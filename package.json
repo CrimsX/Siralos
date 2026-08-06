@@ -20,6 +20,8 @@
     "typecheck": "tsc -b --pretty false",
     "test": "npm run build && vitest run",
     "test:watch": "vitest",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:architecture",
     "solaris": "npm run build && node apps/cli/dist/index.js"
   },
   "devDependencies": {
