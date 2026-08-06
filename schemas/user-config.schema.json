@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://solaris.dev/schemas/user-config.schema.json",
+  "title": "Solaris user configuration",
+  "description": "Trusted user-level Solaris configuration. Project repositories cannot broaden these settings.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["inspect", "develop-offline"],
+          "description": "Session sandbox profile. Defaults to inspect."
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["auto", "anthropic-runtime"],
+          "description": "Sandbox backend selection. Defaults to auto."
+        }
+      }
+    }
+  }
+}
