@@ -1,4 +1,4 @@
-import type { SolarisApplication } from "@solaris/core";
+import type { SolarisApplication, ToolDefinition } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
 import {
   describeError,
@@ -9,6 +9,7 @@ import {
   formatToolCancelled,
   formatToolCompleted,
   formatToolFailed,
+  formatTools,
   formatToolStarted,
   sanitizeForDisplay,
 } from "./output.js";
@@ -19,11 +20,17 @@ export interface SessionIO {
   clear(): void;
 }
 
+export interface SessionInfo {
+  readonly workspaceRoot: string;
+  readonly tools: readonly ToolDefinition[];
+}
+
 const PROMPT = "> ";
 
 export async function runInteractiveSession(
   io: SessionIO,
   application: SolarisApplication,
+  sessionInfo: SessionInfo,
 ): Promise<number> {
   for (;;) {
     const input = await io.ask(PROMPT);
@@ -41,10 +48,19 @@ export async function runInteractiveSession(
             io.write(formatHelp());
             break;
           case "status":
-            io.write(formatStatus(application.getStatus()));
+            io.write(
+              formatStatus(
+                application.getStatus(),
+                sessionInfo.workspaceRoot,
+                sessionInfo.tools.length,
+              ),
+            );
             break;
           case "clear":
             io.clear();
+            break;
+          case "tools":
+            io.write(formatTools(sessionInfo.tools));
             break;
           case "exit":
             return 0;

@@ -1,4 +1,4 @@
-export type SlashCommand = "help" | "status" | "clear" | "exit";
+export type SlashCommand = "help" | "status" | "clear" | "tools" | "exit";
 
 export type ParsedInput =
   | {
@@ -17,7 +17,7 @@ export type ParsedInput =
       readonly input: string;
     };
 
-const SLASH_COMMANDS: readonly SlashCommand[] = ["help", "status", "clear", "exit"];
+const SLASH_COMMANDS: readonly SlashCommand[] = ["help", "status", "clear", "tools", "exit"];
 
 export function parseInput(raw: string): ParsedInput {
   const trimmed = raw.trim();

@@ -7,7 +7,7 @@ import { runInteractiveSession, type SessionIO } from "./interactive-session.js"
 import { describeError, formatHeader } from "./output.js";
 
 async function main(): Promise<number> {
-  const { application, providerId } = createCliApplication();
+  const { application, providerId, workspaceRoot, tools } = await createCliApplication();
   const readline = createInterface({ input: stdin, output: stdout });
   readline.on("SIGINT", () => {
     readline.close();
@@ -27,7 +27,7 @@ async function main(): Promise<number> {
     },
   };
   stdout.write(formatHeader(providerId));
-  const exitCode = await runInteractiveSession(io, application);
+  const exitCode = await runInteractiveSession(io, application, { workspaceRoot, tools });
   readline.close();
   stdin.destroy();
   return exitCode;

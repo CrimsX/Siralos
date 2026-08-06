@@ -1,4 +1,4 @@
-import type { SessionStatus } from "@solaris/core";
+import type { SessionStatus, ToolDefinition } from "@solaris/core";
 
 export function formatHeader(providerId: string): string {
   return `Solaris
@@ -10,18 +10,33 @@ Provider: ${providerId}
 export function formatHelp(): string {
   return `Available commands:
   /help    Show this help
-  /status  Show provider and session status
+  /status  Show provider, session, and workspace status
   /clear   Clear the terminal (conversation is kept)
+  /tools   List the available tools
   /exit    Close Solaris
 `;
 }
 
-export function formatStatus(status: SessionStatus): string {
+export function formatStatus(
+  status: SessionStatus,
+  workspaceRoot: string,
+  toolCount: number,
+): string {
   const sessionState = status.state === "responding" ? "responding" : "active";
   return `Provider: ${status.providerId}
 Session: ${sessionState}
 Messages: ${status.messageCount}
+Workspace: ${workspaceRoot}
+Tools: ${toolCount}
 `;
+}
+
+export function formatTools(tools: readonly ToolDefinition[]): string {
+  if (tools.length === 0) {
+    return "Available tools:\n  (none)\n";
+  }
+  const lines = tools.map((tool) => `  ${tool.name} - ${tool.description} (read-only)`);
+  return `Available tools:\n${lines.join("\n")}\n`;
 }
 
 export function formatInvalidCommand(input: string): string {

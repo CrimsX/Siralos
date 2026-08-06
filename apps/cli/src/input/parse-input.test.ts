@@ -19,6 +19,7 @@ describe("parseInput", () => {
     expect(parseInput("/help")).toEqual({ type: "command", command: "help" });
     expect(parseInput("/status")).toEqual({ type: "command", command: "status" });
     expect(parseInput("/clear")).toEqual({ type: "command", command: "clear" });
+    expect(parseInput("/tools")).toEqual({ type: "command", command: "tools" });
     expect(parseInput("/exit")).toEqual({ type: "command", command: "exit" });
   });
 
