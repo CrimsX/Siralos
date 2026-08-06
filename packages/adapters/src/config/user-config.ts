@@ -73,14 +73,16 @@ export function parseUserConfig(data: unknown): UserConfig {
   }
   const profile = sandbox["profile"] ?? "inspect";
   if (typeof profile !== "string" || !SUPPORTED_PROFILES.includes(profile)) {
+    const profileLabel = typeof profile === "string" ? profile : JSON.stringify(profile);
     throw new Error(
-      `Unknown sandbox profile: ${String(profile)}. Expected one of: inspect, develop-offline.`,
+      `Unknown sandbox profile: ${profileLabel}. Expected one of: inspect, develop-offline.`,
     );
   }
   const backend = sandbox["backend"] ?? "auto";
   if (typeof backend !== "string" || !SUPPORTED_BACKENDS.includes(backend)) {
+    const backendLabel = typeof backend === "string" ? backend : JSON.stringify(backend);
     throw new Error(
-      `Unknown sandbox backend: ${String(backend)}. Expected one of: auto, anthropic-runtime.`,
+      `Unknown sandbox backend: ${backendLabel}. Expected one of: auto, anthropic-runtime.`,
     );
   }
   return {
