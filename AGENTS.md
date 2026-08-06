@@ -2,14 +2,22 @@
 
 ## Current state
 
-- Blank-slate repo: only `README.md` exists; initial commit only. No Godot project files (`project.godot`, `.gd`, `.csproj`) and no build/test/CI config yet.
-- Do not hunt for build, test, or lint commands — they do not exist yet.
+- npm TypeScript workspace monorepo (npm workspaces, ESM, strict TypeScript, project references).
+- `@solaris/core`: application + provider port. `@solaris/adapters`: deterministic fake provider. `@solaris/cli`: interactive terminal with `/help`, `/status`, `/clear`, `/exit`.
+- No Godot integration yet; the harness is at the foundation stage.
+
+## Verify
+
+- `npm run check` — full non-mutating validation: format check, lint, typecheck, tests, architecture check.
+- `npm run solaris` — build and launch the interactive CLI.
+- `npm run check:architecture` — workspace dependency-boundary enforcement.
 
 ## Intended direction
 
 - Godot engine agent harness: a harness for an agent driving/running the Godot engine.
-- When scaffolding begins, prefer creating a real Godot project (with `project.godot`) over a loose collection of scripts, and keep run/verify commands documented here as they land.
+- When Godot scaffolding begins, prefer a real Godot project (with `project.godot`) and record new run/verify commands here as they land.
 
 ## Gotchas
 
-- Nothing can be run or verified until the Godot project scaffold is in place; `godot` binary must be on `PATH` (or `GODOT` env var set) before claiming anything runs headless.
+- Nothing engine-related can run until the Godot project scaffold is in place; `godot` binary must be on `PATH` (or `GODOT` env var set) before claiming anything runs headless.
+- Do not add real provider integrations, persistence, multi-agent functionality, or `/evolve` while the foundation stage is unfinished.
