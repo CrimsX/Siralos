@@ -45,7 +45,24 @@ Core must not import the CLI, adapters, test utilities, or Node infrastructure m
 
 ## Runtime validation
 
-Validate data that crosses genuinely untrusted boundaries. Internally produced data does not need runtime validation. There are no trusted runtime boundaries in the current slice beyond the provider port, which is core-owned and compiled against.
+Validate data that crosses genuinely untrusted boundaries. Provider-generated tool input is untrusted: every tool performs runtime validation of its `unknown` input before any work happens. Internally produced data does not need runtime validation. No provider SDK is trusted to validate on the harness's behalf.
+
+## Security properties
+
+These properties are established and tested; weakening any of them is an architecture change requiring explanation:
+
+- **Workspace containment**: no tool can read outside the canonicalized launch directory. Requested paths are resolved relative to the workspace root, canonicalized, and checked against the canonical root; symlink escapes, parent traversal, absolute paths, null bytes, and prefix-confusion paths are rejected.
+- **Read-only operation**: the tools perform no intentional writes.
+- **No shell**: tools never invoke a shell or external command.
+- **No network**: the application and tools make no network requests.
+- **Explicit capability registration**: only tools constructed in the composition root are available; there is no dynamic tool loading.
+- **Untrusted input validation**: all provider-generated tool arguments are validated at runtime by the selected tool.
+- **Untrusted output classification**: file contents remain tool data (`tool_result` conversation items) and never become system or developer instructions.
+- **Bounded execution**: directory listings, file reads, searches, and provider tool rounds have explicit limits with truncation metadata.
+- **Cancellation**: long searches and provider operations stop promptly when aborted; a cancellation is never reported as completion.
+- **Safe failures**: unknown tools, invalid arguments, path escapes, binary files, oversized files, duplicate call ids, and filesystem errors produce typed failures rather than crashes.
+
+Tool output limits live in one discoverable module: `WORKSPACE_LIMITS` in `packages/adapters/src/tools/workspace/limits.ts` (directory entries 200, readable file size 512 KiB, returned read content 64 000 chars, search file size 512 KiB, files scanned 500, search matches 100, returned line length 400 chars). The provider tool-round limit is `DEFAULT_MAX_TOOL_ROUNDS` (8) in `@solaris/core`.
 
 ## Explicit dependency composition
 

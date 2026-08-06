@@ -3,7 +3,8 @@
 ## Current state
 
 - npm TypeScript workspace monorepo (npm workspaces, ESM, strict TypeScript, project references).
-- `@solaris/core`: application + provider port. `@solaris/adapters`: deterministic fake provider. `@solaris/cli`: interactive terminal with `/help`, `/status`, `/clear`, `/exit`.
+- `@solaris/core`: application + provider port + tool contracts and bounded tool loop. `@solaris/adapters`: deterministic fake provider (with tool scenarios) and read-only workspace tools (`workspace.list`, `workspace.read`, `workspace.search`). `@solaris/cli`: interactive terminal with `/help`, `/status`, `/clear`, `/tools`, `/exit`.
+- Workspace root is the canonicalized launch directory; all tool paths are contained within it.
 - No Godot integration yet; the harness is at the foundation stage.
 
 ## Verify

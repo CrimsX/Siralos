@@ -4,7 +4,7 @@ Six agreed product stages. Each stage is a milestone, not a feature catalogue.
 
 ## 1. Harness foundation
 
-An executable, provider-neutral foundation: interactive CLI, provider port, deterministic fake provider, in-process sessions, engineering standards, and mechanically enforced architecture. **Current stage — complete.**
+An executable, provider-neutral foundation: interactive CLI, provider port, deterministic fake provider, in-process sessions, engineering standards, mechanically enforced architecture, and a secure bounded tool loop with read-only workspace inspection tools. **Current stage — in progress: secure read-only tool execution is complete; a real provider adapter with tool-call translation is the next narrow task.**
 
 ## 2. Godot script-development MVP
 

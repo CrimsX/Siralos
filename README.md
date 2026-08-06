@@ -9,14 +9,18 @@ This repository currently contains the **foundation vertical slice**: an executa
 Working today:
 
 - Interactive terminal session (`npm run solaris`)
-- Slash commands: `/help`, `/status`, `/clear`, `/exit`
+- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/exit`
 - Prompt submission with incrementally streamed responses
+- A bounded provider/tool loop: the provider can request read-only workspace tools, results are added to the conversation, and the provider produces a final response
+- Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search` — all paths are canonicalized and contained within the launch directory; symlink escapes, binary files, oversized files, and traversal limits are enforced
 - In-process conversation history
 - Cancellation support through `AbortSignal`
-- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network
+- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic tool-call scenarios (`list files`, `read README.md`, `search <text>`)
 
 Not yet implemented:
 
+- Any file modification, patching, or deletion through tools
+- Shell or Git command execution
 - Godot project understanding, GDScript programming, or editor/runtime integration
 - Real model providers (e.g. Anthropic, OpenAI)
 - Persistent sessions or transcript storage
@@ -74,23 +78,27 @@ Solaris
 Interactive Godot development harness
 Provider: deterministic-fake
 
-> hello
+> list files
 
-Solaris received: hello
+● workspace.list {"path":"."}
+  19 entries
+
+Solaris inspected 19 workspace entries.
+
+> /tools
+
+Available tools:
+  workspace.list - List one directory within the approved workspace. (read-only)
+  workspace.read - Read a bounded range from one text file inside the workspace. (read-only)
+  workspace.search - Search text files recursively within a bounded workspace directory. (read-only)
 
 > /status
 
 Provider: deterministic-fake
 Session: active
-Messages: 2
-
-> /help
-
-Available commands:
-  /help    Show this help
-  /status  Show provider and session status
-  /clear   Clear the terminal (conversation is kept)
-  /exit    Close Solaris
+Messages: 4
+Workspace: C:\Users\...\Solaris
+Tools: 3
 
 > /exit
 ```
@@ -106,12 +114,14 @@ apps/
 packages/
   core/                    application behaviour and external contracts
     src/
-      application/         in-memory conversation and prompt use case
-      domain/              conversation model, cancellation classification
+      application/         in-memory conversation, provider/tool loop
+      domain/              conversation items, JSON types, cancellation
       ports/               provider contract
+      tools/               tool contracts and the tool registry
   adapters/                implementations of core-owned ports
     src/
-      providers/           deterministic fake provider
+      providers/           deterministic fake provider (with tool scenarios)
+      tools/workspace/     read-only workspace tools (list, read, search)
 docs/
   adr/                     architecture decision records
 scripts/                   architecture checks
@@ -135,4 +145,4 @@ runs formatting, linting, type checking, tests, and the architecture check witho
 
 ## Next planned milestone
 
-Stage 2 of `ROADMAP.md`: the Godot script-development MVP (Godot project detection and understanding, GDScript-first development workflows). No work on that stage has begun.
+The next narrow task is to add a real provider adapter with provider-neutral tool-call translation and contract tests. Godot discovery follows once a real provider can drive the established tool loop. See `ROADMAP.md`.

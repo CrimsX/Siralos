@@ -32,7 +32,32 @@ Core imports no Node infrastructure modules, no adapters, no CLI code, and no te
 
 ## Application layer
 
-`createSolarisApplication({ provider })` returns the application: `sendPrompt(text, signal?)` streams `ApplicationEvent`s and `getStatus()` reports provider, state, and message count. State is private; only immutable views are exposed. The application owns conversation history, which providers must not.
+`createSolarisApplication({ provider, tools, maxToolRounds? })` returns the application: `sendPrompt(text, signal?)` streams `ApplicationEvent`s and `getStatus()` reports provider, state, and item count. State is private; only immutable views are exposed. The application owns conversation history, which providers must not.
+
+## Tool loop
+
+`sendPrompt` runs a bounded provider/tool loop:
+
+```text
+User prompt
+   ↓
+Provider turn
+   ├── final text → complete
+   └── tool calls
+          ↓
+      Execute tools sequentially
+          ↓
+      Add tool results to history
+          ↓
+      Next provider turn (until a turn completes without tool calls)
+```
+
+- The provider receives the conversation and the available tool definitions in every request.
+- Assistant text, tool calls (`assistant_tool_call`), and tool results (`tool_result`) are stored as distinct `ConversationItem`s in chronological order. File contents stay classified as tool data.
+- Tool activity surfaces as `tool_started`, `tool_completed`, `tool_failed`, and `tool_cancelled` application events with bounded display summaries.
+- Unknown tools and duplicate call ids produce failed tool results without executing anything; the provider gets a subsequent turn to respond.
+- A configurable maximum tool-round count (default 8, `DEFAULT_MAX_TOOL_ROUNDS`) stops the loop with a clear failure instead of an infinite loop.
+- Cancellation flows from the application signal into the provider stream and each tool execution; later tool calls never start after cancellation, and no false completion is stored.
 
 ## Ports
 
@@ -40,7 +65,12 @@ External capabilities the application needs are narrow interfaces owned by core.
 
 ## Adapters (`packages/adapters`)
 
-Adapters implement core-owned ports. The only adapter is `DeterministicFakeProvider` (id `deterministic-fake`): it streams the prompt back as `Solaris received: <prompt>` in multiple chunks, is deterministic, requires no credentials or network, and stops promptly on abort. Adapters contain no application policy and no conversation state.
+Adapters implement core-owned ports. Providers and concrete tools live here:
+
+- `DeterministicFakeProvider` (id `deterministic-fake`): streams text responses in chunks, supports cancellation, and has synthetic tool scenarios (`list files`, `read README.md`, `search <text>`) that request registered tools and respond truthfully to their results. It never touches the filesystem or executes tools.
+- Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search`. All three share one canonical containment implementation (`resolveWorkspacePath`), the explicit exclusion list (`node_modules`, `.git`, `dist`, `coverage`), and the `WORKSPACE_LIMITS` output limits. They resolve every path against the workspace root, reject escapes, skip binary/oversized content, and return workspace-relative paths only.
+
+The workspace root is the canonicalized directory Solaris was launched from (`resolveWorkspaceRoot`); it is stored privately by the tools and displayed in `/status`. The fake provider never imports concrete tools — the architecture check enforces that boundary.
 
 ## CLI (`apps/cli`)
 
@@ -56,17 +86,26 @@ The CLI does not own conversation state, provider behaviour, or application poli
 
 ## Composition root
 
-`apps/cli/src/bootstrap/create-application.ts` is the only module that imports both core and a concrete adapter:
+`apps/cli/src/bootstrap/create-application.ts` is the only module that imports both core and concrete adapters:
 
 ```ts
-export function createCliApplication(): CliApplication {
+export async function createCliApplication(): Promise<CliApplication> {
+  const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
+  const workspaceTools = [
+    createWorkspaceListTool(workspaceRoot),
+    createWorkspaceReadTool(workspaceRoot),
+    createWorkspaceSearchTool(workspaceRoot),
+  ];
   const provider = createDeterministicFakeProvider();
-  const application = createSolarisApplication({ provider });
-  return { providerId: provider.id, application };
+  const application = createSolarisApplication({
+    provider,
+    tools: createToolRegistry(workspaceTools),
+  });
+  // ...
 }
 ```
 
-No dependency-injection container, service locator, or reflection.
+No dependency-injection container, service locator, or reflection. The registry rejects duplicate tool names at startup and never mutates afterwards.
 
 ## Current dependency direction
 
@@ -77,9 +116,9 @@ CLI ───────────────→ Core
 ```
 
 - Core imports nothing from the workspace.
-- Adapters import only core contracts.
+- Adapters import only core contracts; adapter providers never import adapter tools.
 - The CLI imports core anywhere, and concrete adapters only in the composition root.
-- `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, and workspace dependency cycles all fail the check.
+- `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, provider/tool isolation, and workspace dependency cycles all fail the check.
 
 ## Why a modular monolith
 
