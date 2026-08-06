@@ -100,6 +100,31 @@ describe("check-architecture", () => {
     ).toBe(true);
   });
 
+  it("rejects the fake provider importing concrete workspace tools", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import x from "../tools/workspace/list.js";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("providers must not import concrete workspace tools")),
+    ).toBe(true);
+  });
+
+  it("accepts the fake provider importing core contracts only", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import type { ModelProvider } from "@solaris/core";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects core importing a Node filesystem module", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/index.ts"] = 'import { readFileSync } from "node:fs";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("core must not import Node module"))).toBe(true);
+  });
+
   it("detects workspace dependency cycles", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/core/package.json"] = packageJson("@solaris/core", {

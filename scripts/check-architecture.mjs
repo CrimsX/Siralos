@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export function collectWorkspacePackages(root) {
@@ -74,6 +74,17 @@ export function runChecks(root) {
           }
           if (pkg.name === "@solaris/adapters" && specifier.startsWith("@solaris/cli")) {
             errors.push(`${location}: adapters must not import CLI code`);
+          }
+          if (pkg.name === "@solaris/adapters" && specifier.startsWith(".")) {
+            const packageRelativeFile = relative(pkg.path, file);
+            const inProviders = packageRelativeFile.startsWith(join("src", "providers"));
+            if (inProviders) {
+              const target = resolve(dirname(file), specifier);
+              const toolsRoot = join(pkg.path, "src", "tools");
+              if (target === toolsRoot || target.startsWith(toolsRoot + sep)) {
+                errors.push(`${location}: providers must not import concrete workspace tools`);
+              }
+            }
           }
           if (pkg.name === "@solaris/cli" && specifier.startsWith("@solaris/adapters")) {
             const packageRelative = relative(pkg.path, file);
