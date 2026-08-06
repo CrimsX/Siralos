@@ -275,6 +275,39 @@ describe("deterministic fake provider tool scenarios", () => {
     );
   });
 
+  it("does not reuse a previous turn's tool result for a new prompt", async () => {
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "list files" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-1",
+          toolName: "workspace.list",
+          input: { path: "." },
+        },
+        {
+          type: "tool_result",
+          callId: "call-1",
+          toolName: "workspace.list",
+          result: {
+            status: "success",
+            output: { path: ".", entries: [], truncated: false },
+            summary: "0 entries",
+          },
+        },
+        { type: "user_message", content: "read README.md" },
+      ],
+      tools: [LIST_TOOL, READ_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-1",
+      toolName: "workspace.read",
+      input: { path: "README.md" },
+    });
+  });
+
   it("retains text-only behaviour for arbitrary prompts", async () => {
     const request: ModelRequest = {
       messages: [{ type: "user_message", content: "hello there" }],

@@ -43,18 +43,24 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
     throw createAbortError();
   }
   const scenario = findScenario(request.messages);
-  if (scenario !== null && isToolAvailable(request.tools, scenario.toolName)) {
-    yield {
-      type: "tool_call",
-      callId: "call-1",
-      toolName: scenario.toolName,
-      input: scenario.input,
-    };
-    await Promise.resolve();
+  if (scenario !== null) {
     const result = findResultForCall(request.messages, "call-1");
-    const responseText = formatScenarioResponse(scenario, result);
-    yield* streamTextChunks(responseText, signal);
-    return;
+    if (result === undefined) {
+      if (isToolAvailable(request.tools, scenario.toolName)) {
+        yield {
+          type: "tool_call",
+          callId: "call-1",
+          toolName: scenario.toolName,
+          input: scenario.input,
+        };
+        await Promise.resolve();
+        return;
+      }
+    } else {
+      const responseText = formatScenarioResponse(scenario, result);
+      yield* streamTextChunks(responseText, signal);
+      return;
+    }
   }
   const responseText = formatResponse(request.messages);
   yield* streamTextChunks(responseText, signal);
@@ -106,13 +112,24 @@ function findResultForCall(
   messages: readonly ConversationItem[],
   callId: string,
 ): ToolExecutionResult | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
+  const firstItemOfCurrentTurn = findLatestUserMessageIndex(messages) + 1;
+  for (let index = messages.length - 1; index >= firstItemOfCurrentTurn; index -= 1) {
     const item = messages[index];
     if (item && item.type === "tool_result" && item.callId === callId) {
       return item.result;
     }
   }
   return undefined;
+}
+
+function findLatestUserMessageIndex(messages: readonly ConversationItem[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = messages[index];
+    if (item && item.type === "user_message") {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function formatScenarioResponse(
