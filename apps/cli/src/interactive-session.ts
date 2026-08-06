@@ -6,6 +6,11 @@ import {
   formatInvalidCommand,
   formatProviderFailure,
   formatStatus,
+  formatToolCancelled,
+  formatToolCompleted,
+  formatToolFailed,
+  formatToolStarted,
+  sanitizeForDisplay,
 } from "./output.js";
 
 export interface SessionIO {
@@ -76,6 +81,18 @@ async function runPrompt(
           break;
         case "response_failed":
           io.write(`\n${formatProviderFailure(event.message)}`);
+          break;
+        case "tool_started":
+          io.write(formatToolStarted(event.toolName, sanitizeForDisplay(event.displayInput)));
+          break;
+        case "tool_completed":
+          io.write(formatToolCompleted(sanitizeForDisplay(event.summary)));
+          break;
+        case "tool_failed":
+          io.write(formatToolFailed(sanitizeForDisplay(event.message)));
+          break;
+        case "tool_cancelled":
+          io.write(formatToolCancelled());
           break;
       }
     }

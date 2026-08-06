@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSolarisApplication,
+  createToolRegistry,
   type ApplicationEvent,
   type ModelEvent,
   type ModelProvider,
@@ -79,7 +80,10 @@ describe("createSolarisApplication", () => {
       { type: "text_delta", text: "two" },
       { type: "completed" },
     ]);
-    const application = createSolarisApplication({ provider });
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([]),
+    });
     const events = await collectEvents(application.sendPrompt("hello"));
     expect(events).toEqual([
       { type: "response_started" },
@@ -91,19 +95,32 @@ describe("createSolarisApplication", () => {
 
   it("passes the full conversation history to the provider", async () => {
     const { provider, requests } = createRecordingProvider();
-    const application = createSolarisApplication({ provider });
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([]),
+    });
     await collectEvents(application.sendPrompt("first"));
     await collectEvents(application.sendPrompt("second"));
     expect(
       requests.map((request) =>
-        request.messages.map((message) => `${message.role}:${message.content}`),
+        request.messages.map((item) =>
+          item.type === "user_message" || item.type === "assistant_message"
+            ? `${item.type}:${item.content}`
+            : `${item.type}:${item.callId}`,
+        ),
       ),
-    ).toEqual([["user:first"], ["user:first", "assistant:ok", "user:second"]]);
+    ).toEqual([
+      ["user_message:first"],
+      ["user_message:first", "assistant_message:ok", "user_message:second"],
+    ]);
   });
 
   it("reports message count for the stored conversation", async () => {
     const { provider } = createRecordingProvider();
-    const application = createSolarisApplication({ provider });
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([]),
+    });
     expect(application.getStatus().messageCount).toBe(0);
     await collectEvents(application.sendPrompt("hello"));
     expect(application.getStatus()).toEqual({
@@ -114,7 +131,10 @@ describe("createSolarisApplication", () => {
   });
 
   it("reports a failed provider response without storing an assistant message", async () => {
-    const application = createSolarisApplication({ provider: createFailingProvider() });
+    const application = createSolarisApplication({
+      provider: createFailingProvider(),
+      tools: createToolRegistry([]),
+    });
     const events = await collectEvents(application.sendPrompt("hello"));
     expect(events.at(-1)).toEqual({
       type: "response_failed",
@@ -129,6 +149,7 @@ describe("createSolarisApplication", () => {
     controller.abort();
     const application = createSolarisApplication({
       provider: createStreamingProvider([{ type: "completed" }]),
+      tools: createToolRegistry([]),
     });
     const events = await collectEvents(application.sendPrompt("hello", controller.signal));
     expect(events.map((event) => event.type)).toEqual(["response_started", "response_cancelled"]);
@@ -150,7 +171,10 @@ describe("createSolarisApplication", () => {
         yield { type: "completed" };
       },
     };
-    const application = createSolarisApplication({ provider });
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([]),
+    });
     const events: ApplicationEvent[] = [];
     for await (const event of application.sendPrompt("hello", controller.signal)) {
       events.push(event);
@@ -168,7 +192,10 @@ describe("createSolarisApplication", () => {
 
   it("reports the responding state while a response streams", async () => {
     const { provider, release } = createGateProvider();
-    const application = createSolarisApplication({ provider });
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([]),
+    });
     const events = application.sendPrompt("hello");
     const iterator = events[Symbol.asyncIterator]();
     await iterator.next();
@@ -180,7 +207,10 @@ describe("createSolarisApplication", () => {
 
   it("rejects a second prompt while one is responding", async () => {
     const { provider, release } = createGateProvider();
-    const application = createSolarisApplication({ provider });
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([]),
+    });
     const first = application.sendPrompt("first");
     const firstIterator = first[Symbol.asyncIterator]();
     await firstIterator.next();

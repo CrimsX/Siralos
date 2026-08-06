@@ -35,6 +35,31 @@ export function formatProviderFailure(message: string): string {
 `;
 }
 
+export function formatToolStarted(toolName: string, displayInput: string): string {
+  return `\u25CF ${toolName} ${displayInput}
+`;
+}
+
+export function formatToolCompleted(summary: string): string {
+  return `  ${summary}
+`;
+}
+
+export function formatToolFailed(message: string): string {
+  return `  \u2715 ${message}
+`;
+}
+
+export function formatToolCancelled(): string {
+  return "  \u2715 cancelled\n";
+}
+
+const CONTROL_CHARACTER_PATTERN = new RegExp(`[\u0000-\u001f\u007f]`, "g");
+
+export function sanitizeForDisplay(text: string): string {
+  return text.replace(CONTROL_CHARACTER_PATTERN, "\uFFFD");
+}
+
 export function describeError(error: unknown): string {
   if (error instanceof Error && error.message.length > 0) {
     return error.message;

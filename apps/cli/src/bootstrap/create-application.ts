@@ -1,5 +1,9 @@
 import { createDeterministicFakeProvider } from "@solaris/adapters";
-import { createSolarisApplication, type SolarisApplication } from "@solaris/core";
+import {
+  createSolarisApplication,
+  createToolRegistry,
+  type SolarisApplication,
+} from "@solaris/core";
 
 export interface CliApplication {
   readonly providerId: string;
@@ -8,6 +12,6 @@ export interface CliApplication {
 
 export function createCliApplication(): CliApplication {
   const provider = createDeterministicFakeProvider();
-  const application = createSolarisApplication({ provider });
+  const application = createSolarisApplication({ provider, tools: createToolRegistry([]) });
   return { providerId: provider.id, application };
 }

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createSolarisApplication, type ModelEvent, type ModelProvider } from "@solaris/core";
+import {
+  createSolarisApplication,
+  createToolRegistry,
+  type ModelEvent,
+  type ModelProvider,
+} from "@solaris/core";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { runInteractiveSession, type SessionIO } from "./interactive-session.js";
 
@@ -97,7 +102,10 @@ describe("runInteractiveSession", () => {
         throw new Error("provider exploded");
       },
     };
-    const application = createSolarisApplication({ provider: failingProvider });
+    const application = createSolarisApplication({
+      provider: failingProvider,
+      tools: createToolRegistry([]),
+    });
     const io = new ScriptedIO(["hello", "/exit"]);
     const exitCode = await runInteractiveSession(io, application);
     expect(exitCode).toBe(0);

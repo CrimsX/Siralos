@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   isCancellationError,
-  type ConversationMessage,
+  type ConversationItem,
   type ModelEvent,
   type ModelRequest,
 } from "@solaris/core";
 import { createDeterministicFakeProvider } from "./deterministic-fake-provider.js";
 
-const messages: readonly ConversationMessage[] = [{ role: "user", content: "hello" }];
+const messages: readonly ConversationItem[] = [{ type: "user_message", content: "hello" }];
+const tools: readonly [] = [];
 
 async function collect(request: ModelRequest): Promise<{ events: ModelEvent[]; error: unknown }> {
   const events: ModelEvent[] = [];
@@ -24,7 +25,7 @@ async function collect(request: ModelRequest): Promise<{ events: ModelEvent[]; e
 
 describe("deterministic fake provider", () => {
   it("streams multiple text chunks for the same prompt", async () => {
-    const { events, error } = await collect({ messages });
+    const { events, error } = await collect({ messages, tools });
     expect(error).toBeUndefined();
     const deltaCount = events.filter((event) => event.type === "text_delta").length;
     expect(deltaCount).toBeGreaterThanOrEqual(2);
@@ -32,13 +33,13 @@ describe("deterministic fake provider", () => {
   });
 
   it("produces identical output for identical input", async () => {
-    const first = await collect({ messages });
-    const second = await collect({ messages });
+    const first = await collect({ messages, tools });
+    const second = await collect({ messages, tools });
     expect(first).toEqual(second);
   });
 
   it("echoes the latest user prompt", async () => {
-    const { events } = await collect({ messages });
+    const { events } = await collect({ messages, tools });
     const text = events.map((event) => (event.type === "text_delta" ? event.text : "")).join("");
     expect(text).toBe("Solaris received: hello");
   });
@@ -46,7 +47,7 @@ describe("deterministic fake provider", () => {
   it("fails immediately when the signal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();
-    const { events, error } = await collect({ messages, signal: controller.signal });
+    const { events, error } = await collect({ messages, tools, signal: controller.signal });
     expect(events).toEqual([]);
     expect(isCancellationError(error)).toBe(true);
   });
@@ -58,6 +59,7 @@ describe("deterministic fake provider", () => {
     try {
       for await (const event of createDeterministicFakeProvider().stream({
         messages,
+        tools,
         signal: controller.signal,
       })) {
         events.push(event);

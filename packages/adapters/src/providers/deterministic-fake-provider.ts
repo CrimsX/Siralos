@@ -1,4 +1,4 @@
-import type { ConversationMessage, ModelEvent, ModelProvider, ModelRequest } from "@solaris/core";
+import type { ConversationItem, ModelEvent, ModelProvider, ModelRequest } from "@solaris/core";
 
 export const DETERMINISTIC_FAKE_PROVIDER_ID = "deterministic-fake";
 
@@ -30,15 +30,15 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   yield { type: "completed" };
 }
 
-function formatResponse(messages: readonly ConversationMessage[]): string {
+function formatResponse(messages: readonly ConversationItem[]): string {
   return `Solaris received: ${findLatestUserPrompt(messages)}`;
 }
 
-function findLatestUserPrompt(messages: readonly ConversationMessage[]): string {
+function findLatestUserPrompt(messages: readonly ConversationItem[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message && message.role === "user") {
-      return message.content;
+    const item = messages[index];
+    if (item && item.type === "user_message") {
+      return item.content;
     }
   }
   return "";
