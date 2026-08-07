@@ -126,7 +126,8 @@ function parseOrdinaryRecord(
   records: readonly string[],
   index: number,
 ): OrdinaryRecordResult | null {
-  const parsed = splitHeaderAndPath(record, 8);
+  const fieldCount = record.startsWith("2 ") ? 10 : 9;
+  const parsed = splitHeaderAndPath(record, fieldCount);
   const xy = parsed.header[1] ?? "";
   const kind: GitStatusKind = record.startsWith("2 ")
     ? xy[0] === "C"
@@ -155,12 +156,12 @@ function parseOrdinaryRecord(
 }
 
 function parseUnmergedRecord(record: string): GitConflictEntry | null {
-  const parsed = splitHeaderAndPath(record, 10);
+  const parsed = splitHeaderAndPath(record, 11);
   return {
     path: normalizePath(parsed.path),
-    stage1Oid: parsed.header[6] ?? null,
-    stage2Oid: parsed.header[7] ?? null,
-    stage3Oid: parsed.header[8] ?? null,
+    stage1Oid: parsed.header[7] ?? null,
+    stage2Oid: parsed.header[8] ?? null,
+    stage3Oid: parsed.header[9] ?? null,
   };
 }
 
@@ -179,7 +180,7 @@ function splitHeaderAndPath(
   }
   return {
     header: record.slice(0, index).split(" "),
-    path: record.slice(Math.min(index + 1, record.length)),
+    path: record.slice(Math.min(index, record.length)),
   };
 }
 

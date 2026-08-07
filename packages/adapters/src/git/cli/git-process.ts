@@ -49,7 +49,13 @@ export async function runGitProcess(options: GitProcessOptions): Promise<GitProc
     );
   }
   const configArgs = ALIAS_SELF_OVERRIDES.flatMap((override) => ["-c", override]);
-  const fullArgs = [...configArgs, "--no-pager", options.subcommand, ...options.args];
+  const fullArgs = [
+    ...configArgs,
+    "--no-pager",
+    "--literal-pathspecs",
+    options.subcommand,
+    ...options.args,
+  ];
   const timeoutController = new AbortController();
   let timedOut = false;
   const timeoutTimer = setTimeout(() => {
