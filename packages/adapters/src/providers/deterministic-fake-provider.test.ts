@@ -49,6 +49,86 @@ function toolCallEvent(events: readonly ModelEvent[]): ModelEvent | undefined {
   return events.find((event) => event.type === "tool_call");
 }
 
+function hasLoneSurrogate(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code >= 0xd800 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function encodeUtf8(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+describe("deterministic fake provider unicode chunking", () => {
+  const scenarios: readonly { name: string; text: string }[] = [
+    { name: "emoji sequences", text: "step 1 👨‍👩‍👧‍👦 step 2 🚀 done" },
+    { name: "combining characters", text: "café e\u0301tude n\u0303o \u1e9f" },
+    { name: "mixed ascii and unicode", text: "a1\u00e9\u4e2d\u6587\u00f1B2\u20ac\u2026end" },
+    { name: "astral plane", text: "😀😁😂🤣😃😄😅😆😉😊😋😎😍😘🥰😗" },
+  ];
+  for (const scenario of scenarios) {
+    it(`chunks ${scenario.name} without splitting code points`, async () => {
+      const { events, error } = await collect({
+        messages: [{ type: "user_message", content: scenario.text }],
+        tools,
+      });
+      expect(error).toBeUndefined();
+      const joined = textOf(events);
+      expect(joined).toBe(`Solaris received: ${scenario.text}`);
+      const chunks = events
+        .filter((event) => event.type === "text_delta")
+        .map((event) => (event as { text: string }).text);
+      expect(chunks.length).toBeGreaterThan(1);
+      for (const chunk of chunks) {
+        expect(hasLoneSurrogate(chunk)).toBe(false);
+      }
+      for (const chunk of chunks) {
+        const encoded = encodeUtf8(chunk);
+        const decoded = decodeUtf8(encoded);
+        expect(decoded).toBe(chunk);
+      }
+    });
+  }
+
+  it("preserves deterministic chunking for identical input", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "café \u00e9tude 😀" }],
+      tools,
+    };
+    const first = (await collect(request)).events.filter((event) => event.type === "text_delta");
+    const second = (await collect(request)).events.filter((event) => event.type === "text_delta");
+    expect(first).toEqual(second);
+  });
+
+  it("keeps each chunk independently encoded and valid", async () => {
+    const text = "a\u00e9b\u4e2dc\u00f1d\u2026e".repeat(3);
+    const { events, error } = await collect({
+      messages: [{ type: "user_message", content: text }],
+      tools,
+    });
+    expect(error).toBeUndefined();
+    const chunks = events
+      .filter((event) => event.type === "text_delta")
+      .map((event) => (event as { text: string }).text);
+    expect(chunks.every((chunk) => chunk.length > 0)).toBe(true);
+    const recombined = chunks.map(encodeUtf8).reduce((all, bytes) => {
+      const merged = new Uint8Array(all.length + bytes.length);
+      merged.set(all, 0);
+      merged.set(bytes, all.length);
+      return merged;
+    }, new Uint8Array(0));
+    expect(decodeUtf8(recombined)).toBe(`Solaris received: ${text}`);
+  });
+});
+
 describe("deterministic fake provider", () => {
   it("streams multiple text chunks for the same prompt", async () => {
     const { events, error } = await collect({ messages, tools });

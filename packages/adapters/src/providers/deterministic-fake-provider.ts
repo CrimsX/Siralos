@@ -578,8 +578,19 @@ function findLatestUserPrompt(messages: readonly ConversationItem[]): string {
 
 function chunkText(text: string, size: number): readonly string[] {
   const chunks: string[] = [];
-  for (let index = 0; index < text.length; index += size) {
-    chunks.push(text.slice(index, index + size));
+  let current = "";
+  let count = 0;
+  for (const character of text) {
+    current += character;
+    count += 1;
+    if (count >= size) {
+      chunks.push(current);
+      current = "";
+      count = 0;
+    }
+  }
+  if (current.length > 0) {
+    chunks.push(current);
   }
   return chunks;
 }
