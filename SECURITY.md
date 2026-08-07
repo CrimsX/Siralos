@@ -15,7 +15,7 @@ The current implementation contains no provider-accessible process or write capa
 
 ## Sandbox versus approvals
 
-A permission decision determines whether Solaris permits an operation to proceed. A sandbox profile determines the technical restrictions under which it executes. Approval never means "run the command unrestricted" — at most it will mean "run the command using a broader predefined sandbox profile". This task establishes the profile and enforcement machinery but no approval workflow, because no model-accessible capability exists yet to approve.
+A permission decision determines whether Solaris permits an operation to proceed. A sandbox profile determines the technical restrictions under which it executes. Approval never means "run the command unrestricted" — at most it will mean "run the command using a broader predefined sandbox profile". Every command runs under the internal `validation-offline` profile regardless of the active user profile, so approval can never make command execution workspace-writable.
 
 ## Fail closed
 
@@ -45,14 +45,15 @@ Provider credentials and Solaris internal secrets stay in the provider adapter o
 - sent to future tools,
 - available to project scripts, Godot, or delegated agents.
 
-Child environments are constructed from an explicit allowlist (`buildChildEnvironment` in `packages/adapters/src/environment/`); `process.env` is never forwarded verbatim. Variables matching `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_*`, `AZURE_*`, `GOOGLE_*`, `GITHUB_TOKEN`, `GH_TOKEN`, `SSH_AUTH_SOCK`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENCODE_API_KEY`, and `SOLARIS_CONFIG` are denied. Sandbox `HOME`/`USERPROFILE` and `TEMP`/`TMP`/`TMPDIR` are controlled by Solaris. The architecture check prohibits `process.env` inspection in package source.
+Child environments are constructed from an explicit allowlist (`buildChildEnvironment` in `packages/adapters/src/environment/`); `process.env` is never forwarded verbatim. Variables matching `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_*`, `AZURE_*`, `GOOGLE_*`, `GITHUB_TOKEN`, `GH_TOKEN`, `SSH_AUTH_SOCK`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENCODE_API_KEY`, `SOLARIS_CONFIG`, `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `CDPATH`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG*`, `NPM_CONFIG_USERCONFIG`, `NPM_CONFIG_SCRIPT_SHELL`, and proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`) are denied, case-insensitively (Windows environment names are case-insensitive). Sandbox `HOME`/`USERPROFILE` and `TEMP`/`TMP`/`TMPDIR` are controlled by Solaris. Command environments additionally fix `NO_COLOR=1`, `FORCE_COLOR=0`, `TERM=dumb`, and `GIT_TERMINAL_PROMPT=0`, and the npm runner adds safe npm configuration (`NPM_CONFIG_IGNORE_SCRIPTS=true` disables pre/post hooks while the explicitly requested script still runs, plus audit/fund/update-notifier/color off) with the npm cache and user configuration pointed at sandbox-private run paths. The architecture check prohibits `process.env` inspection in package source.
 
 ## Built-in profiles
 
-- **`inspect`** (default): workspace read-only, no writes, no process execution, no network. This is the profile under which the read-only workspace tools operate.
-- **`develop-offline`**: workspace read/write, sandbox temporary directories read/write, process execution enabled, network denied, minimal environment, protected metadata paths, timeouts, output limits, cancellation.
+- **`inspect`** (default): workspace read-only, no writes, no process execution, no network. This is the profile under which the read-only workspace tools operate; write and process tools are not sent to the provider.
+- **`develop-offline`**: workspace reads allowed, workspace writes require one-time approval, process execution requires one-time approval, network denied, minimal environment, protected metadata paths, timeouts, output limits, cancellation.
+- **`validation-offline`** (internal, never user-selectable): the effective profile under which every provider-accessible command executes. Workspace reads allowed, workspace writes denied, sandbox-private home/temp/npm-cache writable, network denied, minimal environment, closed stdin, process-tree confinement required. The active user profile may narrow command execution further, never broaden it. Notably, `develop-offline` permitting approved file edits does not make command execution workspace-writable.
 
-There is no networked, unrestricted, or "full access" profile.
+There is no networked, unrestricted, or "full access" profile. No public configuration can set `process.execute` to unconditional `allow` in this milestone; a missing process rule fails closed.
 
 ## Why network is denied
 
@@ -105,11 +106,25 @@ Every approved workspace mutation first records a durable Solaris-owned checkpoi
 
 ## Conformance testing
 
-`npm run test:sandbox` runs fixed internal conformance probes against the real backend: inside-workspace reads and writes, outside-workspace write denial, denied-secret reads, loopback and DNS network denial, provider-secret absence, descendant-process confinement, output limits, timeout, and cancellation. The probes use temporary directories and fake secrets only. The command makes no public internet request, never elevates, and returns nonzero when an available backend violates a required boundary. Unavailable backends produce a loud skipped result, never a passing one.
+`npm run test:sandbox` runs fixed internal conformance probes against the real backend: inside-workspace reads and writes, outside-workspace write denial, denied-secret reads, loopback and DNS network denial, provider-secret absence, descendant-process confinement, output limits, timeout, and cancellation — plus validation-command probes under `validation-offline`: Node and npm scripts read fixtures but cannot write the workspace (root, child, grandchild, and npm script shell all denied), cannot reach outbound or loopback network, receive no provider credentials and no `NODE_OPTIONS`, npm pre/post hooks do not run, stdin is closed, output limits terminate the process, timeout and cancellation terminate descendants that ignore normal termination, no sandbox files appear in the workspace, and sandbox-private run-directory cleanup succeeds. The probes use temporary directories and fake secrets only. The command makes no public internet request, never elevates, and returns nonzero when an available backend violates a required boundary. Unavailable backends produce a loud skipped result, never a passing one.
+
+## Sandboxed development-command execution
+
+`process.run` runs a predefined Solaris runner with structured fields — never a provider-supplied shell string, executable path, environment, network permission, writable path, or stdin. Only two runners exist: `npm-script` (one existing npm package script, executed as `npm run <script> -- <args>` through the trusted Node executable invoking the resolved `npm-cli.js`; pre/post hooks disabled via `NPM_CONFIG_IGNORE_SCRIPTS`) and `node-script` (one `.js`/`.mjs`/`.cjs` file through the exact `process.execPath`; no provider-controlled Node flags).
+
+- Every command requires explicit one-time approval of the exact immutable plan. The approval shows the full repository npm script body, every argument boundary, all execution boundaries (read-only workspace, denied network, minimal environment, closed stdin, timeout, output limits), the npm script-shell notice, the disabled-hooks notice, and the digest prefix. The digest is a SHA-256 over the runner, trusted executable identity and version, script/package hash, repository script body, arguments, working directory, effective profile, environment policy, timeout, output limits, stdin policy, and network policy.
+- The approved plan may execute exactly once. Immediately before execution every precondition is revalidated (working directory, script/package file and hash, trusted executable identity, capability policy, sandbox availability, and the recomputed digest); any change is a `conflict` and nothing runs under an earlier approval.
+- Commands execute only through the `SandboxBackend` under `validation-offline`; the backend must report full read-only workspace, network-denial, and process-tree confinement capability or the command does not run (fail closed). There is no host-process fallback.
+- Each run gets a verified Solaris-owned directory beneath `~/.solaris/runs/<workspace-fingerprint>/<run-id>/` with private `home/`, `tmp/`, and `npm-cache/`. It is removed after completion; cleanup never follows links and never deletes outside the verified root, and cleanup failures are reported truthfully.
+- Output streams to the CLI as bounded decoded UTF-8 events (16 KiB per event, line-oriented rendering, terminal sequences sanitized on display). Hard limits are 1 MiB per stream; exceeding them terminates the process (`output-limit`). The provider receives at most 256 KiB per stream with explicit truncation markers and an omitted-bytes note. Nonzero exits are normal completed commands (`exitCode: 2`), never infrastructure failures.
+- Timeouts (default 120 s, provider-bounded to 10 minutes) and cancellation terminate the complete process tree, including descendants that ignore normal termination. Cancellation removes timers and listeners, releases the execution lock, attempts run-directory cleanup, and returns the prompt.
+- Commands are serialized with the same in-process lock as approved file mutations: a mutation cannot begin while a command runs and vice versa.
+- Git structured status is recorded before and after execution as a verification signal. A detected workspace change marks the result `workspace_violation`, disables further command execution for the session, and instructs the user to inspect the workspace; Solaris never auto-repairs. The OS sandbox remains the security boundary; Git status is a signal, not the boundary.
+- Bounded in-memory session metadata is kept for completed commands (command id, runner, safe summary, digest, start time, duration, exit code, outcome, truncation flags); full output is never persisted, and `/commands` shows the latest five records.
 
 ## Why arbitrary command execution remains deferred
 
-No provider-accessible shell, process, or write tool exists yet. The sandbox, profiles, policy evaluator, environment filtering, and conformance suite exist so those tools — when added — execute under enforcement from the first day.
+No general shell, arbitrary executable runner, writable command execution, package installation (`npm install`/`ci`/`update`/`exec`/`npx`), interactive stdin, background process, or remote execution exists. The sandbox, profiles, policy evaluator, environment filtering, and conformance suite exist so those tools — when added — execute under enforcement from the first day. The two current runners are deliberately narrow: validated packages and scripts, read-only workspace, offline, approval-gated.
 
 ## Why full-access mode does not exist yet
 

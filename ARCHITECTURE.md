@@ -25,7 +25,8 @@ Core owns Solaris application behaviour and its external contracts:
 - Provider request/event contracts and the `ModelProvider` port
 - Tool contracts and the immutable tool registry
 - Application events and the bounded provider/tool loop
-- The security model: `Capability`/`CapabilityPolicy`, built-in `SandboxProfile`s (`inspect`, `develop-offline`), the pure `evaluatePermission` function, the `SandboxBackend` port, classified `SandboxError` codes, and the `SolarisSecurity` facade (`evaluateCapability`, `checkSandbox`)
+- The security model: `Capability`/`CapabilityPolicy`, built-in `SandboxProfile`s (`inspect`, `develop-offline`, plus the internal `validation-offline` used only for commands), the pure `evaluatePermission` function, the `SandboxBackend` port, classified `SandboxError` codes, and the `SolarisSecurity` facade (`evaluateCapability`, `checkSandbox`)
+- The provider-neutral development-command contracts: `CommandRunner` preparation/execution contracts, the immutable `CommandRunnerRegistry`, `COMMAND_LIMITS`, the canonical command digest, the opaque single-use `PreparedCommand`, the `PreparedCommandTool` contract for `process.run`, and the `CommandApplicationEvent`/audit model
 
 Core imports no Node infrastructure modules, no adapters, no CLI code, no terminal libraries, and no OS sandbox runtime. It never inspects the parent environment and never spawns processes. Architecture checks enforce all of this.
 
@@ -38,10 +39,48 @@ The security facade (`createSolarisSecurity({ backend, policy, profile })`) sits
 ## Security model
 
 - **Capability policy** (`CapabilityPolicy`) maps `workspace.read`, `workspace.write`, `process.execute`, and `network.outbound` to `allow` / `ask` / `deny`. Missing rules fail closed; explicit denies win; a profile can never broaden a denied policy; no built-in profile enables network.
-- **Profiles**: `inspect` (read-only, no processes, no network — the default) and `develop-offline` (workspace writes and processes, network denied, protected metadata paths, minimal environment, timeouts, output limits).
-- **Backend port** (`SandboxBackend`): `inspect()` reports truthful per-platform status and capabilities; `execute(request)` runs a trusted `SandboxedProcessRequest` (executable + arguments, never a raw shell string) and returns a bounded `SandboxedProcessResult` with violations; `close()` resets backend state and is idempotent. Errors normalize into `SandboxError` codes.
-- **User configuration**: `~/.solaris/config.json` selects the profile and backend (defaults: `inspect`, `auto`). Unknown profiles/backends fail validation; project repositories cannot broaden these settings.
-- **Conformance**: `npm run test:sandbox` runs fixed internal probes (workspace read/write, outside-write denial, secret denial, network denial, descendant confinement, output limits, timeout, cancellation) against the real backend using temporary directories and fake secrets. Unavailable backends are reported loudly and never treated as secure.
+- **Profiles**: `inspect` (read-only, no processes, no network — the default), `develop-offline` (workspace writes and process execution both require one-time approval, network denied, protected metadata paths, minimal environment, timeouts, output limits), and `validation-offline` (internal: commands always run with a read-only workspace regardless of the user profile).
+- **Backend port** (`SandboxBackend`): `inspect()` reports truthful per-platform status and capabilities; `execute(request)` runs a trusted `SandboxedProcessRequest` (executable + arguments, never a raw shell string; optional bounded output streaming, explicit timeout, and per-stream hard limits) and returns a bounded `SandboxedProcessResult` with violations; `close()` resets backend state and is idempotent. Errors normalize into `SandboxError` codes.
+- **User configuration**: `~/.solaris/config.json` selects the profile and backend (defaults: `inspect`, `auto`). Unknown profiles/backends fail validation; project repositories cannot broaden these settings; `validation-offline` is not selectable.
+- **Conformance**: `npm run test:sandbox` runs fixed internal probes (workspace read/write, outside-write denial, secret denial, network denial, descendant confinement, output limits, timeout, cancellation) plus validation-command probes (read-only workspace enforcement for root/child/grandchild/npm scripts, network and loopback denial, credential and `NODE_OPTIONS` absence, disabled npm pre/post hooks, closed stdin, output-limit termination, descendant termination on timeout and cancellation, no workspace artifacts, run-directory cleanup) against the real backend using temporary directories and fake secrets. Unavailable backends are reported loudly and never treated as secure.
+
+## Command execution
+
+`process.run` is a `PreparedCommandTool` owned by adapters, built on core contracts and ports:
+
+```text
+Provider requests a development command
+   ↓
+Runner validates structured input (npm-script | node-script)
+   ↓
+Runner prepares an immutable plan: working directory, package.json or
+script file (bounded, no symlinks, SHA-256 recorded), trusted Node and
+npm CLI identities, argument array, timeout
+   ↓
+Application requests one-time approval with the exact preview and digest
+   ↓
+CLI reviewer shows every boundary; approval binds to the digest
+   ↓
+Tool revalidates all preconditions, recomputes the digest, checks the
+sandbox is available and fully enforcing
+   ↓
+Creates a sandbox-private run directory, acquires the shared mutation
+lock, records Git status
+   ↓
+Sandbox backend executes under validation-offline (read-only workspace,
+denied network, closed stdin, minimal environment, bounded output)
+   ↓
+CLI streams sanitized bounded output; result maps to a structured
+command result (nonzero exit is a completed command)
+   ↓
+Git status compared; run directory removed; lock released
+```
+
+- Runners are prepared/executed through the immutable runner registry; the concrete plans are opaque single-use objects that only their creating runner can translate back into an executable request (revalidated and rehashed). The digest covers runner id, executable identity and version, script/package hash, repository script body, arguments, working directory, profile, environment policy, timeout, output limits, stdin and network policy.
+- Command execution never spawns a process from core, the CLI, providers, or the runners; only the sandbox adapter (and the Git adapter, for inspection) uses process APIs, and the architecture check rejects `shell: true`/`exec`/`execSync`/`spawnSync` in runtime code.
+- Each run lives under `~/.solaris/runs/<workspace-fingerprint>/<run-id>/` with private `home/`, `tmp/`, and `npm-cache/`; cleanup is link-safe and verified against the runs root.
+- Git structured status before/after execution is a verification signal: a workspace change detected despite read-only enforcement marks `workspace_violation` and disables further commands for the session.
+- See `SECURITY.md` and ADR 0007 for the full model.
 
 See `SECURITY.md` for the threat model and platform-specific behaviour.
 
@@ -82,9 +121,11 @@ Write tools (`workspace.create_file`, `workspace.edit_file`, `workspace.delete_f
 
 Prepared mutations are opaque single-use objects; core never sees their contents and the tools never accept another tool's mutation. See `SECURITY.md` and ADR 0005 for the full model.
 
+Prepared command tools follow the same pattern: `prepare` (validate + build the immutable plan), approval (the exact preview and digest), then `executePrepared` exactly once with the approved digest; the tool's payload map makes reuse impossible and the runner's revalidation makes changed plans conflict. See "Command execution" above.
+
 ## Ports
 
-External capabilities the application needs are narrow interfaces owned by core. The only port in this slice is `ModelProvider`, implemented as `stream(request): AsyncIterable<ModelEvent>` with an optional `AbortSignal`. No other ports exist yet; none are speculative.
+External capabilities the application needs are narrow interfaces owned by core: the `ModelProvider` port (`stream(request): AsyncIterable<ModelEvent>` with an optional `AbortSignal`), the `SandboxBackend` port, the `ApprovalReviewer` port, the `GitInspector` port, the `CheckpointStore` port, the `UndoService` port, and the `CommandDigestService` port (hashing is injected so core stays free of Node imports). The command tool consumes the sandbox, approval, git, lock, runner-registry, and run-directory ports; runners are core contracts implemented in adapters.
 
 ## Adapters (`packages/adapters`)
 
@@ -94,11 +135,12 @@ Adapters implement core-owned ports. Providers, concrete tools, configuration, e
 - Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search`. All three share one canonical containment implementation (`resolveWorkspacePath`), the explicit exclusion list (`node_modules`, `.git`, `dist`, `coverage`), and the `WORKSPACE_LIMITS` output limits. `workspace.read` returns the complete-file SHA-256.
 - Approved mutation tools: `workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`. They share the write-path safety and protected-path enforcement (`mutation-paths.ts`), the serialized mutation lock, exclusive temp-file staging, hash-based conflict detection, deterministic bounded diffs (`diff.ts` on the `diff` package), and post-write verification. Only these modules may call direct write APIs.
 - User configuration (`loadUserConfig`): reads `~/.solaris/config.json`, defaults to `inspect`/`auto`, and rejects unknown profiles or backends.
-- Child environments (`buildChildEnvironment`): allowlist-based construction with denied credential patterns; the only sanctioned way to build a child environment.
-- `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). Only this module may import the runtime package.
+- Child environments (`buildChildEnvironment`, `buildCommandEnvironment`): allowlist-based construction with denied credential patterns and fixed safe command values; the only sanctioned way to build a child environment.
+- Command layer (`src/process`): trusted Node/npm CLI resolution (`resolveTrustedNode`, `resolveNpmCli` — npm-cli.js is invoked through the trusted Node executable, never `npm.cmd` or a shell), the `npm-script` and `node-script` runners (structured validation, file hashing, digest computation, full revalidation), the sandbox-private run-directory provider, and the `process.run` tool that executes approved plans through the `SandboxBackend` under `validation-offline`. No module in this layer spawns processes.
+- `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). Only this module may import the runtime package. It streams bounded decoded output, enforces per-stream hard limits by terminating the process, and terminates the process tree on timeout/cancellation.
 - Conformance runner (`runSandboxConformance`): writes fixed fixture programs into a temporary workspace and executes them through the backend, reporting pass/fail per probe.
 
-The workspace root is the canonicalized directory Solaris was launched from; it is stored privately by the tools and displayed in `/status`. Provider adapters never import sandbox, environment, or tool modules — the architecture check enforces that boundary.
+The workspace root is the canonicalized directory Solaris was launched from; it is stored privately by the tools and displayed in `/status`. Provider adapters never import sandbox, environment, tool, checkpoint, git, or process modules — the architecture check enforces that boundary.
 
 ## CLI (`apps/cli`)
 
@@ -144,11 +186,12 @@ CLI ───────────────→ Core
 ```
 
 - Core imports nothing from the workspace and no OS sandbox runtime.
-- Adapters import only core contracts; adapter providers never import adapter tools, sandbox, or environment modules; sandbox adapters never import providers.
+- Adapters import only core contracts; adapter providers never import adapter tools, sandbox, environment, checkpoint, git, or process modules; sandbox adapters never import providers.
 - The CLI imports core anywhere, and concrete adapters only in the composition root (tests may import adapters directly).
 - `process.env` is never inspected in package source; child environments are built from an explicit allowlist.
-- Direct `node:child_process` usage is limited to sandbox modules and test files.
-- Direct file-write APIs (`writeFile`, `unlink`, `rename`, `appendFile`, `createWriteStream`) are limited to the workspace mutation modules, the conformance runner, and tests.
+- Direct `node:child_process` usage is limited to sandbox and git modules and test files; command runners never spawn processes.
+- Raw process execution (`shell: true`, `exec(`, `execSync(`, `spawnSync(`) is prohibited in runtime code, with documented exemptions only for test fixtures and the embedded conformance probe sources.
+- Direct file-write APIs (`writeFile`, `unlink`, `rename`, `appendFile`, `createWriteStream`) are limited to the workspace mutation modules, the conformance runner, the process adapter (run directories), and tests.
 - `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, provider/sandbox isolation, process, environment, and write boundaries, and workspace dependency cycles all fail the check.
 
 ## Why a modular monolith
@@ -177,7 +220,7 @@ The current workflow is one interactive primary agent. Multi-agent review, agent
 
 ## Deferred: process and write tools
 
-The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist, and approved single-file workspace mutations now execute through them. Read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete. No provider-accessible process execution exists. The next milestone adds sandboxed development-command execution with an explicit executable policy, complete command preview, one-time approval, process-tree cancellation, and network denied by default; Godot execution remains deferred beyond that.
+The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; approved single-file workspace mutations execute through them; read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete; and sandboxed validation-command execution (`process.run` with `npm-script` and `node-script` runners) is complete — structured arguments only, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or Godot execution exists; those remain deferred and, when added, must execute under the same enforcement.
 
 ## Git inspection
 
