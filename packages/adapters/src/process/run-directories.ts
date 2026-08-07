@@ -49,9 +49,11 @@ export function createRunDirectoryProvider(
     const home = join(root, "home");
     const temp = join(root, "tmp");
     const npmCache = join(root, "npm-cache");
+    const scriptCache = join(root, "script-cache");
     await mkdir(home, { recursive: true });
     await mkdir(temp, { recursive: true });
     await mkdir(npmCache, { recursive: true });
+    await mkdir(scriptCache, { recursive: true });
     const npmUserConfig = join(root, "npmrc");
     await writeFile(npmUserConfig, "", { flag: "wx" });
     const verified = await verifyRunRoot(root, runsRoot);
@@ -63,7 +65,7 @@ export function createRunDirectoryProvider(
     } catch {
       // restrictive permissions are best-effort where the platform supports them
     }
-    return { runId, home, temp, npmCache, npmUserConfig };
+    return { runId, root, home, temp, npmCache, npmUserConfig, scriptCache };
   }
   async function remove(runId: string): Promise<RunCleanupOutcome> {
     if (!RUN_ID_PATTERN.test(runId)) {

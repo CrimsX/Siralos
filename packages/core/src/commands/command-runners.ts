@@ -34,6 +34,11 @@ export interface CommandPreview {
   readonly scriptShellNotice?: string;
   /** Notice about automatically associated lifecycle hooks (npm pre/post). */
   readonly hooksNotice?: string;
+  /**
+   * Notice describing how the executed content is bound to the approved
+   * bytes (for example an immutable private copy the script runs from).
+   */
+  readonly executionNotice?: string;
 }
 
 const preparedCommandBrand: unique symbol = Symbol("preparedCommandBrand");
@@ -67,6 +72,8 @@ export type CommandPreparationResult =
 export interface CommandRunPaths {
   /** Unique id of this command run. */
   readonly runId: string;
+  /** The run's private root directory beneath the verified runs root. */
+  readonly root: string;
   /** Sandbox-private run home directory. */
   readonly home: string;
   /** Sandbox-private run temp directory. */
@@ -75,6 +82,11 @@ export interface CommandRunPaths {
   readonly npmCache: string;
   /** Sandbox-private npm user configuration file. */
   readonly npmUserConfig: string;
+  /**
+   * Sandbox-private directory holding immutable copies of approved command
+   * content (for example the exact approved Node script bytes).
+   */
+  readonly scriptCache: string;
 }
 
 export interface CommandExecutionContext {

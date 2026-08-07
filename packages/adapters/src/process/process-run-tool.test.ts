@@ -536,8 +536,8 @@ describe("process.run tool workspace protection", () => {
     try {
       const before = await listWorkspaceFiles(harness.workspaceRoot);
       const { command, digest } = await prepareCommand(harness.tool, {
-        runner: "npm-script",
-        script: "check",
+        runner: "node-script",
+        path: "scripts/validate.mjs",
       });
       const result = await harness.tool.executePrepared(command, { approvedDigest: digest });
       expect(result.status).toBe("success");
@@ -640,20 +640,15 @@ describe("process.run tool run directories", () => {
     }
   });
 
-  it("keeps npm cache and user config inside the run directory", async () => {
+  it("surfaces npm-script unavailability through the process tool", async () => {
     const harness = await createHarness({ results: [completedResult()] });
     try {
-      const { command, digest } = await prepareCommand(harness.tool, {
-        runner: "npm-script",
-        script: "check",
-      });
-      const result = await harness.tool.executePrepared(command, { approvedDigest: digest });
-      expect(result.status).toBe("success");
-      if (result.status === "success") {
-        const environment = (harness.backend.requests()[0] as SandboxedProcessRequest).environment;
-        expect(environment["NPM_CONFIG_CACHE"]).toBeTruthy();
-        expect(environment["NPM_CONFIG_USERCONFIG"]).toBeTruthy();
+      const prepared = await harness.tool.prepare({ runner: "npm-script", script: "check" }, {});
+      expect(prepared.status).toBe("unavailable");
+      if (prepared.status === "unavailable") {
+        expect(prepared.message).toContain("npm-script runner is unavailable");
       }
+      expect(harness.backend.requests()).toHaveLength(0);
     } finally {
       await harness.cleanup();
     }
@@ -674,14 +669,22 @@ describe("process.run tool run directories", () => {
         runners: registry,
         backend: fake.backend,
         runDirectories: {
-          create: () =>
-            Promise.resolve({
+          create: async () => {
+            const { mkdir } = await import("node:fs/promises");
+            const runDirectory = join(runsRoot, `run-${Date.now()}-${Math.random()}`);
+            const directories = {
               runId: "run-x",
-              home: join(runsRoot, "home"),
-              temp: join(runsRoot, "tmp"),
-              npmCache: join(runsRoot, "npm-cache"),
-              npmUserConfig: join(runsRoot, "npmrc"),
-            }),
+              root: runDirectory,
+              home: join(runDirectory, "home"),
+              temp: join(runDirectory, "tmp"),
+              npmCache: join(runDirectory, "npm-cache"),
+              npmUserConfig: join(runDirectory, "npmrc"),
+              scriptCache: join(runDirectory, "script-cache"),
+            };
+            await mkdir(directories.root, { recursive: true });
+            await mkdir(directories.scriptCache, { recursive: true });
+            return directories;
+          },
           remove: () => Promise.resolve({ ok: false, message: "The directory is locked." }),
         },
         lock: createMutationLock(),

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import {
   COMMAND_LIMITS,
   createPreparedCommand,
@@ -21,13 +22,35 @@ function createRunner() {
   return createNodeScriptRunner({ digest: createSha256CommandDigestService() });
 }
 
-const RUN_PATHS: CommandExecutionContext["runPaths"] = {
-  runId: "run-1",
-  home: "/run/home",
-  temp: "/run/tmp",
-  npmCache: "/run/npm-cache",
-  npmUserConfig: "/run/npmrc",
-};
+const runPathDirectories: string[] = [];
+
+async function createRunPaths(): Promise<CommandExecutionContext["runPaths"]> {
+  const root = await mkdtemp(join(tmpdir(), "solaris-run-paths-"));
+  runPathDirectories.push(root);
+  const home = join(root, "home");
+  const temp = join(root, "tmp");
+  const npmCache = join(root, "npm-cache");
+  const scriptCache = join(root, "script-cache");
+  await mkdir(home);
+  await mkdir(temp);
+  await mkdir(npmCache);
+  await mkdir(scriptCache);
+  return {
+    runId: "run-1",
+    root,
+    home,
+    temp,
+    npmCache,
+    npmUserConfig: join(root, "npmrc"),
+    scriptCache,
+  };
+}
+
+afterEach(async () => {
+  for (const directory of runPathDirectories.splice(0)) {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 async function prepare(workspaceRoot: string, input: unknown): Promise<CommandPreparationResult> {
   return createRunner().prepare(input, { workspaceRoot });
@@ -290,7 +313,7 @@ describe("node-script runner preparation and execution", () => {
     }
   });
 
-  it("uses the trusted process.execPath with separate arguments", async () => {
+  it("executes the immutable private copy of the approved script, never the workspace path", async () => {
     const workspace = await createTempWorkspace();
     const runner = createRunner();
     try {
@@ -305,9 +328,10 @@ describe("node-script runner preparation and execution", () => {
           { workspaceRoot: workspace.root },
         ),
       );
+      const runPaths = await createRunPaths();
       const execution = await runner.toExecutionRequest(prepared.command, {
         approvedDigest: prepared.digest,
-        runPaths: RUN_PATHS,
+        runPaths,
       });
       expect(execution.status).toBe("ready");
       if (execution.status !== "ready") {
@@ -315,18 +339,26 @@ describe("node-script runner preparation and execution", () => {
       }
       expect(execution.request.executable).toBe(process.execPath);
       expect(execution.request.executableVersion).toBe(process.version);
-      expect(execution.request.arguments).toEqual([
-        join(workspace.root, "a.mjs"),
-        "--flag",
-        "tests/example test.ts",
-      ]);
+      const scriptArgument = execution.request.arguments[0];
+      expect(scriptArgument).toBeDefined();
+      expect(scriptArgument?.startsWith(runPaths.scriptCache)).toBe(true);
+      expect(scriptArgument).not.toContain(workspace.root);
+      expect(execution.request.arguments.slice(1)).toEqual(["--flag", "tests/example test.ts"]);
+      // The private copy carries the exact approved bytes.
+      const privateBytes = await readFile(scriptArgument as string, "utf8");
+      expect(privateBytes).toBe("console.log('ok');");
       expect(execution.request.digest).toBe(prepared.digest);
+      // The workspace script can now be replaced freely; the executed input
+      // is already staged and digest-bound.
+      await writeFile(join(workspace.root, "a.mjs"), "console.log('MALICIOUS');");
+      const staged = await readFile(join(runPaths.scriptCache, basename("a.mjs")), "utf8");
+      expect(staged).toBe("console.log('ok');");
     } finally {
       await workspace.cleanup();
     }
   });
 
-  it("provides a minimal environment without NODE_OPTIONS or credentials", async () => {
+  it("conflicts when a pre-existing private copy already occupies the staging path", async () => {
     const workspace = await createTempWorkspace();
     const runner = createRunner();
     try {
@@ -337,23 +369,14 @@ describe("node-script runner preparation and execution", () => {
           { workspaceRoot: workspace.root },
         ),
       );
+      const runPaths = await createRunPaths();
+      // A pre-existing entry at the staging name must never be overwritten.
+      await writeFile(join(runPaths.scriptCache, "a.js"), "attacker bytes");
       const execution = await runner.toExecutionRequest(prepared.command, {
         approvedDigest: prepared.digest,
-        runPaths: RUN_PATHS,
+        runPaths,
       });
-      expect(execution.status).toBe("ready");
-      if (execution.status !== "ready") {
-        return;
-      }
-      const environment = execution.request.environment;
-      expect(environment["NODE_OPTIONS"]).toBeUndefined();
-      expect(environment["OPENROUTER_API_KEY"]).toBeUndefined();
-      expect(environment["NPM_TOKEN"]).toBeUndefined();
-      expect(environment["HTTP_PROXY"]).toBeUndefined();
-      expect(environment["HOME"]).toBe(RUN_PATHS.home);
-      expect(environment["TEMP"]).toBe(RUN_PATHS.temp);
-      expect(environment["NO_COLOR"]).toBe("1");
-      expect(environment["NPM_CONFIG_CACHE"]).toBeUndefined();
+      expect(execution.status).toBe("conflict");
     } finally {
       await workspace.cleanup();
     }
@@ -373,9 +396,38 @@ describe("node-script runner preparation and execution", () => {
       await writeFile(join(workspace.root, "a.js"), "console.log('two');");
       const execution = await runner.toExecutionRequest(prepared.command, {
         approvedDigest: prepared.digest,
-        runPaths: RUN_PATHS,
+        runPaths: await createRunPaths(),
       });
       expect(execution.status).toBe("conflict");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("binds arguments and working directory into the digest", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "a.js": "console.log('ok');",
+        "sub/a.js": "console.log('ok');",
+      });
+      const plain = ready(await prepare(workspace.root, { runner: "node-script", path: "a.js" }));
+      const withArgs = ready(
+        await prepare(workspace.root, {
+          runner: "node-script",
+          path: "a.js",
+          arguments: ["--flag"],
+        }),
+      );
+      const subdir = ready(
+        await prepare(workspace.root, {
+          runner: "node-script",
+          path: "a.js",
+          workingDirectory: "sub",
+        }),
+      );
+      expect(withArgs.digest).not.toBe(plain.digest);
+      expect(subdir.digest).not.toBe(plain.digest);
     } finally {
       await workspace.cleanup();
     }
@@ -401,7 +453,69 @@ describe("node-script runner preparation and execution", () => {
       );
       const execution = await runner.toExecutionRequest(prepared.command, {
         approvedDigest: prepared.digest,
-        runPaths: RUN_PATHS,
+        runPaths: await createRunPaths(),
+      });
+      expect(execution.status).toBe("ready");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("provides a minimal environment without NODE_OPTIONS or credentials", async () => {
+    const workspace = await createTempWorkspace();
+    const runner = createRunner();
+    try {
+      await writeFixtureFiles(workspace.root, { "a.js": "console.log('ok');" });
+      const prepared = ready(
+        await runner.prepare(
+          { runner: "node-script", path: "a.js" },
+          { workspaceRoot: workspace.root },
+        ),
+      );
+      const runPaths = await createRunPaths();
+      const execution = await runner.toExecutionRequest(prepared.command, {
+        approvedDigest: prepared.digest,
+        runPaths,
+      });
+      expect(execution.status).toBe("ready");
+      if (execution.status !== "ready") {
+        return;
+      }
+      const environment = execution.request.environment;
+      expect(environment["NODE_OPTIONS"]).toBeUndefined();
+      expect(environment["OPENROUTER_API_KEY"]).toBeUndefined();
+      expect(environment["NPM_TOKEN"]).toBeUndefined();
+      expect(environment["HTTP_PROXY"]).toBeUndefined();
+      expect(environment["HOME"]).toBe(runPaths.home);
+      expect(environment["TEMP"]).toBe(runPaths.temp);
+      expect(environment["NO_COLOR"]).toBe("1");
+      expect(environment["NPM_CONFIG_CACHE"]).toBeUndefined();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("conflicts when the working directory changes after approval", async () => {
+    const workspace = await createTempWorkspace();
+    const runner = createRunner();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "a.js": "console.log('ok');",
+        "sub/a.js": "console.log('ok');",
+      });
+      const prepared = ready(
+        await runner.prepare(
+          {
+            runner: "node-script",
+            path: "a.js",
+            workingDirectory: "sub",
+          },
+          { workspaceRoot: workspace.root },
+        ),
+      );
+      const execution = await runner.toExecutionRequest(prepared.command, {
+        approvedDigest: prepared.digest,
+        runPaths: await createRunPaths(),
       });
       expect(execution.status).toBe("ready");
     } finally {
@@ -417,7 +531,7 @@ describe("node-script runner preparation and execution", () => {
       const foreign = createPreparedCommand();
       const execution = await runner.toExecutionRequest(foreign, {
         approvedDigest: "deadbeef",
-        runPaths: RUN_PATHS,
+        runPaths: await createRunPaths(),
       });
       expect(execution.status).toBe("conflict");
     } finally {

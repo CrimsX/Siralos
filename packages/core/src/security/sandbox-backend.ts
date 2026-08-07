@@ -28,6 +28,12 @@ export interface SandboxedProcessRequest {
    * output events as the child writes. When absent the backend only buffers.
    */
   readonly onOutput?: (event: ProcessOutputEvent) => void;
+  /**
+   * The current command run's private directory. The backend grants the
+   * sandboxed child access to exactly this directory — never the shared
+   * runs root or sibling runs.
+   */
+  readonly runDirectory?: string;
   /** Explicit timeout; falls back to `profile.process.timeoutMs`. */
   readonly timeoutMs?: number;
   /** Explicit hard stdout limit; falls back to `profile.process.maxOutputBytes`. */

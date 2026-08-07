@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, stat } from "node:fs/promises";
-import { extname } from "node:path";
+import { lstat, readFile, stat, writeFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import path from "node:path";
 import {
   COMMAND_LIMITS,
@@ -129,6 +129,10 @@ export function createNodeScriptRunner(options: NodeScriptRunnerOptions): Comman
           message: "The command plan changed after approval.",
         };
       }
+      const stagedScript = await stageApprovedScript(plan, context.runPaths.scriptCache);
+      if (stagedScript.status !== "ready") {
+        return stagedScript;
+      }
       const environment = buildCommandEnvironment(
         readParentEnvironment(),
         {
@@ -145,7 +149,7 @@ export function createNodeScriptRunner(options: NodeScriptRunnerOptions): Comman
           executable: plan.nodeIdentity.executable,
           executableIdentity: `node ${plan.nodeIdentity.version}`,
           executableVersion: plan.nodeIdentity.version,
-          arguments: [plan.script.absolutePath, ...plan.arguments],
+          arguments: [stagedScript.privatePath, ...plan.arguments],
           workingDirectory: plan.workingDirectory.absolutePath,
           environment,
           digest: revalidated.digest,
@@ -158,6 +162,63 @@ export function createNodeScriptRunner(options: NodeScriptRunnerOptions): Comman
       return true;
     },
   };
+}
+
+/**
+ * Copies the exact approved script bytes into the private run directory and
+ * verifies the private copy's hash. The child process executes only the
+ * immutable private copy — never the mutable workspace path — so a script
+ * replaced between revalidation and execution can never run.
+ */
+async function stageApprovedScript(
+  plan: NodeScriptPlan,
+  scriptCacheDirectory: string,
+): Promise<
+  | { readonly status: "conflict"; readonly message: string }
+  | { readonly status: "ready"; readonly privatePath: string }
+> {
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(plan.script.absolutePath);
+  } catch (error: unknown) {
+    return {
+      status: "conflict",
+      message: `The script changed after approval: ${describeFsError(error)}`,
+    };
+  }
+  const readHash = createHash("sha256").update(bytes).digest("hex");
+  if (readHash !== plan.script.sha256) {
+    return { status: "conflict", message: "The script changed after approval." };
+  }
+  const privatePath = path.join(scriptCacheDirectory, basename(plan.script.workspaceRelativePath));
+  try {
+    await writeFile(privatePath, bytes, { flag: "wx" });
+  } catch (error: unknown) {
+    return {
+      status: "conflict",
+      message: `The approved script could not be staged in the private run directory: ${describeFsError(error)}`,
+    };
+  }
+  let privateBytes: Buffer;
+  try {
+    privateBytes = await readFile(privatePath);
+  } catch (error: unknown) {
+    return {
+      status: "conflict",
+      message: `The private script copy could not be verified: ${describeFsError(error)}`,
+    };
+  }
+  if (
+    privateBytes.length !== bytes.length ||
+    !privateBytes.equals(bytes) ||
+    createHash("sha256").update(privateBytes).digest("hex") !== plan.script.sha256
+  ) {
+    return {
+      status: "conflict",
+      message: "The private script copy does not match the approved bytes.",
+    };
+  }
+  return { status: "ready", privatePath };
 }
 
 async function revalidateNodeScriptPlan(
@@ -273,6 +334,8 @@ function buildNodeScriptPreview(plan: NodeScriptPlan): CommandPreview {
     networkAccess: "denied",
     environmentPolicy: "minimal",
     stdinPolicy: "closed",
+    executionNotice:
+      "The script runs from an immutable private copy inside the sandbox run directory; __dirname and import.meta.url refer to that private copy, while process.cwd() stays in the workspace.",
   };
 }
 

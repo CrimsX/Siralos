@@ -221,6 +221,7 @@ export function createProcessRunTool(
           workingDirectory: execution.request.workingDirectory,
           profile: dependencies.executionProfile,
           environment: execution.request.environment,
+          runDirectory: runPaths.root,
           timeoutMs: payload.preview.timeoutMs,
           stdoutLimitBytes: COMMAND_LIMITS.stdoutHardLimitBytes,
           stderrLimitBytes: COMMAND_LIMITS.stderrHardLimitBytes,
