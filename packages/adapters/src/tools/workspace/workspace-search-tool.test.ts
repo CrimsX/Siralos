@@ -209,3 +209,134 @@ describe("workspace.search", () => {
     expect(objectOf(first)["line"]).toBe(2);
   });
 });
+
+describe("workspace.search global traversal bounds", () => {
+  function truncationOf(result: Parameters<typeof expectSuccess>[0]): string | null {
+    const output = expectSuccess(result);
+    const reason = output["truncationReason"];
+    return typeof reason === "string" ? reason : null;
+  }
+
+  it("bounds directories visited (empty directories still consume budget)", async () => {
+    const workspace = await withWorkspace();
+    const { mkdir } = await import("node:fs/promises");
+    const deep = Array.from({ length: 12 }, (_, index) => `d${index}`).join("/");
+    await mkdir(path.join(workspace.root, deep), { recursive: true });
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchDirectories: 10 });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("directory_budget");
+  });
+
+  it("bounds directory entries examined (non-files consume budget)", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, {
+      "a.txt": "needle\n",
+      "b.txt": "needle\n",
+      "c.txt": "needle\n",
+    });
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchEntries: 2 });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("entry_budget");
+  });
+
+  it("bounds regular files considered (oversized files consume budget)", async () => {
+    const workspace = await withWorkspace();
+    const { writeFile } = await import("node:fs/promises");
+    for (let index = 0; index < 6; index += 1) {
+      await writeFile(path.join(workspace.root, `big-${index}.txt`), "x".repeat(600 * 1024));
+    }
+    const tool = createWorkspaceSearchTool(workspace.root, {
+      maxSearchFilesConsidered: 5,
+      maxSearchFileSizeBytes: 512 * 1024,
+    });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("file_budget");
+  });
+
+  it("bounds eligible files scanned", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(
+      workspace.root,
+      Object.fromEntries(
+        Array.from({ length: 4 }, (_, index) => [`file-${index}.txt`, "needle\n"]),
+      ),
+    );
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchFiles: 2 });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("scan_budget");
+    expect(fieldNumber(expectSuccess(result), "scannedFiles")).toBe(2);
+  });
+
+  it("bounds total input bytes inspected", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, {
+      "a.txt": "x".repeat(500) + "needle\n",
+      "b.txt": "needle\n",
+    });
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchInputBytes: 400 });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("input_budget");
+  });
+
+  it("bounds total output bytes", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "needle\n".repeat(20) });
+    const tool = createWorkspaceSearchTool(workspace.root, {
+      maxSearchOutputBytes: 30,
+      maxSearchLineLengthChars: 400,
+    });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("output_budget");
+  });
+
+  it("bounds elapsed time", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, {
+      "a.txt": "needle\n",
+      "b.txt": "needle\n",
+    });
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchDurationMs: 0 });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("time_budget");
+  });
+
+  it("cancels during enumeration", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "needle\n", "b.txt": "needle\n" });
+    const tool = createWorkspaceSearchTool(workspace.root);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await tool.execute({ query: "needle" }, { signal: controller.signal });
+    expect(result.status).toBe("cancelled");
+  });
+
+  it("reports the match-limit reason for result truncation", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "needle\n".repeat(5) });
+    const tool = createWorkspaceSearchTool(workspace.root);
+    const result = await tool.execute({ query: "needle", maxResults: 2 }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("match_limit");
+  });
+
+  it("keeps deterministic ordering in truncated results", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, {
+      "z.txt": "needle\n",
+      "a.txt": "needle\n",
+      "m.txt": "needle\n",
+    });
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchFiles: 1 });
+    const result = await tool.execute({ query: "needle" }, {});
+    const matches = fieldArray(expectSuccess(result), "matches");
+    const paths = matches.map((match) => stringOf(objectOf(match)["path"]));
+    expect(paths).toEqual([...paths].sort());
+  });
+});

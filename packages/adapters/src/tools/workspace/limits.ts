@@ -12,4 +12,11 @@ export const WORKSPACE_LIMITS = {
   maxReplacementTextBytes: 64 * 1024,
   maxCompleteDiffBytes: 256 * 1024,
   maxDiffLines: 10_000,
+  /** Independent global traversal bounds for recursive workspace.search. */
+  maxSearchDirectories: 2_000,
+  maxSearchEntries: 25_000,
+  maxSearchFilesConsidered: 2_000,
+  maxSearchInputBytes: 64 * 1024 * 1024,
+  maxSearchOutputBytes: 200_000,
+  maxSearchDurationMs: 10_000,
 } as const;

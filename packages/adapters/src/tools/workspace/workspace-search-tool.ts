@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { lstat, opendir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
@@ -58,7 +58,27 @@ function parseSearchInput(input: unknown): ParsedValue<SearchInput> {
   };
 }
 
-export function createWorkspaceSearchTool(workspaceRoot: string): Tool {
+export interface SearchBoundsOverrides {
+  readonly maxSearchDirectories?: number;
+  readonly maxSearchEntries?: number;
+  readonly maxSearchFilesConsidered?: number;
+  readonly maxSearchFiles?: number;
+  readonly maxSearchInputBytes?: number;
+  readonly maxSearchOutputBytes?: number;
+  readonly maxSearchDurationMs?: number;
+  readonly maxSearchFileSizeBytes?: number;
+  readonly maxSearchLineLengthChars?: number;
+}
+
+export type SearchBounds = {
+  readonly [Key in keyof typeof WORKSPACE_LIMITS]: number;
+} & Required<SearchBoundsOverrides>;
+
+export function createWorkspaceSearchTool(
+  workspaceRoot: string,
+  overrides: SearchBoundsOverrides = {},
+): Tool {
+  const bounds: SearchBounds = { ...WORKSPACE_LIMITS, ...overrides };
   return {
     definition: {
       name: "workspace.search",
@@ -108,11 +128,17 @@ export function createWorkspaceSearchTool(workspaceRoot: string): Tool {
       if (context.signal?.aborted) {
         return { status: "cancelled", message: "Search was cancelled." };
       }
-      const outcome = await search(resolved, parsed.value.query, parsed.value.maxResults, context);
+      const outcome = await search(
+        resolved,
+        parsed.value.query,
+        parsed.value.maxResults,
+        context,
+        bounds,
+      );
       if (outcome.status === "cancelled") {
         return { status: "cancelled", message: "Search was cancelled." };
       }
-      const { matches, scannedFiles, skippedFiles, truncated } = outcome;
+      const { matches, scannedFiles, skippedFiles, truncated, truncationReason } = outcome;
       return {
         status: "success",
         output: {
@@ -122,6 +148,7 @@ export function createWorkspaceSearchTool(workspaceRoot: string): Tool {
           scannedFiles,
           skippedFiles,
           truncated,
+          truncationReason,
         },
         summary: `${matches.length} matches${truncated ? " (truncated)" : ""}`,
       };
@@ -137,18 +164,49 @@ type SearchOutcome =
       readonly scannedFiles: number;
       readonly skippedFiles: number;
       readonly truncated: boolean;
+      readonly truncationReason: string | null;
     };
+
+type TruncationReason =
+  | "directory_budget"
+  | "entry_budget"
+  | "file_budget"
+  | "scan_budget"
+  | "input_budget"
+  | "output_budget"
+  | "time_budget"
+  | "match_limit";
 
 async function search(
   resolved: { readonly workspaceRelativePath: string; readonly absolutePath: string },
   query: string,
   maxResults: number,
   context: ToolExecutionContext,
+  bounds: SearchBounds,
 ): Promise<SearchOutcome> {
   const matches: SearchMatch[] = [];
   let scannedFiles = 0;
   let skippedFiles = 0;
+  let directoriesVisited = 0;
+  let entriesExamined = 0;
+  let filesConsidered = 0;
+  let inputBytes = 0;
+  let outputBytes = 0;
   let truncated = false;
+  let truncationReason: TruncationReason | null = null;
+  const deadline = Date.now() + bounds.maxSearchDurationMs;
+  const stop = (reason: TruncationReason): SearchOutcome => {
+    truncated = true;
+    truncationReason = reason;
+    return {
+      status: "done",
+      matches: [...matches].sort(compareMatches),
+      scannedFiles,
+      skippedFiles,
+      truncated,
+      truncationReason,
+    };
+  };
   const pendingDirectories: Array<{ absolute: string; relative: string }> = [
     { absolute: resolved.absolutePath, relative: resolved.workspaceRelativePath },
   ];
@@ -156,24 +214,52 @@ async function search(
     if (context.signal?.aborted) {
       return { status: "cancelled" };
     }
+    if (Date.now() >= deadline) {
+      return stop("time_budget");
+    }
     const directory = pendingDirectories.pop();
     if (directory === undefined) {
       break;
     }
-    let names: string[];
+    directoriesVisited += 1;
+    if (directoriesVisited > bounds.maxSearchDirectories) {
+      return stop("directory_budget");
+    }
+    const names: string[] = [];
+    let directoryHandle;
     try {
-      names = await readdir(directory.absolute);
+      directoryHandle = await opendir(directory.absolute);
     } catch {
       continue;
     }
+    try {
+      for await (const entry of directoryHandle) {
+        if (context.signal?.aborted) {
+          return { status: "cancelled" };
+        }
+        entriesExamined += 1;
+        if (entriesExamined > bounds.maxSearchEntries) {
+          return stop("entry_budget");
+        }
+        if (
+          DEFAULT_EXCLUDED_DIRECTORIES.some(
+            (excluded) => foldPathComponent(excluded) === foldPathComponent(entry.name),
+          )
+        ) {
+          continue;
+        }
+        names.push(entry.name);
+      }
+    } finally {
+      await directoryHandle.close().catch(() => {});
+    }
     names.sort();
     for (const name of names) {
-      if (
-        DEFAULT_EXCLUDED_DIRECTORIES.some(
-          (excluded) => foldPathComponent(excluded) === foldPathComponent(name),
-        )
-      ) {
-        continue;
+      if (context.signal?.aborted) {
+        return { status: "cancelled" };
+      }
+      if (Date.now() >= deadline) {
+        return stop("time_budget");
       }
       const absolute = path.join(directory.absolute, name);
       let stats;
@@ -198,13 +284,16 @@ async function search(
         skippedFiles += 1;
         continue;
       }
-      if (stats.size > WORKSPACE_LIMITS.maxSearchFileSizeBytes) {
+      filesConsidered += 1;
+      if (filesConsidered > bounds.maxSearchFilesConsidered) {
+        return stop("file_budget");
+      }
+      if (stats.size > bounds.maxSearchFileSizeBytes) {
         skippedFiles += 1;
         continue;
       }
-      if (scannedFiles >= WORKSPACE_LIMITS.maxSearchFiles) {
-        truncated = true;
-        return { status: "done", matches, scannedFiles, skippedFiles, truncated };
+      if (scannedFiles >= bounds.maxSearchFiles) {
+        return stop("scan_budget");
       }
       scannedFiles += 1;
       if (context.signal?.aborted) {
@@ -216,6 +305,10 @@ async function search(
       } catch {
         skippedFiles += 1;
         continue;
+      }
+      inputBytes += buffer.length;
+      if (inputBytes > bounds.maxSearchInputBytes) {
+        return stop("input_budget");
       }
       if (looksBinary(buffer)) {
         skippedFiles += 1;
@@ -235,30 +328,33 @@ async function search(
         }
         const column = line.indexOf(query);
         if (column >= 0) {
+          const matchText = line.slice(0, bounds.maxSearchLineLengthChars);
           matches.push({
             path: relativePath,
             line: lineIndex + 1,
             column: column + 1,
-            text: line.slice(0, WORKSPACE_LIMITS.maxSearchLineLengthChars),
+            text: matchText,
           });
+          outputBytes += Buffer.byteLength(matchText, "utf8");
+          if (outputBytes > bounds.maxSearchOutputBytes) {
+            return stop("output_budget");
+          }
           if (matches.length >= maxResults) {
-            truncated = true;
-            return { status: "done", matches, scannedFiles, skippedFiles, truncated };
+            return stop("match_limit");
           }
         }
       }
     }
   }
-  const sortedMatches = [...matches].sort(compareMatches);
   return {
     status: "done",
-    matches: sortedMatches,
+    matches: [...matches].sort(compareMatches),
     scannedFiles,
     skippedFiles,
     truncated,
+    truncationReason,
   };
 }
-
 function childRelativePath(directoryPath: string, name: string): string {
   return directoryPath === "." ? name : `${directoryPath}/${name}`;
 }
