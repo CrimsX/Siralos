@@ -125,6 +125,76 @@ describe("check-architecture", () => {
     expect(errors.some((error) => error.includes("core must not import Node module"))).toBe(true);
   });
 
+  it("rejects core importing a child-process module", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/index.ts"] = 'import { spawn } from "node:child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("core must not import Node module"))).toBe(true);
+  });
+
+  it("rejects Sandbox Runtime imports outside the anthropic runtime adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/sandbox/other.ts"] =
+      'import { SandboxManager } from "@anthropic-ai/sandbox-runtime";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("may only be imported by the anthropic runtime adapter"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts Sandbox Runtime imports inside the anthropic runtime adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/sandbox/anthropic-runtime/backend.ts"] =
+      'import { SandboxManager } from "@anthropic-ai/sandbox-runtime";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects unsandboxed process spawning outside approved modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["apps/cli/src/repl.ts"] = 'import { spawn } from "node:child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("unsandboxed process spawning is prohibited")),
+    ).toBe(true);
+  });
+
+  it("accepts child-process imports in sandbox modules and test files", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/sandbox/runner.ts"] =
+      'import { spawn } from "node:child_process";\n';
+    fixture["packages/adapters/src/core.test.ts"] = 'import { spawn } from "node:child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects provider adapters importing sandbox adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] = 'import x from "../sandbox/backend.js";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("providers must not import sandbox"))).toBe(true);
+  });
+
+  it("rejects sandbox adapters importing provider adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/sandbox/backend.ts"] = 'import x from "../providers/fake.js";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("sandbox adapters must not import provider")),
+    ).toBe(true);
+  });
+
+  it("rejects process.env inspection in package source", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/index.ts"] = "const env = process.env;\n";
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("process.env inspection is prohibited"))).toBe(
+      true,
+    );
+  });
+
   it("detects workspace dependency cycles", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/core/package.json"] = packageJson("@solaris/core", {

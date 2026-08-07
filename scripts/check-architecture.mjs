@@ -43,13 +43,29 @@ export function listSourceFiles(directory) {
 
 export function extractImportSpecifiers(source) {
   const specifiers = new Set();
-  const patterns = [/\bfrom\s*["']([^"']+)["']/g, /\bimport\s*["']([^"']+)["']/g];
+  const patterns = [
+    /\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s*["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']/g,
+  ];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
       specifiers.add(match[1]);
     }
   }
   return [...specifiers];
+}
+
+function isUnder(target, root) {
+  return target === root || target.startsWith(root + sep);
+}
+
+function containsProcessEnvAccess(source) {
+  const withoutStrings = source.replace(
+    /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
+    "",
+  );
+  return withoutStrings.includes("process.env");
 }
 
 export function runChecks(root) {
@@ -63,7 +79,32 @@ export function runChecks(root) {
       for (const file of listSourceFiles(sourceRoot)) {
         const source = readFileSync(file, "utf8");
         const location = relative(root, file).split(sep).join("/");
+        const packageRelativeFile = relative(pkg.path, file);
+        if (containsProcessEnvAccess(source)) {
+          errors.push(
+            `${location}: process.env inspection is prohibited in package source; build child environments from an explicit allowlist`,
+          );
+        }
         for (const specifier of extractImportSpecifiers(source)) {
+          if (specifier.startsWith("@anthropic-ai/")) {
+            const inRuntimeAdapter = packageRelativeFile.startsWith(
+              join("src", "sandbox", "anthropic-runtime"),
+            );
+            if (!inRuntimeAdapter) {
+              errors.push(
+                `${location}: Sandbox Runtime may only be imported by the anthropic runtime adapter`,
+              );
+            }
+          }
+          if (specifier === "node:child_process") {
+            const inSandbox = packageRelativeFile.startsWith(join("src", "sandbox"));
+            const isTestFile = file.endsWith(".test.ts");
+            if (!inSandbox && !isTestFile) {
+              errors.push(
+                `${location}: unsandboxed process spawning is prohibited outside approved sandbox modules`,
+              );
+            }
+          }
           if (pkg.name === "@solaris/core") {
             if (specifier.startsWith("@solaris/")) {
               errors.push(`${location}: core must not import workspace package ${specifier}`);
@@ -76,19 +117,29 @@ export function runChecks(root) {
             errors.push(`${location}: adapters must not import CLI code`);
           }
           if (pkg.name === "@solaris/adapters" && specifier.startsWith(".")) {
-            const packageRelativeFile = relative(pkg.path, file);
             const inProviders = packageRelativeFile.startsWith(join("src", "providers"));
+            const inSandbox = packageRelativeFile.startsWith(join("src", "sandbox"));
+            const target = resolve(dirname(file), specifier);
             if (inProviders) {
-              const target = resolve(dirname(file), specifier);
               const toolsRoot = join(pkg.path, "src", "tools");
-              if (target === toolsRoot || target.startsWith(toolsRoot + sep)) {
+              if (isUnder(target, toolsRoot)) {
                 errors.push(`${location}: providers must not import concrete workspace tools`);
               }
+              if (
+                isUnder(target, join(pkg.path, "src", "sandbox")) ||
+                isUnder(target, join(pkg.path, "src", "environment"))
+              ) {
+                errors.push(
+                  `${location}: providers must not import sandbox or environment adapters`,
+                );
+              }
+            }
+            if (inSandbox && isUnder(target, join(pkg.path, "src", "providers"))) {
+              errors.push(`${location}: sandbox adapters must not import provider adapters`);
             }
           }
           if (pkg.name === "@solaris/cli" && specifier.startsWith("@solaris/adapters")) {
-            const packageRelative = relative(pkg.path, file);
-            if (!packageRelative.startsWith(join("src", "bootstrap"))) {
+            if (!packageRelativeFile.startsWith(join("src", "bootstrap"))) {
               errors.push(`${location}: only the composition root may import concrete adapters`);
             }
           }
