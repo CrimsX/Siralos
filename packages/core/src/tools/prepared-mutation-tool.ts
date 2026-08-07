@@ -25,7 +25,7 @@ export interface PreparedMutationTool {
 
 export type RegisteredTool = Tool | PreparedMutationTool;
 
-declare const preparedMutationBrand: unique symbol;
+const preparedMutationBrand: unique symbol = Symbol("preparedMutationBrand");
 
 export interface PreparedMutation {
   readonly [preparedMutationBrand]: true;

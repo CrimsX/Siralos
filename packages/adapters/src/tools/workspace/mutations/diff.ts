@@ -1,4 +1,4 @@
-import { createTwoFilesPatch } from "diff";
+import { createPatch } from "diff";
 import { WORKSPACE_LIMITS } from "../limits.js";
 
 export interface UnifiedDiff {
@@ -27,15 +27,9 @@ export function buildUnifiedDiff(
       message: `The change involves more than ${WORKSPACE_LIMITS.maxDiffLines} lines; it cannot be previewed.`,
     };
   }
-  const unifiedDiff = createTwoFilesPatch(
-    relativePath,
-    relativePath,
-    beforeText,
-    afterText,
-    "",
-    "",
-    { context: 3 },
-  );
+  const unifiedDiff = createPatch(relativePath, beforeText, afterText, "", "", {
+    context: 3,
+  });
   if (Buffer.byteLength(unifiedDiff, "utf8") > WORKSPACE_LIMITS.maxCompleteDiffBytes) {
     return {
       status: "too_large",
