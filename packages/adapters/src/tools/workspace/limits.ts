@@ -6,4 +6,10 @@ export const WORKSPACE_LIMITS = {
   maxSearchFiles: 500,
   maxSearchMatches: 100,
   maxSearchLineLengthChars: 400,
+  maxTextFileSizeBytes: 1024 * 1024,
+  maxCreatedContentBytes: 512 * 1024,
+  maxReplacements: 32,
+  maxReplacementTextBytes: 64 * 1024,
+  maxCompleteDiffBytes: 256 * 1024,
+  maxDiffLines: 10_000,
 } as const;

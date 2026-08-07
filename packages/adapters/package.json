@@ -18,7 +18,8 @@
     "dist"
   ],
   "dependencies": {
-    "@solaris/core": "0.0.0"
+    "@solaris/core": "0.0.0",
+    "diff": "9.0.0"
   },
   "scripts": {
     "build": "tsc -b",
