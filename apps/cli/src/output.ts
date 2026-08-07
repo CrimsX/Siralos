@@ -8,6 +8,11 @@ import type {
   GitDiffResult,
   GitStatusResult,
   GitWorkspaceStatus,
+  GodotCompatibilityAssessment,
+  GodotDiscoveryResult,
+  GodotDoctorReport,
+  GodotProjectProfile,
+  GodotSelectedInstallation,
   RegisteredToolInfo,
   SandboxBackendStatus,
   SandboxProfile,
@@ -21,6 +26,8 @@ import { COMMAND_LIMITS } from "@solaris/core";
 const CAPABILITIES: readonly Capability[] = [
   "workspace.read",
   "workspace.write",
+  "git.inspect",
+  "godot.inspect",
   "process.execute",
   "network.outbound",
 ];
@@ -34,19 +41,23 @@ Provider: ${providerId}
 
 export function formatHelp(): string {
   return `Available commands:
-  /help         Show this help
-  /status       Show provider, session, and workspace status
-  /clear        Clear the terminal (conversation is kept)
-  /tools        List the available tools
-  /sandbox      Show the sandbox backend status
-  /permissions  Show capability rules
-  /commands     Show command runners and command status
-  /cancel       Cancel the running command
-  /git-status   Show Git availability and repository status
-  /diff         Show a bounded Git diff (working, staged, or head)
-  /checkpoints  List recorded recovery checkpoints
-  /undo         Undo the latest Solaris mutation (or /undo <checkpoint-id>)
-  /exit         Close Solaris
+  /help              Show this help
+  /status            Show provider, session, and workspace status
+  /clear             Clear the terminal (conversation is kept)
+  /tools             List the available tools
+  /sandbox           Show the sandbox backend status
+  /permissions       Show capability rules
+  /commands          Show command runners and command status
+  /cancel            Cancel the running command
+  /git-status        Show Git availability and repository status
+  /diff              Show a bounded Git diff (working, staged, or head)
+  /checkpoints       List recorded recovery checkpoints
+  /undo              Undo the latest Solaris mutation (or /undo <checkpoint-id>)
+  /godot             Show the selected Godot installation and project compatibility
+  /godot-installations  Show all discovered Godot installations and selection rationale
+  /godot-project     Show the static Godot project profile
+  /godot-doctor      Run bounded Godot diagnostics
+  /exit              Close Solaris
 `;
 }
 
@@ -66,6 +77,11 @@ export interface StatusView {
   readonly activeCommandId: string | null;
   readonly lastCommandExitCode: number | null;
   readonly commandProfile: string;
+  readonly godotSelectedInstallation: string | null;
+  readonly godotVersion: string | null;
+  readonly godotProjectDetected: boolean;
+  readonly godotCompatibility: string | null;
+  readonly godotWarningCount: number;
 }
 
 export function formatStatus(view: StatusView): string {
@@ -91,6 +107,8 @@ Command runners: ${view.runnerCount}
 Active command: ${view.activeCommandId ?? "none"}
 Last command exit: ${view.lastCommandExitCode ?? "none"}
 Command profile: ${view.commandProfile}
+Godot: ${view.godotSelectedInstallation === null ? "no installation selected" : view.godotSelectedInstallation}${view.godotVersion === null ? "" : ` (${view.godotVersion})`}
+Godot project: ${view.godotProjectDetected ? "detected" : "none"}${view.godotCompatibility === null ? "" : `, compatibility: ${view.godotCompatibility}`}${view.godotWarningCount > 0 ? `, warnings: ${view.godotWarningCount}` : ""}
 `;
 }
 
@@ -545,6 +563,150 @@ export function formatToolFailed(message: string): string {
 
 export function formatToolCancelled(): string {
   return "  \u2715 cancelled\n";
+}
+
+export function formatGodotSummary(
+  selected: GodotSelectedInstallation | null,
+  compatibility: GodotCompatibilityAssessment,
+  projectDetected: boolean,
+): string {
+  const lines: string[] = ["Godot:"];
+  if (selected === null) {
+    lines.push("  Selected installation: none");
+  } else {
+    lines.push(`  Selected installation: ${selected.installationId}`);
+    lines.push(`  Executable: ${selected.sourceLabel}`);
+    lines.push(`  Version: ${selected.version.raw}`);
+    lines.push(`  Edition: ${selected.edition}`);
+    lines.push(`  Release channel: ${selected.releaseChannel}`);
+    lines.push(`  Solaris support: ${selected.support}`);
+  }
+  lines.push(`  Project detected: ${projectDetected ? "yes" : "no"}`);
+  if (projectDetected) {
+    lines.push(`  Compatibility: ${compatibility.status} (${compatibility.severity})`);
+  }
+  if (selected !== null) {
+    lines.push("  Capabilities:");
+    lines.push(`    editor                  ${yesNo(selected.capabilities.editor)}`);
+    lines.push(`    headless                ${yesNo(selected.capabilities.headless)}`);
+    lines.push(`    recovery mode           ${yesNo(selected.capabilities.recoveryMode)}`);
+    lines.push(`    import                  ${yesNo(selected.capabilities.import)}`);
+    lines.push(`    GDScript LSP            ${yesNo(selected.capabilities.lsp)}`);
+    lines.push(`    GDScript DAP            ${yesNo(selected.capabilities.dap)}`);
+    lines.push(`    extension API dump      ${yesNo(selected.capabilities.extensionApiDump)}`);
+  }
+  lines.push("No project code was executed.");
+  lines.push("No project import was performed.");
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotInstallations(discovery: GodotDiscoveryResult): string {
+  const lines: string[] = [];
+  if (discovery.candidates.length === 0) {
+    lines.push("No Godot installations were discovered.");
+  } else {
+    lines.push(
+      `${"ID".padEnd(14)}${"VERSION".padEnd(24)}${"EDITION".padEnd(18)}${"SOURCE".padEnd(12)}SUPPORT`,
+    );
+    for (const candidate of discovery.candidates) {
+      const marker = candidate.selected ? "*" : " ";
+      const version = candidate.version?.raw ?? "-";
+      const edition = candidate.edition ?? "-";
+      const source = candidate.sourceLabel;
+      const support = candidate.support ?? "invalid";
+      lines.push(
+        `${marker}${candidate.installationId.padEnd(13)}${version.padEnd(24)}${edition.padEnd(18)}${source.padEnd(12)}${support}${candidate.invalid === null ? "" : `  [${candidate.invalid}]`}`,
+      );
+    }
+  }
+  const duplicates = discovery.candidates.filter((candidate) => candidate.isDuplicate);
+  if (duplicates.length > 0) {
+    lines.push(
+      `Canonical-path duplicates: ${duplicates.map((candidate) => candidate.installationId).join(", ")}`,
+    );
+  }
+  lines.push("");
+  if (discovery.rationale.length > 0) {
+    lines.push("Selection rationale:");
+    for (const reason of discovery.rationale) {
+      lines.push(`  ${reason}`);
+    }
+  }
+  if (discovery.configuration.overrides.length > 0) {
+    lines.push(`Overrides: ${discovery.configuration.overrides.join(", ")}`);
+  }
+  for (const diagnostic of discovery.diagnostics) {
+    lines.push(`Warning: ${diagnostic.message}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotProject(
+  project: GodotProjectProfile,
+  compatibility: GodotCompatibilityAssessment,
+): string {
+  if (!project.detected) {
+    return "No Godot project detected at the workspace root.\n";
+  }
+  const lines: string[] = [
+    `Project: ${project.name ?? "(unnamed)"}`,
+    `Config version: ${project.configVersion ?? "unknown"}`,
+    `Declared version: ${project.declaredEngineVersion?.raw ?? "none"}`,
+    `Main scene: ${project.mainScene ?? "none"}${project.mainScene === null ? "" : project.mainSceneExists === true ? " (exists)" : project.mainSceneExists === false ? " (missing)" : ""}`,
+    `Language profile: ${project.languageProfile}`,
+    `Rendering methods: ${project.renderingMethods.length > 0 ? project.renderingMethods.join(", ") : "none"}`,
+    `Autoloads: ${project.autoloads.length}`,
+    `Enabled plugins: ${project.enabledEditorPlugins.length}`,
+    `Tool scripts: ${project.executableContent.toolScripts.length}`,
+    `GDExtensions: ${project.executableContent.gdextensionDescriptors.length}`,
+    `Compatibility: ${compatibility.status} (${compatibility.severity})`,
+  ];
+  if (project.executableContent.scanTruncated) {
+    lines.push("Scan: truncated (results are partial)");
+  }
+  for (const warning of project.warnings) {
+    lines.push(`${warning.severity === "warning" ? "Warning" : "Note"}: ${warning.message}`);
+  }
+  lines.push("No project code was executed.");
+  lines.push("No project import was performed.");
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotDoctor(report: GodotDoctorReport): string {
+  const discovery = report.discovery;
+  const lines: string[] = [
+    "Solaris Godot doctor",
+    "",
+    "Configuration:",
+    `  Active installation: ${discovery.configuration.activeInstallation ?? "none"}`,
+    `  Configured installations: ${discovery.configuration.configuredCount}`,
+    `  PATH discovery: ${discovery.configuration.discoverOnPath ? "enabled" : "disabled"}`,
+    `  Overrides: ${discovery.configuration.overrides.length > 0 ? discovery.configuration.overrides.join(", ") : "none"}`,
+    "",
+    "Sandbox:",
+    `  State: ${report.sandbox.state}`,
+    `  Backend: ${report.sandbox.backendId}`,
+    `  Network restriction: ${yesNo(report.sandbox.networkRestriction)}`,
+    `  Filesystem write restriction: ${yesNo(report.sandbox.filesystemWriteRestriction)}`,
+    `  Process-tree restriction: ${yesNo(report.sandbox.processTreeRestriction)}`,
+    "",
+    "Cache:",
+    `  Schema version: ${report.cache.schemaVersion}`,
+    `  Cached profiles: ${report.cache.cachedProfileCount}`,
+  ];
+  lines.push("");
+  lines.push(formatGodotInstallations(discovery).trimEnd());
+  if (report.project.detected) {
+    lines.push("");
+    lines.push(formatGodotProject(report.project, report.compatibility).trimEnd());
+  } else {
+    lines.push("");
+    lines.push("Project: not detected (no project.godot at the workspace root)");
+  }
+  lines.push("");
+  lines.push("No project code was executed.");
+  lines.push("No project import was performed.");
+  return `${lines.join("\n")}\n`;
 }
 
 /**

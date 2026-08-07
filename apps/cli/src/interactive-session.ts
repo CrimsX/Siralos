@@ -2,6 +2,7 @@ import type {
   CheckpointStore,
   CommandRunnerRegistry,
   GitInspector,
+  GodotInspector,
   RegisteredToolInfo,
   SandboxBackend,
   SandboxBackendStatus,
@@ -23,6 +24,10 @@ import {
   formatCommands,
   formatGitDiff,
   formatGitStatus,
+  formatGodotDoctor,
+  formatGodotInstallations,
+  formatGodotProject,
+  formatGodotSummary,
   formatHelp,
   formatInvalidCommand,
   formatNoActiveCommand,
@@ -52,6 +57,7 @@ export interface SessionInfo {
   readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
   readonly git: GitInspector;
+  readonly godot: GodotInspector;
   readonly checkpoints: CheckpointStore;
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
@@ -154,6 +160,18 @@ export async function runInteractiveSession(
           case "commands":
             await runCommandsCommand(io, application, sessionInfo);
             break;
+          case "godot":
+            await runGodotCommand(io, sessionInfo);
+            break;
+          case "godot-installations":
+            await runGodotInstallationsCommand(io, sessionInfo);
+            break;
+          case "godot-project":
+            await runGodotProjectCommand(io, sessionInfo);
+            break;
+          case "godot-doctor":
+            await runGodotDoctorCommand(io, sessionInfo);
+            break;
           case "cancel":
             io.write(formatNoActiveCommand());
             break;
@@ -207,6 +225,9 @@ async function buildStatusView(
   const checkpoints = await sessionInfo.checkpoints.list().catch(() => []);
   const latestApplied = checkpoints.find((checkpoint) => checkpoint.state === "applied");
   const processDecision = sessionInfo.security.evaluateCapability("process.execute");
+  const godotSelected = await sessionInfo.godot.selected().catch(() => null);
+  const godotProject = await sessionInfo.godot.projectProfile().catch(() => null);
+  const godotCompatibility = await sessionInfo.godot.compatibility().catch(() => null);
   return {
     status: application.getStatus(),
     workspaceRoot: sessionInfo.workspaceRoot,
@@ -241,6 +262,11 @@ async function buildStatusView(
     activeCommandId: application.getStatus().activeCommandId,
     lastCommandExitCode: application.getLastCommandExitCode(),
     commandProfile: "validation-offline",
+    godotSelectedInstallation: godotSelected?.installationId ?? null,
+    godotVersion: godotSelected?.version.raw ?? null,
+    godotProjectDetected: godotProject?.detected ?? false,
+    godotCompatibility: godotCompatibility?.status ?? null,
+    godotWarningCount: godotProject?.warnings.length ?? 0,
   };
 }
 
@@ -289,6 +315,55 @@ async function runUndoCommand(
   io.write(`Undo checkpoint ${args[0] === undefined ? "(latest)" : args[0]}...\n`);
   const outcome = await sessionInfo.undo.undo(args[0]);
   io.write(formatUndoOutcome(outcome));
+}
+
+async function runGodotCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
+  try {
+    const selected = await sessionInfo.godot.selected();
+    const project = await sessionInfo.godot.projectProfile();
+    const compatibility = await sessionInfo.godot.compatibility();
+    io.write(formatGodotSummary(selected, compatibility, project.detected));
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  }
+}
+
+async function runGodotInstallationsCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+): Promise<void> {
+  try {
+    const discovery = await sessionInfo.godot.discover();
+    io.write(formatGodotInstallations(discovery));
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  }
+}
+
+async function runGodotProjectCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
+  try {
+    const project = await sessionInfo.godot.projectProfile();
+    const compatibility = await sessionInfo.godot.compatibility();
+    io.write(formatGodotProject(project, compatibility));
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  }
+}
+
+async function runGodotDoctorCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
+  try {
+    const report = await sessionInfo.godot.doctor();
+    io.write(formatGodotDoctor(report));
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  }
+}
+
+function describeGodotFailure(error: unknown): string {
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  return describeError(error);
 }
 
 function describeGitFailure(error: unknown): string {

@@ -11,6 +11,10 @@ export type SlashCommand =
   | "undo"
   | "commands"
   | "cancel"
+  | "godot"
+  | "godot-installations"
+  | "godot-project"
+  | "godot-doctor"
   | "exit";
 
 export type ParsedInput =
@@ -44,6 +48,10 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "undo",
   "commands",
   "cancel",
+  "godot",
+  "godot-installations",
+  "godot-project",
+  "godot-doctor",
   "exit",
 ];
 

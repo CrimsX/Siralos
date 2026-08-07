@@ -34,6 +34,22 @@ describe("parseInput", () => {
       args: [],
     });
     expect(parseInput("/undo")).toEqual({ type: "command", command: "undo", args: [] });
+    expect(parseInput("/godot")).toEqual({ type: "command", command: "godot", args: [] });
+    expect(parseInput("/godot-installations")).toEqual({
+      type: "command",
+      command: "godot-installations",
+      args: [],
+    });
+    expect(parseInput("/godot-project")).toEqual({
+      type: "command",
+      command: "godot-project",
+      args: [],
+    });
+    expect(parseInput("/godot-doctor")).toEqual({
+      type: "command",
+      command: "godot-doctor",
+      args: [],
+    });
     expect(parseInput("/exit")).toEqual({ type: "command", command: "exit", args: [] });
   });
 

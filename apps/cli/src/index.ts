@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
 import { createCliApplication } from "./bootstrap/create-application.js";
+import { runGodotDoctor } from "./bootstrap/godot-doctor.js";
 import { doctorExitCode, runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
 import { createInputQueue, type InputQueue } from "./input/input-queue.js";
 import {
@@ -13,7 +14,21 @@ import {
   type SessionIO,
   type SessionInfo,
 } from "./interactive-session.js";
-import { describeError, formatDoctor, formatHeader, TerminalSanitizer } from "./output.js";
+import {
+  describeError,
+  formatDoctor,
+  formatGodotDoctor,
+  formatHeader,
+  TerminalSanitizer,
+} from "./output.js";
+
+function optionValue(args: readonly string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  if (index < 0) {
+    return undefined;
+  }
+  return args[index + 1];
+}
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
@@ -22,6 +37,17 @@ async function main(): Promise<number> {
     const sanitizer = new TerminalSanitizer();
     stdout.write(sanitizer.push(formatDoctor(report)) + sanitizer.flush());
     return doctorExitCode(report, args.includes("--run-probes"));
+  }
+  if (args.includes("--godot-doctor")) {
+    const godotPath = optionValue(args, "--godot-path");
+    const godotInstallation = optionValue(args, "--godot-installation");
+    const report = await runGodotDoctor({
+      ...(godotPath === undefined ? {} : { godotPath }),
+      ...(godotInstallation === undefined ? {} : { godotInstallation }),
+    });
+    const sanitizer = new TerminalSanitizer();
+    stdout.write(sanitizer.push(formatGodotDoctor(report)) + sanitizer.flush());
+    return 0;
   }
   const readline = createInterface({ input: stdin, output: stdout });
   const controls: SessionControls = createSessionControls();
@@ -64,6 +90,8 @@ async function main(): Promise<number> {
     },
   };
   const reviewer = createInteractiveApprovalReviewer(inputQueue);
+  const godotPath = optionValue(args, "--godot-path");
+  const godotInstallation = optionValue(args, "--godot-installation");
   const {
     application,
     providerId,
@@ -73,15 +101,21 @@ async function main(): Promise<number> {
     sandbox,
     checkpoints,
     git,
+    godot,
     undo,
     runners,
-  } = await createCliApplication({ reviewer });
+  } = await createCliApplication({
+    reviewer,
+    ...(godotPath === undefined ? {} : { godotPath }),
+    ...(godotInstallation === undefined ? {} : { godotInstallation }),
+  });
   stdout.write(sanitizer.push(formatHeader(providerId)) + sanitizer.flush());
   const sessionInfo: SessionInfo = {
     workspaceRoot,
     tools,
     security,
     git,
+    godot,
     checkpoints,
     undo,
     runners,

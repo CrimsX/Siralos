@@ -135,7 +135,12 @@ export function createGodotProbeRunner(
     installation: GodotInstallation,
     signal?: AbortSignal,
   ): Promise<{
-    readonly runPaths: { readonly home: string; readonly temp: string };
+    readonly runPaths: {
+      readonly runId: string;
+      readonly root: string;
+      readonly home: string;
+      readonly temp: string;
+    };
     readonly release: () => Promise<string | null>;
   } | null> {
     if (signal?.aborted) {
@@ -236,7 +241,11 @@ export function createGodotProbeRunner(
   function probeRequest(
     installation: GodotInstallation,
     arguments_: readonly string[],
-    runPaths: { readonly home: string; readonly temp: string },
+    runPaths: {
+      readonly root: string;
+      readonly home: string;
+      readonly temp: string;
+    },
     limits: {
       readonly timeoutMs: number;
       readonly stdoutLimitBytes: number;
@@ -253,6 +262,7 @@ export function createGodotProbeRunner(
         home: runPaths.home,
         temp: runPaths.temp,
       }),
+      runDirectory: runPaths.root,
       timeoutMs: limits.timeoutMs,
       stdoutLimitBytes: limits.stdoutLimitBytes,
       stderrLimitBytes: limits.stderrLimitBytes,

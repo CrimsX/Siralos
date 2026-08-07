@@ -3,10 +3,15 @@ import { join } from "node:path";
 import {
   createAnthropicSandboxRuntimeBackend,
   createDeterministicFakeProvider,
+  createEngineProfileCache,
   createFilesystemCheckpointStore,
   createGitCliAdapter,
   createGitDiffTool,
   createGitStatusTool,
+  createGodotInspectEngineTool,
+  createGodotInspectProjectTool,
+  createGodotInspector,
+  createGodotProbeRunner,
   createMutationLock,
   createNpmScriptRunner,
   createNodeScriptRunner,
@@ -23,7 +28,10 @@ import {
   getDefaultUserConfigPath,
   getSandboxDirectories,
   loadUserConfig,
+  readGodotEnvironmentOverrides,
+  readParentEnvironment,
   reconcileWorkspaceCheckpoints,
+  resolveGodotSelection,
   resolveWorkspaceRoot,
 } from "@solaris/adapters";
 import {
@@ -38,15 +46,21 @@ import {
   type CheckpointStore,
   type CommandRunnerRegistry,
   type GitInspector,
+  type GodotInspector,
   type RegisteredToolInfo,
   type SandboxBackend,
   type SolarisApplication,
   type SolarisSecurity,
   type UndoService,
 } from "@solaris/core";
+import { GodotSelectionError } from "@solaris/adapters";
 
 export interface CreateCliApplicationOptions {
   readonly reviewer?: ApprovalReviewer;
+  /** `--godot-path` override. */
+  readonly godotPath?: string;
+  /** `--godot-installation` override. */
+  readonly godotInstallation?: string;
 }
 
 export interface CliApplication {
@@ -58,6 +72,7 @@ export interface CliApplication {
   readonly sandbox: SandboxBackend;
   readonly checkpoints: CheckpointStore;
   readonly git: GitInspector;
+  readonly godot: GodotInspector;
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
 }
@@ -111,6 +126,40 @@ export async function createCliApplication(
     executionPolicy: createDefaultPolicy("validation-offline"),
   });
   const sandboxAvailable = (await sandbox.inspect()).state === "available";
+  const environmentOverrides = readGodotEnvironmentOverrides();
+  const resolvedSelection = resolveGodotSelection({
+    cliPath: options.godotPath ?? null,
+    cliInstallationId: options.godotInstallation ?? null,
+    environmentPath: environmentOverrides.path,
+    environmentInstallationId: environmentOverrides.installationId,
+    config: config.godot,
+  });
+  if (!resolvedSelection.ok) {
+    throw new GodotSelectionError(resolvedSelection.message);
+  }
+  const overrideSource =
+    options.godotPath !== undefined || options.godotInstallation !== undefined
+      ? ("cli" as const)
+      : environmentOverrides.path !== null || environmentOverrides.installationId !== null
+        ? ("environment" as const)
+        : null;
+  const parentEnvironment = readParentEnvironment();
+  const godot = createGodotInspector({
+    config: config.godot,
+    preference: resolvedSelection.preference,
+    overrideSource,
+    workspaceRoot,
+    backend: sandbox,
+    probeRunner: createGodotProbeRunner({
+      backend: sandbox,
+      runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
+      parentEnvironment,
+    }),
+    cache: createEngineProfileCache({}),
+    hostPath: parentEnvironment["PATH"] ?? null,
+    hostPathExt: parentEnvironment["PATHEXT"] ?? null,
+    platform: process.platform,
+  });
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
     createWorkspaceReadTool(workspaceRoot),
@@ -118,6 +167,8 @@ export async function createCliApplication(
     createWorkspaceCreateFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceEditFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceDeleteFileTool(workspaceRoot, mutationLock, checkpoints),
+    createGodotInspectEngineTool(godot),
+    createGodotInspectProjectTool(godot),
     processTool,
   ];
   if (sandboxAvailable) {
@@ -142,6 +193,7 @@ export async function createCliApplication(
     sandbox,
     checkpoints,
     git,
+    godot,
     undo,
     runners,
   };

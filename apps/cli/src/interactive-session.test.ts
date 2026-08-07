@@ -9,6 +9,7 @@ import {
   DEVELOP_OFFLINE_PROFILE,
   GitError,
   INSPECT_PROFILE,
+  createEmptyGodotProjectProfile,
   type CheckpointStore,
   type CommandRunner,
   type CommandToolPreparationResult,
@@ -17,6 +18,12 @@ import {
   type GitInspector,
   type GitStatusResult,
   type GitWorkspaceStatus,
+  type GodotCompatibilityAssessment,
+  type GodotDiscoveryResult,
+  type GodotDoctorReport,
+  type GodotInspector,
+  type GodotProjectProfile,
+  type GodotSelectedInstallation,
   type ModelEvent,
   type ModelProvider,
   type ModelRequest,
@@ -73,13 +80,24 @@ class ScriptedIO implements SessionIO {
 
 async function createComposedSession(lines: readonly string[]) {
   const io = new ScriptedIO(lines);
-  const { application, workspaceRoot, tools, security, git, checkpoints, undo, runners, sandbox } =
-    await createCliApplication();
+  const {
+    application,
+    workspaceRoot,
+    tools,
+    security,
+    git,
+    godot,
+    checkpoints,
+    undo,
+    runners,
+    sandbox,
+  } = await createCliApplication();
   const sessionInfo: SessionInfo = {
     workspaceRoot,
     tools,
     security,
     git,
+    godot,
     checkpoints,
     undo,
     runners,
@@ -153,6 +171,7 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     tools: [],
     security: createFakeSecurity(),
     git: createStubGit(),
+    godot: createStubGodotInspector(),
     checkpoints: createStubCheckpointStore(),
     undo: createStubUndo(),
     runners: createCommandRunnerRegistry([]),
@@ -170,6 +189,65 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       },
     }),
     ...overrides,
+  };
+}
+
+function createStubGodotInspector(): GodotInspector {
+  return {
+    discover(): Promise<GodotDiscoveryResult> {
+      return Promise.resolve({
+        candidates: [],
+        configuration: {
+          activeInstallation: null,
+          configuredCount: 0,
+          discoverOnPath: false,
+          overrides: [],
+        },
+        selected: null,
+        rationale: ["No selectable Godot installation was discovered."],
+        diagnostics: [],
+      });
+    },
+    selected(): Promise<GodotSelectedInstallation | null> {
+      return Promise.resolve(null);
+    },
+    projectProfile(): Promise<GodotProjectProfile> {
+      return Promise.resolve(createEmptyGodotProjectProfile());
+    },
+    compatibility(): Promise<GodotCompatibilityAssessment> {
+      return Promise.resolve({
+        status: "no-project",
+        severity: "info",
+        reasons: ["No project."],
+      });
+    },
+    doctor(): Promise<GodotDoctorReport> {
+      return Promise.resolve({
+        discovery: {
+          candidates: [],
+          configuration: {
+            activeInstallation: null,
+            configuredCount: 0,
+            discoverOnPath: false,
+            overrides: [],
+          },
+          selected: null,
+          rationale: [],
+          diagnostics: [],
+        },
+        project: createEmptyGodotProjectProfile(),
+        compatibility: { status: "no-project", severity: "info", reasons: [] },
+        cache: { schemaVersion: 1, cachedProfileCount: 0, enabled: true },
+        sandbox: {
+          state: "available",
+          backendId: "stub-backend",
+          networkRestriction: true,
+          filesystemWriteRestriction: true,
+          processTreeRestriction: true,
+        },
+        probes: [],
+      });
+    },
   };
 }
 
@@ -307,7 +385,7 @@ describe("runInteractiveSession tool activity", () => {
     const { io, application, sessionInfo } = await createComposedSession(["/status", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Workspace:");
-    expect(io.text).toContain("Tools: 7");
+    expect(io.text).toContain("Tools: 9");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
@@ -467,6 +545,61 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     expect(exitCode).toBe(0);
     expect(io.text).toContain("Git: unavailable");
     expect(io.text).toContain("Repository: unavailable");
+  });
+
+  it("renders /godot with a truthful no-installation summary", async () => {
+    const io = new ScriptedIO(["/godot", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Selected installation: none");
+    expect(io.text).toContain("No project code was executed.");
+  });
+
+  it("renders /godot-installations with candidates and rationale", async () => {
+    const io = new ScriptedIO(["/godot-installations", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("No Godot installations were discovered.");
+  });
+
+  it("renders /godot-project for non-Godot workspaces", async () => {
+    const io = new ScriptedIO(["/godot-project", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("No Godot project detected");
+  });
+
+  it("renders /godot-doctor without project execution", async () => {
+    const io = new ScriptedIO(["/godot-doctor", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Solaris Godot doctor");
+    expect(io.text).toContain("No project code was executed.");
+  });
+
+  it("keeps the session alive when Godot inspection fails", async () => {
+    const failing: SessionInfo = buildSessionInfo({
+      godot: {
+        discover(): Promise<GodotDiscoveryResult> {
+          return Promise.reject(new Error("probe exploded"));
+        },
+        selected(): Promise<GodotSelectedInstallation | null> {
+          return Promise.reject(new Error("probe exploded"));
+        },
+        projectProfile(): Promise<GodotProjectProfile> {
+          return Promise.reject(new Error("probe exploded"));
+        },
+        compatibility(): Promise<GodotCompatibilityAssessment> {
+          return Promise.reject(new Error("probe exploded"));
+        },
+        doctor(): Promise<GodotDoctorReport> {
+          return Promise.reject(new Error("probe exploded"));
+        },
+      },
+    });
+    const io = new ScriptedIO(["/godot", "/status", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), failing);
+    expect(io.text).toContain("probe exploded");
   });
 
   it("renders a diff failure without raw traces", async () => {
