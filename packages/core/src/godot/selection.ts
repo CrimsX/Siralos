@@ -68,15 +68,15 @@ export function rankGodotCandidates(
       if (leftRank !== rightRank) {
         return leftRank - rightRank;
       }
-      const leftPatch = left.profile.version.patch ?? 0;
-      const rightPatch = right.profile.version.patch ?? 0;
-      if (leftPatch !== rightPatch) {
-        return rightPatch - leftPatch;
-      }
       const leftStable = left.profile.releaseChannel === "stable" ? 0 : 1;
       const rightStable = right.profile.releaseChannel === "stable" ? 0 : 1;
       if (leftStable !== rightStable) {
         return leftStable - rightStable;
+      }
+      const leftPatch = left.profile.version.patch ?? 0;
+      const rightPatch = right.profile.version.patch ?? 0;
+      if (leftPatch !== rightPatch) {
+        return rightPatch - leftPatch;
       }
       const leftEdition = left.profile.edition === "standard" ? 0 : 1;
       const rightEdition = right.profile.edition === "standard" ? 0 : 1;

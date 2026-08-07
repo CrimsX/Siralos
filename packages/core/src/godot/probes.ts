@@ -40,7 +40,13 @@ export type GodotHelpProbe =
       readonly unknownOptionCount: number;
     }
   | {
-      readonly status: "degraded" | "failed";
+      readonly status: "degraded";
+      readonly message: string;
+      readonly capabilities: GodotCommandCapabilities;
+      readonly unknownOptionCount: number;
+    }
+  | {
+      readonly status: "failed";
       readonly message: string;
     };
 
