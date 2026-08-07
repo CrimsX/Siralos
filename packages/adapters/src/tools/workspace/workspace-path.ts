@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { foldPathComponent } from "../../fs-case.js";
 
 export const DEFAULT_EXCLUDED_DIRECTORIES: readonly string[] = [
   "node_modules",
@@ -99,12 +100,14 @@ export async function resolveWorkspacePath(
 export function findExcludedComponent(
   workspaceRelativePath: string,
   excludedDirectories: readonly string[],
+  platform: NodeJS.Platform = process.platform,
 ): string | null {
   const components = workspaceRelativePath
     .split("/")
     .filter((component) => component.length > 0 && component !== ".");
+  const excluded = excludedDirectories.map((name) => foldPathComponent(name, platform));
   for (const component of components) {
-    if (excludedDirectories.includes(component)) {
+    if (excluded.includes(foldPathComponent(component, platform))) {
       return component;
     }
   }

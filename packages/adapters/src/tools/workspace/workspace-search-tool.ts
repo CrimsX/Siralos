@@ -2,6 +2,7 @@ import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
+import { foldPathComponent } from "../../fs-case.js";
 import {
   DEFAULT_EXCLUDED_DIRECTORIES,
   findExcludedComponent,
@@ -167,7 +168,11 @@ async function search(
     }
     names.sort();
     for (const name of names) {
-      if (DEFAULT_EXCLUDED_DIRECTORIES.includes(name)) {
+      if (
+        DEFAULT_EXCLUDED_DIRECTORIES.some(
+          (excluded) => foldPathComponent(excluded) === foldPathComponent(name),
+        )
+      ) {
         continue;
       }
       const absolute = path.join(directory.absolute, name);

@@ -176,4 +176,21 @@ describe("findExcludedComponent", () => {
     expect(findExcludedComponent("dist", excluded)).toBe("dist");
     expect(findExcludedComponent("distro", excluded)).toBeNull();
   });
+
+  it("matches mixed-case excluded components on case-insensitive filesystems", () => {
+    const excluded = [".git", "node_modules"];
+    expect(findExcludedComponent(".GIT/config", excluded, "darwin")).toBe(".GIT");
+    expect(findExcludedComponent("packages/pkg/.Git/HEAD", excluded, "darwin")).toBe(".Git");
+    expect(findExcludedComponent("NODE_MODULES/pkg", excluded, "win32")).toBe("NODE_MODULES");
+  });
+
+  it("does not match case variants on case-sensitive filesystems", () => {
+    const excluded = [".git"];
+    expect(findExcludedComponent(".GIT/config", excluded, "linux")).toBeNull();
+  });
+
+  it("returns the original component casing so variants are visible", () => {
+    const excluded = [".git"];
+    expect(findExcludedComponent("packages/.GIT/HEAD", excluded, "darwin")).toBe(".GIT");
+  });
 });

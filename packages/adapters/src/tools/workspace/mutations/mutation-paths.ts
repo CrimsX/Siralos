@@ -1,5 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
+import { foldPathComponent } from "../../../fs-case.js";
 import { describeFsError } from "../workspace-path.js";
 
 export type MutationPathResult =
@@ -177,13 +178,13 @@ export async function resolveMutationTarget(
   };
 }
 
-export function isProtectedWriteTarget(workspaceRelativePath: string): boolean {
+export function isProtectedWriteTarget(
+  workspaceRelativePath: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
   const components = workspaceRelativePath.split("/").filter((component) => component.length > 0);
   const basename = components.at(-1) ?? "";
-  const fold =
-    process.platform === "win32"
-      ? (value: string) => value.toLowerCase()
-      : (value: string) => value;
+  const fold = (value: string): string => foldPathComponent(value, platform);
   if (
     components.some((component) => fold(component) === ".git" || fold(component) === ".solaris")
   ) {

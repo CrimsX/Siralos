@@ -146,4 +146,70 @@ describe("isProtectedWriteTarget", () => {
     expect(isProtectedWriteTarget("keyboard.md")).toBe(false);
     expect(isProtectedWriteTarget("package.json")).toBe(false);
   });
+
+  it("folds case on case-insensitive filesystems", () => {
+    for (const platform of ["win32", "darwin"] as const) {
+      expect(isProtectedWriteTarget(".GIT/config", platform)).toBe(true);
+      expect(isProtectedWriteTarget(".Git/config", platform)).toBe(true);
+      expect(isProtectedWriteTarget(".GIT/HEAD", platform)).toBe(true);
+      expect(isProtectedWriteTarget(".SOLARIS/state.json", platform)).toBe(true);
+      expect(isProtectedWriteTarget(".ENV", platform)).toBe(true);
+      expect(isProtectedWriteTarget("Docs/.ENV.LOCAL", platform)).toBe(true);
+      expect(isProtectedWriteTarget("CERT.PEM", platform)).toBe(true);
+      expect(isProtectedWriteTarget("Nested/ID.KEY", platform)).toBe(true);
+      expect(isProtectedWriteTarget("packages/pkg/.git/HEAD", platform)).toBe(true);
+    }
+  });
+
+  it("does not fold case on case-sensitive filesystems", () => {
+    expect(isProtectedWriteTarget(".GIT/config", "linux")).toBe(false);
+    expect(isProtectedWriteTarget(".ENV", "linux")).toBe(false);
+    expect(isProtectedWriteTarget("docs/.Git/HEAD", "linux")).toBe(false);
+  });
+
+  it("protects a new file below an existing protected directory", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { ".git/config": "x\n" });
+    expect((await resolveCreateTarget(workspace.root, ".git/new.txt")).status).toBe("rejected");
+    expect((await resolveCreateTarget(workspace.root, ".GIT/new.txt")).status).toBe("rejected");
+    expect((await resolveCreateTarget(workspace.root, ".solaris/new.txt")).status).toBe("rejected");
+  });
+
+  it("rejects case variants addressing a protected directory", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { ".git/config": "x\n" });
+    for (const candidate of [".git/config", ".Git/config", ".GIT/config", ".git/HEAD"]) {
+      const resolved = await resolveMutationTarget(workspace.root, candidate);
+      expect(resolved.status, candidate).not.toBe("resolved");
+    }
+  });
+
+  it(
+    "rejects a junction alias to a protected directory on Windows",
+    {
+      skip: process.platform !== "win32",
+    },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { ".git/config": "x\n" });
+      const { execFileSync } = await import("node:child_process");
+      try {
+        execFileSync(
+          "cmd",
+          [
+            "/c",
+            "mklink",
+            "/J",
+            path.join(workspace.root, "junction"),
+            path.join(workspace.root, ".git"),
+          ],
+          { stdio: "ignore" },
+        );
+      } catch {
+        return; // junction creation unsupported in this environment
+      }
+      const resolved = await resolveMutationTarget(workspace.root, "junction/config");
+      expect(resolved.status).not.toBe("resolved");
+    },
+  );
 });
