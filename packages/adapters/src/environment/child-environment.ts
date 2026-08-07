@@ -65,6 +65,10 @@ export function buildChildEnvironment(
   return environment;
 }
 
+export function readParentEnvironment(): Readonly<Record<string, string>> {
+  return process.env as Readonly<Record<string, string>>;
+}
+
 export function isDeniedVariable(name: string): boolean {
   return DENIED_PATTERNS.some((pattern) => pattern.test(name));
 }

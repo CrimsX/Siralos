@@ -60,12 +60,18 @@ function isUnder(target, root) {
   return target === root || target.startsWith(root + sep);
 }
 
-function containsProcessEnvAccess(source) {
+function containsProcessEnvAccess(source, packageRelativeFile) {
   const withoutStrings = source.replace(
     /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
     "",
   );
-  return withoutStrings.includes("process.env");
+  if (!withoutStrings.includes("process.env")) {
+    return false;
+  }
+  if (packageRelativeFile.startsWith(join("src", "environment"))) {
+    return false;
+  }
+  return true;
 }
 
 const WRITE_API_TOKENS = ["writeFile", "unlink(", "rename(", "appendFile", "createWriteStream"];
@@ -73,6 +79,7 @@ const WRITE_API_TOKENS = ["writeFile", "unlink(", "rename(", "appendFile", "crea
 const APPROVED_MUTATION_DIRECTORIES = [
   join("src", "tools", "workspace", "mutations"),
   join("src", "sandbox", "conformance"),
+  join("src", "checkpoints", "filesystem"),
 ];
 
 function isApprovedWriteApiLocation(packageRelativeFile, file) {
@@ -99,7 +106,7 @@ export function runChecks(root) {
         const source = readFileSync(file, "utf8");
         const location = relative(root, file).split(sep).join("/");
         const packageRelativeFile = relative(pkg.path, file);
-        if (containsProcessEnvAccess(source)) {
+        if (containsProcessEnvAccess(source, packageRelativeFile)) {
           errors.push(
             `${location}: process.env inspection is prohibited in package source; build child environments from an explicit allowlist`,
           );

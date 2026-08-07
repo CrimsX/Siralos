@@ -24,6 +24,23 @@ export type MutationPathResult =
 const ABSOLUTE_PATH_PATTERN = /^(?:[A-Za-z]:)?[\\/]/;
 const DRIVE_PATTERN = /^[A-Za-z]:/;
 
+export function validateRelativeWorkspacePath(requested: string): string | null {
+  if (requested.includes("\0")) {
+    return "Path contains a null byte.";
+  }
+  if (requested.length === 0) {
+    return "Path is empty.";
+  }
+  if (ABSOLUTE_PATH_PATTERN.test(requested) || DRIVE_PATTERN.test(requested)) {
+    return "Path must be relative to the workspace.";
+  }
+  const normalized = requested.split(/[\\/]/);
+  if (normalized.some((component) => component === "..")) {
+    return "Path must remain inside the workspace.";
+  }
+  return null;
+}
+
 export async function resolveCreateTarget(
   workspaceRoot: string,
   requested: string,

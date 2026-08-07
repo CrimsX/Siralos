@@ -43,3 +43,11 @@ export { createWorkspaceEditFileTool } from "./tools/workspace/mutations/workspa
 export { createWorkspaceDeleteFileTool } from "./tools/workspace/mutations/workspace-delete-file-tool.js";
 export { createMutationLock } from "./tools/workspace/mutations/mutation-lock.js";
 export { resolveWorkspaceRoot } from "./tools/workspace/workspace-path.js";
+export { createGitCliAdapter, type GitCliAdapterOptions } from "./git/cli/git-cli-adapter.js";
+export {
+  runGitProcess,
+  GIT_ALLOWED_SUBCOMMANDS,
+  GIT_SAFETY_ENVIRONMENT,
+  type GitProcessOptions,
+  type GitProcessResult,
+} from "./git/cli/git-process.js";
