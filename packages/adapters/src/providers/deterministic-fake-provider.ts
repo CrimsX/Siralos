@@ -42,6 +42,17 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   if (signal?.aborted) {
     throw createAbortError();
   }
+  const writeScenario = findWriteScenario(request.messages);
+  if (writeScenario !== null && writeScenarioToolsAvailable(writeScenario, request.tools)) {
+    const turn = buildWriteScenarioTurn(writeScenario, request.messages);
+    if (turn.kind === "call") {
+      yield turn.event;
+      await Promise.resolve();
+      return;
+    }
+    yield* streamTextChunks(turn.text, signal);
+    return;
+  }
   const scenario = findScenario(request.messages);
   if (scenario !== null) {
     const result = findResultForCall(request.messages, "call-1");
@@ -64,6 +75,195 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   }
   const responseText = formatResponse(request.messages);
   yield* streamTextChunks(responseText, signal);
+}
+
+type WriteScenario = "create" | "edit" | "delete";
+
+const WRITE_TEST_FILE = "solaris-write-test.txt";
+const WRITE_TEST_CONTENT = "Created by the deterministic Solaris test provider.\n";
+
+function findWriteScenario(messages: readonly ConversationItem[]): WriteScenario | null {
+  const latestUserPrompt = findLatestUserPrompt(messages);
+  if (latestUserPrompt === "create solaris-write-test") {
+    return "create";
+  }
+  if (latestUserPrompt === "edit solaris-write-test") {
+    return "edit";
+  }
+  if (latestUserPrompt === "delete solaris-write-test") {
+    return "delete";
+  }
+  return null;
+}
+
+function writeScenarioToolsAvailable(
+  scenario: WriteScenario,
+  tools: readonly ToolDefinition[],
+): boolean {
+  switch (scenario) {
+    case "create":
+      return isToolAvailable(tools, "workspace.create_file");
+    case "edit":
+      return (
+        isToolAvailable(tools, "workspace.read") && isToolAvailable(tools, "workspace.edit_file")
+      );
+    case "delete":
+      return (
+        isToolAvailable(tools, "workspace.read") && isToolAvailable(tools, "workspace.delete_file")
+      );
+  }
+}
+
+type WriteScenarioTurn =
+  | { readonly kind: "call"; readonly event: ModelEvent }
+  | { readonly kind: "text"; readonly text: string };
+
+function buildWriteScenarioTurn(
+  scenario: WriteScenario,
+  messages: readonly ConversationItem[],
+): WriteScenarioTurn {
+  const stepItems = itemsAfterLastUserMessage(messages);
+  switch (scenario) {
+    case "create": {
+      const result = findLatestResult(stepItems, "workspace.create_file");
+      if (result === undefined) {
+        return {
+          kind: "call",
+          event: {
+            type: "tool_call",
+            callId: "call-create",
+            toolName: "workspace.create_file",
+            input: { path: WRITE_TEST_FILE, content: WRITE_TEST_CONTENT },
+          },
+        };
+      }
+      return { kind: "text", text: formatWriteFinalText("create", result) };
+    }
+    case "edit": {
+      const editResult = findLatestResult(stepItems, "workspace.edit_file");
+      if (editResult === undefined) {
+        const readResult = findLatestResult(stepItems, "workspace.read");
+        if (readResult === undefined) {
+          return {
+            kind: "call",
+            event: {
+              type: "tool_call",
+              callId: "call-read",
+              toolName: "workspace.read",
+              input: { path: WRITE_TEST_FILE },
+            },
+          };
+        }
+        const hash = readResultSha256(readResult);
+        if (hash === null) {
+          return {
+            kind: "text",
+            text: `Solaris could not read ${WRITE_TEST_FILE}, so it did not modify it.`,
+          };
+        }
+        return {
+          kind: "call",
+          event: {
+            type: "tool_call",
+            callId: "call-edit",
+            toolName: "workspace.edit_file",
+            input: {
+              path: WRITE_TEST_FILE,
+              expectedSha256: hash,
+              replacements: [{ oldText: "Created", newText: "Updated" }],
+            },
+          },
+        };
+      }
+      return { kind: "text", text: formatWriteFinalText("edit", editResult) };
+    }
+    case "delete": {
+      const deleteResult = findLatestResult(stepItems, "workspace.delete_file");
+      if (deleteResult === undefined) {
+        const readResult = findLatestResult(stepItems, "workspace.read");
+        if (readResult === undefined) {
+          return {
+            kind: "call",
+            event: {
+              type: "tool_call",
+              callId: "call-read",
+              toolName: "workspace.read",
+              input: { path: WRITE_TEST_FILE },
+            },
+          };
+        }
+        const hash = readResultSha256(readResult);
+        if (hash === null) {
+          return {
+            kind: "text",
+            text: `Solaris could not read ${WRITE_TEST_FILE}, so it did not delete it.`,
+          };
+        }
+        return {
+          kind: "call",
+          event: {
+            type: "tool_call",
+            callId: "call-delete",
+            toolName: "workspace.delete_file",
+            input: { path: WRITE_TEST_FILE, expectedSha256: hash },
+          },
+        };
+      }
+      return { kind: "text", text: formatWriteFinalText("delete", deleteResult) };
+    }
+  }
+}
+
+function formatWriteFinalText(
+  operation: "create" | "edit" | "delete",
+  result: ToolExecutionResult,
+): string {
+  const verb = operation === "create" ? "create" : operation === "edit" ? "modify" : "delete";
+  switch (result.status) {
+    case "success":
+      return `Solaris ${operation === "create" ? "created" : operation === "edit" ? "updated" : "deleted"} ${WRITE_TEST_FILE}.`;
+    case "denied":
+      return `The workspace change was denied, so Solaris did not ${verb} ${WRITE_TEST_FILE}.`;
+    case "conflict":
+      return `The file changed, so Solaris did not ${verb} ${WRITE_TEST_FILE}. Reread the file to continue.`;
+    case "cancelled":
+      return `The workspace change was cancelled, so Solaris did not ${verb} ${WRITE_TEST_FILE}.`;
+    case "invalid_input":
+    case "failed":
+      return `Solaris could not ${verb} ${WRITE_TEST_FILE}: ${result.message}`;
+  }
+}
+
+function itemsAfterLastUserMessage(
+  messages: readonly ConversationItem[],
+): readonly ConversationItem[] {
+  const start = findLatestUserMessageIndex(messages) + 1;
+  return messages.slice(start);
+}
+
+function findLatestResult(
+  items: readonly ConversationItem[],
+  toolName: string,
+): ToolExecutionResult | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item && item.type === "tool_result" && item.toolName === toolName) {
+      return item.result;
+    }
+  }
+  return undefined;
+}
+
+function readResultSha256(result: ToolExecutionResult): string | null {
+  if (result.status !== "success") {
+    return null;
+  }
+  if (typeof result.output !== "object" || result.output === null || Array.isArray(result.output)) {
+    return null;
+  }
+  const record = result.output as JsonObject;
+  const sha256 = record["sha256"];
+  return typeof sha256 === "string" && sha256.length === 64 ? sha256 : null;
 }
 
 async function* streamTextChunks(

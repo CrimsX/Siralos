@@ -318,3 +318,207 @@ describe("deterministic fake provider tool scenarios", () => {
     expect(textOf(events)).toBe("Solaris received: hello there");
   });
 });
+
+describe("deterministic fake provider write scenarios", () => {
+  const CREATE_TOOL: ToolDefinition = {
+    name: "workspace.create_file",
+    description: "Create one new UTF-8 text file inside an existing workspace directory.",
+    inputSchema: {},
+  };
+  const EDIT_TOOL: ToolDefinition = {
+    name: "workspace.edit_file",
+    description: "Apply a bounded sequence of exact text replacements.",
+    inputSchema: {},
+  };
+  const DELETE_TOOL: ToolDefinition = {
+    name: "workspace.delete_file",
+    description: "Delete one existing UTF-8 text file after explicit review.",
+    inputSchema: {},
+  };
+
+  function readResultWithHash(hash: string): ConversationItem {
+    return {
+      type: "tool_result",
+      callId: "call-read",
+      toolName: "workspace.read",
+      result: {
+        status: "success",
+        output: {
+          path: "solaris-write-test.txt",
+          sha256: hash,
+          content: "Created by the deterministic Solaris test provider.\n",
+          startLine: 1,
+          endLine: 1,
+          totalLines: 1,
+          truncated: false,
+        },
+        summary: "1 lines",
+      },
+    };
+  }
+
+  it("requests the create tool for `create solaris-write-test`", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "create solaris-write-test" }],
+      tools: [CREATE_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-create",
+      toolName: "workspace.create_file",
+      input: {
+        path: "solaris-write-test.txt",
+        content: "Created by the deterministic Solaris test provider.\n",
+      },
+    });
+  });
+
+  it("reports a truthful final text after a denied create", async () => {
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "create solaris-write-test" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-create",
+          toolName: "workspace.create_file",
+          input: { path: "solaris-write-test.txt", content: "x\n" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-create",
+          toolName: "workspace.create_file",
+          result: { status: "denied", message: "The change was denied by the user." },
+        },
+      ],
+      tools: [CREATE_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(textOf(events)).toBe(
+      "The workspace change was denied, so Solaris did not create solaris-write-test.txt.",
+    );
+  });
+
+  it("reads the file before requesting the edit", async () => {
+    const hash = "a".repeat(64);
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "edit solaris-write-test" },
+        readResultWithHash(hash),
+      ],
+      tools: [READ_TOOL, EDIT_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-edit",
+      toolName: "workspace.edit_file",
+      input: {
+        path: "solaris-write-test.txt",
+        expectedSha256: hash,
+        replacements: [{ oldText: "Created", newText: "Updated" }],
+      },
+    });
+  });
+
+  it("requests the read first when no read result exists", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "edit solaris-write-test" }],
+      tools: [READ_TOOL, EDIT_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-read",
+      toolName: "workspace.read",
+      input: { path: "solaris-write-test.txt" },
+    });
+  });
+
+  it("reports a truthful final text after a denied edit", async () => {
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "edit solaris-write-test" },
+        readResultWithHash("a".repeat(64)),
+        {
+          type: "assistant_tool_call",
+          callId: "call-edit",
+          toolName: "workspace.edit_file",
+          input: {
+            path: "solaris-write-test.txt",
+            expectedSha256: "a".repeat(64),
+            replacements: [],
+          },
+        },
+        {
+          type: "tool_result",
+          callId: "call-edit",
+          toolName: "workspace.edit_file",
+          result: { status: "denied", message: "The change was denied by the user." },
+        },
+      ],
+      tools: [READ_TOOL, EDIT_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(textOf(events)).toBe(
+      "The workspace change was denied, so Solaris did not modify solaris-write-test.txt.",
+    );
+  });
+
+  it("reports a truthful final text after an edit conflict", async () => {
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "edit solaris-write-test" },
+        readResultWithHash("a".repeat(64)),
+        {
+          type: "assistant_tool_call",
+          callId: "call-edit",
+          toolName: "workspace.edit_file",
+          input: {
+            path: "solaris-write-test.txt",
+            expectedSha256: "a".repeat(64),
+            replacements: [],
+          },
+        },
+        {
+          type: "tool_result",
+          callId: "call-edit",
+          toolName: "workspace.edit_file",
+          result: { status: "conflict", message: "The file changed; reread the file." },
+        },
+      ],
+      tools: [READ_TOOL, EDIT_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(textOf(events)).toBe(
+      "The file changed, so Solaris did not modify solaris-write-test.txt. Reread the file to continue.",
+    );
+  });
+
+  it("reads before requesting the delete", async () => {
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "delete solaris-write-test" },
+        readResultWithHash("b".repeat(64)),
+      ],
+      tools: [READ_TOOL, DELETE_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-delete",
+      toolName: "workspace.delete_file",
+      input: { path: "solaris-write-test.txt", expectedSha256: "b".repeat(64) },
+    });
+  });
+
+  it("does not request write tools that are not in the request definitions", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "create solaris-write-test" }],
+      tools: [READ_TOOL, LIST_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toBeUndefined();
+    expect(textOf(events)).toBe("Solaris received: create solaris-write-test");
+  });
+});
