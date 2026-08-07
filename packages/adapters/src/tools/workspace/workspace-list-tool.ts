@@ -2,6 +2,7 @@ import { lstat, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Tool, ToolExecutionContext, ToolExecutionResult, JsonValue } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
+import { MUTATION_TEMP_PREFIX } from "./mutations/mutation-temp.js";
 import {
   DEFAULT_EXCLUDED_DIRECTORIES,
   describeFsError,
@@ -81,7 +82,10 @@ export function createWorkspaceListTool(workspaceRoot: string): Tool {
         return { status: "failed", message: `Cannot list directory: ${describeFsError(error)}` };
       }
       const visibleNames = names
-        .filter((name) => !DEFAULT_EXCLUDED_DIRECTORIES.includes(name))
+        .filter(
+          (name) =>
+            !DEFAULT_EXCLUDED_DIRECTORIES.includes(name) && !name.startsWith(MUTATION_TEMP_PREFIX),
+        )
         .sort();
       const truncated = visibleNames.length > WORKSPACE_LIMITS.maxDirectoryEntries;
       const selectedNames = visibleNames.slice(0, WORKSPACE_LIMITS.maxDirectoryEntries);
