@@ -15,15 +15,15 @@ Working today:
 - Read-only workspace tools: `workspace.list`, `workspace.read` (with complete-file SHA-256), `workspace.search` — all paths are canonicalized and contained within the launch directory
 - Read-only Git inspection (`git.status`, `git.diff`) through a trusted, allowlisted Git adapter — fixed argument arrays, no shell, and every executable Git helper disabled mechanically (fsmonitor, aliases, pagers, external diff, textconv, credential helpers, prompts), repository-redirecting and config-injecting environment variables stripped at the process boundary, bounded byte-counted output with a streaming UTF-8 decoder, timeouts, cancellation; structured summaries come from NUL-delimited machine-readable data with exact paths; the repository root must equal the workspace root
 - Safe user-invoked undo (`/undo`) that restores only Solaris-owned changes with a complete reverse diff, one-time approval, and exact post-state hash validation rechecked immediately before the destructive commit; user changes after a Solaris mutation cause a conflict, never an overwrite
-- A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port with an explicit deny-by-default host-read boundary, allowlist-based child environments with the wrapper's runtime-required environment merged under strict rules, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command with trustworthy exit codes (0 passed, 1 probe failure, 3 probes unavailable)
-- Sandboxed development-command execution (`process.run`) with two Solaris-owned runners: `npm-script` (one existing npm package script) and `node-script` (one JavaScript file through Solaris's trusted Node executable). Every command uses structured arguments (never a provider-supplied shell string), runs inside the OS sandbox with a **read-only** workspace, denied network, a minimal sanitized environment, closed stdin, bounded streamed output, a bounded timeout, and process-tree cancellation. Commands require explicit one-time approval of the exact immutable plan (digest-bound); the package or script file is hashed before approval and revalidated after. `npm run check` runs this way.
+- A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port with an enforced host-read allowlist (deny-root with re-allow on Linux/macOS; reported unavailable and refused on Windows), allowlist-based child environments with the wrapper's runtime-required environment merged under strict rules, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command with trustworthy exit codes (0 passed, 1 probe failure, 3 probes unavailable)
+- Sandboxed development-command execution (`process.run`) with the Solaris-owned `node-script` runner (one JavaScript file through Solaris's trusted Node executable, executed from an immutable private copy of the exact approved bytes). Every command uses structured arguments (never a provider-supplied shell string), runs inside the OS sandbox with a **read-only** workspace, denied network, a minimal sanitized environment, closed stdin, bounded streamed output, a bounded timeout, and process-tree cancellation. Commands require explicit one-time approval of the exact immutable plan (digest-bound); the script file is hashed before approval, revalidated after, copied into the run's private directory, and executed from that verified copy. The `npm-script` runner is defined but fails closed as unavailable until npm's execution can be bound to the approved package bytes under the pinned runtime.
 - In-process conversation history
 - Cancellation support through `AbortSignal`
 - Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic scenarios for read tools, the approved write workflow (`create solaris-write-test`, `edit solaris-write-test`, `delete solaris-write-test`), Git inspection (`git status`, `show working diff`, `show staged diff`, `show head diff`), and development commands (`run npm check`, `run npm test`, `run node validation fixture`)
 
 Not yet implemented:
 
-- General shell access, arbitrary executables, writable command execution, package installation, or background processes — the only command runners are `npm-script` and `node-script`, both workspace-read-only and offline
+- General shell access, arbitrary executables, writable command execution, package installation, or background processes — the only active command runner is `node-script`, workspace-read-only and offline; `npm-script` requests fail closed with an explanation
 - Git writes of any kind: staging, commits, reset, restore, checkout, clean, stash, branches, worktrees, remotes
 - Godot project understanding, GDScript programming, or editor/runtime integration (including Godot executable discovery — that is the next narrow task)
 - Real model providers (e.g. Anthropic, OpenAI)
@@ -93,22 +93,17 @@ Solaris
 Interactive Godot development harness
 Provider: deterministic-fake
 
-> run npm check
+> run node validation fixture
 
 Command approval required
 
 Tool: process.run
-Runner: npm-script
-Package: solaris
-Script: check
+Runner: node-script
+Script: scripts/process-validation-fixture.mjs
 Working directory: .
 
 Arguments:
   none
-
-Repository script:
-  npm run format:check && npm run lint && npm run typecheck &&
-  npm test && npm run check:architecture
 
 Execution:
   Workspace access: read-only
@@ -119,18 +114,25 @@ Execution:
   stdout limit: 1 MiB
   stderr limit: 1 MiB
 
-npm executes this repository-defined script through its platform script shell.
-Automatically associated precheck/postcheck scripts are disabled.
+The script runs from an immutable private copy inside the sandbox run
+directory; __dirname and import.meta.url refer to that private copy, while
+process.cwd() stays in the workspace.
 
 Approval applies once to command plan 2f8a91c3.
 
 Approve once? [y/N] y
 
-● npm run check (plan 2f8a91c3)
-  [stdout] Checking formatting...
-  [stdout] Type checking passed.
-  ✓ exit 0 in 18.4s
+● node scripts/process-validation-fixture.mjs (plan 2f8a91c3)
+  [stdout] Validation fixture ran.
+  ✓ exit 0 in 1.2s
 ```
+
+The `npm-script` runner is defined but reports `unavailable` for every
+request (including the fake provider's `run npm check` / `run npm test`
+scenarios): npm re-reads the mutable workspace `package.json` at its own
+execution time, and the pinned sandbox runtime cannot bind that read to the
+approved package bytes without copying the broader package state, so
+Solaris refuses instead of claiming exact approval.
 
 ## How to launch the CLI
 

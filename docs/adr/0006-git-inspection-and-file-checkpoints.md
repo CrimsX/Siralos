@@ -39,5 +39,5 @@ Negative:
 
 Platform limitations:
 
-- On Windows, restore commits use the shared safe-replacement primitive: a direct rename is attempted first; when it fails (typical for locked or read-only targets), the original is moved to a same-directory quarantine, verified by hash, replaced, and restored automatically on failure. The quarantine copy is never removed before the restored content is verified, and an uncertain state reports the recoverable quarantine path.
+- Restore and undo-delete commits use the shared safe-replacement/deletion primitives: the target is always displaced to a same-directory quarantine, the displaced object is hash-verified against the recorded post-state, and only then is the restore rename or unlink performed — on every platform, never only after a direct rename fails. Undo-create uses exclusive creation with a canonical-location check. The quarantine copy is never removed before the restored content is verified and the checkpoint is durably marked undone, and an uncertain state reports the recoverable quarantine path.
 - The Git adapter executes Git directly with the full sandboxed-process discipline (no shell, sanitized environment, bounds, timeout, cancellation); routing Git through a sandbox backend is deferred until a backend is available on the host platform.

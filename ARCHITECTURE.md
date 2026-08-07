@@ -51,11 +51,12 @@ The security facade (`createSolarisSecurity({ backend, policy, profile })`) sits
 ```text
 Provider requests a development command
    ↓
-Runner validates structured input (npm-script | node-script)
+Runner validates structured input (node-script available; npm-script
+fails closed as unavailable)
    ↓
-Runner prepares an immutable plan: working directory, package.json or
-script file (bounded, no symlinks, SHA-256 recorded), trusted Node and
-npm CLI identities, argument array, timeout
+Runner prepares an immutable plan: working directory, script file
+(bounded, no symlinks, SHA-256 recorded), trusted Node identity,
+argument array, timeout
    ↓
 Application requests one-time approval with the exact preview and digest
    ↓
@@ -64,10 +65,16 @@ CLI reviewer shows every boundary; approval binds to the digest
 Tool revalidates all preconditions, recomputes the digest, checks the
 sandbox is available and fully enforcing
    ↓
-Creates a sandbox-private run directory, acquires the shared mutation
+Creates a sandbox-private run directory (no-follow verified, exclusive
+creation, canonical re-verification), acquires the shared mutation
 lock, records Git status
    ↓
-Sandbox backend executes under validation-offline (read-only workspace,
+Runner stages the exact approved script bytes into the run's private
+script cache and verifies the copy's hash; the child executes the
+immutable private copy
+   ↓
+Sandbox backend executes under validation-offline with the request's own
+per-execution configuration (host-read allowlist, read-only workspace,
 denied network, closed stdin, minimal environment, bounded output)
    ↓
 CLI streams sanitized bounded output; result maps to a structured
@@ -76,9 +83,9 @@ command result (nonzero exit is a completed command)
 Git status compared; run directory removed; lock released
 ```
 
-- Runners are prepared/executed through the immutable runner registry; the concrete plans are opaque single-use objects that only their creating runner can translate back into an executable request (revalidated and rehashed). The digest covers runner id, executable identity and version, script/package hash, repository script body, arguments, working directory, profile, environment policy, timeout, output limits, stdin and network policy.
+- Runners are prepared/executed through the immutable runner registry; the concrete plans are opaque single-use objects that only their creating runner can translate back into an executable request (revalidated and rehashed). The digest covers runner id, executable identity and version, script path and complete SHA-256, arguments, working directory, profile, environment policy, timeout, output limits, stdin and network policy.
 - Command execution never spawns a process from core, the CLI, providers, or the runners; only the sandbox adapter (and the Git adapter, for inspection) uses process APIs, and the architecture check rejects `shell: true`/`exec`/`execSync`/`spawnSync` in runtime code.
-- Each run lives under `~/.solaris/runs/<workspace-fingerprint>/<run-id>/` with private `home/`, `tmp/`, and `npm-cache/`; cleanup is link-safe and verified against the runs root.
+- Each run lives under `~/.solaris/runs/<workspace-fingerprint>/<run-id>/` with private `home/`, `tmp/`, `npm-cache/`, and a script cache; every path component is verified with no-follow semantics before anything is created beneath it, components are created exclusively, the runs root must be outside the workspace, and the sandbox is granted exactly the current run directory. Cleanup re-verifies containment immediately before deletion, is link-safe, and preserves the directory when a safe state cannot be proven.
 - Git structured status before/after execution is a verification signal: a workspace change detected despite read-only enforcement marks `workspace_violation` and disables further commands for the session.
 - See `SECURITY.md` and ADR 0007 for the full model.
 
@@ -133,12 +140,12 @@ Adapters implement core-owned ports. Providers, concrete tools, configuration, e
 
 - `DeterministicFakeProvider` (id `deterministic-fake`): streams text responses in chunks, supports cancellation, and has synthetic tool scenarios (`list files`, `read README.md`, `search <text>`) that request registered tools and respond truthfully to their results. It never touches the filesystem or executes tools.
 - Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search`. All three share one canonical containment implementation (`resolveWorkspacePath`), the explicit exclusion list (`node_modules`, `.git`, `dist`, `coverage`), and the `WORKSPACE_LIMITS` output limits. `workspace.read` returns the complete-file SHA-256.
-- Approved mutation tools: `workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`. They share the write-path safety and protected-path enforcement (`mutation-paths.ts`), the serialized mutation lock, exclusive temp-file staging, hash-based conflict detection, deterministic bounded diffs (`diff.ts` on the `diff` package), and post-write verification. Only these modules may call direct write APIs.
+- Approved mutation tools: `workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`. They share the write-path safety and protected-path enforcement (`mutation-paths.ts`), the serialized mutation lock, exclusive temp-file staging, hash-based conflict detection, deterministic bounded diffs (`diff.ts` on the `diff` package), and post-write verification. Every replacement and deletion commit is identity-bound through `safe-replacement.ts`: the target is displaced to a same-directory quarantine, the displaced object is hash-verified against the approved state, and only then is the commit rename or unlink performed — on every platform. Only these modules may call direct write APIs.
 - User configuration (`loadUserConfig`): reads `~/.solaris/config.json`, defaults to `inspect`/`auto`, and rejects unknown profiles or backends.
 - Child environments (`buildChildEnvironment`, `buildCommandEnvironment`): allowlist-based construction with denied credential patterns and fixed safe command values; the only sanctioned way to build a child environment.
-- Command layer (`src/process`): trusted Node/npm CLI resolution (`resolveTrustedNode`, `resolveNpmCli` — npm-cli.js is invoked through the trusted Node executable, never `npm.cmd` or a shell), the `npm-script` and `node-script` runners (structured validation, file hashing, digest computation, full revalidation), the sandbox-private run-directory provider, and the `process.run` tool that executes approved plans through the `SandboxBackend` under `validation-offline`. No module in this layer spawns processes.
-- `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). Only this module may import the runtime package. It streams bounded decoded output, enforces per-stream hard limits by terminating the process, and terminates the process tree on timeout/cancellation.
-- Conformance runner (`runSandboxConformance`): writes fixed fixture programs into a temporary workspace and executes them through the backend, reporting pass/fail per probe.
+- Command layer (`src/process`): trusted Node CLI resolution (`resolveTrustedNode` — npm CLI resolution remains for the conformance suite, but the `npm-script` runner fails closed as unavailable because npm's execution cannot be bound to the approved package bytes under the pinned runtime), the `node-script` runner (structured validation, file hashing, digest computation, full revalidation, and staging of the exact approved script bytes into the run's private script cache with hash verification — the child executes the immutable private copy, never the mutable workspace path), the sandbox-private run-directory provider (every path component verified with no-follow semantics before creation, exclusive creation, canonical re-verification before use, runs root outside the workspace, cleanup that re-verifies immediately before deletion and never traverses links), and the `process.run` tool that executes approved plans through the `SandboxBackend` under `validation-offline`, granting the sandbox exactly the current run directory. No module in this layer spawns processes.
+- `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). Only this module may import the runtime package. It enforces a deny-by-default host-read allowlist (deny `/` and re-allow the workspace, the current run directory, the trusted runner executables, and the minimum system runtime paths on Linux/macOS; refused as unavailable on Windows), gives every request its own per-execution filesystem/network configuration so no request can inherit a broader earlier profile, resets and reinitializes the shared manager when the effective configuration changes, streams bounded decoded output accounted on raw bytes with the hard limit enforced inside the crossing chunk, terminates the process tree on timeout/cancellation/output-limit, runs cleanup in `finally` on every path, and isolates failing output callbacks.
+- Conformance runner (`runSandboxConformance`): writes fixed fixture programs into a temporary workspace and executes them through the backend, reporting pass/fail per probe. Host-read probes use existing regular files in representative unapproved locations selected independently of the deny surface, plus cross-run isolation and bidirectional profile-isolation probes.
 
 The workspace root is the canonicalized directory Solaris was launched from; it is stored privately by the tools and displayed in `/status`. Provider adapters never import sandbox, environment, tool, checkpoint, git, or process modules — the architecture check enforces that boundary.
 
@@ -221,7 +228,7 @@ The current workflow is one interactive primary agent. Multi-agent review, agent
 
 ## Deferred: process and write tools
 
-The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; approved single-file workspace mutations execute through them; read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete; and sandboxed validation-command execution (`process.run` with `npm-script` and `node-script` runners) is complete — structured arguments only, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or Godot execution exists; those remain deferred and, when added, must execute under the same enforcement.
+The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; approved single-file workspace mutations execute through them (identity-bound quarantine commits); read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete; and sandboxed validation-command execution (`process.run` with the `node-script` runner — the `npm-script` runner fails closed as unavailable because npm's execution cannot be bound to the approved package bytes under the pinned runtime) is complete: structured arguments only, immutable private script execution, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or Godot execution exists; those remain deferred and, when added, must execute under the same enforcement.
 
 ## Git inspection
 
