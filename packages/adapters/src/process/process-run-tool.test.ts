@@ -778,13 +778,13 @@ describe("process.run tool serialization", () => {
       const firstRun = harness.tool.executePrepared(first.command, {
         approvedDigest: first.digest,
       });
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 20);
-      });
+      await waitFor(() => started === 1);
       expect(started).toBe(1);
       const secondRun = harness.tool.executePrepared(second.command, {
         approvedDigest: second.digest,
       });
+      // The second run must remain blocked behind the mutation lock.
+      await waitFor(() => started === 1);
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 20);
       });
@@ -798,3 +798,15 @@ describe("process.run tool serialization", () => {
     }
   });
 });
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for the expected state.");
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 5);
+    });
+  }
+}
