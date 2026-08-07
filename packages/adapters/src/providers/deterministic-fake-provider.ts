@@ -116,6 +116,29 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
     yield* streamTextChunks(turn.text, signal);
     return;
   }
+  const commandScenario = findCommandScenario(request.messages);
+  if (commandScenario !== null) {
+    if (isToolAvailable(request.tools, "process.run")) {
+      const result = findLatestResult(itemsAfterLastUserMessage(request.messages), "process.run");
+      if (result === undefined) {
+        yield {
+          type: "tool_call",
+          callId: "call-command",
+          toolName: "process.run",
+          input: commandScenarioInput(commandScenario),
+        };
+        await Promise.resolve();
+        return;
+      }
+      yield* streamTextChunks(formatCommandFinalText(commandScenario, result), signal);
+      return;
+    }
+    yield* streamTextChunks(
+      `Solaris cannot run development commands in this profile (process.run is unavailable).`,
+      signal,
+    );
+    return;
+  }
   const scenario = findScenario(request.messages);
   if (scenario !== null) {
     const result = findResultForCall(request.messages, "call-1");
@@ -300,6 +323,101 @@ function formatWriteFinalText(
     case "sandbox_unavailable":
     case "workspace_violation":
       return `Solaris could not ${verb} ${WRITE_TEST_FILE}: ${result.message}`;
+  }
+}
+
+type CommandScenario =
+  | {
+      readonly kind: "npm-check";
+      readonly display: string;
+    }
+  | {
+      readonly kind: "npm-test";
+      readonly display: string;
+    }
+  | {
+      readonly kind: "node-fixture";
+      readonly display: string;
+    };
+
+const NODE_FIXTURE_PATH = "scripts/process-validation-fixture.mjs";
+
+function findCommandScenario(messages: readonly ConversationItem[]): CommandScenario | null {
+  const latestUserPrompt = findLatestUserPrompt(messages);
+  if (latestUserPrompt === "run npm check") {
+    return { kind: "npm-check", display: "npm run check" };
+  }
+  if (latestUserPrompt === "run npm test") {
+    return { kind: "npm-test", display: "npm run test" };
+  }
+  if (latestUserPrompt === "run node validation fixture") {
+    return { kind: "node-fixture", display: `node ${NODE_FIXTURE_PATH}` };
+  }
+  return null;
+}
+
+function commandScenarioInput(scenario: CommandScenario): JsonValue {
+  switch (scenario.kind) {
+    case "npm-check":
+      return {
+        runner: "npm-script",
+        script: "check",
+        arguments: [],
+        workingDirectory: ".",
+      };
+    case "npm-test":
+      return {
+        runner: "npm-script",
+        script: "test",
+        arguments: [],
+        workingDirectory: ".",
+      };
+    case "node-fixture":
+      return {
+        runner: "node-script",
+        path: NODE_FIXTURE_PATH,
+        arguments: [],
+        workingDirectory: ".",
+      };
+  }
+}
+
+function formatCommandFinalText(scenario: CommandScenario, result: ToolExecutionResult): string {
+  const display = scenario.display;
+  switch (result.status) {
+    case "success": {
+      const exitCode =
+        typeof result.output === "object" &&
+        result.output !== null &&
+        !Array.isArray(result.output) &&
+        typeof (result.output as JsonObject)["exitCode"] === "number"
+          ? (result.output as JsonObject)["exitCode"]
+          : null;
+      if (exitCode !== null && exitCode !== 0) {
+        return `Solaris ran \`${display}\`, but it exited with code ${exitCode}.`;
+      }
+      return `Solaris ran \`${display}\` and it exited with code 0.`;
+    }
+    case "denied":
+      return `The command was not approved, so Solaris did not run it.`;
+    case "conflict":
+      return `The command plan changed, so Solaris did not run it. Request the command again.`;
+    case "cancelled":
+      return `The command was cancelled before it completed.`;
+    case "timed_out":
+      return `The command timed out and its process tree was terminated.`;
+    case "sandbox_denied":
+      return `The sandbox denied part of the command: ${result.message}`;
+    case "sandbox_unavailable":
+      return `The sandbox is unavailable, so the command did not run.`;
+    case "workspace_violation":
+      return `Solaris detected unexpected workspace changes; command execution is disabled for this session.`;
+    case "output_limit":
+      return `The command exceeded its output limit and was terminated.`;
+    case "unavailable":
+    case "invalid_input":
+    case "failed":
+      return `Solaris could not run the command: ${result.message}`;
   }
 }
 

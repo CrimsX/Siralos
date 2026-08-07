@@ -648,3 +648,149 @@ describe("deterministic fake provider git scenarios", () => {
     expect(textOf(events)).toBe("Solaris received: git status");
   });
 });
+
+describe("deterministic fake provider command scenarios", () => {
+  const PROCESS_TOOL: ToolDefinition = {
+    name: "process.run",
+    description: "Run a validated Solaris development command.",
+    inputSchema: {},
+  };
+
+  function commandRequest(
+    prompt: string,
+    result?: {
+      readonly status: string;
+      readonly output?: Record<string, unknown>;
+      readonly message?: string;
+    },
+  ): ModelRequest {
+    const items: ConversationItem[] = [{ type: "user_message", content: prompt }];
+    if (result !== undefined) {
+      items.push({
+        type: "assistant_tool_call",
+        callId: "call-command",
+        toolName: "process.run",
+        input: {},
+      });
+      items.push({
+        type: "tool_result",
+        callId: "call-command",
+        toolName: "process.run",
+        result: {
+          status: result.status as never,
+          ...(result.output === undefined ? {} : { output: result.output }),
+          ...(result.message === undefined ? {} : { message: result.message }),
+        },
+      });
+    }
+    return { messages: items, tools: [PROCESS_TOOL] };
+  }
+
+  it("requests npm check through the npm-script runner", async () => {
+    const { events } = await collect(commandRequest("run npm check"));
+    expect(toolCallEvent(events)).toMatchObject({
+      type: "tool_call",
+      toolName: "process.run",
+      input: {
+        runner: "npm-script",
+        script: "check",
+        arguments: [],
+        workingDirectory: ".",
+      },
+    });
+  });
+
+  it("requests npm test through the npm-script runner", async () => {
+    const { events } = await collect(commandRequest("run npm test"));
+    expect(toolCallEvent(events)).toMatchObject({
+      type: "tool_call",
+      toolName: "process.run",
+      input: {
+        runner: "npm-script",
+        script: "test",
+        arguments: [],
+        workingDirectory: ".",
+      },
+    });
+  });
+
+  it("requests the validation fixture through the node-script runner", async () => {
+    const { events } = await collect(commandRequest("run node validation fixture"));
+    expect(toolCallEvent(events)).toMatchObject({
+      type: "tool_call",
+      toolName: "process.run",
+      input: {
+        runner: "node-script",
+        path: "scripts/process-validation-fixture.mjs",
+        arguments: [],
+        workingDirectory: ".",
+      },
+    });
+  });
+
+  it("does not request process.run when the tool is unavailable", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "run npm check" }],
+      tools: [LIST_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toBeUndefined();
+    expect(textOf(events)).toContain("cannot run development commands");
+  });
+
+  it("summarizes a successful command truthfully", async () => {
+    const { events } = await collect(
+      commandRequest("run npm check", {
+        status: "success",
+        output: { status: "completed", exitCode: 0 },
+      }),
+    );
+    expect(textOf(events)).toBe("Solaris ran `npm run check` and it exited with code 0.");
+  });
+
+  it("summarizes a nonzero exit truthfully without treating it as infrastructure failure", async () => {
+    const { events } = await collect(
+      commandRequest("run npm check", {
+        status: "success",
+        output: { status: "completed", exitCode: 2 },
+      }),
+    );
+    expect(textOf(events)).toBe("Solaris ran `npm run check`, but it exited with code 2.");
+  });
+
+  it("summarizes denial truthfully", async () => {
+    const { events } = await collect(
+      commandRequest("run npm check", { status: "denied", message: "denied" }),
+    );
+    expect(textOf(events)).toBe("The command was not approved, so Solaris did not run it.");
+  });
+
+  it("summarizes cancellation and timeout truthfully", async () => {
+    const cancelled = await collect(
+      commandRequest("run npm check", { status: "cancelled", message: "cancelled" }),
+    );
+    expect(textOf(cancelled.events)).toBe("The command was cancelled before it completed.");
+    const timedOut = await collect(
+      commandRequest("run npm check", { status: "timed_out", message: "timed out" }),
+    );
+    expect(textOf(timedOut.events)).toBe(
+      "The command timed out and its process tree was terminated.",
+    );
+  });
+
+  it("summarizes sandbox unavailability truthfully", async () => {
+    const { events } = await collect(
+      commandRequest("run npm check", { status: "sandbox_unavailable", message: "no sandbox" }),
+    );
+    expect(textOf(events)).toBe("The sandbox is unavailable, so the command did not run.");
+  });
+
+  it("summarizes workspace violations truthfully", async () => {
+    const { events } = await collect(
+      commandRequest("run npm check", { status: "workspace_violation", message: "violation" }),
+    );
+    expect(textOf(events)).toBe(
+      "Solaris detected unexpected workspace changes; command execution is disabled for this session.",
+    );
+  });
+});
