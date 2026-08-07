@@ -1,4 +1,19 @@
-import type { SessionStatus, ToolDefinition } from "@solaris/core";
+import type {
+  Capability,
+  CapabilityPolicy,
+  SandboxBackendStatus,
+  SandboxProfile,
+  SessionStatus,
+  ToolDefinition,
+} from "@solaris/core";
+import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
+
+const CAPABILITIES: readonly Capability[] = [
+  "workspace.read",
+  "workspace.write",
+  "process.execute",
+  "network.outbound",
+];
 
 export function formatHeader(providerId: string): string {
   return `Solaris
@@ -9,11 +24,13 @@ Provider: ${providerId}
 
 export function formatHelp(): string {
   return `Available commands:
-  /help    Show this help
-  /status  Show provider, session, and workspace status
-  /clear   Clear the terminal (conversation is kept)
-  /tools   List the available tools
-  /exit    Close Solaris
+  /help         Show this help
+  /status       Show provider, session, and workspace status
+  /clear        Clear the terminal (conversation is kept)
+  /tools        List the available tools
+  /sandbox      Show the sandbox backend status
+  /permissions  Show capability rules
+  /exit         Close Solaris
 `;
 }
 
@@ -21,14 +38,104 @@ export function formatStatus(
   status: SessionStatus,
   workspaceRoot: string,
   toolCount: number,
+  profileId: string,
 ): string {
   const sessionState = status.state === "responding" ? "responding" : "active";
   return `Provider: ${status.providerId}
 Session: ${sessionState}
 Messages: ${status.messageCount}
 Workspace: ${workspaceRoot}
+Sandbox: ${profileId}
 Tools: ${toolCount}
 `;
+}
+
+export function formatPermissions(policy: CapabilityPolicy, profileId: string): string {
+  const lines = CAPABILITIES.map((capability) => {
+    const rule = policy.rules[capability] ?? "deny";
+    return `  ${capability.padEnd(18)} ${rule}`;
+  });
+  return `Profile: ${profileId}
+
+${lines.join("\n")}
+
+No provider-accessible process or write tool exists yet.
+`;
+}
+
+export function formatSandbox(status: SandboxBackendStatus, profile: SandboxProfile): string {
+  const lines = [
+    `Profile: ${profile.id}`,
+    `Backend: ${status.backendId}`,
+    `Platform: ${status.platform}`,
+    `State: ${status.state}`,
+    `Version: ${status.version}`,
+    `Filesystem read restriction: ${yesNo(status.capabilities.filesystemReadRestriction)}`,
+    `Filesystem write restriction: ${yesNo(status.capabilities.filesystemWriteRestriction)}`,
+    `Network restriction: ${yesNo(status.capabilities.networkRestriction)}`,
+    `Process-tree restriction: ${yesNo(status.capabilities.processTreeRestriction)}`,
+    `Violation reporting: ${yesNo(status.capabilities.violationReporting)}`,
+    `Network: denied`,
+    `Environment: minimal`,
+  ];
+  if (status.message !== undefined) {
+    lines.push(`Setup: ${status.message}`);
+  }
+  if (status.state === "degraded") {
+    lines.push("Warning: the sandbox backend is degraded.");
+  }
+  if (status.state === "failed") {
+    lines.push("Warning: the sandbox backend failed its checks; nothing will run sandboxed.");
+  }
+  if (status.platform === "windows") {
+    lines.push(
+      "Warning: the native Windows backend is alpha; do not treat it as secure until Solaris conformance passes.",
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatSandboxViolation(category: string, summary: string): string {
+  return `  \u26A0 sandbox violation (${category}): ${summary}\n`;
+}
+
+export function formatDoctor(report: SandboxDoctorReport): string {
+  const lines = [
+    "Solaris sandbox doctor",
+    `Profile: ${report.profileId}`,
+    `Backend: ${report.backendId}`,
+    `Backend version: ${report.backendVersion}`,
+    `Platform: ${report.platform}`,
+    `State: ${report.state}`,
+    `Filesystem read restriction: ${yesNo(report.capabilities.filesystemReadRestriction)}`,
+    `Filesystem write restriction: ${yesNo(report.capabilities.filesystemWriteRestriction)}`,
+    `Network restriction: ${yesNo(report.capabilities.networkRestriction)}`,
+    `Process-tree restriction: ${yesNo(report.capabilities.processTreeRestriction)}`,
+    `Violation reporting: ${yesNo(report.capabilities.violationReporting)}`,
+  ];
+  if (report.statusMessage !== null) {
+    lines.push(`Setup requirements: ${report.statusMessage}`);
+  }
+  if (!report.probesRun) {
+    lines.push("Live conformance: not run (use --sandbox-doctor --run-probes)");
+  } else {
+    lines.push("Live conformance: ran");
+    if (report.conformance !== null) {
+      for (const result of report.conformance.results) {
+        const mark =
+          result.outcome === "passed" ? "PASS" : result.outcome === "skipped" ? "SKIP" : "FAIL";
+        lines.push(`  [${mark}] ${result.probeId}: ${result.description}`);
+      }
+      lines.push(
+        `Result: ${report.conformance.passed} passed, ${report.conformance.failed} failed, ${report.conformance.skipped} skipped.`,
+      );
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function yesNo(value: boolean): string {
+  return value ? "yes" : "no";
 }
 
 export function formatTools(tools: readonly ToolDefinition[]): string {

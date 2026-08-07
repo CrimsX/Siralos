@@ -20,6 +20,8 @@ describe("parseInput", () => {
     expect(parseInput("/status")).toEqual({ type: "command", command: "status" });
     expect(parseInput("/clear")).toEqual({ type: "command", command: "clear" });
     expect(parseInput("/tools")).toEqual({ type: "command", command: "tools" });
+    expect(parseInput("/sandbox")).toEqual({ type: "command", command: "sandbox" });
+    expect(parseInput("/permissions")).toEqual({ type: "command", command: "permissions" });
     expect(parseInput("/exit")).toEqual({ type: "command", command: "exit" });
   });
 

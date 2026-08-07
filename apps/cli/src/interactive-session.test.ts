@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  createDefaultPolicy,
   createSolarisApplication,
+  createSolarisSecurity,
   createToolRegistry,
+  INSPECT_PROFILE,
   type ModelEvent,
   type ModelProvider,
+  type SolarisSecurity,
   type Tool,
   type ToolExecutionResult,
 } from "@solaris/core";
+import { createFakeSandboxBackend } from "@solaris/adapters";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { runInteractiveSession, type SessionIO, type SessionInfo } from "./interactive-session.js";
 
@@ -43,9 +48,32 @@ class ScriptedIO implements SessionIO {
 
 async function createComposedSession(lines: readonly string[]) {
   const io = new ScriptedIO(lines);
-  const { application, workspaceRoot, tools } = await createCliApplication();
-  const sessionInfo: SessionInfo = { workspaceRoot, tools };
+  const { application, workspaceRoot, tools, security } = await createCliApplication();
+  const sessionInfo: SessionInfo = { workspaceRoot, tools, security };
   return { io, application, sessionInfo };
+}
+
+function createFakeSecurity(): SolarisSecurity {
+  const { backend } = createFakeSandboxBackend({
+    status: {
+      backendId: "fake-backend",
+      state: "available",
+      platform: "linux",
+      version: "0.0.0-fake",
+      capabilities: {
+        filesystemReadRestriction: true,
+        filesystemWriteRestriction: true,
+        networkRestriction: true,
+        processTreeRestriction: true,
+        violationReporting: true,
+      },
+    },
+  });
+  return createSolarisSecurity({
+    backend,
+    policy: createDefaultPolicy("inspect"),
+    profile: INSPECT_PROFILE,
+  });
 }
 
 describe("runInteractiveSession", () => {
@@ -97,6 +125,7 @@ describe("runInteractiveSession", () => {
     expect(io.text).toContain("Available commands");
     expect(io.text).toContain("Provider: deterministic-fake");
     expect(io.text).toContain("Messages: 0");
+    expect(io.text).toContain("Sandbox:");
   });
 
   it("clears the terminal without clearing conversation history", async () => {
@@ -123,7 +152,11 @@ describe("runInteractiveSession", () => {
       tools: createToolRegistry([]),
     });
     const io = new ScriptedIO(["hello", "/exit"]);
-    const sessionInfo: SessionInfo = { workspaceRoot: "/workspace", tools: [] };
+    const sessionInfo: SessionInfo = {
+      workspaceRoot: "/workspace",
+      tools: [],
+      security: createFakeSecurity(),
+    };
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
     expect(io.text).toContain("provider exploded");
@@ -212,7 +245,11 @@ describe("runInteractiveSession tool activity", () => {
       tools: createToolRegistry([tool]),
     });
     const io = new ScriptedIO(["hello", "/status", "/exit"]);
-    const sessionInfo: SessionInfo = { workspaceRoot: "/workspace", tools: [tool.definition] };
+    const sessionInfo: SessionInfo = {
+      workspaceRoot: "/workspace",
+      tools: [tool.definition],
+      security: createFakeSecurity(),
+    };
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
     expect(io.text).toContain("\u2715 Path is outside the Solaris workspace.");
@@ -220,3 +257,83 @@ describe("runInteractiveSession tool activity", () => {
     expect(io.text).toContain("Messages: 4");
   });
 });
+
+describe("runInteractiveSession sandbox diagnostics", () => {
+  it("renders the capability rules for /permissions", async () => {
+    const io = new ScriptedIO(["/permissions", "/exit"]);
+    const sessionInfo: SessionInfo = {
+      workspaceRoot: "/workspace",
+      tools: [],
+      security: createFakeSecurity(),
+    };
+    const exitCode = await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(exitCode).toBe(0);
+    expect(io.text).toContain("Profile: inspect");
+    expect(io.text).toMatch(/workspace\.read\s+allow/);
+    expect(io.text).toMatch(/workspace\.write\s+deny/);
+    expect(io.text).toMatch(/process\.execute\s+deny/);
+    expect(io.text).toMatch(/network\.outbound\s+deny/);
+    expect(io.text).toContain("No provider-accessible process or write tool exists yet.");
+  });
+
+  it("renders the sandbox status for /sandbox without secrets", async () => {
+    const io = new ScriptedIO(["/sandbox", "/exit"]);
+    const sessionInfo: SessionInfo = {
+      workspaceRoot: "/workspace",
+      tools: [],
+      security: createFakeSecurity(),
+    };
+    const exitCode = await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(exitCode).toBe(0);
+    expect(io.text).toContain("Profile: inspect");
+    expect(io.text).toContain("Backend: fake-backend");
+    expect(io.text).toContain("State: available");
+    expect(io.text).toContain("Network: denied");
+    expect(io.text).toContain("Environment: minimal");
+    expect(io.text).not.toContain("sk-");
+  });
+
+  it("renders setup-required guidance when the backend needs setup", async () => {
+    const { backend } = createFakeSandboxBackend({
+      status: {
+        backendId: "fake-backend",
+        state: "setup-required",
+        platform: "windows",
+        version: "0.0.0-fake",
+        capabilities: {
+          filesystemReadRestriction: false,
+          filesystemWriteRestriction: false,
+          networkRestriction: false,
+          processTreeRestriction: false,
+          violationReporting: false,
+        },
+        message: "Run the one-time elevated setup command.",
+      },
+    });
+    const security = createSolarisSecurity({
+      backend,
+      policy: createDefaultPolicy("inspect"),
+      profile: INSPECT_PROFILE,
+    });
+    const io = new ScriptedIO(["/sandbox", "/exit"]);
+    const sessionInfo: SessionInfo = { workspaceRoot: "/workspace", tools: [], security };
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("State: setup-required");
+    expect(io.text).toContain("Run the one-time elevated setup command.");
+    expect(io.text).toContain("alpha");
+  });
+});
+
+function createTestApplication() {
+  return createSolarisApplication({
+    provider: {
+      id: "session-test-provider",
+      async *stream(): AsyncIterable<ModelEvent> {
+        yield { type: "text_delta", text: "ok" };
+        await Promise.resolve();
+        yield { type: "completed" };
+      },
+    },
+    tools: createToolRegistry([]),
+  });
+}

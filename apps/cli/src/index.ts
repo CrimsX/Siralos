@@ -3,11 +3,19 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { createCliApplication } from "./bootstrap/create-application.js";
-import { runInteractiveSession, type SessionIO } from "./interactive-session.js";
-import { describeError, formatHeader } from "./output.js";
+import { runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
+import { runInteractiveSession, type SessionIO, type SessionInfo } from "./interactive-session.js";
+import { describeError, formatDoctor, formatHeader } from "./output.js";
 
 async function main(): Promise<number> {
-  const { application, providerId, workspaceRoot, tools } = await createCliApplication();
+  const args = process.argv.slice(2);
+  if (args.includes("--sandbox-doctor")) {
+    const report = await runSandboxDoctor({ includeProbes: args.includes("--run-probes") });
+    stdout.write(formatDoctor(report));
+    return 0;
+  }
+  const { application, providerId, workspaceRoot, tools, security, sandbox } =
+    await createCliApplication();
   const readline = createInterface({ input: stdin, output: stdout });
   readline.on("SIGINT", () => {
     readline.close();
@@ -27,9 +35,11 @@ async function main(): Promise<number> {
     },
   };
   stdout.write(formatHeader(providerId));
-  const exitCode = await runInteractiveSession(io, application, { workspaceRoot, tools });
+  const sessionInfo: SessionInfo = { workspaceRoot, tools, security };
+  const exitCode = await runInteractiveSession(io, application, sessionInfo);
   readline.close();
   stdin.destroy();
+  await sandbox.close();
   return exitCode;
 }
 

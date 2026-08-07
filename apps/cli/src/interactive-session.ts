@@ -1,10 +1,13 @@
-import type { SolarisApplication, ToolDefinition } from "@solaris/core";
+import type { SolarisApplication, SolarisSecurity, ToolDefinition } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
 import {
   describeError,
   formatHelp,
   formatInvalidCommand,
+  formatPermissions,
   formatProviderFailure,
+  formatSandbox,
+  formatSandboxViolation,
   formatStatus,
   formatToolCancelled,
   formatToolCompleted,
@@ -23,6 +26,7 @@ export interface SessionIO {
 export interface SessionInfo {
   readonly workspaceRoot: string;
   readonly tools: readonly ToolDefinition[];
+  readonly security: SolarisSecurity;
 }
 
 const PROMPT = "> ";
@@ -53,6 +57,7 @@ export async function runInteractiveSession(
                 application.getStatus(),
                 sessionInfo.workspaceRoot,
                 sessionInfo.tools.length,
+                sessionInfo.security.profile.id,
               ),
             );
             break;
@@ -62,6 +67,14 @@ export async function runInteractiveSession(
           case "tools":
             io.write(formatTools(sessionInfo.tools));
             break;
+          case "sandbox":
+            await runSandboxCheck(io, sessionInfo.security);
+            break;
+          case "permissions":
+            io.write(
+              formatPermissions(sessionInfo.security.policy, sessionInfo.security.profile.id),
+            );
+            break;
           case "exit":
             return 0;
         }
@@ -70,6 +83,22 @@ export async function runInteractiveSession(
         break;
       case "invalid_command":
         io.write(formatInvalidCommand(parsed.input));
+        break;
+    }
+  }
+}
+
+async function runSandboxCheck(io: SessionIO, security: SolarisSecurity): Promise<void> {
+  for await (const event of security.checkSandbox()) {
+    switch (event.type) {
+      case "sandbox_check_started":
+        io.write("Checking sandbox\u2026\n");
+        break;
+      case "sandbox_check_completed":
+        io.write(formatSandbox(event.status, security.profile));
+        break;
+      case "sandbox_violation":
+        io.write(formatSandboxViolation(event.category, sanitizeForDisplay(event.summary)));
         break;
     }
   }
