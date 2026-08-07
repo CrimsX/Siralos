@@ -129,8 +129,52 @@ describe("isDeniedVariable", () => {
     expect(isDeniedVariable("AZURE_TENANT")).toBe(true);
     expect(isDeniedVariable("GOOGLE_CLOUD_PROJECT")).toBe(true);
     expect(isDeniedVariable("NPM_TOKEN")).toBe(true);
+    expect(isDeniedVariable("NODE_OPTIONS")).toBe(true);
+    expect(isDeniedVariable("BASH_ENV")).toBe(true);
+    expect(isDeniedVariable("ENV")).toBe(true);
+    expect(isDeniedVariable("CDPATH")).toBe(true);
+    expect(isDeniedVariable("GIT_DIR")).toBe(true);
+    expect(isDeniedVariable("GIT_WORK_TREE")).toBe(true);
+    expect(isDeniedVariable("GIT_INDEX_FILE")).toBe(true);
+    expect(isDeniedVariable("GIT_CONFIG")).toBe(true);
+    expect(isDeniedVariable("GIT_CONFIG_GLOBAL")).toBe(true);
+    expect(isDeniedVariable("GIT_CONFIG_SYSTEM")).toBe(true);
+    expect(isDeniedVariable("NPM_CONFIG_USERCONFIG")).toBe(true);
+    expect(isDeniedVariable("npm_config_userconfig")).toBe(true);
+    expect(isDeniedVariable("NPM_CONFIG_SCRIPT_SHELL")).toBe(true);
+    expect(isDeniedVariable("npm_config_script_shell")).toBe(true);
+    expect(isDeniedVariable("HTTP_PROXY")).toBe(true);
+    expect(isDeniedVariable("HTTPS_PROXY")).toBe(true);
+    expect(isDeniedVariable("ALL_PROXY")).toBe(true);
+    expect(isDeniedVariable("NO_PROXY")).toBe(true);
     expect(isDeniedVariable("PATH")).toBe(false);
     expect(isDeniedVariable("TOKENIZED")).toBe(false);
     expect(isDeniedVariable("SECRETARY")).toBe(false);
+  });
+
+  it("removes secret names case-insensitively", () => {
+    const environment = buildChildEnvironment(
+      {
+        openrouter_api_key: "lower-fake",
+        OpenRouter_API_Key: "mixed-fake",
+        github_token: "lower-gh",
+        aws_access_key_id: "lower-aws",
+        node_options: "--inspect",
+        npm_config_userconfig: "/evil/npmrc",
+        npm_config_script_shell: "/bin/evil",
+        https_proxy: "http://proxy",
+        My_CUSTOM_PASSWORD: "lower-pass",
+      },
+      PATHS,
+    );
+    expect(environment["openrouter_api_key"]).toBeUndefined();
+    expect(environment["OpenRouter_API_Key"]).toBeUndefined();
+    expect(environment["github_token"]).toBeUndefined();
+    expect(environment["aws_access_key_id"]).toBeUndefined();
+    expect(environment["node_options"]).toBeUndefined();
+    expect(environment["npm_config_userconfig"]).toBeUndefined();
+    expect(environment["npm_config_script_shell"]).toBeUndefined();
+    expect(environment["https_proxy"]).toBeUndefined();
+    expect(environment["My_CUSTOM_PASSWORD"]).toBeUndefined();
   });
 });
