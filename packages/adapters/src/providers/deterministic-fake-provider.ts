@@ -386,15 +386,9 @@ function formatCommandFinalText(scenario: CommandScenario, result: ToolExecution
   const display = scenario.display;
   switch (result.status) {
     case "success": {
-      const exitCode =
-        typeof result.output === "object" &&
-        result.output !== null &&
-        !Array.isArray(result.output) &&
-        typeof (result.output as JsonObject)["exitCode"] === "number"
-          ? (result.output as JsonObject)["exitCode"]
-          : null;
-      if (exitCode !== null && exitCode !== 0) {
-        return `Solaris ran \`${display}\`, but it exited with code ${exitCode}.`;
+      const exitCodeValue = readExitCode(result.output);
+      if (exitCodeValue !== null && exitCodeValue !== 0) {
+        return `Solaris ran \`${display}\`, but it exited with code ${exitCodeValue}.`;
       }
       return `Solaris ran \`${display}\` and it exited with code 0.`;
     }
@@ -419,6 +413,14 @@ function formatCommandFinalText(scenario: CommandScenario, result: ToolExecution
     case "failed":
       return `Solaris could not run the command: ${result.message}`;
   }
+}
+
+function readExitCode(output: JsonValue): number | null {
+  if (typeof output !== "object" || output === null || Array.isArray(output)) {
+    return null;
+  }
+  const value = (output as JsonObject)["exitCode"];
+  return typeof value === "number" ? value : null;
 }
 
 function itemsAfterLastUserMessage(

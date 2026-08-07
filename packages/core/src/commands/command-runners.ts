@@ -65,6 +65,8 @@ export type CommandPreparationResult =
     };
 
 export interface CommandRunPaths {
+  /** Unique id of this command run. */
+  readonly runId: string;
   /** Sandbox-private run home directory. */
   readonly home: string;
   /** Sandbox-private run temp directory. */

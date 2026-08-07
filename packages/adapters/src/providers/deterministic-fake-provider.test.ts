@@ -5,6 +5,7 @@ import {
   type ModelEvent,
   type ModelRequest,
   type ToolDefinition,
+  type ToolExecutionResult,
 } from "@solaris/core";
 import { createDeterministicFakeProvider } from "./deterministic-fake-provider.js";
 
@@ -656,14 +657,7 @@ describe("deterministic fake provider command scenarios", () => {
     inputSchema: {},
   };
 
-  function commandRequest(
-    prompt: string,
-    result?: {
-      readonly status: string;
-      readonly output?: Record<string, unknown>;
-      readonly message?: string;
-    },
-  ): ModelRequest {
+  function commandRequest(prompt: string, result?: ToolExecutionResult): ModelRequest {
     const items: ConversationItem[] = [{ type: "user_message", content: prompt }];
     if (result !== undefined) {
       items.push({
@@ -676,11 +670,7 @@ describe("deterministic fake provider command scenarios", () => {
         type: "tool_result",
         callId: "call-command",
         toolName: "process.run",
-        result: {
-          status: result.status as never,
-          ...(result.output === undefined ? {} : { output: result.output }),
-          ...(result.message === undefined ? {} : { message: result.message }),
-        },
+        result,
       });
     }
     return { messages: items, tools: [PROCESS_TOOL] };
@@ -743,6 +733,7 @@ describe("deterministic fake provider command scenarios", () => {
       commandRequest("run npm check", {
         status: "success",
         output: { status: "completed", exitCode: 0 },
+        summary: "ok",
       }),
     );
     expect(textOf(events)).toBe("Solaris ran `npm run check` and it exited with code 0.");
@@ -753,6 +744,7 @@ describe("deterministic fake provider command scenarios", () => {
       commandRequest("run npm check", {
         status: "success",
         output: { status: "completed", exitCode: 2 },
+        summary: "ok",
       }),
     );
     expect(textOf(events)).toBe("Solaris ran `npm run check`, but it exited with code 2.");
