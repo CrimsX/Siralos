@@ -17,7 +17,7 @@ describe("git status inspection", () => {
   it("reports a clean repository", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const status = await adapter.getStatus({});
     expect(status.repository).toBe(true);
@@ -31,7 +31,7 @@ describe("git status inspection", () => {
   it("reports a modified tracked file", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const status = await adapter.getStatus({});
@@ -49,7 +49,7 @@ describe("git status inspection", () => {
   it("reports a staged file", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     repo.git("add", "a.txt");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
@@ -64,7 +64,7 @@ describe("git status inspection", () => {
   it("reports staged and unstaged changes separately", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     repo.git("add", "a.txt");
     await repo.write("a.txt", "three\n");
@@ -79,7 +79,7 @@ describe("git status inspection", () => {
   it("reports untracked files", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("new file.txt", "x\n");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const status = await adapter.getStatus({});
@@ -89,7 +89,7 @@ describe("git status inspection", () => {
   it("reports a deleted file", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     const { rm } = await import("node:fs/promises");
     await rm(join(repo.root, "a.txt"));
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
@@ -103,7 +103,7 @@ describe("git status inspection", () => {
   it("reports a renamed file", async () => {
     const repo = await createTempRepo();
     await repo.write("old.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     repo.git("mv", "old.txt", "new.txt");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const status = await adapter.getStatus({});
@@ -118,13 +118,13 @@ describe("git status inspection", () => {
   it("reports a merge conflict", async () => {
     const repo = await createTempRepo();
     await repo.write("conflict.txt", "base\n");
-    await commitAll(repo, "base");
+    commitAll(repo, "base");
     repo.git("checkout", "-b", "other");
     await repo.write("conflict.txt", "other\n");
-    await commitAll(repo, "other change");
+    commitAll(repo, "other change");
     repo.git("checkout", "main");
     await repo.write("conflict.txt", "main\n");
-    await commitAll(repo, "main change");
+    commitAll(repo, "main change");
     const merge = repo.git("merge", "other");
     expect(merge.status).not.toBe(0);
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
@@ -141,7 +141,7 @@ describe("git status inspection", () => {
     if (tabSupported) {
       await repo.write("with\ttab.txt", "tab\n");
     }
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("with space.txt", "changed\n");
     await repo.write("unicodé.txt", "changed\n");
     if (tabSupported) {
@@ -162,7 +162,7 @@ describe("git status inspection", () => {
     await mkdir(originDir, { recursive: true });
     const origin = await createTempRepo();
     await origin.write("a.txt", "one\n");
-    await commitAll(origin, "initial");
+    commitAll(origin, "initial");
     const repo = await createTempRepo();
     const clone = repo.git("clone", origin.root, join(repo.root, "clone"));
     expect(clone.status).toBe(0);
@@ -185,7 +185,7 @@ describe("git status inspection", () => {
   it("reports no upstream when none is configured", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const status = await adapter.getStatus({});
     expect(status.branch.upstream).toBeNull();
@@ -203,7 +203,7 @@ describe("git diff inspection", () => {
   it("returns a working diff", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\ntwo\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "one\nchanged\n");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const result = await adapter.getDiff({ scope: "working" });
@@ -225,7 +225,7 @@ describe("git diff inspection", () => {
   it("returns a staged diff", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     repo.git("add", "a.txt");
     await repo.write("a.txt", "three\n");
@@ -240,7 +240,7 @@ describe("git diff inspection", () => {
   it("returns an empty diff for a clean repository", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.files).toEqual([]);
@@ -259,7 +259,7 @@ describe("git diff inspection", () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
     await repo.write("b.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     await repo.write("b.txt", "two\n");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
@@ -270,7 +270,7 @@ describe("git diff inspection", () => {
   it("rejects invalid relative paths", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     await expect(
       adapter.getDiff({ scope: "working", paths: ["../outside"] }),
@@ -282,7 +282,7 @@ describe("git diff inspection", () => {
   it("treats pathspec-like input as a literal path", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const result = await adapter.getDiff({ scope: "working", paths: ["*.txt"] });
@@ -292,7 +292,7 @@ describe("git diff inspection", () => {
   it("summarizes binary changes without patch content", async () => {
     const repo = await createTempRepo();
     await repo.write("bin.dat", "abc");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     const { writeFile } = await import("node:fs/promises");
     await writeFile(join(repo.root, "bin.dat"), Buffer.from([0x00, 0x01, 0x02, 0x03]));
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
@@ -304,7 +304,7 @@ describe("git diff inspection", () => {
   it("summarizes renames", async () => {
     const repo = await createTempRepo();
     await repo.write("old.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     repo.git("mv", "old.txt", "new.txt");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const result = await adapter.getDiff({ scope: "staged" });
@@ -318,7 +318,7 @@ describe("git diff inspection", () => {
   it("marks truncated output", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "x\n".repeat(2000));
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("a.txt", "y\n".repeat(2000));
     const adapter = createGitCliAdapter({
       workspaceRoot: repo.root,
@@ -331,7 +331,7 @@ describe("git diff inspection", () => {
   it("ignores external diff helpers and textconv configuration", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     repo.git("config", "diff.external", "echo EXTERNAL-DIFF-RAN");
     repo.git("config", "diff.a.textconv", "echo TEXTCONV-RAN");
     await repo.write("a.txt", "two\n");
@@ -345,7 +345,7 @@ describe("git diff inspection", () => {
   it("does not include untracked file contents", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
-    await commitAll(repo, "initial");
+    commitAll(repo, "initial");
     await repo.write("untracked.txt", "secret untracked content\n");
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const result = await adapter.getDiff({ scope: "working" });
