@@ -125,6 +125,32 @@ describe("createInteractiveApprovalReviewer", () => {
     expect(text).toContain("+new");
   });
 
+  it("sanitizes control characters from file content in the diff", async () => {
+    const request = createRequest({
+      preview: {
+        files: [
+          {
+            path: "README.md",
+            operation: "update",
+            beforeSha256: "before",
+            afterSha256: "after",
+            addedLines: 1,
+            removedLines: 1,
+            unifiedDiff: "--- README.md\n+++ README.md\n@@\n+evil \u001b[31mred\u001b[0m\n",
+          },
+        ],
+        totalAddedLines: 1,
+        totalRemovedLines: 1,
+        truncated: false,
+      },
+    });
+    const io = new ScriptedIO(["n"]);
+    const reviewer = createInteractiveApprovalReviewer(io, 60_000);
+    await reviewer.review(request);
+    expect(io.text).not.toContain("\u001b");
+    expect(io.text).toContain("Approval required");
+  });
+
   it("cancels when the signal is aborted while waiting", async () => {
     const io = new HangingIO();
     const reviewer = createInteractiveApprovalReviewer(io, 60_000);

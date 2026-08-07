@@ -4,7 +4,7 @@ import {
   type ApprovalRequest,
   type ApprovalReviewer,
 } from "@solaris/core";
-import { formatApprovalPrompt, sanitizeForDisplay } from "../output.js";
+import { formatApprovalPrompt } from "../output.js";
 import type { SessionIO } from "../interactive-session.js";
 
 const ACCEPTED_ANSWERS: readonly string[] = ["y", "yes"];
@@ -27,7 +27,7 @@ export function createInteractiveApprovalReviewer(
 ): ApprovalReviewer {
   return {
     async review(request: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalDecision> {
-      io.write(sanitizeForDisplay(formatApprovalPrompt(request)));
+      io.write(formatApprovalPrompt(request));
       if (signal?.aborted) {
         return { type: "cancelled" };
       }

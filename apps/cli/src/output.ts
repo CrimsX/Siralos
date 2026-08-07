@@ -179,7 +179,7 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
     "",
   ];
   if (file !== undefined) {
-    lines.push(file.unifiedDiff);
+    lines.push(sanitizeForDisplay(file.unifiedDiff));
   }
   return `${lines.join("\n")}\n`;
 }
