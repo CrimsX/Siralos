@@ -254,6 +254,34 @@ function containsForbiddenGitMutationToken(source) {
 }
 
 /**
+ * Godot probe invocation guardrail. Solaris Godot probes pass exactly one
+ * fixed argument (`--version`, `--help`, or `--dump-extension-api`); the
+ * probe invocation module must never carry project-affecting option tokens.
+ * The check is scoped to the invocation module (runtime files under
+ * `src/godot/process` that are not `*-parser.ts` and not tests), so the
+ * capability parser, help fixtures, documentation, and tests can still
+ * reference those option names.
+ */
+const FORBIDDEN_GODOT_PROJECT_ARGUMENTS = ["--path", "--upwards", "--import", "--scene", "--script"];
+
+function containsForbiddenGodotProjectArgument(source) {
+  return FORBIDDEN_GODOT_PROJECT_ARGUMENTS.some((token) => source.includes(token));
+}
+
+function isGodotProbeInvocationModule(packageRelativeFile, file) {
+  if (isTestSupportFile(file)) {
+    return false;
+  }
+  if (!packageRelativeFile.startsWith(join("src", "godot", "process") + sep)) {
+    return false;
+  }
+  if (packageRelativeFile.endsWith("-parser.ts")) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Structural scan of one source file. Returns import bindings (named,
  * namespace, and default) and a list of call targets: for every
  * CallExpression, the resolved module (if the callee comes from an import)
@@ -393,6 +421,14 @@ export function runChecks(root) {
           if (containsProhibitedProcessPattern(source) && !exempt) {
             errors.push(
               `${location}: raw process execution (exec, execSync, spawnSync, shell: true) is prohibited outside documented test fixtures`,
+            );
+          }
+          if (
+            isGodotProbeInvocationModule(packageRelativeFile, file) &&
+            containsForbiddenGodotProjectArgument(source)
+          ) {
+            errors.push(
+              `${location}: project-affecting Godot arguments (--path, --upwards, --import, --scene, --script) are prohibited in probe invocation code`,
             );
           }
           for (const imported of analysis.destructiveFsImports) {

@@ -22,6 +22,7 @@
     "test:watch": "vitest",
     "check:architecture": "node scripts/check-architecture.mjs",
     "test:sandbox": "npm run build && node scripts/sandbox/run-conformance.mjs",
+    "test:godot": "npm run build && node scripts/sandbox/run-godot-conformance.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:architecture",
     "solaris": "npm run build && node apps/cli/dist/index.js"
   },
