@@ -86,7 +86,7 @@ describe("provider/tool loop", () => {
 
   it("executes a provider tool call and stores call and result distinctly", async () => {
     const { provider, requests } = createScriptedProvider([
-      [toolCall("c1", "a.tool", { value: 1 })],
+      [toolCall("c1", "a.tool", { value: 1 }), { type: "completed" }],
       [{ type: "text_delta", text: "done" }, { type: "completed" }],
     ]);
     const { tool, calls } = createStubTool("a.tool");
@@ -112,7 +112,7 @@ describe("provider/tool loop", () => {
 
   it("executes multiple tool calls sequentially", async () => {
     const { provider } = createScriptedProvider([
-      [toolCall("c1", "a.tool", {}), toolCall("c2", "b.tool", {})],
+      [toolCall("c1", "a.tool", {}), toolCall("c2", "b.tool", {}), { type: "completed" }],
       [{ type: "completed" }],
     ]);
     const { tool: toolA, calls: callsA } = createStubTool("a.tool");
@@ -130,7 +130,7 @@ describe("provider/tool loop", () => {
 
   it("fails safely for unknown tools and lets the provider recover", async () => {
     const { provider, requests } = createScriptedProvider([
-      [toolCall("c1", "mystery.tool", {})],
+      [toolCall("c1", "mystery.tool", {}), { type: "completed" }],
       [{ type: "text_delta", text: "recovered" }, { type: "completed" }],
     ]);
     const application = createSolarisApplication({
@@ -151,7 +151,7 @@ describe("provider/tool loop", () => {
 
   it("returns invalid_input without executing the tool", async () => {
     const { provider } = createScriptedProvider([
-      [toolCall("c1", "strict.tool", 42)],
+      [toolCall("c1", "strict.tool", 42), { type: "completed" }],
       [{ type: "completed" }],
     ]);
     let workRan = false;
@@ -178,7 +178,11 @@ describe("provider/tool loop", () => {
 
   it("normalizes duplicate tool call ids into a safe failure", async () => {
     const { provider } = createScriptedProvider([
-      [toolCall("c1", "a.tool", {}), toolCall("c1", "a.tool", { again: true })],
+      [
+        toolCall("c1", "a.tool", {}),
+        toolCall("c1", "a.tool", { again: true }),
+        { type: "completed" },
+      ],
       [{ type: "completed" }],
     ]);
     const { tool, calls } = createStubTool("a.tool");
@@ -193,25 +197,80 @@ describe("provider/tool loop", () => {
     expect(failures[0]).toMatchObject({ message: "Duplicate tool call id: c1." });
   });
 
-  it("enforces the tool-round limit and stops without success", async () => {
+  it("enforces the tool-round limit and stops without executing beyond it", async () => {
     const { provider, requests } = createScriptedProvider([
-      [toolCall("c1", "a.tool", {})],
-      [toolCall("c2", "a.tool", {})],
+      [toolCall("c1", "a.tool", {}), { type: "completed" }],
+      [toolCall("c2", "a.tool", {}), { type: "completed" }],
+      [toolCall("c3", "a.tool", {}), { type: "completed" }],
+      [{ type: "completed" }],
     ]);
-    const { tool } = createStubTool("a.tool");
+    const { tool, calls } = createStubTool("a.tool");
     const application = createSolarisApplication({
       provider,
       tools: createToolRegistry([tool]),
       maxToolRounds: 2,
     });
     const events = await collectEvents(application.sendPrompt("hello"));
+    expect(calls).toHaveLength(2);
     const failed = events.find((event) => event.type === "response_failed");
     expect(failed).toMatchObject({
       type: "response_failed",
-      message: "Solaris reached the maximum of 2 tool rounds.",
+      message:
+        "Solaris reached the maximum of 2 tool rounds; the requested tool round was not executed.",
     });
     expect(events.some((event) => event.type === "response_completed")).toBe(false);
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
+  });
+
+  it("allows a final answer after the last permitted tool round", async () => {
+    const { provider } = createScriptedProvider([
+      [toolCall("c1", "a.tool", {}), { type: "completed" }],
+      [{ type: "text_delta", text: "final answer" }, { type: "completed" }],
+    ]);
+    const { tool } = createStubTool("a.tool");
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([tool]),
+      maxToolRounds: 1,
+    });
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(events.map((event) => event.type)).toEqual([
+      "response_started",
+      "tool_started",
+      "tool_completed",
+      "text_delta",
+      "response_completed",
+    ]);
+  });
+
+  it("rejects a second tool round beyond maxToolRounds without executing it", async () => {
+    const { provider } = createScriptedProvider([
+      [toolCall("c1", "a.tool", {}), { type: "completed" }],
+      [toolCall("c2", "a.tool", {}), { type: "completed" }],
+    ]);
+    const { tool, calls } = createStubTool("a.tool");
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([tool]),
+      maxToolRounds: 1,
+    });
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(calls).toHaveLength(1);
+    expect(events.some((event) => event.type === "response_completed")).toBe(false);
+    const failed = events.find((event) => event.type === "response_failed") as
+      { message?: string } | undefined;
+    expect(failed?.message).toContain("maximum of 1 tool rounds");
+  });
+
+  it("accepts an empty valid completion", async () => {
+    const { provider } = createScriptedProvider([[{ type: "completed" }]]);
+    const application = createSolarisApplication({
+      provider,
+      tools: createToolRegistry([]),
+    });
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(events.map((event) => event.type)).toEqual(["response_started", "response_completed"]);
+    expect(application.getStatus().messageCount).toBe(1);
   });
 
   it("does not report success when the provider fails after a tool result", async () => {
@@ -222,6 +281,7 @@ describe("provider/tool loop", () => {
         turn += 1;
         if (turn === 1) {
           yield { type: "tool_call", callId: "c1", toolName: "a.tool", input: {} };
+          yield { type: "completed" };
           await Promise.resolve();
           return;
         }
@@ -246,7 +306,9 @@ describe("provider/tool loop", () => {
 
   it("stops an active tool when the request is cancelled", async () => {
     const controller = new AbortController();
-    const { provider } = createScriptedProvider([[toolCall("c1", "wait.tool", {})]]);
+    const { provider } = createScriptedProvider([
+      [toolCall("c1", "wait.tool", {}), { type: "completed" }],
+    ]);
     let toolStarted: (() => void) | undefined;
     const startedGate = new Promise<void>((resolve) => {
       toolStarted = resolve;
@@ -285,7 +347,7 @@ describe("provider/tool loop", () => {
   it("does not start later tool calls after cancellation", async () => {
     const controller = new AbortController();
     const { provider } = createScriptedProvider([
-      [toolCall("c1", "a.tool", {}), toolCall("c2", "b.tool", {})],
+      [toolCall("c1", "a.tool", {}), toolCall("c2", "b.tool", {}), { type: "completed" }],
     ]);
     const { tool: toolA } = createStubTool("a.tool");
     const { tool: toolB, calls: callsB } = createStubTool("b.tool");
@@ -306,6 +368,6 @@ describe("provider/tool loop", () => {
     );
     expect(events.some((event) => event.type === "response_cancelled")).toBe(true);
     expect(events.some((event) => event.type === "response_completed")).toBe(false);
-    expect(application.getStatus().messageCount).toBe(4);
+    expect(application.getStatus().messageCount).toBe(5);
   });
 });

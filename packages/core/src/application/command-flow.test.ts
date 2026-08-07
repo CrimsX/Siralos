@@ -174,7 +174,10 @@ describe("prepared command tool flow", () => {
     let approved = false;
     const application = scriptedApplication(
       [
-        [toolCall("c1", "process.run", { runner: "npm-script", script: "check" })],
+        [
+          toolCall("c1", "process.run", { runner: "npm-script", script: "check" }),
+          { type: "completed" },
+        ],
         [{ type: "completed" }],
       ],
       tool,
@@ -219,7 +222,10 @@ describe("prepared command tool flow", () => {
     const { tool, executed } = createStubCommandTool();
     const application = scriptedApplication(
       [
-        [toolCall("c1", "process.run", { runner: "npm-script", script: "check" })],
+        [
+          toolCall("c1", "process.run", { runner: "npm-script", script: "check" }),
+          { type: "completed" },
+        ],
         [{ type: "completed" }],
       ],
       tool,
@@ -236,7 +242,7 @@ describe("prepared command tool flow", () => {
   it("denies when the reviewer fails", async () => {
     const { tool, executed } = createStubCommandTool();
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       {
         reviewer: () => Promise.reject(new Error("reviewer exploded")),
@@ -249,7 +255,9 @@ describe("prepared command tool flow", () => {
 
   it("denies when no reviewer is available", async () => {
     const { tool, executed } = createStubCommandTool();
-    const { provider } = createScriptedProvider([[toolCall("c1", "process.run", {})]]);
+    const { provider } = createScriptedProvider([
+      [toolCall("c1", "process.run", {}), { type: "completed" }],
+    ]);
     const application = createSolarisApplication({
       provider,
       tools: createToolRegistry([tool]),
@@ -265,17 +273,21 @@ describe("prepared command tool flow", () => {
   it("cancels while awaiting approval without a successful response", async () => {
     const controller = new AbortController();
     const { tool, executed } = createStubCommandTool();
-    const application = scriptedApplication([[toolCall("c1", "process.run", {})]], tool, {
-      reviewer: async () => {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 10);
-        });
-        if (controller.signal.aborted) {
-          return { type: "cancelled" };
-        }
-        return { type: "approve_once" };
+    const application = scriptedApplication(
+      [[toolCall("c1", "process.run", {}), { type: "completed" }]],
+      tool,
+      {
+        reviewer: async () => {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 10);
+          });
+          if (controller.signal.aborted) {
+            return { type: "cancelled" };
+          }
+          return { type: "approve_once" };
+        },
       },
-    });
+    );
     const events: ApplicationEvent[] = [];
     const completion = (async () => {
       for await (const event of application.sendPrompt("run npm check", controller.signal)) {
@@ -315,7 +327,7 @@ describe("prepared command tool flow", () => {
       },
     });
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       { reviewer: () => Promise.resolve({ type: "approve_once" }) },
     );
@@ -334,7 +346,7 @@ describe("prepared command tool flow", () => {
       result: { status: "timed_out", message: "The command timed out after 2 seconds." },
     });
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       { reviewer: () => Promise.resolve({ type: "approve_once" }) },
     );
@@ -350,7 +362,7 @@ describe("prepared command tool flow", () => {
       alwaysConflict: "The package.json changed after approval.",
     });
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       { reviewer: () => Promise.resolve({ type: "approve_once" }) },
     );
@@ -365,7 +377,7 @@ describe("prepared command tool flow", () => {
       result: { status: "sandbox_denied", message: "The sandbox denied a workspace write." },
     });
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       { reviewer: () => Promise.resolve({ type: "approve_once" }) },
     );
@@ -383,9 +395,13 @@ describe("prepared command tool flow", () => {
       emitDelayMs: 1,
       result: { status: "cancelled", message: "The command was cancelled." },
     });
-    const application = scriptedApplication([[toolCall("c1", "process.run", {})]], tool, {
-      reviewer: () => Promise.resolve({ type: "approve_once" }),
-    });
+    const application = scriptedApplication(
+      [[toolCall("c1", "process.run", {}), { type: "completed" }]],
+      tool,
+      {
+        reviewer: () => Promise.resolve({ type: "approve_once" }),
+      },
+    );
     const events: ApplicationEvent[] = [];
     const completion = (async () => {
       for await (const event of application.sendPrompt("run npm check", controller.signal)) {
@@ -409,7 +425,7 @@ describe("prepared command tool flow", () => {
     });
     let seenActive = false;
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       { reviewer: () => Promise.resolve({ type: "approve_once" }) },
     );
@@ -429,7 +445,7 @@ describe("prepared command tool flow", () => {
     const { tool } = createStubCommandTool();
     let seenPreview: unknown;
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       {
         reviewer: (request) => {
@@ -456,9 +472,13 @@ describe("prepared command tool flow", () => {
     const { tool } = createStubCommandTool({
       result: { status: "cancelled", message: "Cancelled." },
     });
-    const application = scriptedApplication([[toolCall("c1", "process.run", {})]], tool, {
-      reviewer: () => Promise.resolve({ type: "approve_once" }),
-    });
+    const application = scriptedApplication(
+      [[toolCall("c1", "process.run", {}), { type: "completed" }]],
+      tool,
+      {
+        reviewer: () => Promise.resolve({ type: "approve_once" }),
+      },
+    );
     for await (const event of application.sendPrompt("run npm check", controller.signal)) {
       if (event.type === "command_started") {
         controller.abort();
@@ -470,7 +490,7 @@ describe("prepared command tool flow", () => {
   it("binds the approved digest to the execution request", async () => {
     const { tool, executed } = createStubCommandTool();
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       { reviewer: () => Promise.resolve({ type: "approve_once" }) },
     );
@@ -483,7 +503,7 @@ describe("prepared command tool preparation failures", () => {
   it("fails truthfully when preparation fails", async () => {
     const { tool } = createStubCommandTool({ prepareError: "The npm runner is unavailable." });
     const application = scriptedApplication(
-      [[toolCall("c1", "process.run", {})], [{ type: "completed" }]],
+      [[toolCall("c1", "process.run", {}), { type: "completed" }], [{ type: "completed" }]],
       tool,
       { reviewer: () => Promise.resolve({ type: "approve_once" }) },
     );

@@ -100,6 +100,7 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
         input: gitScenarioInput(gitScenario),
       };
       await Promise.resolve();
+      yield { type: "completed" };
       return;
     }
     yield* streamTextChunks(formatGitFinalText(gitScenario, result), signal);
@@ -111,6 +112,7 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
     if (turn.kind === "call") {
       yield turn.event;
       await Promise.resolve();
+      yield { type: "completed" };
       return;
     }
     yield* streamTextChunks(turn.text, signal);
@@ -128,6 +130,7 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
           input: commandScenarioInput(commandScenario),
         };
         await Promise.resolve();
+        yield { type: "completed" };
         return;
       }
       yield* streamTextChunks(formatCommandFinalText(commandScenario, result), signal);
@@ -151,6 +154,7 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
           input: scenario.input,
         };
         await Promise.resolve();
+        yield { type: "completed" };
         return;
       }
     } else {

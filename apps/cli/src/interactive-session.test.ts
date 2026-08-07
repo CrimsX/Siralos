@@ -355,6 +355,7 @@ describe("runInteractiveSession tool activity", () => {
             input: { path: "." },
           };
           await Promise.resolve();
+          yield { type: "completed" };
           return;
         }
         yield { type: "text_delta", text: "recovered" };
@@ -617,6 +618,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
             toolName: "process.run",
             input: { runner: "npm-script", script: "check" },
           },
+          { type: "completed" },
         ],
         [{ type: "completed" }],
       ],
@@ -656,6 +658,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
               toolName: "process.run",
               input: { runner: "npm-script", script: "check" },
             },
+            { type: "completed" },
           ],
           [{ type: "completed" }],
         ],
@@ -680,6 +683,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
             toolName: "process.run",
             input: { runner: "npm-script", script: "check" },
           },
+          { type: "completed" },
         ],
       ],
     });
@@ -712,6 +716,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
             toolName: "process.run",
             input: { runner: "npm-script", script: "check" },
           },
+          { type: "completed" },
         ],
         [{ type: "completed" }],
       ],

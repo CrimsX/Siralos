@@ -150,7 +150,10 @@ function createApplication(options: {
 }) {
   const { provider, requests } = createScriptedProvider(
     options.turns ?? [
-      [{ type: "tool_call", callId: "c1", toolName: "write.tool", input: {} }],
+      [
+        { type: "tool_call", callId: "c1", toolName: "write.tool", input: {} },
+        { type: "completed" },
+      ],
       [{ type: "text_delta", text: "done" }, { type: "completed" }],
     ],
   );
@@ -424,7 +427,10 @@ describe("approval fail-closed behavior", () => {
       reviewer,
       tools: [tool],
       turns: [
-        [{ type: "tool_call", callId: "c1", toolName: "plain.write", input: {} }],
+        [
+          { type: "tool_call", callId: "c1", toolName: "plain.write", input: {} },
+          { type: "completed" },
+        ],
         [{ type: "text_delta", text: "done" }, { type: "completed" }],
       ],
     });
@@ -444,7 +450,10 @@ describe("approval fail-closed behavior", () => {
       profile: DEVELOP_OFFLINE_PROFILE,
       tools: [tool],
       turns: [
-        [{ type: "tool_call", callId: "c1", toolName: "plain.write", input: {} }],
+        [
+          { type: "tool_call", callId: "c1", toolName: "plain.write", input: {} },
+          { type: "completed" },
+        ],
         [{ type: "text_delta", text: "done" }, { type: "completed" }],
       ],
     });
@@ -562,12 +571,15 @@ describe("approval fail-closed behavior", () => {
       reviewer,
       tools: [tool],
       turns: [
-        [{ type: "tool_call", callId: "c1", toolName: "write.tool", input: {} }],
         [
-          { type: "tool_call", callId: "c2", toolName: "write.tool", input: {} },
-          { type: "text_delta", text: "done" },
+          { type: "tool_call", callId: "c1", toolName: "write.tool", input: {} },
           { type: "completed" },
         ],
+        [
+          { type: "tool_call", callId: "c2", toolName: "write.tool", input: {} },
+          { type: "completed" },
+        ],
+        [{ type: "text_delta", text: "done" }, { type: "completed" }],
       ],
     });
     const events = await collectEvents(application.sendPrompt("hello"));

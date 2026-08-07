@@ -1,4 +1,5 @@
 export type { ConversationItem } from "./domain/conversation.js";
+export { validateConversationItems } from "./domain/conversation.js";
 export { isCancellationError } from "./domain/cancellation.js";
 export type { JsonObject, JsonPrimitive, JsonValue } from "./domain/json.js";
 export type { ModelEvent, ModelProvider, ModelRequest } from "./ports/provider.js";
@@ -55,6 +56,7 @@ export {
 export {
   createSolarisApplication,
   DEFAULT_MAX_TOOL_ROUNDS,
+  PROVIDER_TURN_LIMITS,
   type ApplicationEvent,
   type SessionStatus,
   type SolarisApplication,

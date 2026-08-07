@@ -1,5 +1,5 @@
 import { isCancellationError } from "../domain/cancellation.js";
-import type { ConversationItem } from "../domain/conversation.js";
+import { validateConversationItems, type ConversationItem } from "../domain/conversation.js";
 import type { JsonObject, JsonValue } from "../domain/json.js";
 import type { ModelProvider, ModelRequest } from "../ports/provider.js";
 import { evaluatePermission } from "../security/permission-evaluator.js";
@@ -107,6 +107,26 @@ export interface SolarisApplicationDependencies {
 
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
 
+/**
+ * Per-turn provider stream bounds. Every bound is enforced on UTF-8 byte
+ * counts, not JavaScript character counts, and exceeding any bound fails the
+ * turn without committing partial output as a successful response.
+ */
+export const PROVIDER_TURN_LIMITS = {
+  /** Total assistant text bytes across all deltas of one turn. */
+  maxAssistantTextBytes: 64 * 1024,
+  /** Number of text_delta events in one turn. */
+  maxTextEvents: 4096,
+  /** Number of tool_call events in one turn. */
+  maxToolCallsPerTurn: 32,
+  /** UTF-8 bytes of one tool name. */
+  maxToolNameBytes: 256,
+  /** UTF-8 bytes of one tool-call argument payload. */
+  maxToolArgumentBytes: 128 * 1024,
+  /** Aggregate UTF-8 bytes (text + tool names + arguments) of one turn. */
+  maxTurnBytes: 256 * 1024,
+} as const;
+
 export interface SolarisApplication {
   sendPrompt(text: string, signal?: AbortSignal): AsyncIterable<ApplicationEvent>;
 
@@ -149,6 +169,12 @@ type TurnOutcome =
 
 const MAX_DISPLAY_INPUT_LENGTH = 200;
 
+const textEncoder = new TextEncoder();
+
+function utf8ByteLength(text: string): number {
+  return textEncoder.encode(text).length;
+}
+
 export function createSolarisApplication(
   dependencies: SolarisApplicationDependencies,
 ): SolarisApplication {
@@ -182,13 +208,6 @@ export function createSolarisApplication(
           yield { type: "response_cancelled" };
           return;
         }
-        if (toolRounds >= maxToolRounds) {
-          yield {
-            type: "response_failed",
-            message: `Solaris reached the maximum of ${maxToolRounds} tool rounds.`,
-          };
-          return;
-        }
         const turn = yield* collectProviderTurn(signal);
         if (turn.kind === "cancelled") {
           yield { type: "response_cancelled" };
@@ -198,28 +217,38 @@ export function createSolarisApplication(
           yield { type: "response_failed", message: turn.message };
           return;
         }
-        if (turn.assistantText.length > 0) {
-          history.push({ type: "assistant_message", content: turn.assistantText });
-        }
         if (turn.toolCalls.length === 0) {
+          if (turn.assistantText.length > 0) {
+            history.push({ type: "assistant_message", content: turn.assistantText });
+          }
           yield { type: "response_completed" };
           return;
         }
-        toolRounds += 1;
-        for (const call of turn.toolCalls) {
-          if (call.kind === "execute") {
-            history.push({
-              type: "assistant_tool_call",
-              callId: call.callId,
-              toolName: call.toolName,
-              input: call.input,
-            });
-          }
+        if (toolRounds >= maxToolRounds) {
+          yield {
+            type: "response_failed",
+            message: `Solaris reached the maximum of ${maxToolRounds} tool rounds; the requested tool round was not executed.`,
+          };
+          return;
         }
+        toolRounds += 1;
+        const executed: ConversationItem[] = [];
         for (const call of turn.toolCalls) {
+          executed.push({
+            type: "assistant_tool_call",
+            callId: call.callId,
+            toolName: call.toolName,
+            input: call.kind === "invalid" ? undefined : call.input,
+          });
+        }
+        let cancelledIndex = -1;
+        let abortedBeforeExecution = false;
+        for (let index = 0; index < turn.toolCalls.length; index += 1) {
+          const call = turn.toolCalls[index] as TurnToolCall;
           if (signal?.aborted) {
-            yield { type: "response_cancelled" };
-            return;
+            cancelledIndex = index;
+            abortedBeforeExecution = true;
+            break;
           }
           if (call.kind === "invalid") {
             yield {
@@ -228,7 +257,7 @@ export function createSolarisApplication(
               toolName: call.toolName,
               message: call.message,
             };
-            history.push({
+            executed.push({
               type: "tool_result",
               callId: call.callId,
               toolName: call.toolName,
@@ -237,16 +266,42 @@ export function createSolarisApplication(
             continue;
           }
           const result = yield* runToolCall(call, signal);
-          history.push({
+          executed.push({
             type: "tool_result",
             callId: call.callId,
             toolName: call.toolName,
             result,
           });
           if (result.status === "cancelled") {
-            yield { type: "response_cancelled" };
-            return;
+            cancelledIndex = index;
+            break;
           }
+        }
+        if (cancelledIndex >= 0) {
+          const start = cancelledIndex + (abortedBeforeExecution ? 0 : 1);
+          for (let index = start; index < turn.toolCalls.length; index += 1) {
+            const call = turn.toolCalls[index] as TurnToolCall;
+            executed.push({
+              type: "tool_result",
+              callId: call.callId,
+              toolName: call.toolName,
+              result: {
+                status: "cancelled",
+                message: "The tool call was cancelled before it executed.",
+              },
+            });
+          }
+          for (const item of executed) {
+            history.push(item);
+          }
+          yield { type: "response_cancelled" };
+          return;
+        }
+        if (turn.assistantText.length > 0) {
+          history.push({ type: "assistant_message", content: turn.assistantText });
+        }
+        for (const item of executed) {
+          history.push(item);
         }
       }
     } finally {
@@ -257,45 +312,102 @@ export function createSolarisApplication(
   async function* collectProviderTurn(
     signal?: AbortSignal,
   ): AsyncGenerator<ApplicationEvent, TurnOutcome, void> {
+    const transcriptError = validateConversationItems(history);
+    if (transcriptError !== null) {
+      return {
+        kind: "failed",
+        message: `The conversation transcript is structurally invalid; the provider request was blocked: ${transcriptError}`,
+      };
+    }
     const request: ModelRequest = {
       messages: [...history],
       tools: toolDefinitions,
       ...(signal === undefined ? {} : { signal }),
     };
     let assistantText = "";
+    let textEvents = 0;
+    let turnBytes = 0;
     const toolCalls: TurnToolCall[] = [];
     const seenCallIds = new Set<string>();
     let invalidCallIndex = 0;
+    let completionSeen = false;
+    let exceeded: string | null = null;
     try {
       for await (const event of dependencies.provider.stream(request)) {
+        if (signal?.aborted) {
+          break;
+        }
+        if (completionSeen) {
+          exceeded = "an event after completion";
+          break;
+        }
+        if (event.type === "completed") {
+          completionSeen = true;
+          continue;
+        }
         if (event.type === "text_delta") {
+          const bytes = utf8ByteLength(event.text);
+          textEvents += 1;
+          if (textEvents > PROVIDER_TURN_LIMITS.maxTextEvents) {
+            exceeded = "the text-event count";
+            break;
+          }
+          if (bytes > PROVIDER_TURN_LIMITS.maxAssistantTextBytes) {
+            exceeded = "the assistant-text byte limit";
+            break;
+          }
+          turnBytes += bytes;
+          if (turnBytes > PROVIDER_TURN_LIMITS.maxTurnBytes) {
+            exceeded = "the aggregate turn byte limit";
+            break;
+          }
           assistantText += event.text;
           yield { type: "text_delta", text: event.text };
-        } else if (event.type === "tool_call") {
-          if (event.callId.length === 0 || event.toolName.length === 0) {
-            invalidCallIndex += 1;
-            toolCalls.push({
-              kind: "invalid",
-              callId: `invalid-call-${invalidCallIndex}`,
-              toolName: event.toolName.length === 0 ? "<empty>" : event.toolName,
-              message: "Provider emitted a tool call with an empty call id or tool name.",
-            });
-          } else if (seenCallIds.has(event.callId)) {
-            toolCalls.push({
-              kind: "invalid",
-              callId: event.callId,
-              toolName: event.toolName,
-              message: `Duplicate tool call id: ${event.callId}.`,
-            });
-          } else {
-            seenCallIds.add(event.callId);
-            toolCalls.push({
-              kind: "execute",
-              callId: event.callId,
-              toolName: event.toolName,
-              input: event.input,
-            });
-          }
+          continue;
+        }
+        const nameBytes = utf8ByteLength(event.toolName);
+        const argumentBytes = utf8ByteLength(JSON.stringify(event.input) ?? "");
+        if (nameBytes > PROVIDER_TURN_LIMITS.maxToolNameBytes) {
+          exceeded = "the tool-name byte limit";
+          break;
+        }
+        if (argumentBytes > PROVIDER_TURN_LIMITS.maxToolArgumentBytes) {
+          exceeded = "the tool-argument byte limit";
+          break;
+        }
+        turnBytes += nameBytes + argumentBytes;
+        if (turnBytes > PROVIDER_TURN_LIMITS.maxTurnBytes) {
+          exceeded = "the aggregate turn byte limit";
+          break;
+        }
+        if (toolCalls.length >= PROVIDER_TURN_LIMITS.maxToolCallsPerTurn) {
+          exceeded = "the tool-call count";
+          break;
+        }
+        if (event.callId.length === 0 || event.toolName.length === 0) {
+          invalidCallIndex += 1;
+          toolCalls.push({
+            kind: "invalid",
+            callId: `invalid-call-${invalidCallIndex}`,
+            toolName: event.toolName.length === 0 ? "<empty>" : event.toolName,
+            message: "Provider emitted a tool call with an empty call id or tool name.",
+          });
+        } else if (seenCallIds.has(event.callId)) {
+          invalidCallIndex += 1;
+          toolCalls.push({
+            kind: "invalid",
+            callId: `invalid-call-${invalidCallIndex}`,
+            toolName: event.toolName,
+            message: `Duplicate tool call id: ${event.callId}.`,
+          });
+        } else {
+          seenCallIds.add(event.callId);
+          toolCalls.push({
+            kind: "execute",
+            callId: event.callId,
+            toolName: event.toolName,
+            input: event.input,
+          });
         }
       }
     } catch (error: unknown) {
@@ -303,6 +415,21 @@ export function createSolarisApplication(
         return { kind: "cancelled" };
       }
       return { kind: "failed", message: describeError(error) };
+    }
+    if (signal?.aborted) {
+      return { kind: "cancelled" };
+    }
+    if (exceeded !== null) {
+      return {
+        kind: "failed",
+        message: `The provider exceeded ${exceeded} limit; the response was rejected.`,
+      };
+    }
+    if (!completionSeen) {
+      return {
+        kind: "failed",
+        message: "The provider stream ended without a completion event; the response was rejected.",
+      };
     }
     return { kind: "turn", assistantText, toolCalls };
   }
