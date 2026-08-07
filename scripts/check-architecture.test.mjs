@@ -370,4 +370,67 @@ describe("check-architecture", () => {
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("process adapters"))).toBe(true);
   });
+
+  it("rejects child_process imported without the node: prefix", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] = 'import { spawn } from "child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
+  });
+
+  it("rejects aliased dangerous child_process imports", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { exec as evilExec } from "node:child_process";\nevilExec("evil");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
+  });
+
+  it("rejects re-exports of dangerous modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'export { spawn } from "node:child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
+  });
+
+  it("rejects static dynamic imports of dangerous modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'const cp = await import("node:child_process");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
+  });
+
+  it("rejects aliased destructive filesystem imports with calls", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { rename as evilRename } from "node:fs/promises";\nevilRename("a", "b");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(true);
+  });
+
+  it("rejects namespace filesystem imports that call destructive APIs", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import * as fsp from "node:fs/promises";\nfsp.writeFile("a", "b");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(true);
+  });
+
+  it("rejects Git mutation commands passed to spawn structurally", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/git/cli/runner.ts"] =
+      'import { spawn } from "node:child_process";\nspawn("git", ["reset", "--hard"]);\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("Git mutation commands"))).toBe(true);
+  });
+
+  it("accepts non-destructive filesystem imports in tools", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { realpath, stat } from "node:fs/promises";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(false);
+  });
 });

@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import ts from "typescript";
 
 export function collectWorkspacePackages(root) {
   const rootPackageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -41,19 +42,62 @@ export function listSourceFiles(directory) {
   return files;
 }
 
+function parseSource(source) {
+  return ts.createSourceFile("fixture.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+function stringLiteralOf(node) {
+  return node !== undefined && ts.isStringLiteral(node) ? node.text : undefined;
+}
+
+/**
+ * Structural import extraction. Covers static imports, re-exports
+ * (`export ... from "..."`), static dynamic imports (`import("...")` with a
+ * string literal), and `import x = require("...")`. Specifiers built at
+ * runtime (template literals, variables) cannot be resolved statically and
+ * are a documented limitation; the module-name rules below also catch the
+ * canonical spellings of every dangerous module.
+ */
 export function extractImportSpecifiers(source) {
   const specifiers = new Set();
-  const patterns = [
-    /\bfrom\s*["']([^"']+)["']/g,
-    /\bimport\s*["']([^"']+)["']/g,
-    /\bimport\s*\(\s*["']([^"']+)["']/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      specifiers.add(match[1]);
+  const file = parseSource(source);
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node)) {
+      const specifier = stringLiteralOf(node.moduleSpecifier);
+      if (specifier !== undefined) {
+        specifiers.add(specifier);
+      }
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined) {
+      const specifier = stringLiteralOf(node.moduleSpecifier);
+      if (specifier !== undefined) {
+        specifiers.add(specifier);
+      }
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      const specifier = stringLiteralOf(node.moduleReference.expression);
+      if (specifier !== undefined) {
+        specifiers.add(specifier);
+      }
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const specifier = stringLiteralOf(node.arguments[0]);
+      if (specifier !== undefined) {
+        specifiers.add(specifier);
+      }
     }
-  }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
   return [...specifiers];
+}
+
+/**
+ * Equivalent Node module names normalize to one canonical form so
+ * `node:child_process` and `child_process` cannot bypass a rule.
+ */
+function normalizeModuleName(specifier) {
+  return specifier.startsWith("node:") ? specifier.slice("node:".length) : specifier;
 }
 
 function isUnder(target, root) {
@@ -67,6 +111,89 @@ function isTestSupportFile(file) {
     file.endsWith("git-test-support.ts")
   );
 }
+
+const CHILD_PROCESS_MODULE = "child_process";
+
+/** Destructive filesystem APIs tracked structurally. */
+const DESTRUCTIVE_FS_APIS = new Set([
+  "writeFile",
+  "writeFileSync",
+  "appendFile",
+  "appendFileSync",
+  "createWriteStream",
+  "unlink",
+  "unlinkSync",
+  "rename",
+  "renameSync",
+  "rm",
+  "rmSync",
+  "rmdir",
+  "rmdirSync",
+  "copyFile",
+  "copyFileSync",
+  "truncate",
+  "truncateSync",
+]);
+
+const FS_MODULES = new Set(["fs", "fs/promises"]);
+
+const CHILD_PROCESS_FUNCTIONS = new Set([
+  "exec",
+  "execSync",
+  "spawn",
+  "spawnSync",
+  "fork",
+  "execFile",
+  "execFileSync",
+]);
+
+/** Git mutation verbs recognized in spawn argument lists and strings. */
+const GIT_MUTATION_VERBS = new Set([
+  "add",
+  "commit",
+  "merge",
+  "push",
+  "pull",
+  "rebase",
+  "revert",
+  "cherry-pick",
+  "reset",
+  "restore",
+  "checkout",
+  "clean",
+  "stash",
+  "rm",
+  "mv",
+  "tag",
+  "update-ref",
+  "branch",
+]);
+
+const APPROVED_CHILD_PROCESS_DIRECTORIES = [join("src", "sandbox"), join("src", "git", "cli")];
+
+const APPROVED_MUTATION_DIRECTORIES = [
+  join("src", "tools", "workspace", "mutations"),
+  join("src", "sandbox", "conformance"),
+  join("src", "checkpoints", "filesystem"),
+  join("src", "process"),
+];
+
+/**
+ * Prohibited raw process-execution patterns kept as textual fallbacks for
+ * constructs the structural pass cannot represent (e.g. destructured
+ * `const { exec } = require(...)`).
+ */
+const PROHIBITED_PROCESS_PATTERNS = [
+  { pattern: /shell:\s*true/, label: "shell: true" },
+  { pattern: /execSync\(/, label: "execSync(" },
+  { pattern: /spawnSync\(/, label: "spawnSync(" },
+  { pattern: /(?<!\.)exec\(/, label: "exec(" },
+];
+
+const PROHIBITED_PROCESS_EXEMPTIONS = [
+  // embedded probe fixture sources that exercise prohibited operations
+  join("src", "sandbox", "conformance"),
+];
 
 function containsProcessEnvAccess(source, packageRelativeFile, file) {
   const withoutStrings = source.replace(
@@ -85,42 +212,6 @@ function containsProcessEnvAccess(source, packageRelativeFile, file) {
   return true;
 }
 
-const WRITE_API_TOKENS = ["writeFile", "unlink(", "rename(", "appendFile", "createWriteStream"];
-
-const FORBIDDEN_GIT_WRITE_TOKENS = [
-  "git reset",
-  "git restore",
-  "git checkout",
-  "git clean",
-  "git stash",
-];
-
-const APPROVED_CHILD_PROCESS_DIRECTORIES = [join("src", "sandbox"), join("src", "git", "cli")];
-
-const APPROVED_MUTATION_DIRECTORIES = [
-  join("src", "tools", "workspace", "mutations"),
-  join("src", "sandbox", "conformance"),
-  join("src", "checkpoints", "filesystem"),
-  join("src", "process"),
-];
-
-/**
- * Prohibited raw process-execution patterns. `exec` matches the
- * child_process API only when not preceded by a dot (regex `.exec(...)`
- * calls are unrelated and allowed).
- */
-const PROHIBITED_PROCESS_PATTERNS = [
-  { pattern: /shell:\s*true/, label: "shell: true" },
-  { pattern: /execSync\(/, label: "execSync(" },
-  { pattern: /spawnSync\(/, label: "spawnSync(" },
-  { pattern: /(?<!\.)exec\(/, label: "exec(" },
-];
-
-const PROHIBITED_PROCESS_EXEMPTIONS = [
-  // embedded probe fixture sources that exercise prohibited operations
-  join("src", "sandbox", "conformance"),
-];
-
 function isApprovedWriteApiLocation(packageRelativeFile, file) {
   if (isTestSupportFile(file)) {
     return true;
@@ -130,8 +221,148 @@ function isApprovedWriteApiLocation(packageRelativeFile, file) {
   );
 }
 
+/** Git mutation command strings prohibited in runtime code. */
+const FORBIDDEN_GIT_WRITE_TOKENS = [
+  "git add",
+  "git commit",
+  "git merge",
+  "git push",
+  "git pull",
+  "git rebase",
+  "git revert",
+  "git cherry-pick",
+  "git reset",
+  "git restore",
+  "git checkout",
+  "git clean",
+  "git stash",
+  "git rm",
+  "git mv",
+  "git tag",
+  "git update-ref",
+];
+
 function containsProhibitedProcessPattern(source) {
   return PROHIBITED_PROCESS_PATTERNS.some((entry) => entry.pattern.test(source));
+}
+
+function containsForbiddenGitMutationToken(source) {
+  return FORBIDDEN_GIT_WRITE_TOKENS.some((token) => source.includes(token));
+}
+
+/**
+ * Structural scan of one source file. Returns import bindings (named,
+ * namespace, and default) and a list of call targets: for every
+ * CallExpression, the resolved module (if the callee comes from an import)
+ * and the original imported name, plus the callee text for local/global
+ * calls. Aliased imports and renamed functions resolve through the bindings,
+ * so `import { rename as evil } from "node:fs/promises"` is caught.
+ */
+function analyzeSource(source) {
+  const file = parseSource(source);
+  const bindings = new Map(); // local name -> { module, originalName }
+  const namespaceImports = new Map(); // local name -> module
+  const calls = []; // { module, api, calleeText }
+  const spawnCalls = []; // { calleeText, argumentTexts, shellTrue }
+  const destructiveFsImports = []; // { module, api } imported from fs modules
+  const imports = new Set();
+
+  const addCall = (module, api, calleeText) => {
+    calls.push({ module, api, calleeText });
+  };
+
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node)) {
+      const specifier = stringLiteralOf(node.moduleSpecifier);
+      if (specifier !== undefined) {
+        imports.add(specifier);
+        const module = normalizeModuleName(specifier);
+        const clause = node.importClause;
+        if (clause !== undefined) {
+          if (clause.name !== undefined) {
+            bindings.set(clause.name.text, { module, originalName: "default" });
+          }
+          if (clause.namedBindings !== undefined) {
+            if (ts.isNamespaceImport(clause.namedBindings)) {
+              namespaceImports.set(clause.namedBindings.name.text, module);
+              if (FS_MODULES.has(module)) {
+                destructiveFsImports.push({ module, api: "*" });
+              }
+            } else {
+              for (const element of clause.namedBindings.elements) {
+                const local = element.name.text;
+                const imported = element.propertyName?.text ?? local;
+                bindings.set(local, { module, originalName: imported });
+                if (FS_MODULES.has(module) && DESTRUCTIVE_FS_APIS.has(imported)) {
+                  destructiveFsImports.push({ module, api: imported });
+                }
+              }
+            }
+          }
+        }
+      }
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined) {
+      const specifier = stringLiteralOf(node.moduleSpecifier);
+      if (specifier !== undefined) {
+        imports.add(specifier);
+      }
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const specifier = stringLiteralOf(node.arguments[0]);
+      if (specifier !== undefined) {
+        imports.add(specifier);
+      }
+    } else if (ts.isCallExpression(node)) {
+      const argumentTexts = node.arguments.map((argument) => argument.getText(file));
+      const shellTrue = argumentTexts.some(
+        (text) => text.includes("shell:") && /shell:\s*true/.test(text),
+      );
+      let calleeText = node.expression.getText(file);
+      if (ts.isIdentifier(node.expression)) {
+        const binding = bindings.get(node.expression.text);
+        if (binding !== undefined) {
+          addCall(binding.module, binding.originalName, node.expression.text);
+          if (binding.module === CHILD_PROCESS_MODULE) {
+            spawnCalls.push({ calleeText: node.expression.text, argumentTexts, shellTrue });
+          }
+          if (FS_MODULES.has(binding.module)) {
+            spawnCalls.push({ calleeText: node.expression.text, argumentTexts, shellTrue });
+          }
+        } else {
+          spawnCalls.push({ calleeText: node.expression.text, argumentTexts, shellTrue });
+        }
+      } else if (ts.isPropertyAccessExpression(node.expression)) {
+        const objectText = node.expression.expression.getText(file);
+        const namespace = namespaceImports.get(objectText);
+        if (namespace !== undefined) {
+          addCall(namespace, node.expression.name.text, calleeText);
+          if (namespace === CHILD_PROCESS_MODULE) {
+            spawnCalls.push({ calleeText, argumentTexts, shellTrue });
+          }
+        } else {
+          spawnCalls.push({ calleeText, argumentTexts, shellTrue });
+        }
+      } else {
+        spawnCalls.push({ calleeText, argumentTexts, shellTrue });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return { imports, calls, spawnCalls, destructiveFsImports };
+}
+
+function isGitMutationCall(call) {
+  if (!CHILD_PROCESS_FUNCTIONS.has(call.calleeText)) {
+    return false;
+  }
+  const hasGitExecutable = call.argumentTexts.some((text) => /\bgit(?:\.exe)?\b/i.test(text));
+  if (!hasGitExecutable) {
+    return false;
+  }
+  return call.argumentTexts.some((text) => {
+    const quoted = /["'`]([a-z][a-z-]*)["'`]/gi.exec(text);
+    return quoted !== null && GIT_MUTATION_VERBS.has(quoted[1].toLowerCase());
+  });
 }
 
 export function runChecks(root) {
@@ -146,38 +377,67 @@ export function runChecks(root) {
         const source = readFileSync(file, "utf8");
         const location = relative(root, file).split(sep).join("/");
         const packageRelativeFile = relative(pkg.path, file);
+        const analysis = analyzeSource(source);
         if (containsProcessEnvAccess(source, packageRelativeFile, file)) {
           errors.push(
             `${location}: process.env inspection is prohibited in package source; build child environments from an explicit allowlist`,
           );
         }
-        if (
-          WRITE_API_TOKENS.some((token) => source.includes(token)) &&
-          !isApprovedWriteApiLocation(packageRelativeFile, file)
-        ) {
-          errors.push(
-            `${location}: direct file write APIs are prohibited outside approved workspace mutation modules and tests`,
-          );
-        }
-        if (
-          !isTestSupportFile(file) &&
-          FORBIDDEN_GIT_WRITE_TOKENS.some((token) => source.includes(token))
-        ) {
-          errors.push(
-            `${location}: Git mutation commands (reset, restore, checkout, clean, stash) are prohibited in runtime code`,
-          );
-        }
-        if (containsProhibitedProcessPattern(source)) {
+        if (isTestSupportFile(file) === false) {
           const exempt = PROHIBITED_PROCESS_EXEMPTIONS.some((directory) =>
             packageRelativeFile.startsWith(directory + sep),
           );
-          if (!isTestSupportFile(file) && !exempt) {
+          if (containsProhibitedProcessPattern(source) && !exempt) {
             errors.push(
               `${location}: raw process execution (exec, execSync, spawnSync, shell: true) is prohibited outside documented test fixtures`,
             );
           }
+          for (const imported of analysis.destructiveFsImports) {
+            if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
+              errors.push(
+                `${location}: direct file write APIs are prohibited: ${imported.api} imported from ${imported.module} outside approved workspace mutation modules and tests`,
+              );
+            }
+          }
+          if (containsForbiddenGitMutationToken(source)) {
+            errors.push(
+              `${location}: Git mutation commands (add, commit, reset, restore, checkout, clean, stash, ...) are prohibited in runtime code`,
+            );
+          }
+          for (const call of analysis.calls) {
+            if (FS_MODULES.has(call.module) && DESTRUCTIVE_FS_APIS.has(call.api)) {
+              if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
+                errors.push(
+                  `${location}: direct file write APIs are prohibited: ${call.api} from ${call.module} outside approved workspace mutation modules and tests`,
+                );
+              }
+            }
+            if (call.module === CHILD_PROCESS_MODULE) {
+              const inApprovedDirectory = APPROVED_CHILD_PROCESS_DIRECTORIES.some((directory) =>
+                packageRelativeFile.startsWith(directory + sep),
+              );
+              if (!inApprovedDirectory) {
+                errors.push(
+                  `${location}: unsandboxed process spawning is prohibited outside approved sandbox and git modules`,
+                );
+              }
+            }
+          }
+          for (const call of analysis.spawnCalls) {
+            if (call.shellTrue && !exempt) {
+              errors.push(
+                `${location}: raw process execution with shell: true is prohibited outside documented test fixtures`,
+              );
+            }
+            if (isGitMutationCall(call)) {
+              errors.push(
+                `${location}: Git mutation commands (add, commit, reset, restore, checkout, clean, stash, ...) are prohibited in runtime code`,
+              );
+            }
+          }
         }
-        for (const specifier of extractImportSpecifiers(source)) {
+        for (const specifier of analysis.imports) {
+          const normalized = normalizeModuleName(specifier);
           if (specifier.startsWith("@anthropic-ai/")) {
             const inRuntimeAdapter = packageRelativeFile.startsWith(
               join("src", "sandbox", "anthropic-runtime"),
@@ -188,12 +448,11 @@ export function runChecks(root) {
               );
             }
           }
-          if (specifier === "node:child_process") {
+          if (normalized === CHILD_PROCESS_MODULE && isTestSupportFile(file) === false) {
             const inApprovedDirectory = APPROVED_CHILD_PROCESS_DIRECTORIES.some((directory) =>
               packageRelativeFile.startsWith(directory + sep),
             );
-            const isTestFile = file.endsWith(".test.ts");
-            if (!inApprovedDirectory && !isTestFile) {
+            if (!inApprovedDirectory) {
               errors.push(
                 `${location}: unsandboxed process spawning is prohibited outside approved sandbox and git modules`,
               );
@@ -302,6 +561,17 @@ function findCycle(start, graph) {
   return visit(start);
 }
 
+/**
+ * Limitations of this checker (documented, not claims of an OS boundary):
+ * - Specifiers built at runtime (template literals, variables) are not
+ *   resolved; canonical spellings of the dangerous modules are still caught.
+ * - `require(...)` calls are not analyzed structurally (textual fallbacks
+ *   cover the raw-process patterns).
+ * - String contents are not semantically analyzed: a repository could
+ *   construct Git mutation commands at runtime from parts. Runtime
+ *   enforcement (the Git adapter allowlist and the sandbox) is the
+ *   security boundary; this checker is a developer guardrail.
+ */
 function main() {
   const errors = runChecks(join(import.meta.dirname, ".."));
   if (errors.length > 0) {
