@@ -33,6 +33,7 @@ interface UndoContext {
 
 async function withContext(
   decision: "approve" | "deny" | "cancel" = "approve",
+  extra: { readonly beforeCommitOpen?: () => Promise<void> } = {},
 ): Promise<UndoContext> {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-undo-workspace-"));
   registerTempDir(workspaceRoot);
@@ -57,6 +58,7 @@ async function withContext(
     store,
     lock: createMutationLock(),
     reviewer,
+    ...extra,
   });
   const withReviewer = (custom: ApprovalReviewer) =>
     createUndoService({
@@ -64,6 +66,7 @@ async function withContext(
       store,
       lock: createMutationLock(),
       reviewer: custom,
+      ...extra,
     });
   return {
     store,
@@ -399,4 +402,96 @@ describe("safe undo", () => {
     expect(outcome.type).toBe("cancelled");
     expect(await readFile(join(context.workspaceRoot, "docs", "note.md"), "utf8")).toBe(after);
   });
+});
+
+describe("safe undo adversarial commit", () => {
+  it("preserves a target replaced immediately before the undo-delete displacement", async () => {
+    const content = "created content\n";
+    let displaced = false;
+    const context = await withContext("approve", {
+      beforeCommitOpen: async () => {
+        if (!displaced) {
+          await writeFile(join(context.workspaceRoot, "docs", "note.md"), "user replaced it\n");
+          displaced = true;
+        }
+      },
+    });
+    const checkpoint = await context.store.prepare({
+      ...prepared("docs/note.md", content, content),
+      operation: "create",
+      before: { exists: false, sha256: null, byteLength: null, bytes: null },
+      after: { exists: true, sha256: hashOf(content), byteLength: Buffer.byteLength(content) },
+    });
+    await applyCheckpoint(context, checkpoint);
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), content);
+
+    const outcome = await context.undo(checkpoint.id);
+    expect(outcome.type).toBe("conflict");
+    expect(await readFile(join(context.workspaceRoot, "docs", "note.md"), "utf8")).toBe(
+      "user replaced it\n",
+    );
+  });
+
+  it("reports an uncertain markUndone failure with the recoverable quarantine named", async () => {
+    const context = await withContext();
+    const before = "original\n";
+    const after = "edited\n";
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), before);
+    const checkpoint = await context.store.prepare(prepared("docs/note.md", before, after));
+    await applyCheckpoint(context, checkpoint);
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), after);
+    const failingStore = new Proxy(context.store, {
+      get(target, property: keyof CheckpointStore) {
+        if (property === "markUndone") {
+          return () => Promise.reject(new Error("metadata write failed"));
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const undoService = createUndoService({
+      workspaceRoot: context.workspaceRoot,
+      store: failingStore,
+      lock: createMutationLock(),
+      reviewer: { review: () => Promise.resolve({ type: "approve_once" as const }) },
+    });
+    const outcome = await undoService.undo(checkpoint.id);
+    expect(outcome.type).toBe("failed");
+    if (outcome.type !== "failed") {
+      return;
+    }
+    expect(outcome.message).toContain("Recovery state is uncertain");
+    expect(outcome.message).toContain(".solaris-quarantine-");
+    expect(await readFile(join(context.workspaceRoot, "docs", "note.md"), "utf8")).toBe(before);
+    const entries = await (
+      await import("node:fs/promises")
+    ).readdir(join(context.workspaceRoot, "docs"));
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(true);
+  });
+
+  it(
+    "detects a parent swapped to a symlink before the undo-create commit open",
+    { skip: process.platform === "win32" },
+    async () => {
+      const before = "deleted content\n";
+      const outsideRoot = await mkdtemp(join(tmpdir(), "solaris-undo-outside-"));
+      registerTempDir(outsideRoot);
+      const context = await withContext("approve", {
+        beforeCommitOpen: async () => {
+          const { rm, symlink } = await import("node:fs/promises");
+          await rm(join(context.workspaceRoot, "docs"), { recursive: true });
+          await symlink(outsideRoot, join(context.workspaceRoot, "docs"), "dir");
+        },
+      });
+      const checkpoint = await context.store.prepare(
+        prepared("docs/note.md", before, "unused", "delete"),
+      );
+      await applyCheckpoint(context, checkpoint);
+
+      const outcome = await context.undo(checkpoint.id);
+      expect(outcome.type).toBe("conflict");
+      const entries = await (await import("node:fs/promises")).readdir(outsideRoot);
+      expect(entries).not.toContain("note.md");
+    },
+  );
 });

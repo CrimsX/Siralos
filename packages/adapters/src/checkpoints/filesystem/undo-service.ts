@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { open, readFile, unlink, lstat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { open, readFile, lstat, realpath } from "node:fs/promises";
+import path from "node:path";
 import type {
   ApprovalRequest,
   ApprovalReviewer,
@@ -24,6 +24,7 @@ import {
 import {
   removeQuarantinedCopy,
   replaceFileWithQuarantine,
+  unlinkWithIdentityVerification,
 } from "../../tools/workspace/mutations/safe-replacement.js";
 import { buildUnifiedDiff } from "../../tools/workspace/mutations/diff.js";
 import { hashMutationPlan } from "../../tools/workspace/mutations/mutation-hash.js";
@@ -35,6 +36,11 @@ export interface UndoServiceDependencies {
   readonly store: CheckpointStore;
   readonly lock: MutationLock;
   readonly reviewer: ApprovalReviewer;
+  /**
+   * Test seam: deterministic barrier invoked immediately before the
+   * irreversible commit open, after every final revalidation.
+   */
+  readonly beforeCommitOpen?: () => Promise<void>;
 }
 
 type UndoAction = "create" | "restore" | "delete";
@@ -170,12 +176,31 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       try {
         await dependencies.store.markUndone(checkpoint.id);
       } catch (error: unknown) {
+        const quarantine = restoreOutcome.quarantinePath;
+        const recoverable =
+          quarantine === null
+            ? ""
+            : ` The original copy is preserved at ${quarantine}; do not delete it.`;
         return {
           type: "failed",
           checkpointId: checkpoint.id,
           path,
-          message: `Undo was applied but the checkpoint could not be marked undone: ${describeError(error)}`,
+          message: `Undo was applied but the checkpoint could not be marked undone: ${describeError(error)}. Recovery state is uncertain.${recoverable}`,
         };
+      }
+      if (restoreOutcome.quarantinePath !== null) {
+        try {
+          await removeQuarantinedCopy(restoreOutcome.quarantinePath);
+        } catch (error: unknown) {
+          // The lifecycle state is durably finalized; a failed quarantine
+          // removal leaves only a recoverable copy behind, never a loss.
+          return {
+            type: "undone",
+            checkpointId: checkpoint.id,
+            path,
+            message: `Undo applied; the quarantine copy at ${restoreOutcome.quarantinePath} could not be removed: ${describeError(error)}`,
+          };
+        }
       }
       return { type: "undone", checkpointId: checkpoint.id, path };
     } finally {
@@ -199,7 +224,7 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
   }
 
   type RestoreOutcome =
-    | { readonly kind: "ok" }
+    | { readonly kind: "ok"; readonly quarantinePath: string | null }
     | { readonly kind: "cancelled" }
     | { readonly kind: "failed"; readonly message: string };
 
@@ -221,10 +246,21 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       if (signal?.aborted) {
         return { kind: "cancelled" };
       }
-      try {
-        await unlink(absolute);
-      } catch (error: unknown) {
-        return { kind: "failed", message: describeError(error) };
+      if (dependencies.beforeCommitOpen !== undefined) {
+        await dependencies.beforeCommitOpen();
+      }
+      const commitOutcome = await unlinkWithIdentityVerification({
+        targetPath: absolute,
+        expectedTargetSha256: checkpoint.after.sha256,
+      });
+      if (commitOutcome.kind !== "success") {
+        if (commitOutcome.kind === "uncertain") {
+          return {
+            kind: "failed",
+            message: `${commitOutcome.message} The quarantine copy at ${commitOutcome.quarantinePath} must not be deleted; recover the original from it.`,
+          };
+        }
+        return { kind: "failed", message: commitOutcome.message };
       }
       let stillExists = true;
       try {
@@ -235,7 +271,7 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       if (stillExists) {
         return { kind: "failed", message: "The file still exists after undo deletion." };
       }
-      return { kind: "ok" };
+      return { kind: "ok", quarantinePath: null };
     }
     if (preimage === null) {
       return { kind: "failed", message: "The preimage is missing." };
@@ -251,16 +287,51 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       if (signal?.aborted) {
         return { kind: "cancelled" };
       }
+      if (dependencies.beforeCommitOpen !== undefined) {
+        await dependencies.beforeCommitOpen();
+      }
+      let canonicalRoot: string;
       try {
-        const handle = await open(absolute, "wx");
-        try {
-          await handle.writeFile(preimage);
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+        canonicalRoot = await realpath(dependencies.workspaceRoot);
       } catch (error: unknown) {
         return { kind: "failed", message: describeError(error) };
+      }
+      let handle;
+      try {
+        handle = await open(absolute, "wx");
+      } catch (error: unknown) {
+        return { kind: "failed", message: describeError(error) };
+      }
+      let escaped = false;
+      try {
+        // Exclusive creation is not no-follow on intermediate components: a
+        // parent swapped for a symlink or junction after the final
+        // revalidation would restore the preimage outside the workspace.
+        let createdCanonical: string;
+        try {
+          createdCanonical = await realpath(absolute);
+        } catch (error: unknown) {
+          escaped = true;
+          return {
+            kind: "failed",
+            message: `The restored file could not be resolved canonically: ${describeError(error)}`,
+          };
+        }
+        if (!isInside(canonicalRoot, createdCanonical)) {
+          escaped = true;
+          return {
+            kind: "failed",
+            message:
+              "A parent directory was swapped for a link before the restore; nothing was written.",
+          };
+        }
+        await handle.writeFile(preimage);
+        await handle.sync();
+      } finally {
+        await handle.close();
+        if (escaped) {
+          await import("node:fs/promises").then((fs) => fs.unlink(absolute).catch(() => {}));
+        }
       }
     } else {
       const resolved = await resolveMutationTarget(
@@ -270,7 +341,8 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       if (resolved.status !== "resolved") {
         return { kind: "failed", message: resolved.message };
       }
-      const tempPath = createMutationTempPath(dirname(absolute));
+      const tempPath = createMutationTempPath(path.dirname(absolute));
+      let quarantinePath: string | null = null;
       try {
         const handle = await open(tempPath, "wx");
         try {
@@ -281,6 +353,9 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
         }
         if (signal?.aborted) {
           return { kind: "cancelled" };
+        }
+        if (dependencies.beforeCommitOpen !== undefined) {
+          await dependencies.beforeCommitOpen();
         }
         const commitOutcome = await replaceFileWithQuarantine({
           tempPath,
@@ -296,26 +371,24 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
           }
           return { kind: "failed", message: commitOutcome.message };
         }
-        if (commitOutcome.quarantinePath !== null) {
-          const verified = await verifyRestored(absolute, checkpoint);
-          if (verified !== null) {
-            return {
-              kind: "failed",
-              message: `${verified} The original copy is preserved at ${commitOutcome.quarantinePath}; do not delete it.`,
-            };
-          }
-          await removeQuarantinedCopy(commitOutcome.quarantinePath).catch(() => {});
-          return { kind: "ok" };
+        quarantinePath = commitOutcome.quarantinePath;
+        const verified = await verifyRestored(absolute, checkpoint);
+        if (verified !== null) {
+          return {
+            kind: "failed",
+            message: `${verified} The original copy is preserved at ${quarantinePath}; do not delete it.`,
+          };
         }
       } finally {
         await removeMutationTemp(tempPath).catch(() => {});
       }
+      return { kind: "ok", quarantinePath };
     }
     const verified = await verifyRestored(absolute, checkpoint);
     if (verified !== null) {
       return { kind: "failed", message: verified };
     }
-    return { kind: "ok" };
+    return { kind: "ok", quarantinePath: null };
   }
 
   async function verifyRestored(
@@ -397,7 +470,12 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
 }
 
 function joinAbsolute(workspaceRoot: string, relativePath: string): string {
-  return join(workspaceRoot, ...relativePath.split("/"));
+  return path.join(workspaceRoot, ...relativePath.split("/"));
+}
+
+function isInside(root: string, target: string): boolean {
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return target === root || target.startsWith(rootPrefix);
 }
 
 function describeError(error: unknown): string {

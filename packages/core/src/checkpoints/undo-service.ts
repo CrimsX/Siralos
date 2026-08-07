@@ -3,6 +3,8 @@ export type UndoOutcome =
       readonly type: "undone";
       readonly checkpointId: string;
       readonly path: string;
+      /** Optional advisory detail (for example a leftover recoverable copy). */
+      readonly message?: string;
     }
   | {
       readonly type: "denied";
