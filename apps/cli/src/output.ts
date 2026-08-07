@@ -161,7 +161,13 @@ export function formatDoctor(report: SandboxDoctorReport): string {
     lines.push(`Setup requirements: ${report.statusMessage}`);
   }
   if (!report.probesRun) {
-    lines.push("Live conformance: not run (use --sandbox-doctor --run-probes)");
+    if (report.state === "available") {
+      lines.push("Live conformance: not run (use --sandbox-doctor --run-probes)");
+    } else {
+      lines.push(
+        `Live conformance: not run — the backend state is ${report.state}; probes are never treated as passing when they cannot execute.`,
+      );
+    }
   } else {
     lines.push("Live conformance: ran");
     if (report.conformance !== null) {
@@ -175,6 +181,7 @@ export function formatDoctor(report: SandboxDoctorReport): string {
       );
     }
   }
+  lines.push("Exit code: 0 = passed, 1 = probe failure, 3 = probes unavailable");
   return `${lines.join("\n")}\n`;
 }
 

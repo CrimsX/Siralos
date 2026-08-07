@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
 import { createCliApplication } from "./bootstrap/create-application.js";
-import { runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
+import { doctorExitCode, runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
 import { createInputQueue, type InputQueue } from "./input/input-queue.js";
 import {
   createSessionControls,
@@ -92,22 +92,6 @@ async function main(): Promise<number> {
   stdin.destroy();
   await sandbox.close();
   return exitCode;
-}
-
-export function doctorExitCode(
-  report: Awaited<ReturnType<typeof runSandboxDoctor>>,
-  includeProbes: boolean,
-): number {
-  if (!includeProbes) {
-    return 0;
-  }
-  if (!report.probesRun) {
-    return 3;
-  }
-  if (report.conformance === null) {
-    return 3;
-  }
-  return report.conformance.failed > 0 ? 1 : 0;
 }
 
 main().then(
