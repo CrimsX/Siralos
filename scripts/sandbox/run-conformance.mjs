@@ -45,6 +45,18 @@ async function main() {
       );
       return 0;
     }
+    if (!status.capabilities.filesystemReadRestriction) {
+      console.log(
+        `SANDBOX CONFORMANCE: SKIPPED - the backend cannot enforce the host-read allowlist on ${status.platform}.`,
+      );
+      if (status.message !== undefined) {
+        console.log(`  ${status.message}`);
+      }
+      console.log(
+        "Process execution is refused while the host-read boundary cannot be enforced; skipped is never treated as passed.",
+      );
+      return 0;
+    }
     const environment = buildChildEnvironment(
       { ...process.env, ...FAKE_PROBE_SECRETS },
       sandboxDirectories,

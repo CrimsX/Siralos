@@ -17,9 +17,10 @@ import {
 } from "@anthropic-ai/sandbox-runtime";
 import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
-import { homedir } from "node:os";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { isDeniedVariable } from "../../environment/child-environment.js";
+import { resolveNpmCli } from "../../process/trusted-executables.js";
 
 export const ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID = "anthropic-runtime";
 
@@ -29,18 +30,117 @@ export interface AnthropicSandboxRuntimeBackendOptions {
   readonly workspaceRoot: string;
   readonly sandboxHome: string;
   readonly sandboxTemp: string;
-  /**
-   * Solaris-owned runs root (`~/.solaris/runs`). Command run directories live
-   * beneath it; it is readable and writable only for sandboxed commands.
-   */
-  readonly runRoot?: string;
+}
+
+/**
+ * The approved host-readable surface for sandboxed commands: the active
+ * workspace, the Solaris-owned sandbox-private directories, the current
+ * run's private directory, the exact trusted runner executables and their
+ * installation directories, and the minimum system runtime/library paths the
+ * selected trusted runner requires. Everything else on the host is denied.
+ */
+export async function hostReadAllowSurface(): Promise<readonly string[]> {
+  const system = systemRuntimeReadPaths(detectPlatform());
+  const trusted = await trustedRunnerReadPaths();
+  return [...system, ...trusted];
+}
+
+let cachedTrustedSurface: readonly string[] | undefined;
+
+async function trustedRunnerReadPaths(): Promise<readonly string[]> {
+  if (cachedTrustedSurface !== undefined) {
+    return cachedTrustedSurface;
+  }
+  const surface = new Set<string>();
+  const nodeExecutable = process.execPath;
+  try {
+    surface.add(realpathSync(nodeExecutable));
+  } catch {
+    surface.add(nodeExecutable);
+  }
+  const nodeDirectory = path.dirname(nodeExecutable);
+  surface.add(nodeDirectory);
+  surface.add(path.join(nodeDirectory, "..", "lib"));
+  const npmCli = await resolveNpmCli();
+  if (npmCli.status === "resolved") {
+    surface.add(npmCli.cliPath);
+    surface.add(path.dirname(npmCli.cliPath));
+    surface.add(path.dirname(path.dirname(npmCli.cliPath)));
+  }
+  cachedTrustedSurface = [...surface];
+  return cachedTrustedSurface;
+}
+
+/**
+ * The minimum system runtime/library paths required by the selected trusted
+ * runners. These are machine system locations only — never user data,
+ * credentials, logs, caches, or shared scratch regions.
+ */
+function systemRuntimeReadPaths(platform: ReturnType<typeof detectPlatform>): readonly string[] {
+  switch (platform) {
+    case "linux":
+      return [
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/usr/lib",
+        "/usr/lib32",
+        "/usr/lib64",
+        "/usr/libexec",
+        "/usr/local/lib",
+        "/etc/ld.so.cache",
+        "/etc/ld.so.conf",
+        "/etc/ld.so.conf.d",
+        "/etc/passwd",
+        "/etc/group",
+        "/etc/nsswitch.conf",
+        "/etc/resolv.conf",
+        "/etc/hosts",
+        "/etc/localtime",
+        "/usr/share/zoneinfo",
+      ];
+    case "macos":
+      return [
+        "/bin",
+        "/sbin",
+        "/usr/bin",
+        "/usr/sbin",
+        "/usr/local/bin",
+        "/usr/lib",
+        "/usr/libexec",
+        "/usr/local/lib",
+        "/System",
+        "/usr/share",
+        "/usr/share/zoneinfo",
+        "/etc/passwd",
+        "/etc/group",
+        "/etc/hosts",
+        "/etc/resolv.conf",
+        "/etc/localtime",
+        "/private/etc/passwd",
+        "/private/etc/group",
+        "/private/etc/hosts",
+        "/private/etc/resolv.conf",
+        "/private/etc/localtime",
+      ];
+    case "windows":
+    case "unknown":
+      return [];
+  }
 }
 
 export function createAnthropicSandboxRuntimeBackend(
   options: AnthropicSandboxRuntimeBackendOptions,
 ): SandboxBackend {
-  let initializedProfile: SandboxProfile | undefined;
+  let initializedKey: string | undefined;
   let closed = false;
+  let transition: Promise<unknown> = Promise.resolve();
 
   async function inspect(): Promise<SandboxBackendStatus> {
     const platform = detectPlatform();
@@ -48,7 +148,15 @@ export function createAnthropicSandboxRuntimeBackend(
       return unsupportedStatus(platform);
     }
     if (platform === "windows") {
-      return inspectWindows();
+      const status = await inspectWindows();
+      if (status.state !== "available") {
+        return status;
+      }
+      return {
+        ...status,
+        message:
+          "The pinned Sandbox Runtime cannot express a reliable host-read allowlist on Windows (per-execution grants are unsupported and ACL stamping cannot override inherited well-known-group read access). Host-read enforcement is reported unavailable and process execution is refused.",
+      };
     }
     if (platform === "linux") {
       const dependencies = await SandboxManager.checkDependenciesAsync();
@@ -100,14 +208,19 @@ export function createAnthropicSandboxRuntimeBackend(
         `Profile ${request.profile.id} does not allow process execution.`,
       );
     }
-    const runtime = await ensureInitialized(request.profile);
+    if (detectPlatform() === "windows") {
+      assertHostReadBoundarySupported("windows");
+    }
+    await serialized(() => ensureInitialized(request.profile));
+    const runDirectory = request.runDirectory;
+    const customConfig = await buildPerExecutionConfig(options, request.profile, runDirectory);
     const command = buildCommand(request.executable, request.arguments);
     let wrapped: { argv: string[]; env: NodeJS.ProcessEnv };
     try {
-      wrapped = await runtime.wrapWithSandboxArgv(
+      wrapped = await SandboxManager.wrapWithSandboxArgv(
         command,
         undefined,
-        undefined,
+        customConfig,
         request.signal,
         request.workingDirectory,
       );
@@ -126,6 +239,7 @@ export function createAnthropicSandboxRuntimeBackend(
     const stderrLimitBytes = request.stderrLimitBytes ?? request.profile.process.maxOutputBytes;
     const timeoutController = new AbortController();
     let timedOut = false;
+    let outputLimited = false;
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
       timeoutController.abort();
@@ -133,21 +247,6 @@ export function createAnthropicSandboxRuntimeBackend(
     const signals: AbortSignal[] = [timeoutController.signal];
     if (request.signal !== undefined) {
       signals.push(request.signal);
-    }
-    const child = spawn(wrapped.argv[0] as string, wrapped.argv.slice(1), {
-      cwd: request.workingDirectory,
-      env: environment,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      signal: AbortSignal.any(signals),
-    });
-    let outputLimited = false;
-    const abortTreeListener = () => {
-      terminateProcessTree(child);
-    };
-    for (const signal of signals) {
-      signal.addEventListener("abort", abortTreeListener, { once: true });
     }
     const stdoutSink = createOutputSink(stdoutLimitBytes, () => {
       outputLimited = true;
@@ -159,93 +258,133 @@ export function createAnthropicSandboxRuntimeBackend(
     });
     const stdoutDecoder = new StringDecoder("utf8");
     const stderrDecoder = new StringDecoder("utf8");
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdoutSink.push(chunk);
-      if (request.onOutput !== undefined) {
-        const text = stdoutDecoder.write(chunk);
-        emitChunked(request.onOutput, "stdout", text);
-      }
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderrSink.push(chunk);
-      if (request.onOutput !== undefined) {
-        const text = stderrDecoder.write(chunk);
-        emitChunked(request.onOutput, "stderr", text);
-      }
-    });
-    const result = await new Promise<SandboxedProcessResult>((resolve, reject) => {
-      child.on("error", (error: Error) => {
-        clearTimeout(timeoutTimer);
-        for (const signal of signals) {
-          signal.removeEventListener("abort", abortTreeListener);
-        }
-        reject(
-          new SandboxError(
-            "sandbox_initialization_failed",
-            `Cannot start process: ${error.message}`,
-            error,
-          ),
-        );
+    let result: SandboxedProcessResult;
+    try {
+      const child = spawn(wrapped.argv[0] as string, wrapped.argv.slice(1), {
+        cwd: request.workingDirectory,
+        env: environment,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform !== "win32",
+        signal: AbortSignal.any(signals),
       });
-      child.on("close", (exitCode: number | null, exitSignal: string | null) => {
-        clearTimeout(timeoutTimer);
-        for (const signal of signals) {
-          signal.removeEventListener("abort", abortTreeListener);
-        }
-        const violations = collectViolations();
-        let status: SandboxedProcessResult["status"];
-        if (timedOut) {
-          status = "timed-out";
-        } else if (outputLimited) {
-          status = "output-limit";
-        } else if (request.signal?.aborted) {
-          status = "cancelled";
-        } else if (violations.length > 0) {
-          status = "sandbox-denied";
-        } else if (exitCode === null) {
-          status = "failed";
+      const abortTreeListener = () => {
+        terminateProcessTree(child);
+      };
+      for (const signal of signals) {
+        signal.addEventListener("abort", abortTreeListener, { once: true });
+      }
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdoutSink.push(chunk);
+        if (request.onOutput !== undefined && !outputLimited && !timedOut) {
+          emitChunked(request.onOutput, "stdout", stdoutDecoder.write(chunk));
         } else {
-          status = "completed";
+          stdoutDecoder.write(chunk);
         }
-        resolve({
-          status,
-          exitCode,
-          signal: exitSignal,
-          stdout: stdoutSink.text,
-          stderr: stderrSink.text,
-          stdoutTruncated: stdoutSink.truncated,
-          stderrTruncated: stderrSink.truncated,
-          durationMs: Date.now() - startedAt,
-          violations,
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderrSink.push(chunk);
+        if (request.onOutput !== undefined && !outputLimited && !timedOut) {
+          emitChunked(request.onOutput, "stderr", stderrDecoder.write(chunk));
+        } else {
+          stderrDecoder.write(chunk);
+        }
+      });
+      result = await new Promise<SandboxedProcessResult>((resolve, reject) => {
+        child.on("error", (error: Error) => {
+          clearTimeout(timeoutTimer);
+          for (const signal of signals) {
+            signal.removeEventListener("abort", abortTreeListener);
+          }
+          reject(
+            new SandboxError(
+              "sandbox_initialization_failed",
+              `Cannot start process: ${error.message}`,
+              error,
+            ),
+          );
+        });
+        child.on("close", (exitCode: number | null, exitSignal: string | null) => {
+          clearTimeout(timeoutTimer);
+          for (const signal of signals) {
+            signal.removeEventListener("abort", abortTreeListener);
+          }
+          const violations = collectViolations();
+          let status: SandboxedProcessResult["status"];
+          if (timedOut) {
+            status = "timed-out";
+          } else if (outputLimited) {
+            status = "output-limit";
+          } else if (request.signal?.aborted) {
+            status = "cancelled";
+          } else if (violations.length > 0) {
+            status = "sandbox-denied";
+          } else if (exitCode === null) {
+            status = "failed";
+          } else {
+            status = "completed";
+          }
+          resolve({
+            status,
+            exitCode,
+            signal: exitSignal,
+            stdout: stdoutSink.text,
+            stderr: stderrSink.text,
+            stdoutTruncated: stdoutSink.truncated,
+            stderrTruncated: stderrSink.truncated,
+            durationMs: Date.now() - startedAt,
+            violations,
+          });
         });
       });
-    });
-    if (request.onOutput !== undefined) {
-      const stdoutTail = stdoutDecoder.end();
-      if (stdoutTail.length > 0) {
-        emitChunked(request.onOutput, "stdout", stdoutTail);
+      if (request.onOutput !== undefined && !outputLimited && !timedOut) {
+        const stdoutTail = stdoutDecoder.end();
+        if (stdoutTail.length > 0) {
+          emitChunked(request.onOutput, "stdout", stdoutTail);
+        }
+        const stderrTail = stderrDecoder.end();
+        if (stderrTail.length > 0) {
+          emitChunked(request.onOutput, "stderr", stderrTail);
+        }
+      } else {
+        stdoutDecoder.end();
+        stderrDecoder.end();
       }
-      const stderrTail = stderrDecoder.end();
-      if (stderrTail.length > 0) {
-        emitChunked(request.onOutput, "stderr", stderrTail);
+    } finally {
+      clearTimeout(timeoutTimer);
+      try {
+        SandboxManager.cleanupAfterCommand();
+      } catch {
+        // best-effort runtime cleanup; never masks the command result
       }
     }
-    runtime.cleanupAfterCommand();
     return result;
   }
 
-  async function ensureInitialized(profile: SandboxProfile): Promise<typeof SandboxManager> {
-    if (initializedProfile !== undefined) {
-      return SandboxManager;
+  async function ensureInitialized(profile: SandboxProfile): Promise<void> {
+    const key = effectiveConfigKey(options, profile);
+    if (initializedKey === key) {
+      return;
     }
-    const config = buildRuntimeConfig(options, profile);
+    if (initializedKey !== undefined) {
+      try {
+        await SandboxManager.reset();
+      } catch (error: unknown) {
+        throw new SandboxError(
+          "sandbox_cleanup_failed",
+          `The previous sandbox configuration could not be torn down: ${describeError(error)}`,
+          error,
+        );
+      }
+    }
+    const config = await buildSessionConfig(options, profile);
     try {
       await SandboxManager.initialize(config);
     } catch (error: unknown) {
       throw classifyInitializationError(error);
     }
-    initializedProfile = profile;
-    return SandboxManager;
+    // Only report the profile as active after initialization succeeded.
+    initializedKey = key;
   }
 
   async function close(): Promise<void> {
@@ -264,6 +403,15 @@ export function createAnthropicSandboxRuntimeBackend(
     }
   }
 
+  function serialized<T>(task: () => Promise<T>): Promise<T> {
+    const run = transition.then(task, task);
+    transition = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   return {
     id: ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID,
     inspect,
@@ -274,13 +422,14 @@ export function createAnthropicSandboxRuntimeBackend(
 
 function baseStatus(state: SandboxBackendStatus["state"], platform: string): SandboxBackendStatus {
   const available = state === "available";
+  const readRestrictionAvailable = available && platform !== "windows";
   return {
     backendId: ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID,
     state,
     platform,
     version: ANTHROPIC_SANDBOX_RUNTIME_VERSION,
     capabilities: {
-      filesystemReadRestriction: available,
+      filesystemReadRestriction: readRestrictionAvailable,
       filesystemWriteRestriction: available,
       networkRestriction: available,
       processTreeRestriction: available,
@@ -296,21 +445,11 @@ function unsupportedStatus(platform: string): SandboxBackendStatus {
   };
 }
 
-function buildRuntimeConfig(
+async function buildSessionConfig(
   options: AnthropicSandboxRuntimeBackendOptions,
   profile: SandboxProfile,
-): SandboxRuntimeConfig {
-  const writableRoots =
-    profile.filesystem.workspaceAccess === "read-write"
-      ? [options.workspaceRoot, options.sandboxHome, options.sandboxTemp]
-      : [options.sandboxHome, options.sandboxTemp];
-  if (options.runRoot !== undefined) {
-    writableRoots.push(options.runRoot);
-  }
-  const readableRoots = [options.workspaceRoot, options.sandboxHome, options.sandboxTemp];
-  if (options.runRoot !== undefined) {
-    readableRoots.push(options.runRoot);
-  }
+): Promise<SandboxRuntimeConfig> {
+  const surface = await hostReadAllowSurface();
   return {
     network: {
       allowedDomains: [],
@@ -318,8 +457,8 @@ function buildRuntimeConfig(
     },
     filesystem: {
       denyRead: hostReadBoundaryPatterns(),
-      allowRead: readableRoots,
-      allowWrite: writableRoots,
+      allowRead: [options.workspaceRoot, options.sandboxHome, options.sandboxTemp, ...surface],
+      allowWrite: profileWriteRoots(options, profile),
       denyWrite: protectedPathPatterns(profile, options.workspaceRoot),
     },
     enableWeakerNestedSandbox: false,
@@ -331,54 +470,121 @@ function buildRuntimeConfig(
   };
 }
 
+export async function buildPerExecutionConfig(
+  options: AnthropicSandboxRuntimeBackendOptions,
+  profile: SandboxProfile,
+  runDirectory: string | undefined,
+): Promise<Partial<SandboxRuntimeConfig>> {
+  const surface = await hostReadAllowSurface();
+  const readableRoots = [options.workspaceRoot, options.sandboxHome, options.sandboxTemp];
+  if (runDirectory !== undefined) {
+    readableRoots.push(runDirectory);
+  }
+  const writableRoots = profileWriteRoots(options, profile);
+  if (runDirectory !== undefined) {
+    writableRoots.push(runDirectory);
+  }
+  return {
+    network: {
+      allowedDomains: [],
+      deniedDomains: [],
+    },
+    filesystem: {
+      denyRead: hostReadBoundaryPatterns(),
+      allowRead: [...readableRoots, ...surface],
+      allowWrite: writableRoots,
+      denyWrite: protectedPathPatterns(profile, options.workspaceRoot),
+    },
+    enableWeakerNestedSandbox: false,
+    enableWeakerNetworkIsolation: false,
+    allowAppleEvents: false,
+  };
+}
+
+function profileWriteRoots(
+  options: AnthropicSandboxRuntimeBackendOptions,
+  profile: SandboxProfile,
+): string[] {
+  const writableRoots =
+    profile.filesystem.workspaceAccess === "read-write"
+      ? [options.workspaceRoot, options.sandboxHome, options.sandboxTemp]
+      : [options.sandboxHome, options.sandboxTemp];
+  return writableRoots;
+}
+
 /**
- * The explicit deny-by-default host-read boundary. Reads are allowed by
- * default inside the sandbox runtime, so everything outside the approved
- * surface must be denied explicitly: the approved workspace mode, the
- * Solaris-owned sandbox-private directories, and the smallest system paths
- * required for tooling are re-allowed via `allowRead`, while every
- * user-data and shared-scratch region of the host is denied. "Deny the home
- * directory" is not treated as "workspace-only": the entire user-data
- * surface (all profiles, other users, shared temp/log/cache regions, and
- * mounted volumes) is denied on each platform.
+ * The effective-configuration key: every profile-derived part of the runtime
+ * configuration that changes the sandbox's effective behavior. Requests are
+ * never executed under a previously initialized broader configuration; when
+ * the key changes the manager is reset and reinitialized before use.
  */
-function hostReadBoundaryPatterns(): string[] {
-  switch (detectPlatform()) {
-    case "windows":
-      return [`${joinOutsideProfile(homedir())}${path.sep}**`];
-    case "macos":
-      return [
-        "/Users/**",
-        "/private/var/folders/**",
-        "/private/tmp/**",
-        "/tmp/**",
-        "/var/tmp/**",
-        "/var/log/**",
-        "/var/db/**",
-        "/Volumes/**",
-      ];
-    case "linux":
-      return [
-        "/home/**",
-        "/root/**",
-        "/tmp/**",
-        "/var/tmp/**",
-        "/var/log/**",
-        "/var/cache/**",
-        "/var/lib/**",
-        "/var/mail/**",
-        "/var/spool/**",
-        "/srv/**",
-        "/mnt/**",
-        "/media/**",
-      ];
+export function effectiveConfigKey(
+  options: AnthropicSandboxRuntimeBackendOptions,
+  profile: SandboxProfile,
+): string {
+  return JSON.stringify({
+    workspaceAccess: profile.filesystem.workspaceAccess,
+    protectGitMetadata: profile.filesystem.protectGitMetadata,
+    protectSolarisMetadata: profile.filesystem.protectSolarisMetadata,
+    denySensitiveProjectFiles: profile.filesystem.denySensitiveProjectFiles,
+    processEnabled: profile.process.enabled,
+    workspaceRoot: options.workspaceRoot,
+  });
+}
+
+/**
+ * The host-read boundary is an allowlist, not a blocklist. The runtime's
+ * read model allows everything by default, so the whole host root is denied
+ * first and only the approved surface is re-allowed: the active workspace,
+ * the current command's private run directory, the Solaris-owned sandbox
+ * directories, the exact trusted runner executables, and the minimum system
+ * runtime/library paths the selected trusted runner requires. Nothing else —
+ * other user profiles, shared temporary areas, mounted volumes, other
+ * drives, system configuration beyond the listed runtime paths, service
+ * data, logs, caches, or credential locations — is readable.
+ */
+export function hostReadBoundaryPatterns(
+  platform: ReturnType<typeof detectPlatform> = detectPlatform(),
+): string[] {
+  switch (platform) {
     case "unknown":
       return [];
+    case "windows":
+      // Windows execution is refused (the runtime cannot express a reliable
+      // allowlist there); no partial deny surface is claimed.
+      return [];
+    case "macos":
+    case "linux":
+      return ["/"];
   }
 }
 
-function joinOutsideProfile(home: string): string {
-  return path.dirname(home);
+/**
+ * Refuses process execution on platforms where the pinned runtime cannot
+ * express the deny-by-default host-read allowlist. On Windows per-execution
+ * filesystem grants are unsupported and ACL stamping cannot override
+ * inherited well-known-group read access, so a reliable allowlist cannot be
+ * established; execution fails closed instead of claiming a boundary.
+ */
+export function assertHostReadBoundarySupported(platform: string): void {
+  if (platform === "windows") {
+    throw new SandboxError(
+      "sandbox_configuration_error",
+      "The pinned Sandbox Runtime cannot enforce a deny-by-default host-read allowlist on Windows; process execution is refused. Report this platform as unable to enforce the host-read boundary.",
+    );
+  }
+}
+
+function isPathInside(root: string, target: string): boolean {
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return target === root || target.startsWith(rootPrefix);
+}
+
+export function isWithinHostReadAllowSurface(
+  candidate: string,
+  surface: readonly string[],
+): boolean {
+  return surface.some((root) => isPathInside(root, candidate));
 }
 
 /**
@@ -474,7 +680,13 @@ function quoteWindows(argument: string): string {
   return `"${argument.replace(/"/g, '\\"')}"`;
 }
 
-function createOutputSink(
+/**
+ * Output sink that accounts the hard limit on raw bytes, keeps decoded text
+ * valid across child-process buffer boundaries, and never truncates inside a
+ * multibyte sequence. The limit is enforced within the crossing chunk, so a
+ * single large OS buffer cannot bypass it.
+ */
+export function createOutputSink(
   maxBytes: number,
   onLimitReached: () => void,
 ): {
@@ -482,7 +694,9 @@ function createOutputSink(
   truncated: boolean;
   push(chunk: Buffer): void;
 } {
+  const decoder = new StringDecoder("utf8");
   let text = "";
+  let totalBytes = 0;
   let truncated = false;
   let limitReported = false;
   return {
@@ -496,16 +710,19 @@ function createOutputSink(
       if (truncated) {
         return;
       }
-      const remaining = maxBytes - Buffer.byteLength(text, "utf8");
+      const remaining = maxBytes - totalBytes;
       if (chunk.length > remaining) {
-        text += chunk.subarray(0, Math.max(remaining, 0)).toString("utf8");
+        // Keep only the bytes that fit; the decoder drops any dangling
+        // partial sequence instead of emitting a replacement character.
+        text += decoder.write(chunk.subarray(0, Math.max(remaining, 0)));
         truncated = true;
         if (!limitReported) {
           limitReported = true;
           onLimitReached();
         }
       } else {
-        text += chunk.toString("utf8");
+        totalBytes += chunk.length;
+        text += decoder.write(chunk);
       }
     },
   };
@@ -518,7 +735,12 @@ function emitChunked(
 ): void {
   for (const chunk of chunkDecodedText(text, COMMAND_LIMITS.maxSingleOutputEventBytes)) {
     if (chunk.length > 0) {
-      onOutput({ type: stream, text: chunk });
+      try {
+        onOutput({ type: stream, text: chunk });
+      } catch {
+        // A failing output callback must never crash Solaris or leak a
+        // running child; the command continues and the callback is skipped.
+      }
     }
   }
 }

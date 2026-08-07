@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, parse } from "node:path";
 import type {
   SandboxBackend,
   SandboxProfile,
@@ -13,6 +13,10 @@ import { COMMAND_LIMITS, VALIDATION_OFFLINE_PROFILE } from "@solaris/core";
 import { buildCommandEnvironment } from "../../environment/command-environment.js";
 import { createRunDirectoryProvider, type CommandRunPaths } from "../../process/run-directories.js";
 import { resolveNpmCli, type NpmCliResolution } from "../../process/trusted-executables.js";
+import {
+  hostReadAllowSurface,
+  isWithinHostReadAllowSurface,
+} from "../anthropic-runtime/anthropic-sandbox-runtime-backend.js";
 
 export interface ConformanceProbeResult {
   readonly probeId: string;
@@ -169,7 +173,7 @@ export async function runSandboxConformance(
   };
 
   const COMMAND_PROFILE = VALIDATION_OFFLINE_PROFILE;
-  const hostReadCandidates = existingHostReadCandidates();
+  const hostReadCandidates = await existingHostReadCandidates();
   const probes: readonly Probe[] = [
     {
       id: "read-inside",
@@ -200,13 +204,33 @@ export async function runSandboxConformance(
     },
     {
       id: "host-read-denied",
-      description: "Host paths outside the approved surface are unreadable",
+      description: "Host paths outside the approved allowlist are unreadable",
       buildRequest: (_context, runPaths) =>
         nodeRequest("host-read", options.profile, runPaths, hostReadCandidates),
       check: (result) => {
-        const expected = hostReadCandidates.map((_, index) => `hr:${index}:denied`);
-        return expected.every((marker) => result.stdout.includes(marker));
+        // Every existing candidate outside the approved surface must be
+        // unreadable; a readable one (hr:*:ok) fails live conformance.
+        // "denied" (explicit denial) and "missing" (hidden by the
+        // deny-root allowlist) are both unreadable outcomes.
+        const ok = hostReadCandidates.map((_, index) => `hr:${index}:ok`);
+        return ok.every((marker) => !result.stdout.includes(marker));
       },
+    },
+    {
+      id: "cross-run-isolation",
+      description: "One command cannot read another run's private directory",
+      buildRequest: async (_context, runPaths) => {
+        const other = await runDirectories.create();
+        try {
+          await writeFile(join(other.home, "other-run-secret.txt"), "OTHER-RUN-SECRET\n");
+          return nodeRequest("cross-run-read", options.profile, runPaths, [
+            join(other.home, "other-run-secret.txt"),
+          ]);
+        } finally {
+          await runDirectories.remove(other.runId).catch(() => {});
+        }
+      },
+      check: (result) => !result.stdout.includes("cross-run-ok"),
     },
     {
       id: "network",
@@ -425,6 +449,23 @@ export async function runSandboxConformance(
       },
       check: (result) => result.stdout.includes("read-ok"),
     },
+    {
+      // The suite's ordering deliberately exercises profile isolation both
+      // ways: `write-inside` (develop-offline, workspace writable) runs
+      // first, then every validation-offline probe must still be denied
+      // writes; this final probe re-runs the broader profile after all the
+      // strict executions and must regain its own (never the strict one's)
+      // effective configuration. Each request carries its own per-execution
+      // configuration, so no request ever executes under another profile's
+      // filesystem policy.
+      id: "profile-rebroaden",
+      description: "A broader profile regains its own configuration after strict executions",
+      buildRequest: (_context, runPaths) => nodeRequest("write-inside", options.profile, runPaths),
+      check: (result) => result.stdout.includes("write-ok"),
+      cleanupAfter: async (context) => {
+        await rm(join(context.workspaceRoot, "probe-write.txt"), { force: true });
+      },
+    },
   ];
 
   const results: ConformanceProbeResult[] = [];
@@ -589,28 +630,137 @@ async function startLoopbackServer(): Promise<Server> {
 class SkipProbeError extends Error {}
 
 /**
- * Host paths that exist on this machine and must be unreadable from the
- * sandbox: representative user-data files under the real home directory and
- * representative shared system/scratch regions per platform. Only paths
- * that actually exist are probed, so a missing file cannot be confused with
- * a denial.
+ * Host files that exist on this machine in representative unapproved
+ * locations and must be unreadable from the sandbox. Candidates are real
+ * regular files (never directories, so a missing-file error can never be
+ * confused with a denial), selected independently from the runtime's deny
+ * surface: they represent the promised allowlist boundary (workspace +
+ * private run directory + trusted runner surface only). Candidates that
+ * fall inside the approved allowlist surface are excluded so the probe
+ * never depends on where the trusted runner is installed.
  */
-function existingHostReadCandidates(): string[] {
-  const home = homedir();
-  const homeCandidates = [
-    join(home, ".gitconfig"),
-    join(home, ".bashrc"),
-    join(home, ".zshrc"),
-    join(home, ".profile"),
-    join(home, ".ssh", "id_rsa"),
+async function existingHostReadCandidates(): Promise<string[]> {
+  const surface = await hostReadAllowSurface();
+  const candidates: string[] = [];
+  for (const region of hostReadRegions()) {
+    const found = await findProbeFile(region);
+    if (found !== null && !isWithinHostReadAllowSurface(found, surface)) {
+      candidates.push(found);
+    }
+  }
+  return candidates;
+}
+
+function hostReadRegions(): readonly string[] {
+  if (process.platform === "win32") {
+    return [
+      process.env["ProgramData"] ?? join(process.env["SystemDrive"] ?? "C:", "ProgramData"),
+      join(process.env["SystemRoot"] ?? "C:\\Windows", "Temp"),
+      dirname(homedir()),
+      ...otherFixedDriveRoots(),
+    ];
+  }
+  if (process.platform === "darwin") {
+    return [
+      "/etc",
+      "/opt",
+      "/usr/local",
+      "/Library",
+      "/Applications",
+      "/Volumes",
+      "/Users",
+      "/private/var/folders",
+      "/private/var/log",
+      "/private/tmp",
+      "/tmp",
+      "/var/tmp",
+    ];
+  }
+  return [
+    "/etc",
+    "/opt",
+    "/usr/local",
+    "/var",
+    "/var/tmp",
+    "/tmp",
+    "/home",
+    "/root",
+    "/mnt",
+    "/media",
+    "/srv",
   ];
-  const systemCandidates =
-    process.platform === "win32"
-      ? [join(dirname(home), "Default")]
-      : process.platform === "darwin"
-        ? ["/private/var/log", "/Users", "/private/var/folders"]
-        : ["/var/log", "/var/cache", "/root", "/home"];
-  return [...homeCandidates, ...systemCandidates].filter((candidate) => existsSync(candidate));
+}
+
+function otherFixedDriveRoots(): readonly string[] {
+  if (process.platform !== "win32") {
+    return [];
+  }
+  const roots: string[] = [];
+  const homeRoot = parse(homedir()).root;
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for (const letter of letters) {
+    const root = `${letter}:\\`;
+    if (root.toLowerCase() === homeRoot.toLowerCase()) {
+      continue;
+    }
+    try {
+      if (lstatSync(root).isDirectory()) {
+        roots.push(root);
+      }
+    } catch {
+      // drive not present
+    }
+  }
+  return roots;
+}
+
+const PROBE_SCAN_LIMIT = 200;
+
+/**
+ * Finds one existing regular file inside a region, preferring known
+ * representative files first and otherwise scanning one shallow level.
+ */
+async function findProbeFile(region: string): Promise<string | null> {
+  const known = knownProbeFiles(region);
+  for (const candidate of known) {
+    if (isRegularFile(candidate)) {
+      return candidate;
+    }
+  }
+  let entries;
+  try {
+    entries = await readdir(region, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (let index = 0; index < Math.min(entries.length, PROBE_SCAN_LIMIT); index += 1) {
+    const entry = entries[index];
+    if (entry === undefined || !entry.isFile()) {
+      continue;
+    }
+    const candidate = join(region, entry.name);
+    if (isRegularFile(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function isRegularFile(candidate: string): boolean {
+  try {
+    return lstatSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function knownProbeFiles(region: string): readonly string[] {
+  const files: Record<string, readonly string[]> = {
+    "/etc": ["/etc/fstab", "/etc/os-release", "/etc/machine-id", "/etc/timezone", "/etc/issue"],
+    "/var": ["/var/log/dpkg.log", "/var/log/syslog", "/var/log/messages"],
+    "/Library": ["/Library/Preferences/SystemConfiguration/com.apple.airport.preferences.plist"],
+  };
+  return files[region] ?? [];
 }
 
 async function tryStartUnixServer(socketPath: string): Promise<boolean> {
@@ -746,6 +896,17 @@ if (mode === "read-inside" || mode === "node-read") {
       } else {
         report("hr:" + (index - 7) + ":denied");
       }
+    }
+  }
+} else if (mode === "cross-run-read") {
+  try {
+    fs.readFileSync(process.argv[7], "utf8");
+    report("cross-run-ok");
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      report("cross-run-missing");
+    } else {
+      report("cross-run-denied");
     }
   }
 } else if (mode === "private-network") {

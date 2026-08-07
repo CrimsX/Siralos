@@ -75,7 +75,6 @@ export async function createCliApplication(
     workspaceRoot,
     sandboxHome: sandboxDirectories.home,
     sandboxTemp: sandboxDirectories.temp,
-    runRoot: runsRoot,
   });
   const security = createSolarisSecurity({ backend: sandbox, policy, profile });
   const mutationLock = createMutationLock();

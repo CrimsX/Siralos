@@ -15,7 +15,7 @@ import {
   type SandboxBackendStatus,
 } from "@solaris/core";
 import { mkdtemp } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export interface SandboxDoctorReport {
@@ -58,7 +58,6 @@ export async function runSandboxDoctor(
   const config = await loadUserConfig(options.configPath ?? getDefaultUserConfigPath());
   const profile = getBuiltInProfile(config.sandbox.profile);
   const sandboxDirectories = getSandboxDirectories();
-  const runRoot = join(homedir(), ".solaris", "runs");
   let conformance: ConformanceReport | null = null;
   let probesRun = false;
   let probeWorkspace: string | undefined;
@@ -76,12 +75,16 @@ export async function runSandboxDoctor(
             workspaceRoot,
             sandboxHome: sandboxDirectories.home,
             sandboxTemp: sandboxDirectories.temp,
-            runRoot,
           })
         : options.backendFactory(workspaceRoot);
     try {
       const status = await backend.inspect();
-      if (options.includeProbes && status.state === "available" && probeWorkspace !== undefined) {
+      if (
+        options.includeProbes &&
+        status.state === "available" &&
+        status.capabilities.filesystemReadRestriction &&
+        probeWorkspace !== undefined
+      ) {
         probesRun = true;
         const runner = options.conformanceRunner ?? runSandboxConformance;
         conformance = await runner(backend, {

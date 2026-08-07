@@ -13,7 +13,14 @@ import {
 import {
   ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID,
   ANTHROPIC_SANDBOX_RUNTIME_VERSION,
+  assertHostReadBoundarySupported,
+  buildPerExecutionConfig,
   createAnthropicSandboxRuntimeBackend,
+  createOutputSink,
+  effectiveConfigKey,
+  hostReadAllowSurface,
+  hostReadBoundaryPatterns,
+  isWithinHostReadAllowSurface,
 } from "./anthropic-sandbox-runtime-backend.js";
 import { completedResult, createFakeSandboxBackend } from "../fake-sandbox-backend.js";
 
@@ -90,6 +97,161 @@ describe("Anthropic Sandbox Runtime backend", () => {
     const backend = createBackend(workspace);
     await backend.close();
     await expect(backend.close()).resolves.toBeUndefined();
+  });
+});
+
+describe("host-read allowlist boundary", () => {
+  it("denies the whole host root and re-allows only the approved surface on Linux and macOS", () => {
+    expect(hostReadBoundaryPatterns("linux")).toEqual(["/"]);
+    expect(hostReadBoundaryPatterns("macos")).toEqual(["/"]);
+  });
+
+  it("claims no partial deny surface on Windows", () => {
+    expect(hostReadBoundaryPatterns("windows")).toEqual([]);
+  });
+
+  it("refuses process execution on Windows instead of claiming a boundary", () => {
+    expect(() => assertHostReadBoundarySupported("linux")).not.toThrow();
+    expect(() => assertHostReadBoundarySupported("macos")).not.toThrow();
+    expect(() => assertHostReadBoundarySupported("windows")).toThrow(SandboxError);
+    expect(() => assertHostReadBoundarySupported("windows")).toThrow("host-read allowlist");
+  });
+
+  it("exposes the trusted runner and system runtime surface", async () => {
+    const surface = await hostReadAllowSurface();
+    expect(surface.length).toBeGreaterThan(0);
+    expect(surface.some((root) => root.includes("node"))).toBe(true);
+    expect(surface.includes(process.execPath)).toBe(true);
+  });
+
+  it("classifies candidates against the allowlist surface", async () => {
+    const surface = await hostReadAllowSurface();
+    expect(isWithinHostReadAllowSurface(process.execPath, surface)).toBe(true);
+    expect(isWithinHostReadAllowSurface(join(tmpdir(), "solaris-unapproved.txt"), surface)).toBe(
+      false,
+    );
+  });
+});
+
+describe("effective profile configuration isolation", () => {
+  const options = {
+    workspaceRoot: "/workspace",
+    sandboxHome: "/sandbox-home",
+    sandboxTemp: "/sandbox-temp",
+  };
+
+  it("compares effective configuration, not only the profile id", () => {
+    const developKey = effectiveConfigKey(options, DEVELOP_OFFLINE_PROFILE);
+    const validationKey = effectiveConfigKey(options, {
+      ...DEVELOP_OFFLINE_PROFILE,
+      filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+    });
+    expect(developKey).not.toBe(validationKey);
+    expect(effectiveConfigKey(options, DEVELOP_OFFLINE_PROFILE)).toBe(developKey);
+  });
+
+  it("never grants workspace writes to a read-only profile's execution config", async () => {
+    const runDirectory = "/runs/fingerprint/run-1";
+    const validationConfig = await buildPerExecutionConfig(
+      options,
+      {
+        ...DEVELOP_OFFLINE_PROFILE,
+        filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+      },
+      runDirectory,
+    );
+    const writeRoots = validationConfig.filesystem?.allowWrite ?? [];
+    expect(writeRoots).not.toContain("/workspace");
+    expect(writeRoots).toContain(runDirectory);
+    expect(validationConfig.filesystem?.allowRead).toContain("/workspace");
+    expect(validationConfig.filesystem?.denyRead).toEqual(hostReadBoundaryPatterns());
+  });
+
+  it("grants workspace writes only to a read-write profile's execution config", async () => {
+    const runDirectory = "/runs/fingerprint/run-2";
+    const developConfig = await buildPerExecutionConfig(
+      options,
+      DEVELOP_OFFLINE_PROFILE,
+      runDirectory,
+    );
+    expect(developConfig.filesystem?.allowWrite).toContain("/workspace");
+    expect(developConfig.filesystem?.allowWrite).toContain(runDirectory);
+  });
+
+  it("grants exactly the current run directory, never sibling runs", async () => {
+    const runDirectory = "/runs/fingerprint/run-1";
+    const config = await buildPerExecutionConfig(
+      options,
+      {
+        ...DEVELOP_OFFLINE_PROFILE,
+        filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+      },
+      runDirectory,
+    );
+    const readable = config.filesystem?.allowRead ?? [];
+    expect(readable).toContain(runDirectory);
+    expect(readable.some((root) => root.startsWith("/runs/fingerprint/run-2"))).toBe(false);
+    expect(readable.some((root) => root === "/runs/fingerprint")).toBe(false);
+    expect(readable.some((root) => root === "/runs")).toBe(false);
+  });
+
+  it("a request without a run directory never gains the shared runs root", async () => {
+    const config = await buildPerExecutionConfig(
+      options,
+      {
+        ...DEVELOP_OFFLINE_PROFILE,
+        filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+      },
+      undefined,
+    );
+    const readable = config.filesystem?.allowRead ?? [];
+    expect(readable.some((root) => root === "/runs" || root === "/runs/fingerprint")).toBe(false);
+  });
+});
+
+describe("output sink hard limits", () => {
+  it("accounts raw bytes and truncates inside the crossing chunk", () => {
+    let reached = 0;
+    const sink = createOutputSink(10, () => {
+      reached += 1;
+    });
+    sink.push(Buffer.from("abcdef"));
+    sink.push(Buffer.from("ghijklmnop"));
+    expect(sink.text).toBe("abcdefghij");
+    expect(sink.truncated).toBe(true);
+    expect(reached).toBe(1);
+    sink.push(Buffer.from("more"));
+    expect(sink.text).toBe("abcdefghij");
+  });
+
+  it("a single large OS buffer cannot bypass the stream limit", () => {
+    let reached = 0;
+    const sink = createOutputSink(1000, () => {
+      reached += 1;
+    });
+    sink.push(Buffer.alloc(10_000, 0x61));
+    expect(sink.text.length).toBe(1000);
+    expect(sink.truncated).toBe(true);
+    expect(reached).toBe(1);
+  });
+
+  it("never splits a multibyte sequence at the truncation boundary", () => {
+    const sink = createOutputSink(5, () => {});
+    // "a" (1 byte) + \u00e9 (2 bytes) + \u00e9 (2 bytes) + "b" (1 byte):
+    // the 5-byte window must keep exactly the complete sequences and drop
+    // the dangling remainder without emitting a replacement character.
+    sink.push(Buffer.from("a\u00e9\u00e9b", "utf8"));
+    expect(sink.text).toBe("a\u00e9\u00e9");
+    expect(sink.text).not.toContain("\uFFFD");
+    expect(Buffer.byteLength(sink.text, "utf8")).toBe(5);
+  });
+
+  it("decodes sequences split across child-process buffers", () => {
+    const sink = createOutputSink(100, () => {});
+    const bytes = Buffer.from("h\u00e9llo", "utf8");
+    sink.push(bytes.subarray(0, 2));
+    sink.push(bytes.subarray(2));
+    expect(sink.text).toBe("h\u00e9llo");
   });
 });
 
