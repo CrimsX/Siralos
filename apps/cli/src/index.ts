@@ -12,14 +12,15 @@ import {
   type SessionIO,
   type SessionInfo,
 } from "./interactive-session.js";
-import { describeError, formatDoctor, formatHeader } from "./output.js";
+import { describeError, formatDoctor, formatHeader, TerminalSanitizer } from "./output.js";
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
   if (args.includes("--sandbox-doctor")) {
     const report = await runSandboxDoctor({ includeProbes: args.includes("--run-probes") });
-    stdout.write(formatDoctor(report));
-    return 0;
+    const sanitizer = new TerminalSanitizer();
+    stdout.write(sanitizer.push(formatDoctor(report)) + sanitizer.flush());
+    return doctorExitCode(report, args.includes("--run-probes"));
   }
   const readline = createInterface({ input: stdin, output: stdout });
   const controls: SessionControls = createSessionControls();
@@ -32,16 +33,21 @@ async function main(): Promise<number> {
     stdout.write("\n[cancelled; Solaris stays active]\n");
   });
   const lines = readline[Symbol.asyncIterator]();
+  // All terminal output funnels through this sanitizer: provider deltas,
+  // command output, tool activity, approval prompts, Git output, checkpoint
+  // listings, filenames, and error messages are untrusted input.
+  const sanitizer = new TerminalSanitizer();
   const io: SessionIO = {
     async ask(prompt: string): Promise<string | null> {
-      stdout.write(prompt);
+      stdout.write(sanitizer.push(prompt));
       const result = await lines.next();
       return result.done ? null : result.value;
     },
     write(text: string): void {
-      stdout.write(text);
+      stdout.write(sanitizer.push(text));
     },
     clear(): void {
+      sanitizer.flush();
       stdout.write("\x1b[2J\x1b[H");
     },
   };
@@ -58,7 +64,7 @@ async function main(): Promise<number> {
     undo,
     runners,
   } = await createCliApplication({ reviewer });
-  stdout.write(formatHeader(providerId));
+  stdout.write(sanitizer.push(formatHeader(providerId)) + sanitizer.flush());
   const sessionInfo: SessionInfo = {
     workspaceRoot,
     tools,
@@ -74,6 +80,22 @@ async function main(): Promise<number> {
   stdin.destroy();
   await sandbox.close();
   return exitCode;
+}
+
+export function doctorExitCode(
+  report: Awaited<ReturnType<typeof runSandboxDoctor>>,
+  includeProbes: boolean,
+): number {
+  if (!includeProbes) {
+    return 0;
+  }
+  if (!report.probesRun) {
+    return 3;
+  }
+  if (report.conformance === null) {
+    return 3;
+  }
+  return report.conformance.failed > 0 ? 1 : 0;
 }
 
 main().then(

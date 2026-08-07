@@ -540,10 +540,84 @@ export function formatToolCancelled(): string {
   return "  \u2715 cancelled\n";
 }
 
-const CONTROL_CHARACTER_PATTERN = new RegExp(`[\u0000-\u001f\u007f]`, "g");
+/**
+ * One final terminal-rendering boundary. Provider responses, repository
+ * filenames, Git output, checkpoint metadata, tool activity, errors, and
+ * approval information are all untrusted; every byte that reaches the
+ * terminal passes through this sanitizer, which neutralizes C0/C1 controls,
+ * ANSI CSI sequences, OSC sequences (including OSC 8 links, title changes,
+ * and clipboard writes), carriage-return and backspace rewriting, and DEL.
+ * Ordinary Unicode and readable newlines survive. Sequences split across
+ * stream chunks are tracked across `push` calls; `flush` drops any dangling
+ * sequence so truncation can never leave the terminal inside an active
+ * escape sequence.
+ */
+export class TerminalSanitizer {
+  private mode: "normal" | "escape" | "csi" | "osc" | "osc_escape" = "normal";
+
+  push(text: string): string {
+    let out = "";
+    for (const character of text) {
+      switch (this.mode) {
+        case "normal": {
+          const code = character.codePointAt(0) ?? 0;
+          if (character === "\u001b") {
+            this.mode = "escape";
+          } else if (character === "\n" || character === "\t") {
+            out += character;
+          } else if (code <= 0x1f) {
+            out += caretNotation(code);
+          } else if (code === 0x7f) {
+            out += "^?";
+          } else if (code >= 0x80 && code <= 0x9f) {
+            out += "\uFFFD";
+          } else {
+            out += character;
+          }
+          break;
+        }
+        case "escape":
+          if (character === "[") {
+            this.mode = "csi";
+          } else if (character === "]") {
+            this.mode = "osc";
+          } else {
+            this.mode = "normal";
+          }
+          break;
+        case "csi":
+          if (character >= "\x40" && character <= "\x7e") {
+            this.mode = "normal";
+          }
+          break;
+        case "osc":
+          if (character === "\u0007") {
+            this.mode = "normal";
+          } else if (character === "\u001b") {
+            this.mode = "osc_escape";
+          }
+          break;
+        case "osc_escape":
+          this.mode = character === "\\" ? "normal" : "osc";
+          break;
+      }
+    }
+    return out;
+  }
+
+  flush(): string {
+    this.mode = "normal";
+    return "";
+  }
+}
+
+function caretNotation(code: number): string {
+  return `^${String.fromCharCode(code + 0x40)}`;
+}
 
 export function sanitizeForDisplay(text: string): string {
-  return text.replace(CONTROL_CHARACTER_PATTERN, "\uFFFD");
+  const sanitizer = new TerminalSanitizer();
+  return sanitizer.push(text) + sanitizer.flush();
 }
 
 export function describeError(error: unknown): string {
