@@ -33,6 +33,7 @@ export {
 export type { Capability, CapabilityPolicy, PermissionRule } from "./security/capability.js";
 export { createDefaultPolicy } from "./security/default-policy.js";
 export type {
+  GitBranchStatus,
   GitChangeEntry,
   GitConflictEntry,
   GitDiffFileSummary,
