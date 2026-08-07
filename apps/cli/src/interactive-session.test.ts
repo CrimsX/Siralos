@@ -178,21 +178,23 @@ describe("runInteractiveSession", () => {
 });
 
 describe("runInteractiveSession tool activity", () => {
-  it("lists the registered tools for /tools", async () => {
+  it("lists the registered tools with classifications for /tools", async () => {
     const { io, application, sessionInfo } = await createComposedSession(["/tools", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Available tools");
     expect(io.text).toContain("workspace.list");
     expect(io.text).toContain("workspace.read");
     expect(io.text).toContain("workspace.search");
-    expect(io.text).toContain("(read-only)");
+    expect(io.text).toContain("(read-only, allowed)");
   });
 
-  it("includes the workspace and tool count in /status", async () => {
+  it("includes the workspace, sandbox, and tool counts in /status", async () => {
     const { io, application, sessionInfo } = await createComposedSession(["/status", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Workspace:");
-    expect(io.text).toContain("Tools: 3");
+    expect(io.text).toContain("Tools: 6");
+    expect(io.text).toContain("Provider tools:");
+    expect(io.text).toContain("Pending approval: no");
   });
 
   it("renders list-files tool activity and a final response", async () => {
@@ -261,7 +263,7 @@ describe("runInteractiveSession tool activity", () => {
     const io = new ScriptedIO(["hello", "/status", "/exit"]);
     const sessionInfo: SessionInfo = {
       workspaceRoot: "/workspace",
-      tools: [tool.definition],
+      tools: [{ definition: tool.definition, capability: "workspace.write" }],
       security: createFakeSecurity(),
     };
     const exitCode = await runInteractiveSession(io, application, sessionInfo);

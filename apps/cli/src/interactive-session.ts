@@ -1,4 +1,4 @@
-import type { SolarisApplication, SolarisSecurity, ToolDefinition } from "@solaris/core";
+import type { RegisteredToolInfo, SolarisApplication, SolarisSecurity } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
 import {
   describeError,
@@ -25,7 +25,7 @@ export interface SessionIO {
 
 export interface SessionInfo {
   readonly workspaceRoot: string;
-  readonly tools: readonly ToolDefinition[];
+  readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
 }
 
@@ -57,6 +57,10 @@ export async function runInteractiveSession(
                 status: application.getStatus(),
                 workspaceRoot: sessionInfo.workspaceRoot,
                 toolCount: sessionInfo.tools.length,
+                providerToolCount: sessionInfo.tools.filter(
+                  (info) =>
+                    sessionInfo.security.evaluateCapability(info.capability).decision !== "deny",
+                ).length,
                 profileId: sessionInfo.security.profile.id,
               }),
             );
@@ -65,7 +69,7 @@ export async function runInteractiveSession(
             io.clear();
             break;
           case "tools":
-            io.write(formatTools(sessionInfo.tools));
+            io.write(formatTools(sessionInfo.tools, sessionInfo.security));
             break;
           case "sandbox":
             await runSandboxCheck(io, sessionInfo.security);

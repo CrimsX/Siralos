@@ -1,10 +1,12 @@
 import type {
+  ApprovalRequest,
   Capability,
   CapabilityPolicy,
+  RegisteredToolInfo,
   SandboxBackendStatus,
   SandboxProfile,
   SessionStatus,
-  ToolDefinition,
+  SolarisSecurity,
 } from "@solaris/core";
 import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
 
@@ -38,6 +40,7 @@ export interface StatusView {
   readonly status: SessionStatus;
   readonly workspaceRoot: string;
   readonly toolCount: number;
+  readonly providerToolCount: number;
   readonly profileId: string;
 }
 
@@ -50,6 +53,7 @@ Messages: ${status.messageCount}
 Workspace: ${view.workspaceRoot}
 Sandbox: ${view.profileId}
 Pending approval: ${status.pendingApproval ? "yes" : "no"}
+Provider tools: ${view.providerToolCount}
 Tools: ${view.toolCount}
 `;
 }
@@ -142,12 +146,42 @@ function yesNo(value: boolean): string {
   return value ? "yes" : "no";
 }
 
-export function formatTools(tools: readonly ToolDefinition[]): string {
+export function formatTools(
+  tools: readonly RegisteredToolInfo[],
+  security: SolarisSecurity,
+): string {
   if (tools.length === 0) {
     return "Available tools:\n  (none)\n";
   }
-  const lines = tools.map((tool) => `  ${tool.name} - ${tool.description} (read-only)`);
+  const lines = tools.map((info) => {
+    const kind = info.capability === "workspace.write" ? "write" : "read-only";
+    const decision = security.evaluateCapability(info.capability);
+    const status =
+      decision.decision === "deny"
+        ? "denied"
+        : decision.decision === "ask"
+          ? "approval required"
+          : "allowed";
+    return `  ${info.definition.name} - ${info.definition.description} (${kind}, ${status})`;
+  });
   return `Available tools:\n${lines.join("\n")}\n`;
+}
+
+export function formatApprovalPrompt(request: ApprovalRequest): string {
+  const file = request.preview.files[0];
+  const lines = [
+    "Approval required",
+    "",
+    `Tool: ${request.toolName}`,
+    `Capability: ${request.capability}`,
+    `File: ${file?.path ?? "(none)"}`,
+    `Change: +${request.preview.totalAddedLines} -${request.preview.totalRemovedLines}`,
+    "",
+  ];
+  if (file !== undefined) {
+    lines.push(file.unifiedDiff);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 export function formatInvalidCommand(input: string): string {

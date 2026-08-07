@@ -2,6 +2,7 @@
 
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
 import { runInteractiveSession, type SessionIO, type SessionInfo } from "./interactive-session.js";
@@ -14,8 +15,6 @@ async function main(): Promise<number> {
     stdout.write(formatDoctor(report));
     return 0;
   }
-  const { application, providerId, workspaceRoot, tools, security, sandbox } =
-    await createCliApplication();
   const readline = createInterface({ input: stdin, output: stdout });
   readline.on("SIGINT", () => {
     readline.close();
@@ -34,6 +33,9 @@ async function main(): Promise<number> {
       stdout.write("\x1b[2J\x1b[H");
     },
   };
+  const reviewer = createInteractiveApprovalReviewer(io);
+  const { application, providerId, workspaceRoot, tools, security, sandbox } =
+    await createCliApplication({ reviewer });
   stdout.write(formatHeader(providerId));
   const sessionInfo: SessionInfo = { workspaceRoot, tools, security };
   const exitCode = await runInteractiveSession(io, application, sessionInfo);
