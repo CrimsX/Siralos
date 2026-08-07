@@ -99,3 +99,21 @@ export {
   type GitProcessOptions,
   type GitProcessResult,
 } from "./git/cli/git-process.js";
+export {
+  createGodotInspector,
+  type GodotInspectorDependencies,
+} from "./godot/godot-inspector.js";
+export { createGodotProbeRunner } from "./godot/process/godot-probe-runner.js";
+export { createEngineProfileCache } from "./godot/cache/engine-profile-cache.js";
+export {
+  createGodotInspectEngineTool,
+} from "./godot/tools/godot-inspect-engine-tool.js";
+export {
+  createGodotInspectProjectTool,
+} from "./godot/tools/godot-inspect-project-tool.js";
+export { readGodotEnvironmentOverrides } from "./environment/godot-overrides.js";
+export {
+  resolveGodotSelection,
+  type GodotSelectionInput,
+  type GodotSelectionResolution,
+} from "./godot/config/selection-request.js";

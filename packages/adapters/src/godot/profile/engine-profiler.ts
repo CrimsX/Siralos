@@ -50,6 +50,12 @@ export interface GodotEngineProfilerDependencies {
 
 export interface GodotEngineProfiler {
   discover(signal?: AbortSignal): Promise<GodotDiscoveryResult>;
+
+  /** Selected installation with its full profile after discovery, or null. */
+  selectedProfile(signal?: AbortSignal): Promise<{
+    readonly installation: GodotInstallation;
+    readonly profile: GodotEngineProfile;
+  } | null>;
 }
 
 export interface GodotProfiledCandidate {
@@ -62,6 +68,7 @@ export function createGodotEngineProfiler(
   dependencies: GodotEngineProfilerDependencies,
 ): GodotEngineProfiler {
   let cached: GodotDiscoveryResult | null = null;
+  let lastProfiled: readonly GodotProfiledCandidate[] = [];
 
   function emit(event: GodotApplicationEvent): void {
     dependencies.onEvent?.(event);
@@ -80,6 +87,7 @@ export function createGodotEngineProfiler(
       }
       profiled.push(await profileCandidate(installation, signal));
     }
+    lastProfiled = profiled;
     const selection = await select(profiled);
     const diagnostics: SafeDiagnostic[] = [];
     if (selection.configActiveError !== null) {
@@ -517,7 +525,24 @@ export function createGodotEngineProfiler(
     return { installation: winner.installation, rationale };
   }
 
-  return { discover };
+  async function selectedProfile(signal?: AbortSignal): Promise<{
+    readonly installation: GodotInstallation;
+    readonly profile: GodotEngineProfile;
+  } | null> {
+    const discovery = await discover(signal);
+    if (discovery.selected === null) {
+      return null;
+    }
+    const candidate = lastProfiled.find(
+      (entry) => entry.installation.id === discovery.selected?.installationId,
+    );
+    if (candidate === undefined || candidate.profile === null) {
+      return null;
+    }
+    return { installation: candidate.installation, profile: candidate.profile };
+  }
+
+  return { discover, selectedProfile };
 }
 
 function profileFromCache(cached: CachedEngineProfile): GodotEngineProfile {

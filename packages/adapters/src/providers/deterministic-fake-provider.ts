@@ -83,10 +83,92 @@ function formatGitFinalText(scenario: GitScenario, result: ToolExecutionResult):
   return `Solaris inspected a ${scenario === "diff-working" ? "working" : scenario === "diff-staged" ? "staged" : "HEAD"} diff of ${files.length} file${files.length === 1 ? "" : "s"}.`;
 }
 
+type GodotScenario = "inspect-engine" | "inspect-project";
+
+function findGodotScenario(messages: readonly ConversationItem[]): GodotScenario | null {
+  const latestUserPrompt = findLatestUserPrompt(messages);
+  if (latestUserPrompt === "inspect godot" || latestUserPrompt === "inspect godot engine") {
+    return "inspect-engine";
+  }
+  if (latestUserPrompt === "inspect godot project") {
+    return "inspect-project";
+  }
+  if (latestUserPrompt === "is this project compatible with godot") {
+    return "inspect-project";
+  }
+  return null;
+}
+
+function godotScenarioTool(scenario: GodotScenario): string {
+  return scenario === "inspect-engine" ? "godot.inspect_engine" : "godot.inspect_project";
+}
+
+function formatGodotFinalText(scenario: GodotScenario, result: ToolExecutionResult): string {
+  if (result.status !== "success") {
+    return `Solaris could not complete the Godot inspection: ${result.message}`;
+  }
+  const record = result.output as JsonObject;
+  if (scenario === "inspect-engine") {
+    if (record["selected"] === false) {
+      return "No Godot installation is selected, so Solaris could not profile an engine.";
+    }
+    const version = typeof record["version"] === "string" ? record["version"] : "unknown";
+    const edition = typeof record["edition"] === "string" ? record["edition"] : "unknown";
+    const support = typeof record["support"] === "string" ? record["support"] : "unknown";
+    const verified = Array.isArray(record["verifiedCapabilities"])
+      ? (record["verifiedCapabilities"] as readonly unknown[]).length
+      : 0;
+    return `Solaris inspected the selected Godot installation: ${version} (${edition}, ${support}) with ${verified} operationally verified capabilities.`;
+  }
+  const detected = record["detected"] === true;
+  const name = typeof record["name"] === "string" ? record["name"] : null;
+  const statusRecord =
+    typeof record["compatibility"] === "object" && record["compatibility"] !== null
+      ? (record["compatibility"] as JsonObject)
+      : null;
+  const status =
+    statusRecord !== null && typeof statusRecord["status"] === "string"
+      ? statusRecord["status"]
+      : "unknown";
+  if (!detected) {
+    return "Solaris found no Godot project at the workspace root; the static inspection reported nothing to assess.";
+  }
+  const namePart = name === null ? "an unnamed project" : `the project ${name}`;
+  return `Solaris statically inspected ${namePart}: the assessment is ${status}. No project code was executed and no import was performed.`;
+}
+
+async function* streamGodotScenario(
+  scenario: GodotScenario,
+  request: ModelRequest,
+  signal: AbortSignal | undefined,
+): AsyncIterable<ModelEvent> {
+  const toolName = godotScenarioTool(scenario);
+  const result = findLatestResult(itemsAfterLastUserMessage(request.messages), toolName);
+  if (result === undefined) {
+    if (isToolAvailable(request.tools, toolName)) {
+      yield { type: "tool_call", callId: "call-godot", toolName, input: {} };
+      await Promise.resolve();
+      yield { type: "completed" };
+      return;
+    }
+    yield* streamTextChunks(
+      "Solaris cannot inspect Godot in this profile (Godot inspection tools are unavailable).",
+      signal,
+    );
+    return;
+  }
+  yield* streamTextChunks(formatGodotFinalText(scenario, result), signal);
+}
+
 async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   const signal = request.signal;
   if (signal?.aborted) {
     throw createAbortError();
+  }
+  const godotScenario = findGodotScenario(request.messages);
+  if (godotScenario !== null) {
+    yield* streamGodotScenario(godotScenario, request, signal);
+    return;
   }
   const gitScenario = findGitScenario(request.messages);
   if (gitScenario !== null && isToolAvailable(request.tools, gitScenarioTool(gitScenario))) {

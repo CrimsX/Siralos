@@ -866,3 +866,184 @@ describe("deterministic fake provider command scenarios", () => {
     );
   });
 });
+
+describe("deterministic fake provider godot scenarios", () => {
+  const ENGINE_TOOL: ToolDefinition = {
+    name: "godot.inspect_engine",
+    description: "Inspect the selected Godot installation.",
+    inputSchema: {},
+  };
+  const PROJECT_TOOL: ToolDefinition = {
+    name: "godot.inspect_project",
+    description: "Statically inspect the Godot project.",
+    inputSchema: {},
+  };
+
+  it("requests godot.inspect_engine for `inspect godot`", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "inspect godot" }],
+      tools: [ENGINE_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.inspect_engine",
+      input: {},
+    });
+  });
+
+  it("requests godot.inspect_engine for `inspect godot engine`", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "inspect godot engine" }],
+      tools: [ENGINE_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.inspect_engine",
+      input: {},
+    });
+  });
+
+  it("requests godot.inspect_project for `inspect godot project`", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "inspect godot project" }],
+      tools: [PROJECT_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.inspect_project",
+      input: {},
+    });
+  });
+
+  it("requests godot.inspect_project for compatibility questions", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "is this project compatible with godot" }],
+      tools: [PROJECT_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.inspect_project",
+      input: {},
+    });
+  });
+
+  it("summarizes a missing installation truthfully", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "inspect godot" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.inspect_engine",
+          input: {},
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.inspect_engine",
+          result: {
+            status: "success",
+            output: {
+              selected: false,
+              version: null,
+              edition: null,
+              releaseChannel: null,
+              support: null,
+            },
+            summary: "No Godot installation is selected.",
+          },
+        },
+      ],
+      tools: [ENGINE_TOOL],
+    });
+    expect(textOf(events)).toContain("No Godot installation is selected");
+  });
+
+  it("summarizes a non-Godot workspace truthfully and states the inspection was static", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "is this project compatible with godot" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.inspect_project",
+          input: {},
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.inspect_project",
+          result: {
+            status: "success",
+            output: {
+              detected: false,
+              name: null,
+              compatibility: { status: "no-project", severity: "info", reasons: [] },
+            },
+            summary: "No Godot project detected at the workspace root.",
+          },
+        },
+      ],
+      tools: [PROJECT_TOOL],
+    });
+    expect(textOf(events)).toContain("no Godot project");
+  });
+
+  it("reports unverified versions accurately", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "inspect godot" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.inspect_engine",
+          input: {},
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.inspect_engine",
+          result: {
+            status: "success",
+            output: {
+              selected: true,
+              installationId: "rc",
+              version: "4.7.2.rc1.official",
+              edition: "standard",
+              support: "prerelease-untested",
+              verifiedCapabilities: ["version", "help"],
+            },
+            summary: "4.7.2.rc1.official (standard, prerelease-untested)",
+          },
+        },
+      ],
+      tools: [ENGINE_TOOL],
+    });
+    expect(textOf(events)).toContain("prerelease-untested");
+  });
+
+  it("does not request project execution", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "inspect godot project" }],
+      tools: [PROJECT_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.inspect_project",
+      input: {},
+    });
+  });
+
+  it("summarizes tool unavailability when Godot tools are denied", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "inspect godot" }],
+      tools: [],
+    });
+    expect(textOf(events)).toContain("Godot inspection tools are unavailable");
+  });
+});
