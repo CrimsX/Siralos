@@ -19,6 +19,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { homedir } from "node:os";
 import path from "node:path";
+import { isDeniedVariable } from "../../environment/child-environment.js";
 
 export const ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID = "anthropic-runtime";
 
@@ -113,6 +114,12 @@ export function createAnthropicSandboxRuntimeBackend(
     } catch (error: unknown) {
       throw classifyExecutionError(error);
     }
+    let environment: Readonly<Record<string, string>>;
+    try {
+      environment = mergeWrapperEnvironment(request.environment, wrapped.env);
+    } catch (error: unknown) {
+      throw classifyExecutionError(error);
+    }
     const startedAt = Date.now();
     const timeoutMs = request.timeoutMs ?? request.profile.process.timeoutMs;
     const stdoutLimitBytes = request.stdoutLimitBytes ?? request.profile.process.maxOutputBytes;
@@ -129,7 +136,7 @@ export function createAnthropicSandboxRuntimeBackend(
     }
     const child = spawn(wrapped.argv[0] as string, wrapped.argv.slice(1), {
       cwd: request.workingDirectory,
-      env: request.environment,
+      env: environment,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
@@ -168,6 +175,10 @@ export function createAnthropicSandboxRuntimeBackend(
     });
     const result = await new Promise<SandboxedProcessResult>((resolve, reject) => {
       child.on("error", (error: Error) => {
+        clearTimeout(timeoutTimer);
+        for (const signal of signals) {
+          signal.removeEventListener("abort", abortTreeListener);
+        }
         reject(
           new SandboxError(
             "sandbox_initialization_failed",
@@ -306,7 +317,7 @@ function buildRuntimeConfig(
       deniedDomains: [],
     },
     filesystem: {
-      denyRead: [`${homedir()}${path.sep}**`],
+      denyRead: hostReadBoundaryPatterns(),
       allowRead: readableRoots,
       allowWrite: writableRoots,
       denyWrite: protectedPathPatterns(profile, options.workspaceRoot),
@@ -318,6 +329,101 @@ function buildRuntimeConfig(
       srtWin: { path: VENDORED_SRT_WIN_EXE },
     },
   };
+}
+
+/**
+ * The explicit deny-by-default host-read boundary. Reads are allowed by
+ * default inside the sandbox runtime, so everything outside the approved
+ * surface must be denied explicitly: the approved workspace mode, the
+ * Solaris-owned sandbox-private directories, and the smallest system paths
+ * required for tooling are re-allowed via `allowRead`, while every
+ * user-data and shared-scratch region of the host is denied. "Deny the home
+ * directory" is not treated as "workspace-only": the entire user-data
+ * surface (all profiles, other users, shared temp/log/cache regions, and
+ * mounted volumes) is denied on each platform.
+ */
+function hostReadBoundaryPatterns(): string[] {
+  switch (detectPlatform()) {
+    case "windows":
+      return [`${joinOutsideProfile(homedir())}${path.sep}**`];
+    case "macos":
+      return [
+        "/Users/**",
+        "/private/var/folders/**",
+        "/private/tmp/**",
+        "/tmp/**",
+        "/var/tmp/**",
+        "/var/log/**",
+        "/var/db/**",
+        "/Volumes/**",
+      ];
+    case "linux":
+      return [
+        "/home/**",
+        "/root/**",
+        "/tmp/**",
+        "/var/tmp/**",
+        "/var/log/**",
+        "/var/cache/**",
+        "/var/lib/**",
+        "/var/mail/**",
+        "/var/spool/**",
+        "/srv/**",
+        "/mnt/**",
+        "/media/**",
+      ];
+    case "unknown":
+      return [];
+  }
+}
+
+function joinOutsideProfile(home: string): string {
+  return path.dirname(home);
+}
+
+/**
+ * Merges the sandbox wrapper's runtime-required environment into Solaris's
+ * minimal allowlisted environment. The wrapper (Sandbox Runtime) returns the
+ * environment its wrapped invocation needs; only that explicit set is
+ * merged — never the host environment wholesale. Collisions resolve to the
+ * Solaris-controlled value (the wrapper can never override protected
+ * variables such as HOME/TEMP), wrapper-only keys are added, keys matching
+ * the credential/proxy/Node-injection deny patterns fail closed, and keys
+ * are normalized case-insensitively so duplicate spellings cannot bypass
+ * filtering (canonical casing wins on Windows).
+ */
+export function mergeWrapperEnvironment(
+  base: Readonly<Record<string, string>>,
+  wrapperEnvironment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform = process.platform,
+): Readonly<Record<string, string>> {
+  const keyOf = (name: string): string => (platform === "win32" ? name.toLowerCase() : name);
+  const merged: Record<string, string> = {};
+  const baseKeys = new Map<string, string>();
+  for (const [name, value] of Object.entries(base)) {
+    const normalized = keyOf(name);
+    if (baseKeys.has(normalized)) {
+      continue;
+    }
+    baseKeys.set(normalized, name);
+    merged[name] = value;
+  }
+  for (const [name, value] of Object.entries(wrapperEnvironment)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (isDeniedVariable(name)) {
+      throw new SandboxError(
+        "sandbox_configuration_error",
+        `The sandbox wrapper requires environment variable ${name}, which Solaris denies; refusing to execute.`,
+      );
+    }
+    if (baseKeys.has(keyOf(name))) {
+      continue;
+    }
+    merged[name] = value;
+  }
+  return merged;
 }
 
 function protectedPathPatterns(profile: SandboxProfile, workspaceRoot: string): string[] {

@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type {
   SandboxBackend,
@@ -112,6 +113,7 @@ export async function runSandboxConformance(
     probeId: string,
     profile: SandboxProfile,
     runPaths: CommandRunPaths,
+    extraArgs: readonly string[] = [],
   ): Promise<SandboxedProcessRequest> =>
     Promise.resolve({
       executable: process.execPath,
@@ -122,6 +124,7 @@ export async function runSandboxConformance(
         probeContext.secretPath,
         String(probeContext.loopbackPort),
         join(runPaths.temp, HEARTBEAT_FILE_NAME),
+        ...extraArgs,
       ],
       workingDirectory: options.workspaceRoot,
       profile,
@@ -166,6 +169,7 @@ export async function runSandboxConformance(
   };
 
   const COMMAND_PROFILE = VALIDATION_OFFLINE_PROFILE;
+  const hostReadCandidates = existingHostReadCandidates();
   const probes: readonly Probe[] = [
     {
       id: "read-inside",
@@ -195,11 +199,44 @@ export async function runSandboxConformance(
       check: (result) => result.stdout.includes("secret-denied"),
     },
     {
+      id: "host-read-denied",
+      description: "Host paths outside the approved surface are unreadable",
+      buildRequest: (_context, runPaths) =>
+        nodeRequest("host-read", options.profile, runPaths, hostReadCandidates),
+      check: (result) => {
+        const expected = hostReadCandidates.map((_, index) => `hr:${index}:denied`);
+        return expected.every((marker) => result.stdout.includes(marker));
+      },
+    },
+    {
       id: "network",
       description: "Outbound loopback connection is denied",
       needsLoopbackServer: true,
       buildRequest: (_context, runPaths) => nodeRequest("network", options.profile, runPaths),
       check: (result) => result.stdout.includes("network-denied"),
+    },
+    {
+      id: "private-network",
+      description: "Reserved private-network destinations are denied",
+      buildRequest: (_context, runPaths) =>
+        nodeRequest("private-network", options.profile, runPaths),
+      check: (result) =>
+        result.stdout.includes("priv1-denied") && result.stdout.includes("priv2-denied"),
+    },
+    {
+      id: "unix-socket",
+      description: "Host Unix sockets are unreachable",
+      buildRequest: async (_context, runPaths) => {
+        const socketPath = join(probeContext.outsideDirectory, "solaris-probe.sock");
+        if (!(await tryStartUnixServer(socketPath))) {
+          throw new SkipProbeError("Unix sockets are unavailable on this host; probe skipped.");
+        }
+        return nodeRequest("unix-socket", options.profile, runPaths, [socketPath]);
+      },
+      check: (result) => result.stdout.includes("socket-denied"),
+      cleanupAfter: async (context) => {
+        await rm(join(context.outsideDirectory, "solaris-probe.sock"), { force: true });
+      },
     },
     {
       id: "dns",
@@ -446,8 +483,13 @@ export async function runSandboxConformance(
         await probe.cleanupAfter(probeContext);
       }
     } catch (error: unknown) {
-      outcome = "failed";
-      detail = describeError(error);
+      if (error instanceof SkipProbeError) {
+        outcome = "skipped";
+        detail = error.message;
+      } else {
+        outcome = "failed";
+        detail = describeError(error);
+      }
     } finally {
       if (cancelTimer !== undefined) {
         clearTimeout(cancelTimer);
@@ -542,6 +584,52 @@ async function startLoopbackServer(): Promise<Server> {
     });
   });
   return server;
+}
+
+class SkipProbeError extends Error {}
+
+/**
+ * Host paths that exist on this machine and must be unreadable from the
+ * sandbox: representative user-data files under the real home directory and
+ * representative shared system/scratch regions per platform. Only paths
+ * that actually exist are probed, so a missing file cannot be confused with
+ * a denial.
+ */
+function existingHostReadCandidates(): string[] {
+  const home = homedir();
+  const homeCandidates = [
+    join(home, ".gitconfig"),
+    join(home, ".bashrc"),
+    join(home, ".zshrc"),
+    join(home, ".profile"),
+    join(home, ".ssh", "id_rsa"),
+  ];
+  const systemCandidates =
+    process.platform === "win32"
+      ? [join(dirname(home), "Default")]
+      : process.platform === "darwin"
+        ? ["/private/var/log", "/Users", "/private/var/folders"]
+        : ["/var/log", "/var/cache", "/root", "/home"];
+  return [...homeCandidates, ...systemCandidates].filter((candidate) => existsSync(candidate));
+}
+
+async function tryStartUnixServer(socketPath: string): Promise<boolean> {
+  if (process.platform === "win32") {
+    return false;
+  }
+  const server = createServer(() => {});
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, () => {
+        resolve();
+      });
+    });
+  } catch {
+    return false;
+  }
+  server.close();
+  return true;
 }
 
 async function closeLoopbackServer(server: Server): Promise<void> {
@@ -646,6 +734,64 @@ if (mode === "read-inside" || mode === "node-read") {
   } catch (error) {
     report("read-denied");
   }
+} else if (mode === "host-read") {
+  for (let index = 7; index < process.argv.length; index += 1) {
+    const candidate = process.argv[index];
+    try {
+      fs.readFileSync(candidate);
+      report("hr:" + (index - 7) + ":ok");
+    } catch (error) {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+        report("hr:" + (index - 7) + ":missing");
+      } else {
+        report("hr:" + (index - 7) + ":denied");
+      }
+    }
+  }
+} else if (mode === "private-network") {
+  const first = net.connect({ host: "198.51.100.1", port: 9 });
+  first.setTimeout(5000);
+  first.once("error", function () {
+    first.destroy();
+    report("priv1-denied");
+  });
+  first.once("connect", function () {
+    first.destroy();
+    report("priv1-ok");
+  });
+  first.once("timeout", function () {
+    first.destroy();
+    report("priv1-denied");
+  });
+  const second = net.connect({ host: "203.0.113.1", port: 9 });
+  second.setTimeout(5000);
+  second.once("error", function () {
+    second.destroy();
+    report("priv2-denied");
+  });
+  second.once("connect", function () {
+    second.destroy();
+    report("priv2-ok");
+  });
+  second.once("timeout", function () {
+    second.destroy();
+    report("priv2-denied");
+  });
+} else if (mode === "unix-socket") {
+  const socket = net.connect({ path: process.argv[7] });
+  socket.setTimeout(5000);
+  socket.once("error", function () {
+    socket.destroy();
+    report("socket-denied");
+  });
+  socket.once("connect", function () {
+    socket.destroy();
+    report("socket-ok");
+  });
+  socket.once("timeout", function () {
+    socket.destroy();
+    report("socket-denied");
+  });
 } else if (mode === "write-inside") {
   try {
     fs.writeFileSync(path.join(process.cwd(), "probe-write.txt"), "ok");
