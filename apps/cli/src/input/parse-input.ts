@@ -1,5 +1,15 @@
 export type SlashCommand =
-  "help" | "status" | "clear" | "tools" | "sandbox" | "permissions" | "exit";
+  | "help"
+  | "status"
+  | "clear"
+  | "tools"
+  | "sandbox"
+  | "permissions"
+  | "git-status"
+  | "diff"
+  | "checkpoints"
+  | "undo"
+  | "exit";
 
 export type ParsedInput =
   | {
@@ -9,6 +19,7 @@ export type ParsedInput =
   | {
       readonly type: "command";
       readonly command: SlashCommand;
+      readonly args: readonly string[];
     }
   | {
       readonly type: "empty";
@@ -25,6 +36,10 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "tools",
   "sandbox",
   "permissions",
+  "git-status",
+  "diff",
+  "checkpoints",
+  "undo",
   "exit",
 ];
 
@@ -36,7 +51,7 @@ export function parseInput(raw: string): ParsedInput {
   if (trimmed.startsWith("/")) {
     const command = findSlashCommand(trimmed);
     if (command !== null) {
-      return { type: "command", command };
+      return { type: "command", command, args: extractArgs(trimmed) };
     }
     return { type: "invalid_command", input: trimmed };
   }
@@ -44,5 +59,10 @@ export function parseInput(raw: string): ParsedInput {
 }
 
 function findSlashCommand(text: string): SlashCommand | null {
-  return SLASH_COMMANDS.find((command) => `/${command}` === text) ?? null;
+  return SLASH_COMMANDS.find((command) => `/${command}` === text.split(/\s+/)[0]) ?? null;
+}
+
+function extractArgs(text: string): readonly string[] {
+  const parts = text.split(/\s+/).slice(1);
+  return parts.filter((part) => part.length > 0);
 }

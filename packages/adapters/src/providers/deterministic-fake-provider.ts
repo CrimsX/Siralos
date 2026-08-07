@@ -37,10 +37,73 @@ export function createDeterministicFakeProvider(): ModelProvider {
   };
 }
 
+type GitScenario = "git-status" | "diff-working" | "diff-staged" | "diff-head";
+
+function findGitScenario(messages: readonly ConversationItem[]): GitScenario | null {
+  const latestUserPrompt = findLatestUserPrompt(messages);
+  if (latestUserPrompt === "git status") {
+    return "git-status";
+  }
+  if (latestUserPrompt === "show working diff") {
+    return "diff-working";
+  }
+  if (latestUserPrompt === "show staged diff") {
+    return "diff-staged";
+  }
+  if (latestUserPrompt === "show head diff") {
+    return "diff-head";
+  }
+  return null;
+}
+
+function gitScenarioTool(scenario: GitScenario): string {
+  return scenario === "git-status" ? "git.status" : "git.diff";
+}
+
+function gitScenarioInput(scenario: GitScenario): unknown {
+  if (scenario === "git-status") {
+    return {};
+  }
+  return {
+    scope: scenario === "diff-working" ? "working" : scenario === "diff-staged" ? "staged" : "head",
+  };
+}
+
+function formatGitFinalText(scenario: GitScenario, result: ToolExecutionResult): string {
+  if (result.status !== "success") {
+    return `Solaris could not inspect Git: ${result.message}`;
+  }
+  const record = result.output as JsonObject;
+  if (scenario === "git-status") {
+    const changes = Array.isArray(record["changes"]) ? record["changes"] : [];
+    const untracked = Array.isArray(record["untracked"]) ? record["untracked"] : [];
+    return `Solaris found ${changes.length} modified files and ${untracked.length} untracked file${untracked.length === 1 ? "" : "s"}.`;
+  }
+  const files = Array.isArray(record["files"]) ? record["files"] : [];
+  return `Solaris inspected a ${scenario === "diff-working" ? "working" : scenario === "diff-staged" ? "staged" : "HEAD"} diff of ${files.length} file${files.length === 1 ? "" : "s"}.`;
+}
+
 async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   const signal = request.signal;
   if (signal?.aborted) {
     throw createAbortError();
+  }
+  const gitScenario = findGitScenario(request.messages);
+  if (gitScenario !== null && isToolAvailable(request.tools, gitScenarioTool(gitScenario))) {
+    const toolName = gitScenarioTool(gitScenario);
+    const result = findLatestResult(itemsAfterLastUserMessage(request.messages), toolName);
+    if (result === undefined) {
+      yield {
+        type: "tool_call",
+        callId: "call-git",
+        toolName,
+        input: gitScenarioInput(gitScenario),
+      };
+      await Promise.resolve();
+      return;
+    }
+    yield* streamTextChunks(formatGitFinalText(gitScenario, result), signal);
+    return;
   }
   const writeScenario = findWriteScenario(request.messages);
   if (writeScenario !== null && writeScenarioToolsAvailable(writeScenario, request.tools)) {

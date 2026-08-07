@@ -1,7 +1,19 @@
-import type { RegisteredToolInfo, SolarisApplication, SolarisSecurity } from "@solaris/core";
+import type {
+  CheckpointStore,
+  GitInspector,
+  RegisteredToolInfo,
+  SolarisApplication,
+  SolarisSecurity,
+  UndoService,
+} from "@solaris/core";
+import { GitError } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
+import type { StatusView } from "./output.js";
 import {
   describeError,
+  formatCheckpoints,
+  formatGitDiff,
+  formatGitStatus,
   formatHelp,
   formatInvalidCommand,
   formatPermissions,
@@ -14,6 +26,7 @@ import {
   formatToolFailed,
   formatTools,
   formatToolStarted,
+  formatUndoOutcome,
   sanitizeForDisplay,
 } from "./output.js";
 
@@ -27,6 +40,9 @@ export interface SessionInfo {
   readonly workspaceRoot: string;
   readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
+  readonly git: GitInspector;
+  readonly checkpoints: CheckpointStore;
+  readonly undo: UndoService;
 }
 
 const PROMPT = "> ";
@@ -52,18 +68,7 @@ export async function runInteractiveSession(
             io.write(formatHelp());
             break;
           case "status":
-            io.write(
-              formatStatus({
-                status: application.getStatus(),
-                workspaceRoot: sessionInfo.workspaceRoot,
-                toolCount: sessionInfo.tools.length,
-                providerToolCount: sessionInfo.tools.filter(
-                  (info) =>
-                    sessionInfo.security.evaluateCapability(info.capability).decision !== "deny",
-                ).length,
-                profileId: sessionInfo.security.profile.id,
-              }),
-            );
+            io.write(formatStatus(await buildStatusView(application, sessionInfo)));
             break;
           case "clear":
             io.clear();
@@ -79,6 +84,18 @@ export async function runInteractiveSession(
               formatPermissions(sessionInfo.security.policy, sessionInfo.security.profile.id),
             );
             break;
+          case "git-status":
+            await runGitStatusCommand(io, sessionInfo);
+            break;
+          case "diff":
+            await runDiffCommand(io, sessionInfo, parsed.args);
+            break;
+          case "checkpoints":
+            io.write(formatCheckpoints(await sessionInfo.checkpoints.list({ limit: 10 })));
+            break;
+          case "undo":
+            await runUndoCommand(io, sessionInfo, parsed.args);
+            break;
           case "exit":
             return 0;
         }
@@ -90,6 +107,98 @@ export async function runInteractiveSession(
         break;
     }
   }
+}
+
+async function buildStatusView(
+  application: SolarisApplication,
+  sessionInfo: SessionInfo,
+): Promise<StatusView> {
+  const inspection = await sessionInfo.git.inspectRepository().catch(() => null);
+  const statusResult =
+    inspection?.repositoryState === "repository"
+      ? await sessionInfo.git.getStatus({}).catch(() => null)
+      : null;
+  const checkpoints = await sessionInfo.checkpoints.list().catch(() => []);
+  const latestApplied = checkpoints.find((checkpoint) => checkpoint.state === "applied");
+  return {
+    status: application.getStatus(),
+    workspaceRoot: sessionInfo.workspaceRoot,
+    toolCount: sessionInfo.tools.length,
+    providerToolCount: sessionInfo.tools.filter(
+      (info) => sessionInfo.security.evaluateCapability(info.capability).decision !== "deny",
+    ).length,
+    profileId: sessionInfo.security.profile.id,
+    gitRepositoryState: inspection?.repositoryState ?? "unavailable",
+    gitBranch:
+      inspection?.repositoryState === "repository" && statusResult !== null
+        ? statusResult.branch.detached
+          ? `(detached) ${statusResult.branch.oid ?? "unknown"}`
+          : statusResult.branch.head
+        : null,
+    gitDirtyCount:
+      statusResult === null
+        ? 0
+        : statusResult.changes.length +
+          statusResult.conflicts.length +
+          statusResult.untracked.length,
+    latestCheckpoint: latestApplied === undefined ? null : shortenId(latestApplied.id),
+    uncertainCheckpointCount: checkpoints.filter((checkpoint) => checkpoint.state === "uncertain")
+      .length,
+  };
+}
+
+function shortenId(id: string): string {
+  return id.length > 12 ? id.slice(0, 12) : id;
+}
+
+async function runGitStatusCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
+  try {
+    const inspection = await sessionInfo.git.inspectRepository();
+    const result =
+      inspection.repositoryState === "repository" ? await sessionInfo.git.getStatus({}) : undefined;
+    io.write(formatGitStatus(inspection, result));
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGitFailure(error)));
+  }
+}
+
+async function runDiffCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  args: readonly string[],
+): Promise<void> {
+  const scope = args[0] ?? "working";
+  if (args.length > 1 || !["working", "staged", "head"].includes(scope)) {
+    io.write("Usage: /diff [working|staged|head]\n");
+    return;
+  }
+  try {
+    const result = await sessionInfo.git.getDiff({ scope: scope as "working" | "staged" | "head" });
+    io.write(formatGitDiff(result));
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGitFailure(error)));
+  }
+}
+
+async function runUndoCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  args: readonly string[],
+): Promise<void> {
+  if (args.length > 1) {
+    io.write("Usage: /undo [checkpoint-id]\n");
+    return;
+  }
+  io.write(`Undo checkpoint ${args[0] === undefined ? "(latest)" : args[0]}...\n`);
+  const outcome = await sessionInfo.undo.undo(args[0]);
+  io.write(formatUndoOutcome(outcome));
+}
+
+function describeGitFailure(error: unknown): string {
+  if (error instanceof GitError) {
+    return error.message;
+  }
+  return describeError(error);
 }
 
 async function runSandboxCheck(io: SessionIO, security: SolarisSecurity): Promise<void> {

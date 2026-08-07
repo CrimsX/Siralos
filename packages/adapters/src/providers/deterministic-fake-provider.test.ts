@@ -522,3 +522,129 @@ describe("deterministic fake provider write scenarios", () => {
     expect(textOf(events)).toBe("Solaris received: create solaris-write-test");
   });
 });
+
+describe("deterministic fake provider git scenarios", () => {
+  const GIT_STATUS_TOOL: ToolDefinition = {
+    name: "git.status",
+    description: "Show structured Git repository status.",
+    inputSchema: {},
+  };
+  const GIT_DIFF_TOOL: ToolDefinition = {
+    name: "git.diff",
+    description: "Show a bounded Git diff.",
+    inputSchema: {},
+  };
+
+  it("requests git.status for `git status`", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "git status" }],
+      tools: [GIT_STATUS_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-git",
+      toolName: "git.status",
+      input: {},
+    });
+  });
+
+  it("requests git.diff with the correct scope", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "show staged diff" }],
+      tools: [GIT_DIFF_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-git",
+      toolName: "git.diff",
+      input: { scope: "staged" },
+    });
+  });
+
+  it("summarizes status results truthfully", async () => {
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "git status" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-git",
+          toolName: "git.status",
+          input: {},
+        },
+        {
+          type: "tool_result",
+          callId: "call-git",
+          toolName: "git.status",
+          result: {
+            status: "success",
+            output: {
+              repository: true,
+              branch: {
+                head: "main",
+                oid: null,
+                upstream: null,
+                ahead: null,
+                behind: null,
+                detached: false,
+                unborn: false,
+              },
+              changes: [
+                {
+                  path: "a.txt",
+                  originalPath: null,
+                  indexStatus: "unmodified",
+                  worktreeStatus: "modified",
+                  kind: "ordinary",
+                },
+              ],
+              conflicts: [],
+              untracked: ["b.txt"],
+              truncated: false,
+            },
+            summary: "1 changed files, 1 untracked",
+          },
+        },
+      ],
+      tools: [GIT_STATUS_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(textOf(events)).toBe("Solaris found 1 modified files and 1 untracked file.");
+  });
+
+  it("summarizes failed git results truthfully", async () => {
+    const request: ModelRequest = {
+      messages: [
+        { type: "user_message", content: "git status" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-git",
+          toolName: "git.status",
+          input: {},
+        },
+        {
+          type: "tool_result",
+          callId: "call-git",
+          toolName: "git.status",
+          result: { status: "failed", message: "The workspace is not a Git repository." },
+        },
+      ],
+      tools: [GIT_STATUS_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(textOf(events)).toBe(
+      "Solaris could not inspect Git: The workspace is not a Git repository.",
+    );
+  });
+
+  it("does not request git tools that are not registered", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "git status" }],
+      tools: [LIST_TOOL, READ_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(toolCallEvent(events)).toBeUndefined();
+    expect(textOf(events)).toBe("Solaris received: git status");
+  });
+});

@@ -40,5 +40,8 @@ export function isPreparedMutationTool(tool: RegisteredTool): tool is PreparedMu
 }
 
 export function toolCapability(tool: RegisteredTool): Capability {
-  return isPreparedMutationTool(tool) ? tool.capability : "workspace.read";
+  if (isPreparedMutationTool(tool)) {
+    return tool.capability;
+  }
+  return tool.capability ?? "workspace.read";
 }

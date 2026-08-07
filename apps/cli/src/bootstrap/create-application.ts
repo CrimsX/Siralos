@@ -2,7 +2,11 @@ import {
   createAnthropicSandboxRuntimeBackend,
   createDeterministicFakeProvider,
   createFilesystemCheckpointStore,
+  createGitCliAdapter,
+  createGitDiffTool,
+  createGitStatusTool,
   createMutationLock,
+  createUndoService,
   createWorkspaceCreateFileTool,
   createWorkspaceDeleteFileTool,
   createWorkspaceEditFileTool,
@@ -23,10 +27,12 @@ import {
   getBuiltInProfile,
   type ApprovalReviewer,
   type CheckpointStore,
+  type GitInspector,
   type RegisteredToolInfo,
   type SandboxBackend,
   type SolarisApplication,
   type SolarisSecurity,
+  type UndoService,
 } from "@solaris/core";
 
 export interface CreateCliApplicationOptions {
@@ -41,6 +47,8 @@ export interface CliApplication {
   readonly security: SolarisSecurity;
   readonly sandbox: SandboxBackend;
   readonly checkpoints: CheckpointStore;
+  readonly git: GitInspector;
+  readonly undo: UndoService;
 }
 
 export async function createCliApplication(
@@ -60,6 +68,22 @@ export async function createCliApplication(
   const mutationLock = createMutationLock();
   const checkpoints = await createFilesystemCheckpointStore({ workspaceRoot });
   await reconcileWorkspaceCheckpoints({ workspaceRoot, store: checkpoints });
+  const git = createGitCliAdapter({ workspaceRoot });
+  const reviewer: ApprovalReviewer = options.reviewer ?? {
+    review(): Promise<{ type: "deny" }> {
+      return Promise.resolve({
+        type: "deny",
+        reason: "No interactive approval reviewer is configured.",
+      });
+    },
+  };
+  const undo = createUndoService({
+    workspaceRoot,
+    store: checkpoints,
+    lock: mutationLock,
+    reviewer,
+  });
+  const sandboxAvailable = (await sandbox.inspect()).state === "available";
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
     createWorkspaceReadTool(workspaceRoot),
@@ -68,6 +92,10 @@ export async function createCliApplication(
     createWorkspaceEditFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceDeleteFileTool(workspaceRoot, mutationLock, checkpoints),
   ];
+  if (sandboxAvailable) {
+    workspaceTools.push(createGitStatusTool(git));
+    workspaceTools.push(createGitDiffTool(git));
+  }
   const registry = createToolRegistry(workspaceTools);
   const provider = createDeterministicFakeProvider();
   const application = createSolarisApplication({
@@ -85,5 +113,7 @@ export async function createCliApplication(
     security,
     sandbox,
     checkpoints,
+    git,
+    undo,
   };
 }

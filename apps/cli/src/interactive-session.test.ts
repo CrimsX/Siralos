@@ -4,7 +4,14 @@ import {
   createSolarisApplication,
   createSolarisSecurity,
   createToolRegistry,
+  GitError,
   INSPECT_PROFILE,
+  type CheckpointStore,
+  type FileCheckpoint,
+  type GitDiffResult,
+  type GitInspector,
+  type GitStatusResult,
+  type GitWorkspaceStatus,
   type ModelEvent,
   type ModelProvider,
   type SandboxBackend,
@@ -12,6 +19,8 @@ import {
   type SolarisSecurity,
   type Tool,
   type ToolExecutionResult,
+  type UndoOutcome,
+  type UndoService,
 } from "@solaris/core";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { runInteractiveSession, type SessionIO, type SessionInfo } from "./interactive-session.js";
@@ -49,9 +58,81 @@ class ScriptedIO implements SessionIO {
 
 async function createComposedSession(lines: readonly string[]) {
   const io = new ScriptedIO(lines);
-  const { application, workspaceRoot, tools, security } = await createCliApplication();
-  const sessionInfo: SessionInfo = { workspaceRoot, tools, security };
+  const { application, workspaceRoot, tools, security, git, checkpoints, undo } =
+    await createCliApplication();
+  const sessionInfo: SessionInfo = { workspaceRoot, tools, security, git, checkpoints, undo };
   return { io, application, sessionInfo };
+}
+
+function createStubGit(): GitInspector {
+  return {
+    inspectRepository(): Promise<GitWorkspaceStatus> {
+      return Promise.resolve({
+        gitAvailable: false,
+        gitVersion: null,
+        repositoryState: "unavailable",
+        repositoryRoot: null,
+        message: "Git is not installed or not on PATH.",
+      });
+    },
+    getStatus(): Promise<GitStatusResult> {
+      return Promise.reject(new GitError("git_unavailable", "Git is not available."));
+    },
+    getDiff(): Promise<GitDiffResult> {
+      return Promise.reject(new GitError("git_unavailable", "Git is not available."));
+    },
+  };
+}
+
+function createStubCheckpointStore(): CheckpointStore {
+  return {
+    prepare(): Promise<FileCheckpoint> {
+      return Promise.reject(new Error("Not used in session tests."));
+    },
+    finalizeApplied(): Promise<FileCheckpoint> {
+      return Promise.reject(new Error("Not used in session tests."));
+    },
+    markUndone(): Promise<FileCheckpoint> {
+      return Promise.reject(new Error("Not used in session tests."));
+    },
+    markState(): Promise<FileCheckpoint> {
+      return Promise.reject(new Error("Not used in session tests."));
+    },
+    get(): Promise<FileCheckpoint | null> {
+      return Promise.resolve(null);
+    },
+    list(): Promise<readonly FileCheckpoint[]> {
+      return Promise.resolve([]);
+    },
+    loadPreimage(): Promise<Uint8Array | null> {
+      return Promise.resolve(null);
+    },
+  };
+}
+
+function createStubUndo(): UndoService {
+  return {
+    undo(): Promise<UndoOutcome> {
+      return Promise.resolve({
+        type: "failed",
+        checkpointId: null,
+        path: null,
+        message: "No undo service available.",
+      });
+    },
+  };
+}
+
+function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
+  return {
+    workspaceRoot: "/workspace",
+    tools: [],
+    security: createFakeSecurity(),
+    git: createStubGit(),
+    checkpoints: createStubCheckpointStore(),
+    undo: createStubUndo(),
+    ...overrides,
+  };
 }
 
 function createStubBackend(status: SandboxBackendStatus): SandboxBackend {
@@ -166,11 +247,7 @@ describe("runInteractiveSession", () => {
       tools: createToolRegistry([]),
     });
     const io = new ScriptedIO(["hello", "/exit"]);
-    const sessionInfo: SessionInfo = {
-      workspaceRoot: "/workspace",
-      tools: [],
-      security: createFakeSecurity(),
-    };
+    const sessionInfo: SessionInfo = buildSessionInfo();
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
     expect(io.text).toContain("provider exploded");
@@ -261,11 +338,9 @@ describe("runInteractiveSession tool activity", () => {
       tools: createToolRegistry([tool]),
     });
     const io = new ScriptedIO(["hello", "/status", "/exit"]);
-    const sessionInfo: SessionInfo = {
-      workspaceRoot: "/workspace",
+    const sessionInfo: SessionInfo = buildSessionInfo({
       tools: [{ definition: tool.definition, capability: "workspace.write" }],
-      security: createFakeSecurity(),
-    };
+    });
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
     expect(io.text).toContain("\u2715 Path is outside the Solaris workspace.");
@@ -277,11 +352,7 @@ describe("runInteractiveSession tool activity", () => {
 describe("runInteractiveSession sandbox diagnostics", () => {
   it("renders the capability rules for /permissions", async () => {
     const io = new ScriptedIO(["/permissions", "/exit"]);
-    const sessionInfo: SessionInfo = {
-      workspaceRoot: "/workspace",
-      tools: [],
-      security: createFakeSecurity(),
-    };
+    const sessionInfo: SessionInfo = buildSessionInfo();
     const exitCode = await runInteractiveSession(io, createTestApplication(), sessionInfo);
     expect(exitCode).toBe(0);
     expect(io.text).toContain("Profile: inspect");
@@ -294,11 +365,7 @@ describe("runInteractiveSession sandbox diagnostics", () => {
 
   it("renders the sandbox status for /sandbox without secrets", async () => {
     const io = new ScriptedIO(["/sandbox", "/exit"]);
-    const sessionInfo: SessionInfo = {
-      workspaceRoot: "/workspace",
-      tools: [],
-      security: createFakeSecurity(),
-    };
+    const sessionInfo: SessionInfo = buildSessionInfo();
     const exitCode = await runInteractiveSession(io, createTestApplication(), sessionInfo);
     expect(exitCode).toBe(0);
     expect(io.text).toContain("Profile: inspect");
@@ -310,22 +377,23 @@ describe("runInteractiveSession sandbox diagnostics", () => {
   });
 
   it("renders setup-required guidance when the backend needs setup", async () => {
-    const security = createFakeSecurity({
-      backendId: "fake-backend",
-      state: "setup-required",
-      platform: "windows",
-      version: "0.0.0-fake",
-      capabilities: {
-        filesystemReadRestriction: false,
-        filesystemWriteRestriction: false,
-        networkRestriction: false,
-        processTreeRestriction: false,
-        violationReporting: false,
-      },
-      message: "Run the one-time elevated setup command.",
-    });
     const io = new ScriptedIO(["/sandbox", "/exit"]);
-    const sessionInfo: SessionInfo = { workspaceRoot: "/workspace", tools: [], security };
+    const sessionInfo: SessionInfo = buildSessionInfo({
+      security: createFakeSecurity({
+        backendId: "fake-backend",
+        state: "setup-required",
+        platform: "windows",
+        version: "0.0.0-fake",
+        capabilities: {
+          filesystemReadRestriction: false,
+          filesystemWriteRestriction: false,
+          networkRestriction: false,
+          processTreeRestriction: false,
+          violationReporting: false,
+        },
+        message: "Run the one-time elevated setup command.",
+      }),
+    });
     await runInteractiveSession(io, createTestApplication(), sessionInfo);
     expect(io.text).toContain("State: setup-required");
     expect(io.text).toContain("Run the one-time elevated setup command.");
@@ -346,3 +414,92 @@ function createTestApplication() {
     tools: createToolRegistry([]),
   });
 }
+
+describe("runInteractiveSession git and checkpoint commands", () => {
+  it("renders git status for a non-repository workspace", async () => {
+    const io = new ScriptedIO(["/git-status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    const exitCode = await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(exitCode).toBe(0);
+    expect(io.text).toContain("Git: unavailable");
+    expect(io.text).toContain("Repository: unavailable");
+  });
+
+  it("renders a diff failure without raw traces", async () => {
+    const io = new ScriptedIO(["/diff", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Git is not available.");
+    expect(io.text).not.toContain("at ");
+  });
+
+  it("rejects invalid diff scopes", async () => {
+    const io = new ScriptedIO(["/diff bogus", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Usage: /diff");
+  });
+
+  it("lists checkpoints without preimage content", async () => {
+    const io = new ScriptedIO(["/checkpoints", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo({
+      checkpoints: {
+        prepare() {
+          return Promise.reject(new Error("not used"));
+        },
+        finalizeApplied() {
+          return Promise.reject(new Error("not used"));
+        },
+        markUndone() {
+          return Promise.reject(new Error("not used"));
+        },
+        markState() {
+          return Promise.reject(new Error("not used"));
+        },
+        get() {
+          return Promise.resolve(null);
+        },
+        list() {
+          return Promise.resolve([
+            {
+              version: 1,
+              id: "cp_01Jtest12345",
+              workspaceFingerprint: "fingerprint",
+              relativePath: "README.md",
+              operation: "update",
+              toolName: "workspace.edit_file",
+              createdAt: new Date().toISOString(),
+              state: "applied",
+              before: { exists: true, sha256: "a", byteLength: 1 },
+              after: { exists: true, sha256: "b", byteLength: 1 },
+              preview: { addedLines: 1, removedLines: 1 },
+            },
+          ] as FileCheckpoint[]);
+        },
+        loadPreimage() {
+          return Promise.resolve(null);
+        },
+      },
+    });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("cp_01Jtest12");
+    expect(io.text).toContain("applied");
+    expect(io.text).not.toContain("preimage");
+  });
+
+  it("renders undo failures", async () => {
+    const io = new ScriptedIO(["/undo", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("No undo service available.");
+  });
+
+  it("includes git and checkpoint summaries in /status", async () => {
+    const io = new ScriptedIO(["/status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Git: unavailable");
+    expect(io.text).toContain("Checkpoint: none");
+    expect(io.text).toContain("Uncertain checkpoints: 0");
+  });
+});

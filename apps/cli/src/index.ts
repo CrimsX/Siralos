@@ -34,10 +34,19 @@ async function main(): Promise<number> {
     },
   };
   const reviewer = createInteractiveApprovalReviewer(io);
-  const { application, providerId, workspaceRoot, tools, security, sandbox } =
-    await createCliApplication({ reviewer });
+  const {
+    application,
+    providerId,
+    workspaceRoot,
+    tools,
+    security,
+    sandbox,
+    checkpoints,
+    git,
+    undo,
+  } = await createCliApplication({ reviewer });
   stdout.write(formatHeader(providerId));
-  const sessionInfo: SessionInfo = { workspaceRoot, tools, security };
+  const sessionInfo: SessionInfo = { workspaceRoot, tools, security, git, checkpoints, undo };
   const exitCode = await runInteractiveSession(io, application, sessionInfo);
   readline.close();
   stdin.destroy();

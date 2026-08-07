@@ -60,6 +60,8 @@ export {
 } from "./checkpoints/filesystem/undo-service.js";
 export { resolveWorkspaceRoot } from "./tools/workspace/workspace-path.js";
 export { createGitCliAdapter, type GitCliAdapterOptions } from "./git/cli/git-cli-adapter.js";
+export { createGitStatusTool } from "./git/tools/git-status-tool.js";
+export { createGitDiffTool } from "./git/tools/git-diff-tool.js";
 export {
   runGitProcess,
   GIT_ALLOWED_SUBCOMMANDS,

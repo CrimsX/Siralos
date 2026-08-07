@@ -1,3 +1,4 @@
+import type { Capability } from "../security/capability.js";
 import type { JsonObject, JsonValue } from "../domain/json.js";
 
 export interface ToolDefinition {
@@ -39,6 +40,7 @@ export type ToolExecutionResult =
 
 export interface Tool {
   readonly definition: ToolDefinition;
+  readonly capability?: Capability;
 
   execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult>;
 }
