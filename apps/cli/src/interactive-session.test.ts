@@ -7,11 +7,12 @@ import {
   INSPECT_PROFILE,
   type ModelEvent,
   type ModelProvider,
+  type SandboxBackend,
+  type SandboxBackendStatus,
   type SolarisSecurity,
   type Tool,
   type ToolExecutionResult,
 } from "@solaris/core";
-import { createFakeSandboxBackend } from "@solaris/adapters";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { runInteractiveSession, type SessionIO, type SessionInfo } from "./interactive-session.js";
 
@@ -53,24 +54,37 @@ async function createComposedSession(lines: readonly string[]) {
   return { io, application, sessionInfo };
 }
 
-function createFakeSecurity(): SolarisSecurity {
-  const { backend } = createFakeSandboxBackend({
-    status: {
-      backendId: "fake-backend",
-      state: "available",
-      platform: "linux",
-      version: "0.0.0-fake",
-      capabilities: {
-        filesystemReadRestriction: true,
-        filesystemWriteRestriction: true,
-        networkRestriction: true,
-        processTreeRestriction: true,
-        violationReporting: true,
-      },
+function createStubBackend(status: SandboxBackendStatus): SandboxBackend {
+  return {
+    id: "stub-backend",
+    inspect(): Promise<SandboxBackendStatus> {
+      return Promise.resolve(status);
     },
-  });
+    execute(): Promise<never> {
+      throw new Error("Not used in session tests.");
+    },
+    close(): Promise<void> {
+      return Promise.resolve();
+    },
+  };
+}
+
+function createFakeSecurity(status?: SandboxBackendStatus): SolarisSecurity {
+  const resolvedStatus: SandboxBackendStatus = status ?? {
+    backendId: "fake-backend",
+    state: "available",
+    platform: "linux",
+    version: "0.0.0-fake",
+    capabilities: {
+      filesystemReadRestriction: true,
+      filesystemWriteRestriction: true,
+      networkRestriction: true,
+      processTreeRestriction: true,
+      violationReporting: true,
+    },
+  };
   return createSolarisSecurity({
-    backend,
+    backend: createStubBackend(resolvedStatus),
     policy: createDefaultPolicy("inspect"),
     profile: INSPECT_PROFILE,
   });
@@ -294,26 +308,19 @@ describe("runInteractiveSession sandbox diagnostics", () => {
   });
 
   it("renders setup-required guidance when the backend needs setup", async () => {
-    const { backend } = createFakeSandboxBackend({
-      status: {
-        backendId: "fake-backend",
-        state: "setup-required",
-        platform: "windows",
-        version: "0.0.0-fake",
-        capabilities: {
-          filesystemReadRestriction: false,
-          filesystemWriteRestriction: false,
-          networkRestriction: false,
-          processTreeRestriction: false,
-          violationReporting: false,
-        },
-        message: "Run the one-time elevated setup command.",
+    const security = createFakeSecurity({
+      backendId: "fake-backend",
+      state: "setup-required",
+      platform: "windows",
+      version: "0.0.0-fake",
+      capabilities: {
+        filesystemReadRestriction: false,
+        filesystemWriteRestriction: false,
+        networkRestriction: false,
+        processTreeRestriction: false,
+        violationReporting: false,
       },
-    });
-    const security = createSolarisSecurity({
-      backend,
-      policy: createDefaultPolicy("inspect"),
-      profile: INSPECT_PROFILE,
+      message: "Run the one-time elevated setup command.",
     });
     const io = new ScriptedIO(["/sandbox", "/exit"]);
     const sessionInfo: SessionInfo = { workspaceRoot: "/workspace", tools: [], security };
