@@ -9,6 +9,7 @@ import {
   DEVELOP_OFFLINE_PROFILE,
   type ApprovalReviewer,
   type CheckpointStore,
+  type PreparedCheckpoint,
 } from "@solaris/core";
 import { createWorkspaceCreateFileTool } from "./workspace-create-file-tool.js";
 import { createMutationLock } from "./mutation-lock.js";
@@ -141,6 +142,63 @@ describe("workspace.create_file", () => {
     expect(bytes.toString("utf8")).toBe("raced\n");
   });
 
+  it(
+    "detects a parent directory swapped to a symlink after preparation",
+    {
+      skip: !SYMLINKS_SUPPORTED,
+    },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/keep.txt": "keep\n" });
+      const { tool } = await createTool(workspace.root);
+      const prepared = await tool.prepare({ path: "docs/new.txt", content: CONTENT }, {});
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      const outside = await createTempWorkspace();
+      workspaces.push(outside);
+      const { rm } = await import("node:fs/promises");
+      await rm(path.join(workspace.root, "docs"), { recursive: true });
+      await createSymlink(outside.root, path.join(workspace.root, "docs"));
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+      expect(result.status).toBe("conflict");
+      expect(await readFile(path.join(outside.root, "keep.txt"), "utf8")).toBe("keep\n");
+    },
+  );
+
+  it("cancels before the commit point without creating the file", async () => {
+    const workspace = await withWorkspace();
+    const controller = new AbortController();
+    const store = await createTempCheckpointStore(workspace.root);
+    const realPrepare = store.prepare.bind(store);
+    const abortingStore = new Proxy(store, {
+      get(target, property: keyof typeof store) {
+        if (property === "prepare") {
+          return async (checkpoint: PreparedCheckpoint, signal?: AbortSignal) => {
+            const result = await realPrepare(checkpoint, signal);
+            controller.abort();
+            return result;
+          };
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const tool = createWorkspaceCreateFileTool(workspace.root, createMutationLock(), abortingStore);
+    const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    expect(result.status).toBe("cancelled");
+    await expect(readFile(path.join(workspace.root, "new.txt"))).rejects.toThrow();
+  });
+
   it("rejects a missing parent directory", async () => {
     const workspace = await withWorkspace();
     const { tool } = await createTool(workspace.root);
@@ -256,12 +314,10 @@ describe("workspace.create_file through the application", () => {
     const application = createSolarisApplication({
       provider: {
         id: "create-provider",
-        async *stream(): AsyncIterable<{
-          type: "tool_call";
-          callId: string;
-          toolName: string;
-          input: unknown;
-        }> {
+        async *stream(): AsyncIterable<
+          | { type: "tool_call"; callId: string; toolName: string; input: unknown }
+          | { type: "completed" }
+        > {
           yield {
             type: "tool_call",
             callId: "c1",
@@ -269,6 +325,7 @@ describe("workspace.create_file through the application", () => {
             input: { path: "new.txt", content: CONTENT },
           };
           await Promise.resolve();
+          yield { type: "completed" };
         },
       },
       tools: createToolRegistry([(await createTool(workspace.root)).tool]),
@@ -287,12 +344,10 @@ describe("workspace.create_file through the application", () => {
     const application = createSolarisApplication({
       provider: {
         id: "create-provider",
-        async *stream(): AsyncIterable<{
-          type: "tool_call";
-          callId: string;
-          toolName: string;
-          input: unknown;
-        }> {
+        async *stream(): AsyncIterable<
+          | { type: "tool_call"; callId: string; toolName: string; input: unknown }
+          | { type: "completed" }
+        > {
           yield {
             type: "tool_call",
             callId: "c1",
@@ -300,6 +355,7 @@ describe("workspace.create_file through the application", () => {
             input: { path: "new.txt", content: CONTENT },
           };
           await Promise.resolve();
+          yield { type: "completed" };
         },
       },
       tools: createToolRegistry([(await createTool(workspace.root)).tool]),
@@ -320,12 +376,10 @@ describe("workspace.create_file through the application", () => {
     const application = createSolarisApplication({
       provider: {
         id: "create-provider",
-        async *stream(): AsyncIterable<{
-          type: "tool_call";
-          callId: string;
-          toolName: string;
-          input: unknown;
-        }> {
+        async *stream(): AsyncIterable<
+          | { type: "tool_call"; callId: string; toolName: string; input: unknown }
+          | { type: "completed" }
+        > {
           yield {
             type: "tool_call",
             callId: "c1",
@@ -333,6 +387,7 @@ describe("workspace.create_file through the application", () => {
             input: { path: "new.txt", content: CONTENT },
           };
           await Promise.resolve();
+          yield { type: "completed" };
         },
       },
       tools: createToolRegistry([(await createTool(workspace.root)).tool]),

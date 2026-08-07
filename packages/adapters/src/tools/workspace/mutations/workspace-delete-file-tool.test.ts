@@ -8,6 +8,7 @@ import {
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   type ApprovalReviewer,
+  type PreparedCheckpoint,
 } from "@solaris/core";
 import { createWorkspaceDeleteFileTool } from "./workspace-delete-file-tool.js";
 import { createMutationLock } from "./mutation-lock.js";
@@ -120,6 +121,76 @@ describe("workspace.delete_file", () => {
     expect(result.status).toBe("conflict");
   });
 
+  it("conflicts when the target changes after the checkpoint is created", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "obsolete.md": "line one\n" });
+    const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
+    const store = await createTempCheckpointStore(workspace.root);
+    const realPrepare = store.prepare.bind(store);
+    const racingStore = new Proxy(store, {
+      get(target, property: keyof typeof store) {
+        if (property === "prepare") {
+          return async (checkpoint: PreparedCheckpoint, signal?: AbortSignal) => {
+            const result = await realPrepare(checkpoint, signal);
+            const { writeFile } = await import("node:fs/promises");
+            await writeFile(
+              path.join(workspace.root, "obsolete.md"),
+              "user edit after checkpoint\n",
+            );
+            return result;
+          };
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const tool = createWorkspaceDeleteFileTool(workspace.root, createMutationLock(), racingStore);
+    const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("conflict");
+    const content = await readFile(path.join(workspace.root, "obsolete.md"), "utf8");
+    expect(content).toBe("user edit after checkpoint\n");
+  });
+
+  it("cancels before the destructive commit point without deleting", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "obsolete.md": "line one\n" });
+    const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
+    const controller = new AbortController();
+    const store = await createTempCheckpointStore(workspace.root);
+    const realPrepare = store.prepare.bind(store);
+    const abortingStore = new Proxy(store, {
+      get(target, property: keyof typeof store) {
+        if (property === "prepare") {
+          return async (checkpoint: PreparedCheckpoint, signal?: AbortSignal) => {
+            const result = await realPrepare(checkpoint, signal);
+            controller.abort();
+            return result;
+          };
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const tool = createWorkspaceDeleteFileTool(workspace.root, createMutationLock(), abortingStore);
+    const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    expect(result.status).toBe("cancelled");
+    const content = await readFile(path.join(workspace.root, "obsolete.md"), "utf8");
+    expect(content).toBe("line one\n");
+  });
+
   it("rejects directories", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "dir/inner.txt": "x" });
@@ -208,12 +279,10 @@ describe("workspace.delete_file through the application", () => {
     const application = createSolarisApplication({
       provider: {
         id: "delete-provider",
-        async *stream(): AsyncIterable<{
-          type: "tool_call";
-          callId: string;
-          toolName: string;
-          input: unknown;
-        }> {
+        async *stream(): AsyncIterable<
+          | { type: "tool_call"; callId: string; toolName: string; input: unknown }
+          | { type: "completed" }
+        > {
           yield {
             type: "tool_call",
             callId: "c1",
@@ -221,6 +290,7 @@ describe("workspace.delete_file through the application", () => {
             input: { path: "obsolete.md", expectedSha256: hash },
           };
           await Promise.resolve();
+          yield { type: "completed" };
         },
       },
       tools: createToolRegistry([(await createTool(workspace.root)).tool]),
@@ -242,12 +312,10 @@ describe("workspace.delete_file through the application", () => {
     const application = createSolarisApplication({
       provider: {
         id: "delete-provider",
-        async *stream(): AsyncIterable<{
-          type: "tool_call";
-          callId: string;
-          toolName: string;
-          input: unknown;
-        }> {
+        async *stream(): AsyncIterable<
+          | { type: "tool_call"; callId: string; toolName: string; input: unknown }
+          | { type: "completed" }
+        > {
           yield {
             type: "tool_call",
             callId: "c1",
@@ -255,6 +323,7 @@ describe("workspace.delete_file through the application", () => {
             input: { path: "obsolete.md", expectedSha256: hash },
           };
           await Promise.resolve();
+          yield { type: "completed" };
         },
       },
       tools: createToolRegistry([(await createTool(workspace.root)).tool]),

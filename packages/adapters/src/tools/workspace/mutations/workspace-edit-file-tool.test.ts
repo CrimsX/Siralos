@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { ToolPreparationResult } from "@solaris/core";
+import type { CheckpointStore, ToolPreparationResult } from "@solaris/core";
 import { createWorkspaceEditFileTool } from "./workspace-edit-file-tool.js";
 import { createMutationLock } from "./mutation-lock.js";
 import { WORKSPACE_LIMITS } from "../limits.js";
+import type { ReplacementFsOps } from "./safe-replacement.js";
 import {
   cleanupTempCheckpointDirs,
   createSymlink,
@@ -25,9 +26,15 @@ async function withWorkspace(): Promise<TempWorkspace> {
   return workspace;
 }
 
-async function createTool(workspaceRoot: string) {
+async function createTool(
+  workspaceRoot: string,
+  dependencies?: Parameters<typeof createWorkspaceEditFileTool>[3],
+) {
   const store = await createTempCheckpointStore(workspaceRoot);
-  return { tool: createWorkspaceEditFileTool(workspaceRoot, createMutationLock(), store), store };
+  return {
+    tool: createWorkspaceEditFileTool(workspaceRoot, createMutationLock(), store, dependencies),
+    store,
+  };
 }
 
 async function hashOf(absolutePath: string): Promise<string> {
@@ -368,4 +375,212 @@ describe("workspace.edit_file", () => {
     const prepared = await prepareEdit(tool, "a.txt", "a".repeat(64), replacements);
     expect(prepared).toMatchObject({ status: "invalid_input" });
   });
+});
+
+describe("workspace.edit_file replacement recovery", () => {
+  function failingOps(
+    failRenameCalls: readonly number[] = [],
+    failReadFileCalls: readonly number[] = [],
+  ): { replacementOps: ReplacementFsOps } {
+    let renameCalls = 0;
+    let readFileCalls = 0;
+    return {
+      replacementOps: {
+        async rename(from: string, to: string) {
+          renameCalls += 1;
+          if (failRenameCalls.includes(renameCalls)) {
+            throw new Error(`injected rename failure (call ${renameCalls})`);
+          }
+          const { rename } = await import("node:fs/promises");
+          await rename(from, to);
+        },
+        async unlink(p: string) {
+          const { unlink } = await import("node:fs/promises");
+          await unlink(p);
+        },
+        async readFile(p: string) {
+          readFileCalls += 1;
+          if (failReadFileCalls.includes(readFileCalls)) {
+            throw new Error(`injected read failure (call ${readFileCalls})`);
+          }
+          const fs = await import("node:fs/promises");
+          return fs.readFile(p);
+        },
+        async lstat(p: string) {
+          const { lstat } = await import("node:fs/promises");
+          return lstat(p);
+        },
+        async rm(p: string) {
+          const { rm } = await import("node:fs/promises");
+          await rm(p, { force: true });
+        },
+      },
+    };
+  }
+
+  it("commits via quarantine when the direct rename fails and cleans up after verification", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const { tool } = await createTool(workspace.root, failingOps([1]));
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("success");
+    const content = await readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("changed\n");
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(false);
+  });
+
+  it("keeps the original recoverable when post-commit verification fails", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const store = await createTempCheckpointStore(workspace.root);
+    const tool = createWorkspaceEditFileTool(workspace.root, createMutationLock(), store, {
+      replacementOps: {
+        ...failingOps().replacementOps,
+        async rename(from: string, to: string) {
+          await failingOps().replacementOps.rename(from, to);
+          if (to.endsWith("a.txt")) {
+            const fs = await import("node:fs/promises");
+            await fs.appendFile(to, "tampered after commit\n");
+          }
+        },
+      },
+    });
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") {
+      return;
+    }
+    expect(result.message).toContain("Post-write verification failed");
+  });
+
+  it("fails closed without touching the target when the quarantine cannot be created", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const { tool } = await createTool(workspace.root, failingOps([1, 2]));
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    const content = await readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("original\n");
+  });
+});
+
+describe("workspace.edit_file commit-point cancellation", () => {
+  it("cancels before the commit point without changing the target", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const { tool } = await createTool(workspace.root);
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const controller = new AbortController();
+    controller.abort();
+    const result = await tool.apply(prepared.mutation, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    expect(result.status).toBe("cancelled");
+    const content = await readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("original\n");
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-mutation-"))).toBe(false);
+  });
+
+  it("finalizes lifecycle state even when cancellation arrives after the commit point", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const store = await createTempCheckpointStore(workspace.root);
+    const controller = new AbortController();
+    const guardedStore = new Proxy(store, {
+      get(target, property: keyof CheckpointStore) {
+        if (property === "finalizeApplied") {
+          return (
+            checkpointId: string,
+            result: Parameters<CheckpointStore["finalizeApplied"]>[1],
+          ) => {
+            controller.abort();
+            const finalize = target.finalizeApplied.bind(target);
+            return finalize(checkpointId, result);
+          };
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const tool = createWorkspaceEditFileTool(workspace.root, createMutationLock(), guardedStore);
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    expect(result.status).toBe("success");
+    expect(controller.signal.aborted).toBe(true);
+    const checkpoints = await store.list();
+    expect(checkpoints[0]?.state).toBe("applied");
+    const content = await readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("changed\n");
+  });
+
+  it(
+    "detects a parent directory swapped to a symlink after preparation",
+    {
+      skip: !SYMLINKS_SUPPORTED,
+    },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/a.txt": "original\n" });
+      const hash = await hashOf(path.join(workspace.root, "docs", "a.txt"));
+      const { tool } = await createTool(workspace.root);
+      const prepared = await prepareEdit(tool, "docs/a.txt", hash, [
+        { oldText: "original", newText: "changed" },
+      ]);
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      const outside = await createTempWorkspace();
+      workspaces.push(outside);
+      const { rm } = await import("node:fs/promises");
+      await rm(path.join(workspace.root, "docs"), { recursive: true });
+      await createSymlink(outside.root, path.join(workspace.root, "docs"));
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+      expect(result.status).toBe("conflict");
+    },
+  );
 });

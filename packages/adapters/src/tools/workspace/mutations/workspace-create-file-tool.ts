@@ -181,9 +181,25 @@ export function createWorkspaceCreateFileTool(
           message: `Checkpoint could not be recorded; the mutation was not applied: ${describeError(error)}`,
         };
       }
+      if (context.signal?.aborted) {
+        return { status: "cancelled", message: "The mutation was cancelled before commit." };
+      }
+      const finalRevalidation = await resolveCreateTarget(
+        workspaceRoot,
+        payload.workspaceRelativePath,
+      );
+      if (finalRevalidation.status !== "resolved") {
+        return {
+          status: "conflict",
+          message: `The target changed since the proposal: ${finalRevalidation.message}`,
+        };
+      }
+      if (context.signal?.aborted) {
+        return { status: "cancelled", message: "The mutation was cancelled before commit." };
+      }
       let handle;
       try {
-        handle = await open(payload.absolutePath, "wx");
+        handle = await open(finalRevalidation.absolutePath, "wx");
       } catch (error: unknown) {
         return {
           status: "conflict",

@@ -1,4 +1,4 @@
-import { open, readFile, rename, unlink } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   ChangePreview,
@@ -16,6 +16,11 @@ import { buildUnifiedDiff } from "./diff.js";
 import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
 import type { MutationLock } from "./mutation-lock.js";
 import { resolveMutationTarget } from "./mutation-paths.js";
+import {
+  removeQuarantinedCopy,
+  replaceFileWithQuarantine,
+  type ReplacementFsOps,
+} from "./safe-replacement.js";
 import { createMutationTempPath, removeMutationTemp } from "./mutation-temp.js";
 import { decodeUtf8, looksBinary } from "../text.js";
 import {
@@ -123,8 +128,10 @@ export function createWorkspaceEditFileTool(
   workspaceRoot: string,
   lock: MutationLock,
   store: CheckpointStore,
+  dependencies: { readonly replacementOps?: ReplacementFsOps } = {},
 ): PreparedMutationTool {
   const payloads = new WeakMap<PreparedMutation, EditPayload>();
+  const replacementOps = dependencies.replacementOps;
 
   async function prepare(
     input: unknown,
@@ -258,6 +265,7 @@ export function createWorkspaceEditFileTool(
       throw error;
     }
     let tempPath: string | undefined;
+    let quarantinePath: string | null = null;
     try {
       const conflict = await revalidateTarget(payload);
       if (conflict !== null) {
@@ -319,14 +327,40 @@ export function createWorkspaceEditFileTool(
         await removeMutationTemp(tempPath);
         return { status: "conflict", message: finalConflict };
       }
-      const commitError = await commitReplacement(payload, tempPath);
-      tempPath = undefined;
-      if (commitError !== null) {
-        return { status: "failed", message: commitError };
+      if (context.signal?.aborted) {
+        await removeMutationTemp(tempPath);
+        return { status: "cancelled", message: "The mutation was cancelled before commit." };
       }
+      const commitOutcome = await replaceFileWithQuarantine({
+        tempPath,
+        targetPath: payload.absolutePath,
+        expectedTargetSha256: payload.expectedSha256,
+        ...(replacementOps === undefined ? {} : { ops: replacementOps }),
+      });
+      tempPath = undefined;
+      if (commitOutcome.kind !== "success") {
+        if (commitOutcome.kind === "uncertain") {
+          quarantinePath = commitOutcome.quarantinePath;
+          return {
+            status: "failed",
+            message: `${commitOutcome.message} The quarantine copy at ${commitOutcome.quarantinePath} must not be deleted; recover the original from it.`,
+          };
+        }
+        return { status: "failed", message: commitOutcome.message };
+      }
+      quarantinePath = commitOutcome.quarantinePath;
       const verification = await verifyEditedFile(payload);
       if (verification !== null) {
+        if (quarantinePath !== null) {
+          return {
+            status: "failed",
+            message: `${verification} The original copy is preserved at ${quarantinePath}; do not delete it.`,
+          };
+        }
         return { status: "failed", message: verification };
+      }
+      if (quarantinePath !== null) {
+        await removeQuarantinedCopy(quarantinePath, replacementOps).catch(() => {});
       }
       try {
         await store.finalizeApplied(checkpoint.id, {
@@ -373,33 +407,6 @@ export function createWorkspaceEditFileTool(
       return "The file changed since the proposal was approved; reread the file.";
     }
     return null;
-  }
-
-  async function commitReplacement(payload: EditPayload, tempPath: string): Promise<string | null> {
-    if (process.platform === "win32") {
-      try {
-        await rename(tempPath, payload.absolutePath);
-        return null;
-      } catch (firstError: unknown) {
-        try {
-          await unlink(payload.absolutePath);
-        } catch (unlinkError: unknown) {
-          return `The replacement could not be committed: ${describeError(firstError)}; recovery state: ${describeError(unlinkError)}`;
-        }
-        try {
-          await rename(tempPath, payload.absolutePath);
-          return null;
-        } catch (secondError: unknown) {
-          return `The replacement could not be committed on Windows: ${describeError(secondError)}; the original may need restoration.`;
-        }
-      }
-    }
-    try {
-      await rename(tempPath, payload.absolutePath);
-      return null;
-    } catch (error: unknown) {
-      return `The replacement could not be committed: ${describeError(error)}`;
-    }
   }
 
   async function verifyEditedFile(payload: EditPayload): Promise<string | null> {

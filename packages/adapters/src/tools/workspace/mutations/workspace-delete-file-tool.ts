@@ -222,6 +222,16 @@ export function createWorkspaceDeleteFileTool(
           message: `Checkpoint could not be recorded; the mutation was not applied: ${describeError(error)}`,
         };
       }
+      if (context.signal?.aborted) {
+        return { status: "cancelled", message: "The mutation was cancelled before commit." };
+      }
+      const finalConflict = await revalidateForDeletion(payload);
+      if (finalConflict !== null) {
+        return { status: "conflict", message: finalConflict };
+      }
+      if (context.signal?.aborted) {
+        return { status: "cancelled", message: "The mutation was cancelled before commit." };
+      }
       try {
         await unlink(payload.absolutePath);
       } catch (error: unknown) {
@@ -264,6 +274,23 @@ export function createWorkspaceDeleteFileTool(
     } finally {
       release();
     }
+  }
+
+  async function revalidateForDeletion(payload: DeletePayload): Promise<string | null> {
+    const revalidated = await resolveMutationTarget(workspaceRoot, payload.workspaceRelativePath);
+    if (revalidated.status !== "resolved") {
+      return `The target changed since the proposal: ${revalidated.message}`;
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(revalidated.absolutePath);
+    } catch (error: unknown) {
+      return `The target changed since the proposal: ${describeError(error)}`;
+    }
+    if (hashBuffer(bytes) !== payload.expectedSha256) {
+      return "The file changed since the proposal was approved; reread the file.";
+    }
+    return null;
   }
 
   return {

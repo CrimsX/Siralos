@@ -37,4 +37,44 @@ describe("createMutationLock", () => {
     const third = await lock.acquire();
     third();
   });
+
+  it("aborts a queued waiter promptly while the lock is held", async () => {
+    const lock = createMutationLock();
+    const firstRelease = await lock.acquire();
+    const controller = new AbortController();
+    const queued = lock.acquire(controller.signal);
+    let settled = false;
+    const result = queued.then(
+      () => {
+        settled = true;
+        return "resolved";
+      },
+      () => {
+        settled = true;
+        return "rejected";
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    controller.abort();
+    await expect(result).resolves.toBe("rejected");
+    firstRelease();
+    const after = await lock.acquire();
+    after();
+  });
+
+  it("keeps the queue healthy after an aborted waiter", async () => {
+    const lock = createMutationLock();
+    const firstRelease = await lock.acquire();
+    const abortController = new AbortController();
+    const waiterOne = lock.acquire(abortController.signal);
+    const waiterTwo = lock.acquire();
+    abortController.abort();
+    await expect(waiterOne).rejects.toThrow();
+    firstRelease();
+    const secondRelease = await waiterTwo;
+    secondRelease();
+    const thirdRelease = await lock.acquire();
+    thirdRelease();
+  });
 });

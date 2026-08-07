@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, readFile, rename, unlink, lstat } from "node:fs/promises";
+import { open, readFile, unlink, lstat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type {
   ApprovalRequest,
@@ -21,6 +21,10 @@ import {
   createMutationTempPath,
   removeMutationTemp,
 } from "../../tools/workspace/mutations/mutation-temp.js";
+import {
+  removeQuarantinedCopy,
+  replaceFileWithQuarantine,
+} from "../../tools/workspace/mutations/safe-replacement.js";
 import { buildUnifiedDiff } from "../../tools/workspace/mutations/diff.js";
 import { hashMutationPlan } from "../../tools/workspace/mutations/mutation-hash.js";
 import { decodeUtf8 } from "../../tools/workspace/text.js";
@@ -148,17 +152,20 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
           };
         }
       }
-      const restoreError = await restore(action, checkpoint, preimage, signal);
-      if (restoreError !== null) {
+      if (signal?.aborted) {
+        return { type: "cancelled", checkpointId: checkpoint.id, path };
+      }
+      const restoreOutcome = await restore(action, checkpoint, preimage, signal);
+      if (restoreOutcome.kind !== "ok") {
+        if (restoreOutcome.kind === "cancelled") {
+          return { type: "cancelled", checkpointId: checkpoint.id, path };
+        }
         return {
           type: "conflict",
           checkpointId: checkpoint.id,
           path,
-          message: `Undo could not be applied: ${restoreError}`,
+          message: `Undo could not be applied: ${restoreOutcome.message}`,
         };
-      }
-      if (signal?.aborted) {
-        return { type: "cancelled", checkpointId: checkpoint.id, path };
       }
       try {
         await dependencies.store.markUndone(checkpoint.id);
@@ -191,12 +198,17 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
     return null;
   }
 
+  type RestoreOutcome =
+    | { readonly kind: "ok" }
+    | { readonly kind: "cancelled" }
+    | { readonly kind: "failed"; readonly message: string };
+
   async function restore(
     action: UndoAction,
     checkpoint: FileCheckpoint,
     preimage: Uint8Array | null,
     signal?: AbortSignal,
-  ): Promise<string | null> {
+  ): Promise<RestoreOutcome> {
     const absolute = joinAbsolute(dependencies.workspaceRoot, checkpoint.relativePath);
     if (action === "delete") {
       const resolved = await resolveMutationTarget(
@@ -204,12 +216,15 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
         checkpoint.relativePath,
       );
       if (resolved.status !== "resolved") {
-        return resolved.message;
+        return { kind: "failed", message: resolved.message };
+      }
+      if (signal?.aborted) {
+        return { kind: "cancelled" };
       }
       try {
         await unlink(absolute);
       } catch (error: unknown) {
-        return describeError(error);
+        return { kind: "failed", message: describeError(error) };
       }
       let stillExists = true;
       try {
@@ -218,12 +233,12 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
         stillExists = false;
       }
       if (stillExists) {
-        return "The file still exists after undo deletion.";
+        return { kind: "failed", message: "The file still exists after undo deletion." };
       }
-      return null;
+      return { kind: "ok" };
     }
     if (preimage === null) {
-      return "The preimage is missing.";
+      return { kind: "failed", message: "The preimage is missing." };
     }
     if (action === "create") {
       const resolved = await resolveCreateTarget(
@@ -231,7 +246,10 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
         checkpoint.relativePath,
       );
       if (resolved.status !== "resolved") {
-        return resolved.message;
+        return { kind: "failed", message: resolved.message };
+      }
+      if (signal?.aborted) {
+        return { kind: "cancelled" };
       }
       try {
         const handle = await open(absolute, "wx");
@@ -242,7 +260,7 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
           await handle.close();
         }
       } catch (error: unknown) {
-        return describeError(error);
+        return { kind: "failed", message: describeError(error) };
       }
     } else {
       const resolved = await resolveMutationTarget(
@@ -250,10 +268,7 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
         checkpoint.relativePath,
       );
       if (resolved.status !== "resolved") {
-        return resolved.message;
-      }
-      if (signal?.aborted) {
-        return null;
+        return { kind: "failed", message: resolved.message };
       }
       const tempPath = createMutationTempPath(dirname(absolute));
       try {
@@ -265,11 +280,32 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
           await handle.close();
         }
         if (signal?.aborted) {
-          return null;
+          return { kind: "cancelled" };
         }
-        const commitError = await commitRestore(tempPath, absolute);
-        if (commitError !== null) {
-          return commitError;
+        const commitOutcome = await replaceFileWithQuarantine({
+          tempPath,
+          targetPath: absolute,
+          expectedTargetSha256: checkpoint.after.sha256,
+        });
+        if (commitOutcome.kind !== "success") {
+          if (commitOutcome.kind === "uncertain") {
+            return {
+              kind: "failed",
+              message: `${commitOutcome.message} The quarantine copy at ${commitOutcome.quarantinePath} must not be deleted; recover the original from it.`,
+            };
+          }
+          return { kind: "failed", message: commitOutcome.message };
+        }
+        if (commitOutcome.quarantinePath !== null) {
+          const verified = await verifyRestored(absolute, checkpoint);
+          if (verified !== null) {
+            return {
+              kind: "failed",
+              message: `${verified} The original copy is preserved at ${commitOutcome.quarantinePath}; do not delete it.`,
+            };
+          }
+          await removeQuarantinedCopy(commitOutcome.quarantinePath).catch(() => {});
+          return { kind: "ok" };
         }
       } finally {
         await removeMutationTemp(tempPath).catch(() => {});
@@ -277,36 +313,9 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
     }
     const verified = await verifyRestored(absolute, checkpoint);
     if (verified !== null) {
-      return verified;
+      return { kind: "failed", message: verified };
     }
-    return null;
-  }
-
-  async function commitRestore(tempPath: string, absolute: string): Promise<string | null> {
-    if (process.platform === "win32") {
-      try {
-        await rename(tempPath, absolute);
-        return null;
-      } catch (firstError: unknown) {
-        try {
-          await unlink(absolute);
-        } catch (unlinkError: unknown) {
-          return `Restore could not be committed: ${describeError(firstError)}; recovery state: ${describeError(unlinkError)}`;
-        }
-        try {
-          await rename(tempPath, absolute);
-          return null;
-        } catch (secondError: unknown) {
-          return `Restore could not be committed on Windows: ${describeError(secondError)}.`;
-        }
-      }
-    }
-    try {
-      await rename(tempPath, absolute);
-      return null;
-    } catch (error: unknown) {
-      return `Restore could not be committed: ${describeError(error)}`;
-    }
+    return { kind: "ok" };
   }
 
   async function verifyRestored(

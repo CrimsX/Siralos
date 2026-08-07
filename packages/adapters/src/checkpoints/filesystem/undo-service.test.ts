@@ -28,6 +28,7 @@ interface UndoContext {
   workspaceRoot: string;
   review: (decision: "approve" | "deny" | "cancel") => void;
   undo: (id?: string) => Promise<UndoOutcome>;
+  undoWithReviewer: (id: string | undefined, reviewer: ApprovalReviewer) => Promise<UndoOutcome>;
 }
 
 async function withContext(
@@ -57,6 +58,13 @@ async function withContext(
     lock: createMutationLock(),
     reviewer,
   });
+  const withReviewer = (custom: ApprovalReviewer) =>
+    createUndoService({
+      workspaceRoot,
+      store,
+      lock: createMutationLock(),
+      reviewer: custom,
+    });
   return {
     store,
     workspaceRoot,
@@ -64,6 +72,7 @@ async function withContext(
       currentDecision = next;
     },
     undo: (id) => undoService.undo(id),
+    undoWithReviewer: (id, custom) => withReviewer(custom).undo(id),
   };
 }
 
@@ -285,8 +294,21 @@ describe("safe undo", () => {
     await applyCheckpoint(context, checkpoint);
     await writeFile(join(context.workspaceRoot, "docs", "note.md"), after);
 
-    const outcome = await context.undo();
-    expect(outcome.type).toBe("undone");
+    const approvingThenMutatingReviewer = {
+      async review(): Promise<{ type: "approve_once" }> {
+        await writeFile(
+          join(context.workspaceRoot, "docs", "note.md"),
+          "user change after approval\n",
+        );
+        return { type: "approve_once" };
+      },
+    };
+    const outcome = await context.undoWithReviewer(checkpoint.id, approvingThenMutatingReviewer);
+    expect(outcome.type).toBe("conflict");
+    const content = await readFile(join(context.workspaceRoot, "docs", "note.md"), "utf8");
+    expect(content).toBe("user change after approval\n");
+    const stored = await context.store.get(checkpoint.id);
+    expect(stored?.state).toBe("applied");
   });
 
   it("reports a conflict when an undone-again attempt sees changed state", async () => {
@@ -301,5 +323,80 @@ describe("safe undo", () => {
     await context.undo(checkpoint.id);
     const outcome = await context.undo(checkpoint.id);
     expect(outcome.type).toBe("failed");
+  });
+
+  it("finalizes the checkpoint even when cancellation arrives after the destructive commit", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-undo-workspace-"));
+    registerTempDir(workspaceRoot);
+    const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-undo-store-"));
+    registerTempDir(rootDirectory);
+    const store = await createFilesystemCheckpointStore({ workspaceRoot, rootDirectory });
+    await mkdir(join(workspaceRoot, "docs"), { recursive: true });
+    const before = "original\n";
+    const after = "edited\n";
+    await writeFile(join(workspaceRoot, "docs", "note.md"), before);
+    const checkpoint = await store.prepare(prepared("docs/note.md", before, after));
+    await applyCheckpoint({ store, workspaceRoot } as UndoContext, checkpoint);
+    await writeFile(join(workspaceRoot, "docs", "note.md"), after);
+
+    const controller = new AbortController();
+    const realMarkUndone = store.markUndone.bind(store);
+    const abortingStore = new Proxy(store, {
+      get(target, property: keyof typeof store) {
+        if (property === "markUndone") {
+          return (checkpointId: string) => {
+            controller.abort();
+            return realMarkUndone(checkpointId);
+          };
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const undoService = createUndoService({
+      workspaceRoot,
+      store: abortingStore,
+      lock: createMutationLock(),
+      reviewer: { review: () => Promise.resolve({ type: "approve_once" as const }) },
+    });
+    const outcome = await undoService.undo(checkpoint.id, controller.signal);
+    expect(outcome.type).toBe("undone");
+    expect(controller.signal.aborted).toBe(true);
+    expect((await store.get(checkpoint.id))?.state).toBe("undone");
+    expect(await readFile(join(workspaceRoot, "docs", "note.md"), "utf8")).toBe(before);
+  });
+
+  it("cancels cleanly before the destructive commit and leaves the file at the post-state", async () => {
+    const context = await withContext();
+    const before = "original\n";
+    const after = "edited\n";
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), before);
+    const checkpoint = await context.store.prepare(prepared("docs/note.md", before, after));
+    await applyCheckpoint(context, checkpoint);
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), after);
+
+    const controller = new AbortController();
+    const realLoadPreimage = context.store.loadPreimage.bind(context.store);
+    const abortingStore = new Proxy(context.store, {
+      get(target, property: keyof CheckpointStore) {
+        if (property === "loadPreimage") {
+          return (checkpointId: string) => {
+            controller.abort();
+            return realLoadPreimage(checkpointId);
+          };
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const undoService = createUndoService({
+      workspaceRoot: context.workspaceRoot,
+      store: abortingStore,
+      lock: createMutationLock(),
+      reviewer: { review: () => Promise.resolve({ type: "approve_once" as const }) },
+    });
+    const outcome = await undoService.undo(checkpoint.id, controller.signal);
+    expect(outcome.type).toBe("cancelled");
+    expect(await readFile(join(context.workspaceRoot, "docs", "note.md"), "utf8")).toBe(after);
   });
 });
