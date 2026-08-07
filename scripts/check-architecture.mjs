@@ -176,6 +176,9 @@ const APPROVED_MUTATION_DIRECTORIES = [
   join("src", "sandbox", "conformance"),
   join("src", "checkpoints", "filesystem"),
   join("src", "process"),
+  // the engine-profile cache performs verified atomic metadata writes
+  // beneath ~/.solaris/godot/engine-profiles
+  join("src", "godot", "cache"),
 ];
 
 /**
