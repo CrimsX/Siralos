@@ -1,4 +1,4 @@
-import { createPatch } from "diff";
+import { createTwoFilesPatch } from "diff";
 import { WORKSPACE_LIMITS } from "../limits.js";
 
 export interface UnifiedDiff {
@@ -27,9 +27,11 @@ export function buildUnifiedDiff(
       message: `The change involves more than ${WORKSPACE_LIMITS.maxDiffLines} lines; it cannot be previewed.`,
     };
   }
-  const unifiedDiff = createPatch(relativePath, beforeText, afterText, "", "", {
-    context: 3,
-  });
+  const unifiedDiff = stripIndexHeader(
+    createTwoFilesPatch(relativePath, relativePath, beforeText, afterText, "", "", {
+      context: 3,
+    }),
+  );
   if (Buffer.byteLength(unifiedDiff, "utf8") > WORKSPACE_LIMITS.maxCompleteDiffBytes) {
     return {
       status: "too_large",
@@ -52,6 +54,15 @@ export function countLines(text: string): number {
   }
   const normalized = text.endsWith("\n") ? text.slice(0, -1) : text;
   return normalized.split("\n").length;
+}
+
+function stripIndexHeader(patch: string): string {
+  if (!patch.startsWith("Index: ")) {
+    return patch;
+  }
+  const newlineIndex = patch.indexOf("\n");
+  const rest = newlineIndex < 0 ? "" : patch.slice(newlineIndex + 1);
+  return rest.replace(/^=+\n/, "");
 }
 
 function countAddedLines(unifiedDiff: string): number {

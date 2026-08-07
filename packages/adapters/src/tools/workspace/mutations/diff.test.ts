@@ -52,6 +52,15 @@ describe("buildUnifiedDiff", () => {
     expect(first).toEqual(second);
   });
 
+  it("omits svn-style Index headers from previews", () => {
+    const result = buildUnifiedDiff("f.txt", "a\nb\n", "a\nc\n");
+    expect(result.status).toBe("ready");
+    if (result.status === "ready") {
+      expect(result.diff.unifiedDiff).toMatch(/^--- f\.txt\n\+\+\+ f\.txt\n/);
+      expect(result.diff.unifiedDiff).not.toContain("Index:");
+    }
+  });
+
   it("fails when the change involves too many lines", () => {
     const huge = `${"x\n".repeat(WORKSPACE_LIMITS.maxDiffLines + 1)}`;
     const result = buildUnifiedDiff("f.txt", huge, huge);
