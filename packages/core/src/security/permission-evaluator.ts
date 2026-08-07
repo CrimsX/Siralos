@@ -55,5 +55,7 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       return null;
     case "workspace.read":
       return null;
+    case "git.inspect":
+      return null;
   }
 }

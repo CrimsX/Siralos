@@ -1,5 +1,6 @@
 import { isCancellationError } from "../domain/cancellation.js";
 import type { ConversationItem } from "../domain/conversation.js";
+import type { JsonObject, JsonValue } from "../domain/json.js";
 import type { ModelProvider, ModelRequest } from "../ports/provider.js";
 import { evaluatePermission } from "../security/permission-evaluator.js";
 import type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "../security/approval.js";
@@ -68,6 +69,11 @@ export type ApplicationEvent =
       readonly type: "approval_resolved";
       readonly requestId: string;
       readonly decision: "approved" | "denied" | "cancelled";
+    }
+  | {
+      readonly type: "checkpoint_applied";
+      readonly checkpointId: string;
+      readonly path: string;
     };
 
 export interface SessionStatus {
@@ -401,6 +407,13 @@ export function createSolarisApplication(
         result = { status: "failed", message: describeError(error) };
       }
     }
+    if (result.status === "success") {
+      const checkpointId = readCheckpointId(result.output);
+      if (checkpointId !== null) {
+        const path = preview.files[0]?.path ?? "<unknown>";
+        yield { type: "checkpoint_applied", checkpointId, path };
+      }
+    }
     yield* emitToolOutcome(call.callId, call.toolName, result);
     return result;
   }
@@ -446,6 +459,14 @@ function summarizePreview(preview: {
 }): string {
   const fileLabel = preview.files.length === 1 ? "1 file" : `${preview.files.length} files`;
   return `${fileLabel}, +${preview.totalAddedLines} -${preview.totalRemovedLines}`;
+}
+
+function readCheckpointId(output: JsonValue): string | null {
+  if (typeof output !== "object" || output === null || Array.isArray(output)) {
+    return null;
+  }
+  const value = (output as JsonObject)["checkpointId"];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function toDisplayInput(input: unknown): string {

@@ -7,6 +7,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
       return {
         rules: {
           "workspace.read": "allow",
+          "git.inspect": "allow",
           "workspace.write": "deny",
           "process.execute": "deny",
           "network.outbound": "deny",
@@ -16,6 +17,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
       return {
         rules: {
           "workspace.read": "allow",
+          "git.inspect": "allow",
           "workspace.write": "ask",
           "process.execute": "allow",
           "network.outbound": "deny",

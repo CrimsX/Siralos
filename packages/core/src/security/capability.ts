@@ -1,5 +1,5 @@
 export type Capability =
-  "workspace.read" | "workspace.write" | "process.execute" | "network.outbound";
+  "workspace.read" | "workspace.write" | "git.inspect" | "process.execute" | "network.outbound";
 
 export type PermissionRule = "allow" | "ask" | "deny";
 

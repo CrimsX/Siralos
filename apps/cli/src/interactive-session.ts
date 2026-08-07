@@ -154,6 +154,9 @@ async function runPrompt(
             `  approval ${event.decision === "approved" ? "approved" : event.decision === "denied" ? "denied" : "cancelled"}\n`,
           );
           break;
+        case "checkpoint_applied":
+          io.write(`\u25CF Checkpoint ${event.checkpointId} recorded (${event.path})\n`);
+          break;
       }
     }
   } catch (error: unknown) {

@@ -32,6 +32,41 @@ export {
 } from "./application/application.js";
 export type { Capability, CapabilityPolicy, PermissionRule } from "./security/capability.js";
 export { createDefaultPolicy } from "./security/default-policy.js";
+export type {
+  GitChangeEntry,
+  GitConflictEntry,
+  GitDiffFileSummary,
+  GitDiffResult,
+  GitDiffScope,
+  GitFileStatus,
+  GitStatusKind,
+  GitStatusResult,
+  GitWorkspaceStatus,
+} from "./git/git-models.js";
+export { GitError, describeGitError, type GitErrorCode } from "./git/git-errors.js";
+export type {
+  GitInspector,
+  GitStatusRequest,
+  GitDiffRequest,
+} from "./git/git-inspector.js";
+export type {
+  AppliedCheckpointResult,
+  CheckpointFileState,
+  CheckpointListQuery,
+  CheckpointOperation,
+  CheckpointPreimage,
+  CheckpointState,
+  CheckpointTerminalState,
+  FileCheckpoint,
+  PreparedCheckpoint,
+} from "./checkpoints/checkpoint-model.js";
+export type { CheckpointStore } from "./checkpoints/checkpoint-store.js";
+export {
+  planUndo,
+  type UndoPlanDecision,
+  type WorkspaceFileState,
+} from "./checkpoints/undo-plan.js";
+export type { UndoOutcome, UndoService } from "./checkpoints/undo-service.js";
 export type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "./security/approval.js";
 export { DEFAULT_MAX_PENDING_APPROVAL_MS } from "./security/approval.js";
 export type {
