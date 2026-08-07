@@ -68,6 +68,25 @@ function containsProcessEnvAccess(source) {
   return withoutStrings.includes("process.env");
 }
 
+const WRITE_API_TOKENS = ["writeFile", "unlink(", "rename(", "appendFile", "createWriteStream"];
+
+const APPROVED_MUTATION_DIRECTORIES = [
+  join("src", "tools", "workspace", "mutations"),
+  join("src", "sandbox", "conformance"),
+];
+
+function isApprovedWriteApiLocation(packageRelativeFile, file) {
+  if (file.endsWith(".test.ts")) {
+    return true;
+  }
+  if (file.endsWith("workspace-fixtures.ts")) {
+    return true;
+  }
+  return APPROVED_MUTATION_DIRECTORIES.some((directory) =>
+    packageRelativeFile.startsWith(directory + sep),
+  );
+}
+
 export function runChecks(root) {
   const errors = [];
   const packages = collectWorkspacePackages(root);
@@ -83,6 +102,14 @@ export function runChecks(root) {
         if (containsProcessEnvAccess(source)) {
           errors.push(
             `${location}: process.env inspection is prohibited in package source; build child environments from an explicit allowlist`,
+          );
+        }
+        if (
+          WRITE_API_TOKENS.some((token) => source.includes(token)) &&
+          !isApprovedWriteApiLocation(packageRelativeFile, file)
+        ) {
+          errors.push(
+            `${location}: direct file write APIs are prohibited outside approved workspace mutation modules and tests`,
           );
         }
         for (const specifier of extractImportSpecifiers(source)) {

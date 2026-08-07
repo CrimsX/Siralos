@@ -195,6 +195,54 @@ describe("check-architecture", () => {
     );
   });
 
+  it("rejects direct file writes in core", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/index.ts"] =
+      'import { writeFile } from "node:fs/promises";\nwriteFile("x", "y");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs are prohibited"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects direct file writes in providers", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { unlink } from "node:fs/promises";\nunlink("x");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs are prohibited"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects direct file writes in the CLI", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["apps/cli/src/repl.ts"] =
+      'import { rename } from "node:fs/promises";\nrename("a", "b");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs are prohibited"))).toBe(
+      true,
+    );
+  });
+
+  it("accepts direct file writes in mutation modules and tests", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/workspace/mutations/editor.ts"] =
+      'import { writeFile } from "node:fs/promises";\nwriteFile("x", "y");\n';
+    fixture["packages/adapters/src/tools/workspace/mutations/editor.test.ts"] =
+      'import { writeFile } from "node:fs/promises";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects provider adapters importing CLI approval code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { createInteractiveApprovalReviewer } from "@solaris/cli";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("adapters must not import CLI code"))).toBe(true);
+  });
+
   it("detects workspace dependency cycles", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/core/package.json"] = packageJson("@solaris/core", {
