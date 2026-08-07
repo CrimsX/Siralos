@@ -259,7 +259,8 @@ describe("check-architecture", () => {
 
   it("rejects forbidden Git mutation commands in runtime code", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["packages/adapters/src/tools/example.ts"] = 'export const command = "git reset --hard";\n';
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'export const command = "git reset --hard";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("Git mutation commands"))).toBe(true);
   });
