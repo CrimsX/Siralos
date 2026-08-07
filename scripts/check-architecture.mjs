@@ -60,12 +60,23 @@ function isUnder(target, root) {
   return target === root || target.startsWith(root + sep);
 }
 
-function containsProcessEnvAccess(source, packageRelativeFile) {
+function isTestSupportFile(file) {
+  return (
+    file.endsWith(".test.ts") ||
+    file.endsWith("workspace-fixtures.ts") ||
+    file.endsWith("git-test-support.ts")
+  );
+}
+
+function containsProcessEnvAccess(source, packageRelativeFile, file) {
   const withoutStrings = source.replace(
     /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
     "",
   );
   if (!withoutStrings.includes("process.env")) {
+    return false;
+  }
+  if (isTestSupportFile(file)) {
     return false;
   }
   if (packageRelativeFile.startsWith(join("src", "environment"))) {
@@ -76,6 +87,19 @@ function containsProcessEnvAccess(source, packageRelativeFile) {
 
 const WRITE_API_TOKENS = ["writeFile", "unlink(", "rename(", "appendFile", "createWriteStream"];
 
+const FORBIDDEN_GIT_WRITE_TOKENS = [
+  "git reset",
+  "git restore",
+  "git checkout",
+  "git clean",
+  "git stash",
+];
+
+const APPROVED_CHILD_PROCESS_DIRECTORIES = [
+  join("src", "sandbox"),
+  join("src", "git", "cli"),
+];
+
 const APPROVED_MUTATION_DIRECTORIES = [
   join("src", "tools", "workspace", "mutations"),
   join("src", "sandbox", "conformance"),
@@ -83,10 +107,7 @@ const APPROVED_MUTATION_DIRECTORIES = [
 ];
 
 function isApprovedWriteApiLocation(packageRelativeFile, file) {
-  if (file.endsWith(".test.ts")) {
-    return true;
-  }
-  if (file.endsWith("workspace-fixtures.ts")) {
+  if (isTestSupportFile(file)) {
     return true;
   }
   return APPROVED_MUTATION_DIRECTORIES.some((directory) =>
@@ -106,7 +127,7 @@ export function runChecks(root) {
         const source = readFileSync(file, "utf8");
         const location = relative(root, file).split(sep).join("/");
         const packageRelativeFile = relative(pkg.path, file);
-        if (containsProcessEnvAccess(source, packageRelativeFile)) {
+        if (containsProcessEnvAccess(source, packageRelativeFile, file)) {
           errors.push(
             `${location}: process.env inspection is prohibited in package source; build child environments from an explicit allowlist`,
           );
@@ -117,6 +138,14 @@ export function runChecks(root) {
         ) {
           errors.push(
             `${location}: direct file write APIs are prohibited outside approved workspace mutation modules and tests`,
+          );
+        }
+        if (
+          !isTestSupportFile(file) &&
+          FORBIDDEN_GIT_WRITE_TOKENS.some((token) => source.includes(token))
+        ) {
+          errors.push(
+            `${location}: Git mutation commands (reset, restore, checkout, clean, stash) are prohibited in runtime code`,
           );
         }
         for (const specifier of extractImportSpecifiers(source)) {
@@ -131,11 +160,13 @@ export function runChecks(root) {
             }
           }
           if (specifier === "node:child_process") {
-            const inSandbox = packageRelativeFile.startsWith(join("src", "sandbox"));
+            const inApprovedDirectory = APPROVED_CHILD_PROCESS_DIRECTORIES.some((directory) =>
+              packageRelativeFile.startsWith(directory + sep),
+            );
             const isTestFile = file.endsWith(".test.ts");
-            if (!inSandbox && !isTestFile) {
+            if (!inApprovedDirectory && !isTestFile) {
               errors.push(
-                `${location}: unsandboxed process spawning is prohibited outside approved sandbox modules`,
+                `${location}: unsandboxed process spawning is prohibited outside approved sandbox and git modules`,
               );
             }
           }
@@ -161,10 +192,12 @@ export function runChecks(root) {
               }
               if (
                 isUnder(target, join(pkg.path, "src", "sandbox")) ||
-                isUnder(target, join(pkg.path, "src", "environment"))
+                isUnder(target, join(pkg.path, "src", "environment")) ||
+                isUnder(target, join(pkg.path, "src", "checkpoints")) ||
+                isUnder(target, join(pkg.path, "src", "git"))
               ) {
                 errors.push(
-                  `${location}: providers must not import sandbox or environment adapters`,
+                  `${location}: providers must not import sandbox, environment, checkpoint, or git adapters`,
                 );
               }
             }

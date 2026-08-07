@@ -256,4 +256,51 @@ describe("check-architecture", () => {
       true,
     );
   });
+
+  it("rejects forbidden Git mutation commands in runtime code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] = 'export const command = "git reset --hard";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("Git mutation commands"))).toBe(true);
+  });
+
+  it("accepts Git mutation strings in test files", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.test.ts"] =
+      'export const command = "git reset --hard";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("Git mutation commands"))).toBe(false);
+  });
+
+  it("rejects child-process spawning outside sandbox and git modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { spawn } from "node:child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
+  });
+
+  it("accepts child-process imports in the approved git adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/git/cli/runner.ts"] =
+      'import { spawn } from "node:child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(false);
+  });
+
+  it("rejects provider adapters importing checkpoint or git adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { loadPreimage } from "../checkpoints/filesystem/checkpoint-store.js";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("checkpoint, or git adapters"))).toBe(true);
+  });
+
+  it("rejects direct file writes outside approved modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { writeFile } from "node:fs/promises";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(true);
+  });
 });
