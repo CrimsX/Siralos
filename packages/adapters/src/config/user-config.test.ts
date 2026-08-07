@@ -30,12 +30,14 @@ describe("parseUserConfig", () => {
       parseUserConfig({ sandbox: { profile: "develop-offline", backend: "anthropic-runtime" } }),
     ).toEqual({
       sandbox: { profile: "develop-offline", backend: "anthropic-runtime" },
+      godot: DEFAULT_USER_CONFIG.godot,
     });
   });
 
   it("accepts partial sandbox sections with defaults", () => {
     expect(parseUserConfig({ sandbox: { profile: "develop-offline" } })).toEqual({
       sandbox: { profile: "develop-offline", backend: "auto" },
+      godot: DEFAULT_USER_CONFIG.godot,
     });
     expect(parseUserConfig({ sandbox: {} })).toEqual(DEFAULT_USER_CONFIG);
   });
@@ -103,6 +105,97 @@ describe("loadUserConfig", () => {
   });
 });
 
+describe("parseUserConfig godot section", () => {
+  it("defaults the godot section when missing", () => {
+    expect(parseUserConfig({}).godot).toEqual(DEFAULT_USER_CONFIG.godot);
+  });
+
+  it("loads valid configured installations", () => {
+    const config = parseUserConfig({
+      godot: {
+        activeInstallation: "primary",
+        installations: {
+          primary: {
+            path: "C:\\Tools\\Godot\\Godot_v4.7.1-stable_win64.exe",
+            editionHint: "standard",
+          },
+        },
+        discoverOnPath: true,
+      },
+    });
+    expect(config.godot.activeInstallation).toBe("primary");
+    expect(config.godot.installations["primary"]).toEqual({
+      path: "C:\\Tools\\Godot\\Godot_v4.7.1-stable_win64.exe",
+      editionHint: "standard",
+    });
+    expect(config.godot.discoverOnPath).toBe(true);
+  });
+
+  it("defaults edition hints to unknown and discovery to true", () => {
+    const config = parseUserConfig({
+      godot: { installations: { primary: { path: "C:\\godot.exe" } } },
+    });
+    expect(config.godot.installations["primary"]?.editionHint).toBe("unknown");
+    expect(config.godot.discoverOnPath).toBe(true);
+  });
+
+  it("rejects relative configured paths", () => {
+    expect(() =>
+      parseUserConfig({
+        godot: { installations: { primary: { path: "godot.exe" } } },
+      }),
+    ).toThrow("path must be absolute");
+  });
+
+  it("rejects unknown godot section keys", () => {
+    expect(() => parseUserConfig({ godot: { automaticDownload: true } })).toThrow(
+      "Unknown Solaris godot configuration key",
+    );
+  });
+
+  it("rejects unknown installation keys", () => {
+    expect(() =>
+      parseUserConfig({
+        godot: { installations: { primary: { path: "C:\\godot.exe", secret: "x" } } },
+      }),
+    ).toThrow("Unknown Godot installation key");
+  });
+
+  it("rejects unknown edition hints", () => {
+    expect(() =>
+      parseUserConfig({
+        godot: { installations: { primary: { path: "C:\\godot.exe", editionHint: "mono" } } },
+      }),
+    ).toThrow("Unknown Godot edition hint");
+  });
+
+  it("rejects empty installation ids", () => {
+    expect(() =>
+      parseUserConfig({ godot: { installations: { "": { path: "C:\\godot.exe" } } } }),
+    ).toThrow("installation id");
+  });
+
+  it("rejects non-string active installations", () => {
+    expect(() => parseUserConfig({ godot: { activeInstallation: 5 } })).toThrow(
+      "godot.activeInstallation",
+    );
+  });
+
+  it("rejects oversized installation maps", () => {
+    const installations: Record<string, { path: string }> = {};
+    for (let index = 0; index < 17; index += 1) {
+      installations[`id-${index}`] = { path: "C:\\godot.exe" };
+    }
+    expect(() => parseUserConfig({ godot: { installations } })).toThrow("limited to 16");
+  });
+
+  it("rejects non-boolean discoverOnPath values", () => {
+    expect(() => parseUserConfig({ godot: { discoverOnPath: "yes" } })).toThrow(
+      "discoverOnPath must be a boolean",
+    );
+  });
+});
+
 describe("user-config schema", () => {
   it("matches the runtime validation enums", async () => {
     const { readFile } = await import("node:fs/promises");
@@ -111,6 +204,15 @@ describe("user-config schema", () => {
       properties: {
         sandbox: {
           properties: { profile: { enum: string[] }; backend: { enum: string[] } };
+        };
+        godot: {
+          properties: {
+            installations: {
+              additionalProperties: {
+                properties: { editionHint: { enum: string[] } };
+              };
+            };
+          };
         };
       };
     };
@@ -122,5 +224,9 @@ describe("user-config schema", () => {
       "auto",
       "anthropic-runtime",
     ]);
+    expect(
+      schema.properties.godot.properties.installations.additionalProperties.properties.editionHint
+        .enum,
+    ).toEqual(["standard", "dotnet", "unknown"]);
   });
 });

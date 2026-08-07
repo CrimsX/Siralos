@@ -109,6 +109,7 @@ export type {
 } from "./security/change-preview.js";
 export {
   DEVELOP_OFFLINE_PROFILE,
+  GODOT_PROBE_OFFLINE_PROFILE,
   INSPECT_PROFILE,
   VALIDATION_OFFLINE_PROFILE,
   getBuiltInProfile,
@@ -138,3 +139,74 @@ export {
   type SolarisSecurity,
   type SolarisSecurityDependencies,
 } from "./security/sandbox-service.js";
+export { GODOT_LIMITS } from "./godot/limits.js";
+export type { SafeDiagnostic } from "./godot/diagnostics.js";
+export {
+  classifyGodotReleaseChannel,
+  parseDeclaredVersion,
+  type GodotDeclaredVersion,
+  type GodotReleaseChannel,
+  type GodotVersion,
+  type GodotVersionStatus,
+} from "./godot/version.js";
+export {
+  FORBIDDEN_GODOT_PROJECT_ARGUMENTS,
+  GODOT_KNOWN_OPTIONS,
+  createEmptyGodotCommandCapabilities,
+  type GodotCommandCapabilities,
+} from "./godot/capabilities.js";
+export type {
+  GodotEditionHint,
+  GodotInstallation,
+  GodotInstallationSource,
+} from "./godot/installations.js";
+export {
+  classifyGodotEdition,
+  classifyGodotSupport,
+  isEditorSelectionCandidate,
+  type GodotEdition,
+  type GodotEditionClassification,
+  type GodotEditionConfidence,
+  type GodotEditionEvidence,
+  type GodotEngineProfile,
+  type GodotSupportClassificationInput,
+  type SolarisGodotSupport,
+} from "./godot/engine-profile.js";
+export type {
+  GodotApiDumpProbe,
+  GodotApiDumpSummary,
+  GodotHelpProbe,
+  GodotProbeRunner,
+  GodotVersionProbe,
+} from "./godot/probes.js";
+export {
+  createEmptyGodotExecutableContentInventory,
+  createEmptyGodotProjectProfile,
+  type GodotAutoloadSummary,
+  type GodotExecutableContentInventory,
+  type GodotGDExtensionSummary,
+  type GodotLanguageProfile,
+  type GodotPluginSummary,
+  type GodotProjectProfile,
+} from "./godot/project.js";
+export {
+  assessGodotCompatibility,
+  type GodotCompatibilityAssessment,
+  type GodotCompatibilityStatus,
+} from "./godot/compatibility.js";
+export {
+  GODOT_SELECTION_RANKS,
+  rankCandidate,
+  rankGodotCandidates,
+  type GodotRankedCandidate,
+  type GodotSelectionOutcome,
+  type GodotSelectionPreference,
+} from "./godot/selection.js";
+export type {
+  GodotDiscoveryResult,
+  GodotDoctorReport,
+  GodotInstallationOverview,
+  GodotInspector,
+  GodotSelectedInstallation,
+} from "./godot/inspector.js";
+export type { GodotApplicationEvent } from "./godot/events.js";

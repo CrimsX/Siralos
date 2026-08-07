@@ -1,4 +1,5 @@
-export type SandboxProfileId = "inspect" | "develop-offline" | "validation-offline";
+export type SandboxProfileId =
+  "inspect" | "develop-offline" | "validation-offline" | "godot-probe-offline";
 
 export type WorkspaceAccess = "read-only" | "read-write";
 
@@ -94,6 +95,37 @@ export const VALIDATION_OFFLINE_PROFILE: SandboxProfile = {
   },
 };
 
+/**
+ * Internal effective profile for Godot engine probes.
+ *
+ * Godot probes are project-independent, read-only, offline, and fixed by
+ * Solaris: they run in a Solaris-private probe directory with a sandbox
+ * private home and temp, the project workspace is never writable, network
+ * and loopback are denied, stdin is closed, and the process tree is
+ * confined. This profile is never user-selectable and must never be
+ * broadened by public configuration.
+ */
+export const GODOT_PROBE_OFFLINE_PROFILE: SandboxProfile = {
+  id: "godot-probe-offline",
+  filesystem: {
+    workspaceAccess: "read-only",
+    protectGitMetadata: true,
+    protectSolarisMetadata: true,
+    denySensitiveProjectFiles: true,
+  },
+  process: {
+    enabled: true,
+    timeoutMs: 120_000,
+    maxOutputBytes: 1_000_000,
+  },
+  network: {
+    outbound: "deny",
+  },
+  environment: {
+    policy: "minimal",
+  },
+};
+
 export function getBuiltInProfile(profileId: SandboxProfileId): SandboxProfile {
   switch (profileId) {
     case "inspect":
@@ -102,5 +134,7 @@ export function getBuiltInProfile(profileId: SandboxProfileId): SandboxProfile {
       return DEVELOP_OFFLINE_PROFILE;
     case "validation-offline":
       return VALIDATION_OFFLINE_PROFILE;
+    case "godot-probe-offline":
+      return GODOT_PROBE_OFFLINE_PROFILE;
   }
 }

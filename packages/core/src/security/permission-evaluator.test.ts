@@ -3,6 +3,8 @@ import {
   createDefaultPolicy,
   DEVELOP_OFFLINE_PROFILE,
   evaluatePermission,
+  getBuiltInProfile,
+  GODOT_PROBE_OFFLINE_PROFILE,
   INSPECT_PROFILE,
   VALIDATION_OFFLINE_PROFILE,
   type Capability,
@@ -58,6 +60,21 @@ describe("built-in profiles", () => {
     });
   });
 
+  it("defines the internal godot-probe-offline profile without broadened access", () => {
+    expect(GODOT_PROBE_OFFLINE_PROFILE).toMatchObject({
+      id: "godot-probe-offline",
+      filesystem: {
+        workspaceAccess: "read-only",
+        protectGitMetadata: true,
+        protectSolarisMetadata: true,
+        denySensitiveProjectFiles: true,
+      },
+      process: { enabled: true },
+      network: { outbound: "deny" },
+      environment: { policy: "minimal" },
+    });
+  });
+
   it("validation-offline is narrower than develop-offline", () => {
     expect(VALIDATION_OFFLINE_PROFILE.filesystem.workspaceAccess).toBe("read-only");
     expect(DEVELOP_OFFLINE_PROFILE.filesystem.workspaceAccess).toBe("read-write");
@@ -90,6 +107,25 @@ describe("evaluatePermission", () => {
     expect(evaluatePermission("network.outbound", inspectPolicy, INSPECT_PROFILE)).toMatchObject({
       decision: "deny",
     });
+  });
+
+  it("allows godot inspection under every built-in policy", () => {
+    for (const profileId of ["inspect", "develop-offline", "validation-offline"] as const) {
+      const policy = createDefaultPolicy(profileId);
+      expect(policy.rules["godot.inspect"]).toBe("allow");
+      expect(evaluatePermission("godot.inspect", policy, getBuiltInProfile(profileId))).toEqual({
+        decision: "allow",
+      });
+    }
+  });
+
+  it("fails closed when the godot inspection rule is missing", () => {
+    const missing = evaluatePermission(
+      "godot.inspect",
+      policyWithout("godot.inspect"),
+      DEVELOP_OFFLINE_PROFILE,
+    );
+    expect(missing).toMatchObject({ decision: "deny" });
   });
 
   it("asks for approval of workspace writes under develop-offline", () => {

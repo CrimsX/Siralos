@@ -8,6 +8,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
         rules: {
           "workspace.read": "allow",
           "git.inspect": "allow",
+          "godot.inspect": "allow",
           "workspace.write": "deny",
           "process.execute": "deny",
           "network.outbound": "deny",
@@ -18,6 +19,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
         rules: {
           "workspace.read": "allow",
           "git.inspect": "allow",
+          "godot.inspect": "allow",
           "workspace.write": "ask",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -28,6 +30,21 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
         rules: {
           "workspace.read": "allow",
           "git.inspect": "allow",
+          "godot.inspect": "allow",
+          "workspace.write": "deny",
+          "process.execute": "ask",
+          "network.outbound": "deny",
+        },
+      };
+    case "godot-probe-offline":
+      // Internal execution profile: never user-selectable and never used for
+      // tool permission evaluation. Mirrors validation-offline so permission
+      // evaluation is total; probes themselves are Solaris-fixed.
+      return {
+        rules: {
+          "workspace.read": "allow",
+          "git.inspect": "allow",
+          "godot.inspect": "allow",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",

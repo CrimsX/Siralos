@@ -57,5 +57,9 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       return null;
     case "git.inspect":
       return null;
+    case "godot.inspect":
+      // Godot inspection is fixed, project-independent, read-only, and
+      // offline; no profile constraint applies beyond the policy rule.
+      return null;
   }
 }

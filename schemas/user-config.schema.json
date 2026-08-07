@@ -21,6 +21,44 @@
           "description": "Sandbox backend selection. Defaults to auto."
         }
       }
+    },
+    "godot": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Trusted user-level Godot installation configuration. Project files cannot select or broaden executables.",
+      "properties": {
+        "activeInstallation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Installation id used by default. Must reference a configured or discovered installation."
+        },
+        "installations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Absolute path to a Godot executable (or macOS .app bundle). Relative paths are rejected."
+              },
+              "editionHint": {
+                "type": "string",
+                "enum": ["standard", "dotnet", "unknown"],
+                "description": "User-supplied edition hint. A hint only, never an authoritative result."
+              }
+            },
+            "required": ["path"]
+          },
+          "maxProperties": 16
+        },
+        "discoverOnPath": {
+          "type": "boolean",
+          "description": "Whether fixed-name PATH discovery is enabled. Defaults to true."
+        }
+      }
     }
   }
 }
