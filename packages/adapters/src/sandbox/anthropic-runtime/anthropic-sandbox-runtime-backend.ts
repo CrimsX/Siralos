@@ -9,7 +9,9 @@ import type {
 import { SandboxError } from "@solaris/core";
 import {
   SandboxManager,
+  VENDORED_SRT_WIN_EXE,
   checkWindowsSandboxStatusAsync,
+  resolveSrtWin,
   windowsInstallInstructions,
   type SandboxRuntimeConfig,
 } from "@anthropic-ai/sandbox-runtime";
@@ -55,9 +57,10 @@ export function createAnthropicSandboxRuntimeBackend(
   }
 
   async function inspectWindows(): Promise<SandboxBackendStatus> {
+    const srtWin = resolveSrtWin({ path: VENDORED_SRT_WIN_EXE });
     let status;
     try {
-      status = await checkWindowsSandboxStatusAsync();
+      status = await checkWindowsSandboxStatusAsync({ srtWin });
     } catch (error: unknown) {
       return {
         ...baseStatus("failed", "windows"),
@@ -258,6 +261,9 @@ function buildRuntimeConfig(
     enableWeakerNestedSandbox: false,
     enableWeakerNetworkIsolation: false,
     allowAppleEvents: false,
+    windows: {
+      srtWin: { path: VENDORED_SRT_WIN_EXE },
+    },
   };
 }
 

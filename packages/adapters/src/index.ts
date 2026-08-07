@@ -19,6 +19,13 @@ export {
 } from "./sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.js";
 export { getSandboxDirectories } from "./sandbox/sandbox-directories.js";
 export {
+  runSandboxConformance,
+  removeConformanceArtifacts,
+  type ConformanceOptions,
+  type ConformanceProbeResult,
+  type ConformanceReport,
+} from "./sandbox/conformance/run-conformance.js";
+export {
   createFakeSandboxBackend,
   completedResult,
   type FakeSandboxBackendOptions,
