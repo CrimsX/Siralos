@@ -44,88 +44,85 @@ export function createFakeGodotProbeRunner(options: FakeGodotProbeRunnerOptions 
 } {
   const calls = { version: 0, help: 0, api: 0 };
   const runner: GodotProbeRunner = {
-    async probeVersion(_installation: GodotInstallation): Promise<GodotVersionProbe> {
+    probeVersion(_installation: GodotInstallation): Promise<GodotVersionProbe> {
       calls.version += 1;
-      const scripted = options.version;
-      if (scripted === undefined) {
-        const parsed = parseVersion(options.versionText ?? "4.7.1.stable.official");
-        if (parsed === null) {
-          return { status: "failed", message: "The Godot version output is not recognizable." };
-        }
-        return { status: "success", version: parsed };
-      }
-      if (scripted.status === "failed") {
-        return { status: "failed", message: scripted.message };
-      }
-      const parsed = parseVersion(scripted.stdout);
-      if (parsed === null) {
-        return { status: "failed", message: "The Godot version output is not recognizable." };
-      }
-      return { status: "success", version: parsed };
+      return Promise.resolve(resolveVersionProbe(options));
     },
-    async probeHelp(_installation: GodotInstallation): Promise<GodotHelpProbe> {
+    probeHelp(_installation: GodotInstallation): Promise<GodotHelpProbe> {
       calls.help += 1;
-      const scripted = options.help;
-      const text =
-        scripted !== undefined && scripted.status !== "failed"
-          ? scripted.stdout
-          : (options.helpText ?? defaultHelpText(options.advertiseApiDump ?? false));
-      const capabilities = parseCapabilities(text);
-      if (scripted !== undefined && scripted.status === "failed") {
-        return { status: "failed", message: scripted.message };
-      }
-      if (scripted !== undefined && scripted.status === "degraded") {
-        return {
-          status: "degraded",
-          message: scripted.message,
-          capabilities,
-          unknownOptionCount: 0,
-        };
-      }
-      return { status: "success", capabilities, unknownOptionCount: 0 };
+      return Promise.resolve(resolveHelpProbe(options));
     },
-    async dumpExtensionApi(_installation: GodotInstallation): Promise<GodotApiDumpProbe> {
+    dumpExtensionApi(_installation: GodotInstallation): Promise<GodotApiDumpProbe> {
       calls.api += 1;
-      const scripted = options.apiDump;
-      if (scripted === undefined) {
-        return {
-          status: "success",
-          summary: {
-            headerVersion: "4.7.1.stable.official",
-            apiHash: "abc123",
-            classCount: 3,
-            builtinClassCount: 2,
-            globalEnumCount: 1,
-            utilityFunctionCount: 2,
-            configurationVersion: 5,
-            fileSizeBytes: 1024,
-            sha256: "b".repeat(64),
-          },
-        };
-      }
-      if (scripted.status === "failed") {
-        return { status: "failed", message: scripted.message };
-      }
-      if (scripted.status === "degraded") {
-        return { status: "degraded", message: scripted.message };
-      }
-      return {
-        status: "success",
-        summary: {
-          headerVersion: "4.7.1.stable.official",
-          apiHash: "abc123",
-          classCount: 3,
-          builtinClassCount: 2,
-          globalEnumCount: 1,
-          utilityFunctionCount: 2,
-          configurationVersion: 5,
-          fileSizeBytes: 1024,
-          sha256: "b".repeat(64),
-        },
-      };
+      return Promise.resolve(resolveApiDumpProbe(options));
     },
   };
   return { runner, calls: () => ({ ...calls }) };
+}
+
+function resolveVersionProbe(options: FakeGodotProbeRunnerOptions): GodotVersionProbe {
+  const scripted = options.version;
+  if (scripted === undefined) {
+    const parsed = parseVersion(options.versionText ?? "4.7.1.stable.official");
+    if (parsed === null) {
+      return { status: "failed", message: "The Godot version output is not recognizable." };
+    }
+    return { status: "success", version: parsed };
+  }
+  if (scripted.status === "failed") {
+    return { status: "failed", message: scripted.message };
+  }
+  const parsed = parseVersion(scripted.stdout);
+  if (parsed === null) {
+    return { status: "failed", message: "The Godot version output is not recognizable." };
+  }
+  return { status: "success", version: parsed };
+}
+
+function resolveHelpProbe(options: FakeGodotProbeRunnerOptions): GodotHelpProbe {
+  const scripted = options.help;
+  const text =
+    scripted !== undefined && scripted.status !== "failed"
+      ? scripted.stdout
+      : (options.helpText ?? defaultHelpText(options.advertiseApiDump ?? false));
+  const capabilities = parseCapabilities(text);
+  if (scripted !== undefined && scripted.status === "failed") {
+    return { status: "failed", message: scripted.message };
+  }
+  if (scripted !== undefined && scripted.status === "degraded") {
+    return {
+      status: "degraded",
+      message: scripted.message,
+      capabilities,
+      unknownOptionCount: 0,
+    };
+  }
+  return { status: "success", capabilities, unknownOptionCount: 0 };
+}
+
+function resolveApiDumpProbe(options: FakeGodotProbeRunnerOptions): GodotApiDumpProbe {
+  const scripted = options.apiDump;
+  const summary = {
+    headerVersion: "4.7.1.stable.official",
+    apiHash: "abc123",
+    classCount: 3,
+    builtinClassCount: 2,
+    globalEnumCount: 1,
+    utilityFunctionCount: 2,
+    configurationVersion: 5,
+    fileSizeBytes: 1024,
+    sha256: "b".repeat(64),
+  };
+  if (scripted === undefined) {
+    return { status: "success", summary };
+  }
+  if (scripted.status === "failed") {
+    return { status: "failed", message: scripted.message };
+  }
+  if (scripted.status === "degraded") {
+    return { status: "degraded", message: scripted.message };
+  }
+  return { status: "success", summary };
 }
 
 function parseVersion(text: string): import("@solaris/core").GodotVersion | null {

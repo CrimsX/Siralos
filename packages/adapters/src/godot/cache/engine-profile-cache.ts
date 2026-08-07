@@ -211,10 +211,7 @@ function parseCachedProfile(content: string): CachedEngineProfile | null {
     return null;
   }
   const executable = record["executable"] as Record<string, unknown>;
-  if (
-    typeof executable["sha256"] !== "string" ||
-    !/^[0-9a-f]{64}$/.test(executable["sha256"] as string)
-  ) {
+  if (typeof executable["sha256"] !== "string" || !/^[0-9a-f]{64}$/.test(executable["sha256"])) {
     return null;
   }
   const version = record["version"] as Record<string, unknown>;
@@ -232,7 +229,7 @@ function parseCachedProfile(content: string): CachedEngineProfile | null {
     typeof version["minor"] !== "number" ||
     (version["patch"] !== null && typeof version["patch"] !== "number") ||
     typeof version["status"] !== "string" ||
-    !versionStatuses.includes(version["status"] as string)
+    !versionStatuses.includes(version["status"])
   ) {
     return null;
   }

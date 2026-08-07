@@ -403,7 +403,7 @@ describe("dumpExtensionApi", () => {
 });
 
 describe("probe argument discipline", () => {
-  it("passes exactly --version and --help and the dump flag", async () => {
+  it("passes exactly --version and --help and the dump flag", () => {
     expect(GODOT_VERSION_ARGUMENTS).toEqual(["--version"]);
     expect(GODOT_HELP_ARGUMENTS).toEqual(["--help"]);
     expect(GODOT_API_DUMP_ARGUMENTS).toEqual(["--dump-extension-api"]);

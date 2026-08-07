@@ -12,7 +12,7 @@ const COMMIT_PATTERN = /^[0-9a-f]{7,40}$/;
  *
  * Supported forms include `4.7.1.stable.official`,
  * `4.7.2.rc1.official`, `4.8.dev2.custom_build`, patchless versions, and
- * versions carrying a git commit token. Non-numeric major/minor values are
+ * versions carrying a commit-hash token. Non-numeric major/minor values are
  * rejected, empty and non-Godot output fails, control characters are
  * sanitized, and unknown suffixes are preserved rather than failing.
  */
@@ -37,7 +37,7 @@ export function parseGodotVersionText(raw: string): GodotVersionParseResult {
   }
   const rest = segments.slice(2);
   let patch: number | null = null;
-  if (rest.length > 0 && isSegmentInteger(rest[0] as string)) {
+  if (rest.length > 0 && isSegmentInteger(rest[0])) {
     patch = Number(rest[0]);
     rest.shift();
   }

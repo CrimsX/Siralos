@@ -205,7 +205,9 @@ export function classifyGodotEdition(evidence: GodotEditionEvidence): GodotEditi
   }
   if (!editorSignals) {
     if (standardSignals.length > 0) {
-      conflicts.push("the user hint says standard, but the help output advertises no editor signal");
+      conflicts.push(
+        "the user hint says standard, but the help output advertises no editor signal",
+      );
       return {
         edition: "standard",
         confidence: "medium",

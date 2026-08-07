@@ -87,7 +87,7 @@ describe("validateExecutable", () => {
   it("canonicalizes through symlinks and records the target", async () => {
     const root = await withTemp();
     const target = await writeExecutable(join(root, "real-godot.exe"));
-    let linked = join(root, "godot-link.exe");
+    const linked = join(root, "godot-link.exe");
     try {
       const { symlink } = await import("node:fs/promises");
       await symlink(target, linked);

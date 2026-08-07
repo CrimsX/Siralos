@@ -6,7 +6,6 @@ import {
   GODOT_SELECTION_RANKS,
   rankGodotCandidates,
   type GodotApplicationEvent,
-  type GodotCommandCapabilities,
   type GodotDiscoveryResult,
   type GodotEngineProfile,
   type GodotInstallation,
@@ -292,7 +291,6 @@ export function createGodotEngineProfiler(
     const helpProbe = await dependencies.probeRunner.probeHelp(installation, signal);
     const diagnostics: SafeDiagnostic[] = [];
     const degradedCapabilities: string[] = [];
-    let capabilities: GodotCommandCapabilities;
     if (helpProbe.status === "failed") {
       emit({
         type: "godot_probe_completed",
@@ -302,7 +300,7 @@ export function createGodotEngineProfiler(
       });
       return { installation, profile: null, profileError: helpProbe.message };
     }
-    capabilities = helpProbe.capabilities;
+    const capabilities = helpProbe.capabilities;
     if (helpProbe.status === "degraded") {
       degradedCapabilities.push("help");
       diagnostics.push({ severity: "warning", message: helpProbe.message });
@@ -410,11 +408,19 @@ export function createGodotEngineProfiler(
     return { installation, profile, profileError: null };
   }
 
-  async function select(profiled: readonly GodotProfiledCandidate[]): Promise<{
+  function select(profiled: readonly GodotProfiledCandidate[]): Promise<{
     readonly installation: GodotInstallation | null;
     readonly rationale: readonly string[];
     readonly configActiveError: string | null;
   }> {
+    return Promise.resolve(selectSync(profiled));
+  }
+
+  function selectSync(profiled: readonly GodotProfiledCandidate[]): {
+    readonly installation: GodotInstallation | null;
+    readonly rationale: readonly string[];
+    readonly configActiveError: string | null;
+  } {
     const valid = profiled.filter(
       (candidate) => candidate.profile !== null && candidate.installation.status === "valid",
     );

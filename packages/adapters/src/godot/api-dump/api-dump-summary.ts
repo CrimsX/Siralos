@@ -17,7 +17,7 @@ export function extractGodotApiDumpSummary(
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
-  } catch (error: unknown) {
+  } catch {
     return { ok: false, message: "The API dump is not valid JSON." };
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {

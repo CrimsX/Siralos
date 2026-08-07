@@ -151,7 +151,7 @@ export function createGodotProbeRunner(
     let runPaths;
     try {
       runPaths = await dependencies.runDirectories.create();
-    } catch (error: unknown) {
+    } catch {
       return null;
     }
     return {
@@ -190,7 +190,7 @@ export function createGodotProbeRunner(
     let runPaths;
     try {
       runPaths = await dependencies.runDirectories.create();
-    } catch (error: unknown) {
+    } catch {
       return {
         status: "failed",
         message: "The private probe directory could not be created; the probe did not run.",
@@ -304,7 +304,7 @@ async function extractApiDumpFromDirectory(
   let entries: string[];
   try {
     entries = await readdir(directory);
-  } catch (error: unknown) {
+  } catch {
     return { ok: false, message: "The probe directory could not be listed." };
   }
   if (!entries.includes("extension_api.json")) {
@@ -318,7 +318,7 @@ async function extractApiDumpFromDirectory(
   let metadata;
   try {
     metadata = await lstat(dumpPath);
-  } catch (error: unknown) {
+  } catch {
     return { ok: false, message: "The API dump file could not be inspected." };
   }
   if (!metadata.isFile()) {
@@ -340,7 +340,7 @@ async function extractApiDumpFromDirectory(
     } finally {
       await handle.close().catch(() => undefined);
     }
-  } catch (error: unknown) {
+  } catch {
     return { ok: false, message: "The API dump could not be read." };
   }
   const summary = extractGodotApiDumpSummary(content, metadata.size);
