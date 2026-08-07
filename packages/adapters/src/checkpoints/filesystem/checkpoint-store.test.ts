@@ -7,6 +7,7 @@ import type { PreparedCheckpoint } from "@solaris/core";
 import { createFilesystemCheckpointStore } from "./checkpoint-store.js";
 import { reconcileWorkspaceCheckpoints } from "./reconciliation.js";
 import { cleanupTempDirs, registerTempDir } from "../../git/cli/git-test-support.js";
+import { SYMLINKS_SUPPORTED } from "../../tools/workspace/workspace-fixtures.js";
 
 afterEach(async () => {
   await cleanupTempDirs();
@@ -284,7 +285,7 @@ describe("checkpoint reconciliation", () => {
     expect((await context.store.get(uncertainCheckpoint.id))?.state).toBe("uncertain");
   });
 
-  it("reconciliation is bounded to prepared checkpoints only", async () => {
+  it("reconciliation is bounded to prepared and applied checkpoints only", async () => {
     const context = await withStore();
     const checkpoint = await context.store.prepare(preparedUpdate());
     await context.store.markState(checkpoint.id, "abandoned");
@@ -294,4 +295,138 @@ describe("checkpoint reconciliation", () => {
     });
     expect(report.checked).toBe(0);
   });
+
+  it("reconciles an applied checkpoint whose file matches the before-state as undone", async () => {
+    const context = await withStore();
+    await mkdir(join(context.workspaceRoot, "docs"), { recursive: true });
+    const before = "before content\n";
+    const after = "after content\n";
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), before);
+    const checkpoint = await context.store.prepare(preparedUpdate());
+    await context.store.finalizeApplied(checkpoint.id, {
+      afterSha256: hashOf(after),
+      absent: false,
+    });
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), before);
+
+    const report = await reconcileWorkspaceCheckpoints({
+      workspaceRoot: context.workspaceRoot,
+      store: context.store,
+    });
+    expect(report.undoneAfterRestore).toBe(1);
+    expect((await context.store.get(checkpoint.id))?.state).toBe("undone");
+  });
+
+  it("leaves an applied checkpoint alone when the file still matches the after-state", async () => {
+    const context = await withStore();
+    await mkdir(join(context.workspaceRoot, "docs"), { recursive: true });
+    const before = "before content\n";
+    const after = "after content\n";
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), before);
+    const checkpoint = await context.store.prepare(preparedUpdate());
+    await context.store.finalizeApplied(checkpoint.id, {
+      afterSha256: hashOf(after),
+      absent: false,
+    });
+    await writeFile(join(context.workspaceRoot, "docs", "note.md"), after);
+
+    const report = await reconcileWorkspaceCheckpoints({
+      workspaceRoot: context.workspaceRoot,
+      store: context.store,
+    });
+    expect(report.undoneAfterRestore).toBe(0);
+    expect((await context.store.get(checkpoint.id))?.state).toBe("applied");
+  });
+});
+
+describe("checkpoint storage link rejection", () => {
+  it(
+    "rejects a fingerprint directory swapped to a symlink after startup",
+    {
+      skip: !SYMLINKS_SUPPORTED,
+    },
+    async () => {
+      const context = await withStore();
+      const checkpoint = await context.store.prepare(preparedUpdate());
+      const fingerprintDir = join(context.rootDirectory, context.fingerprint);
+      const { rm, symlink, mkdtemp } = await import("node:fs/promises");
+      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-outside-"));
+      registerTempDir(outside);
+      await rm(fingerprintDir, { recursive: true });
+      await symlink(outside, fingerprintDir);
+      expect(await context.store.get(checkpoint.id)).toBeNull();
+      await expect(context.store.loadPreimage(checkpoint.id)).rejects.toThrow();
+    },
+  );
+
+  it(
+    "rejects a checkpoint directory swapped to a junction after startup",
+    {
+      skip: process.platform !== "win32",
+    },
+    async () => {
+      const context = await withStore();
+      const checkpoint = await context.store.prepare(preparedUpdate());
+      const checkpointDir = checkpointDirOf(context, checkpoint.id);
+      const { rm, mkdtemp } = await import("node:fs/promises");
+      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-junction-"));
+      registerTempDir(outside);
+      await rm(checkpointDir, { recursive: true });
+      const { execFileSync } = await import("node:child_process");
+      try {
+        execFileSync("cmd", ["/c", "mklink", "/J", checkpointDir, outside], { stdio: "ignore" });
+      } catch {
+        return; // junction creation unsupported in this environment
+      }
+      expect(await context.store.get(checkpoint.id)).toBeNull();
+      await expect(context.store.loadPreimage(checkpoint.id)).rejects.toThrow();
+    },
+  );
+
+  it("rejects metadata path substitution", { skip: !SYMLINKS_SUPPORTED }, async () => {
+    const context = await withStore();
+    const checkpoint = await context.store.prepare(preparedUpdate());
+    const metadataPath = join(checkpointDirOf(context, checkpoint.id), "metadata.json");
+    const { rm, symlink } = await import("node:fs/promises");
+    const outside = join(context.rootDirectory, "outside-metadata.json");
+    await writeFile(outside, JSON.stringify({ evil: true }));
+    await rm(metadataPath);
+    await symlink(outside, metadataPath);
+    expect(await context.store.get(checkpoint.id)).toBeNull();
+  });
+
+  it("rejects preimage path substitution", { skip: !SYMLINKS_SUPPORTED }, async () => {
+    const context = await withStore();
+    const checkpoint = await context.store.prepare(preparedUpdate());
+    const preimagePath = join(checkpointDirOf(context, checkpoint.id), "preimage.bin");
+    const { rm, symlink } = await import("node:fs/promises");
+    const outside = join(context.rootDirectory, "outside-preimage.bin");
+    await writeFile(outside, "attacker bytes");
+    await rm(preimagePath);
+    await symlink(outside, preimagePath);
+    await expect(context.store.loadPreimage(checkpoint.id)).rejects.toThrow();
+  });
+
+  it(
+    "retention never deletes through links in malicious entries",
+    {
+      skip: !SYMLINKS_SUPPORTED,
+    },
+    async () => {
+      const tight = await withStore({ maxCheckpoints: 2 });
+      await tight.store.prepare(preparedUpdate({ relativePath: "docs/a.md" }));
+      await tight.store.prepare(preparedUpdate({ relativePath: "docs/b.md" }));
+      const outsideTarget = join(tight.rootDirectory, "attacker-target.txt");
+      await writeFile(outsideTarget, "do not delete me");
+      const maliciousDir = join(tight.rootDirectory, tight.fingerprint, "cp_malicious-0001");
+      const { mkdir, symlink } = await import("node:fs/promises");
+      await mkdir(maliciousDir, { recursive: true });
+      await symlink(outsideTarget, join(maliciousDir, "metadata.json"));
+      await tight.store.prepare(preparedUpdate({ relativePath: "docs/c.md" }));
+      const entries = await readdir(join(tight.rootDirectory, tight.fingerprint));
+      expect(entries).toContain("cp_malicious-0001");
+      const { readFile } = await import("node:fs/promises");
+      expect(await readFile(outsideTarget, "utf8")).toBe("do not delete me");
+    },
+  );
 });

@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { mkdir, open, readFile, readdir, realpath, rename, rm, lstat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { basename, dirname, join, relative as pathRelative, sep } from "node:path";
 import type {
   AppliedCheckpointResult,
   CheckpointListQuery,
@@ -49,6 +49,10 @@ export async function createFilesystemCheckpointStore(
     await mkdir(requestedRoot, { recursive: true, mode: 0o700 });
     canonicalRoot = await realpath(requestedRoot);
   }
+  const rootStats = await lstat(canonicalRoot).catch(() => null);
+  if (rootStats === null || rootStats.isSymbolicLink()) {
+    throw new Error("The checkpoint root must not be a symbolic link.");
+  }
   if (isInside(canonicalWorkspace, canonicalRoot) || canonicalRoot === canonicalWorkspace) {
     throw new Error("The checkpoint store must not resolve inside the active workspace.");
   }
@@ -61,8 +65,53 @@ export async function createFilesystemCheckpointStore(
     return join(checkpointDirectory, id);
   }
 
+  /**
+   * No-follow validation of a path under the Solaris-owned checkpoint root.
+   * Every component is lstat-checked (rejecting symlinks), the leaf must
+   * resolve canonically to its logical location (rejecting junctions and
+   * reparse points on Windows and any inserted link on POSIX), and the root
+   * itself is re-validated as a non-link directory outside the workspace on
+   * every operation so a link inserted after startup is detected.
+   */
+  async function assertCheckpointPathSecure(directory: string): Promise<void> {
+    const rootStats = await lstat(rootDirectory).catch(() => null);
+    if (rootStats === null || rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
+      throw new Error("The checkpoint root is missing or a symbolic link.");
+    }
+    const canonicalRootNow = await realpath(rootDirectory);
+    if (
+      canonicalRootNow !== rootDirectory ||
+      isInside(canonicalWorkspace, canonicalRootNow) ||
+      canonicalRootNow === canonicalWorkspace
+    ) {
+      throw new Error("The checkpoint root moved or resolves inside the workspace.");
+    }
+    const relative = pathRelative(rootDirectory, directory);
+    const components = relative.split(sep).filter((component) => component.length > 0);
+    let current = rootDirectory;
+    for (const component of components) {
+      current = join(current, component);
+      const stats = await lstat(current).catch(() => null);
+      if (stats === null) {
+        throw new Error(`Checkpoint path is missing: ${current}`);
+      }
+      if (stats.isSymbolicLink()) {
+        throw new Error(`Checkpoint path contains a symbolic link: ${current}`);
+      }
+    }
+    const parentCanonical = await realpath(dirname(directory));
+    const leafCanonical = await realpath(directory);
+    if (leafCanonical !== join(parentCanonical, basename(directory))) {
+      throw new Error(`Checkpoint path is a junction or reparse point: ${directory}`);
+    }
+    if (!isInside(rootDirectory, leafCanonical)) {
+      throw new Error(`Checkpoint path escapes the checkpoint root: ${directory}`);
+    }
+  }
+
   async function loadMetadata(id: string): Promise<FileCheckpoint> {
     const directory = checkpointPath(id);
+    await assertCheckpointPathSecure(directory);
     const dirStats = await lstat(directory).catch(() => null);
     if (dirStats === null) {
       throw new Error(`Unknown checkpoint: ${id}.`);
@@ -71,6 +120,7 @@ export async function createFilesystemCheckpointStore(
       throw new Error(`Checkpoint path is a symbolic link: ${id}.`);
     }
     const metadataPath = join(directory, "metadata.json");
+    await assertCheckpointPathSecure(metadataPath);
     const metadataStats = await lstat(metadataPath).catch(() => null);
     if (metadataStats === null || metadataStats.isSymbolicLink()) {
       throw new Error(`Checkpoint metadata is missing or a symbolic link: ${id}.`);
@@ -95,9 +145,10 @@ export async function createFilesystemCheckpointStore(
 
   async function writeMetadata(checkpoint: FileCheckpoint): Promise<void> {
     const directory = checkpointPath(checkpoint.id);
+    await assertCheckpointPathSecure(directory);
     const temporaryPath = join(directory, `metadata.json.tmp-${randomUUID()}`);
     const metadataPath = join(directory, "metadata.json");
-    const handle = await open(temporaryPath, "wx");
+    const handle = await open(temporaryPath, "wx", 0o600);
     try {
       await handle.writeFile(JSON.stringify(checkpoint, null, 2), "utf8");
       await handle.sync();
@@ -137,7 +188,13 @@ export async function createFilesystemCheckpointStore(
       if (checkpoints.length + 1 <= maxCheckpoints && totalBytes + addedBytes <= maxStorageBytes) {
         break;
       }
-      await rm(checkpointPath(checkpoint.id), { recursive: true, force: true });
+      const target = checkpointPath(checkpoint.id);
+      await assertCheckpointPathSecure(target);
+      const leafCanonical = await realpath(target);
+      if (!isInside(rootDirectory, leafCanonical)) {
+        throw new Error(`Retention refuses to delete through a link: ${checkpoint.id}.`);
+      }
+      await rm(target, { recursive: true, force: true });
       totalBytes -= checkpoint.before.byteLength ?? 0;
       checkpoints.splice(checkpoints.indexOf(checkpoint), 1);
     }
@@ -190,14 +247,17 @@ export async function createFilesystemCheckpointStore(
     await pruneIfNeeded(checkpoint.before.byteLength ?? 0);
     const directory = checkpointPath(id);
     await mkdir(directory, { recursive: true, mode: 0o700 });
+    await assertCheckpointPathSecure(directory);
     if (checkpoint.before.bytes !== null) {
-      const handle = await open(join(directory, "preimage.bin"), "wx", 0o600);
+      const preimagePath = join(directory, "preimage.bin");
+      const handle = await open(preimagePath, "wx", 0o600);
       try {
         await handle.writeFile(checkpoint.before.bytes);
         await handle.sync();
       } finally {
         await handle.close();
       }
+      await assertCheckpointPathSecure(preimagePath);
     }
     await writeMetadata(stored);
     return stored;
@@ -284,6 +344,7 @@ export async function createFilesystemCheckpointStore(
       return null;
     }
     const preimagePath = join(checkpointPath(checkpointId), "preimage.bin");
+    await assertCheckpointPathSecure(preimagePath);
     const stats = await lstat(preimagePath).catch(() => null);
     if (stats === null || stats.isSymbolicLink()) {
       throw new Error(`Checkpoint preimage is missing or a symbolic link: ${checkpointId}.`);
