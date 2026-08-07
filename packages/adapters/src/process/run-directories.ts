@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import type { CommandRunPaths } from "@solaris/core";
 
+export type { CommandRunPaths };
+
 export interface RunDirectoryProviderOptions {
   readonly workspaceRoot: string;
   /** Solaris-owned runs root; defaults to `~/.solaris/runs`. */

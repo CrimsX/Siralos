@@ -18,15 +18,18 @@ const FAKE_PROBE_SECRETS = {
   OPENCODE_API_KEY: "probe-fake-opencode-key",
   GITHUB_TOKEN: "probe-fake-github-token",
   NPM_TOKEN: "probe-fake-npm-token",
+  NODE_OPTIONS: "--inspect=127.0.0.1:9999",
 };
 
 async function main() {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-conformance-"));
   const sandboxDirectories = getSandboxDirectories();
+  const runsRoot = join(tmpdir(), "solaris-conformance-runs");
   const backend = createAnthropicSandboxRuntimeBackend({
     workspaceRoot,
     sandboxHome: sandboxDirectories.home,
     sandboxTemp: sandboxDirectories.temp,
+    runRoot: runsRoot,
   });
   try {
     const status = await backend.inspect();
