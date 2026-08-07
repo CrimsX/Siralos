@@ -220,6 +220,86 @@ describe("provider stream resource bounds", () => {
     expect(failReason(events)).toContain("assistant-text byte limit");
   });
 
+  it("enforces the assistant-text limit cumulatively across individually legal deltas", async () => {
+    const delta = "x".repeat(Math.floor(PROVIDER_TURN_LIMITS.maxAssistantTextBytes / 2) + 100);
+    const { provider } = createScriptedProvider([
+      [
+        { type: "text_delta", text: delta },
+        { type: "text_delta", text: delta },
+        { type: "completed" },
+      ],
+    ]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("assistant-text byte limit");
+    expect(events.some((event) => event.type === "response_completed")).toBe(false);
+  });
+
+  it("rejects cumulative assistant text that only crosses the limit on a multibyte delta", async () => {
+    // 32 KiB of "a" plus a delta whose UTF-8 bytes (2 per \u00e9) push the
+    // cumulative total past the limit while the delta itself is small.
+    const prefix = "a".repeat(Math.floor(PROVIDER_TURN_LIMITS.maxAssistantTextBytes / 2));
+    const crossing = "\u00e9".repeat(Math.floor(PROVIDER_TURN_LIMITS.maxAssistantTextBytes / 2));
+    const { provider } = createScriptedProvider([
+      [
+        { type: "text_delta", text: prefix },
+        { type: "text_delta", text: crossing },
+        { type: "completed" },
+      ],
+    ]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("assistant-text byte limit");
+  });
+
+  it("accepts assistant text exactly at the cumulative limit", async () => {
+    const { provider } = createScriptedProvider([
+      [
+        { type: "text_delta", text: "a".repeat(PROVIDER_TURN_LIMITS.maxAssistantTextBytes) },
+        { type: "completed" },
+      ],
+    ]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toBeNull();
+    expect(events.some((event) => event.type === "response_completed")).toBe(true);
+  });
+
+  it("rejects text plus tool calls reaching the aggregate turn limit", async () => {
+    const textBytes = 50 * 1024;
+    const argumentBytes = Math.floor(PROVIDER_TURN_LIMITS.maxToolArgumentBytes * 0.95);
+    const { provider } = createScriptedProvider([
+      [
+        { type: "text_delta", text: "a".repeat(textBytes) },
+        toolCall("c1", "a.tool", { payload: "z".repeat(argumentBytes) }),
+        toolCall("c2", "a.tool", { payload: "z".repeat(argumentBytes) }),
+        { type: "completed" },
+      ],
+    ]);
+    const { tool, calls } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("aggregate turn byte limit");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("closes the provider iterator and commits no partial history on cumulative rejection", async () => {
+    const delta = "x".repeat(Math.floor(PROVIDER_TURN_LIMITS.maxAssistantTextBytes / 2) + 100);
+    const { provider, requests, returnCount } = createScriptedProvider([
+      [
+        { type: "text_delta", text: delta },
+        { type: "text_delta", text: delta },
+        { type: "completed" },
+      ],
+    ]);
+    const application = makeApplication(provider, []);
+    await collectEvents(application.sendPrompt("hello"));
+    expect(returnCount()).toBeGreaterThan(0);
+    await collectEvents(application.sendPrompt("again"));
+    const items = requests[1]?.messages ?? [];
+    expect(items.some((item) => item.type === "assistant_message")).toBe(false);
+  });
+
   it("cancels promptly during an endless stream", async () => {
     const controller = new AbortController();
     let ticks = 0;

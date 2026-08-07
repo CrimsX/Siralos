@@ -325,6 +325,7 @@ export function createSolarisApplication(
       ...(signal === undefined ? {} : { signal }),
     };
     let assistantText = "";
+    let assistantTextBytes = 0;
     let textEvents = 0;
     let turnBytes = 0;
     const toolCalls: TurnToolCall[] = [];
@@ -352,7 +353,11 @@ export function createSolarisApplication(
             exceeded = "the text-event count";
             break;
           }
-          if (bytes > PROVIDER_TURN_LIMITS.maxAssistantTextBytes) {
+          // The assistant-text limit is cumulative across all deltas of the
+          // turn, not a per-delta cap: individually legal deltas cannot
+          // accumulate beyond the documented total.
+          assistantTextBytes += bytes;
+          if (assistantTextBytes > PROVIDER_TURN_LIMITS.maxAssistantTextBytes) {
             exceeded = "the assistant-text byte limit";
             break;
           }
