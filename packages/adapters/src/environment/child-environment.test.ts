@@ -124,7 +124,7 @@ describe("isDeniedVariable", () => {
     expect(isDeniedVariable("MY_API_KEY")).toBe(true);
     expect(isDeniedVariable("SOME_TOKEN")).toBe(true);
     expect(isDeniedVariable("A_SECRET")).toBe(true);
-    expect(isDeniedVariable("PASSWORD")).toBe(true);
+    expect(isDeniedVariable("DB_PASSWORD")).toBe(true);
     expect(isDeniedVariable("AWS_REGION")).toBe(true);
     expect(isDeniedVariable("AZURE_TENANT")).toBe(true);
     expect(isDeniedVariable("GOOGLE_CLOUD_PROJECT")).toBe(true);
