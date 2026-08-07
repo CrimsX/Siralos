@@ -51,6 +51,7 @@ function createRequest(
     toolName: "workspace.edit_file",
     summary: "1 file, +1 -1",
     paths: ["README.md"],
+    digest: "plan-digest-1234",
     preview: {
       files: [
         {
@@ -167,7 +168,10 @@ describe("createInteractiveApprovalReviewer", () => {
     const io = new HangingIO();
     const reviewer = createInteractiveApprovalReviewer(io, 20);
     const decision = await reviewer.review(createRequest());
-    expect(decision).toEqual({ type: "cancelled" });
+    expect(decision).toEqual({
+      type: "deny",
+      reason: "The approval prompt timed out; the change was denied.",
+    });
   });
 
   it("cancels immediately when the signal is pre-aborted", async () => {

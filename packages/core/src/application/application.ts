@@ -343,6 +343,13 @@ export function createSolarisApplication(
       return result;
     }
     if (!isPreparedMutationTool(tool)) {
+      if (permission.decision === "ask") {
+        const message =
+          `Capability ${capability} requires approval, but this tool does not support ` +
+          "a reviewable preparation protocol; the call was denied without execution.";
+        yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
+        return { status: "denied", message };
+      }
       let result: ToolExecutionResult;
       try {
         result = await tool.execute(call.input, signal === undefined ? {} : { signal });
@@ -370,7 +377,7 @@ export function createSolarisApplication(
       };
       return { status: prepared.status, message: prepared.message };
     }
-    const { mutation, preview } = prepared;
+    const { mutation, preview, digest } = prepared;
     if (preview.truncated) {
       const message = "The change preview is truncated and cannot be approved.";
       yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
@@ -385,6 +392,7 @@ export function createSolarisApplication(
         summary: summarizePreview(preview),
         paths: preview.files.map((file) => file.path),
         preview,
+        digest,
       };
       yield {
         type: "approval_requested",
@@ -433,7 +441,10 @@ export function createSolarisApplication(
     }
     let result: ToolExecutionResult;
     try {
-      result = await tool.apply(mutation, signal === undefined ? {} : { signal });
+      result = await tool.apply(mutation, {
+        ...(signal === undefined ? {} : { signal }),
+        approvedDigest: digest,
+      });
     } catch (error: unknown) {
       if (signal?.aborted || isCancellationError(error)) {
         result = { status: "cancelled", message: "The mutation was cancelled." };

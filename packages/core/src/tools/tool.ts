@@ -9,6 +9,12 @@ export interface ToolDefinition {
 
 export interface ToolExecutionContext {
   readonly signal?: AbortSignal;
+  /**
+   * Digest of the immutable prepared plan that was reviewed (and, when
+   * required, approved). Prepared mutation tools verify the plan they are
+   * asked to apply against this digest and fail closed on mismatch.
+   */
+  readonly approvedDigest?: string;
 }
 
 export type ToolExecutionResult =

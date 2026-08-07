@@ -83,7 +83,7 @@ describe("workspace.delete_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     const output = expectSuccess(result);
     expect(output["operation"]).toBe("delete");
     expect(output["removedLines"]).toBe(1);
@@ -116,7 +116,7 @@ describe("workspace.delete_file", () => {
     }
     const { rm } = await import("node:fs/promises");
     await rm(path.join(workspace.root, "obsolete.md"));
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("conflict");
   });
 
@@ -181,8 +181,12 @@ describe("workspace.delete_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    expect((await tool.apply(prepared.mutation, {})).status).toBe("success");
-    expect((await tool.apply(prepared.mutation, {})).status).toBe("failed");
+    expect((await tool.apply(prepared.mutation, { approvedDigest: prepared.digest })).status).toBe(
+      "success",
+    );
+    expect((await tool.apply(prepared.mutation, { approvedDigest: prepared.digest })).status).toBe(
+      "failed",
+    );
   });
 });
 

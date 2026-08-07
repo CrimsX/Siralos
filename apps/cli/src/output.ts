@@ -226,6 +226,8 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   if (file !== undefined) {
     lines.push(sanitizeForDisplay(file.unifiedDiff));
   }
+  lines.push("");
+  lines.push(`Approval applies once to plan ${request.digest.slice(0, 8)}.`);
   return `${lines.join("\n")}\n`;
 }
 

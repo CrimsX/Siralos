@@ -64,7 +64,7 @@ describe("workspace.edit_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     const output = expectSuccess(result);
     expect(output["operation"]).toBe("update");
     const bytes = await readFile(path.join(workspace.root, "a.txt"));
@@ -86,7 +86,7 @@ describe("workspace.edit_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("success");
     const bytes = await readFile(path.join(workspace.root, "a.txt"));
     expect(bytes.toString("utf8")).toBe("1 2 3\n");
@@ -247,7 +247,7 @@ describe("workspace.edit_file", () => {
       return;
     }
     await writeFixtureFiles(workspace.root, { "a.txt": "external edit\n" });
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("conflict");
     const bytes = await readFile(path.join(workspace.root, "a.txt"));
     expect(bytes.toString("utf8")).toBe("external edit\n");
@@ -267,7 +267,7 @@ describe("workspace.edit_file", () => {
     }
     const { rm } = await import("node:fs/promises");
     await rm(path.join(workspace.root, "a.txt"));
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("conflict");
   });
 
@@ -292,7 +292,7 @@ describe("workspace.edit_file", () => {
         path.join(workspace.root, "other.txt"),
         path.join(workspace.root, "a.txt"),
       );
-      const result = await tool.apply(prepared.mutation, {});
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
       expect(result.status).toBe("conflict");
     },
   );
@@ -309,7 +309,7 @@ describe("workspace.edit_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("success");
     const entries = await (await import("node:fs/promises")).readdir(workspace.root);
     expect(entries.some((entry) => entry.startsWith(".solaris-mutation-"))).toBe(false);
@@ -327,8 +327,34 @@ describe("workspace.edit_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    expect((await tool.apply(prepared.mutation, {})).status).toBe("success");
-    expect((await tool.apply(prepared.mutation, {})).status).toBe("failed");
+    expect((await tool.apply(prepared.mutation, { approvedDigest: prepared.digest })).status).toBe(
+      "success",
+    );
+    expect((await tool.apply(prepared.mutation, { approvedDigest: prepared.digest })).status).toBe(
+      "failed",
+    );
+  });
+
+  it("denies apply under a digest that does not match the prepared plan", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const { tool } = await createTool(workspace.root);
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, {
+      approvedDigest: "another-digest-entirely",
+    });
+    expect(result.status).toBe("denied");
+    const content = await (
+      await import("node:fs/promises")
+    ).readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("original\n");
   });
 
   it("rejects replacements beyond the limit", async () => {

@@ -13,7 +13,7 @@ import type {
 import { createPreparedMutation } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "../limits.js";
 import { buildUnifiedDiff } from "./diff.js";
-import { hashBuffer } from "./mutation-hash.js";
+import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
 import type { MutationLock } from "./mutation-lock.js";
 import { resolveMutationTarget } from "./mutation-paths.js";
 import { createMutationTempPath, removeMutationTemp } from "./mutation-temp.js";
@@ -46,6 +46,7 @@ interface EditPayload {
   readonly afterSha256: string;
   readonly addedLines: number;
   readonly removedLines: number;
+  readonly digest: string;
 }
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -206,6 +207,12 @@ export function createWorkspaceEditFileTool(
       truncated: false,
     };
     const mutation = createPreparedMutation();
+    const digest = hashMutationPlan({
+      relativePath: resolved.workspaceRelativePath,
+      operation: "update",
+      beforeSha256: currentHash,
+      afterSha256,
+    });
     payloads.set(mutation, {
       workspaceRelativePath: resolved.workspaceRelativePath,
       absolutePath: resolved.absolutePath,
@@ -215,8 +222,9 @@ export function createWorkspaceEditFileTool(
       afterSha256,
       addedLines: diff.diff.addedLines,
       removedLines: diff.diff.removedLines,
+      digest,
     });
-    return { status: "ready", mutation, preview };
+    return { status: "ready", mutation, preview, digest };
   }
 
   async function apply(
@@ -229,6 +237,12 @@ export function createWorkspaceEditFileTool(
       return {
         status: "failed",
         message: "The prepared mutation is not valid for this tool or has already been used.",
+      };
+    }
+    if (context.approvedDigest !== payload.digest) {
+      return {
+        status: "denied",
+        message: "The prepared plan does not match the approved plan; the mutation was denied.",
       };
     }
     let release: () => void;

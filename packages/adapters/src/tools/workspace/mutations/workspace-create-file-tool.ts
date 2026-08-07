@@ -12,7 +12,7 @@ import type {
 import { createPreparedMutation } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "../limits.js";
 import { buildUnifiedDiff } from "./diff.js";
-import { hashBuffer } from "./mutation-hash.js";
+import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
 import type { MutationLock } from "./mutation-lock.js";
 import { resolveCreateTarget } from "./mutation-paths.js";
 import { readJsonObject, readRequiredString, type ParsedValue } from "../validation.js";
@@ -23,6 +23,7 @@ interface CreatePayload {
   readonly content: Buffer;
   readonly afterSha256: string;
   readonly addedLines: number;
+  readonly digest: string;
 }
 
 interface CreateInput {
@@ -102,14 +103,21 @@ export function createWorkspaceCreateFileTool(
       truncated: false,
     };
     const mutation = createPreparedMutation();
+    const digest = hashMutationPlan({
+      relativePath: resolved.workspaceRelativePath,
+      operation: "create",
+      beforeSha256: null,
+      afterSha256,
+    });
     payloads.set(mutation, {
       workspaceRelativePath: resolved.workspaceRelativePath,
       absolutePath: resolved.absolutePath,
       content,
       afterSha256,
       addedLines: diff.diff.addedLines,
+      digest,
     });
-    return { status: "ready", mutation, preview };
+    return { status: "ready", mutation, preview, digest };
   }
 
   async function apply(
@@ -122,6 +130,12 @@ export function createWorkspaceCreateFileTool(
       return {
         status: "failed",
         message: "The prepared mutation is not valid for this tool or has already been used.",
+      };
+    }
+    if (context.approvedDigest !== payload.digest) {
+      return {
+        status: "denied",
+        message: "The prepared plan does not match the approved plan; the mutation was denied.",
       };
     }
     let release: () => void;

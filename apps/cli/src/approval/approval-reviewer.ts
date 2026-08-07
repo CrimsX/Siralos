@@ -37,8 +37,11 @@ export function createInteractiveApprovalReviewer(
         signal,
         timeoutMs,
       );
-      if (firstAnswer.kind === "aborted" || firstAnswer.kind === "timeout") {
+      if (firstAnswer.kind === "aborted") {
         return { type: "cancelled" };
+      }
+      if (firstAnswer.kind === "timeout") {
+        return { type: "deny", reason: "The approval prompt timed out; the change was denied." };
       }
       if (firstAnswer.value === null) {
         return { type: "deny", reason: "The approval prompt was closed without an answer." };

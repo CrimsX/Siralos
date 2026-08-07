@@ -80,7 +80,7 @@ describe("workspace.create_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result).toMatchObject({ status: "success" });
     if (result.status !== "success") {
       return;
@@ -99,8 +99,8 @@ describe("workspace.create_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const first = await tool.apply(prepared.mutation, {});
-    const second = await tool.apply(prepared.mutation, {});
+    const first = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    const second = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(first.status).toBe("success");
     expect(second.status).toBe("failed");
   });
@@ -114,7 +114,7 @@ describe("workspace.create_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await toolB.apply(prepared.mutation, {});
+    const result = await toolB.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("failed");
   });
 
@@ -135,7 +135,7 @@ describe("workspace.create_file", () => {
       return;
     }
     await writeFixtureFiles(workspace.root, { "new.txt": "raced\n" });
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("conflict");
     const bytes = await readFile(path.join(workspace.root, "new.txt"));
     expect(bytes.toString("utf8")).toBe("raced\n");
@@ -198,7 +198,7 @@ describe("workspace.create_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("success");
   });
 
@@ -210,7 +210,7 @@ describe("workspace.create_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     const output = expectSuccess(result);
     expect(typeof output["checkpointId"]).toBe("string");
     const checkpoints = await store.list();
@@ -231,7 +231,7 @@ describe("workspace.create_file", () => {
     if (prepared.status !== "ready") {
       return;
     }
-    const result = await tool.apply(prepared.mutation, {});
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
       expect(result.message).toContain("Checkpoint could not be recorded");

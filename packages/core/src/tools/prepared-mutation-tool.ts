@@ -8,6 +8,8 @@ export type ToolPreparationResult =
       readonly status: "ready";
       readonly mutation: PreparedMutation;
       readonly preview: ChangePreview;
+      /** SHA-256 over the immutable prepared plan; binds approval to it. */
+      readonly digest: string;
     }
   | {
       readonly status: "invalid_input" | "denied" | "conflict" | "failed" | "cancelled";

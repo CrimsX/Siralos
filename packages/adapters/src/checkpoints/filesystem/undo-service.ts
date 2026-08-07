@@ -22,6 +22,7 @@ import {
   removeMutationTemp,
 } from "../../tools/workspace/mutations/mutation-temp.js";
 import { buildUnifiedDiff } from "../../tools/workspace/mutations/diff.js";
+import { hashMutationPlan } from "../../tools/workspace/mutations/mutation-hash.js";
 import { decodeUtf8 } from "../../tools/workspace/text.js";
 import { readWorkspaceFileState } from "./checkpoint-file-state.js";
 
@@ -94,6 +95,12 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       };
     }
     const requestId = `undo-${(approvalCounter += 1)}`;
+    const digest = hashMutationPlan({
+      relativePath: path,
+      operation: action === "create" ? "create" : action === "delete" ? "delete" : "update",
+      beforeSha256: checkpoint.after.exists ? (checkpoint.after.sha256 ?? null) : null,
+      afterSha256: action === "delete" ? null : (checkpoint.before.sha256 ?? null),
+    });
     const approvalRequest: ApprovalRequest = {
       id: requestId,
       capability: "workspace.write",
@@ -101,6 +108,7 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       summary: `Checkpoint ${checkpoint.id} (${checkpoint.operation} by ${checkpoint.toolName})`,
       paths: [path],
       preview,
+      digest,
     };
     let decision;
     try {

@@ -8,6 +8,12 @@ export interface WorkspaceWriteApprovalRequest {
   readonly summary: string;
   readonly paths: readonly string[];
   readonly preview: ChangePreview;
+  /**
+   * SHA-256 digest over the immutable prepared mutation plan (path,
+   * operation, and before/after content hashes). Approval binds to this
+   * exact plan; the mutation refuses to apply under any other digest.
+   */
+  readonly digest: string;
 }
 
 export interface ProcessExecutionApprovalRequest {
