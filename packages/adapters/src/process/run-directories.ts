@@ -152,6 +152,19 @@ export function createRunDirectoryProvider(
    * also be outside the workspace.
    */
   async function establishVerifiedRunsRoot(): Promise<string> {
+    // Reject a runs root that contains or sits inside the workspace before
+    // creating anything, so a rejected configuration leaves no directories
+    // behind inside the workspace.
+    const canonicalWorkspace = await realpath(options.workspaceRoot).catch(() => null);
+    if (canonicalWorkspace !== null) {
+      if (
+        configuredRunsRoot === canonicalWorkspace ||
+        isPathInside(canonicalWorkspace, configuredRunsRoot) ||
+        isPathInside(configuredRunsRoot, canonicalWorkspace)
+      ) {
+        throw new Error("The runs root and the project workspace must not contain each other.");
+      }
+    }
     const parsed = path.parse(configuredRunsRoot);
     const relative = path.relative(parsed.root, configuredRunsRoot);
     const relativeComponents =
@@ -167,7 +180,6 @@ export function createRunDirectoryProvider(
         "The runs root does not resolve canonically to its configured location; refusing to use it.",
       );
     }
-    const canonicalWorkspace = await realpath(options.workspaceRoot).catch(() => null);
     if (canonicalWorkspace !== null) {
       if (
         canonical === canonicalWorkspace ||

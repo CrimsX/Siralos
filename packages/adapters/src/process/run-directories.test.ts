@@ -134,12 +134,14 @@ describe("createRunDirectoryProvider", () => {
     }
   });
 
-  it("rejects a runs root inside the project workspace", async () => {
+  it("rejects a runs root inside the project workspace before creating anything", async () => {
     const workspace = await createTempWorkspace();
     const runsRoot = join(workspace.root, ".solaris-runs");
     try {
       const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
       await expect(provider.create()).rejects.toThrow();
+      const entries = await readdir(workspace.root);
+      expect(entries).toEqual([]);
     } finally {
       await workspace.cleanup();
     }
