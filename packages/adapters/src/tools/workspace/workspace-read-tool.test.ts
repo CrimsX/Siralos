@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { createWorkspaceReadTool } from "./workspace-read-tool.js";
 import { WORKSPACE_LIMITS } from "./limits.js";
@@ -92,6 +93,31 @@ describe("workspace.read", () => {
     expect((await tool.execute({ path: "a.txt", endLine: "three" }, {})).status).toBe(
       "invalid_input",
     );
+  });
+
+  it("returns the complete-file SHA-256 for line ranges", async () => {
+    const workspace = await withWorkspace();
+    const content = "line one\nline two\nline three\n";
+    await writeFixtureFiles(workspace.root, { "a.txt": content });
+    const tool = createWorkspaceReadTool(workspace.root);
+    const full = await tool.execute({ path: "a.txt" }, {});
+    const ranged = await tool.execute({ path: "a.txt", startLine: 1, endLine: 1 }, {});
+    const fullOutput = expectSuccess(full);
+    const rangedOutput = expectSuccess(ranged);
+    const expectedHash = createHash("sha256").update(content).digest("hex");
+    expect(fullOutput["sha256"]).toBe(expectedHash);
+    expect(rangedOutput["sha256"]).toBe(expectedHash);
+    expect(stringOf(rangedOutput["content"])).toBe("line one");
+  });
+
+  it("produces different hashes for different bytes", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "same bytes" });
+    const tool = createWorkspaceReadTool(workspace.root);
+    const first = expectSuccess(await tool.execute({ path: "a.txt" }, {}));
+    await writeFixtureFiles(workspace.root, { "a.txt": "same bytEZ" });
+    const second = expectSuccess(await tool.execute({ path: "a.txt" }, {}));
+    expect(first["sha256"]).not.toBe(second["sha256"]);
   });
 
   it("rejects a startLine beyond the file", async () => {

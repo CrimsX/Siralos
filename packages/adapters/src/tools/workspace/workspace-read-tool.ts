@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
 import {
@@ -147,6 +148,7 @@ export function createWorkspaceReadTool(workspaceRoot: string): Tool {
         status: "success",
         output: {
           path: resolved.workspaceRelativePath,
+          sha256: createHash("sha256").update(buffer).digest("hex"),
           content,
           startLine,
           endLine,
