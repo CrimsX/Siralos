@@ -337,7 +337,10 @@ export function createWorkspaceEditFileTool(
         expectedTargetSha256: payload.expectedSha256,
         ...(replacementOps === undefined ? {} : { ops: replacementOps }),
       });
-      tempPath = undefined;
+      if (commitOutcome.kind === "success") {
+        // The staged content was consumed by the commit rename.
+        tempPath = undefined;
+      }
       if (commitOutcome.kind !== "success") {
         if (commitOutcome.kind === "uncertain") {
           quarantinePath = commitOutcome.quarantinePath;
@@ -351,16 +354,10 @@ export function createWorkspaceEditFileTool(
       quarantinePath = commitOutcome.quarantinePath;
       const verification = await verifyEditedFile(payload);
       if (verification !== null) {
-        if (quarantinePath !== null) {
-          return {
-            status: "failed",
-            message: `${verification} The original copy is preserved at ${quarantinePath}; do not delete it.`,
-          };
-        }
-        return { status: "failed", message: verification };
-      }
-      if (quarantinePath !== null) {
-        await removeQuarantinedCopy(quarantinePath, replacementOps).catch(() => {});
+        return {
+          status: "failed",
+          message: `${verification} The original copy is preserved at ${quarantinePath}; do not delete it.`,
+        };
       }
       try {
         await store.finalizeApplied(checkpoint.id, {
@@ -370,8 +367,14 @@ export function createWorkspaceEditFileTool(
       } catch (error: unknown) {
         return {
           status: "failed",
-          message: `The mutation was applied but its checkpoint could not be finalized; recovery state is uncertain: ${describeError(error)}`,
+          message: `The mutation was applied but its checkpoint could not be finalized; recovery state is uncertain: ${describeError(error)}. The original copy is preserved at ${quarantinePath}; do not delete it.`,
         };
+      }
+      let cleanupWarning: string | undefined;
+      try {
+        await removeQuarantinedCopy(quarantinePath, replacementOps);
+      } catch (error: unknown) {
+        cleanupWarning = `The quarantine copy at ${quarantinePath} could not be removed: ${describeError(error)}`;
       }
       return {
         status: "success",
@@ -383,6 +386,7 @@ export function createWorkspaceEditFileTool(
           afterSha256: payload.afterSha256,
           addedLines: payload.addedLines,
           removedLines: payload.removedLines,
+          ...(cleanupWarning === undefined ? {} : { cleanupWarning }),
         },
         summary: `Applied +${payload.addedLines} -${payload.removedLines}`,
       };

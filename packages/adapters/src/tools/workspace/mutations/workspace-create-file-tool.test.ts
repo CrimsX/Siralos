@@ -36,10 +36,11 @@ async function withWorkspace(): Promise<TempWorkspace> {
 async function createTool(
   workspaceRoot: string,
   storeOptions: { maxCheckpoints?: number; maxStorageBytes?: number } = {},
+  dependencies?: Parameters<typeof createWorkspaceCreateFileTool>[3],
 ): Promise<{ tool: ReturnType<typeof createWorkspaceCreateFileTool>; store: CheckpointStore }> {
   const store = await createTempCheckpointStore(workspaceRoot, storeOptions);
   return {
-    tool: createWorkspaceCreateFileTool(workspaceRoot, createMutationLock(), store),
+    tool: createWorkspaceCreateFileTool(workspaceRoot, createMutationLock(), store, dependencies),
     store,
   };
 }
@@ -164,6 +165,45 @@ describe("workspace.create_file", () => {
       const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
       expect(result.status).toBe("conflict");
       expect(await readFile(path.join(outside.root, "keep.txt"), "utf8")).toBe("keep\n");
+    },
+  );
+
+  it(
+    "detects a parent swapped to a symlink between final revalidation and the exclusive open",
+    {
+      skip: !SYMLINKS_SUPPORTED,
+    },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/keep.txt": "keep\n" });
+      const outside = await createTempWorkspace();
+      workspaces.push(outside);
+      const { rm, readdir } = await import("node:fs/promises");
+      const { tool } = await createTool(
+        workspace.root,
+        {},
+        {
+          beforeCommitOpen: async () => {
+            // Swap the parent after the final revalidation succeeded but
+            // immediately before the exclusive open commits the write.
+            await rm(path.join(workspace.root, "docs"), { recursive: true });
+            await createSymlink(outside.root, path.join(workspace.root, "docs"));
+          },
+        },
+      );
+      const prepared = await tool.prepare({ path: "docs/new.txt", content: CONTENT }, {});
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+      expect(result.status).toBe("conflict");
+      if (result.status === "conflict") {
+        expect(result.message).toContain("link");
+      }
+      // The escaped file must not remain behind the swapped parent.
+      const outsideEntries = await readdir(outside.root);
+      expect(outsideEntries).not.toContain("new.txt");
     },
   );
 

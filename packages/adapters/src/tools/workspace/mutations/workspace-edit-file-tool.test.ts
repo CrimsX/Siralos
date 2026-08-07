@@ -418,11 +418,11 @@ describe("workspace.edit_file replacement recovery", () => {
     };
   }
 
-  it("commits via quarantine when the direct rename fails and cleans up after verification", async () => {
+  it("commits through quarantine on every platform and cleans up after finalization", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
-    const { tool } = await createTool(workspace.root, failingOps([1]));
+    const { tool } = await createTool(workspace.root, failingOps());
     const prepared = await prepareEdit(tool, "a.txt", hash, [
       { oldText: "original", newText: "changed" },
     ]);
@@ -436,6 +436,141 @@ describe("workspace.edit_file replacement recovery", () => {
     expect(content).toBe("changed\n");
     const entries = await (await import("node:fs/promises")).readdir(workspace.root);
     expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(false);
+    expect(entries.some((entry) => entry.startsWith(".solaris-mutation-"))).toBe(false);
+  });
+
+  it("preserves a later user edit made between final revalidation and the commit displacement", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    let committed = false;
+    const { tool } = await createTool(workspace.root, {
+      replacementOps: {
+        ...failingOps().replacementOps,
+        async rename(from: string, to: string) {
+          if (!committed && to.includes(".solaris-quarantine-")) {
+            // Simulate a concurrent external edit landing on the target
+            // immediately before the commit displacement.
+            const fs = await import("node:fs/promises");
+            await fs.writeFile(from, "concurrent user edit\n");
+            committed = true;
+          }
+          await failingOps().replacementOps.rename(from, to);
+        },
+      },
+    });
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    const content = await readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("concurrent user edit\n");
+  });
+
+  it("reports an uncertain finalize failure with the recoverable quarantine named", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const store = await createTempCheckpointStore(workspace.root);
+    const guardedStore = new Proxy(store, {
+      get(target, property: keyof CheckpointStore) {
+        if (property === "finalizeApplied") {
+          return () => Promise.reject(new Error("disk full"));
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const tool = createWorkspaceEditFileTool(workspace.root, createMutationLock(), guardedStore);
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") {
+      return;
+    }
+    expect(result.message).toContain("recovery state is uncertain");
+    expect(result.message).toContain(".solaris-quarantine-");
+    const content = await readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("changed\n");
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(true);
+  });
+
+  it("surfaces quarantine cleanup failure without deleting the recoverable copy", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const { tool } = await createTool(workspace.root, {
+      replacementOps: {
+        ...failingOps().replacementOps,
+        rm(p: string) {
+          throw new Error(`injected rm failure: ${p}`);
+        },
+      },
+    });
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("success");
+    if (result.status !== "success") {
+      return;
+    }
+    const output = result.output as Record<string, unknown> | null;
+    expect(output?.["cleanupWarning"]).toContain(".solaris-quarantine-");
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(true);
+  });
+
+  it("detects a tampered staged temp file before the commit completes", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const { tool } = await createTool(workspace.root, {
+      replacementOps: {
+        ...failingOps().replacementOps,
+        async rename(from: string, to: string) {
+          if (to.endsWith("a.txt")) {
+            // The staged content is swapped for different bytes right
+            // before the commit rename consumes it.
+            const fs = await import("node:fs/promises");
+            await fs.writeFile(from, "injected staged content\n");
+          }
+          await failingOps().replacementOps.rename(from, to);
+        },
+      },
+    });
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") {
+      return;
+    }
+    expect(result.message).toContain("Post-write verification failed");
+    expect(result.message).toContain(".solaris-quarantine-");
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(true);
   });
 
   it("keeps the original recoverable when post-commit verification fails", async () => {

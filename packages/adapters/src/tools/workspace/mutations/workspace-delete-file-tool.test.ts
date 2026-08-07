@@ -32,10 +32,13 @@ async function withWorkspace(): Promise<TempWorkspace> {
   return workspace;
 }
 
-async function createTool(workspaceRoot: string) {
+async function createTool(
+  workspaceRoot: string,
+  dependencies?: Parameters<typeof createWorkspaceDeleteFileTool>[3],
+) {
   const store = await createTempCheckpointStore(workspaceRoot);
   return {
-    tool: createWorkspaceDeleteFileTool(workspaceRoot, createMutationLock(), store),
+    tool: createWorkspaceDeleteFileTool(workspaceRoot, createMutationLock(), store, dependencies),
     store,
   };
 }
@@ -258,6 +261,93 @@ describe("workspace.delete_file", () => {
     expect((await tool.apply(prepared.mutation, { approvedDigest: prepared.digest })).status).toBe(
       "failed",
     );
+  });
+});
+
+describe("workspace.delete_file adversarial commit", () => {
+  function realOps() {
+    return {
+      async rename(from: string, to: string) {
+        const { rename } = await import("node:fs/promises");
+        await rename(from, to);
+      },
+      async unlink(p: string) {
+        const { unlink } = await import("node:fs/promises");
+        await unlink(p);
+      },
+      async readFile(p: string) {
+        const fs = await import("node:fs/promises");
+        return fs.readFile(p);
+      },
+      async lstat(p: string) {
+        const { lstat } = await import("node:fs/promises");
+        return lstat(p);
+      },
+      async rm(p: string) {
+        const { rm } = await import("node:fs/promises");
+        await rm(p, { force: true });
+      },
+    };
+  }
+
+  it("preserves a target replaced immediately before the deletion displacement", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "obsolete.md": "approved content\n" });
+    const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
+    let displaced = false;
+    const { tool } = await createTool(workspace.root, {
+      replacementOps: {
+        ...realOps(),
+        async rename(from: string, to: string) {
+          if (!displaced && to.includes(".solaris-quarantine-")) {
+            const fs = await import("node:fs/promises");
+            await fs.writeFile(from, "user content replaced after approval\n");
+            displaced = true;
+          }
+          await realOps().rename(from, to);
+        },
+      },
+    });
+    const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    const content = await readFile(path.join(workspace.root, "obsolete.md"), "utf8");
+    expect(content).toBe("user content replaced after approval\n");
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(false);
+  });
+
+  it("reports an uncertain finalize failure after the file is deleted", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "obsolete.md": "line one\n" });
+    const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
+    const store = await createTempCheckpointStore(workspace.root);
+    const guardedStore = new Proxy(store, {
+      get(target, property: keyof typeof store) {
+        if (property === "finalizeApplied") {
+          return () => Promise.reject(new Error("metadata write failed"));
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const tool = createWorkspaceDeleteFileTool(workspace.root, createMutationLock(), guardedStore);
+    const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") {
+      return;
+    }
+    expect(result.message).toContain("recovery state is uncertain");
+    await expect(readFile(path.join(workspace.root, "obsolete.md"))).rejects.toThrow();
   });
 });
 

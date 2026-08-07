@@ -1,4 +1,4 @@
-import { lstat, readFile, unlink } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import type {
   ChangePreview,
   CheckpointStore,
@@ -15,6 +15,7 @@ import { buildUnifiedDiff } from "./diff.js";
 import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
 import type { MutationLock } from "./mutation-lock.js";
 import { resolveMutationTarget } from "./mutation-paths.js";
+import { unlinkWithIdentityVerification, type ReplacementFsOps } from "./safe-replacement.js";
 import { decodeUtf8, looksBinary } from "../text.js";
 import { readJsonObject, readRequiredString, type ParsedValue } from "../validation.js";
 
@@ -59,8 +60,10 @@ export function createWorkspaceDeleteFileTool(
   workspaceRoot: string,
   lock: MutationLock,
   store: CheckpointStore,
+  dependencies: { readonly replacementOps?: ReplacementFsOps } = {},
 ): PreparedMutationTool {
   const payloads = new WeakMap<PreparedMutation, DeletePayload>();
+  const replacementOps = dependencies.replacementOps;
 
   async function prepare(
     input: unknown,
@@ -232,13 +235,19 @@ export function createWorkspaceDeleteFileTool(
       if (context.signal?.aborted) {
         return { status: "cancelled", message: "The mutation was cancelled before commit." };
       }
-      try {
-        await unlink(payload.absolutePath);
-      } catch (error: unknown) {
-        return {
-          status: "failed",
-          message: `The file could not be deleted: ${describeError(error)}`,
-        };
+      const commitOutcome = await unlinkWithIdentityVerification({
+        targetPath: payload.absolutePath,
+        expectedTargetSha256: payload.expectedSha256,
+        ...(replacementOps === undefined ? {} : { ops: replacementOps }),
+      });
+      if (commitOutcome.kind !== "success") {
+        if (commitOutcome.kind === "uncertain") {
+          return {
+            status: "failed",
+            message: `${commitOutcome.message} The quarantine copy at ${commitOutcome.quarantinePath} must not be deleted; recover the original from it.`,
+          };
+        }
+        return { status: "failed", message: commitOutcome.message };
       }
       let stillExists = true;
       try {
