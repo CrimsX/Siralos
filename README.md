@@ -13,9 +13,9 @@ Working today:
 - Prompt submission with incrementally streamed responses
 - A bounded provider/tool loop with approved workspace mutations: `workspace.create_file`, `workspace.edit_file` (exact text replacements), and `workspace.delete_file` — each gated by capability policy, a complete reviewable diff, and one-time user approval, with SHA-256 conflict detection, mutation serialization, and post-write verification. Every approved mutation first durably records a Solaris-owned recovery checkpoint (exact pre-change bytes), reconciled at startup after crashes.
 - Read-only workspace tools: `workspace.list`, `workspace.read` (with complete-file SHA-256), `workspace.search` — all paths are canonicalized and contained within the launch directory
-- Read-only Git inspection (`git.status`, `git.diff`) through a trusted, allowlisted Git adapter — fixed argument arrays, no shell, no pagers/aliases/external diff helpers/textconv, sanitized environment, bounded output, timeouts, cancellation; the repository root must equal the workspace root
-- Safe user-invoked undo (`/undo`) that restores only Solaris-owned changes with a complete reverse diff, one-time approval, and exact post-state hash validation; user changes after a Solaris mutation cause a conflict, never an overwrite
-- A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port, allowlist-based child environments, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command
+- Read-only Git inspection (`git.status`, `git.diff`) through a trusted, allowlisted Git adapter — fixed argument arrays, no shell, and every executable Git helper disabled mechanically (fsmonitor, aliases, pagers, external diff, textconv, credential helpers, prompts), repository-redirecting and config-injecting environment variables stripped at the process boundary, bounded byte-counted output with a streaming UTF-8 decoder, timeouts, cancellation; structured summaries come from NUL-delimited machine-readable data with exact paths; the repository root must equal the workspace root
+- Safe user-invoked undo (`/undo`) that restores only Solaris-owned changes with a complete reverse diff, one-time approval, and exact post-state hash validation rechecked immediately before the destructive commit; user changes after a Solaris mutation cause a conflict, never an overwrite
+- A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port with an explicit deny-by-default host-read boundary, allowlist-based child environments with the wrapper's runtime-required environment merged under strict rules, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command with trustworthy exit codes (0 passed, 1 probe failure, 3 probes unavailable)
 - Sandboxed development-command execution (`process.run`) with two Solaris-owned runners: `npm-script` (one existing npm package script) and `node-script` (one JavaScript file through Solaris's trusted Node executable). Every command uses structured arguments (never a provider-supplied shell string), runs inside the OS sandbox with a **read-only** workspace, denied network, a minimal sanitized environment, closed stdin, bounded streamed output, a bounded timeout, and process-tree cancellation. Commands require explicit one-time approval of the exact immutable plan (digest-bound); the package or script file is hashed before approval and revalidated after. `npm run check` runs this way.
 - In-process conversation history
 - Cancellation support through `AbortSignal`
@@ -55,21 +55,21 @@ npm run solaris      # launch the interactive CLI
 
 ## npm commands
 
-| Command                               | Purpose                                                                            |
-| ------------------------------------- | ---------------------------------------------------------------------------------- |
-| `npm run build`                       | Build all workspaces into their `dist/` directories                                |
-| `npm run clean`                       | Remove all build output                                                            |
-| `npm run format`                      | Format the repository with Prettier (may modify files)                             |
-| `npm run format:check`                | Verify formatting without modifying files                                          |
-| `npm run lint`                        | Lint with type-aware ESLint rules                                                  |
-| `npm run typecheck`                   | Type-check with strict TypeScript                                                  |
-| `npm test`                            | Run all tests once (Vitest)                                                        |
-| `npm run test:watch`                  | Run tests in watch mode                                                            |
-| `npm run check:architecture`          | Verify workspace dependency boundaries                                             |
-| `npm run test:sandbox`                | Run live sandbox conformance probes (skips loudly when the backend is unavailable) |
-| `npm run check`                       | Run all non-mutating validation                                                    |
-| `npm run solaris`                     | Build and launch the interactive CLI                                               |
-| `npm run solaris -- --sandbox-doctor` | Print sandbox diagnostics (add `--run-probes` to run fixed probes)                 |
+| Command                               | Purpose                                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `npm run build`                       | Build all workspaces into their `dist/` directories                                                                      |
+| `npm run clean`                       | Remove all build output                                                                                                  |
+| `npm run format`                      | Format the repository with Prettier (may modify files)                                                                   |
+| `npm run format:check`                | Verify formatting without modifying files                                                                                |
+| `npm run lint`                        | Lint with type-aware ESLint rules                                                                                        |
+| `npm run typecheck`                   | Type-check with strict TypeScript                                                                                        |
+| `npm test`                            | Run all tests once (Vitest)                                                                                              |
+| `npm run test:watch`                  | Run tests in watch mode                                                                                                  |
+| `npm run check:architecture`          | Verify workspace dependency boundaries (structural parsing, not regex-only)                                              |
+| `npm run test:sandbox`                | Run live sandbox conformance probes (skips loudly when the backend is unavailable)                                       |
+| `npm run check`                       | Run all non-mutating validation                                                                                          |
+| `npm run solaris`                     | Build and launch the interactive CLI                                                                                     |
+| `npm run solaris -- --sandbox-doctor` | Print sandbox diagnostics (add `--run-probes` to run fixed probes; exit 0 passed, 1 probe failure, 3 probes unavailable) |
 
 ## Sandbox configuration
 

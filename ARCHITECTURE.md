@@ -188,11 +188,12 @@ CLI ───────────────→ Core
 - Core imports nothing from the workspace and no OS sandbox runtime.
 - Adapters import only core contracts; adapter providers never import adapter tools, sandbox, environment, checkpoint, git, or process modules; sandbox adapters never import providers.
 - The CLI imports core anywhere, and concrete adapters only in the composition root (tests may import adapters directly).
-- `process.env` is never inspected in package source; child environments are built from an explicit allowlist.
-- Direct `node:child_process` usage is limited to sandbox and git modules and test files; command runners never spawn processes.
-- Raw process execution (`shell: true`, `exec(`, `execSync(`, `spawnSync(`) is prohibited in runtime code, with documented exemptions only for test fixtures and the embedded conformance probe sources.
-- Direct file-write APIs (`writeFile`, `unlink`, `rename`, `appendFile`, `createWriteStream`) are limited to the workspace mutation modules, the conformance runner, the process adapter (run directories), and tests.
-- `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, provider/sandbox isolation, process, environment, and write boundaries, and workspace dependency cycles all fail the check.
+- `process.env` is never inspected in package source; child environments are built from an explicit allowlist, and the sandbox wrapper's runtime-required environment is merged under strict rules (wrapper-only variables added, Solaris-controlled values win collisions, denied patterns fail closed, Windows keys normalized case-insensitively).
+- Direct `node:child_process` usage is limited to sandbox and git modules and test files (the `node:` prefix and the bare `child_process` spelling normalize to one rule); command runners never spawn processes.
+- Raw process execution (`shell: true`, `exec(`, `execSync(`, `spawnSync(`) is prohibited in runtime code, with documented exemptions only for test fixtures and the embedded conformance probe sources; the checks are structural (TypeScript parsing of imports, re-exports, static dynamic imports, aliases, and call sites) with textual fallbacks for constructs parsing cannot represent.
+- Destructive filesystem APIs (`writeFile`, `unlink`, `rename`, `appendFile`, `createWriteStream`, and friends, including aliased and namespace forms) are limited to the workspace mutation modules, the conformance runner, the process adapter (run directories), and tests.
+- Git mutation commands are rejected in runtime code both as string tokens and structurally in spawn argument lists.
+- `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, provider/sandbox isolation, process, environment, and write boundaries, and workspace dependency cycles all fail the check. It is a developer guardrail, not an OS security boundary; runtime-constructed module specifiers and string contents are documented limitations.
 
 ## Why a modular monolith
 
