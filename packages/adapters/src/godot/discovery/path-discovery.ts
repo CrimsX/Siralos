@@ -79,7 +79,7 @@ export async function discoverOnPath(options: PathDiscoveryOptions): Promise<{
 
 export function installationFromIdentity(
   id: string,
-  source: "user-config" | "path",
+  source: "user-config" | "path" | "cli-path" | "environment-path",
   sourceLabel: string,
   identity: ExecutableIdentity,
   editionHint: GodotEditionHint,
@@ -99,7 +99,7 @@ export function installationFromIdentity(
 
 export function invalidInstallation(
   id: string,
-  source: "user-config" | "path",
+  source: "user-config" | "path" | "cli-path" | "environment-path",
   sourceLabel: string,
   error: string,
 ): GodotInstallation {
