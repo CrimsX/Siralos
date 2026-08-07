@@ -11,17 +11,17 @@ Working today:
 - Interactive terminal session (`npm run solaris`)
 - Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/exit`
 - Prompt submission with incrementally streamed responses
-- A bounded provider/tool loop: the provider can request read-only workspace tools, results are added to the conversation, and the provider produces a final response
-- Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search` — all paths are canonicalized and contained within the launch directory; symlink escapes, binary files, oversized files, and traversal limits are enforced
+- A bounded provider/tool loop with approved workspace mutations: `workspace.create_file`, `workspace.edit_file` (exact text replacements), and `workspace.delete_file` — each gated by capability policy, a complete reviewable diff, and one-time user approval, with SHA-256 conflict detection, mutation serialization, and post-write verification
+- Read-only workspace tools: `workspace.list`, `workspace.read` (with complete-file SHA-256), `workspace.search` — all paths are canonicalized and contained within the launch directory
 - A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port, allowlist-based child environments, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command
 - In-process conversation history
 - Cancellation support through `AbortSignal`
-- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic tool-call scenarios (`list files`, `read README.md`, `search <text>`)
+- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic scenarios for read tools and the approved write workflow (`create solaris-write-test`, `edit solaris-write-test`, `delete solaris-write-test`)
 
 Not yet implemented:
 
-- Any file modification, patching, or deletion through tools
-- Shell or Git command execution — no provider-accessible process or write tool exists yet
+- Shell or Git command execution — no provider-accessible process execution exists
+- Git status, diff, checkpoints, or undo
 - Godot project understanding, GDScript programming, or editor/runtime integration
 - Real model providers (e.g. Anthropic, OpenAI)
 - Persistent sessions or transcript storage
@@ -81,7 +81,7 @@ User-level configuration lives at `~/.solaris/config.json`:
 }
 ```
 
-Supported profiles: `inspect` (default; read-only, no processes, no network) and `develop-offline` (workspace writes and processes allowed, network denied). Backends: `auto` and `anthropic-runtime`. An untrusted repository can never broaden these settings. See `SECURITY.md` for the full security model.
+Supported profiles: `inspect` (default; read-only, no processes, no network — write tools are not exposed to the provider) and `develop-offline` (workspace writes require one-time approval, processes allowed, network denied). Backends: `auto` and `anthropic-runtime`. An untrusted repository can never broaden these settings. See `SECURITY.md` for the full security model.
 
 ## How to launch the CLI
 
@@ -135,15 +135,16 @@ packages/
       application/         in-memory conversation, provider/tool loop
       domain/              conversation items, JSON types, cancellation
       ports/               provider contract
-      security/            capability policy, sandbox profiles, backend port
-      tools/               tool contracts and the tool registry
+      security/            capability policy, sandbox profiles, approval port,
+                           backend port
+      tools/               tool contracts, registry, prepared mutations
   adapters/                implementations of core-owned ports
     src/
       config/              trusted user-level configuration
       environment/         child-environment allowlist builder
       providers/           deterministic fake provider (with tool scenarios)
       sandbox/             Anthropic Sandbox Runtime backend, conformance probes
-      tools/workspace/     read-only workspace tools (list, read, search)
+      tools/workspace/     read-only workspace tools + approved mutation tools
 docs/
   adr/                     architecture decision records
 schemas/                   user configuration JSON Schema
@@ -170,4 +171,4 @@ runs formatting, linting, type checking, tests, and the architecture check witho
 
 ## Next planned milestone
 
-The next narrow task is to add workspace-write tools and an explicit approval flow using the established sandbox and capability policy. See `ROADMAP.md`.
+The next narrow task is to add Git status, diff, Solaris-owned checkpoints, and safe undo before adding shell or Godot execution. See `ROADMAP.md`.

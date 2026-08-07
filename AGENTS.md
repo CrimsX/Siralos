@@ -3,9 +3,9 @@
 ## Current state
 
 - npm TypeScript workspace monorepo (npm workspaces, ESM, strict TypeScript, project references).
-- `@solaris/core`: application + provider port + tool contracts and bounded tool loop + security model (capability policy, sandbox profiles, backend port). `@solaris/adapters`: deterministic fake provider (with tool scenarios), read-only workspace tools (`workspace.list`, `workspace.read`, `workspace.search`), user config, allowlist child environments, and the Anthropic Sandbox Runtime backend (pinned `0.0.70`). `@solaris/cli`: interactive terminal with `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/exit`, plus `--sandbox-doctor`.
-- Workspace root is the canonicalized launch directory; all tool paths are contained within it. Sandbox config is user-level (`~/.solaris/config.json`).
-- No Godot integration yet; the harness is at the foundation stage. No provider-accessible process or write tool exists yet.
+- `@solaris/core`: application + provider port + tool contracts and bounded tool loop + security model (capability policy, sandbox profiles, backend port, one-time approval port). `@solaris/adapters`: deterministic fake provider (with read and write scenarios), read-only workspace tools (`workspace.list`, `workspace.read`, `workspace.search`), approved mutation tools (`workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`), user config, allowlist child environments, and the Anthropic Sandbox Runtime backend (pinned `0.0.70`). `@solaris/cli`: interactive terminal with `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/exit`, an interactive approval reviewer, plus `--sandbox-doctor`.
+- Workspace root is the canonicalized launch directory; all tool paths are contained within it. Sandbox config is user-level (`~/.solaris/config.json`); write tools require `develop-offline` and one-time approval.
+- No Godot integration yet; the harness is at the foundation stage. No provider-accessible process execution exists.
 
 ## Verify
 

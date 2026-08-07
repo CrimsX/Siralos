@@ -80,6 +80,18 @@ The `develop-offline` profile denies writes to `.git/`, `.solaris/`, `.env`, `.e
 
 See "Credential isolation" above. The allowlist keeps only variables required to run ordinary development tools (`PATH`, `SystemRoot`, `WINDIR`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP`, `TMPDIR`, `LANG`, `LC_ALL`, `TERM`), with sandbox-controlled home and temp values.
 
+## Approved workspace mutations
+
+Write tools (`workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`) run through the full stack: capability policy, a complete reviewable diff, one-time user approval, workspace path safety, protected-path enforcement, hash-based conflict detection, a serialized mutation lock, and post-write verification.
+
+- Approval means **apply this exact prepared mutation once**. It never means future edits, process execution, network access, broader workspace roots, disabled protected paths, or another sandbox profile.
+- Providers cannot approve their own actions, set approval defaults, hide diffs, modify policy, or retry a denied request without producing a new proposal that requires a new approval.
+- A mutation does not execute when: the policy denies it, the profile forbids writes, no reviewer is available, the user rejects, input is invalid, the target changed after preparation, a path is protected or escapes the workspace, a target or parent is a symbolic link, the file is unsupported, the preview is oversized, preconditions cannot be revalidated, the write fails, or post-write verification fails.
+- `workspace.write` is `ask` under `develop-offline` and `deny` under `inspect`; under `inspect` write tools are not sent to the provider at all. There is no `autoApproveEdits` setting and no workspace-write `allow` option in the public configuration.
+- Exact SHA-256 hashes are the conflict precondition; `workspace.read` returns the complete-file hash. Timestamps and file sizes are never conflict preconditions.
+- Protected paths (`.git/`, `.solaris/`, `.env`, `.env.*`, `*.pem`, `*.key`, Solaris configuration, sandbox metadata, anything outside the workspace) cannot be overridden by approval or provider requests, and are applied again immediately before mutation.
+- Mutations are serialized in-process; temp files use unpredictable names, stay in the target directory, are hidden from listings, and are cleaned up after success or failure. Cancellation before the commit section prevents mutation; the short final replacement section is not interrupted midway.
+
 ## Conformance testing
 
 `npm run test:sandbox` runs fixed internal conformance probes against the real backend: inside-workspace reads and writes, outside-workspace write denial, denied-secret reads, loopback and DNS network denial, provider-secret absence, descendant-process confinement, output limits, timeout, and cancellation. The probes use temporary directories and fake secrets only. The command makes no public internet request, never elevates, and returns nonzero when an available backend violates a required boundary. Unavailable backends produce a loud skipped result, never a passing one.

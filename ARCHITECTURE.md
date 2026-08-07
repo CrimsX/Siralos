@@ -63,12 +63,24 @@ Provider turn
       Next provider turn (until a turn completes without tool calls)
 ```
 
-- The provider receives the conversation and the available tool definitions in every request.
+- The provider receives only the tools the capability policy permits: under `inspect`, write tools are absent from the request.
 - Assistant text, tool calls (`assistant_tool_call`), and tool results (`tool_result`) are stored as distinct `ConversationItem`s in chronological order. File contents stay classified as tool data.
-- Tool activity surfaces as `tool_started`, `tool_completed`, `tool_failed`, and `tool_cancelled` application events with bounded display summaries.
+- Tool activity surfaces as `tool_started`, `tool_completed`, `tool_failed`, and `tool_cancelled` application events with bounded display summaries, plus `tool_awaiting_approval`, `approval_requested`, and `approval_resolved` events for the approval flow.
 - Unknown tools and duplicate call ids produce failed tool results without executing anything; the provider gets a subsequent turn to respond.
 - A configurable maximum tool-round count (default 8, `DEFAULT_MAX_TOOL_ROUNDS`) stops the loop with a clear failure instead of an infinite loop.
 - Cancellation flows from the application signal into the provider stream and each tool execution; later tool calls never start after cancellation, and no false completion is stored.
+
+## Approved mutations
+
+Write tools (`workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`) are `PreparedMutationTool`s registered alongside the immediate read-only tools:
+
+1. The provider requests a write tool; the application evaluates the capability policy (`workspace.write` is `ask` under `develop-offline`, `deny` under `inspect`).
+2. The tool `prepare`s the change in memory: validates input, resolves the target with component-aware path safety, checks protected paths, reads and hashes the current file, applies exact text replacements (for edits), and builds a complete deterministic bounded unified diff.
+3. Under `ask`, the application calls the core-owned `ApprovalReviewer` with the bounded preview. The CLI implements the interactive reviewer; denial is the default; EOF, reviewer failure, timeout, and cancellation all prevent mutation; decisions are one-time.
+4. On approval, the tool `apply`s exactly once: re-acquires the serialized mutation lock, revalidates the path, file type, symlink state, and hash, stages content in an exclusive temp file (updates), enters a short non-cancellable commit section, replaces or deletes the target, verifies the final bytes and hash, and cleans up temp artifacts.
+5. Conflicts (stale hash, disappeared or appeared target, symlink races, replaced parents) return `conflict` without touching the changed external state; a revised proposal requires a new approval.
+
+Prepared mutations are opaque single-use objects; core never sees their contents and the tools never accept another tool's mutation. See `SECURITY.md` and ADR 0005 for the full model.
 
 ## Ports
 
@@ -79,10 +91,11 @@ External capabilities the application needs are narrow interfaces owned by core.
 Adapters implement core-owned ports. Providers, concrete tools, configuration, environment building, and the sandbox backend live here:
 
 - `DeterministicFakeProvider` (id `deterministic-fake`): streams text responses in chunks, supports cancellation, and has synthetic tool scenarios (`list files`, `read README.md`, `search <text>`) that request registered tools and respond truthfully to their results. It never touches the filesystem or executes tools.
-- Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search`. All three share one canonical containment implementation (`resolveWorkspacePath`), the explicit exclusion list (`node_modules`, `.git`, `dist`, `coverage`), and the `WORKSPACE_LIMITS` output limits.
+- Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search`. All three share one canonical containment implementation (`resolveWorkspacePath`), the explicit exclusion list (`node_modules`, `.git`, `dist`, `coverage`), and the `WORKSPACE_LIMITS` output limits. `workspace.read` returns the complete-file SHA-256.
+- Approved mutation tools: `workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`. They share the write-path safety and protected-path enforcement (`mutation-paths.ts`), the serialized mutation lock, exclusive temp-file staging, hash-based conflict detection, deterministic bounded diffs (`diff.ts` on the `diff` package), and post-write verification. Only these modules may call direct write APIs.
 - User configuration (`loadUserConfig`): reads `~/.solaris/config.json`, defaults to `inspect`/`auto`, and rejects unknown profiles or backends.
 - Child environments (`buildChildEnvironment`): allowlist-based construction with denied credential patterns; the only sanctioned way to build a child environment.
-- `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). It translates Solaris profiles into the runtime's configuration (empty network allowlists, workspace-rooted writes, protected paths, no weaker-isolation flags), reports truthful per-platform status (including Windows `setup-required`), enforces timeouts and output limits, collects violations, and normalizes errors. Only this module may import the runtime package.
+- `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). Only this module may import the runtime package.
 - Conformance runner (`runSandboxConformance`): writes fixed fixture programs into a temporary workspace and executes them through the backend, reporting pass/fail per probe.
 
 The workspace root is the canonicalized directory Solaris was launched from; it is stored privately by the tools and displayed in `/status`. Provider adapters never import sandbox, environment, or tool modules — the architecture check enforces that boundary.
@@ -135,7 +148,8 @@ CLI ───────────────→ Core
 - The CLI imports core anywhere, and concrete adapters only in the composition root (tests may import adapters directly).
 - `process.env` is never inspected in package source; child environments are built from an explicit allowlist.
 - Direct `node:child_process` usage is limited to sandbox modules and test files.
-- `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, provider/sandbox isolation, process and environment boundaries, and workspace dependency cycles all fail the check.
+- Direct file-write APIs (`writeFile`, `unlink`, `rename`, `appendFile`, `createWriteStream`) are limited to the workspace mutation modules, the conformance runner, and tests.
+- `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, provider/sandbox isolation, process, environment, and write boundaries, and workspace dependency cycles all fail the check.
 
 ## Why a modular monolith
 
@@ -163,4 +177,4 @@ The current workflow is one interactive primary agent. Multi-agent review, agent
 
 ## Deferred: process and write tools
 
-The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist, but no provider-accessible process or write tool does. The next milestone adds workspace-write tools and an explicit approval flow gated through the established policy and sandbox profiles. Shell execution and Godot execution remain deferred beyond that.
+The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist, and approved single-file workspace mutations now execute through them. No provider-accessible process execution exists. The next milestone adds Git status, diff, Solaris-owned checkpoints, and safe undo; shell execution and Godot execution remain deferred beyond that.

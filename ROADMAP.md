@@ -4,7 +4,7 @@ Six agreed product stages. Each stage is a milestone, not a feature catalogue.
 
 ## 1. Harness foundation
 
-An executable, provider-neutral foundation: interactive CLI, provider port, deterministic fake provider, in-process sessions, engineering standards, mechanically enforced architecture, a secure bounded tool loop with read-only workspace inspection tools, and a sandbox/permission boundary (capability policy, built-in profiles, an isolated Sandbox Runtime backend, allowlist child environments, and fixed conformance probes). **Current stage — in progress: the sandbox and permission foundation is complete; the next narrow task is adding workspace-write tools and an explicit approval flow using the established sandbox and capability policy.**
+An executable, provider-neutral foundation: interactive CLI, provider port, deterministic fake provider, in-process sessions, engineering standards, mechanically enforced architecture, a secure bounded tool loop with read-only workspace inspection tools, a sandbox/permission boundary (capability policy, built-in profiles, an isolated Sandbox Runtime backend, allowlist child environments, fixed conformance probes), and approved workspace mutations (create, exact-replacement edit, delete — each with complete previews, one-time approval, hash conflict detection, and post-write verification). **Current stage — in progress: approved mutations are complete; the next narrow task is adding Git status, diff, Solaris-owned checkpoints, and safe undo before adding shell or Godot execution.**
 
 ## 2. Godot script-development MVP
 
