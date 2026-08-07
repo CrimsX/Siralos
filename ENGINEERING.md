@@ -51,18 +51,22 @@ Validate data that crosses genuinely untrusted boundaries. Provider-generated to
 
 These properties are established and tested; weakening any of them is an architecture change requiring explanation:
 
+- **Sandbox and permission policy are separate**: a permission decision gates whether an operation proceeds; a sandbox profile defines the technical restrictions under which it runs. Approval never means unrestricted execution.
+- **Fail closed**: when the requested policy cannot be enforced the process does not run; there is no silent host fallback, no weakened profile, no network enablement, and no unrestricted backend.
 - **Workspace containment**: no tool can read outside the canonicalized launch directory. Requested paths are resolved relative to the workspace root, canonicalized, and checked against the canonical root; symlink escapes, parent traversal, absolute paths, null bytes, and prefix-confusion paths are rejected.
-- **Read-only operation**: the tools perform no intentional writes.
-- **No shell**: tools never invoke a shell or external command.
-- **No network**: the application and tools make no network requests.
+- **Read-only operation**: the workspace tools perform no intentional writes.
+- **No shell**: tools never invoke a shell or external command; sandboxed commands are internally fixed and trusted.
+- **No network**: sandboxed child processes never get network access; all built-in profiles deny outbound traffic. Provider API networking stays in the host process.
+- **Credential isolation**: child environments come from an explicit allowlist with deny patterns (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_*`, `AZURE_*`, `GOOGLE_*`, `GITHUB_TOKEN`, `GH_TOKEN`, `SSH_AUTH_SOCK`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, provider keys, `SOLARIS_CONFIG`); `process.env` is never forwarded. Sandbox home and temp values are controlled.
 - **Explicit capability registration**: only tools constructed in the composition root are available; there is no dynamic tool loading.
 - **Untrusted input validation**: all provider-generated tool arguments are validated at runtime by the selected tool.
 - **Untrusted output classification**: file contents remain tool data (`tool_result` conversation items) and never become system or developer instructions.
-- **Bounded execution**: directory listings, file reads, searches, and provider tool rounds have explicit limits with truncation metadata.
-- **Cancellation**: long searches and provider operations stop promptly when aborted; a cancellation is never reported as completion.
-- **Safe failures**: unknown tools, invalid arguments, path escapes, binary files, oversized files, duplicate call ids, and filesystem errors produce typed failures rather than crashes.
+- **Bounded execution**: directory listings, file reads, searches, provider tool rounds, sandboxed process output, and execution time have explicit limits with truncation metadata.
+- **Cancellation**: long searches and sandboxed processes stop promptly when aborted; a cancellation is never reported as completion.
+- **Safe failures**: unknown tools, invalid arguments, path escapes, binary files, oversized files, duplicate call ids, filesystem errors, sandbox denials, and backend unavailability produce typed failures rather than crashes.
+- **Project configuration cannot broaden access**: sandbox configuration is user-level only (`~/.solaris/config.json`); an untrusted repository cannot enable network access, add writable roots, change backends, or disable environment filtering.
 
-Tool output limits live in one discoverable module: `WORKSPACE_LIMITS` in `packages/adapters/src/tools/workspace/limits.ts` (directory entries 200, readable file size 512 KiB, returned read content 64 000 chars, search file size 512 KiB, files scanned 500, search matches 100, returned line length 400 chars). The provider tool-round limit is `DEFAULT_MAX_TOOL_ROUNDS` (8) in `@solaris/core`.
+Tool output limits live in one discoverable module: `WORKSPACE_LIMITS` in `packages/adapters/src/tools/workspace/limits.ts` (directory entries 200, readable file size 512 KiB, returned read content 64 000 chars, search file size 512 KiB, files scanned 500, search matches 100, returned line length 400 chars). The provider tool-round limit is `DEFAULT_MAX_TOOL_ROUNDS` (8) in `@solaris/core`. Sandbox process limits come from the active profile (`timeoutMs`, `maxOutputBytes`); the backend is pinned exactly (`@anthropic-ai/sandbox-runtime@0.0.70`) and isolated behind the `SandboxBackend` port. See `SECURITY.md` for the threat model and platform support details.
 
 ## Explicit dependency composition
 

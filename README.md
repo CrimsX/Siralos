@@ -9,10 +9,11 @@ This repository currently contains the **foundation vertical slice**: an executa
 Working today:
 
 - Interactive terminal session (`npm run solaris`)
-- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/exit`
+- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/exit`
 - Prompt submission with incrementally streamed responses
 - A bounded provider/tool loop: the provider can request read-only workspace tools, results are added to the conversation, and the provider produces a final response
 - Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search` — all paths are canonicalized and contained within the launch directory; symlink escapes, binary files, oversized files, and traversal limits are enforced
+- A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port, allowlist-based child environments, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command
 - In-process conversation history
 - Cancellation support through `AbortSignal`
 - Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic tool-call scenarios (`list files`, `read README.md`, `search <text>`)
@@ -20,7 +21,7 @@ Working today:
 Not yet implemented:
 
 - Any file modification, patching, or deletion through tools
-- Shell or Git command execution
+- Shell or Git command execution — no provider-accessible process or write tool exists yet
 - Godot project understanding, GDScript programming, or editor/runtime integration
 - Real model providers (e.g. Anthropic, OpenAI)
 - Persistent sessions or transcript storage
@@ -51,19 +52,36 @@ npm run solaris      # launch the interactive CLI
 
 ## npm commands
 
-| Command                      | Purpose                                                |
-| ---------------------------- | ------------------------------------------------------ |
-| `npm run build`              | Build all workspaces into their `dist/` directories    |
-| `npm run clean`              | Remove all build output                                |
-| `npm run format`             | Format the repository with Prettier (may modify files) |
-| `npm run format:check`       | Verify formatting without modifying files              |
-| `npm run lint`               | Lint with type-aware ESLint rules                      |
-| `npm run typecheck`          | Type-check with strict TypeScript                      |
-| `npm test`                   | Run all tests once (Vitest)                            |
-| `npm run test:watch`         | Run tests in watch mode                                |
-| `npm run check:architecture` | Verify workspace dependency boundaries                 |
-| `npm run check`              | Run all non-mutating validation                        |
-| `npm run solaris`            | Build and launch the interactive CLI                   |
+| Command                               | Purpose                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------- |
+| `npm run build`                       | Build all workspaces into their `dist/` directories                                |
+| `npm run clean`                       | Remove all build output                                                            |
+| `npm run format`                      | Format the repository with Prettier (may modify files)                             |
+| `npm run format:check`                | Verify formatting without modifying files                                          |
+| `npm run lint`                        | Lint with type-aware ESLint rules                                                  |
+| `npm run typecheck`                   | Type-check with strict TypeScript                                                  |
+| `npm test`                            | Run all tests once (Vitest)                                                        |
+| `npm run test:watch`                  | Run tests in watch mode                                                            |
+| `npm run check:architecture`          | Verify workspace dependency boundaries                                             |
+| `npm run test:sandbox`                | Run live sandbox conformance probes (skips loudly when the backend is unavailable) |
+| `npm run check`                       | Run all non-mutating validation                                                    |
+| `npm run solaris`                     | Build and launch the interactive CLI                                               |
+| `npm run solaris -- --sandbox-doctor` | Print sandbox diagnostics (add `--run-probes` to run fixed probes)                 |
+
+## Sandbox configuration
+
+User-level configuration lives at `~/.solaris/config.json`:
+
+```json
+{
+  "sandbox": {
+    "profile": "inspect",
+    "backend": "auto"
+  }
+}
+```
+
+Supported profiles: `inspect` (default; read-only, no processes, no network) and `develop-offline` (workspace writes and processes allowed, network denied). Backends: `auto` and `anthropic-runtime`. An untrusted repository can never broaden these settings. See `SECURITY.md` for the full security model.
 
 ## How to launch the CLI
 
@@ -109,7 +127,7 @@ Tools: 3
 apps/
   cli/                     interactive terminal (input/output adapter)
     src/
-      bootstrap/           composition root
+      bootstrap/           composition root, sandbox doctor
       input/               slash-command parsing
 packages/
   core/                    application behaviour and external contracts
@@ -117,23 +135,30 @@ packages/
       application/         in-memory conversation, provider/tool loop
       domain/              conversation items, JSON types, cancellation
       ports/               provider contract
+      security/            capability policy, sandbox profiles, backend port
       tools/               tool contracts and the tool registry
   adapters/                implementations of core-owned ports
     src/
+      config/              trusted user-level configuration
+      environment/         child-environment allowlist builder
       providers/           deterministic fake provider (with tool scenarios)
+      sandbox/             Anthropic Sandbox Runtime backend, conformance probes
       tools/workspace/     read-only workspace tools (list, read, search)
 docs/
   adr/                     architecture decision records
+schemas/                   user configuration JSON Schema
+scripts/
+  sandbox/                 live conformance runner
 scripts/                   architecture checks
 ```
 
 ## Architecture summary
 
-- `@solaris/core` owns application behaviour, conversation history, and the provider port. It imports no Node infrastructure, no adapters, and no UI code.
-- `@solaris/adapters` implements the provider port. The only implementation is the deterministic fake provider.
-- `@solaris/cli` is a terminal input/output adapter. It parses input, renders events, and composes dependencies in one composition root (`apps/cli/src/bootstrap/create-application.ts`). It owns no application behaviour.
-- Dependency direction is inward: `CLI -> Core` and `CLI -> composition -> Adapters -> Core ports`. `npm run check:architecture` enforces this mechanically.
-- See `ARCHITECTURE.md` and `docs/adr/0001-modular-monolith.md` for details.
+- `@solaris/core` owns application behaviour, conversation history, the provider port, and — since the sandbox milestone — the security model: capability policy, built-in sandbox profiles, the pure permission evaluator, the `SandboxBackend` port, and classified sandbox errors. It imports no Node infrastructure, no adapters, no UI code, and no sandbox runtime.
+- `@solaris/adapters` implements ports: the deterministic fake provider, the read-only workspace tools, the allowlist child-environment builder, and the Anthropic Sandbox Runtime backend (pinned exactly at `0.0.70`). Only the sandbox adapter module may import the runtime package.
+- `@solaris/cli` is a terminal input/output adapter. It parses input, renders events, and composes dependencies in one composition root. `/sandbox` and `/permissions` are diagnostics; the sandbox doctor is a startup-mode report.
+- Dependency direction is inward: `CLI -> Core` and `CLI -> composition -> Adapters -> Core ports`. `npm run check:architecture` enforces this mechanically, including process and sandbox boundaries.
+- See `ARCHITECTURE.md`, `SECURITY.md`, and the ADRs in `docs/adr/` for details.
 
 ## Testing and validation
 
@@ -145,4 +170,4 @@ runs formatting, linting, type checking, tests, and the architecture check witho
 
 ## Next planned milestone
 
-The next narrow task is to add a real provider adapter with provider-neutral tool-call translation and contract tests. Godot discovery follows once a real provider can drive the established tool loop. See `ROADMAP.md`.
+The next narrow task is to add workspace-write tools and an explicit approval flow using the established sandbox and capability policy. See `ROADMAP.md`.
