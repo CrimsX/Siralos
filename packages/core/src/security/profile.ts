@@ -1,4 +1,4 @@
-export type SandboxProfileId = "inspect" | "develop-offline";
+export type SandboxProfileId = "inspect" | "develop-offline" | "validation-offline";
 
 export type WorkspaceAccess = "read-only" | "read-write";
 
@@ -65,11 +65,42 @@ export const DEVELOP_OFFLINE_PROFILE: SandboxProfile = {
   },
 };
 
+/**
+ * Internal execution profile used only for provider-accessible commands.
+ *
+ * Commands always run with a narrower effective profile than approved file
+ * edits: the project workspace is readable but never writable, regardless of
+ * the active user profile. This profile is never user-selectable and must
+ * never be broadened by public configuration.
+ */
+export const VALIDATION_OFFLINE_PROFILE: SandboxProfile = {
+  id: "validation-offline",
+  filesystem: {
+    workspaceAccess: "read-only",
+    protectGitMetadata: true,
+    protectSolarisMetadata: true,
+    denySensitiveProjectFiles: true,
+  },
+  process: {
+    enabled: true,
+    timeoutMs: 600_000,
+    maxOutputBytes: 1_000_000,
+  },
+  network: {
+    outbound: "deny",
+  },
+  environment: {
+    policy: "minimal",
+  },
+};
+
 export function getBuiltInProfile(profileId: SandboxProfileId): SandboxProfile {
   switch (profileId) {
     case "inspect":
       return INSPECT_PROFILE;
     case "develop-offline":
       return DEVELOP_OFFLINE_PROFILE;
+    case "validation-offline":
+      return VALIDATION_OFFLINE_PROFILE;
   }
 }

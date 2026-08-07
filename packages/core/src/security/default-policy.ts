@@ -19,7 +19,17 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "workspace.read": "allow",
           "git.inspect": "allow",
           "workspace.write": "ask",
-          "process.execute": "allow",
+          "process.execute": "ask",
+          "network.outbound": "deny",
+        },
+      };
+    case "validation-offline":
+      return {
+        rules: {
+          "workspace.read": "allow",
+          "git.inspect": "allow",
+          "workspace.write": "deny",
+          "process.execute": "ask",
           "network.outbound": "deny",
         },
       };

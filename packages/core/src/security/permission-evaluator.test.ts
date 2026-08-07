@@ -4,6 +4,7 @@ import {
   DEVELOP_OFFLINE_PROFILE,
   evaluatePermission,
   INSPECT_PROFILE,
+  VALIDATION_OFFLINE_PROFILE,
   type Capability,
   type CapabilityPolicy,
 } from "../index.js";
@@ -40,6 +41,26 @@ describe("built-in profiles", () => {
       network: { outbound: "deny" },
       environment: { policy: "minimal" },
     });
+  });
+
+  it("defines the internal validation-offline profile with a read-only workspace", () => {
+    expect(VALIDATION_OFFLINE_PROFILE).toMatchObject({
+      id: "validation-offline",
+      filesystem: {
+        workspaceAccess: "read-only",
+        protectGitMetadata: true,
+        protectSolarisMetadata: true,
+        denySensitiveProjectFiles: true,
+      },
+      process: { enabled: true },
+      network: { outbound: "deny" },
+      environment: { policy: "minimal" },
+    });
+  });
+
+  it("validation-offline is narrower than develop-offline", () => {
+    expect(VALIDATION_OFFLINE_PROFILE.filesystem.workspaceAccess).toBe("read-only");
+    expect(DEVELOP_OFFLINE_PROFILE.filesystem.workspaceAccess).toBe("read-write");
   });
 });
 
@@ -78,10 +99,49 @@ describe("evaluatePermission", () => {
     });
   });
 
-  it("allows process execution under develop-offline", () => {
+  it("asks for approval of process execution under develop-offline", () => {
     expect(evaluatePermission("process.execute", developPolicy, DEVELOP_OFFLINE_PROFILE)).toEqual({
-      decision: "allow",
+      decision: "ask",
+      reason: "Policy requires approval for process.execute.",
     });
+  });
+
+  it("denies process execution under inspect", () => {
+    expect(
+      evaluatePermission("process.execute", createDefaultPolicy("inspect"), INSPECT_PROFILE),
+    ).toMatchObject({
+      decision: "deny",
+    });
+  });
+
+  it("does not allow process execution to be set to unconditional allow by built-in policy", () => {
+    for (const profileId of ["inspect", "develop-offline", "validation-offline"] as const) {
+      const policy = createDefaultPolicy(profileId);
+      expect(policy.rules["process.execute"]).not.toBe("allow");
+    }
+  });
+
+  it("fails closed when the process rule is missing", () => {
+    const missing = evaluatePermission(
+      "process.execute",
+      policyWithout("process.execute"),
+      DEVELOP_OFFLINE_PROFILE,
+    );
+    expect(missing).toMatchObject({ decision: "deny" });
+  });
+
+  it("allows process execution under the validation-offline policy", () => {
+    const validationPolicy = createDefaultPolicy("validation-offline");
+    expect(
+      evaluatePermission("process.execute", validationPolicy, VALIDATION_OFFLINE_PROFILE),
+    ).toMatchObject({ decision: "ask" });
+  });
+
+  it("denies workspace writes under validation-offline", () => {
+    const validationPolicy = createDefaultPolicy("validation-offline");
+    expect(
+      evaluatePermission("workspace.write", validationPolicy, VALIDATION_OFFLINE_PROFILE),
+    ).toMatchObject({ decision: "deny" });
   });
 
   it("denies network access under develop-offline", () => {
