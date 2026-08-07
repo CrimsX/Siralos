@@ -9,14 +9,108 @@ export const GIT_ALLOWED_SUBCOMMANDS: readonly string[] = [
   "check-ignore",
 ];
 
+/**
+ * Environment variables Solaris pins for every Git invocation. Caller
+ * values for these names are always discarded; only the pinned values reach
+ * the child. `GIT_CONFIG_NOSYSTEM=1` keeps a compromised or malicious
+ * machine-wide system Git config from being read at all.
+ */
 export const GIT_SAFETY_ENVIRONMENT: Readonly<Record<string, string>> = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_OPTIONAL_LOCKS: "0",
   GIT_PAGER: "cat",
   PAGER: "cat",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_EXTERNAL_DIFF: "",
   LC_ALL: "C",
   LANG: "C",
 };
+
+/**
+ * Environment variables stripped from the caller-provided environment before
+ * any Git process starts. Git reads several `GIT_*` variables that redirect
+ * the repository, index, object store, or configuration source; an attacker
+ * who can influence the process environment (or a stale hostile environment
+ * left behind on the host) must not be able to repoint Git at a different
+ * repository or inject configuration through `GIT_CONFIG_COUNT` /
+ * `GIT_CONFIG_KEY_*` / `GIT_CONFIG_VALUE_*` / `GIT_CONFIG_PARAMETERS`.
+ */
+const GIT_STRIPPED_ENVIRONMENT_PATTERNS: readonly RegExp[] = [
+  /^GIT_CONFIG_COUNT$/i,
+  /^GIT_CONFIG_KEY_\d+$/i,
+  /^GIT_CONFIG_VALUE_\d+$/i,
+  /^GIT_CONFIG_PARAMETERS$/i,
+  /^GIT_CONFIG_NOSYSTEM$/i,
+  /^GIT_DIR$/i,
+  /^GIT_WORK_TREE$/i,
+  /^GIT_INDEX_FILE$/i,
+  /^GIT_OBJECT_DIRECTORY$/i,
+  /^GIT_ALTERNATE_OBJECT_DIRECTORIES$/i,
+  /^GIT_COMMON_DIR$/i,
+  /^GIT_NAMESPACE$/i,
+  /^GIT_ASKPASS$/i,
+  /^SSH_ASKPASS$/i,
+  /^GIT_SSH$/i,
+  /^GIT_SSH_COMMAND$/i,
+  /^GIT_SSH_VARIANT$/i,
+  /^GIT_PAGER$/i,
+  /^PAGER$/i,
+  /^GIT_TERMINAL_PROMPT$/i,
+  /^GIT_OPTIONAL_LOCKS$/i,
+  /^GIT_EXTERNAL_DIFF$/i,
+];
+
+/**
+ * Command-line configuration overrides applied before every Git subcommand.
+ * Command-line `-c` settings take precedence over repository, user, and
+ * system configuration, so repository-local configuration cannot re-enable a
+ * disabled behavior, and later arguments cannot override them (Solaris
+ * builds the argument array itself; providers only select high-level options).
+ *
+ * The override set neutralizes every configuration mechanism that can
+ * execute or delegate to external code during the supported read-only
+ * inspection operations:
+ *
+ * - `core.fsmonitor` / `core.useBuiltinFSMonitor`: background watch daemons
+ *   executed by `git status`.
+ * - `core.askPass` / `credential.helper` / `credential.interactive`:
+ *   external credential helpers and interactive prompts.
+ * - `core.pager` and per-command pagers: external pager programs.
+ * - `diff.external`: external diff programs (also pinned empty in the
+ *   environment and disabled with `--no-ext-diff` by the adapter).
+ * - `alias.<command>`: shell aliases; each allowed subcommand is mapped to
+ *   itself so a repository alias like `alias.status = !evil` cannot run.
+ */
+const GIT_DISABLING_CONFIG: readonly string[] = [
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.useBuiltinFSMonitor=false",
+  "-c",
+  "core.askPass=",
+  "-c",
+  "core.pager=cat",
+  "-c",
+  "credential.helper=",
+  "-c",
+  "credential.interactive=false",
+  "-c",
+  "diff.external=",
+  ...GIT_ALLOWED_SUBCOMMANDS.flatMap((command) => ["-c", `alias.${command}=${command}`]),
+];
+
+export function sanitizeGitEnvironment(
+  environment: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  const sanitized: Record<string, string> = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (GIT_STRIPPED_ENVIRONMENT_PATTERNS.some((pattern) => pattern.test(name))) {
+      continue;
+    }
+    sanitized[name] = value;
+  }
+  return { ...sanitized, ...GIT_SAFETY_ENVIRONMENT };
+}
 
 export interface GitProcessResult {
   readonly exitCode: number;
@@ -37,10 +131,6 @@ export interface GitProcessOptions {
   readonly gitExecutable?: string;
 }
 
-const ALIAS_SELF_OVERRIDES: readonly string[] = GIT_ALLOWED_SUBCOMMANDS.map(
-  (command) => `alias.${command}=${command}`,
-);
-
 export async function runGitProcess(options: GitProcessOptions): Promise<GitProcessResult> {
   if (!GIT_ALLOWED_SUBCOMMANDS.includes(options.subcommand)) {
     throw new GitError(
@@ -48,9 +138,8 @@ export async function runGitProcess(options: GitProcessOptions): Promise<GitProc
       `Git subcommand "${options.subcommand}" is not allowed by Solaris.`,
     );
   }
-  const configArgs = ALIAS_SELF_OVERRIDES.flatMap((override) => ["-c", override]);
   const fullArgs = [
-    ...configArgs,
+    ...GIT_DISABLING_CONFIG,
     "--no-pager",
     "--literal-pathspecs",
     options.subcommand,
@@ -68,7 +157,7 @@ export async function runGitProcess(options: GitProcessOptions): Promise<GitProc
   }
   const child = spawn(options.gitExecutable ?? "git", fullArgs, {
     cwd: options.cwd,
-    env: options.environment,
+    env: sanitizeGitEnvironment(options.environment),
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     signal: AbortSignal.any(signals),
