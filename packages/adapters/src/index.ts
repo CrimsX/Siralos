@@ -54,6 +54,10 @@ export {
   type ReconciliationOptions,
   type ReconciliationReport,
 } from "./checkpoints/filesystem/reconciliation.js";
+export {
+  createUndoService,
+  type UndoServiceDependencies,
+} from "./checkpoints/filesystem/undo-service.js";
 export { resolveWorkspaceRoot } from "./tools/workspace/workspace-path.js";
 export { createGitCliAdapter, type GitCliAdapterOptions } from "./git/cli/git-cli-adapter.js";
 export {

@@ -1,8 +1,5 @@
-import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
-import { join } from "node:path";
-import type { CheckpointStore, FileCheckpoint, WorkspaceFileState } from "@solaris/core";
-import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
+import type { CheckpointStore, WorkspaceFileState } from "@solaris/core";
+import { readWorkspaceFileState } from "./checkpoint-file-state.js";
 
 export interface ReconciliationReport {
   checked: number;
@@ -17,8 +14,6 @@ export interface ReconciliationOptions {
   readonly maxStateBytes?: number;
 }
 
-const DEFAULT_MAX_STATE_BYTES = 1024 * 1024;
-
 export async function reconcileWorkspaceCheckpoints(
   options: ReconciliationOptions,
 ): Promise<ReconciliationReport> {
@@ -27,8 +22,8 @@ export async function reconcileWorkspaceCheckpoints(
   for (const checkpoint of pending) {
     const current = await readWorkspaceFileState(
       options.workspaceRoot,
-      checkpoint,
-      options.maxStateBytes ?? DEFAULT_MAX_STATE_BYTES,
+      checkpoint.relativePath,
+      options.maxStateBytes,
     );
     const beforeState: WorkspaceFileState = {
       exists: checkpoint.before.exists,
@@ -61,37 +56,6 @@ export async function reconcileWorkspaceCheckpoints(
     }
   }
   return report;
-}
-
-async function readWorkspaceFileState(
-  workspaceRoot: string,
-  checkpoint: FileCheckpoint,
-  maxStateBytes: number,
-): Promise<WorkspaceFileState> {
-  const validation = validateRelativeWorkspacePath(checkpoint.relativePath);
-  if (validation !== null) {
-    return { exists: true, sha256: null };
-  }
-  const absolute = join(workspaceRoot, ...checkpoint.relativePath.split("/"));
-  let stats;
-  try {
-    stats = await lstat(absolute);
-  } catch {
-    return { exists: false, sha256: null };
-  }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
-    return { exists: true, sha256: null };
-  }
-  if (stats.size > maxStateBytes) {
-    return { exists: true, sha256: null };
-  }
-  let bytes: Buffer;
-  try {
-    bytes = await readFile(absolute);
-  } catch {
-    return { exists: true, sha256: null };
-  }
-  return { exists: true, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
 function statesEqual(a: WorkspaceFileState, b: WorkspaceFileState): boolean {
