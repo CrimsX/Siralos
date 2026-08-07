@@ -42,7 +42,9 @@ class HangingIO implements SessionIO {
   clear(): void {}
 }
 
-function createRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
+function createRequest(
+  overrides: Partial<Extract<ApprovalRequest, { capability: "workspace.write" }>> = {},
+): ApprovalRequest {
   return {
     id: "approval-1",
     capability: "workspace.write",

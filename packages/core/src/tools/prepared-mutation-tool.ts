@@ -1,5 +1,6 @@
 import type { Capability } from "../security/capability.js";
 import type { ChangePreview } from "../security/change-preview.js";
+import type { PreparedCommandTool } from "../commands/command-tool.js";
 import type { Tool, ToolExecutionContext, ToolExecutionResult, ToolDefinition } from "./tool.js";
 
 export type ToolPreparationResult =
@@ -23,7 +24,7 @@ export interface PreparedMutationTool {
   apply(prepared: PreparedMutation, context: ToolExecutionContext): Promise<ToolExecutionResult>;
 }
 
-export type RegisteredTool = Tool | PreparedMutationTool;
+export type RegisteredTool = Tool | PreparedMutationTool | PreparedCommandTool;
 
 const preparedMutationBrand: unique symbol = Symbol("preparedMutationBrand");
 
@@ -39,8 +40,15 @@ export function isPreparedMutationTool(tool: RegisteredTool): tool is PreparedMu
   return "kind" in tool && tool.kind === "prepared_mutation";
 }
 
+export function isPreparedCommandTool(tool: RegisteredTool): tool is PreparedCommandTool {
+  return "kind" in tool && tool.kind === "prepared_command";
+}
+
 export function toolCapability(tool: RegisteredTool): Capability {
   if (isPreparedMutationTool(tool)) {
+    return tool.capability;
+  }
+  if (isPreparedCommandTool(tool)) {
     return tool.capability;
   }
   return tool.capability ?? "workspace.read";

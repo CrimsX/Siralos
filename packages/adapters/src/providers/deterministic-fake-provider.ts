@@ -293,6 +293,12 @@ function formatWriteFinalText(
       return `The workspace change was cancelled, so Solaris did not ${verb} ${WRITE_TEST_FILE}.`;
     case "invalid_input":
     case "failed":
+    case "unavailable":
+    case "timed_out":
+    case "output_limit":
+    case "sandbox_denied":
+    case "sandbox_unavailable":
+    case "workspace_violation":
       return `Solaris could not ${verb} ${WRITE_TEST_FILE}: ${result.message}`;
   }
 }

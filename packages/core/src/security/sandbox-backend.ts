@@ -23,7 +23,28 @@ export interface SandboxedProcessRequest {
   readonly profile: SandboxProfile;
   readonly environment: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
+  /**
+   * Optional streaming sink. When present the backend emits bounded decoded
+   * output events as the child writes. When absent the backend only buffers.
+   */
+  readonly onOutput?: (event: ProcessOutputEvent) => void;
+  /** Explicit timeout; falls back to `profile.process.timeoutMs`. */
+  readonly timeoutMs?: number;
+  /** Explicit hard stdout limit; falls back to `profile.process.maxOutputBytes`. */
+  readonly stdoutLimitBytes?: number;
+  /** Explicit hard stderr limit; falls back to `profile.process.maxOutputBytes`. */
+  readonly stderrLimitBytes?: number;
 }
+
+export type ProcessOutputEvent =
+  | {
+      readonly type: "stdout";
+      readonly text: string;
+    }
+  | {
+      readonly type: "stderr";
+      readonly text: string;
+    };
 
 export interface SandboxViolation {
   readonly category: string;
@@ -31,7 +52,13 @@ export interface SandboxViolation {
 }
 
 export type SandboxedProcessStatus =
-  "completed" | "cancelled" | "timed-out" | "sandbox-denied" | "sandbox-unavailable" | "failed";
+  | "completed"
+  | "cancelled"
+  | "timed-out"
+  | "sandbox-denied"
+  | "sandbox-unavailable"
+  | "output-limit"
+  | "failed";
 
 export interface SandboxedProcessResult {
   readonly status: SandboxedProcessStatus;

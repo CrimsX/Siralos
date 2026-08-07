@@ -16,12 +16,42 @@ export type {
 export {
   createPreparedMutation,
   isPreparedMutationTool,
+  isPreparedCommandTool,
   toolCapability,
   type PreparedMutation,
   type PreparedMutationTool,
   type RegisteredTool,
   type ToolPreparationResult,
 } from "./tools/prepared-mutation-tool.js";
+export { PROCESS_RUN_TOOL_NAME } from "./commands/command-tool.js";
+export type {
+  CommandToolExecutionContext,
+  CommandToolPreparationResult,
+  PreparedCommandTool,
+  ProcessRunInput,
+} from "./commands/command-tool.js";
+export type { CommandAuditRecord, CommandApplicationEvent } from "./commands/command-events.js";
+export { MAX_RETAINED_COMMAND_AUDIT_RECORDS } from "./commands/command-events.js";
+export type { CommandDigestParts, CommandDigestService } from "./commands/command-digest.js";
+export { canonicalizeCommandDigest } from "./commands/command-digest.js";
+export { COMMAND_LIMITS } from "./commands/command-limits.js";
+export {
+  createCommandRunnerRegistry,
+  type CommandRunnerRegistry,
+} from "./commands/command-registry.js";
+export {
+  createPreparedCommand,
+  type CommandExecutionContext,
+  type CommandExecutionRequest,
+  type CommandExecutionRequestResult,
+  type CommandPreparationContext,
+  type CommandPreparationResult,
+  type CommandPreview,
+  type CommandRunner,
+  type CommandRunnerDefinition,
+  type CommandRunPaths,
+  type PreparedCommand,
+} from "./commands/command-runners.js";
 export {
   createSolarisApplication,
   DEFAULT_MAX_TOOL_ROUNDS,
@@ -67,6 +97,10 @@ export type { UndoOutcome, UndoService } from "./checkpoints/undo-service.js";
 export type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "./security/approval.js";
 export { DEFAULT_MAX_PENDING_APPROVAL_MS } from "./security/approval.js";
 export type {
+  ProcessExecutionApprovalRequest,
+  WorkspaceWriteApprovalRequest,
+} from "./security/approval.js";
+export type {
   ChangePreview,
   FileChangeOperation,
   FileChangePreview,
@@ -74,6 +108,7 @@ export type {
 export {
   DEVELOP_OFFLINE_PROFILE,
   INSPECT_PROFILE,
+  VALIDATION_OFFLINE_PROFILE,
   getBuiltInProfile,
   type SandboxProfile,
   type SandboxProfileId,
@@ -88,6 +123,7 @@ export type {
   SandboxedProcessResult,
   SandboxedProcessStatus,
   SandboxViolation,
+  ProcessOutputEvent,
 } from "./security/sandbox-backend.js";
 export {
   normalizeSandboxError,

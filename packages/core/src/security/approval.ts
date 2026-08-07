@@ -1,6 +1,7 @@
 import type { ChangePreview } from "./change-preview.js";
+import type { CommandPreview } from "../commands/command-runners.js";
 
-export interface ApprovalRequest {
+export interface WorkspaceWriteApprovalRequest {
   readonly id: string;
   readonly capability: "workspace.write";
   readonly toolName: string;
@@ -8,6 +9,19 @@ export interface ApprovalRequest {
   readonly paths: readonly string[];
   readonly preview: ChangePreview;
 }
+
+export interface ProcessExecutionApprovalRequest {
+  readonly id: string;
+  readonly capability: "process.execute";
+  readonly toolName: string;
+  readonly summary: string;
+  /** The immutable command preview; approval applies to the digest below. */
+  readonly preview: CommandPreview;
+  /** Full prepared-command digest; approval binds to this exact plan. */
+  readonly digest: string;
+}
+
+export type ApprovalRequest = WorkspaceWriteApprovalRequest | ProcessExecutionApprovalRequest;
 
 export type ApprovalDecision =
   | {

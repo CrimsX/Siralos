@@ -36,6 +36,30 @@ export type ToolExecutionResult =
   | {
       readonly status: "cancelled";
       readonly message: string;
+    }
+  | {
+      readonly status: "timed_out";
+      readonly message: string;
+    }
+  | {
+      readonly status: "output_limit";
+      readonly message: string;
+    }
+  | {
+      readonly status: "sandbox_denied";
+      readonly message: string;
+    }
+  | {
+      readonly status: "sandbox_unavailable";
+      readonly message: string;
+    }
+  | {
+      readonly status: "workspace_violation";
+      readonly message: string;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly message: string;
     };
 
 export interface Tool {

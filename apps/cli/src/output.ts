@@ -189,6 +189,9 @@ export function formatTools(
 }
 
 export function formatApprovalPrompt(request: ApprovalRequest): string {
+  if (request.capability === "process.execute") {
+    return formatCommandApprovalPrompt(request);
+  }
   const file = request.preview.files[0];
   const lines = [
     "Approval required",
@@ -209,6 +212,75 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
     lines.push(sanitizeForDisplay(file.unifiedDiff));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function formatCommandApprovalPrompt(
+  request: Extract<ApprovalRequest, { capability: "process.execute" }>,
+): string {
+  const preview = request.preview;
+  const lines = [
+    "Command approval required",
+    "",
+    `Tool: ${request.toolName}`,
+    `Runner: ${preview.runnerId}`,
+  ];
+  if (preview.packageName !== undefined) {
+    lines.push(`Package: ${preview.packageName}`);
+  }
+  if (preview.scriptName !== undefined) {
+    lines.push(`Script: ${preview.scriptName}`);
+  }
+  lines.push(`Working directory: ${preview.workingDirectory}`);
+  lines.push("");
+  lines.push("Arguments:");
+  if (preview.arguments.length === 0) {
+    lines.push("  none");
+  } else {
+    preview.arguments.forEach((argument, index) => {
+      lines.push(`  [${index}] "${sanitizeForDisplay(argument)}"`);
+    });
+  }
+  if (preview.repositoryScript !== undefined) {
+    lines.push("");
+    lines.push("Repository script:");
+    for (const scriptLine of preview.repositoryScript.split("\n")) {
+      lines.push(`  ${sanitizeForDisplay(scriptLine)}`);
+    }
+  }
+  lines.push("");
+  lines.push("Execution:");
+  lines.push(`  Workspace access: ${preview.workspaceAccess}`);
+  lines.push(`  Network: ${preview.networkAccess}`);
+  lines.push(`  Environment: ${preview.environmentPolicy}`);
+  lines.push(`  stdin: ${preview.stdinPolicy}`);
+  lines.push(`  Timeout: ${formatTimeoutSeconds(preview.timeoutMs)}`);
+  lines.push(`  stdout limit: ${formatBytes(preview.stdoutLimitBytes)}`);
+  lines.push(`  stderr limit: ${formatBytes(preview.stderrLimitBytes)}`);
+  lines.push("");
+  if (preview.scriptShellNotice !== undefined) {
+    lines.push(preview.scriptShellNotice);
+  }
+  if (preview.hooksNotice !== undefined) {
+    lines.push(preview.hooksNotice);
+  }
+  lines.push("");
+  lines.push(`Approval applies once to command plan ${request.digest.slice(0, 8)}.`);
+  return `${lines.join("\n")}\n`;
+}
+
+function formatTimeoutSeconds(timeoutMs: number): string {
+  if (timeoutMs % 1000 === 0) {
+    return `${timeoutMs / 1000} seconds`;
+  }
+  return `${(timeoutMs / 1000).toFixed(1)} seconds`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    const value = bytes / (1024 * 1024);
+    return `${value} MiB`;
+  }
+  return `${Math.round(bytes / 1024)} KiB`;
 }
 
 export function formatGitStatus(inspection: GitWorkspaceStatus, result?: GitStatusResult): string {
