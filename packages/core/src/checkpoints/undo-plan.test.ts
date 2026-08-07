@@ -49,11 +49,7 @@ describe("git.inspect capability", () => {
   it("fails closed when the git rule is missing", () => {
     const rules = { ...createDefaultPolicy("inspect").rules } as Record<string, unknown>;
     delete rules["git.inspect"];
-    const result = evaluatePermission(
-      "git.inspect",
-      { rules: rules as never },
-      INSPECT_PROFILE,
-    );
+    const result = evaluatePermission("git.inspect", { rules: rules as never }, INSPECT_PROFILE);
     expect(result).toMatchObject({ decision: "deny" });
   });
 });

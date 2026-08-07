@@ -44,11 +44,7 @@ export type {
   GitWorkspaceStatus,
 } from "./git/git-models.js";
 export { GitError, describeGitError, type GitErrorCode } from "./git/git-errors.js";
-export type {
-  GitInspector,
-  GitStatusRequest,
-  GitDiffRequest,
-} from "./git/git-inspector.js";
+export type { GitInspector, GitStatusRequest, GitDiffRequest } from "./git/git-inspector.js";
 export type {
   AppliedCheckpointResult,
   CheckpointFileState,
