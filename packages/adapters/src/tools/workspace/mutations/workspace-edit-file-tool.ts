@@ -17,6 +17,7 @@ import { resolveMutationTarget } from "./mutation-paths.js";
 import { createMutationTempPath, removeMutationTemp } from "./mutation-temp.js";
 import { decodeUtf8, looksBinary } from "../text.js";
 import {
+  readArrayField,
   readJsonObject,
   readOptionalString,
   readRequiredString,
@@ -66,10 +67,11 @@ function parseEditInput(input: unknown): ParsedValue<EditInput> {
       message: '"expectedSha256" must be a lowercase 64-character SHA-256 hex digest.',
     };
   }
-  const replacementsValue = object.value["replacements"];
-  if (!Array.isArray(replacementsValue)) {
-    return { ok: false, message: '"replacements" is required and must be an array.' };
+  const replacementsField = readArrayField(object.value, "replacements");
+  if (!replacementsField.ok) {
+    return replacementsField;
   }
+  const replacementsValue = replacementsField.value;
   if (replacementsValue.length === 0) {
     return { ok: false, message: "At least one replacement is required." };
   }

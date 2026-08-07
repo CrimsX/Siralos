@@ -43,6 +43,17 @@ export function readRequiredString(
   return { ok: true, value: parsed.value };
 }
 
+export function readArrayField(
+  record: Record<string, unknown>,
+  key: string,
+): ParsedValue<readonly unknown[]> {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return { ok: false, message: `"${key}" must be an array.` };
+  }
+  return { ok: true, value: value as readonly unknown[] };
+}
+
 export function readOptionalPositiveInteger(
   record: Record<string, unknown>,
   key: string,

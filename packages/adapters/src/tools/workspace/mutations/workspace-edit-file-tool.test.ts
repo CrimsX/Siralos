@@ -117,8 +117,10 @@ describe("workspace.edit_file", () => {
     const prepared = await prepareEdit(tool, "a.txt", hash, [{ oldText: "missing", newText: "x" }]);
     expect(prepared).toMatchObject({
       status: "conflict",
-      message: expect.stringContaining("not found"),
     });
+    if (prepared.status === "conflict") {
+      expect(prepared.message).toContain("not found");
+    }
   });
 
   it("fails with multiple matches", async () => {
@@ -129,8 +131,10 @@ describe("workspace.edit_file", () => {
     const prepared = await prepareEdit(tool, "a.txt", hash, [{ oldText: "dup", newText: "x" }]);
     expect(prepared).toMatchObject({
       status: "conflict",
-      message: expect.stringContaining("ambiguous"),
     });
+    if (prepared.status === "conflict") {
+      expect(prepared.message).toContain("ambiguous");
+    }
   });
 
   it("rejects empty oldText", async () => {
@@ -151,8 +155,10 @@ describe("workspace.edit_file", () => {
     const prepared = await prepareEdit(tool, "a.txt", hash, [{ oldText: "same", newText: "same" }]);
     expect(prepared).toMatchObject({
       status: "failed",
-      message: expect.stringContaining("identical"),
     });
+    if (prepared.status === "failed") {
+      expect(prepared.message).toContain("identical");
+    }
   });
 
   it("rejects protected files", async () => {
@@ -187,8 +193,10 @@ describe("workspace.edit_file", () => {
     const prepared = await prepareEdit(tool, "bin.dat", hash, [{ oldText: "a", newText: "b" }]);
     expect(prepared).toMatchObject({
       status: "failed",
-      message: expect.stringContaining("binary"),
     });
+    if (prepared.status === "failed") {
+      expect(prepared.message).toContain("binary");
+    }
   });
 
   it("rejects oversized files", async () => {
@@ -201,8 +209,10 @@ describe("workspace.edit_file", () => {
     const prepared = await prepareEdit(tool, "big.txt", hash, [{ oldText: "a", newText: "b" }]);
     expect(prepared).toMatchObject({
       status: "failed",
-      message: expect.stringContaining("too large"),
     });
+    if (prepared.status === "failed") {
+      expect(prepared.message).toContain("too large");
+    }
   });
 
   it("conflicts on a stale hash during preparation", async () => {
@@ -214,8 +224,10 @@ describe("workspace.edit_file", () => {
     ]);
     expect(prepared).toMatchObject({
       status: "conflict",
-      message: expect.stringContaining("reread"),
     });
+    if (prepared.status === "conflict") {
+      expect(prepared.message).toContain("reread");
+    }
   });
 
   it("conflicts when the file changes after approval", async () => {
