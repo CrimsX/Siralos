@@ -13,7 +13,9 @@ import { createWorkspaceDeleteFileTool } from "./workspace-delete-file-tool.js";
 import { createMutationLock } from "./mutation-lock.js";
 import { WORKSPACE_LIMITS } from "../limits.js";
 import {
+  cleanupTempCheckpointDirs,
   createSymlink,
+  createTempCheckpointStore,
   createTempWorkspace,
   expectSuccess,
   SYMLINKS_SUPPORTED,
@@ -29,8 +31,12 @@ async function withWorkspace(): Promise<TempWorkspace> {
   return workspace;
 }
 
-function createTool(workspaceRoot: string) {
-  return createWorkspaceDeleteFileTool(workspaceRoot, createMutationLock());
+async function createTool(workspaceRoot: string) {
+  const store = await createTempCheckpointStore(workspaceRoot);
+  return {
+    tool: createWorkspaceDeleteFileTool(workspaceRoot, createMutationLock(), store),
+    store,
+  };
 }
 
 async function hashOf(absolutePath: string): Promise<string> {
@@ -39,6 +45,7 @@ async function hashOf(absolutePath: string): Promise<string> {
 }
 
 afterEach(async () => {
+  await cleanupTempCheckpointDirs();
   for (const workspace of workspaces.splice(0)) {
     await workspace.cleanup();
   }
@@ -48,7 +55,7 @@ describe("workspace.delete_file", () => {
   it("prepares a complete deletion preview", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "obsolete.md": "line one\nline two\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
     const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
     expect(prepared.status).toBe("ready");
@@ -69,7 +76,7 @@ describe("workspace.delete_file", () => {
   it("deletes the approved file and verifies absence", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "obsolete.md": "line one\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
     const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
     expect(prepared.status).toBe("ready");
@@ -86,7 +93,7 @@ describe("workspace.delete_file", () => {
   it("conflicts on a stale hash", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "obsolete.md": "line one\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare(
       { path: "obsolete.md", expectedSha256: "f".repeat(64) },
       {},
@@ -100,7 +107,7 @@ describe("workspace.delete_file", () => {
   it("conflicts when the file disappears before apply", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "obsolete.md": "line one\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
     const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
     expect(prepared.status).toBe("ready");
@@ -116,7 +123,7 @@ describe("workspace.delete_file", () => {
   it("rejects directories", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "dir/inner.txt": "x" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "dir", expectedSha256: "a".repeat(64) }, {});
     expect(prepared).toMatchObject({ status: "denied" });
   });
@@ -128,7 +135,7 @@ describe("workspace.delete_file", () => {
       path.join(workspace.root, "real.txt"),
       path.join(workspace.root, "link.txt"),
     );
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "link.txt", expectedSha256: "a".repeat(64) }, {});
     expect(prepared).toMatchObject({ status: "denied" });
   });
@@ -136,7 +143,7 @@ describe("workspace.delete_file", () => {
   it("rejects protected paths", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { ".env": "KEY=value\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: ".env", expectedSha256: "a".repeat(64) }, {});
     expect(prepared).toMatchObject({ status: "denied" });
   });
@@ -144,7 +151,7 @@ describe("workspace.delete_file", () => {
   it("rejects binary files", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "bin.dat": Buffer.from([0x00, 0x01]) });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "bin.dat"));
     const prepared = await tool.prepare({ path: "bin.dat", expectedSha256: hash }, {});
     expect(prepared).toMatchObject({ status: "failed" });
@@ -158,7 +165,7 @@ describe("workspace.delete_file", () => {
     await writeFixtureFiles(workspace.root, {
       "big.txt": Buffer.alloc(WORKSPACE_LIMITS.maxTextFileSizeBytes + 1, 0x61),
     });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "big.txt"));
     const prepared = await tool.prepare({ path: "big.txt", expectedSha256: hash }, {});
     expect(prepared).toMatchObject({ status: "failed" });
@@ -167,7 +174,7 @@ describe("workspace.delete_file", () => {
   it("cannot be applied twice", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "obsolete.md": "x\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "obsolete.md"));
     const prepared = await tool.prepare({ path: "obsolete.md", expectedSha256: hash }, {});
     expect(prepared.status).toBe("ready");
@@ -212,7 +219,7 @@ describe("workspace.delete_file through the application", () => {
           await Promise.resolve();
         },
       },
-      tools: createToolRegistry([createTool(workspace.root)]),
+      tools: createToolRegistry([(await createTool(workspace.root)).tool]),
       policy: createDefaultPolicy("develop-offline"),
       profile: DEVELOP_OFFLINE_PROFILE,
       reviewer: createReviewer("deny"),
@@ -246,7 +253,7 @@ describe("workspace.delete_file through the application", () => {
           await Promise.resolve();
         },
       },
-      tools: createToolRegistry([createTool(workspace.root)]),
+      tools: createToolRegistry([(await createTool(workspace.root)).tool]),
       policy: createDefaultPolicy("develop-offline"),
       profile: DEVELOP_OFFLINE_PROFILE,
       reviewer: createReviewer("approve"),

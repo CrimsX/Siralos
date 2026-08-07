@@ -1,6 +1,8 @@
 import { lstat, readFile, unlink } from "node:fs/promises";
 import type {
   ChangePreview,
+  CheckpointStore,
+  FileCheckpoint,
   PreparedMutation,
   PreparedMutationTool,
   ToolExecutionContext,
@@ -55,6 +57,7 @@ function parseDeleteInput(input: unknown): ParsedValue<DeleteInput> {
 export function createWorkspaceDeleteFileTool(
   workspaceRoot: string,
   lock: MutationLock,
+  store: CheckpointStore,
 ): PreparedMutationTool {
   const payloads = new WeakMap<PreparedMutation, DeletePayload>();
 
@@ -181,6 +184,30 @@ export function createWorkspaceDeleteFileTool(
           message: "The file changed since the proposal was approved; reread the file.",
         };
       }
+      let checkpoint: FileCheckpoint;
+      try {
+        checkpoint = await store.prepare(
+          {
+            relativePath: payload.workspaceRelativePath,
+            operation: "delete",
+            toolName: "workspace.delete_file",
+            before: {
+              exists: true,
+              sha256: payload.expectedSha256,
+              byteLength: currentBytes.length,
+              bytes: new Uint8Array(currentBytes),
+            },
+            after: { exists: false, sha256: null, byteLength: null },
+            preview: { addedLines: 0, removedLines: payload.removedLines },
+          },
+          context.signal,
+        );
+      } catch (error: unknown) {
+        return {
+          status: "failed",
+          message: `Checkpoint could not be recorded; the mutation was not applied: ${describeError(error)}`,
+        };
+      }
       try {
         await unlink(payload.absolutePath);
       } catch (error: unknown) {
@@ -201,11 +228,20 @@ export function createWorkspaceDeleteFileTool(
           message: "Post-deletion verification failed: the file still exists.",
         };
       }
+      try {
+        await store.finalizeApplied(checkpoint.id, { afterSha256: null, absent: true });
+      } catch (error: unknown) {
+        return {
+          status: "failed",
+          message: `The mutation was applied but its checkpoint could not be finalized; recovery state is uncertain: ${describeError(error)}`,
+        };
+      }
       return {
         status: "success",
         output: {
           path: payload.workspaceRelativePath,
           operation: "delete",
+          checkpointId: checkpoint.id,
           beforeSha256: payload.expectedSha256,
           removedLines: payload.removedLines,
         },

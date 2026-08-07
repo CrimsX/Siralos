@@ -2,8 +2,26 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { JsonObject, JsonValue, ToolExecutionResult } from "@solaris/core";
+import type { CheckpointStore, JsonObject, JsonValue, ToolExecutionResult } from "@solaris/core";
 import { expect } from "vitest";
+import { createFilesystemCheckpointStore } from "../../checkpoints/filesystem/checkpoint-store.js";
+
+const checkpointDirectories: string[] = [];
+
+export async function cleanupTempCheckpointDirs(): Promise<void> {
+  for (const directory of checkpointDirectories.splice(0)) {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+export async function createTempCheckpointStore(
+  workspaceRoot: string,
+  options: { maxCheckpoints?: number; maxStorageBytes?: number } = {},
+): Promise<CheckpointStore> {
+  const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+  checkpointDirectories.push(rootDirectory);
+  return createFilesystemCheckpointStore({ workspaceRoot, rootDirectory, ...options });
+}
 
 export interface TempWorkspace {
   readonly root: string;

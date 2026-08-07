@@ -42,6 +42,18 @@ export { createWorkspaceCreateFileTool } from "./tools/workspace/mutations/works
 export { createWorkspaceEditFileTool } from "./tools/workspace/mutations/workspace-edit-file-tool.js";
 export { createWorkspaceDeleteFileTool } from "./tools/workspace/mutations/workspace-delete-file-tool.js";
 export { createMutationLock } from "./tools/workspace/mutations/mutation-lock.js";
+export {
+  createFilesystemCheckpointStore,
+  DEFAULT_CHECKPOINT_ROOT,
+  DEFAULT_MAX_CHECKPOINTS,
+  DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES,
+  type FilesystemCheckpointStoreOptions,
+} from "./checkpoints/filesystem/checkpoint-store.js";
+export {
+  reconcileWorkspaceCheckpoints,
+  type ReconciliationOptions,
+  type ReconciliationReport,
+} from "./checkpoints/filesystem/reconciliation.js";
 export { resolveWorkspaceRoot } from "./tools/workspace/workspace-path.js";
 export { createGitCliAdapter, type GitCliAdapterOptions } from "./git/cli/git-cli-adapter.js";
 export {

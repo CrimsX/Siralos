@@ -1,6 +1,8 @@
 import { open, readFile } from "node:fs/promises";
 import type {
   ChangePreview,
+  CheckpointStore,
+  FileCheckpoint,
   PreparedMutation,
   PreparedMutationTool,
   ToolExecutionContext,
@@ -47,6 +49,7 @@ function parseCreateInput(input: unknown): ParsedValue<CreateInput> {
 export function createWorkspaceCreateFileTool(
   workspaceRoot: string,
   lock: MutationLock,
+  store: CheckpointStore,
 ): PreparedMutationTool {
   const payloads = new WeakMap<PreparedMutation, CreatePayload>();
 
@@ -141,6 +144,29 @@ export function createWorkspaceCreateFileTool(
           message: `The target changed since the proposal: ${revalidated.message}`,
         };
       }
+      let checkpoint: FileCheckpoint;
+      try {
+        checkpoint = await store.prepare(
+          {
+            relativePath: payload.workspaceRelativePath,
+            operation: "create",
+            toolName: "workspace.create_file",
+            before: { exists: false, sha256: null, byteLength: null, bytes: null },
+            after: {
+              exists: true,
+              sha256: payload.afterSha256,
+              byteLength: payload.content.length,
+            },
+            preview: { addedLines: payload.addedLines, removedLines: 0 },
+          },
+          context.signal,
+        );
+      } catch (error: unknown) {
+        return {
+          status: "failed",
+          message: `Checkpoint could not be recorded; the mutation was not applied: ${describeError(error)}`,
+        };
+      }
       let handle;
       try {
         handle = await open(payload.absolutePath, "wx");
@@ -160,11 +186,23 @@ export function createWorkspaceCreateFileTool(
       if (verification !== null) {
         return { status: "failed", message: verification };
       }
+      try {
+        await store.finalizeApplied(checkpoint.id, {
+          afterSha256: payload.afterSha256,
+          absent: false,
+        });
+      } catch (error: unknown) {
+        return {
+          status: "failed",
+          message: `The mutation was applied but its checkpoint could not be finalized; recovery state is uncertain: ${describeError(error)}`,
+        };
+      }
       return {
         status: "success",
         output: {
           path: payload.workspaceRelativePath,
           operation: "create",
+          checkpointId: checkpoint.id,
           sha256: payload.afterSha256,
           bytesWritten: payload.content.length,
           addedLines: payload.addedLines,

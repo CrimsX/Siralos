@@ -39,9 +39,15 @@ export async function createFilesystemCheckpointStore(
   let canonicalRoot: string;
   try {
     canonicalWorkspace = await realpath(options.workspaceRoot);
-    canonicalRoot = await realpath(options.rootDirectory ?? DEFAULT_CHECKPOINT_ROOT);
   } catch (error: unknown) {
     throw new Error(`Checkpoint store paths cannot be resolved: ${describeError(error)}`);
+  }
+  const requestedRoot = options.rootDirectory ?? DEFAULT_CHECKPOINT_ROOT;
+  try {
+    canonicalRoot = await realpath(requestedRoot);
+  } catch {
+    await mkdir(requestedRoot, { recursive: true, mode: 0o700 });
+    canonicalRoot = await realpath(requestedRoot);
   }
   if (isInside(canonicalWorkspace, canonicalRoot) || canonicalRoot === canonicalWorkspace) {
     throw new Error("The checkpoint store must not resolve inside the active workspace.");

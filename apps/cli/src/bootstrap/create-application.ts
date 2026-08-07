@@ -1,16 +1,19 @@
 import {
+  createAnthropicSandboxRuntimeBackend,
   createDeterministicFakeProvider,
+  createFilesystemCheckpointStore,
+  createMutationLock,
+  createWorkspaceCreateFileTool,
+  createWorkspaceDeleteFileTool,
+  createWorkspaceEditFileTool,
   createWorkspaceListTool,
   createWorkspaceReadTool,
   createWorkspaceSearchTool,
-  createWorkspaceCreateFileTool,
-  createWorkspaceEditFileTool,
-  createWorkspaceDeleteFileTool,
   getDefaultUserConfigPath,
   getSandboxDirectories,
   loadUserConfig,
+  reconcileWorkspaceCheckpoints,
   resolveWorkspaceRoot,
-  createAnthropicSandboxRuntimeBackend,
 } from "@solaris/adapters";
 import {
   createDefaultPolicy,
@@ -19,12 +22,12 @@ import {
   createToolRegistry,
   getBuiltInProfile,
   type ApprovalReviewer,
+  type CheckpointStore,
   type RegisteredToolInfo,
   type SandboxBackend,
   type SolarisApplication,
   type SolarisSecurity,
 } from "@solaris/core";
-import { createMutationLock } from "@solaris/adapters";
 
 export interface CreateCliApplicationOptions {
   readonly reviewer?: ApprovalReviewer;
@@ -37,6 +40,7 @@ export interface CliApplication {
   readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
   readonly sandbox: SandboxBackend;
+  readonly checkpoints: CheckpointStore;
 }
 
 export async function createCliApplication(
@@ -54,13 +58,15 @@ export async function createCliApplication(
   });
   const security = createSolarisSecurity({ backend: sandbox, policy, profile });
   const mutationLock = createMutationLock();
+  const checkpoints = await createFilesystemCheckpointStore({ workspaceRoot });
+  await reconcileWorkspaceCheckpoints({ workspaceRoot, store: checkpoints });
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
     createWorkspaceReadTool(workspaceRoot),
     createWorkspaceSearchTool(workspaceRoot),
-    createWorkspaceCreateFileTool(workspaceRoot, mutationLock),
-    createWorkspaceEditFileTool(workspaceRoot, mutationLock),
-    createWorkspaceDeleteFileTool(workspaceRoot, mutationLock),
+    createWorkspaceCreateFileTool(workspaceRoot, mutationLock, checkpoints),
+    createWorkspaceEditFileTool(workspaceRoot, mutationLock, checkpoints),
+    createWorkspaceDeleteFileTool(workspaceRoot, mutationLock, checkpoints),
   ];
   const registry = createToolRegistry(workspaceTools);
   const provider = createDeterministicFakeProvider();
@@ -78,5 +84,6 @@ export async function createCliApplication(
     tools: registry.definitions(),
     security,
     sandbox,
+    checkpoints,
   };
 }

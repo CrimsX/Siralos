@@ -8,12 +8,15 @@ import {
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   type ApprovalReviewer,
+  type CheckpointStore,
 } from "@solaris/core";
 import { createWorkspaceCreateFileTool } from "./workspace-create-file-tool.js";
 import { createMutationLock } from "./mutation-lock.js";
 import { WORKSPACE_LIMITS } from "../limits.js";
 import {
+  cleanupTempCheckpointDirs,
   createSymlink,
+  createTempCheckpointStore,
   createTempWorkspace,
   expectSuccess,
   SYMLINKS_SUPPORTED,
@@ -29,13 +32,21 @@ async function withWorkspace(): Promise<TempWorkspace> {
   return workspace;
 }
 
-function createTool(workspaceRoot: string) {
-  return createWorkspaceCreateFileTool(workspaceRoot, createMutationLock());
+async function createTool(
+  workspaceRoot: string,
+  storeOptions: { maxCheckpoints?: number; maxStorageBytes?: number } = {},
+): Promise<{ tool: ReturnType<typeof createWorkspaceCreateFileTool>; store: CheckpointStore }> {
+  const store = await createTempCheckpointStore(workspaceRoot, storeOptions);
+  return {
+    tool: createWorkspaceCreateFileTool(workspaceRoot, createMutationLock(), store),
+    store,
+  };
 }
 
 const CONTENT = "Created by the deterministic Solaris test provider.\n";
 
 afterEach(async () => {
+  await cleanupTempCheckpointDirs();
   for (const workspace of workspaces.splice(0)) {
     await workspace.cleanup();
   }
@@ -44,7 +55,7 @@ afterEach(async () => {
 describe("workspace.create_file", () => {
   it("prepares a complete creation preview", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
@@ -63,7 +74,7 @@ describe("workspace.create_file", () => {
 
   it("creates the file after apply with verified bytes and hash", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
@@ -82,7 +93,7 @@ describe("workspace.create_file", () => {
 
   it("cannot be applied twice", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
@@ -96,8 +107,8 @@ describe("workspace.create_file", () => {
 
   it("rejects a prepared mutation from another tool", async () => {
     const workspace = await withWorkspace();
-    const toolA = createTool(workspace.root);
-    const toolB = createTool(workspace.root);
+    const { tool: toolA } = await createTool(workspace.root);
+    const { tool: toolB } = await createTool(workspace.root);
     const prepared = await toolA.prepare({ path: "new.txt", content: CONTENT }, {});
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
@@ -110,14 +121,14 @@ describe("workspace.create_file", () => {
   it("returns conflict when the target already exists", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "new.txt": "existing\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
     expect(prepared).toMatchObject({ status: "conflict" });
   });
 
   it("returns conflict when the target appears before apply", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
@@ -132,14 +143,14 @@ describe("workspace.create_file", () => {
 
   it("rejects a missing parent directory", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "missing/new.txt", content: CONTENT }, {});
     expect(prepared).toMatchObject({ status: "denied" });
   });
 
   it("rejects protected targets", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     for (const target of [".env", ".git/config", ".solaris/state.json", "cert.pem", "id.key"]) {
       const prepared = await tool.prepare({ path: target, content: CONTENT }, {});
       expect(prepared, target).toMatchObject({ status: "denied" });
@@ -151,14 +162,14 @@ describe("workspace.create_file", () => {
     const outside = await createTempWorkspace();
     workspaces.push(outside);
     await createSymlink(outside.root, path.join(workspace.root, "link-dir"));
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "link-dir/new.txt", content: CONTENT }, {});
     expect(prepared).toMatchObject({ status: "denied" });
   });
 
   it("rejects oversized content", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const huge = "x".repeat(WORKSPACE_LIMITS.maxCreatedContentBytes + 1);
     const prepared = await tool.prepare({ path: "huge.txt", content: huge }, {});
     expect(prepared).toMatchObject({ status: "invalid_input" });
@@ -166,14 +177,14 @@ describe("workspace.create_file", () => {
 
   it("rejects binary content with null bytes", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "bin.txt", content: "a\0b" }, {});
     expect(prepared).toMatchObject({ status: "invalid_input" });
   });
 
   it("rejects empty content", async () => {
     const workspace = await withWorkspace();
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "empty.txt", content: "" }, {});
     expect(prepared).toMatchObject({ status: "invalid_input" });
   });
@@ -181,7 +192,7 @@ describe("workspace.create_file", () => {
   it("creates files in nested existing directories", async () => {
     const workspace = await withWorkspace();
     await mkdir(path.join(workspace.root, "docs", "deep"), { recursive: true });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await tool.prepare({ path: "docs/deep/note.md", content: "# Note\n" }, {});
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
@@ -189,6 +200,43 @@ describe("workspace.create_file", () => {
     }
     const result = await tool.apply(prepared.mutation, {});
     expect(result.status).toBe("success");
+  });
+
+  it("records an applied checkpoint before the mutation and returns its id", async () => {
+    const workspace = await withWorkspace();
+    const { tool, store } = await createTool(workspace.root);
+    const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, {});
+    const output = expectSuccess(result);
+    expect(typeof output["checkpointId"]).toBe("string");
+    const checkpoints = await store.list();
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]).toMatchObject({
+      operation: "create",
+      state: "applied",
+      relativePath: "new.txt",
+    });
+    expect(checkpoints[0]?.before.exists).toBe(false);
+  });
+
+  it("does not mutate when checkpoint recording fails", async () => {
+    const workspace = await withWorkspace();
+    const { tool } = await createTool(workspace.root, { maxCheckpoints: 0 });
+    const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, {});
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.message).toContain("Checkpoint could not be recorded");
+    }
+    await expect(readFile(path.join(workspace.root, "new.txt"))).rejects.toThrow();
   });
 });
 
@@ -223,7 +271,7 @@ describe("workspace.create_file through the application", () => {
           await Promise.resolve();
         },
       },
-      tools: createToolRegistry([createTool(workspace.root)]),
+      tools: createToolRegistry([(await createTool(workspace.root)).tool]),
       policy: createDefaultPolicy("develop-offline"),
       profile: DEVELOP_OFFLINE_PROFILE,
       reviewer: createReviewer("deny"),
@@ -254,7 +302,7 @@ describe("workspace.create_file through the application", () => {
           await Promise.resolve();
         },
       },
-      tools: createToolRegistry([createTool(workspace.root)]),
+      tools: createToolRegistry([(await createTool(workspace.root)).tool]),
       policy: createDefaultPolicy("develop-offline"),
       profile: DEVELOP_OFFLINE_PROFILE,
       reviewer: createReviewer("approve"),
@@ -287,7 +335,7 @@ describe("workspace.create_file through the application", () => {
           await Promise.resolve();
         },
       },
-      tools: createToolRegistry([createTool(workspace.root)]),
+      tools: createToolRegistry([(await createTool(workspace.root)).tool]),
       policy: createDefaultPolicy("develop-offline"),
       profile: DEVELOP_OFFLINE_PROFILE,
       reviewer: {

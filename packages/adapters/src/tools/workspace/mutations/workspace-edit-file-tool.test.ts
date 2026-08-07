@@ -7,7 +7,9 @@ import { createWorkspaceEditFileTool } from "./workspace-edit-file-tool.js";
 import { createMutationLock } from "./mutation-lock.js";
 import { WORKSPACE_LIMITS } from "../limits.js";
 import {
+  cleanupTempCheckpointDirs,
   createSymlink,
+  createTempCheckpointStore,
   createTempWorkspace,
   expectSuccess,
   SYMLINKS_SUPPORTED,
@@ -23,8 +25,9 @@ async function withWorkspace(): Promise<TempWorkspace> {
   return workspace;
 }
 
-function createTool(workspaceRoot: string) {
-  return createWorkspaceEditFileTool(workspaceRoot, createMutationLock());
+async function createTool(workspaceRoot: string) {
+  const store = await createTempCheckpointStore(workspaceRoot);
+  return { tool: createWorkspaceEditFileTool(workspaceRoot, createMutationLock(), store), store };
 }
 
 async function hashOf(absolutePath: string): Promise<string> {
@@ -33,7 +36,7 @@ async function hashOf(absolutePath: string): Promise<string> {
 }
 
 async function prepareEdit(
-  tool: ReturnType<typeof createTool>,
+  tool: ReturnType<typeof createWorkspaceEditFileTool>,
   filePath: string,
   hash: string,
   replacements: readonly { oldText: string; newText: string }[],
@@ -42,6 +45,7 @@ async function prepareEdit(
 }
 
 afterEach(async () => {
+  await cleanupTempCheckpointDirs();
   for (const workspace of workspaces.splice(0)) {
     await workspace.cleanup();
   }
@@ -51,7 +55,7 @@ describe("workspace.edit_file", () => {
   it("applies one exact replacement", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "Created text here\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [
       { oldText: "Created", newText: "Updated" },
@@ -71,7 +75,7 @@ describe("workspace.edit_file", () => {
   it("applies several sequential replacements", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "one two three\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [
       { oldText: "one", newText: "1" },
@@ -91,7 +95,7 @@ describe("workspace.edit_file", () => {
   it("produces a complete update preview", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "old line\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [{ oldText: "old", newText: "new" }]);
     expect(prepared.status).toBe("ready");
@@ -112,7 +116,7 @@ describe("workspace.edit_file", () => {
   it("fails with zero matches", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "hello\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [{ oldText: "missing", newText: "x" }]);
     expect(prepared).toMatchObject({
@@ -126,7 +130,7 @@ describe("workspace.edit_file", () => {
   it("fails with multiple matches", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "dup\ndup\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [{ oldText: "dup", newText: "x" }]);
     expect(prepared).toMatchObject({
@@ -140,7 +144,7 @@ describe("workspace.edit_file", () => {
   it("rejects empty oldText", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "hello\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await prepareEdit(tool, "a.txt", "a".repeat(64), [
       { oldText: "", newText: "x" },
     ]);
@@ -150,7 +154,7 @@ describe("workspace.edit_file", () => {
   it("rejects a no-op result", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "same\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [{ oldText: "same", newText: "same" }]);
     expect(prepared).toMatchObject({
@@ -164,7 +168,7 @@ describe("workspace.edit_file", () => {
   it("rejects protected files", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { ".env": "KEY=value\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await prepareEdit(tool, ".env", "a".repeat(64), [
       { oldText: "KEY", newText: "SECRET" },
     ]);
@@ -178,7 +182,7 @@ describe("workspace.edit_file", () => {
       path.join(workspace.root, "real.txt"),
       path.join(workspace.root, "link.txt"),
     );
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await prepareEdit(tool, "link.txt", "a".repeat(64), [
       { oldText: "hello", newText: "bye" },
     ]);
@@ -188,7 +192,7 @@ describe("workspace.edit_file", () => {
   it("rejects binary files", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "bin.dat": Buffer.from([0x00, 0x01, 0x02]) });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "bin.dat"));
     const prepared = await prepareEdit(tool, "bin.dat", hash, [{ oldText: "a", newText: "b" }]);
     expect(prepared).toMatchObject({
@@ -204,7 +208,7 @@ describe("workspace.edit_file", () => {
     await writeFixtureFiles(workspace.root, {
       "big.txt": Buffer.alloc(WORKSPACE_LIMITS.maxTextFileSizeBytes + 1, 0x61),
     });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "big.txt"));
     const prepared = await prepareEdit(tool, "big.txt", hash, [{ oldText: "a", newText: "b" }]);
     expect(prepared).toMatchObject({
@@ -218,7 +222,7 @@ describe("workspace.edit_file", () => {
   it("conflicts on a stale hash during preparation", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const prepared = await prepareEdit(tool, "a.txt", "f".repeat(64), [
       { oldText: "original", newText: "changed" },
     ]);
@@ -233,7 +237,7 @@ describe("workspace.edit_file", () => {
   it("conflicts when the file changes after approval", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [
       { oldText: "original", newText: "changed" },
@@ -252,7 +256,7 @@ describe("workspace.edit_file", () => {
   it("conflicts when the file disappears after approval", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [
       { oldText: "original", newText: "changed" },
@@ -273,7 +277,7 @@ describe("workspace.edit_file", () => {
     async () => {
       const workspace = await withWorkspace();
       await writeFixtureFiles(workspace.root, { "a.txt": "original\n", "other.txt": "other\n" });
-      const tool = createTool(workspace.root);
+      const { tool } = await createTool(workspace.root);
       const hash = await hashOf(path.join(workspace.root, "a.txt"));
       const prepared = await prepareEdit(tool, "a.txt", hash, [
         { oldText: "original", newText: "changed" },
@@ -296,7 +300,7 @@ describe("workspace.edit_file", () => {
   it("verifies the final hash and leaves no temporary files", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [
       { oldText: "original", newText: "changed" },
@@ -314,7 +318,7 @@ describe("workspace.edit_file", () => {
   it("cannot be applied twice", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const hash = await hashOf(path.join(workspace.root, "a.txt"));
     const prepared = await prepareEdit(tool, "a.txt", hash, [
       { oldText: "original", newText: "changed" },
@@ -330,7 +334,7 @@ describe("workspace.edit_file", () => {
   it("rejects replacements beyond the limit", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "x\n" });
-    const tool = createTool(workspace.root);
+    const { tool } = await createTool(workspace.root);
     const replacements = Array.from({ length: WORKSPACE_LIMITS.maxReplacements + 1 }, () => ({
       oldText: "x",
       newText: "y",

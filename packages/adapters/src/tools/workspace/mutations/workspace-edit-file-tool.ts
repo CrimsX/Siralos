@@ -2,6 +2,8 @@ import { open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   ChangePreview,
+  CheckpointStore,
+  FileCheckpoint,
   PreparedMutation,
   PreparedMutationTool,
   ToolExecutionContext,
@@ -119,6 +121,7 @@ function parseEditInput(input: unknown): ParsedValue<EditInput> {
 export function createWorkspaceEditFileTool(
   workspaceRoot: string,
   lock: MutationLock,
+  store: CheckpointStore,
 ): PreparedMutationTool {
   const payloads = new WeakMap<PreparedMutation, EditPayload>();
 
@@ -249,6 +252,34 @@ export function createWorkspaceEditFileTool(
       if (context.signal?.aborted) {
         return { status: "cancelled", message: "The mutation was cancelled before writing." };
       }
+      let checkpoint: FileCheckpoint;
+      try {
+        checkpoint = await store.prepare(
+          {
+            relativePath: payload.workspaceRelativePath,
+            operation: "update",
+            toolName: "workspace.edit_file",
+            before: {
+              exists: true,
+              sha256: payload.expectedSha256,
+              byteLength: payload.originalBytes.length,
+              bytes: new Uint8Array(payload.originalBytes),
+            },
+            after: {
+              exists: true,
+              sha256: payload.afterSha256,
+              byteLength: payload.newContent.length,
+            },
+            preview: { addedLines: payload.addedLines, removedLines: payload.removedLines },
+          },
+          context.signal,
+        );
+      } catch (error: unknown) {
+        return {
+          status: "failed",
+          message: `Checkpoint could not be recorded; the mutation was not applied: ${describeError(error)}`,
+        };
+      }
       tempPath = createMutationTempPath(dirname(payload.absolutePath));
       try {
         const handle = await open(tempPath, "wx");
@@ -283,11 +314,23 @@ export function createWorkspaceEditFileTool(
       if (verification !== null) {
         return { status: "failed", message: verification };
       }
+      try {
+        await store.finalizeApplied(checkpoint.id, {
+          afterSha256: payload.afterSha256,
+          absent: false,
+        });
+      } catch (error: unknown) {
+        return {
+          status: "failed",
+          message: `The mutation was applied but its checkpoint could not be finalized; recovery state is uncertain: ${describeError(error)}`,
+        };
+      }
       return {
         status: "success",
         output: {
           path: payload.workspaceRelativePath,
           operation: "update",
+          checkpointId: checkpoint.id,
           beforeSha256: payload.expectedSha256,
           afterSha256: payload.afterSha256,
           addedLines: payload.addedLines,
