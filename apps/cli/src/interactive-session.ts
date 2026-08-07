@@ -1,7 +1,10 @@
 import type {
   CheckpointStore,
+  CommandRunnerRegistry,
   GitInspector,
   RegisteredToolInfo,
+  SandboxBackend,
+  SandboxBackendStatus,
   SolarisApplication,
   SolarisSecurity,
   UndoService,
@@ -11,11 +14,17 @@ import { parseInput } from "./input/parse-input.js";
 import type { StatusView } from "./output.js";
 import {
   describeError,
+  formatCancelReport,
   formatCheckpoints,
+  formatCommandCompleted,
+  formatCommandStarted,
+  formatCommandTerminal,
+  formatCommands,
   formatGitDiff,
   formatGitStatus,
   formatHelp,
   formatInvalidCommand,
+  formatNoActiveCommand,
   formatPermissions,
   formatProviderFailure,
   formatSandbox,
@@ -28,6 +37,7 @@ import {
   formatToolStarted,
   formatUndoOutcome,
   sanitizeForDisplay,
+  type CommandsView,
 } from "./output.js";
 
 export interface SessionIO {
@@ -43,24 +53,63 @@ export interface SessionInfo {
   readonly git: GitInspector;
   readonly checkpoints: CheckpointStore;
   readonly undo: UndoService;
+  readonly runners: CommandRunnerRegistry;
+  readonly sandbox: SandboxBackend;
 }
 
 const PROMPT = "> ";
+
+export interface SessionControls {
+  beginPrompt(): AbortController;
+  endPrompt(): void;
+  /** Abort the active prompt (command, approval, or response). */
+  cancelActivePrompt(): boolean;
+}
+
+export function createSessionControls(): SessionControls {
+  let controller: AbortController | undefined;
+  return {
+    beginPrompt(): AbortController {
+      controller = new AbortController();
+      return controller;
+    },
+    endPrompt(): void {
+      controller = undefined;
+    },
+    cancelActivePrompt(): boolean {
+      if (controller === undefined) {
+        return false;
+      }
+      if (!controller.signal.aborted) {
+        controller.abort();
+      }
+      return true;
+    },
+  };
+}
 
 export async function runInteractiveSession(
   io: SessionIO,
   application: SolarisApplication,
   sessionInfo: SessionInfo,
+  controls: SessionControls = createSessionControls(),
 ): Promise<number> {
+  const inputBuffer: string[] = [];
+  const nextInput = async (prompt: string): Promise<string | null> => {
+    if (inputBuffer.length > 0) {
+      return inputBuffer.shift() as string;
+    }
+    return io.ask(prompt);
+  };
   for (;;) {
-    const input = await io.ask(PROMPT);
+    const input = await nextInput(PROMPT);
     if (input === null) {
       return 0;
     }
     const parsed = parseInput(input);
     switch (parsed.type) {
       case "prompt":
-        await runPrompt(io, application, parsed.text);
+        await runPrompt(io, application, parsed.text, controls, inputBuffer);
         break;
       case "command":
         switch (parsed.command) {
@@ -96,6 +145,12 @@ export async function runInteractiveSession(
           case "undo":
             await runUndoCommand(io, sessionInfo, parsed.args);
             break;
+          case "commands":
+            await runCommandsCommand(io, application, sessionInfo);
+            break;
+          case "cancel":
+            io.write(formatNoActiveCommand());
+            break;
           case "exit":
             return 0;
         }
@@ -109,6 +164,31 @@ export async function runInteractiveSession(
   }
 }
 
+async function runCommandsCommand(
+  io: SessionIO,
+  application: SolarisApplication,
+  sessionInfo: SessionInfo,
+): Promise<void> {
+  const availability: Record<string, boolean> = {};
+  for (const runner of sessionInfo.runners.definitions) {
+    const instance = sessionInfo.runners.get(runner.id);
+    availability[runner.id] = (await instance?.isAvailable().catch(() => false)) ?? false;
+  }
+  const backendStatus: SandboxBackendStatus | null = await sessionInfo.sandbox
+    .inspect()
+    .catch(() => null);
+  const decision = sessionInfo.security.evaluateCapability("process.execute");
+  const view: CommandsView = {
+    runners: sessionInfo.runners.definitions,
+    runnerAvailability: availability,
+    backendStatus,
+    processDecision: decision.decision === "deny" ? "denied" : "approval required",
+    activeCommandId: application.getStatus().activeCommandId,
+    history: application.getCommandHistory(),
+  };
+  io.write(formatCommands(view));
+}
+
 async function buildStatusView(
   application: SolarisApplication,
   sessionInfo: SessionInfo,
@@ -120,6 +200,7 @@ async function buildStatusView(
       : null;
   const checkpoints = await sessionInfo.checkpoints.list().catch(() => []);
   const latestApplied = checkpoints.find((checkpoint) => checkpoint.state === "applied");
+  const processDecision = sessionInfo.security.evaluateCapability("process.execute");
   return {
     status: application.getStatus(),
     workspaceRoot: sessionInfo.workspaceRoot,
@@ -144,6 +225,16 @@ async function buildStatusView(
     latestCheckpoint: latestApplied === undefined ? null : shortenId(latestApplied.id),
     uncertainCheckpointCount: checkpoints.filter((checkpoint) => checkpoint.state === "uncertain")
       .length,
+    processPermission:
+      processDecision.decision === "deny"
+        ? "denied"
+        : processDecision.decision === "ask"
+          ? "approval required"
+          : "allowed",
+    runnerCount: sessionInfo.runners.definitions.length,
+    activeCommandId: application.getStatus().activeCommandId,
+    lastCommandExitCode: application.getLastCommandExitCode(),
+    commandProfile: "validation-offline",
   };
 }
 
@@ -221,9 +312,16 @@ async function runPrompt(
   io: SessionIO,
   application: SolarisApplication,
   text: string,
+  controls: SessionControls,
+  inputBuffer: string[],
 ): Promise<void> {
+  const controller = controls.beginPrompt();
+  let busy: Promise<void> | undefined;
+  let busyStarted = false;
+  let promptFinished = false;
+  let commandRenderer: CommandOutputRenderer | undefined;
   try {
-    for await (const event of application.sendPrompt(text)) {
+    for await (const event of application.sendPrompt(text, controller.signal)) {
       switch (event.type) {
         case "response_started":
           io.write("\n");
@@ -241,22 +339,34 @@ async function runPrompt(
           io.write(`\n${formatProviderFailure(event.message)}`);
           break;
         case "tool_started":
-          io.write(formatToolStarted(event.toolName, sanitizeForDisplay(event.displayInput)));
+          if (!isCommandTool(event.toolName)) {
+            io.write(formatToolStarted(event.toolName, sanitizeForDisplay(event.displayInput)));
+          }
           break;
         case "tool_completed":
-          io.write(formatToolCompleted(sanitizeForDisplay(event.summary)));
+          if (!isCommandTool(event.toolName)) {
+            io.write(formatToolCompleted(sanitizeForDisplay(event.summary)));
+          }
           break;
         case "tool_failed":
-          io.write(formatToolFailed(sanitizeForDisplay(event.message)));
+          if (!isCommandTool(event.toolName)) {
+            io.write(formatToolFailed(sanitizeForDisplay(event.message)));
+          }
           break;
         case "tool_cancelled":
-          io.write(formatToolCancelled());
+          if (!isCommandTool(event.toolName)) {
+            io.write(formatToolCancelled());
+          }
           break;
         case "tool_awaiting_approval":
-          io.write(`  \u23F3 ${event.toolName} awaiting approval\n`);
+          if (!isCommandTool(event.toolName)) {
+            io.write(`  \u23F3 ${event.toolName} awaiting approval\n`);
+          }
           break;
         case "approval_requested":
-          io.write(`\nApproval required for ${event.toolName} (${event.summary})\n`);
+          if (event.capability !== "process.execute") {
+            io.write(`\nApproval required for ${event.toolName} (${event.summary})\n`);
+          }
           break;
         case "approval_resolved":
           io.write(
@@ -266,9 +376,121 @@ async function runPrompt(
         case "checkpoint_applied":
           io.write(`\u25CF Checkpoint ${event.checkpointId} recorded (${event.path})\n`);
           break;
+        case "command_prepared":
+          break;
+        case "command_started":
+          if (!busyStarted) {
+            busyStarted = true;
+            busy = runBusyInput(io, controller, inputBuffer, () => promptFinished);
+          }
+          io.write(formatCommandStarted(event.displayName, event.digestPrefix));
+          commandRenderer = createCommandOutputRenderer((text) => io.write(text));
+          break;
+        case "command_stdout":
+          commandRenderer?.stdout(event.text);
+          break;
+        case "command_stderr":
+          commandRenderer?.stderr(event.text);
+          break;
+        case "command_completed":
+          commandRenderer?.flush();
+          commandRenderer = undefined;
+          io.write(formatCommandCompleted(event.exitCode, event.durationMs));
+          break;
+        case "command_denied":
+        case "command_conflict":
+        case "command_cancelled":
+        case "command_timed_out":
+        case "command_failed":
+          commandRenderer?.flush();
+          commandRenderer = undefined;
+          io.write(formatCommandTerminal(event.type, event.message));
+          break;
       }
     }
   } catch (error: unknown) {
     io.write(`\n${formatProviderFailure(describeError(error))}`);
+  } finally {
+    promptFinished = true;
+    if (busyStarted) {
+      io.write(PROMPT);
+    }
+    await busy;
+    controls.endPrompt();
   }
+}
+
+function isCommandTool(toolName: string): boolean {
+  return toolName === "process.run";
+}
+
+/**
+ * While a provider-accessible command runs, keep reading the terminal so
+ * `/cancel` and Ctrl+C work. Type-ahead input is buffered and replayed after
+ * the command completes; the final line read after completion is preserved so
+ * no user input is ever lost.
+ */
+async function runBusyInput(
+  io: SessionIO,
+  controller: AbortController,
+  inputBuffer: string[],
+  isDone: () => boolean,
+): Promise<void> {
+  for (;;) {
+    const line = await io.ask("");
+    if (line === null) {
+      controller.abort();
+      return;
+    }
+    if (line.trim() === "/cancel" && !controller.signal.aborted) {
+      controller.abort();
+      io.write(formatCancelReport());
+      return;
+    }
+    inputBuffer.push(line);
+    if (isDone()) {
+      return;
+    }
+  }
+}
+
+interface CommandOutputRenderer {
+  stdout(text: string): void;
+  stderr(text: string): void;
+  flush(): void;
+}
+
+function createCommandOutputRenderer(write: (text: string) => void): CommandOutputRenderer {
+  let partial: { readonly stream: "stdout" | "stderr"; readonly text: string } | null = null;
+  const writeLine = (stream: "stdout" | "stderr", line: string): void => {
+    write(`  [${stream}] ${sanitizeForDisplay(line)}\n`);
+  };
+  const emit = (stream: "stdout" | "stderr", text: string): void => {
+    const segments = text.split("\n");
+    if (partial !== null) {
+      segments[0] = partial.text + (segments[0] ?? "");
+      partial = null;
+    }
+    const last = segments[segments.length - 1] ?? "";
+    if (last.length > 0) {
+      partial = { stream, text: last };
+    }
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      writeLine(stream, segments[index] ?? "");
+    }
+  };
+  return {
+    stdout(text: string): void {
+      emit("stdout", text);
+    },
+    stderr(text: string): void {
+      emit("stderr", text);
+    },
+    flush(): void {
+      if (partial !== null) {
+        writeLine(partial.stream, partial.text);
+        partial = null;
+      }
+    },
+  };
 }

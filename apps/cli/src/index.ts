@@ -5,7 +5,13 @@ import { stdin, stdout } from "node:process";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
-import { runInteractiveSession, type SessionIO, type SessionInfo } from "./interactive-session.js";
+import {
+  createSessionControls,
+  runInteractiveSession,
+  type SessionControls,
+  type SessionIO,
+  type SessionInfo,
+} from "./interactive-session.js";
 import { describeError, formatDoctor, formatHeader } from "./output.js";
 
 async function main(): Promise<number> {
@@ -16,8 +22,14 @@ async function main(): Promise<number> {
     return 0;
   }
   const readline = createInterface({ input: stdin, output: stdout });
+  const controls: SessionControls = createSessionControls();
   readline.on("SIGINT", () => {
-    readline.close();
+    const cancelled = controls.cancelActivePrompt();
+    if (!cancelled) {
+      readline.close();
+      return;
+    }
+    stdout.write("\n[cancelled; Solaris stays active]\n");
   });
   const lines = readline[Symbol.asyncIterator]();
   const io: SessionIO = {
@@ -44,10 +56,20 @@ async function main(): Promise<number> {
     checkpoints,
     git,
     undo,
+    runners,
   } = await createCliApplication({ reviewer });
   stdout.write(formatHeader(providerId));
-  const sessionInfo: SessionInfo = { workspaceRoot, tools, security, git, checkpoints, undo };
-  const exitCode = await runInteractiveSession(io, application, sessionInfo);
+  const sessionInfo: SessionInfo = {
+    workspaceRoot,
+    tools,
+    security,
+    git,
+    checkpoints,
+    undo,
+    runners,
+    sandbox,
+  };
+  const exitCode = await runInteractiveSession(io, application, sessionInfo, controls);
   readline.close();
   stdin.destroy();
   await sandbox.close();

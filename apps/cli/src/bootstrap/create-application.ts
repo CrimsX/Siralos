@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   createAnthropicSandboxRuntimeBackend,
   createDeterministicFakeProvider,
@@ -6,6 +8,11 @@ import {
   createGitDiffTool,
   createGitStatusTool,
   createMutationLock,
+  createNpmScriptRunner,
+  createNodeScriptRunner,
+  createProcessRunTool,
+  createRunDirectoryProvider,
+  createSha256CommandDigestService,
   createUndoService,
   createWorkspaceCreateFileTool,
   createWorkspaceDeleteFileTool,
@@ -20,13 +27,16 @@ import {
   resolveWorkspaceRoot,
 } from "@solaris/adapters";
 import {
+  createCommandRunnerRegistry,
   createDefaultPolicy,
   createSolarisApplication,
   createSolarisSecurity,
   createToolRegistry,
   getBuiltInProfile,
+  VALIDATION_OFFLINE_PROFILE,
   type ApprovalReviewer,
   type CheckpointStore,
+  type CommandRunnerRegistry,
   type GitInspector,
   type RegisteredToolInfo,
   type SandboxBackend,
@@ -49,6 +59,7 @@ export interface CliApplication {
   readonly checkpoints: CheckpointStore;
   readonly git: GitInspector;
   readonly undo: UndoService;
+  readonly runners: CommandRunnerRegistry;
 }
 
 export async function createCliApplication(
@@ -59,10 +70,12 @@ export async function createCliApplication(
   const policy = createDefaultPolicy(config.sandbox.profile);
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const sandboxDirectories = getSandboxDirectories();
+  const runsRoot = join(homedir(), ".solaris", "runs");
   const sandbox = createAnthropicSandboxRuntimeBackend({
     workspaceRoot,
     sandboxHome: sandboxDirectories.home,
     sandboxTemp: sandboxDirectories.temp,
+    runRoot: runsRoot,
   });
   const security = createSolarisSecurity({ backend: sandbox, policy, profile });
   const mutationLock = createMutationLock();
@@ -83,6 +96,21 @@ export async function createCliApplication(
     lock: mutationLock,
     reviewer,
   });
+  const digest = createSha256CommandDigestService();
+  const runners = createCommandRunnerRegistry([
+    createNpmScriptRunner({ digest }),
+    createNodeScriptRunner({ digest }),
+  ]);
+  const processTool = createProcessRunTool({
+    workspaceRoot,
+    runners,
+    backend: sandbox,
+    runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
+    lock: mutationLock,
+    git,
+    executionProfile: VALIDATION_OFFLINE_PROFILE,
+    executionPolicy: createDefaultPolicy("validation-offline"),
+  });
   const sandboxAvailable = (await sandbox.inspect()).state === "available";
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
@@ -91,6 +119,7 @@ export async function createCliApplication(
     createWorkspaceCreateFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceEditFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceDeleteFileTool(workspaceRoot, mutationLock, checkpoints),
+    processTool,
   ];
   if (sandboxAvailable) {
     workspaceTools.push(createGitStatusTool(git));
@@ -115,5 +144,6 @@ export async function createCliApplication(
     checkpoints,
     git,
     undo,
+    runners,
   };
 }

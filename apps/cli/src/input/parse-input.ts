@@ -9,6 +9,8 @@ export type SlashCommand =
   | "diff"
   | "checkpoints"
   | "undo"
+  | "commands"
+  | "cancel"
   | "exit";
 
 export type ParsedInput =
@@ -40,6 +42,8 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "diff",
   "checkpoints",
   "undo",
+  "commands",
+  "cancel",
   "exit",
 ];
 

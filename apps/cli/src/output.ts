@@ -2,6 +2,8 @@ import type {
   ApprovalRequest,
   Capability,
   CapabilityPolicy,
+  CommandAuditRecord,
+  CommandRunnerDefinition,
   FileCheckpoint,
   GitDiffResult,
   GitStatusResult,
@@ -14,6 +16,7 @@ import type {
   UndoOutcome,
 } from "@solaris/core";
 import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
+import { COMMAND_LIMITS } from "@solaris/core";
 
 const CAPABILITIES: readonly Capability[] = [
   "workspace.read",
@@ -37,6 +40,8 @@ export function formatHelp(): string {
   /tools        List the available tools
   /sandbox      Show the sandbox backend status
   /permissions  Show capability rules
+  /commands     Show command runners and command status
+  /cancel       Cancel the running command
   /git-status   Show Git availability and repository status
   /diff         Show a bounded Git diff (working, staged, or head)
   /checkpoints  List recorded recovery checkpoints
@@ -56,6 +61,11 @@ export interface StatusView {
   readonly gitDirtyCount: number;
   readonly latestCheckpoint: string | null;
   readonly uncertainCheckpointCount: number;
+  readonly processPermission: string;
+  readonly runnerCount: number;
+  readonly activeCommandId: string | null;
+  readonly lastCommandExitCode: number | null;
+  readonly commandProfile: string;
 }
 
 export function formatStatus(view: StatusView): string {
@@ -76,6 +86,11 @@ Checkpoint: ${view.latestCheckpoint === null ? "none" : view.latestCheckpoint}
 Uncertain checkpoints: ${view.uncertainCheckpointCount}
 Provider tools: ${view.providerToolCount}
 Tools: ${view.toolCount}
+Process execution: ${view.processPermission}
+Command runners: ${view.runnerCount}
+Active command: ${view.activeCommandId ?? "none"}
+Last command exit: ${view.lastCommandExitCode ?? "none"}
+Command profile: ${view.commandProfile}
 `;
 }
 
@@ -88,7 +103,7 @@ export function formatPermissions(policy: CapabilityPolicy, profileId: string): 
 
 ${lines.join("\n")}
 
-No provider-accessible process or write tool exists yet.
+Command execution requires one-time approval per exact command plan.
 `;
 }
 
@@ -405,6 +420,103 @@ Type /help for the list of available commands.
 export function formatProviderFailure(message: string): string {
   return `[error] ${message}
 `;
+}
+
+export interface CommandsView {
+  readonly runners: readonly CommandRunnerDefinition[];
+  readonly runnerAvailability: Readonly<Record<string, boolean>>;
+  readonly backendStatus: SandboxBackendStatus | null;
+  readonly processDecision: string;
+  readonly activeCommandId: string | null;
+  readonly history: readonly CommandAuditRecord[];
+}
+
+export function formatCommands(view: CommandsView): string {
+  const lines = ["RUNNER       STATUS       SECURITY"];
+  for (const runner of view.runners) {
+    const availability = view.runnerAvailability[runner.id] === true ? "available" : "unavailable";
+    lines.push(
+      `${runner.id.padEnd(12)} ${availability.padEnd(12)} approval, read-only workspace, offline`,
+    );
+  }
+  lines.push("");
+  if (view.backendStatus === null) {
+    lines.push("Sandbox: unavailable");
+  } else {
+    lines.push(`Sandbox: ${view.backendStatus.backendId} (${view.backendStatus.state})`);
+  }
+  lines.push(`Process execution: ${view.processDecision}`);
+  lines.push(`Active command: ${view.activeCommandId ?? "none"}`);
+  lines.push(`Default timeout: ${formatTimeoutSeconds(COMMAND_LIMITS.defaultTimeoutMs)}`);
+  lines.push(`stdout limit: ${formatBytes(COMMAND_LIMITS.stdoutHardLimitBytes)}`);
+  lines.push(`stderr limit: ${formatBytes(COMMAND_LIMITS.stderrHardLimitBytes)}`);
+  lines.push("");
+  lines.push("Recent commands:");
+  if (view.history.length === 0) {
+    lines.push("  none");
+  } else {
+    for (const record of view.history.slice(-5)) {
+      const duration =
+        record.durationMs === null ? "unknown duration" : formatDuration(record.durationMs);
+      const exit = record.exitCode === null ? "no exit" : `exit ${record.exitCode}`;
+      lines.push(
+        `  [${shortenCommandId(record.commandId)}] ${record.summary} \u2014 ${record.outcome} (${exit}, ${duration})`,
+      );
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatCommandStarted(displayName: string, digestPrefix: string): string {
+  return `\u25CF ${sanitizeForDisplay(displayName)} (plan ${digestPrefix})
+`;
+}
+
+export function formatCommandCompleted(exitCode: number, durationMs: number): string {
+  return `  \u2713 exit ${exitCode} in ${formatDuration(durationMs)}
+`;
+}
+
+export function formatCommandTerminal(
+  type:
+    | "command_denied"
+    | "command_conflict"
+    | "command_cancelled"
+    | "command_timed_out"
+    | "command_failed",
+  message: string,
+): string {
+  const label =
+    type === "command_denied"
+      ? "denied"
+      : type === "command_conflict"
+        ? "conflict"
+        : type === "command_cancelled"
+          ? "cancelled"
+          : type === "command_timed_out"
+            ? "timed out"
+            : "failed";
+  return `  \u2715 ${label}: ${sanitizeForDisplay(message)}
+`;
+}
+
+export function formatNoActiveCommand(): string {
+  return "  No command is active.\n";
+}
+
+export function formatCancelReport(): string {
+  return "  Command cancelled.\n";
+}
+
+function shortenCommandId(id: string): string {
+  return id.length > 8 ? `${id.slice(0, 8)}\u2026` : id;
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1000) {
+    return `${durationMs}ms`;
+  }
+  return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
 export function formatToolStarted(toolName: string, displayInput: string): string {
