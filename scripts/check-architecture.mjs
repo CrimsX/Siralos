@@ -101,6 +101,24 @@ const APPROVED_MUTATION_DIRECTORIES = [
   join("src", "tools", "workspace", "mutations"),
   join("src", "sandbox", "conformance"),
   join("src", "checkpoints", "filesystem"),
+  join("src", "process"),
+];
+
+/**
+ * Prohibited raw process-execution patterns. `exec` matches the
+ * child_process API only when not preceded by a dot (regex `.exec(...)`
+ * calls are unrelated and allowed).
+ */
+const PROHIBITED_PROCESS_PATTERNS = [
+  { pattern: /shell:\s*true/, label: "shell: true" },
+  { pattern: /execSync\(/, label: "execSync(" },
+  { pattern: /spawnSync\(/, label: "spawnSync(" },
+  { pattern: /(?<!\.)exec\(/, label: "exec(" },
+];
+
+const PROHIBITED_PROCESS_EXEMPTIONS = [
+  // embedded probe fixture sources that exercise prohibited operations
+  join("src", "sandbox", "conformance"),
 ];
 
 function isApprovedWriteApiLocation(packageRelativeFile, file) {
@@ -110,6 +128,10 @@ function isApprovedWriteApiLocation(packageRelativeFile, file) {
   return APPROVED_MUTATION_DIRECTORIES.some((directory) =>
     packageRelativeFile.startsWith(directory + sep),
   );
+}
+
+function containsProhibitedProcessPattern(source) {
+  return PROHIBITED_PROCESS_PATTERNS.some((entry) => entry.pattern.test(source));
 }
 
 export function runChecks(root) {
@@ -144,6 +166,16 @@ export function runChecks(root) {
           errors.push(
             `${location}: Git mutation commands (reset, restore, checkout, clean, stash) are prohibited in runtime code`,
           );
+        }
+        if (containsProhibitedProcessPattern(source)) {
+          const exempt = PROHIBITED_PROCESS_EXEMPTIONS.some((directory) =>
+            packageRelativeFile.startsWith(directory + sep),
+          );
+          if (!isTestSupportFile(file) && !exempt) {
+            errors.push(
+              `${location}: raw process execution (exec, execSync, spawnSync, shell: true) is prohibited outside documented test fixtures`,
+            );
+          }
         }
         for (const specifier of extractImportSpecifiers(source)) {
           if (specifier.startsWith("@anthropic-ai/")) {
@@ -191,10 +223,11 @@ export function runChecks(root) {
                 isUnder(target, join(pkg.path, "src", "sandbox")) ||
                 isUnder(target, join(pkg.path, "src", "environment")) ||
                 isUnder(target, join(pkg.path, "src", "checkpoints")) ||
-                isUnder(target, join(pkg.path, "src", "git"))
+                isUnder(target, join(pkg.path, "src", "git")) ||
+                isUnder(target, join(pkg.path, "src", "process"))
               ) {
                 errors.push(
-                  `${location}: providers must not import sandbox, environment, checkpoint, or git adapters`,
+                  `${location}: providers must not import sandbox, environment, checkpoint, git, or process adapters`,
                 );
               }
             }

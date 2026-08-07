@@ -294,7 +294,9 @@ describe("check-architecture", () => {
     fixture["packages/adapters/src/providers/fake.ts"] =
       'import { loadPreimage } from "../checkpoints/filesystem/checkpoint-store.js";\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(errors.some((error) => error.includes("checkpoint, or git adapters"))).toBe(true);
+    expect(errors.some((error) => error.includes("checkpoint, git, or process adapters"))).toBe(
+      true,
+    );
   });
 
   it("rejects direct file writes outside approved modules", () => {
@@ -303,5 +305,69 @@ describe("check-architecture", () => {
       'import { writeFile } from "node:fs/promises";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(true);
+  });
+
+  it("accepts direct file writes in the process adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/process/run-directories.ts"] =
+      'import { writeFile } from "node:fs/promises";\n' + "export {};\n";
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(false);
+  });
+
+  it("rejects shell: true in runtime code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] = "const options = { shell: true };\n";
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("raw process execution"))).toBe(true);
+  });
+
+  it("rejects execSync and spawnSync in runtime code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'execSync("evil");\nspawnSync("git", []);\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("raw process execution"))).toBe(true);
+  });
+
+  it("rejects child_process exec in runtime code but allows regex .exec", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'exec("evil");\nconst match = /x/.exec("x");\n';
+    const errors = runChecks(writeFixture(fixture));
+    const rawErrors = errors.filter((error) => error.includes("raw process execution"));
+    expect(rawErrors).toHaveLength(1);
+  });
+
+  it("rejects process.run command runners that spawn processes", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/process/runners/npm-script-runner.ts"] =
+      'import { spawn } from "node:child_process";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
+  });
+
+  it("accepts prohibited patterns inside documented conformance fixture sources", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/sandbox/conformance/run-conformance.ts"] =
+      'const fixture = `spawnSync("x", []); exec("y"); shell: true`;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("raw process execution"))).toBe(false);
+  });
+
+  it("accepts prohibited patterns in test support files", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/workspace/workspace-fixtures.ts"] =
+      'spawnSync("git", []);\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("raw process execution"))).toBe(false);
+  });
+
+  it("rejects providers importing process adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { createProcessRunTool } from "../process/process-run-tool.js";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("process adapters"))).toBe(true);
   });
 });
