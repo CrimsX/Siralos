@@ -19,9 +19,11 @@ import {
   type GitWorkspaceStatus,
   type ModelEvent,
   type ModelProvider,
+  type ModelRequest,
   type PreparedCommandTool,
   type SandboxBackend,
   type SandboxBackendStatus,
+  type SolarisApplication,
   type SolarisSecurity,
   type Tool,
   type ToolExecutionResult,
@@ -30,6 +32,7 @@ import {
 } from "@solaris/core";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
+import { createInputQueue, type InputQueue } from "./input/input-queue.js";
 import {
   createSessionControls,
   runInteractiveSession,
@@ -726,6 +729,20 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     expect(io.text).toContain("Last command exit: 0");
     expect(io.text).toContain("Process execution: approval required");
   });
+
+  it("does not let an approval timeout consume the next main-loop command", async () => {
+    const { io, application, sessionInfo, inputQueue, text } = createTimedOutApprovalSession();
+    const exitCode = await runInteractiveSession(
+      io,
+      application,
+      sessionInfo,
+      createSessionControls(),
+      inputQueue,
+    );
+    expect(exitCode).toBe(0);
+    expect(text()).toContain("denied");
+    expect(text()).toContain("Solaris received: hello world");
+  });
 });
 
 function createStubRunner(id: string): CommandRunner {
@@ -818,13 +835,20 @@ function createCommandSession(options: {
   readonly turns: readonly (readonly ModelEvent[])[];
 }) {
   const io = new ScriptedIO(options.lines);
+  const inputQueue = createInputQueue(
+    (prompt) => {
+      io.write(prompt);
+      return io.ask("");
+    },
+    (text) => io.write(text),
+  );
   const provider = createScriptedProvider(options.turns);
   const application = createSolarisApplication({
     provider,
     tools: createToolRegistry([options.tool]),
     policy: createDefaultPolicy("develop-offline"),
     profile: DEVELOP_OFFLINE_PROFILE,
-    reviewer: createInteractiveApprovalReviewer(io, 60_000),
+    reviewer: createInteractiveApprovalReviewer(inputQueue, 60_000),
   });
   const sessionInfo: SessionInfo = buildSessionInfo({
     runners: createCommandRunnerRegistry([]),
@@ -847,7 +871,90 @@ function createCommandSession(options: {
       profile: DEVELOP_OFFLINE_PROFILE,
     }),
   });
-  return { io, application, sessionInfo };
+  return { io, application, sessionInfo, inputQueue };
+}
+
+function createTimedOutApprovalSession(): {
+  io: SessionIO;
+  application: SolarisApplication;
+  sessionInfo: SessionInfo;
+  inputQueue: InputQueue;
+  text: () => string;
+} {
+  const chunks: string[] = [];
+  const timedLines: Array<{ text: string; delayMs: number }> = [
+    { text: "run npm check", delayMs: 0 },
+    { text: "hello world", delayMs: 60 },
+    { text: "/exit", delayMs: 0 },
+  ];
+  let lineIndex = 0;
+  const io: SessionIO = {
+    ask(_prompt: string): Promise<string | null> {
+      const entry = timedLines[lineIndex];
+      lineIndex += 1;
+      if (entry === undefined) {
+        return Promise.resolve(null);
+      }
+      return new Promise<string | null>((resolve) => {
+        setTimeout(() => resolve(entry.text), entry.delayMs);
+      });
+    },
+    write(text: string): void {
+      chunks.push(text);
+    },
+    clear(): void {},
+  };
+  const inputQueue = createInputQueue(
+    (prompt) => {
+      io.write(prompt);
+      return io.ask("");
+    },
+    (text) => io.write(text),
+  );
+  const { tool } = createStubCommandTool();
+  let firstTurn = true;
+  const provider: ModelProvider = {
+    id: "echo-stub",
+    stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+      const generator = {
+        [Symbol.asyncIterator](): AsyncIterableIterator<ModelEvent> {
+          const run = async function* (): AsyncIterableIterator<ModelEvent> {
+            if (firstTurn) {
+              firstTurn = false;
+              yield {
+                type: "tool_call",
+                callId: "c1",
+                toolName: "process.run",
+                input: { runner: "npm-script", script: "check" },
+              };
+              yield { type: "completed" };
+              return;
+            }
+            await Promise.resolve();
+            const lastUser = [...request.messages]
+              .reverse()
+              .find((item) => item.type === "user_message");
+            yield {
+              type: "text_delta",
+              text: `Solaris received: ${lastUser?.content ?? "?"}`,
+            };
+            yield { type: "completed" };
+          };
+          return run();
+        },
+      };
+      return generator;
+    },
+  };
+  const application = createSolarisApplication({
+    provider,
+    tools: createToolRegistry([tool]),
+    policy: createDefaultPolicy("develop-offline"),
+    profile: DEVELOP_OFFLINE_PROFILE,
+    reviewer: createInteractiveApprovalReviewer(inputQueue, 20),
+  });
+  const sessionInfo: SessionInfo = buildSessionInfo();
+  return { io, application, sessionInfo, inputQueue, text: () => chunks.join("") };
 }
 
 function createScriptedProvider(turns: readonly (readonly ModelEvent[])[]): ModelProvider {

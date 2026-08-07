@@ -5,6 +5,7 @@ import { stdin, stdout } from "node:process";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
+import { createInputQueue, type InputQueue } from "./input/input-queue.js";
 import {
   createSessionControls,
   runInteractiveSession,
@@ -37,21 +38,32 @@ async function main(): Promise<number> {
   // command output, tool activity, approval prompts, Git output, checkpoint
   // listings, filenames, and error messages are untrusted input.
   const sanitizer = new TerminalSanitizer();
-  const io: SessionIO = {
-    async ask(prompt: string): Promise<string | null> {
-      stdout.write(sanitizer.push(prompt));
+  // One component owns terminal reads: the queue serializes main-loop,
+  // approval, and busy-command reads and makes them cancellable.
+  const inputQueue: InputQueue = createInputQueue(
+    async (): Promise<string | null> => {
       const result = await lines.next();
       return result.done ? null : result.value;
     },
-    write(text: string): void {
+    (text: string): void => {
       stdout.write(sanitizer.push(text));
+    },
+  );
+  const io: SessionIO = {
+    ask(prompt: string): Promise<string | null> {
+      return inputQueue
+        .ask(prompt)
+        .then((outcome) => (outcome.kind === "answer" ? outcome.value : null));
+    },
+    write(text: string): void {
+      inputQueue.write(text);
     },
     clear(): void {
       sanitizer.flush();
       stdout.write("\x1b[2J\x1b[H");
     },
   };
-  const reviewer = createInteractiveApprovalReviewer(io);
+  const reviewer = createInteractiveApprovalReviewer(inputQueue);
   const {
     application,
     providerId,
@@ -75,7 +87,7 @@ async function main(): Promise<number> {
     runners,
     sandbox,
   };
-  const exitCode = await runInteractiveSession(io, application, sessionInfo, controls);
+  const exitCode = await runInteractiveSession(io, application, sessionInfo, controls, inputQueue);
   readline.close();
   stdin.destroy();
   await sandbox.close();

@@ -11,6 +11,7 @@ import type {
 } from "@solaris/core";
 import { GitError } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
+import type { InputQueue } from "./input/input-queue.js";
 import type { StatusView } from "./output.js";
 import {
   describeError,
@@ -93,13 +94,18 @@ export async function runInteractiveSession(
   application: SolarisApplication,
   sessionInfo: SessionInfo,
   controls: SessionControls = createSessionControls(),
+  inputQueue?: InputQueue,
 ): Promise<number> {
   const inputBuffer: string[] = [];
   const nextInput = async (prompt: string): Promise<string | null> => {
     if (inputBuffer.length > 0) {
       return inputBuffer.shift() as string;
     }
-    return io.ask(prompt);
+    if (inputQueue === undefined) {
+      return io.ask(prompt);
+    }
+    const outcome = await inputQueue.ask(prompt);
+    return outcome.kind === "answer" ? outcome.value : null;
   };
   for (;;) {
     const input = await nextInput(PROMPT);
@@ -109,7 +115,7 @@ export async function runInteractiveSession(
     const parsed = parseInput(input);
     switch (parsed.type) {
       case "prompt":
-        await runPrompt(io, application, parsed.text, controls, inputBuffer);
+        await runPrompt(io, application, parsed.text, controls, inputBuffer, inputQueue);
         break;
       case "command":
         switch (parsed.command) {
@@ -314,6 +320,7 @@ async function runPrompt(
   text: string,
   controls: SessionControls,
   inputBuffer: string[],
+  inputQueue?: InputQueue,
 ): Promise<void> {
   const controller = controls.beginPrompt();
   let busy: Promise<void> | undefined;
@@ -381,7 +388,7 @@ async function runPrompt(
         case "command_started":
           if (!busyStarted) {
             busyStarted = true;
-            busy = runBusyInput(io, controller, inputBuffer, () => promptFinished);
+            busy = runBusyInput(io, controller, inputBuffer, () => promptFinished, inputQueue);
           }
           io.write(formatCommandStarted(event.displayName, event.digestPrefix));
           commandRenderer = createCommandOutputRenderer((text) => io.write(text));
@@ -412,6 +419,9 @@ async function runPrompt(
     io.write(`\n${formatProviderFailure(describeError(error))}`);
   } finally {
     promptFinished = true;
+    if (busyStarted && inputQueue !== undefined) {
+      inputQueue.cancelPendingAsk();
+    }
     if (busyStarted) {
       io.write(PROMPT);
     }
@@ -428,16 +438,28 @@ function isCommandTool(toolName: string): boolean {
  * While a provider-accessible command runs, keep reading the terminal so
  * `/cancel` and Ctrl+C work. Type-ahead input is buffered and replayed after
  * the command completes; the final line read after completion is preserved so
- * no user input is ever lost.
+ * no user input is ever lost. With an InputQueue, the in-flight read is
+ * cancellable and the queue discards it when the command finishes.
  */
 async function runBusyInput(
   io: SessionIO,
   controller: AbortController,
   inputBuffer: string[],
   isDone: () => boolean,
+  inputQueue?: InputQueue,
 ): Promise<void> {
   for (;;) {
-    const line = await io.ask("");
+    const outcome =
+      inputQueue === undefined
+        ? { kind: "answer" as const, value: await io.ask("") }
+        : await inputQueue.ask("", { signal: controller.signal });
+    if (outcome.kind === "aborted" || outcome.kind === "discarded") {
+      return;
+    }
+    if (outcome.kind !== "answer") {
+      return;
+    }
+    const line = outcome.value;
     if (line === null) {
       controller.abort();
       return;

@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { ApprovalRequest, ApprovalReviewer } from "@solaris/core";
 import { createInteractiveApprovalReviewer } from "./approval-reviewer.js";
+import { createInputQueue, type InputQueue } from "../input/input-queue.js";
 import type { SessionIO } from "../interactive-session.js";
+
+function queueFor(io: SessionIO): InputQueue {
+  return createInputQueue(
+    (prompt) => {
+      io.write(prompt);
+      return io.ask("");
+    },
+    (text) => io.write(text),
+  );
+}
 
 class ScriptedIO implements SessionIO {
   private readonly lines: readonly string[];
@@ -76,7 +87,7 @@ async function reviewWith(
   lines: readonly string[],
 ): Promise<{ decision: Awaited<ReturnType<ApprovalReviewer["review"]>>; text: string }> {
   const io = new ScriptedIO(lines);
-  const interactive = createInteractiveApprovalReviewer(io, 60_000);
+  const interactive = createInteractiveApprovalReviewer(queueFor(io), 60_000);
   const decision = await interactive.review(createRequest());
   return { decision, text: io.text };
 }
@@ -148,7 +159,7 @@ describe("createInteractiveApprovalReviewer", () => {
       },
     });
     const io = new ScriptedIO(["n"]);
-    const reviewer = createInteractiveApprovalReviewer(io, 60_000);
+    const reviewer = createInteractiveApprovalReviewer(queueFor(io), 60_000);
     await reviewer.review(request);
     expect(io.text).not.toContain("\u001b");
     expect(io.text).toContain("Approval required");
@@ -156,7 +167,7 @@ describe("createInteractiveApprovalReviewer", () => {
 
   it("cancels when the signal is aborted while waiting", async () => {
     const io = new HangingIO();
-    const reviewer = createInteractiveApprovalReviewer(io, 60_000);
+    const reviewer = createInteractiveApprovalReviewer(queueFor(io), 60_000);
     const controller = new AbortController();
     const promise = reviewer.review(createRequest(), controller.signal);
     controller.abort();
@@ -166,7 +177,7 @@ describe("createInteractiveApprovalReviewer", () => {
 
   it("cancels on timeout", async () => {
     const io = new HangingIO();
-    const reviewer = createInteractiveApprovalReviewer(io, 20);
+    const reviewer = createInteractiveApprovalReviewer(queueFor(io), 20);
     const decision = await reviewer.review(createRequest());
     expect(decision).toEqual({
       type: "deny",
@@ -176,7 +187,7 @@ describe("createInteractiveApprovalReviewer", () => {
 
   it("cancels immediately when the signal is pre-aborted", async () => {
     const io = new HangingIO();
-    const reviewer = createInteractiveApprovalReviewer(io, 60_000);
+    const reviewer = createInteractiveApprovalReviewer(queueFor(io), 60_000);
     const controller = new AbortController();
     controller.abort();
     const decision = await reviewer.review(createRequest(), controller.signal);
