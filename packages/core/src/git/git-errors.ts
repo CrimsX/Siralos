@@ -5,7 +5,6 @@ export type GitErrorCode =
   | "git_unsupported_version"
   | "git_status_failed"
   | "git_diff_failed"
-  | "git_output_limit"
   | "git_cancelled"
   | "git_timeout"
   | "git_parse_failed";

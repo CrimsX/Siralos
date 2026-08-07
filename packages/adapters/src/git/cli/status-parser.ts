@@ -198,6 +198,8 @@ function mapIndexStatus(code: string): GitFileStatus {
       return "copied";
     case "U":
       return "unmerged";
+    case "T":
+      return "modified";
     default:
       return "unmodified";
   }
@@ -209,6 +211,8 @@ function mapWorktreeStatus(code: string): GitFileStatus {
       return "modified";
     case "D":
       return "deleted";
+    case "T":
+      return "modified";
     default:
       return "unmodified";
   }

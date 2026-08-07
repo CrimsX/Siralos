@@ -17,7 +17,7 @@ import { getSandboxDirectories } from "../../sandbox/sandbox-directories.js";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
 import { GIT_SAFETY_ENVIRONMENT, runGitProcess, type GitProcessResult } from "./git-process.js";
 import { parsePorcelainV2 } from "./status-parser.js";
-import { parseUnifiedDiff } from "./diff-parser.js";
+import { parseNumstatDiff } from "./diff-parser.js";
 
 export interface GitCliAdapterOptions {
   readonly workspaceRoot: string;
@@ -242,12 +242,34 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
       }
       throw new GitError("git_diff_failed", result.stderr.trim() || "git diff failed.");
     }
-    const parsed = parseUnifiedDiff(result.stdout);
+    const summaryArgs = [
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--ignore-submodules=all",
+      "--numstat",
+      "-z",
+      ...scopeArgs,
+      ...(paths.length > 0 ? ["--", ...paths] : []),
+    ];
+    let summaryResult: GitProcessResult;
+    try {
+      summaryResult = await run("diff", summaryArgs, request.signal);
+    } catch (error: unknown) {
+      if (error instanceof GitError) {
+        throw error;
+      }
+      throw new GitError("git_diff_failed", `git diff failed: ${describeGitError(error)}`);
+    }
+    if (summaryResult.exitCode !== 0) {
+      throw new GitError("git_diff_failed", summaryResult.stderr.trim() || "git diff failed.");
+    }
+    const parsed = parseNumstatDiff(summaryResult.stdout);
     return {
       scope: request.scope,
       files: parsed.files,
       patch: result.stdout,
-      truncated: result.stdoutTruncated || parsed.truncated,
+      truncated: result.stdoutTruncated || summaryResult.stdoutTruncated || parsed.truncated,
       untrackedExcluded: true,
     };
   }

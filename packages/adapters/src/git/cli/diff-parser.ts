@@ -7,86 +7,75 @@ export interface ParsedDiff {
 
 export const MAX_GIT_DIFF_FILES = 1000;
 
-interface SectionAccumulator {
-  path: string;
-  originalPath: string | null;
-  operation: "add" | "modify" | "delete" | "rename";
-  addedLines: number;
-  removedLines: number;
-  binary: boolean;
-}
-
-export function parseUnifiedDiff(patch: string): ParsedDiff {
-  const lines = patch.split("\n");
+/**
+ * Parses `git diff --numstat -z` output into structured file summaries.
+ * The NUL-delimited machine-readable form preserves exact paths (spaces,
+ * tabs, unicode, newlines, backslashes, quotes) and classifies binary
+ * entries (`-\t-`). Rename/copy pairs appear as
+ * `added\tdeleted\t\0<original>\0<path>`; the first path is the original.
+ * Human-oriented quoted diff headers are never parsed as authoritative
+ * paths; the unified patch is used only for display.
+ */
+export function parseNumstatDiff(output: string): ParsedDiff {
+  const records = output.split("\0");
   const files: GitDiffFileSummary[] = [];
-  let current: SectionAccumulator | null = null;
   let truncated = false;
-  const flush = (): void => {
-    if (current === null) {
-      return;
+  let index = 0;
+  for (; index < records.length; index += 1) {
+    const record = records[index];
+    if (record === undefined || record.length === 0) {
+      continue;
+    }
+    const fields = record.split("\t");
+    const addedField = fields[0] ?? "";
+    const removedField = fields[1] ?? "";
+    const inlinePath = fields[2] ?? "";
+    const binary = addedField === "-" || removedField === "-";
+    let path: string;
+    let originalPath: string | null = null;
+    let operation: GitDiffFileSummary["operation"];
+    let addedLines: number;
+    let removedLines: number;
+    if (inlinePath.length === 0) {
+      // rename/copy pair: added\tdeleted\t\0<original>\0<path>
+      originalPath = records[index + 1] ?? "";
+      path = records[index + 2] ?? "";
+      index += 2;
+      if (originalPath.length === 0 || path.length === 0) {
+        throw new Error("Malformed numstat rename record.");
+      }
+      operation = "rename";
+      addedLines = binary ? 0 : parseIntOrZero(addedField);
+      removedLines = binary ? 0 : parseIntOrZero(removedField);
+    } else {
+      path = inlinePath;
+      addedLines = binary ? 0 : parseIntOrZero(addedField);
+      removedLines = binary ? 0 : parseIntOrZero(removedField);
+      if (addedLines > 0 && removedLines === 0) {
+        operation = "add";
+      } else if (addedLines === 0 && removedLines > 0) {
+        operation = "delete";
+      } else {
+        operation = "modify";
+      }
     }
     files.push({
-      path: current.path,
-      originalPath: current.originalPath,
-      operation: current.operation,
-      addedLines: current.addedLines,
-      removedLines: current.removedLines,
-      binary: current.binary,
+      path,
+      originalPath,
+      operation,
+      addedLines,
+      removedLines,
+      binary,
     });
-    current = null;
-  };
-  for (const line of lines) {
-    if (line.startsWith("diff --git ")) {
-      flush();
-      if (files.length >= MAX_GIT_DIFF_FILES) {
-        truncated = true;
-        break;
-      }
-      current = {
-        path: parseDiffGitPath(line),
-        originalPath: null,
-        operation: "modify",
-        addedLines: 0,
-        removedLines: 0,
-        binary: false,
-      };
-      continue;
-    }
-    if (current === null) {
-      continue;
-    }
-    if (line.startsWith("new file mode ")) {
-      current.operation = "add";
-    } else if (line.startsWith("deleted file mode ")) {
-      current.operation = "delete";
-    } else if (line.startsWith("rename from ")) {
-      current.originalPath = normalizePath(line.slice("rename from ".length));
-    } else if (line.startsWith("rename to ")) {
-      current.path = normalizePath(line.slice("rename to ".length));
-      current.operation = "rename";
-    } else if (line.startsWith("similarity index ") || line.startsWith("copy from ")) {
-      // rename/copy metadata
-    } else if (line.startsWith("Binary files ") && line.includes(" differ")) {
-      current.binary = true;
-    } else if (line.startsWith("+") && !line.startsWith("+++")) {
-      current.addedLines += 1;
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
-      current.removedLines += 1;
+    if (files.length >= MAX_GIT_DIFF_FILES) {
+      truncated = true;
+      break;
     }
   }
-  flush();
   return { files, truncated };
 }
 
-function parseDiffGitPath(header: string): string {
-  const rest = header.slice("diff --git ".length);
-  const separator = rest.lastIndexOf(" b/");
-  if (separator < 0) {
-    return rest;
-  }
-  return normalizePath(rest.slice(separator + 3));
-}
-
-function normalizePath(value: string): string {
-  return value.split("\\").join("/");
+function parseIntOrZero(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }

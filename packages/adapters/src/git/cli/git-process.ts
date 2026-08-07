@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { GitError } from "@solaris/core";
 
 export const GIT_ALLOWED_SUBCOMMANDS: readonly string[] = [
@@ -216,7 +217,9 @@ function createOutputSink(maxBytes: number): {
   truncated: boolean;
   push(chunk: Buffer): void;
 } {
+  const decoder = new StringDecoder("utf8");
   let text = "";
+  let remaining = maxBytes;
   let truncated = false;
   return {
     get text(): string {
@@ -229,13 +232,13 @@ function createOutputSink(maxBytes: number): {
       if (truncated) {
         return;
       }
-      const remaining = maxBytes - text.length;
-      if (chunk.length > remaining) {
-        text += chunk.toString("utf8", 0, Math.max(remaining, 0));
+      if (chunk.length >= remaining) {
+        text += decoder.write(chunk.subarray(0, Math.max(remaining, 0)));
         truncated = true;
-      } else {
-        text += chunk.toString("utf8");
+        return;
       }
+      remaining -= chunk.length;
+      text += decoder.write(chunk);
     },
   };
 }

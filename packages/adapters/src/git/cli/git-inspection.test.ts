@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GitError } from "@solaris/core";
 import { createGitCliAdapter } from "./git-cli-adapter.js";
+import { runGitProcess } from "./git-process.js";
 import { cleanupTempDirs, createTempRepo, type TempRepo } from "./git-test-support.js";
 
 afterEach(async () => {
@@ -352,5 +353,83 @@ describe("git diff inspection", () => {
     expect(result.files).toEqual([]);
     expect(result.patch).toBe("");
     expect(result.untrackedExcluded).toBe(true);
+  });
+
+  it("reports exact paths for special filenames in diffs", async () => {
+    const repo = await createTempRepo();
+    const names: string[] = ["sp ace.txt", "uni-\u00e9\u4e2d.txt"];
+    if (process.platform !== "win32") {
+      names.push('quote"name.txt', "back\\slash.txt", "tab\tname.txt", "new\nline.txt");
+    }
+    for (const name of names) {
+      await repo.write(name, "one\n");
+    }
+    commitAll(repo, "initial");
+    for (const name of names) {
+      await repo.write(name, "two\n");
+    }
+    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const result = await adapter.getDiff({ scope: "working" });
+    const paths = result.files.map((file) => file.path);
+    for (const name of names) {
+      expect(paths).toContain(name);
+    }
+  });
+
+  it(
+    "classifies tracked type changes as modified",
+    { skip: process.platform === "win32" },
+    async () => {
+      const repo = await createTempRepo();
+      await repo.write("t.txt", "x\n");
+      commitAll(repo, "initial");
+      const { rm, symlink } = await import("node:fs/promises");
+      await rm(join(repo.root, "t.txt"));
+      await symlink("somewhere", join(repo.root, "t.txt"));
+      const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+      const result = await adapter.getStatus({});
+      const change = result.changes.find((entry) => entry.path === "t.txt");
+      expect(change).toBeDefined();
+      expect(change?.worktreeStatus).toBe("modified");
+    },
+  );
+
+  it("decodes truncated output as valid UTF-8 without splitting sequences", async () => {
+    const repo = await createTempRepo();
+    await repo.write("uni-\u00e9\u4e2d.txt", "one\n");
+    commitAll(repo, "initial");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(repo.root, "uni-\u00e9\u4e2d.txt"), "\u00e9".repeat(4000));
+    const result = await runGitProcess({
+      subcommand: "diff",
+      args: ["--no-ext-diff", "--no-textconv", "--no-color", "--", "uni-\u00e9\u4e2d.txt"],
+      cwd: repo.root,
+      environment: {},
+      timeoutMs: 15_000,
+      maxOutputBytes: 997,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdoutTruncated).toBe(true);
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(997);
+    const fatal = new TextDecoder("utf-8", { fatal: true });
+    expect(() => fatal.decode(Buffer.from(result.stdout, "utf8"))).not.toThrow();
+  });
+
+  it("preserves rename counts from numstat records", async () => {
+    const repo = await createTempRepo();
+    await repo.write("old.txt", "one\ntwo\n");
+    commitAll(repo, "initial");
+    await repo.write("new.txt", "one\ntwo\nthree\n");
+    repo.git("rm", "-q", "old.txt");
+    repo.git("add", "new.txt");
+    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const result = await adapter.getDiff({ scope: "staged" });
+    const renamed = result.files.find((file) => file.operation === "rename");
+    expect(renamed).toMatchObject({
+      path: "new.txt",
+      originalPath: "old.txt",
+      addedLines: 1,
+      removedLines: 0,
+    });
   });
 });
