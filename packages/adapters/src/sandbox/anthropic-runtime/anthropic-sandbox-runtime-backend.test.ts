@@ -17,6 +17,7 @@ import {
   buildPerExecutionConfig,
   createAnthropicSandboxRuntimeBackend,
   createOutputSink,
+  emitChunked,
   effectiveConfigKey,
   hostReadAllowSurface,
   hostReadBoundaryPatterns,
@@ -252,6 +253,22 @@ describe("output sink hard limits", () => {
     sink.push(bytes.subarray(0, 2));
     sink.push(bytes.subarray(2));
     expect(sink.text).toBe("h\u00e9llo");
+  });
+
+  it("isolates a failing output callback without crashing", () => {
+    const received: string[] = [];
+    emitChunked(
+      (event) => {
+        received.push(event.text);
+        if (event.text.length > 100) {
+          throw new Error("callback exploded");
+        }
+      },
+      "stdout",
+      "y".repeat(200_000),
+    );
+    // Events were emitted before the failure and emission continued after it.
+    expect(received.length).toBeGreaterThan(1);
   });
 });
 

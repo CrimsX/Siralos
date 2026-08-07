@@ -239,6 +239,33 @@ describe("workspace.create_file", () => {
     await expect(readFile(path.join(workspace.root, "new.txt"))).rejects.toThrow();
   });
 
+  it("reports an uncertain finalize failure after the file was created", async () => {
+    const workspace = await withWorkspace();
+    const store = await createTempCheckpointStore(workspace.root);
+    const guardedStore = new Proxy(store, {
+      get(target, property: keyof typeof store) {
+        if (property === "finalizeApplied") {
+          return () => Promise.reject(new Error("metadata write failed"));
+        }
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- store methods are closures without this
+        return target[property] as never;
+      },
+    });
+    const tool = createWorkspaceCreateFileTool(workspace.root, createMutationLock(), guardedStore);
+    const prepared = await tool.prepare({ path: "new.txt", content: CONTENT }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") {
+      return;
+    }
+    expect(result.message).toContain("recovery state is uncertain");
+    expect(await readFile(path.join(workspace.root, "new.txt"), "utf8")).toBe(CONTENT);
+  });
+
   it("rejects a missing parent directory", async () => {
     const workspace = await withWorkspace();
     const { tool } = await createTool(workspace.root);

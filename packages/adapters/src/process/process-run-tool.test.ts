@@ -640,6 +640,26 @@ describe("process.run tool run directories", () => {
     }
   });
 
+  it("grants the backend exactly the current run directory, never the shared runs root", async () => {
+    const harness = await createHarness({ results: [completedResult()] });
+    try {
+      const { command, digest } = await prepareCommand(harness.tool, {
+        runner: "node-script",
+        path: "scripts/validate.mjs",
+      });
+      const result = await harness.tool.executePrepared(command, { approvedDigest: digest });
+      expect(result.status).toBe("success");
+      if (result.status === "success") {
+        const request = harness.backend.requests()[0] as SandboxedProcessRequest;
+        expect(request.runDirectory).toBeTruthy();
+        expect(request.runDirectory?.startsWith(harness.runsRoot)).toBe(true);
+        expect(request.runDirectory).not.toBe(harness.runsRoot);
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("surfaces npm-script unavailability through the process tool", async () => {
     const harness = await createHarness({ results: [completedResult()] });
     try {

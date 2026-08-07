@@ -728,7 +728,7 @@ export function createOutputSink(
   };
 }
 
-function emitChunked(
+export function emitChunked(
   onOutput: (event: { readonly type: "stdout" | "stderr"; readonly text: string }) => void,
   stream: "stdout" | "stderr",
   text: string,
