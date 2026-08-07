@@ -23,6 +23,11 @@ export {
   completedResult,
   type FakeSandboxBackendOptions,
 } from "./sandbox/fake-sandbox-backend.js";
+export {
+  buildChildEnvironment,
+  isDeniedVariable,
+  type SandboxEnvironmentPaths,
+} from "./environment/child-environment.js";
 export { createWorkspaceListTool } from "./tools/workspace/workspace-list-tool.js";
 export { createWorkspaceReadTool } from "./tools/workspace/workspace-read-tool.js";
 export { createWorkspaceSearchTool } from "./tools/workspace/workspace-search-tool.js";
