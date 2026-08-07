@@ -128,6 +128,7 @@ describe("createSolarisApplication", () => {
       state: "idle",
       messageCount: 2,
       pendingApproval: false,
+      activeCommandId: null,
     });
   });
 

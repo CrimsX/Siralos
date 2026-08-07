@@ -7,9 +7,20 @@ import type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "../sec
 import type { CapabilityPolicy } from "../security/capability.js";
 import { createDefaultPolicy } from "../security/default-policy.js";
 import { INSPECT_PROFILE, type SandboxProfile } from "../security/profile.js";
+import type { ProcessOutputEvent } from "../security/sandbox-backend.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ToolExecutionResult } from "../tools/tool.js";
-import { isPreparedMutationTool, toolCapability } from "../tools/prepared-mutation-tool.js";
+import {
+  isPreparedCommandTool,
+  isPreparedMutationTool,
+  toolCapability,
+} from "../tools/prepared-mutation-tool.js";
+import type { PreparedCommandTool } from "../commands/command-tool.js";
+import type { CommandAuditRecord, CommandApplicationEvent } from "../commands/command-events.js";
+import { MAX_RETAINED_COMMAND_AUDIT_RECORDS } from "../commands/command-events.js";
+import type { CommandPreview, PreparedCommand } from "../commands/command-runners.js";
+import type { PermissionEvaluation } from "../security/permission-evaluator.js";
+import { PROCESS_RUN_TOOL_NAME } from "../commands/command-tool.js";
 
 export type ApplicationEvent =
   | {
@@ -62,7 +73,7 @@ export type ApplicationEvent =
       readonly type: "approval_requested";
       readonly requestId: string;
       readonly toolName: string;
-      readonly capability: "workspace.write";
+      readonly capability: "workspace.write" | "process.execute";
       readonly summary: string;
     }
   | {
@@ -74,13 +85,15 @@ export type ApplicationEvent =
       readonly type: "checkpoint_applied";
       readonly checkpointId: string;
       readonly path: string;
-    };
+    }
+  | CommandApplicationEvent;
 
 export interface SessionStatus {
   readonly providerId: string;
   readonly state: "idle" | "responding";
   readonly messageCount: number;
   readonly pendingApproval: boolean;
+  readonly activeCommandId: string | null;
 }
 
 export interface SolarisApplicationDependencies {
@@ -98,6 +111,12 @@ export interface SolarisApplication {
   sendPrompt(text: string, signal?: AbortSignal): AsyncIterable<ApplicationEvent>;
 
   getStatus(): SessionStatus;
+
+  /** Bounded in-memory metadata for commands that executed this session. */
+  getCommandHistory(): readonly CommandAuditRecord[];
+
+  /** Exit code of the most recently completed command, if any. */
+  getLastCommandExitCode(): number | null;
 }
 
 type TurnToolCall =
@@ -145,6 +164,9 @@ export function createSolarisApplication(
   let state: "idle" | "responding" = "idle";
   let pendingApproval = false;
   let approvalCounter = 0;
+  let activeCommandId: string | null = null;
+  let lastCommandExitCode: number | null = null;
+  const commandHistory: CommandAuditRecord[] = [];
 
   async function* sendPrompt(text: string, signal?: AbortSignal): AsyncIterable<ApplicationEvent> {
     if (state === "responding") {
@@ -308,6 +330,18 @@ export function createSolarisApplication(
       yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
       return { status: "denied", message };
     }
+    if (isPreparedCommandTool(tool)) {
+      const result = yield* runPreparedCommandTool(
+        tool,
+        call.callId,
+        call.toolName,
+        call.input,
+        permission,
+        signal,
+      );
+      yield* emitToolOutcome(call.callId, call.toolName, result);
+      return result;
+    }
     if (!isPreparedMutationTool(tool)) {
       let result: ToolExecutionResult;
       try {
@@ -418,6 +452,283 @@ export function createSolarisApplication(
     return result;
   }
 
+  async function* runPreparedCommandTool(
+    tool: PreparedCommandTool,
+    callId: string,
+    toolName: string,
+    input: unknown,
+    permission: PermissionEvaluation,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ApplicationEvent, ToolExecutionResult, void> {
+    const prepared = await tool.prepare(input, signal === undefined ? {} : { signal });
+    if (prepared.status !== "ready") {
+      if (prepared.status === "cancelled") {
+        yield { type: "tool_cancelled", callId, toolName };
+        return { status: "cancelled", message: prepared.message };
+      }
+      yield { type: "tool_failed", callId, toolName, message: prepared.message };
+      return { status: prepared.status, message: prepared.message };
+    }
+    const { command, preview, digest, commandId } = prepared;
+    yield {
+      type: "command_prepared",
+      commandId,
+      runnerId: preview.runnerId,
+      summary: preview.displayName,
+    };
+    if (permission.decision === "ask") {
+      const requestId = `approval-${(approvalCounter += 1)}`;
+      const approvalRequest: ApprovalRequest = {
+        id: requestId,
+        capability: "process.execute",
+        toolName: PROCESS_RUN_TOOL_NAME,
+        summary: preview.displayName,
+        preview,
+        digest,
+      };
+      yield {
+        type: "approval_requested",
+        requestId,
+        toolName: PROCESS_RUN_TOOL_NAME,
+        capability: "process.execute",
+        summary: approvalRequest.summary,
+      };
+      yield {
+        type: "tool_awaiting_approval",
+        callId,
+        toolName: PROCESS_RUN_TOOL_NAME,
+        requestId,
+      };
+      pendingApproval = true;
+      let decision: ApprovalDecision;
+      try {
+        decision =
+          reviewer === undefined
+            ? { type: "deny", reason: "No approval reviewer is available." }
+            : await reviewer.review(approvalRequest, signal);
+      } catch {
+        decision = {
+          type: "deny",
+          reason: "The approval reviewer failed; the command was denied.",
+        };
+      } finally {
+        pendingApproval = false;
+      }
+      yield {
+        type: "approval_resolved",
+        requestId,
+        decision:
+          decision.type === "approve_once"
+            ? "approved"
+            : decision.type === "deny"
+              ? "denied"
+              : "cancelled",
+      };
+      if (decision.type !== "approve_once") {
+        if (decision.type === "cancelled") {
+          yield { type: "tool_cancelled", callId, toolName };
+          yield {
+            type: "command_cancelled",
+            commandId,
+            message: "The command approval was cancelled.",
+          };
+          return { status: "cancelled", message: "The command approval was cancelled." };
+        }
+        const message = decision.reason ?? "The command was denied by the user.";
+        yield { type: "command_denied", commandId, message };
+        yield { type: "tool_failed", callId, toolName, message };
+        return { status: "denied", message };
+      }
+    }
+    const startedAt = Date.now();
+    activeCommandId = commandId;
+    try {
+      yield {
+        type: "command_started",
+        commandId,
+        runnerId: preview.runnerId,
+        displayName: preview.displayName,
+        digestPrefix: digest.slice(0, 8),
+      };
+      let result: ToolExecutionResult;
+      try {
+        result = yield* streamPreparedCommand(tool, command, digest, commandId, signal);
+      } catch (error: unknown) {
+        if (signal?.aborted || isCancellationError(error)) {
+          result = { status: "cancelled", message: "The command was cancelled." };
+        } else {
+          result = { status: "failed", message: describeError(error) };
+        }
+      }
+      yield* emitCommandOutcome(commandId, preview, digest, startedAt, result);
+      return result;
+    } finally {
+      if (activeCommandId === commandId) {
+        activeCommandId = null;
+      }
+    }
+  }
+
+  async function* streamPreparedCommand(
+    tool: PreparedCommandTool,
+    command: PreparedCommand,
+    approvedDigest: string,
+    commandId: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ApplicationEvent, ToolExecutionResult, void> {
+    const pending: ProcessOutputEvent[] = [];
+    const waiters: Array<() => void> = [];
+    let result: ToolExecutionResult | undefined;
+    let failure: unknown;
+    const wake = (): void => {
+      const current = waiters.splice(0, waiters.length);
+      for (const waiter of current) {
+        waiter();
+      }
+    };
+    tool
+      .executePrepared(command, {
+        approvedDigest,
+        ...(signal === undefined ? {} : { signal }),
+        onOutput: (event: ProcessOutputEvent) => {
+          pending.push(event);
+          wake();
+        },
+      })
+      .then(
+        (executed: ToolExecutionResult) => {
+          result = executed;
+          wake();
+        },
+        (error: unknown) => {
+          failure = error;
+          wake();
+        },
+      );
+    for (;;) {
+      if (pending.length > 0) {
+        const event = pending.shift() as ProcessOutputEvent;
+        if (event.type === "stdout") {
+          yield { type: "command_stdout", commandId, text: event.text };
+        } else {
+          yield { type: "command_stderr", commandId, text: event.text };
+        }
+        continue;
+      }
+      if (result !== undefined) {
+        return result;
+      }
+      if (failure !== undefined) {
+        throw failure instanceof Error ? failure : new Error(describeError(failure));
+      }
+      await new Promise<void>((resolve) => {
+        waiters.push(resolve);
+      });
+    }
+  }
+
+  function* emitCommandOutcome(
+    commandId: string,
+    preview: CommandPreview,
+    digest: string,
+    startedAt: number,
+    result: ToolExecutionResult,
+  ): Generator<ApplicationEvent, void, void> {
+    switch (result.status) {
+      case "success": {
+        const output = asJsonObject(result.output);
+        const exitCode = typeof output?.["exitCode"] === "number" ? output["exitCode"] : null;
+        const durationMs =
+          typeof output?.["durationMs"] === "number"
+            ? output["durationMs"]
+            : Date.now() - startedAt;
+        yield { type: "command_completed", commandId, exitCode: exitCode ?? 0, durationMs };
+        appendCommandAudit(preview, digest, startedAt, {
+          outcome: "completed",
+          exitCode,
+          durationMs,
+          stdoutTruncated: output?.["stdoutTruncated"] === true,
+          stderrTruncated: output?.["stderrTruncated"] === true,
+        });
+        return;
+      }
+      case "timed_out":
+        yield { type: "command_timed_out", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "timed_out" });
+        return;
+      case "cancelled":
+        yield { type: "command_cancelled", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "cancelled" });
+        return;
+      case "conflict":
+        yield { type: "command_conflict", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "conflict" });
+        return;
+      case "denied":
+        yield { type: "command_denied", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "denied" });
+        return;
+      case "output_limit":
+        yield { type: "command_failed", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "output_limit" });
+        return;
+      case "sandbox_denied":
+        yield { type: "command_failed", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "sandbox_denied" });
+        return;
+      case "sandbox_unavailable":
+        yield { type: "command_failed", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "sandbox_unavailable" });
+        return;
+      case "workspace_violation":
+        yield { type: "command_failed", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "workspace_violation" });
+        return;
+      case "invalid_input":
+      case "failed":
+        yield { type: "command_failed", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "failed" });
+        return;
+      case "unavailable":
+        yield { type: "command_failed", commandId, message: result.message };
+        appendCommandAudit(preview, digest, startedAt, { outcome: "unavailable" });
+        return;
+    }
+  }
+
+  function appendCommandAudit(
+    preview: CommandPreview,
+    digest: string,
+    startedAt: number,
+    detail: {
+      readonly outcome: string;
+      readonly exitCode?: number | null;
+      readonly durationMs?: number;
+      readonly stdoutTruncated?: boolean;
+      readonly stderrTruncated?: boolean;
+    },
+  ): void {
+    const record: CommandAuditRecord = {
+      commandId: activeCommandId ?? "<unknown>",
+      runnerId: preview.runnerId,
+      summary: preview.displayName,
+      digest,
+      startedAt,
+      durationMs: detail.durationMs ?? null,
+      exitCode: detail.exitCode ?? null,
+      outcome: detail.outcome,
+      stdoutTruncated: detail.stdoutTruncated ?? false,
+      stderrTruncated: detail.stderrTruncated ?? false,
+    };
+    if (record.exitCode !== null && detail.outcome === "completed") {
+      lastCommandExitCode = record.exitCode;
+    }
+    commandHistory.push(record);
+    if (commandHistory.length > MAX_RETAINED_COMMAND_AUDIT_RECORDS) {
+      commandHistory.splice(0, commandHistory.length - MAX_RETAINED_COMMAND_AUDIT_RECORDS);
+    }
+  }
+
   function* emitToolOutcome(
     callId: string,
     toolName: string,
@@ -430,6 +741,12 @@ export function createSolarisApplication(
       case "cancelled":
         yield { type: "tool_cancelled", callId, toolName };
         break;
+      case "timed_out":
+      case "output_limit":
+      case "sandbox_denied":
+      case "sandbox_unavailable":
+      case "workspace_violation":
+      case "unavailable":
       case "invalid_input":
       case "denied":
       case "conflict":
@@ -447,7 +764,14 @@ export function createSolarisApplication(
         state,
         messageCount: history.length,
         pendingApproval,
+        activeCommandId,
       };
+    },
+    getCommandHistory(): readonly CommandAuditRecord[] {
+      return [...commandHistory];
+    },
+    getLastCommandExitCode(): number | null {
+      return lastCommandExitCode;
     },
   };
 }
@@ -467,6 +791,13 @@ function readCheckpointId(output: JsonValue): string | null {
   }
   const value = (output as JsonObject)["checkpointId"];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asJsonObject(value: JsonValue): JsonObject | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as JsonObject;
 }
 
 function toDisplayInput(input: unknown): string {
