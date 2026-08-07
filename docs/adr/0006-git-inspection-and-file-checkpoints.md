@@ -1,0 +1,41 @@
+# ADR 0006: Git inspection and file checkpoints
+
+Status: accepted
+
+## Context
+
+Solaris can apply approved workspace mutations but has no repository awareness and no recovery mechanism: a crashed mutation, or a Solaris edit the user later regrets, cannot be undone without manual work. Before Solaris is permitted to execute development commands, it needs read-only Git inspection and a Solaris-owned recovery record. This milestone adds trusted Git status/diff, durable per-file checkpoints around every approved mutation, crash reconciliation, and user-invoked, approval-gated safe undo. Checkpoints are deliberately independent of Git: they must work in non-Git workspaces and must never depend on the Git index, stashes, or commits.
+
+## Decision
+
+- **Git access is read-only in this milestone.** Solaris executes only fixed inspection operations (`git --version`, `git rev-parse`, `git status`, `git diff`, `git check-ignore`). Staging, commits, reset, restore, checkout, clean, stash, branches, worktrees, remotes, hooks, and config edits are absent; the architecture check forbids Git mutation command strings in runtime code.
+- **Git uses fixed argument arrays, never a shell.** The Git adapter spawns the executable directly with a fixed allowlisted subcommand set, an exact argument array, `--no-pager`, self-mapping alias overrides, and `--literal-pathspecs`. Provider input can only select schema-validated high-level options (diff scope, workspace-relative paths) — never raw Git arguments.
+- **Git output is treated as untrusted.** Pagers, external diff programs, and text-conversion filters are disabled (`GIT_PAGER=cat`, `PAGER=cat`, `--no-ext-diff`, `--no-textconv`, `--no-color` where accepted); credential prompts are impossible (`GIT_TERMINAL_PROMPT=0`); optional index locks are disabled (`GIT_OPTIONAL_LOCKS=0`); stdout and stderr are independently bounded; output is locale-stable (`LC_ALL=C`, `LANG=C`); commands run from the workspace root with a sanitized environment and no network. Errors are normalized into safe categories (`git_unavailable`, `git_not_repository`, `git_root_mismatch`, `git_status_failed`, `git_diff_failed`, `git_output_limit`, `git_cancelled`, `git_timeout`, `git_parse_failed`).
+- **Status uses a machine-oriented format.** `git status --porcelain=v2 -z --branch --untracked-files=all --ignore-submodules=all` is parsed into a structured model with ordinary, renamed/copied, unmerged, and untracked records; branch, detached, unborn, upstream, and ahead/behind information; adversarial filename support; explicit entry-limit truncation; and workspace-relative `/`-separated paths.
+- **Diffs are bounded and summary-first.** `git diff` runs with external helpers disabled and path lists prefixed with `--`; output is capped (patch bytes, changed files), binary changes are summarized without binary patches, untracked contents are excluded with an explicit note, unborn repositories yield an empty head diff, and truncation is reported.
+- **Repository roots cannot broaden the workspace.** The Git adapter canonicalizes the repository root and requires it to equal the Solaris workspace root; a nested launch directory reports `root_mismatch` instead of silently widening scope, and non-Git workspaces remain fully valid (checkpoints and undo never require Git).
+- **Checkpoints do not use Git stash or reset.** A checkpoint is a Solaris-owned record: versioned metadata plus the exact pre-change bytes of one file, stored outside the workspace at `~/.solaris/checkpoints/<workspace-fingerprint>/<checkpoint-id>/`, where the fingerprint is the SHA-256 of the canonical workspace path. Storage uses atomic metadata replacement, restrictive permissions where supported, hash-validated preimages, symlink rejection, and bounded sizes.
+- **Every approved mutation automatically creates a checkpoint.** After approval, under the mutation lock, after revalidation, the tool durably records the before-state (exact bytes for update/delete; absence for create) and the expected after-state with `state=prepared`, then applies and verifies the mutation, then finalizes to `state=applied`. If checkpoint storage fails, the mutation does not happen. If finalization fails after a successful apply, the result reports an uncertain recovery state instead of claiming success. The original edit approval covers checkpoint recording — no second prompt.
+- **Crash reconciliation resolves only `prepared` checkpoints at startup** by comparing the current file state with the recorded before and after states: before wins → `abandoned`; after wins → `applied`; neither → `uncertain`. Solaris never guesses, never auto-modifies the workspace, and `/undo` refuses uncertain checkpoints.
+- **Undo restores only Solaris-owned changes, hash-checked.** `/undo` (latest eligible checkpoint) and `/undo <checkpoint-id>` require a complete reverse diff, one-time approval, and an exact match of the current file state against the checkpoint's recorded post-state. A user or external change after the Solaris mutation is a conflict, never an overwrite; there is no force undo, no redo, and no conversation rewind. Restore reuses the mutation lock, path containment, protected-path checks, symlink checks, temp-file replacement, and post-write verification, and marks the checkpoint `undone` only after verification.
+- **Retention is conservative and not provider-configurable**: up to 100 checkpoints or 100 MiB per workspace; automatic pruning deletes oldest `undone`, then `abandoned`, then oldest `applied`; `prepared`, `uncertain`, and `conflicted` are never pruned; if space cannot be freed, checkpoint preparation fails and the mutation does not run.
+- **Checkpoints contain local source-code copies.** Preimages may be source code; they stay on the local machine, are never sent to providers, never appear in workspace search, are never listed through `/checkpoints`, and never leave the checkpoint store.
+- **Redo, conversation rewind, and Git staging/commits are deferred.** Undo is strictly one-shot per checkpoint; automatic Git commits are a separate later decision.
+
+## Consequences
+
+Positive:
+
+- Mutations gain a durable recovery record and the user gains a safe, approval-gated undo path that provably cannot overwrite newer work.
+- Git inspection is a narrow, testable surface with mechanical enforcement of its boundaries (only the Git adapter may spawn processes; providers and the CLI never parse raw Git or restore files).
+- The sequence toward development commands stays conservative: approved mutations → Git inspection + checkpoints + undo → sandboxed commands → Godot.
+
+Negative:
+
+- Checkpoint storage duplicates file content locally (up to the documented limits); Windows mode bits alone do not provide equivalent ACL enforcement to POSIX owner-only permissions.
+- Undo conflicts are strict by design: any later change to the file makes undo refuse to run rather than risk overwriting work.
+
+Platform limitations:
+
+- On Windows, restore commits use the documented unlink+rename fallback with a brief absence window.
+- The Git adapter executes Git directly with the full sandboxed-process discipline (no shell, sanitized environment, bounds, timeout, cancellation); routing Git through a sandbox backend is deferred until a backend is available on the host platform.

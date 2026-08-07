@@ -95,7 +95,7 @@ Build the smallest coherent implementation that satisfies the current requiremen
 
 ## Tests at meaningful boundaries
 
-Tests exercise public behaviour through public APIs: the application API, the provider port, the input parser, and the interactive session. Tests are deterministic, fast, independent of network access and credentials, and free of arbitrary sleeps.
+Tests exercise public behaviour through public APIs: the application API, the provider port, the input parser, and the interactive session. Git tests use temporary local repositories (no global identity, no remotes); checkpoint and undo tests use temporary stores outside the workspace. Tests are deterministic, fast, independent of network access and credentials, and free of arbitrary sleeps.
 
 ## Formatting and linting
 

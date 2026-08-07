@@ -9,19 +9,21 @@ This repository currently contains the **foundation vertical slice**: an executa
 Working today:
 
 - Interactive terminal session (`npm run solaris`)
-- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/exit`
+- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/git-status`, `/diff`, `/checkpoints`, `/undo`, `/exit`
 - Prompt submission with incrementally streamed responses
-- A bounded provider/tool loop with approved workspace mutations: `workspace.create_file`, `workspace.edit_file` (exact text replacements), and `workspace.delete_file` — each gated by capability policy, a complete reviewable diff, and one-time user approval, with SHA-256 conflict detection, mutation serialization, and post-write verification
+- A bounded provider/tool loop with approved workspace mutations: `workspace.create_file`, `workspace.edit_file` (exact text replacements), and `workspace.delete_file` — each gated by capability policy, a complete reviewable diff, and one-time user approval, with SHA-256 conflict detection, mutation serialization, and post-write verification. Every approved mutation first durably records a Solaris-owned recovery checkpoint (exact pre-change bytes), reconciled at startup after crashes.
 - Read-only workspace tools: `workspace.list`, `workspace.read` (with complete-file SHA-256), `workspace.search` — all paths are canonicalized and contained within the launch directory
+- Read-only Git inspection (`git.status`, `git.diff`) through a trusted, allowlisted Git adapter — fixed argument arrays, no shell, no pagers/aliases/external diff helpers/textconv, sanitized environment, bounded output, timeouts, cancellation; the repository root must equal the workspace root
+- Safe user-invoked undo (`/undo`) that restores only Solaris-owned changes with a complete reverse diff, one-time approval, and exact post-state hash validation; user changes after a Solaris mutation cause a conflict, never an overwrite
 - A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port, allowlist-based child environments, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command
 - In-process conversation history
 - Cancellation support through `AbortSignal`
-- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic scenarios for read tools and the approved write workflow (`create solaris-write-test`, `edit solaris-write-test`, `delete solaris-write-test`)
+- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic scenarios for read tools, the approved write workflow (`create solaris-write-test`, `edit solaris-write-test`, `delete solaris-write-test`), and Git inspection (`git status`, `show working diff`, `show staged diff`, `show head diff`)
 
 Not yet implemented:
 
-- Shell or Git command execution — no provider-accessible process execution exists
-- Git status, diff, checkpoints, or undo
+- Shell or arbitrary development-command execution — no provider-accessible process execution exists
+- Git writes of any kind: staging, commits, reset, restore, checkout, clean, stash, branches, worktrees, remotes
 - Godot project understanding, GDScript programming, or editor/runtime integration
 - Real model providers (e.g. Anthropic, OpenAI)
 - Persistent sessions or transcript storage
@@ -155,10 +157,10 @@ scripts/                   architecture checks
 
 ## Architecture summary
 
-- `@solaris/core` owns application behaviour, conversation history, the provider port, and — since the sandbox milestone — the security model: capability policy, built-in sandbox profiles, the pure permission evaluator, the `SandboxBackend` port, and classified sandbox errors. It imports no Node infrastructure, no adapters, no UI code, and no sandbox runtime.
-- `@solaris/adapters` implements ports: the deterministic fake provider, the read-only workspace tools, the allowlist child-environment builder, and the Anthropic Sandbox Runtime backend (pinned exactly at `0.0.70`). Only the sandbox adapter module may import the runtime package.
-- `@solaris/cli` is a terminal input/output adapter. It parses input, renders events, and composes dependencies in one composition root. `/sandbox` and `/permissions` are diagnostics; the sandbox doctor is a startup-mode report.
-- Dependency direction is inward: `CLI -> Core` and `CLI -> composition -> Adapters -> Core ports`. `npm run check:architecture` enforces this mechanically, including process and sandbox boundaries.
+- `@solaris/core` owns application behaviour, conversation history, the provider port, the security model (capability policy, built-in sandbox profiles, the pure permission evaluator, the `SandboxBackend` port, classified errors), the Git-neutral inspection contracts (`GitInspector`, status/diff models, error categories), and the checkpoint model (metadata, lifecycle, the `CheckpointStore` port, undo planning and conflict rules). It imports no Node infrastructure, no adapters, no UI code, and no sandbox runtime.
+- `@solaris/adapters` implements ports: the deterministic fake provider, the read-only workspace tools, the approved mutation tools, the allowlist child-environment builder, the trusted Git CLI adapter (fixed allowlisted subcommands, no shell, sanitized environment, bounded output), the durable filesystem checkpoint store, and the safe undo service. Only the sandbox adapter module may import the runtime package; only the Git adapter may spawn processes.
+- `@solaris/cli` is a terminal input/output adapter. It parses input, renders events, and composes dependencies in one composition root. `/git-status`, `/diff`, `/checkpoints`, and `/undo` are CLI capabilities that use the core-owned ports; the CLI never parses raw Git output and never restores files itself.
+- Dependency direction is inward: `CLI -> Core` and `CLI -> composition -> Adapters -> Core ports`. `npm run check:architecture` enforces this mechanically, including process, Git, checkpoint, and sandbox boundaries.
 - See `ARCHITECTURE.md`, `SECURITY.md`, and the ADRs in `docs/adr/` for details.
 
 ## Testing and validation
@@ -171,4 +173,4 @@ runs formatting, linting, type checking, tests, and the architecture check witho
 
 ## Next planned milestone
 
-The next narrow task is to add Git status, diff, Solaris-owned checkpoints, and safe undo before adding shell or Godot execution. See `ROADMAP.md`.
+The next narrow task is sandboxed development-command execution with an explicit executable policy, complete command preview, one-time approval, process-tree cancellation, and network denied by default — before Godot execution. See `ROADMAP.md`.
