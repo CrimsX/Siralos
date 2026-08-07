@@ -35,6 +35,36 @@ export {
   isDeniedVariable,
   type SandboxEnvironmentPaths,
 } from "./environment/child-environment.js";
+export {
+  buildCommandEnvironment,
+  type CommandEnvironmentOptions,
+  type CommandEnvironmentPaths,
+} from "./environment/command-environment.js";
+export {
+  createProcessRunTool,
+  type ProcessRunToolDependencies,
+} from "./process/process-run-tool.js";
+export {
+  createRunDirectoryProvider,
+  type RunCleanupOutcome,
+  type RunDirectoryProvider,
+  type RunDirectoryProviderOptions,
+} from "./process/run-directories.js";
+export {
+  createNpmScriptRunner,
+  type NpmScriptRunnerOptions,
+} from "./process/runners/npm-script-runner.js";
+export {
+  createNodeScriptRunner,
+  type NodeScriptRunnerOptions,
+} from "./process/runners/node-script-runner.js";
+export { createSha256CommandDigestService } from "./process/command-digest.js";
+export {
+  resolveNpmCli,
+  resolveTrustedNode,
+  type NpmCliResolution,
+  type TrustedNodeIdentity,
+} from "./process/trusted-executables.js";
 export { createWorkspaceListTool } from "./tools/workspace/workspace-list-tool.js";
 export { createWorkspaceReadTool } from "./tools/workspace/workspace-read-tool.js";
 export { createWorkspaceSearchTool } from "./tools/workspace/workspace-search-tool.js";

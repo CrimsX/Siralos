@@ -1,4 +1,5 @@
 import type {
+  ProcessOutputEvent,
   SandboxBackend,
   SandboxBackendStatus,
   SandboxedProcessRequest,
@@ -10,6 +11,8 @@ export interface FakeSandboxBackendOptions {
   readonly results?: readonly SandboxedProcessResult[];
   readonly inspectError?: Error;
   readonly executeError?: Error;
+  /** Output events emitted on `onOutput` before each scripted result. */
+  readonly outputs?: readonly ProcessOutputEvent[];
 }
 
 export function createFakeSandboxBackend(options: FakeSandboxBackendOptions = {}): {
@@ -45,6 +48,9 @@ export function createFakeSandboxBackend(options: FakeSandboxBackendOptions = {}
       requests.push(request);
       if (options.executeError !== undefined) {
         return Promise.reject(options.executeError);
+      }
+      for (const event of options.outputs ?? []) {
+        request.onOutput?.(event);
       }
       const scripted = options.results?.[resultIndex];
       if (scripted !== undefined) {

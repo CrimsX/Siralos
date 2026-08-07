@@ -6,7 +6,7 @@ import type {
   SandboxedProcessResult,
   SandboxViolation,
 } from "@solaris/core";
-import { SandboxError } from "@solaris/core";
+import { COMMAND_LIMITS, SandboxError } from "@solaris/core";
 import {
   SandboxManager,
   VENDORED_SRT_WIN_EXE,
@@ -15,7 +15,8 @@ import {
   windowsInstallInstructions,
   type SandboxRuntimeConfig,
 } from "@anthropic-ai/sandbox-runtime";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -27,6 +28,11 @@ export interface AnthropicSandboxRuntimeBackendOptions {
   readonly workspaceRoot: string;
   readonly sandboxHome: string;
   readonly sandboxTemp: string;
+  /**
+   * Solaris-owned runs root (`~/.solaris/runs`). Command run directories live
+   * beneath it; it is readable and writable only for sandboxed commands.
+   */
+  readonly runRoot?: string;
 }
 
 export function createAnthropicSandboxRuntimeBackend(
@@ -108,8 +114,9 @@ export function createAnthropicSandboxRuntimeBackend(
       throw classifyExecutionError(error);
     }
     const startedAt = Date.now();
-    const timeoutMs = request.profile.process.timeoutMs;
-    const maxOutputBytes = request.profile.process.maxOutputBytes;
+    const timeoutMs = request.timeoutMs ?? request.profile.process.timeoutMs;
+    const stdoutLimitBytes = request.stdoutLimitBytes ?? request.profile.process.maxOutputBytes;
+    const stderrLimitBytes = request.stderrLimitBytes ?? request.profile.process.maxOutputBytes;
     const timeoutController = new AbortController();
     let timedOut = false;
     const timeoutTimer = setTimeout(() => {
@@ -125,15 +132,39 @@ export function createAnthropicSandboxRuntimeBackend(
       env: request.environment,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       signal: AbortSignal.any(signals),
     });
-    const stdoutSink = createOutputSink(maxOutputBytes);
-    const stderrSink = createOutputSink(maxOutputBytes);
+    let outputLimited = false;
+    const abortTreeListener = () => {
+      terminateProcessTree(child);
+    };
+    for (const signal of signals) {
+      signal.addEventListener("abort", abortTreeListener, { once: true });
+    }
+    const stdoutSink = createOutputSink(stdoutLimitBytes, () => {
+      outputLimited = true;
+      timeoutController.abort();
+    });
+    const stderrSink = createOutputSink(stderrLimitBytes, () => {
+      outputLimited = true;
+      timeoutController.abort();
+    });
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutSink.push(chunk);
+      if (request.onOutput !== undefined) {
+        const text = stdoutDecoder.write(chunk);
+        emitChunked(request.onOutput, "stdout", text);
+      }
     });
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrSink.push(chunk);
+      if (request.onOutput !== undefined) {
+        const text = stderrDecoder.write(chunk);
+        emitChunked(request.onOutput, "stderr", text);
+      }
     });
     const result = await new Promise<SandboxedProcessResult>((resolve, reject) => {
       child.on("error", (error: Error) => {
@@ -147,18 +178,23 @@ export function createAnthropicSandboxRuntimeBackend(
       });
       child.on("close", (exitCode: number | null, exitSignal: string | null) => {
         clearTimeout(timeoutTimer);
+        for (const signal of signals) {
+          signal.removeEventListener("abort", abortTreeListener);
+        }
         const violations = collectViolations();
         let status: SandboxedProcessResult["status"];
         if (timedOut) {
           status = "timed-out";
+        } else if (outputLimited) {
+          status = "output-limit";
         } else if (request.signal?.aborted) {
           status = "cancelled";
-        } else if (exitCode === 0) {
-          status = "completed";
         } else if (violations.length > 0) {
           status = "sandbox-denied";
-        } else {
+        } else if (exitCode === null) {
           status = "failed";
+        } else {
+          status = "completed";
         }
         resolve({
           status,
@@ -173,6 +209,16 @@ export function createAnthropicSandboxRuntimeBackend(
         });
       });
     });
+    if (request.onOutput !== undefined) {
+      const stdoutTail = stdoutDecoder.end();
+      if (stdoutTail.length > 0) {
+        emitChunked(request.onOutput, "stdout", stdoutTail);
+      }
+      const stderrTail = stderrDecoder.end();
+      if (stderrTail.length > 0) {
+        emitChunked(request.onOutput, "stderr", stderrTail);
+      }
+    }
     runtime.cleanupAfterCommand();
     return result;
   }
@@ -246,7 +292,14 @@ function buildRuntimeConfig(
   const writableRoots =
     profile.filesystem.workspaceAccess === "read-write"
       ? [options.workspaceRoot, options.sandboxHome, options.sandboxTemp]
-      : [];
+      : [options.sandboxHome, options.sandboxTemp];
+  if (options.runRoot !== undefined) {
+    writableRoots.push(options.runRoot);
+  }
+  const readableRoots = [options.workspaceRoot, options.sandboxHome, options.sandboxTemp];
+  if (options.runRoot !== undefined) {
+    readableRoots.push(options.runRoot);
+  }
   return {
     network: {
       allowedDomains: [],
@@ -254,7 +307,7 @@ function buildRuntimeConfig(
     },
     filesystem: {
       denyRead: [`${homedir()}${path.sep}**`],
-      allowRead: [options.workspaceRoot, options.sandboxHome, options.sandboxTemp],
+      allowRead: readableRoots,
       allowWrite: writableRoots,
       denyWrite: protectedPathPatterns(profile, options.workspaceRoot),
     },
@@ -315,13 +368,17 @@ function quoteWindows(argument: string): string {
   return `"${argument.replace(/"/g, '\\"')}"`;
 }
 
-function createOutputSink(maxBytes: number): {
+function createOutputSink(
+  maxBytes: number,
+  onLimitReached: () => void,
+): {
   text: string;
   truncated: boolean;
   push(chunk: Buffer): void;
 } {
   let text = "";
   let truncated = false;
+  let limitReported = false;
   return {
     get text(): string {
       return text;
@@ -333,15 +390,71 @@ function createOutputSink(maxBytes: number): {
       if (truncated) {
         return;
       }
-      const remaining = maxBytes - text.length;
+      const remaining = maxBytes - Buffer.byteLength(text, "utf8");
       if (chunk.length > remaining) {
-        text += chunk.toString("utf8", 0, Math.max(remaining, 0));
+        text += chunk.subarray(0, Math.max(remaining, 0)).toString("utf8");
         truncated = true;
+        if (!limitReported) {
+          limitReported = true;
+          onLimitReached();
+        }
       } else {
         text += chunk.toString("utf8");
       }
     },
   };
+}
+
+function emitChunked(
+  onOutput: (event: { readonly type: "stdout" | "stderr"; readonly text: string }) => void,
+  stream: "stdout" | "stderr",
+  text: string,
+): void {
+  for (const chunk of chunkDecodedText(text, COMMAND_LIMITS.maxSingleOutputEventBytes)) {
+    if (chunk.length > 0) {
+      onOutput({ type: stream, text: chunk });
+    }
+  }
+}
+
+function chunkDecodedText(text: string, maxBytes: number): readonly string[] {
+  const chunks: string[] = [];
+  let current = "";
+  for (const character of text) {
+    const next = current + character;
+    if (Buffer.byteLength(next, "utf8") > maxBytes && current.length > 0) {
+      chunks.push(current);
+      current = character;
+    } else {
+      current = next;
+    }
+  }
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+  return chunks;
+}
+
+function terminateProcessTree(child: ChildProcess): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  try {
+    if (process.platform === "win32") {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } else {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        process.kill(child.pid, "SIGKILL");
+      }
+    }
+  } catch {
+    // best-effort tree termination; the abort signal already kills the root
+  }
 }
 
 function collectViolations(): readonly SandboxViolation[] {
