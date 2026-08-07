@@ -127,6 +127,7 @@ describe("createSolarisApplication", () => {
       providerId: "recording-stub",
       state: "idle",
       messageCount: 2,
+      pendingApproval: false,
     });
   });
 

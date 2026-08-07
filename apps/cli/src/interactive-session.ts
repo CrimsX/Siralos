@@ -53,12 +53,12 @@ export async function runInteractiveSession(
             break;
           case "status":
             io.write(
-              formatStatus(
-                application.getStatus(),
-                sessionInfo.workspaceRoot,
-                sessionInfo.tools.length,
-                sessionInfo.security.profile.id,
-              ),
+              formatStatus({
+                status: application.getStatus(),
+                workspaceRoot: sessionInfo.workspaceRoot,
+                toolCount: sessionInfo.tools.length,
+                profileId: sessionInfo.security.profile.id,
+              }),
             );
             break;
           case "clear":
@@ -138,6 +138,17 @@ async function runPrompt(
           break;
         case "tool_cancelled":
           io.write(formatToolCancelled());
+          break;
+        case "tool_awaiting_approval":
+          io.write(`  \u23F3 ${event.toolName} awaiting approval\n`);
+          break;
+        case "approval_requested":
+          io.write(`\nApproval required for ${event.toolName} (${event.summary})\n`);
+          break;
+        case "approval_resolved":
+          io.write(
+            `  approval ${event.decision === "approved" ? "approved" : event.decision === "denied" ? "denied" : "cancelled"}\n`,
+          );
           break;
       }
     }

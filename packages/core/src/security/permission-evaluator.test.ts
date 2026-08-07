@@ -71,9 +71,10 @@ describe("evaluatePermission", () => {
     });
   });
 
-  it("allows workspace writes under develop-offline", () => {
+  it("asks for approval of workspace writes under develop-offline", () => {
     expect(evaluatePermission("workspace.write", developPolicy, DEVELOP_OFFLINE_PROFILE)).toEqual({
-      decision: "allow",
+      decision: "ask",
+      reason: "Policy requires approval for workspace.write.",
     });
   });
 

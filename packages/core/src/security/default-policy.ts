@@ -16,7 +16,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
       return {
         rules: {
           "workspace.read": "allow",
-          "workspace.write": "allow",
+          "workspace.write": "ask",
           "process.execute": "allow",
           "network.outbound": "deny",
         },

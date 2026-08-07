@@ -34,19 +34,23 @@ export function formatHelp(): string {
 `;
 }
 
-export function formatStatus(
-  status: SessionStatus,
-  workspaceRoot: string,
-  toolCount: number,
-  profileId: string,
-): string {
+export interface StatusView {
+  readonly status: SessionStatus;
+  readonly workspaceRoot: string;
+  readonly toolCount: number;
+  readonly profileId: string;
+}
+
+export function formatStatus(view: StatusView): string {
+  const { status } = view;
   const sessionState = status.state === "responding" ? "responding" : "active";
   return `Provider: ${status.providerId}
 Session: ${sessionState}
 Messages: ${status.messageCount}
-Workspace: ${workspaceRoot}
-Sandbox: ${profileId}
-Tools: ${toolCount}
+Workspace: ${view.workspaceRoot}
+Sandbox: ${view.profileId}
+Pending approval: ${status.pendingApproval ? "yes" : "no"}
+Tools: ${view.toolCount}
 `;
 }
 

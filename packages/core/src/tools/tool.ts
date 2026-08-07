@@ -25,6 +25,10 @@ export type ToolExecutionResult =
       readonly message: string;
     }
   | {
+      readonly status: "conflict";
+      readonly message: string;
+    }
+  | {
       readonly status: "failed";
       readonly message: string;
     }

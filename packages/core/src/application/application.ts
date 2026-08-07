@@ -1,8 +1,14 @@
 import { isCancellationError } from "../domain/cancellation.js";
 import type { ConversationItem } from "../domain/conversation.js";
 import type { ModelProvider, ModelRequest } from "../ports/provider.js";
+import { evaluatePermission } from "../security/permission-evaluator.js";
+import type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "../security/approval.js";
+import type { CapabilityPolicy } from "../security/capability.js";
+import { createDefaultPolicy } from "../security/default-policy.js";
+import { INSPECT_PROFILE, type SandboxProfile } from "../security/profile.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ToolExecutionResult } from "../tools/tool.js";
+import { isPreparedMutationTool, toolCapability } from "../tools/prepared-mutation-tool.js";
 
 export type ApplicationEvent =
   | {
@@ -29,6 +35,12 @@ export type ApplicationEvent =
       readonly displayInput: string;
     }
   | {
+      readonly type: "tool_awaiting_approval";
+      readonly callId: string;
+      readonly toolName: string;
+      readonly requestId: string;
+    }
+  | {
       readonly type: "tool_completed";
       readonly callId: string;
       readonly toolName: string;
@@ -44,17 +56,33 @@ export type ApplicationEvent =
       readonly type: "tool_cancelled";
       readonly callId: string;
       readonly toolName: string;
+    }
+  | {
+      readonly type: "approval_requested";
+      readonly requestId: string;
+      readonly toolName: string;
+      readonly capability: "workspace.write";
+      readonly summary: string;
+    }
+  | {
+      readonly type: "approval_resolved";
+      readonly requestId: string;
+      readonly decision: "approved" | "denied" | "cancelled";
     };
 
 export interface SessionStatus {
   readonly providerId: string;
   readonly state: "idle" | "responding";
   readonly messageCount: number;
+  readonly pendingApproval: boolean;
 }
 
 export interface SolarisApplicationDependencies {
   readonly provider: ModelProvider;
   readonly tools: ToolRegistry;
+  readonly policy?: CapabilityPolicy;
+  readonly profile?: SandboxProfile;
+  readonly reviewer?: ApprovalReviewer;
   readonly maxToolRounds?: number;
 }
 
@@ -100,9 +128,17 @@ export function createSolarisApplication(
   dependencies: SolarisApplicationDependencies,
 ): SolarisApplication {
   const history: ConversationItem[] = [];
-  const toolDefinitions = dependencies.tools.definitions();
+  const policy = dependencies.policy ?? createDefaultPolicy("inspect");
+  const profile = dependencies.profile ?? INSPECT_PROFILE;
+  const reviewer = dependencies.reviewer;
   const maxToolRounds = dependencies.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+  const toolDefinitions = dependencies.tools
+    .definitions()
+    .filter((info) => evaluatePermission(info.capability, policy, profile).decision !== "deny")
+    .map((info) => info.definition);
   let state: "idle" | "responding" = "idle";
+  let pendingApproval = false;
+  let approvalCounter = 0;
 
   async function* sendPrompt(text: string, signal?: AbortSignal): AsyncIterable<ApplicationEvent> {
     if (state === "responding") {
@@ -259,40 +295,135 @@ export function createSolarisApplication(
       yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
       return { status: "failed", message };
     }
+    const capability = toolCapability(tool);
+    const permission = evaluatePermission(capability, policy, profile);
+    if (permission.decision === "deny") {
+      const message = `Capability ${capability} is denied by policy: ${permission.reason}`;
+      yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
+      return { status: "denied", message };
+    }
+    if (!isPreparedMutationTool(tool)) {
+      let result: ToolExecutionResult;
+      try {
+        result = await tool.execute(call.input, signal === undefined ? {} : { signal });
+      } catch (error: unknown) {
+        if (signal?.aborted || isCancellationError(error)) {
+          result = { status: "cancelled", message: "Tool execution was cancelled." };
+        } else {
+          result = { status: "failed", message: describeError(error) };
+        }
+      }
+      yield* emitToolOutcome(call.callId, call.toolName, result);
+      return result;
+    }
+    const prepared = await tool.prepare(call.input, signal === undefined ? {} : { signal });
+    if (prepared.status !== "ready") {
+      if (prepared.status === "cancelled") {
+        yield { type: "tool_cancelled", callId: call.callId, toolName: call.toolName };
+        return { status: "cancelled", message: prepared.message };
+      }
+      yield {
+        type: "tool_failed",
+        callId: call.callId,
+        toolName: call.toolName,
+        message: prepared.message,
+      };
+      return { status: prepared.status, message: prepared.message };
+    }
+    const { mutation, preview } = prepared;
+    if (preview.truncated) {
+      const message = "The change preview is truncated and cannot be approved.";
+      yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
+      return { status: "failed", message };
+    }
+    if (permission.decision === "ask") {
+      const requestId = `approval-${(approvalCounter += 1)}`;
+      const approvalRequest: ApprovalRequest = {
+        id: requestId,
+        capability: "workspace.write",
+        toolName: call.toolName,
+        summary: summarizePreview(preview),
+        paths: preview.files.map((file) => file.path),
+        preview,
+      };
+      yield {
+        type: "approval_requested",
+        requestId,
+        toolName: call.toolName,
+        capability: "workspace.write",
+        summary: approvalRequest.summary,
+      };
+      yield {
+        type: "tool_awaiting_approval",
+        callId: call.callId,
+        toolName: call.toolName,
+        requestId,
+      };
+      pendingApproval = true;
+      let decision: ApprovalDecision;
+      try {
+        decision =
+          reviewer === undefined
+            ? { type: "deny", reason: "No approval reviewer is available." }
+            : await reviewer.review(approvalRequest, signal);
+      } catch {
+        decision = { type: "deny", reason: "The approval reviewer failed; the change was denied." };
+      } finally {
+        pendingApproval = false;
+      }
+      yield {
+        type: "approval_resolved",
+        requestId,
+        decision:
+          decision.type === "approve_once"
+            ? "approved"
+            : decision.type === "deny"
+              ? "denied"
+              : "cancelled",
+      };
+      if (decision.type !== "approve_once") {
+        if (decision.type === "cancelled") {
+          yield { type: "tool_cancelled", callId: call.callId, toolName: call.toolName };
+          return { status: "cancelled", message: "The approval was cancelled." };
+        }
+        const message = decision.reason ?? "The change was denied by the user.";
+        yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
+        return { status: "denied", message };
+      }
+    }
     let result: ToolExecutionResult;
     try {
-      result = await tool.execute(call.input, signal === undefined ? {} : { signal });
+      result = await tool.apply(mutation, signal === undefined ? {} : { signal });
     } catch (error: unknown) {
       if (signal?.aborted || isCancellationError(error)) {
-        result = { status: "cancelled", message: "Tool execution was cancelled." };
+        result = { status: "cancelled", message: "The mutation was cancelled." };
       } else {
         result = { status: "failed", message: describeError(error) };
       }
     }
+    yield* emitToolOutcome(call.callId, call.toolName, result);
+    return result;
+  }
+
+  function* emitToolOutcome(
+    callId: string,
+    toolName: string,
+    result: ToolExecutionResult,
+  ): Generator<ApplicationEvent, void, void> {
     switch (result.status) {
       case "success":
-        yield {
-          type: "tool_completed",
-          callId: call.callId,
-          toolName: call.toolName,
-          summary: result.summary,
-        };
+        yield { type: "tool_completed", callId, toolName, summary: result.summary };
         break;
       case "cancelled":
-        yield { type: "tool_cancelled", callId: call.callId, toolName: call.toolName };
+        yield { type: "tool_cancelled", callId, toolName };
         break;
-      case "failed":
       case "invalid_input":
       case "denied":
-        yield {
-          type: "tool_failed",
-          callId: call.callId,
-          toolName: call.toolName,
-          message: result.message,
-        };
+      case "conflict":
+      case "failed":
+        yield { type: "tool_failed", callId, toolName, message: result.message };
         break;
     }
-    return result;
   }
 
   return {
@@ -302,9 +433,19 @@ export function createSolarisApplication(
         providerId: dependencies.provider.id,
         state,
         messageCount: history.length,
+        pendingApproval,
       };
     },
   };
+}
+
+function summarizePreview(preview: {
+  readonly files: readonly unknown[];
+  readonly totalAddedLines: number;
+  readonly totalRemovedLines: number;
+}): string {
+  const fileLabel = preview.files.length === 1 ? "1 file" : `${preview.files.length} files`;
+  return `${fileLabel}, +${preview.totalAddedLines} -${preview.totalRemovedLines}`;
 }
 
 function toDisplayInput(input: unknown): string {

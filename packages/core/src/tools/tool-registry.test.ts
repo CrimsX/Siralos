@@ -17,11 +17,16 @@ describe("createToolRegistry", () => {
     );
   });
 
-  it("exposes definitions immutably", () => {
+  it("exposes definitions immutably with capabilities", () => {
     const registry = createToolRegistry([createStubTool("a.tool")]);
     const first = registry.definitions();
     const second = registry.definitions();
-    expect(first).toEqual([{ name: "a.tool", description: "Stub a.tool", inputSchema: {} }]);
+    expect(first).toEqual([
+      {
+        definition: { name: "a.tool", description: "Stub a.tool", inputSchema: {} },
+        capability: "workspace.read",
+      },
+    ]);
     expect(first).not.toBe(second);
   });
 
