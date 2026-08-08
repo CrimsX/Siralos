@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PreparedCheckpoint } from "@solaris/core";
-import { createFilesystemCheckpointStore } from "./checkpoint-store.js";
+import {
+  CheckpointStorageLimitError,
+  createFilesystemCheckpointStore,
+} from "./checkpoint-store.js";
 import { reconcileWorkspaceCheckpoints } from "./reconciliation.js";
 import { cleanupTempDirs, registerTempDir } from "../../git/cli/git-test-support.js";
 import { SYMLINKS_SUPPORTED } from "../../tools/workspace/workspace-fixtures.js";
@@ -62,6 +65,32 @@ function preparedUpdate(overrides: Partial<PreparedCheckpoint> = {}): PreparedCh
 
 function checkpointDirOf(context: StoreContext, checkpointId: string): string {
   return join(context.rootDirectory, context.fingerprint, checkpointId);
+}
+
+/**
+ * Byte-for-byte recursive snapshot of a directory tree: relative path ->
+ * SHA-256 of content. Any deletion, rename, or content change anywhere in
+ * the tree changes the snapshot, so equality before/after an operation
+ * proves no destructive filesystem operation occurred.
+ */
+async function snapshotTree(root: string): Promise<ReadonlyMap<string, string>> {
+  const { createHash } = await import("node:crypto");
+  const { readdir, readFile } = await import("node:fs/promises");
+  const snapshot = new Map<string, string>();
+  const walk = async (directory: string, relative: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const entryRelative = relative.length === 0 ? entry.name : `${relative}/${entry.name}`;
+      const absolute = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolute, entryRelative);
+      } else {
+        const content = await readFile(absolute);
+        snapshot.set(entryRelative, createHash("sha256").update(content).digest("hex"));
+      }
+    }
+  };
+  await walk(root, "");
+  return snapshot;
 }
 
 describe("filesystem checkpoint store", () => {
@@ -190,7 +219,7 @@ describe("filesystem checkpoint store", () => {
     await expect(context.store.loadPreimage(checkpoint.id)).rejects.toThrow();
   });
 
-  it("prunes oldest terminal checkpoints first", async () => {
+  it("refuses new checkpoints at the count limit and deletes nothing", async () => {
     const context = await withStore({ maxCheckpoints: 2 });
     const first = await context.store.prepare(preparedUpdate());
     await context.store.finalizeApplied(first.id, {
@@ -203,24 +232,96 @@ describe("filesystem checkpoint store", () => {
       afterSha256: second.after.sha256,
       absent: false,
     });
-    const third = await context.store.prepare(preparedUpdate());
-    expect(await context.store.get(first.id)).toBeNull();
-    expect((await context.store.get(third.id))?.state).toBe("prepared");
+    // Reaching the count limit is a typed storage-limit refusal, never a
+    // pruning pass: nothing is deleted and every existing checkpoint
+    // directory and file remains byte-for-byte unchanged.
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    expect((await context.store.get(first.id))?.state).toBe("undone");
+    expect((await context.store.get(second.id))?.state).toBe("applied");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
   });
 
-  it("retains prepared and uncertain checkpoints during pruning", async () => {
+  it("retains prepared and uncertain checkpoints under storage pressure and deletes nothing", async () => {
     const context = await withStore({ maxCheckpoints: 2 });
     const prepared = await context.store.prepare(preparedUpdate());
     const uncertain = await context.store.prepare(preparedUpdate());
     await context.store.markState(uncertain.id, "uncertain");
-    await expect(context.store.prepare(preparedUpdate())).rejects.toThrow();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
     expect((await context.store.get(prepared.id))?.state).toBe("prepared");
     expect((await context.store.get(uncertain.id))?.state).toBe("uncertain");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
   });
 
-  it("blocks preparation when storage cannot be freed", async () => {
-    const context = await withStore({ maxStorageBytes: 10 });
-    await expect(context.store.prepare(preparedUpdate())).rejects.toThrow();
+  it("blocks preparation when the byte limit is reached, deleting nothing", async () => {
+    // The default preimage is 14 bytes: the first fits under 20, the
+    // second would exceed it and is refused with zero deletion.
+    const context = await withStore({ maxStorageBytes: 20 });
+    await context.store.prepare(preparedUpdate());
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("never deletes on storage pressure with large fanout and deep trees present", async () => {
+    const context = await withStore({ maxCheckpoints: 1 });
+    await context.store.prepare(preparedUpdate());
+    // A checkpoint-like directory with wide fanout and a deep chain that a
+    // removal pass could have descended into; it must never be touched.
+    const wide = join(context.rootDirectory, context.fingerprint, "cp_wide-0001");
+    await mkdir(join(wide, "deep", "chain"), { recursive: true });
+    for (let index = 0; index < 50; index += 1) {
+      await writeFile(join(wide, `file-${index}.txt`), "x");
+    }
+    await writeFile(join(wide, "deep", "chain", "leaf.txt"), "y");
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("fails closed when the checkpoint directory enumeration is truncated (fanout beyond the cap)", async () => {
+    const context = await withStore({ maxCheckpoints: 2 });
+    // More than maxCheckpoints + 1 entries: the bounded enumeration cannot
+    // prove capacity, so preparation fails closed without deleting anything.
+    for (const id of ["cp_aaaa", "cp_bbbb", "cp_cccc", "cp_dddd"]) {
+      await mkdir(join(context.rootDirectory, context.fingerprint, id), { recursive: true });
+    }
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("fails closed when the retention pass deadline is expired, deleting nothing", async () => {
+    const context = await withStore({ maxCheckpoints: 2, retentionDeadlineMs: -1 });
+    await context.store.prepare(preparedUpdate());
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("never deletes anything when preparation is cancelled", async () => {
+    const context = await withStore({ maxCheckpoints: 1 });
+    await context.store.prepare(preparedUpdate());
+    const controller = new AbortController();
+    controller.abort();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate(), controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
   });
 });
 
@@ -408,7 +509,7 @@ describe("checkpoint storage link rejection", () => {
   });
 
   it(
-    "retention never deletes through links in malicious entries",
+    "storage pressure never deletes malicious symlinked entries",
     {
       skip: !SYMLINKS_SUPPORTED,
     },
@@ -422,11 +523,41 @@ describe("checkpoint storage link rejection", () => {
       const { mkdir, symlink } = await import("node:fs/promises");
       await mkdir(maliciousDir, { recursive: true });
       await symlink(outsideTarget, join(maliciousDir, "metadata.json"));
-      await tight.store.prepare(preparedUpdate({ relativePath: "docs/c.md" }));
+      await expect(
+        tight.store.prepare(preparedUpdate({ relativePath: "docs/c.md" })),
+      ).rejects.toBeInstanceOf(CheckpointStorageLimitError);
+      // The refusal deleted nothing: the malicious entry, its symlink, and
+      // the outside target all remain byte-identical.
       const entries = await readdir(join(tight.rootDirectory, tight.fingerprint));
       expect(entries).toContain("cp_malicious-0001");
       const { readFile } = await import("node:fs/promises");
       expect(await readFile(outsideTarget, "utf8")).toBe("do not delete me");
+    },
+  );
+
+  it(
+    "storage pressure never deletes through a substituted (symlinked) checkpoint directory",
+    {
+      skip: !SYMLINKS_SUPPORTED,
+    },
+    async () => {
+      const context = await withStore({ maxCheckpoints: 1 });
+      const first = await context.store.prepare(preparedUpdate());
+      const checkpointDir = checkpointDirOf(context, first.id);
+      const { rm, symlink, lstat } = await import("node:fs/promises");
+      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-outside-"));
+      registerTempDir(outside);
+      await writeFile(join(outside, "victim.txt"), "keep me");
+      await rm(checkpointDir, { recursive: true });
+      await symlink(outside, checkpointDir);
+      // Storage pressure after substitution: the retention pass must fail
+      // closed and never touch the substituted entry or its target.
+      await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+        CheckpointStorageLimitError,
+      );
+      expect((await lstat(checkpointDir)).isSymbolicLink()).toBe(true);
+      const { readFile } = await import("node:fs/promises");
+      expect(await readFile(join(outside, "victim.txt"), "utf8")).toBe("keep me");
     },
   );
 });

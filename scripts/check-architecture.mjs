@@ -123,8 +123,6 @@ const DESTRUCTIVE_FS_APIS = new Set([
   "unlinkSync",
   "rename",
   "renameSync",
-  "rm",
-  "rmSync",
   "rmdir",
   "rmdirSync",
   "copyFile",
@@ -132,6 +130,23 @@ const DESTRUCTIVE_FS_APIS = new Set([
   "truncate",
   "truncateSync",
 ]);
+
+/**
+ * Path-based recursive deletion. Node offers no directory-handle-relative
+ * deletion primitive, so recursive removal cannot be made identity-bound
+ * and is prohibited in ALL production code (test support files may still
+ * use it for cleanup). Only `rm`/`rmSync` calls that pass
+ * `recursive: true` are flagged: single-file `rm(path, { force: true })`
+ * is an unlink and stays governed by the destructive-API location rule.
+ */
+const RECURSIVE_DELETION_APIS = new Set(["rm", "rmSync"]);
+
+function isRecursiveDeletionCall(calleeText, argumentTexts) {
+  if (!RECURSIVE_DELETION_APIS.has(calleeText) && !/\b(?:fs\.)?(?:rm|rmSync)\b/.test(calleeText)) {
+    return false;
+  }
+  return argumentTexts.some((text) => /recursive\s*:\s*true/.test(text));
+}
 
 const FS_MODULES = new Set(["fs", "fs/promises"]);
 
@@ -177,9 +192,6 @@ const APPROVED_MUTATION_DIRECTORIES = [
   // the probe executable-copy staging writes only the verified private
   // executable copy inside the Solaris-created run directory
   join("src", "godot", "process", "executable-copy.ts"),
-  // the bounded no-follow removal and bounded file reads are Solaris-owned
-  // filesystem primitives operating only on verified Solaris-created roots
-  join("src", "fs"),
 ];
 
 /**
@@ -198,6 +210,14 @@ const PROHIBITED_PROCESS_EXEMPTIONS = [
   // embedded probe fixture sources that exercise prohibited operations
   join("src", "sandbox", "conformance"),
 ];
+
+/**
+ * Recursive-deletion exemptions. The conformance runner is host-side test
+ * infrastructure (like test-support files): it deletes only the probe
+ * workspaces and run roots it created itself via mkdtemp. No shipped
+ * capability ever calls path-based recursive deletion.
+ */
+const RECURSIVE_DELETION_EXEMPTIONS = [join("src", "sandbox", "conformance")];
 
 function containsProcessEnvAccess(source, packageRelativeFile, file) {
   const withoutStrings = source.replace(
@@ -457,7 +477,13 @@ function analyzeSource(source) {
     ts.forEachChild(node, visit);
   };
   visit(file);
-  return { imports, calls, spawnCalls, destructiveFsImports, importedNames };
+  return {
+    imports,
+    calls,
+    spawnCalls,
+    destructiveFsImports,
+    importedNames,
+  };
 }
 
 function isGitMutationCall(call) {
@@ -553,6 +579,16 @@ export function runChecks(root) {
               errors.push(
                 `${location}: raw process execution with shell: true is prohibited outside documented test fixtures`,
               );
+            }
+            if (isRecursiveDeletionCall(call.calleeText, call.argumentTexts)) {
+              const exemptFromRecursiveDeletion = RECURSIVE_DELETION_EXEMPTIONS.some((directory) =>
+                packageRelativeFile.startsWith(directory + sep),
+              );
+              if (!exemptFromRecursiveDeletion) {
+                errors.push(
+                  `${location}: path-based recursive deletion is prohibited in production code: ${call.calleeText} with recursive: true; Node offers no directory-handle-relative deletion primitive, so recursive removal cannot be identity-bound and is never offered`,
+                );
+              }
             }
             if (isGitMutationCall(call)) {
               errors.push(

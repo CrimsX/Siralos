@@ -12,10 +12,7 @@ import type {
   PreparedCheckpoint,
 } from "@solaris/core";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
-import {
-  enumerateDirectoryBounded,
-  removeDirectoryTreeBounded,
-} from "../../fs/directory-enumeration.js";
+import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
 
 export interface FilesystemCheckpointStoreOptions {
   readonly workspaceRoot: string;
@@ -23,6 +20,10 @@ export interface FilesystemCheckpointStoreOptions {
   readonly maxCheckpoints?: number;
   readonly maxStorageBytes?: number;
   readonly maxPreimageBytes?: number;
+  /** Wall-clock budget for one retention pass in ms (default 5000); a
+   * negative value expires the pass immediately. Test-visible so the
+   * expired-deadline fail-closed path is exercised deterministically. */
+  readonly retentionDeadlineMs?: number;
 }
 
 export const DEFAULT_CHECKPOINT_ROOT = join(homedir(), ".solaris", "checkpoints");
@@ -31,13 +32,22 @@ export const DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_MAX_PREIMAGE_BYTES = 1024 * 1024;
 const MAX_METADATA_BYTES = 64 * 1024;
 
-/** Wall-clock budget for one list or prune pass. */
+/** Wall-clock budget for one list or retention pass. */
 const CHECKPOINT_PASS_DEADLINE_MS = 5_000;
 
-/** Entry budget for one bounded recursive checkpoint-tree removal. */
-const CHECKPOINT_REMOVAL_ENTRY_BUDGET = 10_000;
-
-const PRUNE_ORDER: readonly CheckpointState[] = ["undone", "abandoned", "applied"];
+/**
+ * Typed storage-limit failure. Automatic checkpoint-retention deletion is
+ * disabled: reaching the checkpoint count or byte limit never deletes any
+ * checkpoint or filesystem entry, and every existing checkpoint is
+ * preserved for manual inspection. The caller must surface this as an
+ * explicit storage-limit refusal.
+ */
+export class CheckpointStorageLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CheckpointStorageLimitError";
+  }
+}
 
 export async function createFilesystemCheckpointStore(
   options: FilesystemCheckpointStoreOptions,
@@ -45,6 +55,7 @@ export async function createFilesystemCheckpointStore(
   const maxCheckpoints = options.maxCheckpoints ?? DEFAULT_MAX_CHECKPOINTS;
   const maxStorageBytes = options.maxStorageBytes ?? DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES;
   const maxPreimageBytes = options.maxPreimageBytes ?? DEFAULT_MAX_PREIMAGE_BYTES;
+  const retentionDeadlineMs = options.retentionDeadlineMs ?? CHECKPOINT_PASS_DEADLINE_MS;
   let canonicalWorkspace: string;
   let canonicalRoot: string;
   try {
@@ -173,15 +184,26 @@ export async function createFilesystemCheckpointStore(
     await rename(temporaryPath, metadataPath);
   }
 
-  async function pruneIfNeeded(addedBytes: number, signal?: AbortSignal): Promise<void> {
+  /**
+   * Fail-closed retention enforcement. Automatic retention deletion is
+   * disabled: this pass only MEASURES whether the checkpoint count and byte
+   * limits can accommodate one more checkpoint. When a limit would be
+   * exceeded, it throws {@link CheckpointStorageLimitError} and deletes
+   * nothing — every existing checkpoint is preserved for manual inspection.
+   * A truncated enumeration (the checkpoint directory holds more entries
+   * than the retention cap plus one, or the pass deadline expired) also
+   * fails closed: capacity cannot be proven, so no new checkpoint is
+   * created. Refusal always happens before any write.
+   */
+  async function assertRetentionCapacity(addedBytes: number, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) {
       throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
     }
     const names: string[] = [];
-    const deadline = Date.now() + CHECKPOINT_PASS_DEADLINE_MS;
-    // The enumeration is incremental and capped: entries beyond the
-    // retention maximum plus one are junk and can never be materialized.
-    await enumerateDirectoryBounded({
+    const deadline = Date.now() + retentionDeadlineMs;
+    // The enumeration is incremental and capped at the retention maximum
+    // plus one, so a hostile directory can never be materialized.
+    const outcome = await enumerateDirectoryBounded({
       directory: checkpointDirectory,
       maxEntries: maxCheckpoints + 1,
       signal,
@@ -192,18 +214,27 @@ export async function createFilesystemCheckpointStore(
         }
       },
     });
+    if (outcome.truncated) {
+      throw new CheckpointStorageLimitError(
+        `Checkpoint storage limits cannot be proven (the checkpoint directory enumeration was truncated); refusing to create a checkpoint. No checkpoint or filesystem entry was deleted.`,
+      );
+    }
     const loaded: FileCheckpoint[] = [];
     for (const name of names) {
       if (signal?.aborted) {
         throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
       }
       if (Date.now() >= deadline) {
-        break;
+        throw new CheckpointStorageLimitError(
+          `Checkpoint storage limits could not be verified within the pass deadline; refusing to create a checkpoint. No checkpoint or filesystem entry was deleted.`,
+        );
       }
       try {
         loaded.push(await loadMetadata(name));
       } catch {
-        // skip unreadable entries during pruning
+        // An unreadable checkpoint still occupies storage; it counts toward
+        // the retention cap through `names` below, and capacity cannot be
+        // proven for it, so the count check fails closed.
       }
     }
     let totalBytes = 0;
@@ -213,32 +244,10 @@ export async function createFilesystemCheckpointStore(
       }
     }
     const wouldExceed =
-      loaded.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes;
-    if (!wouldExceed) {
-      return;
-    }
-    const terminal = PRUNE_ORDER.flatMap((state) =>
-      loaded
-        .filter((checkpoint) => checkpoint.state === state)
-        .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)),
-    );
-    for (const checkpoint of terminal) {
-      if (loaded.length + 1 <= maxCheckpoints && totalBytes + addedBytes <= maxStorageBytes) {
-        break;
-      }
-      const target = checkpointPath(checkpoint.id);
-      await assertCheckpointPathSecure(target);
-      const leafCanonical = await realpath(target);
-      if (!isInside(rootDirectory, leafCanonical)) {
-        throw new Error(`Retention refuses to delete through a link: ${checkpoint.id}.`);
-      }
-      await removeDirectoryTreeBounded(target, CHECKPOINT_REMOVAL_ENTRY_BUDGET);
-      totalBytes -= checkpoint.before.byteLength ?? 0;
-      loaded.splice(loaded.indexOf(checkpoint), 1);
-    }
-    if (loaded.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes) {
-      throw new Error(
-        "Checkpoint storage limits were reached and terminal checkpoints could not free enough space.",
+      names.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes;
+    if (wouldExceed) {
+      throw new CheckpointStorageLimitError(
+        `Checkpoint storage limits would be exceeded (${names.length + 1} checkpoints against a ${maxCheckpoints}-checkpoint limit, ${totalBytes + addedBytes} bytes against a ${maxStorageBytes}-byte limit); refusing to create a checkpoint. No checkpoint or filesystem entry was deleted; existing checkpoints are preserved for manual inspection.`,
       );
     }
   }
@@ -282,7 +291,7 @@ export async function createFilesystemCheckpointStore(
       after: checkpoint.after,
       preview: checkpoint.preview,
     };
-    await pruneIfNeeded(checkpoint.before.byteLength ?? 0, signal);
+    await assertRetentionCapacity(checkpoint.before.byteLength ?? 0, signal);
     const directory = checkpointPath(id);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await assertCheckpointPathSecure(directory);
