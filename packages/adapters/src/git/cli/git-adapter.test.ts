@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { GIT_SAFETY_ENVIRONMENT, buildGitInvocation } from "./git-process.js";
 import { createGitCliAdapter } from "./git-cli-adapter.js";
 import {
+  createRunDirectoryProvider,
+  type RunCleanupOutcome,
+  type RunDirectoryProvider,
+} from "../../process/run-directories.js";
+import {
   cleanupTempDirs,
   createHostGitBackend,
   createNonGitDir,
@@ -193,6 +198,137 @@ describe("git sandboxed execution", () => {
     const status = await adapter.inspectRepository();
     expect(status.gitAvailable).toBe(false);
     expect(requests()).toHaveLength(0);
+  });
+
+  it("fails closed when private run directories are unavailable: git is never launched", async () => {
+    const repo = await createTempRepo();
+    const { backend, requests } = createFakeSandboxBackend({
+      results: [
+        completedResult({ stdout: "git version 2.40.0\n" }),
+        completedResult({ stdout: `${repo.root}\ntrue\n` }),
+      ],
+    });
+    const runsRoot = join(process.cwd(), "node_modules", ".solaris-git-test-runs");
+    const adapter = createGitCliAdapter({
+      workspaceRoot: repo.root,
+      backend,
+      runDirectories: createRunDirectoryProvider({ workspaceRoot: repo.root, runsRoot }),
+    });
+    const status = await adapter.inspectRepository();
+    expect(status.gitAvailable).toBe(false);
+    expect(status.repositoryState).toBe("unavailable");
+    expect(status.message).toContain("run directory");
+    await expect(adapter.getStatus({})).rejects.toMatchObject({ code: "git_unavailable" });
+    // Git was never executed and nothing was created on the host.
+    expect(requests()).toHaveLength(0);
+    const { stat } = await import("node:fs/promises");
+    expect(await stat(runsRoot).catch(() => null)).toBeNull();
+  });
+
+  it("refuses to launch when the executable is replaced by a link after discovery", async () => {
+    const repo = await createTempRepo();
+    const fakeExecutable = join(repo.root, "fake-git.exe");
+    const { writeFile, symlink } = await import("node:fs/promises");
+    await writeFile(fakeExecutable, "#!/bin/sh\nexit 0\n");
+    const runs = createTestRunDirectories();
+    const { backend, requests } = createFakeSandboxBackend({
+      results: [
+        completedResult({ stdout: "git version 2.40.0\n" }),
+        completedResult({ stdout: `${repo.root}\ntrue\n` }),
+        completedResult({ stdout: "# branch.head main\n" }),
+      ],
+    });
+    const adapter = createGitCliAdapter({
+      workspaceRoot: repo.root,
+      backend,
+      runDirectories: runs.provider,
+      gitExecutable: fakeExecutable,
+    });
+    // First discovery and execution succeed against the verified file.
+    const first = await adapter.getStatus({});
+    expect(first.repository).toBe(true);
+    expect(requests()).toHaveLength(3);
+    // A same-user process substitutes a symlink for the verified file after
+    // discovery. The launch-time re-verification must refuse: the substitute
+    // is never executed.
+    const { rm } = await import("node:fs/promises");
+    await rm(fakeExecutable);
+    try {
+      await symlink(repo.root, fakeExecutable, "file");
+    } catch {
+      return; // symlink unsupported; the removal case below still applies
+    }
+    const error = await adapter.getStatus({}).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "git_unavailable" });
+    expect(error instanceof Error ? error.message : "").toContain("link");
+    expect(requests()).toHaveLength(3);
+  });
+
+  it("refuses to launch when the executable is removed after discovery", async () => {
+    const repo = await createTempRepo();
+    const fakeExecutable = join(repo.root, "fake-git.exe");
+    const { writeFile, rm } = await import("node:fs/promises");
+    await writeFile(fakeExecutable, "#!/bin/sh\nexit 0\n");
+    const runs = createTestRunDirectories();
+    const { backend, requests } = createFakeSandboxBackend({
+      results: [
+        completedResult({ stdout: "git version 2.40.0\n" }),
+        completedResult({ stdout: `${repo.root}\ntrue\n` }),
+        completedResult({ stdout: "# branch.head main\n" }),
+      ],
+    });
+    const adapter = createGitCliAdapter({
+      workspaceRoot: repo.root,
+      backend,
+      runDirectories: runs.provider,
+      gitExecutable: fakeExecutable,
+    });
+    const first = await adapter.getStatus({});
+    expect(first.repository).toBe(true);
+    await rm(fakeExecutable);
+    const error = await adapter.getStatus({}).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "git_unavailable" });
+    expect(error instanceof Error ? error.message : "").toContain("could not be resolved");
+    expect(requests()).toHaveLength(3);
+  });
+
+  it("observes a refused run-directory cleanup and surfaces it explicitly", async () => {
+    const repo = await createTempRepo();
+    const { backend } = createFakeSandboxBackend({
+      results: [
+        completedResult({ stdout: "git version 2.40.0\n" }),
+        completedResult({ stdout: `${repo.root}\ntrue\n` }),
+        completedResult({ stdout: "# branch.head main\n" }),
+      ],
+    });
+    const runs = createTestRunDirectories();
+    // Widened to the provider contract so the refusal reason can be
+    // exercised; the test stand-in's own type only emits "failed".
+    const provider = runs.provider as unknown as RunDirectoryProvider;
+    const originalRemove = provider.remove.bind(provider);
+    let refusals = 0;
+    provider.remove = async (runId: string): Promise<RunCleanupOutcome> => {
+      const outcome = await originalRemove(runId);
+      if (refusals < 2) {
+        refusals += 1;
+        return {
+          ok: false,
+          reason: "refused",
+          message: "locked by another process",
+        };
+      }
+      return outcome;
+    };
+    const adapter = createGitCliAdapter({
+      workspaceRoot: repo.root,
+      backend,
+      runDirectories: provider,
+    });
+    // The cleanup refusal must be observed and surfaced, never ignored.
+    const error = await adapter.getStatus({}).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "git_status_failed" });
+    expect(error instanceof Error ? error.message : "").toContain("could not be cleaned up");
+    expect(refusals).toBeGreaterThan(0);
   });
 });
 

@@ -1,5 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join, posix, win32 } from "node:path";
 import {
   GitError,
   VALIDATION_OFFLINE_PROFILE,
@@ -16,6 +16,7 @@ import {
   buildChildEnvironment,
   readParentEnvironment,
 } from "../../environment/child-environment.js";
+import { samePathIdentity } from "../../fs-path-identity.js";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
 import type { RunDirectoryProvider } from "../../process/run-directories.js";
 import {
@@ -65,8 +66,64 @@ const MAX_GIT_RUNTIME_READ_ROOTS = 8;
  *
  * The adapter itself never spawns a process (enforced structurally by the
  * architecture check); raw Git process primitives are private to this
- * module and never exported.
+ * module and never exported. The executable resolved from PATH is
+ * re-verified (canonical identity, regular non-link file) immediately
+ * before every launch request; byte-for-byte binding to the spawned image
+ * is impossible without an exec-by-handle primitive, so whatever bytes the
+ * sandbox launches remain inside the enforcing boundary described above,
+ * and Git never executes outside it.
  */
+export interface GitExecutableCandidateInfo {
+  /** True only for a regular non-link file (symlinks and junctions are rejected). */
+  readonly isRegularNonLinkFile: boolean;
+}
+
+export interface ResolveGitExecutableOptions {
+  readonly pathValue: string;
+  /** Platform PATH delimiter (`path.delimiter`): `;` on Windows, `:` on POSIX. */
+  readonly delimiter: string;
+  readonly platform: NodeJS.Platform;
+  /** Bounded inspection: at most this many PATH entries are visited. */
+  readonly maxEntries: number;
+  readonly stat: (candidate: string) => Promise<GitExecutableCandidateInfo | null>;
+}
+
+/**
+ * Isolated Git executable resolution from a PATH value. The PATH string is
+ * split with the caller-supplied platform delimiter (empty entries are
+ * dropped — on POSIX they denote the current directory and must never be
+ * resolved relative to the workspace), only a bounded prefix of entries is
+ * inspected, candidates must be absolute after joining, and every candidate
+ * must be a regular non-link file. Returns the first accepted candidate or
+ * null. The stat function is injected so substitution behavior is testable
+ * deterministically; the caller supplies the real filesystem stat.
+ */
+export async function resolveGitExecutableFromPath(
+  options: ResolveGitExecutableOptions,
+): Promise<string | null> {
+  const names = options.platform === "win32" ? ["git.exe", "git"] : ["git"];
+  const pathFor = options.platform === "win32" ? win32 : posix;
+  const absolute = (candidate: string): boolean => pathFor.isAbsolute(candidate);
+  const entries = options.pathValue
+    .split(options.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, Math.max(0, options.maxEntries));
+  for (const entry of entries) {
+    for (const name of names) {
+      const candidate = pathFor.join(entry, name);
+      if (!absolute(candidate)) {
+        continue;
+      }
+      const info = await options.stat(candidate);
+      if (info !== null && info.isRegularNonLinkFile) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
 export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector {
   let inspection: GitWorkspaceStatus | null = null;
   let cachedExecutable: string | null | undefined;
@@ -105,22 +162,67 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
       cachedExecutable = options.gitExecutable;
       return options.gitExecutable;
     }
-    const pathEntries = (readParentEnvironment()["PATH"] ?? "")
-      .split(";")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-    const names = process.platform === "win32" ? ["git.exe", "git"] : ["git"];
-    for (const entry of pathEntries.slice(0, 64)) {
-      for (const name of names) {
-        const candidate = join(entry, name);
+    // PATH is split with the platform delimiter (`;` on Windows, `:` on
+    // Linux/macOS): a hard-coded delimiter would break discovery on every
+    // platform but the one it was written for. Empty entries (which on
+    // POSIX denote the current directory) are dropped — they must never be
+    // resolved relative to the workspace — and only a bounded prefix of
+    // entries is inspected. Candidates must be absolute and must resolve to
+    // a regular non-link file; symlinked executables are rejected.
+    const found = await resolveGitExecutableFromPath({
+      pathValue: readParentEnvironment()["PATH"] ?? "",
+      delimiter,
+      platform: process.platform,
+      maxEntries: 64,
+      stat: async (candidate) => {
         const metadata = await lstat(candidate).catch(() => null);
-        if (metadata !== null && !metadata.isSymbolicLink() && metadata.isFile()) {
-          cachedExecutable = candidate;
-          return candidate;
+        if (metadata === null) {
+          return null;
         }
-      }
+        return { isRegularNonLinkFile: !metadata.isSymbolicLink() && metadata.isFile() };
+      },
+    });
+    if (found === null) {
+      throw new GitError("git_unavailable", "The git executable was not found on PATH.");
     }
-    throw new GitError("git_unavailable", "The git executable was not found on PATH.");
+    cachedExecutable = found;
+    return found;
+  }
+
+  /**
+   * Re-verifies the resolved executable's identity immediately before every
+   * launch request: the path must still resolve canonically to itself (a
+   * link or junction planted after discovery is refused) and the leaf must
+   * still be a regular non-link file. This narrows the substitution window
+   * to the moment of the sandbox's own spawn; the enforcing sandbox boundary
+   * is the security line (whatever bytes launch are confined to the read-only
+   * workspace, denied network, and private run directory), and byte-binding
+   * to the spawned image is not claimed — Node offers no exec-by-handle
+   * primitive.
+   */
+  async function verifyExecutableAtLaunch(gitPath: string): Promise<void> {
+    let canonical: string;
+    try {
+      canonical = await realpath(gitPath);
+    } catch {
+      throw new GitError(
+        "git_unavailable",
+        "The git executable could not be resolved immediately before launch; refusing to execute.",
+      );
+    }
+    if (!samePathIdentity(canonical, gitPath)) {
+      throw new GitError(
+        "git_unavailable",
+        "The git executable resolves through a link immediately before launch; refusing to execute.",
+      );
+    }
+    const metadata = await lstat(canonical).catch(() => null);
+    if (metadata === null || metadata.isSymbolicLink() || !metadata.isFile()) {
+      throw new GitError(
+        "git_unavailable",
+        "The git executable is no longer a regular file immediately before launch; refusing to execute.",
+      );
+    }
   }
 
   async function gitRuntimeReadRoots(gitPath: string): Promise<readonly string[]> {
@@ -151,7 +253,19 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
   ): Promise<GitProcessResult> {
     await requireSandbox();
     const gitPath = await resolveGitExecutable();
-    const runPaths = await options.runDirectories.create();
+    await verifyExecutableAtLaunch(gitPath);
+    const created = await options.runDirectories.create();
+    if (!created.ok) {
+      // Run-directory creation fails closed: Git is never launched without
+      // a verified Solaris-owned private run directory.
+      throw new GitError(
+        "git_unavailable",
+        `Git inspection is unavailable because a private run directory cannot be prepared safely: ${created.message}`,
+      );
+    }
+    const runPaths = created.paths;
+    let failure: unknown = null;
+    let outcome: GitProcessResult | null = null;
     try {
       const environment: Readonly<Record<string, string>> = {
         ...buildChildEnvironment(readParentEnvironment(), {
@@ -175,10 +289,26 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
         explicitReadRoots: [options.workspaceRoot, ...(await gitRuntimeReadRoots(gitPath))],
         ...(signal === undefined ? {} : { signal }),
       });
-      return mapSandboxedGitResult(result, subcommand);
-    } finally {
-      await options.runDirectories.remove(runPaths.runId);
+      outcome = mapSandboxedGitResult(result, subcommand);
+    } catch (error: unknown) {
+      failure = error;
     }
+    // The cleanup outcome is OBSERVED on every path, never ignored: a
+    // refused or failed cleanup surfaces as an explicit cleanup failure
+    // (the original failure, when one occurred, is preserved as the detail),
+    // and the preserved run directory is never silently left behind.
+    const cleanup = await options.runDirectories.remove(runPaths.runId);
+    if (!cleanup.ok) {
+      throw new GitError(
+        "git_status_failed",
+        `Git inspection ran, but its private run directory could not be cleaned up (${cleanup.message}); the run directory was preserved and must be inspected manually.`,
+        failure,
+      );
+    }
+    if (failure !== null) {
+      throw failure instanceof Error ? failure : new Error(describeGitError(failure));
+    }
+    return outcome as GitProcessResult;
   }
 
   async function inspectRepository(signal?: AbortSignal): Promise<GitWorkspaceStatus> {
