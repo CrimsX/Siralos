@@ -439,9 +439,7 @@ describe("check-architecture", () => {
     fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
       'export const ARGS = ["--import"];\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(
-      errors.some((error) => error.includes("project-affecting Godot arguments")),
-    ).toBe(true);
+    expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(true);
   });
 
   it("accepts fixed probe arguments in probe invocation code", () => {
@@ -449,9 +447,7 @@ describe("check-architecture", () => {
     fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
       'export const ARGS = ["--version"];\nexport const HELP = ["--help"];\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(
-      errors.some((error) => error.includes("project-affecting Godot arguments")),
-    ).toBe(false);
+    expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(false);
   });
 
   it("allows capability parsing modules to reference project option names", () => {
@@ -459,9 +455,7 @@ describe("check-architecture", () => {
     fixture["packages/adapters/src/godot/process/help-capabilities-parser.ts"] =
       'export const KNOWN = ["--path", "--scene", "--script", "--import"];\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(
-      errors.some((error) => error.includes("project-affecting Godot arguments")),
-    ).toBe(false);
+    expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(false);
   });
 
   it("allows tests to reference project-affecting Godot arguments", () => {
@@ -469,9 +463,7 @@ describe("check-architecture", () => {
     fixture["packages/adapters/src/godot/process/godot-probe-runner.test.ts"] =
       'expect(ARGS).not.toContain("--path");\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(
-      errors.some((error) => error.includes("project-affecting Godot arguments")),
-    ).toBe(false);
+    expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(false);
   });
 
   it("rejects full API dumps in provider-facing core types via the probe module boundary", () => {

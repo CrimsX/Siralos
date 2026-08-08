@@ -262,7 +262,13 @@ function containsForbiddenGitMutationToken(source) {
  * capability parser, help fixtures, documentation, and tests can still
  * reference those option names.
  */
-const FORBIDDEN_GODOT_PROJECT_ARGUMENTS = ["--path", "--upwards", "--import", "--scene", "--script"];
+const FORBIDDEN_GODOT_PROJECT_ARGUMENTS = [
+  "--path",
+  "--upwards",
+  "--import",
+  "--scene",
+  "--script",
+];
 
 function containsForbiddenGodotProjectArgument(source) {
   return FORBIDDEN_GODOT_PROJECT_ARGUMENTS.some((token) => source.includes(token));
