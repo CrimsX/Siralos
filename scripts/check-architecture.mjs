@@ -123,6 +123,8 @@ const DESTRUCTIVE_FS_APIS = new Set([
   "unlinkSync",
   "rename",
   "renameSync",
+  "rm",
+  "rmSync",
   "rmdir",
   "rmdirSync",
   "copyFile",
@@ -133,18 +135,37 @@ const DESTRUCTIVE_FS_APIS = new Set([
 
 /**
  * Path-based recursive deletion. Node offers no directory-handle-relative
- * deletion primitive, so recursive removal cannot be made identity-bound
- * and is prohibited in ALL production code (test support files may still
- * use it for cleanup). Only `rm`/`rmSync` calls that pass
- * `recursive: true` are flagged: single-file `rm(path, { force: true })`
- * is an unlink and stays governed by the destructive-API location rule.
+ * deletion primitive, so recursive removal cannot be made identity-bound.
+ * The recursive rule is STRICTER than the destructive-API location rule:
+ * `rm`/`rmSync` with `recursive: true` is prohibited in all production
+ * code with only the documented test-support and host-side conformance
+ * exemptions below, even inside approved mutation directories. A
+ * non-recursive `rm(path, { force: true })` is an unlink and stays
+ * governed by the destructive-API location rule.
  */
+const RECURSIVE_DELETION_APIS = new Set(["rm", "rmSync"]);
+
+/** Exact files exempt from the recursive-deletion rule: the host-side
+ * conformance runner's own-artifact cleanup (test support is exempt via
+ * isTestSupportFile). Narrow by exact file, never by directory. */
+const RECURSIVE_DELETION_EXEMPTIONS = [join("src", "sandbox", "conformance", "run-conformance.ts")];
+
+function isExemptFromRecursiveDeletion(packageRelativeFile) {
+  return RECURSIVE_DELETION_EXEMPTIONS.some(
+    (exemption) =>
+      packageRelativeFile === exemption || packageRelativeFile.startsWith(exemption + sep),
+  );
+}
+
+function hasRecursiveFlag(argumentTexts) {
+  return argumentTexts.some((text) => /recursive\s*:\s*true/.test(text));
+}
 
 function isRecursiveDeletionCall(calleeText, argumentTexts) {
   if (!/^(?:fs\.)?(?:rm|rmSync)$/.test(calleeText)) {
     return false;
   }
-  return argumentTexts.some((text) => /recursive\s*:\s*true/.test(text));
+  return hasRecursiveFlag(argumentTexts);
 }
 
 const FS_MODULES = new Set(["fs", "fs/promises"]);
@@ -209,14 +230,6 @@ const PROHIBITED_PROCESS_EXEMPTIONS = [
   // embedded probe fixture sources that exercise prohibited operations
   join("src", "sandbox", "conformance"),
 ];
-
-/**
- * Recursive-deletion exemptions. The conformance runner is host-side test
- * infrastructure (like test-support files): it deletes only the probe
- * workspaces and run roots it created itself via mkdtemp. No shipped
- * capability ever calls path-based recursive deletion.
- */
-const RECURSIVE_DELETION_EXEMPTIONS = [join("src", "sandbox", "conformance")];
 
 function containsProcessEnvAccess(source, packageRelativeFile, file) {
   const withoutStrings = source.replace(
@@ -394,8 +407,8 @@ function analyzeSource(source) {
   const importedNames = []; // { local, originalName, module } for every named binding
   const imports = new Set();
 
-  const addCall = (module, api, calleeText) => {
-    calls.push({ module, api, calleeText });
+  const addCall = (module, api, calleeText, argumentTexts) => {
+    calls.push({ module, api, calleeText, argumentTexts });
   };
 
   const visit = (node) => {
@@ -448,7 +461,7 @@ function analyzeSource(source) {
       if (ts.isIdentifier(node.expression)) {
         const binding = bindings.get(node.expression.text);
         if (binding !== undefined) {
-          addCall(binding.module, binding.originalName, node.expression.text);
+          addCall(binding.module, binding.originalName, node.expression.text, argumentTexts);
           if (binding.module === CHILD_PROCESS_MODULE) {
             spawnCalls.push({ calleeText: node.expression.text, argumentTexts, shellTrue });
           }
@@ -462,7 +475,7 @@ function analyzeSource(source) {
         const objectText = node.expression.expression.getText(file);
         const namespace = namespaceImports.get(objectText);
         if (namespace !== undefined) {
-          addCall(namespace, node.expression.name.text, calleeText);
+          addCall(namespace, node.expression.name.text, calleeText, argumentTexts);
           if (namespace === CHILD_PROCESS_MODULE || FS_MODULES.has(namespace)) {
             spawnCalls.push({ calleeText, argumentTexts, shellTrue });
           }
@@ -562,6 +575,16 @@ export function runChecks(root) {
                 );
               }
             }
+            if (
+              FS_MODULES.has(call.module) &&
+              RECURSIVE_DELETION_APIS.has(call.api) &&
+              hasRecursiveFlag(call.argumentTexts ?? []) &&
+              !isExemptFromRecursiveDeletion(packageRelativeFile)
+            ) {
+              errors.push(
+                `${location}: path-based recursive deletion is prohibited in production code: ${call.api} from ${call.module} with recursive: true; Node offers no directory-handle-relative deletion primitive, so recursive removal cannot be identity-bound and is never offered`,
+              );
+            }
             if (call.module === CHILD_PROCESS_MODULE) {
               const inApprovedDirectory = APPROVED_CHILD_PROCESS_DIRECTORIES.some((directory) =>
                 packageRelativeFile.startsWith(directory + sep),
@@ -580,10 +603,7 @@ export function runChecks(root) {
               );
             }
             if (isRecursiveDeletionCall(call.calleeText, call.argumentTexts)) {
-              const exemptFromRecursiveDeletion = RECURSIVE_DELETION_EXEMPTIONS.some((directory) =>
-                packageRelativeFile.startsWith(directory + sep),
-              );
-              if (!exemptFromRecursiveDeletion) {
+              if (!isExemptFromRecursiveDeletion(packageRelativeFile)) {
                 errors.push(
                   `${location}: path-based recursive deletion is prohibited in production code: ${call.calleeText} with recursive: true; Node offers no directory-handle-relative deletion primitive, so recursive removal cannot be identity-bound and is never offered`,
                 );

@@ -418,6 +418,122 @@ describe("check-architecture", () => {
     expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(true);
   });
 
+  it("rejects direct rm with recursive: true in production code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("dir", { recursive: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+  });
+
+  it("rejects aliased rm with recursive: true in production code", () => {
+    // The verified alias reproduction: the import binding resolves
+    // `erase` back to `rm`, so this must be an architecture error.
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { rm as erase } from "node:fs/promises";\nerase("dir", { recursive: true, force: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+  });
+
+  it("rejects namespace rm with recursive: true in production code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import * as fsp from "node:fs/promises";\nfsp.rm("dir", { recursive: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+  });
+
+  it("rejects rmSync with recursive: true in production code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { rmSync } from "fs";\nrmSync("dir", { recursive: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+  });
+
+  it("rejects bare and node:-prefixed module specifiers alike", () => {
+    for (const specifier of ["node:fs/promises", "fs/promises", "node:fs", "fs"]) {
+      const fixture = cleanWorkspaceFixture();
+      fixture["packages/adapters/src/tools/example.ts"] =
+        `import { rm } from "${specifier}";\nrm("dir", { recursive: true });\n`;
+      const errors = runChecks(writeFixture(fixture));
+      expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+    }
+  });
+
+  it("rejects recursive rm with multiline and reordered option properties", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("dir", {\n  force: true,\n  recursive: true,\n  maxRetries: 3,\n});\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+  });
+
+  it("rejects recursive rm inside an otherwise approved mutation directory", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/workspace/mutations/editor.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("dir", { recursive: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+  });
+
+  it("rejects non-recursive rm outside approved destructive-operation locations", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/example.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("file.txt", { force: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(true);
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(false);
+  });
+
+  it("allows non-recursive rm only in explicitly approved locations", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/workspace/mutations/editor.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("temp.tmp", { force: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(false);
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(false);
+  });
+
+  it("allows recursive cleanup only in the documented exact exemptions", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/sandbox/conformance/run-conformance.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("artifacts", { recursive: true, force: true });\n';
+    fixture["packages/adapters/src/tools/example.test.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("dir", { recursive: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(false);
+  });
+
+  it("does not exempt a whole conformance directory from the recursive rule", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/sandbox/conformance/probe-embed.ts"] =
+      'import { rm } from "node:fs/promises";\nrm("dir", { recursive: true });\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("path-based recursive deletion"))).toBe(true);
+  });
+
+  it("produces the same diagnostic category for direct, alias, and namespace forms", () => {
+    const sources = [
+      'import { rm } from "node:fs/promises";\nrm("dir", { recursive: true });\n',
+      'import { rm as erase } from "node:fs/promises";\nerase("dir", { recursive: true });\n',
+      'import * as fsp from "node:fs/promises";\nfsp.rm("dir", { recursive: true });\n',
+    ];
+    for (const source of sources) {
+      const fixture = cleanWorkspaceFixture();
+      fixture["packages/adapters/src/tools/example.ts"] = source;
+      const errors = runChecks(writeFixture(fixture));
+      const recursiveErrors = errors.filter((error) =>
+        error.includes("path-based recursive deletion"),
+      );
+      expect(recursiveErrors.length).toBeGreaterThan(0);
+      for (const error of recursiveErrors) {
+        expect(error).toContain("path-based recursive deletion is prohibited");
+      }
+    }
+  });
+
   it("rejects Git mutation commands passed to spawn structurally", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/git/cli/runner.ts"] =
