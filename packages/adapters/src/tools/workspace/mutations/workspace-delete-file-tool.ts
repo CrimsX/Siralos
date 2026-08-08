@@ -49,17 +49,23 @@ export function createWorkspaceDeleteFileTool(
       },
     },
     capability: "workspace.write",
-    async prepare(_input: unknown, context: ToolExecutionContext): Promise<ToolPreparationResult> {
+    prepare(_input: unknown, context: ToolExecutionContext): Promise<ToolPreparationResult> {
       if (context.signal?.aborted) {
-        return { status: "cancelled", message: "Preparation was cancelled." };
+        return Promise.resolve({ status: "cancelled", message: "Preparation was cancelled." });
       }
-      return { status: "unavailable", message: WORKSPACE_DELETE_UNAVAILABLE_MESSAGE };
+      return Promise.resolve({
+        status: "unavailable",
+        message: WORKSPACE_DELETE_UNAVAILABLE_MESSAGE,
+      });
     },
-    async apply(
+    apply(
       _prepared: PreparedMutation,
       _context: ToolExecutionContext,
     ): Promise<ToolExecutionResult> {
-      return { status: "unavailable", message: WORKSPACE_DELETE_UNAVAILABLE_MESSAGE };
+      return Promise.resolve({
+        status: "unavailable",
+        message: WORKSPACE_DELETE_UNAVAILABLE_MESSAGE,
+      });
     },
   };
 }

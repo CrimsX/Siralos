@@ -178,7 +178,7 @@ describe("git inspection live confinement (real enforcing sandbox only)", () => 
     repo.git("add", ".gitattributes");
     repo.commit("attrs");
     await makeRacyClean(repo, "data.txt", "changed-content\n");
-    const snapshot = await repo.git("status", "--porcelain=v2", "-z");
+    const snapshot = repo.git("status", "--porcelain=v2", "-z");
 
     const runs = createTestRunDirectories();
     const adapter = createGitCliAdapter({
@@ -192,7 +192,7 @@ describe("git inspection live confinement (real enforcing sandbox only)", () => 
     // write its marker to the host repository.
     await expect(readFile(markerPath, "utf8")).rejects.toThrow();
     // The repository must be byte-identical: no index or object writes.
-    const after = await repo.git("status", "--porcelain=v2", "-z");
+    const after = repo.git("status", "--porcelain=v2", "-z");
     expect(after.stdout).toBe(snapshot.stdout);
   });
 });

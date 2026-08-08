@@ -26,13 +26,13 @@ export const UNDO_UNAVAILABLE_MESSAGE =
  */
 export function createUndoService(_dependencies: UndoServiceDependencies): UndoService {
   return {
-    async undo(): Promise<UndoOutcome> {
-      return {
+    undo(): Promise<UndoOutcome> {
+      return Promise.resolve({
         type: "failed",
         checkpointId: null,
         path: null,
         message: UNDO_UNAVAILABLE_MESSAGE,
-      };
+      });
     },
   };
 }
