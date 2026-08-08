@@ -174,9 +174,6 @@ const APPROVED_MUTATION_DIRECTORIES = [
   join("src", "sandbox", "conformance"),
   join("src", "checkpoints", "filesystem"),
   join("src", "process"),
-  // the engine-profile cache performs verified atomic metadata writes
-  // beneath ~/.solaris/godot/engine-profiles
-  join("src", "godot", "cache"),
   // the probe executable-copy staging writes only the verified private
   // executable copy inside the Solaris-created run directory
   join("src", "godot", "process", "executable-copy.ts"),

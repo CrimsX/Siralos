@@ -138,15 +138,16 @@ export function createGodotEngineProfiler(
   }> {
     emit({ type: "godot_discovery_started" });
     const { candidates, duplicates } = await collectCandidates(signal);
+    const cacheDiagnostics: SafeDiagnostic[] = [];
     const profiled: GodotProfiledCandidate[] = [];
     for (const installation of candidates) {
       if (signal?.aborted) {
         throw createAbortError();
       }
-      profiled.push(await profileCandidate(installation, signal));
+      profiled.push(await profileCandidate(installation, signal, cacheDiagnostics));
     }
     const selection = await select(profiled);
-    const diagnostics: SafeDiagnostic[] = [];
+    const diagnostics: SafeDiagnostic[] = cacheDiagnostics;
     if (selection.configActiveError !== null) {
       diagnostics.push({ severity: "warning", message: selection.configActiveError });
     }
@@ -322,6 +323,7 @@ export function createGodotEngineProfiler(
   async function profileCandidate(
     installation: GodotInstallation,
     signal?: AbortSignal,
+    cacheDiagnostics: SafeDiagnostic[] = [],
   ): Promise<GodotProfiledCandidate> {
     if (installation.status !== "valid") {
       return {
@@ -341,7 +343,24 @@ export function createGodotEngineProfiler(
         profileError: GODOT_PROBING_UNAVAILABLE_MESSAGE,
       };
     }
-    const cachedProfile = await dependencies.cache.load(installation.sha256);
+    // The engine-profile cache is an OPTIONAL optimization, never an
+    // availability dependency: a bounded cache failure (I/O, corruption, or
+    // root unavailability) records a safe diagnostic and discovery continues
+    // without cached data. Cancellation is never swallowed, and
+    // executable-identity failures are never hidden by the cache.
+    let cachedProfile: CachedEngineProfile | null = null;
+    try {
+      cachedProfile = await dependencies.cache.load(installation.sha256);
+    } catch (error: unknown) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      cacheDiagnostics.push({
+        severity: "warning",
+        message:
+          "The engine-profile cache could not be read; discovery continued without cached data.",
+      });
+    }
     if (cachedProfile !== null && (await cacheMatchesExecutable(cachedProfile, installation))) {
       return {
         installation,
@@ -483,6 +502,9 @@ export function createGodotEngineProfiler(
       probedAtMs: Date.now(),
       diagnostics: profile.diagnostics,
     };
+    // A failed or unavailable cache store NEVER converts a successful probe
+    // into a failed discovery: cache durability is not required, and the
+    // probe result is returned regardless of what the cache does with it.
     await dependencies.cache.store(cachedEntry).catch(() => undefined);
     return { installation, profile, profileError: null };
   }
@@ -721,4 +743,8 @@ function describeOverrides(preference: GodotSelectionPreference): readonly strin
 
 function createAbortError(): Error {
   return new DOMException("Godot discovery was aborted.", "AbortError");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }

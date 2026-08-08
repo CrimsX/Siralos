@@ -6,6 +6,7 @@ import { DEFAULT_USER_CONFIG, type UserGodotConfig } from "../../config/user-con
 import { createEngineProfileCache } from "../cache/engine-profile-cache.js";
 import { createGodotEngineProfiler, deduplicateCandidates } from "./engine-profiler.js";
 import { createFakeGodotProbeRunner } from "../testing/fake-godot-probe-runner.js";
+import type { GodotEngineProfileCache } from "../cache/engine-profile-cache.js";
 import type {
   GodotApplicationEvent,
   GodotInstallation,
@@ -57,6 +58,35 @@ function availableBackend(): SandboxBackend {
     },
     close() {
       return Promise.resolve();
+    },
+  };
+}
+
+/**
+ * Hostile cache implementation that fails the selected operations, proving
+ * the profiler treats the cache as an optional optimization that can never
+ * abort discovery.
+ */
+function failingCache(options: { readonly load?: boolean; readonly store?: boolean } = {}): {
+  load: GodotEngineProfileCache["load"];
+  store: GodotEngineProfileCache["store"];
+  count: GodotEngineProfileCache["count"];
+} {
+  return {
+    load() {
+      if (options.load === true) {
+        return Promise.reject(new Error("cache I/O failure"));
+      }
+      return Promise.resolve(null);
+    },
+    store() {
+      if (options.store === true) {
+        return Promise.reject(new Error("cache write failure"));
+      }
+      return Promise.resolve({ ok: false as const, reason: "unavailable" as const, message: "" });
+    },
+    count() {
+      return Promise.resolve(0 as const);
     },
   };
 }
@@ -387,7 +417,7 @@ describe("createGodotEngineProfiler", () => {
     expect(probes.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("serves unchanged executables from the cache without re-probing", async () => {
+  it("re-probes on every discover while the engine-profile cache is unavailable (no cached profile is ever served)", async () => {
     const root = await withTemp();
     const workspace = join(root, "workspace");
     const bin = join(root, "bin");
@@ -415,12 +445,14 @@ describe("createGodotEngineProfiler", () => {
     const first = await profiler.discover();
     expect(fake.calls().version).toBe(1);
     expect(first.selected?.fingerprint).toBeTruthy();
+    // The cache is unavailable: it can never serve a previously stored
+    // profile, so every discover performs a fresh probe.
     const second = await profiler.discover();
-    expect(fake.calls().version).toBe(1);
+    expect(fake.calls().version).toBe(2);
     expect(second.selected?.fingerprint).toBe(first.selected?.fingerprint);
   });
 
-  it("never serves a stale profile after a same-size content replacement with restored mtime", async () => {
+  it("re-validates the executable on every discover after a same-size content replacement with restored mtime", async () => {
     const root = await withTemp();
     const workspace = join(root, "workspace");
     const bin = join(root, "bin");
@@ -453,6 +485,107 @@ describe("createGodotEngineProfiler", () => {
     const second = await profiler.discover();
     expect(fake.calls().version).toBe(2);
     expect(second.selected?.fingerprint).not.toBe(first.selected?.fingerprint);
+  });
+
+  it("continues discovery with a warning when the cache load fails", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    const bin = join(root, "bin");
+    const executable = await executableFixture(bin);
+    const fake = createFakeGodotProbeRunner({
+      versionText: "4.7.1.stable.official",
+      advertiseApiDump: true,
+    });
+    const profiler = createGodotEngineProfiler({
+      config: {
+        activeInstallation: null,
+        installations: { primary: { path: executable, editionHint: "standard" } },
+        discoverOnPath: false,
+      },
+      preference: { kind: "auto" },
+      overrideSource: null,
+      workspaceRoot: workspace,
+      backend: availableBackend(),
+      probeRunner: fake.runner,
+      cache: failingCache({ load: true }),
+      hostPath: null,
+      hostPathExt: null,
+      platform: "win32",
+    });
+    const result = await profiler.discover();
+    // The candidate is still profiled by a fresh probe: the cache is an
+    // optional optimization and its failure never aborts discovery.
+    expect(fake.calls().version).toBe(1);
+    expect(result.selected?.installationId).toBe("primary");
+    expect(result.diagnostics.some((d) => d.message.includes("cache"))).toBe(true);
+  });
+
+  it("propagates cancellation raised by the cache load", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    const bin = join(root, "bin");
+    const executable = await executableFixture(bin);
+    const profiler = createGodotEngineProfiler({
+      config: {
+        activeInstallation: null,
+        installations: { primary: { path: executable, editionHint: "standard" } },
+        discoverOnPath: false,
+      },
+      preference: { kind: "auto" },
+      overrideSource: null,
+      workspaceRoot: workspace,
+      backend: availableBackend(),
+      probeRunner: createFakeGodotProbeRunner().runner,
+      cache: {
+        load() {
+          return Promise.reject(new DOMException("cancelled by caller", "AbortError"));
+        },
+        store() {
+          return Promise.resolve({
+            ok: false as const,
+            reason: "unavailable" as const,
+            message: "",
+          });
+        },
+        count() {
+          return Promise.resolve(0 as const);
+        },
+      },
+      hostPath: null,
+      hostPathExt: null,
+      platform: "win32",
+    });
+    await expect(profiler.discover()).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("never converts a successful probe into a failure when the cache store fails", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    const bin = join(root, "bin");
+    const executable = await executableFixture(bin);
+    const fake = createFakeGodotProbeRunner({
+      versionText: "4.7.1.stable.official",
+      advertiseApiDump: true,
+    });
+    const profiler = createGodotEngineProfiler({
+      config: {
+        activeInstallation: null,
+        installations: { primary: { path: executable, editionHint: "standard" } },
+        discoverOnPath: false,
+      },
+      preference: { kind: "auto" },
+      overrideSource: null,
+      workspaceRoot: workspace,
+      backend: availableBackend(),
+      probeRunner: fake.runner,
+      cache: failingCache({ store: true }),
+      hostPath: null,
+      hostPathExt: null,
+      platform: "win32",
+    });
+    const result = await profiler.discover();
+    expect(fake.calls().version).toBe(1);
+    expect(result.selected?.installationId).toBe("primary");
   });
 
   it("notices candidate additions and removals on every discover", async () => {

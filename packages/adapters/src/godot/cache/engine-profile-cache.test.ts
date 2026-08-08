@@ -1,11 +1,9 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createEngineProfileCache,
-  ENGINE_PROFILE_CACHE_MAX_FILE_BYTES,
-  ENGINE_PROFILE_CACHE_SCAN_CAP,
   ENGINE_PROFILE_CACHE_SCHEMA_VERSION,
   type CachedEngineProfile,
 } from "./engine-profile-cache.js";
@@ -59,259 +57,107 @@ function entry(overrides: Partial<CachedEngineProfile> = {}): CachedEngineProfil
   };
 }
 
-async function writeEntry(cacheRoot: string, sha256: string, content: string): Promise<void> {
-  await mkdir(cacheRoot, { recursive: true });
-  await writeFile(join(cacheRoot, `${sha256}.json`), content);
-}
-
 /**
- * Serializes a base entry with selected fields overridden or deleted, for
- * malformed-entry fixtures. The typed entry is first widened so hostile
- * shapes can be injected.
+ * The engine-profile cache is an explicitly unavailable component while
+ * engine probing is unavailable: it performs ZERO filesystem operations. No
+ * cache path is initialized, created, read, written, renamed, or removed, so
+ * no Windows canonicalization failure can be misreported as a link and no
+ * parent-substitution or entry-substitution attack surface exists.
  */
-function malformed(
-  overrides: Record<string, unknown>,
-  deletedFields: readonly string[] = [],
-): string {
-  const record = { ...entry() } as Record<string, unknown>;
-  for (const field of deletedFields) {
-    delete record[field];
-  }
-  for (const [key, value] of Object.entries(overrides)) {
-    record[key] = value;
-  }
-  return JSON.stringify(record);
-}
-
-describe("createEngineProfileCache", () => {
-  it("stores and loads a profile by executable sha256", async () => {
-    const root = await withTemp();
-    const cache = createEngineProfileCache({ rootDirectory: join(root, "cache") });
-    await cache.store(entry());
-    const loaded = await cache.load("a".repeat(64));
-    expect(loaded?.version.raw).toBe("4.7.1.stable.official");
-    expect(loaded?.schemaVersion).toBe(ENGINE_PROFILE_CACHE_SCHEMA_VERSION);
-  });
-
-  it("returns null for missing entries", async () => {
-    const root = await withTemp();
-    const cache = createEngineProfileCache({ rootDirectory: join(root, "cache") });
-    expect(await cache.load("b".repeat(64))).toBeNull();
-  });
-
-  it("rejects corrupted entries on load", async () => {
+describe("createEngineProfileCache (unavailable contract)", () => {
+  it("load always returns null (a cache miss) without creating the cache directory", async () => {
     const root = await withTemp();
     const cacheRoot = join(root, "cache");
     const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
+    expect(await cache.load("a".repeat(64))).toBeNull();
+    // A missing cache must be a plain miss: no filesystem mutation happened.
+    await expect(stat(cacheRoot)).rejects.toThrow();
+  });
+
+  it("load never reads an existing cache entry: a valid on-disk entry is still a miss", async () => {
+    const root = await withTemp();
+    const cacheRoot = join(root, "cache");
+    await writeFile(join(root, `${"a".repeat(64)}.json`), JSON.stringify(entry()));
+    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
+    expect(await cache.load("a".repeat(64))).toBeNull();
+    const entries = await readdir(root);
+    expect(entries).toEqual([`${"a".repeat(64)}.json`]);
+  });
+
+  it("store returns a typed unavailable result and never creates directories", async () => {
+    const root = await withTemp();
+    const cacheRoot = join(root, "cache");
+    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
+    const outcome = await cache.store(entry());
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe("unavailable");
+      expect(outcome.message).toContain("unavailable");
+    }
+    await expect(stat(cacheRoot)).rejects.toThrow();
+  });
+
+  it("store never writes, renames, or overwrites anything", async () => {
+    const root = await withTemp();
+    const cacheRoot = join(root, "cache");
+    await writeFile(join(root, "victim.txt"), "keep me");
+    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
     await cache.store(entry());
-    await writeEntry(cacheRoot, "a".repeat(64), "{ broken json");
-    expect(await cache.load("a".repeat(64))).toBeNull();
+    const content = await import("node:fs/promises").then((fs) =>
+      fs.readFile(join(root, "victim.txt"), "utf8"),
+    );
+    expect(content).toBe("keep me");
+    expect(await readdir(root)).toEqual(["victim.txt"]);
   });
 
-  it("rejects entries with a mismatched schema version", async () => {
+  it("count always resolves to zero without enumerating anything", async () => {
     const root = await withTemp();
-    const cache = createEngineProfileCache({ rootDirectory: join(root, "cache") });
-    await cache.store(entry({ schemaVersion: 999 }));
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("counts bounded entries", async () => {
-    const root = await withTemp();
-    const cache = createEngineProfileCache({ rootDirectory: join(root, "cache") });
+    const cacheRoot = join(root, "cache");
+    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
     expect(await cache.count()).toBe(0);
-    await cache.store(entry());
-    expect(await cache.count()).toBe(1);
+    await expect(stat(cacheRoot)).rejects.toThrow();
   });
 
-  it("rejects a symlinked cache root", async () => {
+  it("never classifies any path as a link: a missing root, a managed ancestor, or a permission-denied canonicalization can never be misreported", async () => {
+    // Regression for the managed-Windows misclassification: the previous
+    // implementation treated a failed realpath (EPERM/EACCES/UNKNOWN on a
+    // managed ancestor such as the user profile root) as proof of a link and
+    // refused the cache with "resolves through a link". The unavailable
+    // cache performs no canonicalization at all, so no valid path can ever
+    // be falsely classified as a link — and the ordinary cases below must
+    // resolve as plain misses, never as link rejections.
     const root = await withTemp();
+    // 1. A normal missing cache path.
+    const missing = createEngineProfileCache({ rootDirectory: join(root, "nested", "cache") });
+    expect(await missing.load("b".repeat(64))).toBeNull();
+    // 2. An existing directory path (no link involvement).
+    await writeFile(join(root, "file.txt"), "x");
+    const existing = createEngineProfileCache({ rootDirectory: join(root, "file.txt") });
+    expect(await existing.load("c".repeat(64))).toBeNull();
+    // 3. A symlinked root is never followed because it is never touched.
     const realRoot = join(root, "real");
     const linkRoot = join(root, "linked");
-    const cache = createEngineProfileCache({ rootDirectory: linkRoot });
     try {
       await symlink(realRoot, linkRoot, "dir");
     } catch {
-      return;
+      // symlink unsupported; the remaining assertions still apply
     }
-    await expect(cache.store(entry())).rejects.toThrow("resolves through a link");
-    // Nothing was created inside the link target.
-    const entries = await readdir(realRoot);
-    expect(entries).toEqual([]);
+    const linked = createEngineProfileCache({ rootDirectory: linkRoot });
+    expect(await linked.load("d".repeat(64))).toBeNull();
+    expect(await linked.count()).toBe(0);
   });
 
-  it("never creates through a linked ancestor", async () => {
+  it("cache operations never touch the filesystem at all (root, ancestors, and siblings are untouched)", async () => {
     const root = await withTemp();
-    const real = join(root, "real-parent");
-    const link = join(root, "linked-parent");
-    const cacheRoot = join(link, "engine-profiles");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    try {
-      await symlink(real, link, "dir");
-    } catch {
-      return;
-    }
-    await expect(cache.store(entry())).rejects.toThrow("link");
-    // The linked ancestor's target was never written.
-    const entries = await readdir(real).catch(() => []);
-    expect(entries).toEqual([]);
-  });
-
-  it("accepts canonical spelling differences of an existing root on case-insensitive platforms", async () => {
-    if (process.platform !== "win32" && process.platform !== "darwin") {
-      return;
-    }
-    const root = await withTemp();
-    const canonicalRoot = await import("node:fs/promises").then((fs) => fs.realpath(root));
-    await mkdir(join(canonicalRoot, "cache"), { recursive: true });
-    // A case-variant spelling of the SAME directory must be accepted: raw
-    // string equality would falsely reject it on Windows.
-    const variant = join(canonicalRoot, "CACHE");
-    const cache = createEngineProfileCache({ rootDirectory: variant });
-    await cache.store(entry());
-    expect(await cache.load("a".repeat(64))).not.toBeNull();
-  });
-
-  it("writes entries atomically", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await cache.store(entry());
-    const content = await readFile(join(cacheRoot, `${"a".repeat(64)}.json`), "utf8");
-    expect(JSON.parse(content)).toMatchObject({ installationId: "primary" });
-  });
-
-  it("rejects oversized entries on load", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await writeEntry(
-      cacheRoot,
-      "a".repeat(64),
-      " ".repeat(ENGINE_PROFILE_CACHE_MAX_FILE_BYTES + 1),
-    );
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("rejects entries with malformed arrays", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await writeEntry(
-      cacheRoot,
-      "a".repeat(64),
-      malformed({ verifiedCapabilities: "not-an-array" }),
-    );
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("rejects entries with non-string array members", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await writeEntry(cacheRoot, "a".repeat(64), malformed({ degradedCapabilities: [42] }));
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("rejects entries with missing fields", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    for (const field of ["probedAtMs", "edition", "support", "capabilities", "diagnostics"]) {
-      await writeEntry(cacheRoot, "a".repeat(64), malformed({}, [field]));
-      expect(await cache.load("a".repeat(64))).toBeNull();
-    }
-  });
-
-  it("rejects entries with invalid enums and version shapes", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await writeEntry(cacheRoot, "a".repeat(64), malformed({ edition: "banana" }));
-    expect(await cache.load("a".repeat(64))).toBeNull();
-    await writeEntry(cacheRoot, "a".repeat(64), malformed({ support: "totally-verified" }));
-    expect(await cache.load("a".repeat(64))).toBeNull();
-    await writeEntry(
-      cacheRoot,
-      "a".repeat(64),
-      malformed({ version: { major: "four", minor: 7, patch: 1 } }),
-    );
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("rejects entries with malformed capabilities and diagnostics", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await writeEntry(
-      cacheRoot,
-      "a".repeat(64),
-      malformed({ capabilities: { ...createEmptyGodotCommandCapabilities(), editor: "yes" } }),
-    );
-    expect(await cache.load("a".repeat(64))).toBeNull();
-    await writeEntry(
-      cacheRoot,
-      "a".repeat(64),
-      malformed({ diagnostics: [{ severity: "fatal", message: "boom" }] }),
-    );
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("rejects an apiDumpSha256 that is not null or 64-hex", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await writeEntry(cacheRoot, "a".repeat(64), malformed({ apiDumpSha256: "not-a-hash" }));
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("rejects a symlinked entry on load", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await cache.store(entry());
-    const other = await mkdtemp(join(cacheRoot, "other-"));
-    await writeFile(join(other, "real.json"), JSON.stringify(entry()));
-    const entryPath = join(cacheRoot, `${"a".repeat(64)}.json`);
-    await rm(entryPath);
-    try {
-      await symlink(join(other, "real.json"), entryPath);
-    } catch {
-      return;
-    }
-    expect(await cache.load("a".repeat(64))).toBeNull();
-  });
-
-  it("accepts a valid 64-hex apiDumpSha256", async () => {
-    const root = await withTemp();
+    const marker = join(root, "marker.txt");
+    await writeFile(marker, "untouched");
     const cache = createEngineProfileCache({ rootDirectory: join(root, "cache") });
-    await cache.store(entry({ apiDumpSha256: "b".repeat(64) }));
-    expect(await cache.load("a".repeat(64))).not.toBeNull();
-  });
-
-  it("caps directory entries inspected by count", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
-    await mkdir(cacheRoot, { recursive: true });
-    const count = ENGINE_PROFILE_CACHE_SCAN_CAP + 32;
-    for (let index = 0; index < count; index += 1) {
-      await writeEntry(cacheRoot, index.toString(16).padStart(64, "0"), "{}");
-    }
-    expect(await cache.count()).toBe(ENGINE_PROFILE_CACHE_SCAN_CAP);
-  });
-
-  it("evicts oldest entries when full and removes only real files", async () => {
-    const root = await withTemp();
-    const cacheRoot = join(root, "cache");
-    const cache = createEngineProfileCache({ rootDirectory: cacheRoot, maxEntries: 4 });
-    for (let index = 0; index < 6; index += 1) {
-      const sha = index.toString(16).padStart(64, "0");
-      await cache.store(
-        entry({ executable: { ...entry().executable, sha256: sha }, probedAtMs: index }),
-      );
-    }
-    const entries = await readdir(cacheRoot);
-    const profileFiles = entries.filter((entry) => /^[0-9a-f]{64}\.json$/.test(entry));
-    expect(profileFiles.length).toBeLessThanOrEqual(4);
+    await cache.load("e".repeat(64));
+    await cache.store(entry());
+    await cache.count();
+    // No new directory, no temp file, no entry file, no cleanup artifact.
+    expect(await readdir(root)).toEqual(["marker.txt"]);
+    const content = await import("node:fs/promises").then((fs) => fs.readFile(marker, "utf8"));
+    expect(content).toBe("untouched");
   });
 });

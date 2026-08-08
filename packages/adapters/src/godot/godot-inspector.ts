@@ -148,7 +148,11 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
       cache: {
         schemaVersion: ENGINE_PROFILE_CACHE_SCHEMA_VERSION,
         cachedProfileCount: await dependencies.cache.count().catch(() => 0),
-        enabled: true,
+        // The engine-profile cache is explicitly unavailable while engine
+        // probing is unavailable: it is never initialized, created, read, or
+        // written, so it is truthfully reported as disabled with zero cached
+        // profiles. A cache failure can never abort the doctor.
+        enabled: false,
       },
       sandbox: {
         state: sandboxStatus.state,
