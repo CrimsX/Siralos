@@ -444,6 +444,36 @@ describe("approval fail-closed behavior", () => {
     );
   });
 
+  it("never executes an ordinary tool when the reviewer would reject it", async () => {
+    const { reviewer, requests } = createScriptedReviewer([
+      { type: "deny", reason: "Rejected by the reviewer." },
+    ]);
+    const { tool, executeCalls } = createOrdinaryWriteTool({ throwsOnExecute: true });
+    const { application } = createApplication({
+      profile: DEVELOP_OFFLINE_PROFILE,
+      reviewer,
+      tools: [tool],
+      turns: [
+        [
+          { type: "tool_call", callId: "c1", toolName: "plain.write", input: {} },
+          { type: "completed" },
+        ],
+        [{ type: "text_delta", text: "done" }, { type: "completed" }],
+      ],
+    });
+    const events = await collectEvents(application.sendPrompt("hello"));
+    // Execution is never invoked: a rejecting reviewer exists, yet the
+    // ordinary tool is denied before any approval is even requested.
+    expect(executeCalls()).toBe(0);
+    expect(requests()).toHaveLength(0);
+    const failed = events.find((event) => (event as { type?: string }).type === "tool_failed") as
+      { message?: string } | undefined;
+    expect(failed?.message).toContain("does not support a reviewable preparation protocol");
+    expect(events.some((event) => (event as { type?: string }).type === "tool_completed")).toBe(
+      false,
+    );
+  });
+
   it("fails closed when an ask tool cannot produce a reviewable plan", async () => {
     const { tool, executeCalls } = createOrdinaryWriteTool();
     const { application } = createApplication({

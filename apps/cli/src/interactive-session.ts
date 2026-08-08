@@ -43,6 +43,7 @@ import {
   formatToolStarted,
   formatUndoOutcome,
   sanitizeForDisplay,
+  sanitizePathForDisplay,
   type CommandsView,
 } from "./output.js";
 
@@ -456,7 +457,9 @@ async function runPrompt(
           );
           break;
         case "checkpoint_applied":
-          io.write(`\u25CF Checkpoint ${event.checkpointId} recorded (${event.path})\n`);
+          io.write(
+            `\u25CF Checkpoint ${event.checkpointId} recorded (${sanitizePathForDisplay(event.path)})\n`,
+          );
           break;
         case "command_prepared":
           break;

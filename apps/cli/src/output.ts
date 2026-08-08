@@ -238,7 +238,7 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
     "",
     `Tool: ${request.toolName}`,
     `Capability: ${request.capability}`,
-    `File: ${file?.path ?? "(none)"}`,
+    `File: ${file === undefined ? "(none)" : sanitizePathForDisplay(file.path)}`,
     `Change: +${request.preview.totalAddedLines} -${request.preview.totalRemovedLines}`,
     "",
   ];
@@ -366,8 +366,9 @@ export function formatGitDiff(result: GitDiffResult): string {
   const lines = [`Scope: ${result.scope}`, `Files: ${result.files.length}`];
   for (const file of result.files) {
     const label = file.binary ? "binary" : `+${file.addedLines} -${file.removedLines}`;
-    const rename = file.originalPath === null ? "" : ` (from ${file.originalPath})`;
-    lines.push(`  ${file.operation} ${file.path}${rename} [${label}]`);
+    const rename =
+      file.originalPath === null ? "" : ` (from ${sanitizePathForDisplay(file.originalPath)})`;
+    lines.push(`  ${file.operation} ${sanitizePathForDisplay(file.path)}${rename} [${label}]`);
   }
   lines.push("");
   if (result.patch.length > 0) {
@@ -394,7 +395,7 @@ export function formatCheckpoints(checkpoints: readonly FileCheckpoint[]): strin
         shortenId(checkpoint.id),
         checkpoint.state.padEnd(11),
         checkpoint.operation.padEnd(10),
-        checkpoint.relativePath.padEnd(24),
+        sanitizePathForDisplay(checkpoint.relativePath).padEnd(24),
         formatRelativeTime(created),
       ].join(" "),
     );
@@ -403,15 +404,16 @@ export function formatCheckpoints(checkpoints: readonly FileCheckpoint[]): strin
 }
 
 export function formatUndoOutcome(outcome: UndoOutcome): string {
+  const path = sanitizePathForDisplay(outcome.path);
   switch (outcome.type) {
     case "undone":
-      return `\u25CF Checkpoint ${shortenId(outcome.checkpointId)} undone (${outcome.path})\n`;
+      return `\u25CF Checkpoint ${shortenId(outcome.checkpointId)} undone (${path})\n`;
     case "denied":
-      return `\u25CB Undo denied for checkpoint ${shortenId(outcome.checkpointId)} (${outcome.path}).\n`;
+      return `\u25CB Undo denied for checkpoint ${shortenId(outcome.checkpointId)} (${path}).\n`;
     case "cancelled":
-      return `\u25CB Undo cancelled for checkpoint ${shortenId(outcome.checkpointId)} (${outcome.path}).\n`;
+      return `\u25CB Undo cancelled for checkpoint ${shortenId(outcome.checkpointId)} (${path}).\n`;
     case "conflict":
-      return `\u2715 Undo conflict for ${outcome.path}: ${outcome.message}\n`;
+      return `\u2715 Undo conflict for ${path}: ${outcome.message}\n`;
     case "failed":
       return `\u2715 Undo failed: ${outcome.message}\n`;
   }
@@ -723,13 +725,38 @@ export function formatGodotDoctor(report: GodotDoctorReport): string {
  */
 export class TerminalSanitizer {
   private mode: "normal" | "escape" | "csi" | "osc" | "osc_escape" = "normal";
+  /**
+   * A high surrogate held back because its low surrogate may arrive in the
+   * next chunk. Node encodes each `write` call separately, so a pair split
+   * across chunks would otherwise be corrupted into replacement characters;
+   * pairing across pushes keeps emoji and other non-BMP text intact.
+   */
+  private pendingHighSurrogate: string | null = null;
 
   push(text: string): string {
     let out = "";
     for (const character of text) {
+      const code = character.codePointAt(0) ?? 0;
+      if (this.pendingHighSurrogate !== null) {
+        if (code >= 0xdc00 && code <= 0xdfff) {
+          out += this.pendingHighSurrogate + character;
+          this.pendingHighSurrogate = null;
+          continue;
+        }
+        out += "\uFFFD";
+        this.pendingHighSurrogate = null;
+      }
+      if (this.mode === "normal" && code >= 0xd800 && code <= 0xdbff) {
+        this.pendingHighSurrogate = character;
+        continue;
+      }
+      if (code >= 0xdc00 && code <= 0xdfff) {
+        // A lone low surrogate is never valid UTF-16; render it visibly.
+        out += "\uFFFD";
+        continue;
+      }
       switch (this.mode) {
         case "normal": {
-          const code = character.codePointAt(0) ?? 0;
           if (character === "\u001b") {
             this.mode = "escape";
           } else if (character === "\n" || character === "\t") {
@@ -776,7 +803,9 @@ export class TerminalSanitizer {
 
   flush(): string {
     this.mode = "normal";
-    return "";
+    const dangling = this.pendingHighSurrogate;
+    this.pendingHighSurrogate = null;
+    return dangling === null ? "" : "\uFFFD";
   }
 }
 
@@ -787,6 +816,40 @@ function caretNotation(code: number): string {
 export function sanitizeForDisplay(text: string): string {
   const sanitizer = new TerminalSanitizer();
   return sanitizer.push(text) + sanitizer.flush();
+}
+
+/**
+ * Renders a path-like single-line field safely. Paths are untrusted: a file
+ * or checkpoint path may contain embedded newlines, tabs, carriage returns,
+ * or other control characters that would otherwise spoof approval prompts,
+ * status lines, or undo output by fabricating additional lines. The
+ * sanitizer boundary still applies afterwards; this makes the spoofing
+ * vector itself visible instead of structural.
+ */
+export function sanitizePathForDisplay(path: string | null): string {
+  if (path === null) {
+    return "(none)";
+  }
+  let out = "";
+  for (const character of path) {
+    const code = character.codePointAt(0) ?? 0;
+    if (character === "\\") {
+      out += "\\\\";
+    } else if (character === "\n") {
+      out += "\\n";
+    } else if (character === "\r") {
+      out += "\\r";
+    } else if (character === "\t") {
+      out += "\\t";
+    } else if (code < 0x20) {
+      out += caretNotation(code);
+    } else if (code === 0x7f) {
+      out += "^?";
+    } else {
+      out += character;
+    }
+  }
+  return out;
 }
 
 export function describeError(error: unknown): string {
