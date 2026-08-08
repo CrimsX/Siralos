@@ -34,6 +34,14 @@ export interface SandboxedProcessRequest {
    * runs root or sibling runs.
    */
   readonly runDirectory?: string;
+  /**
+   * Exact additional host paths the sandboxed child may read, in addition
+   * to the run directory and the profile-derived roots. The backend must
+   * treat each entry as the complete identity-bound requirement for the
+   * request: whole directories are allowed only when the entire subtree is
+   * required, never an installation parent containing unrelated data.
+   */
+  readonly explicitReadRoots?: readonly string[];
   /** Explicit timeout; falls back to `profile.process.timeoutMs`. */
   readonly timeoutMs?: number;
   /** Explicit hard stdout limit; falls back to `profile.process.maxOutputBytes`. */
