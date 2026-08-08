@@ -78,8 +78,15 @@ function isNotFoundError(error: unknown): boolean {
  * The caller must have already verified that `root` itself is the exact
  * Solaris-created object (identity check) and is a real, non-link directory.
  */
-export async function removeDirectoryTreeBounded(root: string, maxEntries: number): Promise<void> {
-  const plan = await planDirectoryRemoval(root, maxEntries);
+export async function removeDirectoryTreeBounded(
+  root: string,
+  maxEntries: number,
+  options: {
+    readonly signal?: AbortSignal | undefined;
+    readonly deadline?: number | undefined;
+  } = {},
+): Promise<void> {
+  const plan = await planDirectoryRemoval(root, maxEntries, options);
   // The plan records parents before children, so reverse order deletes
   // deepest entries first; a directory is removed only after its subtree.
   for (let index = plan.entries.length - 1; index >= 0; index -= 1) {
@@ -109,28 +116,96 @@ export interface DirectoryRemovalPlan {
   readonly examined: number;
 }
 
+/** Maximum path bytes retained per planned entry (Windows extended-length limit). */
+const MAX_PLANNED_PATH_BYTES = 32_768;
+
+export class RemovalBudgetRefusalError extends Error {}
+export class RemovalDeadlineRefusalError extends Error {}
+export class RemovalAbortError extends DOMException {
+  constructor() {
+    super("Directory removal planning was aborted.", "AbortError");
+  }
+}
+
+function removalBudgetError(maxEntries: number): RemovalBudgetRefusalError {
+  return new RemovalBudgetRefusalError(
+    `Directory removal exceeded the ${maxEntries}-entry budget; the plan was refused before any deletion, so zero entries were removed.`,
+  );
+}
+
+function removalByteBudgetError(): RemovalBudgetRefusalError {
+  return new RemovalBudgetRefusalError(
+    `Directory removal exceeded the retained-path byte budget; the plan was refused before any deletion, so zero entries were removed.`,
+  );
+}
+
+function removalDeadlineError(): RemovalDeadlineRefusalError {
+  return new RemovalDeadlineRefusalError(
+    `Directory removal exceeded its time budget; the plan was refused before any deletion, so zero entries were removed.`,
+  );
+}
+
+function isBoundedRemovalRefusal(error: unknown): boolean {
+  return (
+    error instanceof RemovalBudgetRefusalError ||
+    error instanceof RemovalDeadlineRefusalError ||
+    error instanceof RemovalAbortError ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
 /**
  * Phase one of bounded removal: enumerates the full tree without mutating
- * anything and records every entry, failing closed when the entry budget is
- * exceeded so a refused removal has performed zero deletions. Symbolic
- * links and junctions are recorded as leaves and never followed; a path
- * that cannot be inspected fails the plan closed.
+ * anything and records every entry, failing closed when a bound is exceeded
+ * so a refused removal has performed zero deletions. Symbolic links and
+ * junctions are recorded as leaves and never followed; a path that cannot be
+ * inspected fails the plan closed.
+ *
+ * Every bound is enforced INCREMENTALLY, before a new entry is enqueued:
+ *
+ * - the entry budget applies to the running examined count, checked while
+ *   reading each directory entry and BEFORE it is pushed, so one directory
+ *   containing millions of entries can never fill the pending queue or the
+ *   plan beyond the budget;
+ * - retained path bytes (the plan and the pending queue together) are
+ *   accounted on every push against an explicit byte cap;
+ * - at most one directory handle is open at any time (sequential traversal,
+ *   closed on success, refusal, cancellation, and error);
+ * - the traversal is iterative — never recursive through the JavaScript call
+ *   stack — so depth is bounded by the entry budget and the byte cap;
+ * - the wall-clock deadline and the abort signal are consulted per entry, so
+ *   cancellation and deadline latency are bounded;
+ * - the plan and the pending queue together retain at most `maxEntries`
+ *   entries, so total memory is bounded.
  */
 export async function planDirectoryRemoval(
   root: string,
   maxEntries: number,
+  options: {
+    readonly signal?: AbortSignal | undefined;
+    readonly deadline?: number | undefined;
+  } = {},
 ): Promise<DirectoryRemovalPlan> {
+  if (maxEntries <= 0) {
+    throw new Error(
+      `Directory removal refused: the ${maxEntries}-entry budget is not positive; the plan was refused before any deletion.`,
+    );
+  }
   const entries: { readonly path: string; readonly isDirectory: boolean }[] = [];
   const pending: string[] = [root];
+  let examined = 0;
+  let retainedBytes = root.length;
+  const maxRetainedBytes = maxEntries * MAX_PLANNED_PATH_BYTES;
   while (pending.length > 0) {
+    if (options.signal?.aborted) {
+      throw new RemovalAbortError();
+    }
+    if (options.deadline !== undefined && Date.now() > options.deadline) {
+      throw removalDeadlineError();
+    }
     const current = pending.pop();
     if (current === undefined) {
       break;
-    }
-    if (entries.length >= maxEntries) {
-      throw new Error(
-        `Directory removal exceeded the ${maxEntries}-entry budget; the plan was refused before any deletion, so zero entries were removed.`,
-      );
     }
     let metadata;
     try {
@@ -140,6 +215,7 @@ export async function planDirectoryRemoval(
         `Directory removal could not inspect ${current} (${describeRemovalError(error)}); the plan was refused before any deletion.`,
       );
     }
+    examined += 1;
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
       // A link or non-directory leaf is recorded as a leaf; it is never
       // followed during planning and removed by unlink during deletion.
@@ -157,9 +233,34 @@ export async function planDirectoryRemoval(
     }
     try {
       for await (const entry of handle) {
-        pending.push(join(current, entry.name));
+        if (options.signal?.aborted) {
+          throw new RemovalAbortError();
+        }
+        if (options.deadline !== undefined && Date.now() > options.deadline) {
+          throw removalDeadlineError();
+        }
+        // The budget is enforced WHILE READING each directory entry, before
+        // the entry is enqueued: a directory containing more entries than
+        // the budget can never fill the pending queue or the plan.
+        if (examined >= maxEntries) {
+          throw removalBudgetError(maxEntries);
+        }
+        const childPath = join(current, entry.name);
+        const nextBytes = retainedBytes + childPath.length;
+        if (nextBytes > maxRetainedBytes) {
+          throw removalByteBudgetError();
+        }
+        pending.push(childPath);
+        examined += 1;
+        retainedBytes = nextBytes;
       }
     } catch (error: unknown) {
+      // Bounded-removal refusals (budget, deadline, cancellation) propagate
+      // unchanged: they are not enumeration failures, and cancellation must
+      // never be hidden.
+      if (isBoundedRemovalRefusal(error)) {
+        throw error;
+      }
       throw new Error(
         `Directory removal could not enumerate ${current} (${describeRemovalError(error)}); the plan was refused before any deletion.`,
       );
