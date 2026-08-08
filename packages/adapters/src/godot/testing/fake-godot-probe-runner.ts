@@ -36,6 +36,8 @@ export interface FakeGodotProbeRunnerOptions {
   readonly helpText?: string;
   /** `--dump-extension-api` advertised; when true the api dump scripted probe runs. */
   readonly advertiseApiDump?: boolean;
+  /** When false, `isAvailable()` reports unavailable and no probe runs. */
+  readonly available?: boolean;
 }
 
 export function createFakeGodotProbeRunner(options: FakeGodotProbeRunnerOptions = {}): {
@@ -44,6 +46,9 @@ export function createFakeGodotProbeRunner(options: FakeGodotProbeRunnerOptions 
 } {
   const calls = { version: 0, help: 0, api: 0 };
   const runner: GodotProbeRunner = {
+    isAvailable(): Promise<boolean> {
+      return Promise.resolve(options.available ?? true);
+    },
     probeVersion(_installation: GodotInstallation): Promise<GodotVersionProbe> {
       calls.version += 1;
       return Promise.resolve(resolveVersionProbe(options));

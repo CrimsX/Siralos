@@ -71,6 +71,7 @@ interface ProfilerSetup {
   readonly versionText?: string;
   readonly helpText?: string;
   readonly advertiseApiDump?: boolean;
+  readonly available?: boolean;
   readonly backend?: SandboxBackend;
 }
 
@@ -85,6 +86,7 @@ async function runDiscovery(
     versionText: setup.versionText ?? "4.7.1.stable.official",
     ...(setup.helpText === undefined ? {} : { helpText: setup.helpText }),
     advertiseApiDump: setup.advertiseApiDump ?? true,
+    ...(setup.available === undefined ? {} : { available: setup.available }),
   });
   const events: GodotApplicationEvent[] = [];
   const cacheRoot = join(setup.workspaceRoot, "..", "cache");
@@ -109,6 +111,30 @@ async function runDiscovery(
 }
 
 describe("createGodotEngineProfiler", () => {
+  it("reports every candidate unprofiled when probing is unavailable", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    const bin = join(root, "bin");
+    await mkdir(bin, { recursive: true });
+    const executable = await executableFixture(bin);
+    const { result, fake } = await runDiscovery({
+      workspaceRoot: workspace,
+      config: {
+        activeInstallation: null,
+        installations: { primary: { path: executable, editionHint: "standard" } },
+        discoverOnPath: false,
+      },
+      available: false,
+    });
+    // No probe was attempted and no candidate was profiled: the cache is
+    // bypassed and every candidate reports the fail-closed reason.
+    expect(fake.calls()).toEqual({ version: 0, help: 0, api: 0 });
+    expect(result.selected).toBeNull();
+    const candidate = result.candidates[0];
+    expect(candidate?.profiled).toBe(false);
+    expect(candidate?.invalid).toContain("probing is unavailable");
+  });
+
   it("selects a configured verified baseline installation", async () => {
     const root = await withTemp();
     const workspace = join(root, "workspace");

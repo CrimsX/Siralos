@@ -12,6 +12,16 @@ import type { GodotVersion } from "./version.js";
  * probe adapter implements it and only Solaris composition consumes it.
  */
 export interface GodotProbeRunner {
+  /**
+   * Reports whether engine probing can execute at all. The pinned runtime
+   * cannot bind a sandboxed launch to the exact fingerprinted executable
+   * bytes (the staged copy's pathname is re-opened at spawn time by the
+   * backend, and a same-user process can substitute it between final
+   * verification and spawn); when that boundary cannot be enforced the
+   * runner reports unavailable and never spawns the executable.
+   */
+  isAvailable(): Promise<boolean>;
+
   probeVersion(installation: GodotInstallation, signal?: AbortSignal): Promise<GodotVersionProbe>;
 
   probeHelp(installation: GodotInstallation, signal?: AbortSignal): Promise<GodotHelpProbe>;
@@ -28,6 +38,10 @@ export type GodotVersionProbe =
       readonly version: GodotVersion;
     }
   | {
+      readonly status: "unavailable";
+      readonly message: string;
+    }
+  | {
       readonly status: "failed";
       readonly message: string;
     };
@@ -38,6 +52,10 @@ export type GodotHelpProbe =
       readonly capabilities: GodotCommandCapabilities;
       /** Count of unrecognized options preserved as a bounded diagnostic. */
       readonly unknownOptionCount: number;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly message: string;
     }
   | {
       readonly status: "degraded";
@@ -67,6 +85,10 @@ export type GodotApiDumpProbe =
   | {
       readonly status: "success";
       readonly summary: GodotApiDumpSummary;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly message: string;
     }
   | {
       readonly status: "degraded" | "failed";

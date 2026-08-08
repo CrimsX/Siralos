@@ -30,6 +30,7 @@ import {
   installationFromIdentity,
 } from "../discovery/path-discovery.js";
 import { GodotSelectionError } from "../errors.js";
+import { GODOT_PROBING_UNAVAILABLE_MESSAGE } from "../process/godot-probe-runner.js";
 
 const VERIFIED_BASELINE = { major: 4, minor: 7, patch: 1 };
 
@@ -281,6 +282,17 @@ export function createGodotEngineProfiler(
         profileError: installation.error ?? "invalid installation",
       };
     }
+    // Probing is fail-closed: when the runner reports unavailable, no
+    // cached profile is served and no probe is attempted, so inspection
+    // truthfully reports that engine probing cannot execute.
+    const probingAvailable = await dependencies.probeRunner.isAvailable().catch(() => false);
+    if (!probingAvailable) {
+      return {
+        installation,
+        profile: null,
+        profileError: GODOT_PROBING_UNAVAILABLE_MESSAGE,
+      };
+    }
     const cachedProfile = await dependencies.cache.load(installation.sha256);
     if (cachedProfile !== null && (await cacheMatchesExecutable(cachedProfile, installation))) {
       return {
@@ -310,7 +322,7 @@ export function createGodotEngineProfiler(
     const helpProbe = await dependencies.probeRunner.probeHelp(installation, signal);
     const diagnostics: SafeDiagnostic[] = [];
     const degradedCapabilities: string[] = [];
-    if (helpProbe.status === "failed") {
+    if (helpProbe.status === "failed" || helpProbe.status === "unavailable") {
       emit({
         type: "godot_probe_completed",
         installationId: installation.id,
@@ -358,7 +370,7 @@ export function createGodotEngineProfiler(
           type: "godot_probe_completed",
           installationId: installation.id,
           probe: "api",
-          status: apiProbe.status,
+          status: apiProbe.status === "unavailable" ? "failed" : apiProbe.status,
         });
       }
     }
