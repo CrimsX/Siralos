@@ -57,6 +57,19 @@ async function main() {
       profile: DEVELOP_OFFLINE_PROFILE,
       parentEnvironment: environment,
     });
+    if (report.passed === 0 && report.failed === 0 && report.skipped > 0) {
+      // The suite could not execute (for example because Solaris cannot
+      // create verified private run directories at this stage): every probe
+      // reports skipped with the truthful reason, and skipped is never
+      // treated as passed.
+      const firstDetail = report.results[0]?.detail ?? "no probe executed";
+      console.log(
+        `SANDBOX CONFORMANCE: SKIPPED - ${report.skipped} probes could not execute (backend: ${report.backendId}, profile: ${report.profileId}).`,
+      );
+      console.log(`  ${firstDetail}`);
+      console.log("The conformance suite did not run; a skipped suite is never treated as passed.");
+      return 0;
+    }
     console.log(`SANDBOX CONFORMANCE (backend: ${report.backendId}, profile: ${report.profileId})`);
     for (const result of report.results) {
       const mark =
