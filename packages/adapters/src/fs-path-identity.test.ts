@@ -45,9 +45,9 @@ describe("normalizePathIdentity", () => {
     expect(samePathIdentity("\\\\?\\UNC\\server\\share\\x", "\\\\server\\share\\x", "linux")).toBe(
       false,
     );
-    expect(
-      isWithinPathIdentity("\\\\?\\UNC\\server\\share", "\\\\server\\share\\x", "win32"),
-    ).toBe(true);
+    expect(isWithinPathIdentity("\\\\?\\UNC\\server\\share", "\\\\server\\share\\x", "win32")).toBe(
+      true,
+    );
   });
 
   it("strips trailing separators below the root", () => {
