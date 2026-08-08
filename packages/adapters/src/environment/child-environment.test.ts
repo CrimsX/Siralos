@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChildEnvironment, isDeniedVariable } from "./child-environment.js";
+import { buildChildEnvironment, environmentKeyOf, isDeniedVariable } from "./child-environment.js";
 
 const PATHS = {
   home: "/sandbox/home",
@@ -116,6 +116,122 @@ describe("buildChildEnvironment", () => {
     const environment = buildChildEnvironment({}, PATHS);
     expect(environment["HOME"]).toBe("/sandbox/home");
     expect(environment["TEMP"]).toBe("/sandbox/temp");
+  });
+
+  it("matches Windows environment keys case-insensitively and emits one canonical spelling", () => {
+    // Typical Windows spellings: `Path`, `ComSpec`, `SystemRoot`, `TEMP`.
+    const environment = buildChildEnvironment(
+      {
+        Path: "C:\\Windows\\System32;C:\\tools",
+        ComSpec: "C:\\Windows\\System32\\cmd.exe",
+        systemroot: "C:\\Windows",
+        Temp: "C:\\Users\\test\\AppData\\Local\\Temp",
+        Lang: "en_US.UTF-8",
+      },
+      PATHS,
+      "win32",
+    );
+    // Every allowed variable survives under its canonical allowlist
+    // spelling, regardless of the parent's casing.
+    expect(environment["PATH"]).toBe("C:\\Windows\\System32;C:\\tools");
+    expect(environment["COMSPEC"]).toBe("C:\\Windows\\System32\\cmd.exe");
+    expect(environment["SystemRoot"]).toBe("C:\\Windows");
+    expect(environment["LANG"]).toBe("en_US.UTF-8");
+    // The alternate spellings are deduplicated away.
+    expect(environment["Path"]).toBeUndefined();
+    expect(environment["ComSpec"]).toBeUndefined();
+    expect(environment["systemroot"]).toBeUndefined();
+    expect(environment["Temp"]).toBeUndefined();
+    expect(environment["Lang"]).toBeUndefined();
+  });
+
+  it("deduplicates Path/PATH and ComSpec/COMSPEC aliases with the exact canonical spelling winning", () => {
+    const environment = buildChildEnvironment(
+      {
+        Path: "C:\\alternate",
+        PATH: "C:\\canonical",
+        comspec: "C:\\lowercase",
+        COMSPEC: "C:\\uppercase",
+      },
+      PATHS,
+      "win32",
+    );
+    expect(environment["PATH"]).toBe("C:\\canonical");
+    expect(environment["COMSPEC"]).toBe("C:\\uppercase");
+    expect(
+      Object.keys(environment).filter((name) => environmentKeyOf(name, "win32") === "path"),
+    ).toHaveLength(1);
+    expect(
+      Object.keys(environment).filter((name) => environmentKeyOf(name, "win32") === "comspec"),
+    ).toHaveLength(1);
+  });
+
+  it("never lets Solaris-controlled home and temp values be bypassed through alternate casing", () => {
+    const environment = buildChildEnvironment(
+      {
+        home: "/evil/home",
+        userprofile: "C:\\evil\\profile",
+        temp: "/evil/temp",
+        tmp: "/evil/tmp",
+        tmpdir: "/evil/tmpdir",
+      },
+      PATHS,
+      "win32",
+    );
+    // Solaris-controlled values always win; alternate-cased parent values
+    // are collapsed into the canonical spellings and overwritten.
+    const homeVariables = Object.keys(environment).filter(
+      (name) =>
+        environmentKeyOf(name, "win32") === "home" ||
+        environmentKeyOf(name, "win32") === "userprofile",
+    );
+    expect(homeVariables.length).toBeGreaterThan(0);
+    for (const name of homeVariables) {
+      expect(environment[name]).toBe("/sandbox/home");
+    }
+    expect(environment["TEMP"]).toBe("/sandbox/temp");
+    expect(environment["TMP"]).toBe("/sandbox/temp");
+    expect(environment["TMPDIR"]).toBe("/sandbox/temp");
+  });
+
+  it("preserves case-sensitive matching on POSIX", () => {
+    const environment = buildChildEnvironment(
+      {
+        PATH: "/usr/bin:/bin",
+        Path: "/evil/alternate",
+        ComSpec: "C:\\evil",
+        SystemRoot: "C:\\Windows",
+      },
+      PATHS,
+      "linux",
+    );
+    // On POSIX `Path` is a DIFFERENT variable from `PATH` and is not on the
+    // allowlist, so it is dropped; `PATH` itself is preserved exactly.
+    expect(environment["PATH"]).toBe("/usr/bin:/bin");
+    expect(environment["Path"]).toBeUndefined();
+    expect(environment["ComSpec"]).toBeUndefined();
+    expect(environment["SystemRoot"]).toBe("C:\\Windows");
+  });
+
+  it("applies deny patterns case-insensitively on Windows casing variants", () => {
+    const environment = buildChildEnvironment(
+      {
+        path: "/usr/bin",
+        node_options: "--inspect",
+        git_config_count: "99",
+        npm_config_userconfig: "/evil/npmrc",
+        openrouter_api_key: "sk-fake",
+      },
+      PATHS,
+      "win32",
+    );
+    // The allowed `path` casing variant survives as canonical PATH; every
+    // denied variable is absent regardless of casing.
+    expect(environment["PATH"]).toBe("/usr/bin");
+    expect(environment["node_options"]).toBeUndefined();
+    expect(environment["git_config_count"]).toBeUndefined();
+    expect(environment["npm_config_userconfig"]).toBeUndefined();
+    expect(environment["openrouter_api_key"]).toBeUndefined();
   });
 });
 

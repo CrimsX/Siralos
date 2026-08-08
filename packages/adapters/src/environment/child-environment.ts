@@ -61,19 +61,79 @@ const DENIED_PATTERNS: readonly RegExp[] = [
 const HOME_VARIABLES: readonly string[] = ["HOME", "USERPROFILE"];
 const TEMP_VARIABLES: readonly string[] = ["TEMP", "TMP", "TMPDIR"];
 
+/**
+ * The canonical comparison spelling of one environment key. Windows
+ * environment keys are case-insensitive (`Path` and `PATH` denote the same
+ * variable), so every key comparison and deduplication funnels through this
+ * helper on Windows; on POSIX the original casing is preserved.
+ */
+export function environmentKeyOf(
+  name: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return platform === "win32" ? name.toLowerCase() : name;
+}
+
+function findCaseInsensitive(
+  parent: Readonly<Record<string, string>>,
+  target: string,
+  platform: NodeJS.Platform,
+): string | undefined {
+  const wanted = environmentKeyOf(target, platform);
+  for (const [name, value] of Object.entries(parent)) {
+    if (environmentKeyOf(name, platform) === wanted) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Builds the minimal allowlisted child environment.
+ *
+ * On Windows every allowed variable is matched case-insensitively, emitted
+ * under ONE canonical spelling (the allowlist spelling), and deduplicated,
+ * so `Path`/`PATH`, `ComSpec`/`COMSPEC`, and similar aliases collapse into a
+ * single variable and no allowed variable is dropped for an alternate
+ * casing. On POSIX matching stays case-sensitive. Denied variables are
+ * always excluded regardless of casing, Solaris-controlled home/temp values
+ * always win over any parent spelling, and the returned environment never
+ * equals the parent verbatim.
+ */
 export function buildChildEnvironment(
   parent: Readonly<Record<string, string>>,
   paths: SandboxEnvironmentPaths,
+  platform: NodeJS.Platform = process.platform,
 ): Readonly<Record<string, string>> {
   const environment: Record<string, string> = {};
-  for (const [name, value] of Object.entries(parent)) {
-    if (!ALLOWED_VARIABLES.includes(name)) {
-      continue;
+  if (platform === "win32") {
+    const taken = new Set<string>();
+    for (const allowed of ALLOWED_VARIABLES) {
+      const key = environmentKeyOf(allowed, platform);
+      if (taken.has(key)) {
+        continue;
+      }
+      const exact = parent[allowed];
+      const value = exact ?? findCaseInsensitive(parent, allowed, platform);
+      if (value === undefined) {
+        continue;
+      }
+      if (isDeniedVariable(allowed)) {
+        continue;
+      }
+      taken.add(key);
+      environment[allowed] = value;
     }
-    if (isDeniedVariable(name)) {
-      continue;
+  } else {
+    for (const [name, value] of Object.entries(parent)) {
+      if (!ALLOWED_VARIABLES.includes(name)) {
+        continue;
+      }
+      if (isDeniedVariable(name)) {
+        continue;
+      }
+      environment[name] = value;
     }
-    environment[name] = value;
   }
   const homeVariable = HOME_VARIABLES.find((name) => environment[name] !== undefined);
   if (homeVariable !== undefined) {

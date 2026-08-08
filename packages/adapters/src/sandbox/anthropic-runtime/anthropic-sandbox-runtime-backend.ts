@@ -19,7 +19,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { isDeniedVariable } from "../../environment/child-environment.js";
+import { environmentKeyOf, isDeniedVariable } from "../../environment/child-environment.js";
 import { resolveNpmCli } from "../../process/trusted-executables.js";
 
 export const ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID = "anthropic-runtime";
@@ -813,7 +813,8 @@ export function isWithinHostReadAllowSurface(
  * Solaris-controlled value (the wrapper can never override protected
  * variables such as HOME/TEMP), wrapper-only keys are added, keys matching
  * the credential/proxy/Node-injection deny patterns fail closed, and keys
- * are normalized case-insensitively so duplicate spellings cannot bypass
+ * are normalized through the same case-insensitive Windows comparison used
+ * by `buildChildEnvironment`, so duplicate spellings cannot bypass
  * filtering (canonical casing wins on Windows).
  */
 export function mergeWrapperEnvironment(
@@ -821,7 +822,7 @@ export function mergeWrapperEnvironment(
   wrapperEnvironment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform = process.platform,
 ): Readonly<Record<string, string>> {
-  const keyOf = (name: string): string => (platform === "win32" ? name.toLowerCase() : name);
+  const keyOf = (name: string): string => environmentKeyOf(name, platform);
   const merged: Record<string, string> = {};
   const baseKeys = new Map<string, string>();
   for (const [name, value] of Object.entries(base)) {
