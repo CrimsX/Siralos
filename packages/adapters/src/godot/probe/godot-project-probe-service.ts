@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, open, readdir, stat } from "node:fs/promises";
+import { lstat, open, readdir } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
+import { samePathIdentity } from "../../fs-path-identity.js";
 import {
   assessGodotCompatibility,
   computeGodotPreparedProbeDigest,
@@ -855,16 +856,20 @@ export function createGodotProjectProbeService(
     absolutePath: string,
     signal: AbortSignal | undefined,
   ): Promise<{ readonly path: string; readonly sha256: string; readonly bytes: number } | null> {
-    let metadata;
+    // The path identity anchor is the containment-verified canonical path.
+    // The leaf itself is lstat'd without following: a symlink/junction leaf
+    // (even one planted inside the workspace) must never dereference to an
+    // outside object, so its content is never read or hashed.
+    let leafMetadata;
     try {
-      metadata = await stat(absolutePath);
+      leafMetadata = await lstat(absolutePath);
     } catch {
       return null;
     }
-    if (!metadata.isFile()) {
+    if (leafMetadata.isSymbolicLink() || !leafMetadata.isFile()) {
       return null;
     }
-    if (metadata.size > GODOT_LIMITS.maxMirrorSingleFileBytes) {
+    if (leafMetadata.size > GODOT_LIMITS.maxMirrorSingleFileBytes) {
       return null;
     }
     let handle;
@@ -886,10 +891,16 @@ export function createGodotProjectProbeService(
         }
         hash.update(buffer.subarray(0, bytesRead));
       }
+      // The path must still resolve to the same object after the read; a
+      // swap during inspection discards the result rather than trusting it.
+      const after = await realpathOf(absolutePath);
+      if (after === null || !samePathIdentity(after, absolutePath)) {
+        return null;
+      }
       return {
         path: absolutePath.split(sep).join("/"),
         sha256: hash.digest("hex"),
-        bytes: metadata.size,
+        bytes: leafMetadata.size,
       };
     } catch (error: unknown) {
       if (isAbortError(error)) {
@@ -898,6 +909,15 @@ export function createGodotProjectProbeService(
       return null;
     } finally {
       await handle.close().catch(() => undefined);
+    }
+  }
+
+  async function realpathOf(path: string): Promise<string | null> {
+    try {
+      const { realpath } = await import("node:fs/promises");
+      return await realpath(path);
+    } catch {
+      return null;
     }
   }
 
@@ -910,6 +930,7 @@ export function createGodotProjectProbeService(
     }
     return (
       status.state === "available" &&
+      status.capabilities.filesystemReadRestriction &&
       status.capabilities.filesystemWriteRestriction &&
       status.capabilities.networkRestriction &&
       status.capabilities.processTreeRestriction

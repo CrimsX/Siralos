@@ -283,6 +283,7 @@ export function createGodotRecoveryRunner(dependencies: GodotRecoveryRunnerDepen
     }
     return (
       status.state === "available" &&
+      status.capabilities.filesystemReadRestriction &&
       status.capabilities.filesystemWriteRestriction &&
       status.capabilities.networkRestriction &&
       status.capabilities.processTreeRestriction

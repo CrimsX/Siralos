@@ -948,6 +948,71 @@ describe("risk manifest coverage", () => {
       await rm(executableRoot, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it("never dereferences a symlinked plugin script leaf to an outside file", async () => {
+    const workspaceRoot = await withTempRoot();
+    const runsRoot = await withTempRoot();
+    const executableRoot = await withTempRoot();
+    const executable = path.join(executableRoot, "godot-test.exe");
+    await writeFile(executable, "#!/bin/sh\necho fixture\n");
+    const outside = await withTempRoot();
+    const sentinel = path.join(outside, "secret.gd");
+    await writeFile(sentinel, "extends Node\n# SECRET\n");
+    // A plugin script that lexically stays inside the workspace but whose
+    // leaf is a symlink to an outside file must never be hashed.
+    await writeFiles(workspaceRoot, {
+      "project.godot":
+        '[application]\nconfig/name="Fixture"\nconfig/features=PackedStringArray("4.7")\n[editor_plugins]\nenabled=PackedStringArray("res://addons/demo")\n',
+      "addons/demo/plugin.cfg": '[plugin]\nname="Demo"\nscript="plugin.gd"\n',
+      "src/main.gd": "extends Node\n",
+    });
+    const { symlink } = await import("node:fs/promises");
+    try {
+      await symlink(sentinel, path.join(workspaceRoot, "addons", "demo", "plugin.gd"));
+    } catch {
+      return;
+    }
+    const config: UserGodotConfig = {
+      activeInstallation: null,
+      installations: { "test-install": { path: executable, editionHint: "standard" } },
+      discoverOnPath: false,
+    };
+    const service = createGodotProjectProbeService({
+      workspaceRoot,
+      config,
+      preference: { kind: "installation-id", installationId: "test-install" },
+      overrideSource: "cli",
+      backend: createScriptedBackend([]).backend,
+      probeRunner: createFakeGodotProbeRunner({ helpText: DEFAULT_HELP_TEXT }).runner,
+      cache: {
+        load: () => Promise.resolve(null),
+        store: () => Promise.resolve(),
+        count: () => Promise.resolve(0),
+      },
+      hostPath: null,
+      hostPathExt: null,
+      platform: process.platform,
+      runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
+      mirror: createProjectMirror(),
+      checkpointRoot: null,
+      parentEnvironment: {},
+    });
+    try {
+      const prepared = await service.prepare();
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      // The symlinked plugin script contributes no hashed manifest entry
+      // and the outside sentinel is never read.
+      expect(prepared.preview.risks.enabledEditorPlugins).toBe(0);
+      expect(await readFile(sentinel, "utf8")).toBe("extends Node\n# SECRET\n");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+      await rm(runsRoot, { recursive: true, force: true }).catch(() => undefined);
+      await rm(executableRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
 });
 
 function createStubGitInspector(
