@@ -1,4 +1,5 @@
-import type { GodotAutoloadSummary, SafeDiagnostic } from "@solaris/core";
+import { GODOT_LIMITS, type GodotAutoloadSummary, type SafeDiagnostic } from "@solaris/core";
+import { validateProjectRelativePath } from "./traversal-limits.js";
 
 /** Bounded structural record of one project.godot property. */
 export interface ScannedProjectProperty {
@@ -53,9 +54,7 @@ export function scanProjectFile(content: string): GodotProjectScanResult {
   const properties: ScannedProjectProperty[] = [];
   const warnings: SafeDiagnostic[] = [];
   const addWarning = (message: string): void => {
-    if (warnings.length < MAX_WARNINGS) {
-      warnings.push({ severity: "warning", message });
-    }
+    addScanWarning(warnings, message);
   };
   let section = "";
   let sectionCount = 0;
@@ -105,8 +104,8 @@ export function scanProjectFile(content: string): GodotProjectScanResult {
     readString(properties, "rendering", "renderer/rendering_method.mobile", warnings),
   ].filter((value): value is string => value !== null);
   const dotnetAssemblyName = readString(properties, "dotnet", "project/assembly_name", warnings);
-  const autoloads = readAutoloads(properties);
-  const enabledPlugins = readStringArray(properties, "editor_plugins", "enabled");
+  const autoloads = readAutoloads(properties, warnings);
+  const enabledPlugins = readEnabledPlugins(properties, warnings);
   const distinct = [...new Set(renderingMethods)];
   return {
     properties,
@@ -304,17 +303,45 @@ function readStringArray(
 
 function readAutoloads(
   properties: readonly ScannedProjectProperty[],
+  warnings: SafeDiagnostic[],
 ): readonly GodotAutoloadSummary[] {
   const autoloads: GodotAutoloadSummary[] = [];
   for (const property of properties) {
     if (property.section !== "autoload") {
       continue;
     }
+    if (autoloads.length >= GODOT_LIMITS.maxProjectAutoloads) {
+      addScanWarning(
+        warnings,
+        "The number of autoload declarations exceeded the bound (maxProjectAutoloads); the autoload list is partial.",
+      );
+      break;
+    }
     const value = interpretValue(property.rawValue);
     if (value.kind !== "string") {
       continue;
     }
     const target = value.value as string;
+    // Autoload targets are project-controlled but only ever surfaced
+    // textually; unsafe spellings still produce a lexical warning.
+    const reference = target.startsWith("*") ? target.slice(1) : target;
+    if (reference.startsWith("res://")) {
+      const verdict = validateProjectRelativePath(
+        reference.slice("res://".length),
+        GODOT_LIMITS.maxResReferencePathBytes,
+      );
+      if (!verdict.ok) {
+        addScanWarning(
+          warnings,
+          `The autoload ${property.key} declares a target (${target}) that is not a contained project path.`,
+        );
+      }
+    } else if (reference.length > 0) {
+      addScanWarning(
+        warnings,
+        `The autoload ${property.key} declares a non-res:// target (${target}) that could not be validated as a project path.`,
+      );
+    }
     autoloads.push({
       name: property.key,
       target,
@@ -322,6 +349,40 @@ function readAutoloads(
     });
   }
   return autoloads;
+}
+
+function readEnabledPlugins(
+  properties: readonly ScannedProjectProperty[],
+  warnings: SafeDiagnostic[],
+): readonly string[] {
+  const raw = readStringArray(properties, "editor_plugins", "enabled");
+  const enabled: string[] = [];
+  for (const plugin of raw) {
+    if (enabled.length >= GODOT_LIMITS.maxProjectPlugins) {
+      addScanWarning(
+        warnings,
+        "The number of enabled editor plugins exceeded the bound (maxProjectPlugins); the enabled-plugin list is partial.",
+      );
+      break;
+    }
+    const reference = plugin.startsWith("res://") ? plugin.slice("res://".length) : plugin;
+    const verdict = validateProjectRelativePath(reference, GODOT_LIMITS.maxResReferencePathBytes);
+    if (!verdict.ok) {
+      addScanWarning(
+        warnings,
+        `The enabled plugin entry (${plugin}) is not a contained project path and cannot be matched to an addon.`,
+      );
+      continue;
+    }
+    enabled.push(plugin);
+  }
+  return enabled;
+}
+
+function addScanWarning(warnings: SafeDiagnostic[], message: string): void {
+  if (warnings.length < MAX_WARNINGS) {
+    warnings.push({ severity: "warning", message });
+  }
 }
 
 function warnUnknown(warnings: SafeDiagnostic[], property: ScannedProjectProperty): void {

@@ -38,6 +38,24 @@ export interface GodotGDExtensionSummary {
 }
 
 /**
+ * Why a bounded project scan or executable-content inventory stopped early.
+ * Every bound has an exact, stable reason so truncation is never silent or
+ * ambiguous.
+ */
+export type GodotScanTruncationReason =
+  | "none"
+  | "file-limit"
+  | "directory-limit"
+  | "entry-limit"
+  | "surfaced-limit"
+  | "plugin-limit"
+  | "descriptor-limit"
+  | "inventory-limit"
+  | "bytes-limit"
+  | "timeout"
+  | "cancelled";
+
+/**
  * Statically identified project components that may execute when the editor
  * or project is opened. This inventory informs the future recovery-mode
  * trust decision; nothing here is ever loaded or run.
@@ -51,7 +69,10 @@ export interface GodotExecutableContentInventory {
   readonly gdextensionDescriptors: readonly GodotGDExtensionSummary[];
   readonly autoloadCount: number;
   readonly dotnetProjectFiles: readonly string[];
+  /** True when any static-scan or inventory bound was exhausted. */
   readonly scanTruncated: boolean;
+  /** Exact reason for truncation; "none" when the inventory is complete. */
+  readonly scanTruncationReason: GodotScanTruncationReason;
 }
 
 export function createEmptyGodotExecutableContentInventory(): GodotExecutableContentInventory {
@@ -63,6 +84,7 @@ export function createEmptyGodotExecutableContentInventory(): GodotExecutableCon
     autoloadCount: 0,
     dotnetProjectFiles: [],
     scanTruncated: false,
+    scanTruncationReason: "none",
   };
 }
 

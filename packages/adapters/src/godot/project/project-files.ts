@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstat, open } from "node:fs/promises";
 import { join } from "node:path";
 import { GODOT_LIMITS } from "@solaris/core";
+import {
+  DEFAULT_FS_OPS,
+  verifyProjectPathContainment,
+  type GodotProjectFsOps,
+} from "./traversal-limits.js";
+import { samePathIdentity } from "../../fs-path-identity.js";
 
 export interface GodotProjectFileInfo {
   readonly exists: boolean;
@@ -20,7 +25,13 @@ export type GodotProjectFileRead =
   | {
       readonly ok: false;
       readonly reason:
-        "missing" | "not-regular" | "symlink" | "oversized" | "read-failed" | "cancelled";
+        | "missing"
+        | "not-regular"
+        | "symlink"
+        | "oversized"
+        | "read-failed"
+        | "cancelled"
+        | "changed";
       readonly message: string;
     };
 
@@ -28,15 +39,33 @@ export type GodotProjectFileRead =
  * Root-only static project detection. A Godot project is detected only when
  * a regular, non-symlinked `project.godot` exists at the workspace root.
  * Parents and children are never searched and `--upwards` is never used.
+ * The parent chain is verified canonically contained before the read, and
+ * the path identity is re-verified after the read so a swap during
+ * inspection is detected and the data is rejected.
  */
 export async function readProjectFile(
   workspaceRoot: string,
   signal?: AbortSignal,
+  fsOps: GodotProjectFsOps = DEFAULT_FS_OPS,
 ): Promise<GodotProjectFileRead> {
-  const path = join(workspaceRoot, "project.godot");
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = await fsOps.realpath(workspaceRoot);
+  } catch (error: unknown) {
+    return { ok: false, reason: "read-failed", message: describeError(error) };
+  }
+  const path = join(canonicalRoot, "project.godot");
+  const verified = await verifyProjectPathContainment(canonicalRoot, path, fsOps);
+  if (!verified.ok) {
+    return {
+      ok: false,
+      reason: "missing",
+      message: "No project.godot exists at the workspace root.",
+    };
+  }
   let metadata;
   try {
-    metadata = await lstat(path);
+    metadata = await fsOps.lstat(path);
   } catch (error: unknown) {
     if (isNotFoundError(error)) {
       return {
@@ -70,7 +99,7 @@ export async function readProjectFile(
   }
   let handle;
   try {
-    handle = await open(path, "r");
+    handle = await fsOps.open(path);
   } catch (error: unknown) {
     return { ok: false, reason: "read-failed", message: describeError(error) };
   }
@@ -102,6 +131,16 @@ export async function readProjectFile(
     return { ok: false, reason: "read-failed", message: describeError(error) };
   } finally {
     await handle.close().catch(() => undefined);
+  }
+  // Re-verify identity after the read: a parent swapped during inspection
+  // (or a file replaced by a link) is treated as an escape and rejected.
+  const after = await fsOps.realpath(path).catch(() => null);
+  if (after === null || !samePathIdentity(after, verified.canonicalPath)) {
+    return {
+      ok: false,
+      reason: "changed",
+      message: "project.godot changed during inspection; the read was rejected.",
+    };
   }
   return {
     ok: true,

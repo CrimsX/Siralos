@@ -38,6 +38,46 @@ describe("scanProjectFile", () => {
     expect(result.renderingMethods).toEqual(["forward_plus", "gl_compatibility"]);
   });
 
+  it("warns on autoload targets that are not contained project paths", () => {
+    const result = scanProjectFile(
+      [
+        "[autoload]",
+        'Good="*res://src/autoload/game_state.gd"',
+        'Escape="*res://../../outside.gd"',
+        'Absolute="C:\\\\outside\\\\evil.gd"',
+        'Unc="\\\\\\\\server\\\\share\\\\evil.gd"',
+      ].join("\n"),
+    );
+    expect(result.autoloads).toHaveLength(4);
+    expect(result.warnings.some((warning) => warning.message.includes("Escape"))).toBe(true);
+    expect(result.warnings.some((warning) => warning.message.includes("Absolute"))).toBe(true);
+    expect(result.warnings.some((warning) => warning.message.includes("Unc"))).toBe(true);
+    expect(result.warnings.some((warning) => warning.message.includes("Good"))).toBe(false);
+  });
+
+  it("warns on enabled plugin entries that are not contained", () => {
+    const result = scanProjectFile(
+      '[editor_plugins]\nenabled=PackedStringArray("res://addons/ok", "res://../../evil", "C:\\\\evil")\n',
+    );
+    expect(result.enabledPlugins).toEqual(["res://addons/ok"]);
+    expect(result.warnings.some((warning) => warning.message.includes("res://../../evil"))).toBe(
+      true,
+    );
+    expect(result.warnings.some((warning) => warning.message.includes("C:\\evil"))).toBe(true);
+  });
+
+  it("bounds autoload declarations", () => {
+    const lines = ["[autoload]"];
+    for (let index = 0; index < 300; index += 1) {
+      lines.push(`"Auto${index}"="res://src/a.gd"`);
+    }
+    const result = scanProjectFile(lines.join("\n"));
+    expect(result.autoloads).toHaveLength(256);
+    expect(result.warnings.some((warning) => warning.message.includes("maxProjectAutoloads"))).toBe(
+      true,
+    );
+  });
+
   it("parses dotnet settings", () => {
     const result = scanProjectFile(GODOT_4_PROJECT);
     expect(result.dotnetAssemblyName).toBe("CounterStrafe");

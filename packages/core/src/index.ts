@@ -190,6 +190,7 @@ export {
   type GodotLanguageProfile,
   type GodotPluginSummary,
   type GodotProjectProfile,
+  type GodotScanTruncationReason,
 } from "./godot/project.js";
 export {
   assessGodotCompatibility,
