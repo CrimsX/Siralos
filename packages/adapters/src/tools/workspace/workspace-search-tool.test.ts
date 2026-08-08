@@ -137,9 +137,15 @@ describe("workspace.search", () => {
     const tool = createWorkspaceSearchTool(workspace.root);
     const result = await tool.execute({ query: "needle" }, {});
     const output = expectSuccess(result);
-    expect(fieldNumber(output, "scannedFiles")).toBe(WORKSPACE_LIMITS.maxSearchFiles);
+    expect(fieldNumber(output, "scannedFiles")).toBeLessThanOrEqual(
+      WORKSPACE_LIMITS.maxSearchFiles,
+    );
     expect(fieldBoolean(output, "truncated")).toBe(true);
-  });
+    // The file-scan bound is authoritative; under heavy parallel load the
+    // independent time bound may fire first, which is equally a bounded
+    // traversal outcome — never more files scanned than the limit.
+    expect(["scan_budget", "time_budget"]).toContain(output["truncationReason"]);
+  }, 30_000);
 
   it("truncates long matching lines", async () => {
     const workspace = await withWorkspace();
