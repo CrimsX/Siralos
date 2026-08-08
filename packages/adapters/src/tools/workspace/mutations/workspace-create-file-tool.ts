@@ -1,5 +1,5 @@
-import { open, readFile, unlink, realpath } from "node:fs/promises";
-import path from "node:path";
+import { open, readFile, realpath } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import type {
   ChangePreview,
   CheckpointStore,
@@ -15,7 +15,12 @@ import { WORKSPACE_LIMITS } from "../limits.js";
 import { buildUnifiedDiff } from "./diff.js";
 import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
 import type { MutationLock } from "./mutation-lock.js";
-import { resolveCreateTarget } from "./mutation-paths.js";
+import {
+  removeCreatedObjectIfSame,
+  resolveCreateTarget,
+  verifyExclusiveOpenIdentity,
+  verifyParentChainIdentity,
+} from "./mutation-paths.js";
 import { readJsonObject, readRequiredString, type ParsedValue } from "../validation.js";
 
 interface CreatePayload {
@@ -52,7 +57,10 @@ export function createWorkspaceCreateFileTool(
   workspaceRoot: string,
   lock: MutationLock,
   store: CheckpointStore,
-  dependencies: { readonly beforeCommitOpen?: () => Promise<void> } = {},
+  dependencies: {
+    readonly beforeCommitOpen?: () => Promise<void>;
+    readonly beforeObjectCleanup?: () => Promise<void>;
+  } = {},
 ): PreparedMutationTool {
   const payloads = new WeakMap<PreparedMutation, CreatePayload>();
 
@@ -199,9 +207,6 @@ export function createWorkspaceCreateFileTool(
       if (context.signal?.aborted) {
         return { status: "cancelled", message: "The mutation was cancelled before commit." };
       }
-      if (dependencies.beforeCommitOpen !== undefined) {
-        await dependencies.beforeCommitOpen();
-      }
       let canonicalRoot: string;
       try {
         canonicalRoot = await realpath(workspaceRoot);
@@ -211,7 +216,31 @@ export function createWorkspaceCreateFileTool(
           message: `Workspace root is not accessible: ${describeError(error)}`,
         };
       }
-      let handle;
+      // Re-verify every parent component's identity immediately before the
+      // exclusive open. The "wx" open is exclusive but not no-follow on
+      // intermediate components: a parent swapped for a symlink or junction
+      // after this check would create the file outside the workspace. Node
+      // offers no openat-style dirfd primitive, so a swap in the remaining
+      // window is detected AFTER the open but BEFORE any byte is written,
+      // through the opened handle (see verifyExclusiveOpenIdentity); the
+      // exact created object is then removed only when identity-provable.
+      const parentChain = await verifyParentChainIdentity(
+        workspaceRoot,
+        finalRevalidation.absolutePath,
+      );
+      if (!parentChain.ok) {
+        return {
+          status: "conflict",
+          message: `The target changed since the proposal: ${parentChain.message}`,
+        };
+      }
+      if (context.signal?.aborted) {
+        return { status: "cancelled", message: "The mutation was cancelled before commit." };
+      }
+      if (dependencies.beforeCommitOpen !== undefined) {
+        await dependencies.beforeCommitOpen();
+      }
+      let handle: FileHandle;
       try {
         handle = await open(finalRevalidation.absolutePath, "wx");
       } catch (error: unknown) {
@@ -220,38 +249,46 @@ export function createWorkspaceCreateFileTool(
           message: `The target appeared before the write: ${describeError(error)}`,
         };
       }
-      let escaped = false;
+      const openedIdentity = await verifyExclusiveOpenIdentity(
+        handle,
+        finalRevalidation.absolutePath,
+        canonicalRoot,
+      );
+      if (!openedIdentity.ok) {
+        await handle.close().catch(() => {});
+        if (dependencies.beforeObjectCleanup !== undefined) {
+          await dependencies.beforeObjectCleanup();
+        }
+        const cleanup = await removeCreatedObjectIfSame(
+          finalRevalidation.absolutePath,
+          openedIdentity.dev,
+          openedIdentity.ino,
+        );
+        if (cleanup === "preserved") {
+          return {
+            status: "conflict",
+            message: `${openedIdentity.message}; nothing was written. The created object could not be identity-proven and was left in place; it was not deleted.`,
+          };
+        }
+        if (cleanup === "absent") {
+          return {
+            status: "conflict",
+            message: `${openedIdentity.message}; nothing was written and no stray object remained.`,
+          };
+        }
+        return {
+          status: "conflict",
+          message: `${openedIdentity.message}; nothing was written and the created object was removed.`,
+        };
+      }
       try {
-        // The "wx" open is exclusive but not no-follow on intermediate
-        // components: a parent directory swapped for a symlink or junction
-        // between the final revalidation and this open would create the file
-        // outside the workspace. Resolve the created path canonically now —
-        // before any bytes are written — and refuse if it escaped.
-        let createdCanonical: string;
-        try {
-          createdCanonical = await realpath(finalRevalidation.absolutePath);
-        } catch (error: unknown) {
-          escaped = true;
-          return {
-            status: "conflict",
-            message: `The created file could not be resolved canonically: ${describeError(error)}`,
-          };
-        }
-        if (!isInside(canonicalRoot, createdCanonical)) {
-          escaped = true;
-          return {
-            status: "conflict",
-            message:
-              "A parent directory was swapped for a link before the write; nothing was written.",
-          };
-        }
+        // Write only through the verified handle: the path is never
+        // reopened, so a substitution made after the open cannot redirect
+        // the write.
         await handle.writeFile(payload.content);
         await handle.sync();
       } finally {
         await handle.close();
-        if (escaped) {
-          await unlink(finalRevalidation.absolutePath).catch(() => {});
-        }
       }
       const verification = await verifyCreatedFile(payload);
       if (verification !== null) {
@@ -327,11 +364,6 @@ export function createWorkspaceCreateFileTool(
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
-}
-
-function isInside(root: string, target: string): boolean {
-  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  return target === root || target.startsWith(rootPrefix);
 }
 
 function describeError(error: unknown): string {

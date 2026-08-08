@@ -239,6 +239,97 @@ describe("workspace.create_file", () => {
     await expect(readFile(path.join(workspace.root, "new.txt"))).rejects.toThrow();
   });
 
+  it(
+    "detects the swap in the final open window and removes only the identity-proven object",
+    { skip: !SYMLINKS_SUPPORTED },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/keep.txt": "keep\n" });
+      const outside = await createTempWorkspace();
+      workspaces.push(outside);
+      const otherOutside = await createTempWorkspace();
+      workspaces.push(otherOutside);
+      const sentinel = Buffer.from("sentinel that must not change\n");
+      await writeFixtureFiles(otherOutside.root, { "new.txt": sentinel });
+      const { rm, unlink: fsUnlink } = await import("node:fs/promises");
+      const { tool } = await createTool(
+        workspace.root,
+        {},
+        {
+          beforeCommitOpen: async () => {
+            // Swap 1: after the parent chain was verified, the parent becomes
+            // a symlink pointing outside; the exclusive open then creates the
+            // file outside the workspace.
+            await rm(path.join(workspace.root, "docs"), { recursive: true });
+            await createSymlink(outside.root, path.join(workspace.root, "docs"));
+          },
+          beforeObjectCleanup: async () => {
+            // Swap 2: the parent is retargeted before cleanup, so the path
+            // resolves to a pre-existing sentinel that is NOT the opened
+            // object. Cleanup must not unlink an uncertain path.
+            await fsUnlink(path.join(workspace.root, "docs"));
+            await createSymlink(otherOutside.root, path.join(workspace.root, "docs"));
+          },
+        },
+      );
+      const prepared = await tool.prepare({ path: "docs/new.txt", content: CONTENT }, {});
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+      expect(result.status).toBe("conflict");
+      if (result.status === "conflict") {
+        expect(result.message).toContain("left in place");
+      }
+      // The sentinel that replaced the opened object at the path is intact.
+      const bytes = await readFile(path.join(otherOutside.root, "new.txt"));
+      expect(bytes.equals(sentinel)).toBe(true);
+    },
+  );
+
+  it(
+    "rejects a workspace child replaced by a junction",
+    { skip: process.platform !== "win32" },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/keep.txt": "keep\n" });
+      const { execFileSync } = await import("node:child_process");
+      const junctionTarget = path.join(workspace.root, "real-docs");
+      await mkdir(junctionTarget);
+      const junction = path.join(workspace.root, "docs");
+      try {
+        execFileSync("cmd", ["/c", "mklink", "/J", junction, junctionTarget], {
+          stdio: "ignore",
+        });
+      } catch {
+        return; // junction creation unsupported in this environment
+      }
+      const { tool } = await createTool(workspace.root);
+      const prepared = await tool.prepare({ path: "docs/new.txt", content: CONTENT }, {});
+      expect(prepared.status).toBe("denied");
+    },
+  );
+
+  it(
+    "creates a file through case-variant parent spellings on case-insensitive platforms",
+    { skip: process.platform === "linux" },
+    async () => {
+      const workspace = await withWorkspace();
+      await mkdir(path.join(workspace.root, "docs"), { recursive: true });
+      const { tool } = await createTool(workspace.root);
+      const prepared = await tool.prepare({ path: "DOCS/New.txt", content: CONTENT }, {});
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+      expect(result.status).toBe("success");
+      const bytes = await readFile(path.join(workspace.root, "docs", "New.txt"));
+      expect(bytes.toString("utf8")).toBe(CONTENT);
+    },
+  );
+
   it("reports an uncertain finalize failure after the file was created", async () => {
     const workspace = await withWorkspace();
     const store = await createTempCheckpointStore(workspace.root);

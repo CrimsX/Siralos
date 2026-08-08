@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdir } from "node:fs/promises";
+import { mkdir, open, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   isProtectedWriteTarget,
+  removeCreatedObjectIfSame,
   resolveCreateTarget,
   resolveMutationTarget,
+  verifyParentChainIdentity,
 } from "./mutation-paths.js";
 import {
   createSymlink,
@@ -212,4 +214,165 @@ describe("isProtectedWriteTarget", () => {
       expect(resolved.status).not.toBe("resolved");
     },
   );
+
+  it(
+    "rejects a junction alias in the parent chain on Windows",
+    {
+      skip: process.platform !== "win32",
+    },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "real-docs/keep.txt": "x" });
+      const { execFileSync } = await import("node:child_process");
+      try {
+        execFileSync(
+          "cmd",
+          [
+            "/c",
+            "mklink",
+            "/J",
+            path.join(workspace.root, "docs"),
+            path.join(workspace.root, "real-docs"),
+          ],
+          { stdio: "ignore" },
+        );
+      } catch {
+        return; // junction creation unsupported in this environment
+      }
+      const resolved = await resolveCreateTarget(workspace.root, "docs/new.txt");
+      expect(resolved.status).not.toBe("resolved");
+    },
+  );
+
+  it(
+    "resolves case-variant spellings of an existing parent on case-insensitive platforms",
+    { skip: process.platform === "linux" },
+    async () => {
+      const workspace = await withWorkspace();
+      await mkdir(path.join(workspace.root, "docs"));
+      const resolved = await resolveCreateTarget(workspace.root, "DOCS/example.md");
+      expect(resolved.status).toBe("resolved");
+      if (resolved.status === "resolved") {
+        expect(resolved.workspaceRelativePath).toBe("DOCS/example.md");
+      }
+    },
+  );
+
+  it(
+    "resolves case-variant spellings of an existing file on case-insensitive platforms",
+    { skip: process.platform === "linux" },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/note.md": "hello\n" });
+      const resolved = await resolveMutationTarget(workspace.root, "DOCS/NOTE.MD");
+      expect(resolved.status).toBe("resolved");
+    },
+  );
+});
+
+describe("verifyParentChainIdentity", () => {
+  it("accepts a real nested parent chain", async () => {
+    const workspace = await withWorkspace();
+    await mkdir(path.join(workspace.root, "docs", "deep"), { recursive: true });
+    const target = path.join(workspace.root, "docs", "deep", "new.txt");
+    const verified = await verifyParentChainIdentity(workspace.root, target);
+    expect(verified.ok).toBe(true);
+  });
+
+  it("accepts the workspace root itself as the parent chain", async () => {
+    const workspace = await withWorkspace();
+    const verified = await verifyParentChainIdentity(
+      workspace.root,
+      path.join(workspace.root, "new.txt"),
+    );
+    expect(verified.ok).toBe(true);
+  });
+
+  it("rejects a symlinked parent component", { skip: !SYMLINKS_SUPPORTED }, async () => {
+    const workspace = await withWorkspace();
+    const outside = await createTempWorkspace();
+    workspaces.push(outside);
+    await createSymlink(outside.root, path.join(workspace.root, "link-dir"));
+    const verified = await verifyParentChainIdentity(
+      workspace.root,
+      path.join(workspace.root, "link-dir", "new.txt"),
+    );
+    expect(verified.ok).toBe(false);
+    if (!verified.ok) {
+      expect(verified.message).toContain("symbolic link");
+    }
+  });
+
+  it(
+    "rejects a junction parent component on Windows",
+    {
+      skip: process.platform !== "win32",
+    },
+    async () => {
+      const workspace = await withWorkspace();
+      await mkdir(path.join(workspace.root, "real-docs"));
+      const { execFileSync } = await import("node:child_process");
+      try {
+        execFileSync(
+          "cmd",
+          [
+            "/c",
+            "mklink",
+            "/J",
+            path.join(workspace.root, "docs"),
+            path.join(workspace.root, "real-docs"),
+          ],
+          { stdio: "ignore" },
+        );
+      } catch {
+        return; // junction creation unsupported in this environment
+      }
+      const verified = await verifyParentChainIdentity(
+        workspace.root,
+        path.join(workspace.root, "docs", "new.txt"),
+      );
+      expect(verified.ok).toBe(false);
+    },
+  );
+});
+
+describe("removeCreatedObjectIfSame", () => {
+  it("removes the exact object by dev+ino", async () => {
+    const workspace = await withWorkspace();
+    const filePath = path.join(workspace.root, "a.txt");
+    const handle = await open(filePath, "wx");
+    const stats = await handle.stat({ bigint: true });
+    await handle.close();
+    const outcome = await removeCreatedObjectIfSame(filePath, stats.dev, stats.ino);
+    expect(outcome).toBe("removed");
+    await expect(import("node:fs/promises").then((fs) => fs.readFile(filePath))).rejects.toThrow();
+  });
+
+  it("never unlinks a path that no longer resolves to the proven object", async () => {
+    const workspace = await withWorkspace();
+    const filePath = path.join(workspace.root, "a.txt");
+    const handle = await open(filePath, "wx");
+    const stats = await handle.stat({ bigint: true });
+    await handle.close();
+    const { rm } = await import("node:fs/promises");
+    await rm(filePath, { force: true });
+    await writeFile(filePath, "replaced by another process\n");
+    const outcome = await removeCreatedObjectIfSame(filePath, stats.dev, stats.ino);
+    expect(outcome).toBe("preserved");
+    expect(await import("node:fs/promises").then((fs) => fs.readFile(filePath, "utf8"))).toBe(
+      "replaced by another process\n",
+    );
+  });
+
+  it("reports absent when the path no longer resolves", async () => {
+    const workspace = await withWorkspace();
+    const filePath = path.join(workspace.root, "a.txt");
+    const handle = await open(filePath, "wx");
+    const stats = await handle.stat({ bigint: true });
+    await handle.close();
+    const { rm } = await import("node:fs/promises");
+    await rm(filePath, { force: true });
+    const outcome = await removeCreatedObjectIfSame(filePath, stats.dev, stats.ino);
+    expect(outcome).toBe("absent");
+  });
 });
