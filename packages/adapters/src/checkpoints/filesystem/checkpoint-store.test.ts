@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -92,6 +92,217 @@ async function snapshotTree(root: string): Promise<ReadonlyMap<string, string>> 
   await walk(root, "");
   return snapshot;
 }
+
+describe("fail-closed capacity verification", () => {
+  async function entryDirOf(context: StoreContext, id: string): Promise<string> {
+    const dir = join(context.rootDirectory, context.fingerprint, id);
+    await mkdir(dir, { recursive: true });
+    return dir;
+  }
+
+  function metadataPathOf(context: StoreContext, id: string): string {
+    return join(context.rootDirectory, context.fingerprint, id, "metadata.json");
+  }
+
+  async function readMetadata(context: StoreContext, id: string): Promise<Record<string, unknown>> {
+    const raw = await readFile(metadataPathOf(context, id), "utf8");
+    return JSON.parse(raw) as Record<string, unknown>;
+  }
+
+  async function rewriteMetadata(
+    context: StoreContext,
+    id: string,
+    mutate: (record: Record<string, unknown>) => void,
+  ): Promise<void> {
+    const record = await readMetadata(context, id);
+    mutate(record);
+    await writeFile(metadataPathOf(context, id), JSON.stringify(record, null, 2), "utf8");
+  }
+
+  async function expectRefusalPreservesTree(
+    context: StoreContext,
+    prepare: () => Promise<unknown>,
+  ): Promise<void> {
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(prepare()).rejects.toBeInstanceOf(CheckpointStorageLimitError);
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  }
+
+  it("the known reproduction refuses: malformed metadata with a large preimage under a small byte limit", async () => {
+    const context = await withStore({ maxStorageBytes: 20 });
+    const id = `cp_${randomUUID()}`;
+    await entryDirOf(context, id);
+    await writeFile(metadataPathOf(context, id), "{ this is not json", "utf8");
+    await writeFile(
+      join(context.rootDirectory, context.fingerprint, id, "preimage.bin"),
+      Buffer.alloc(1024 * 1024, 0x61),
+    );
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when a checkpoint-like entry has missing metadata", async () => {
+    const context = await withStore({ maxStorageBytes: 20 });
+    const id = `cp_${randomUUID()}`;
+    const dir = await entryDirOf(context, id);
+    await writeFile(join(dir, "preimage.bin"), Buffer.alloc(1024 * 1024, 0x61));
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when metadata is oversized", async () => {
+    const context = await withStore({ maxStorageBytes: 20 });
+    const id = `cp_${randomUUID()}`;
+    await entryDirOf(context, id);
+    await writeFile(
+      metadataPathOf(context, id),
+      JSON.stringify({ padding: "x".repeat(70 * 1024) }),
+      "utf8",
+    );
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when metadata is unreadable", { skip: process.platform === "win32" }, async () => {
+    const context = await withStore({ maxStorageBytes: 20 });
+    const id = `cp_${randomUUID()}`;
+    await entryDirOf(context, id);
+    await writeFile(metadataPathOf(context, id), "{}", "utf8");
+    await chmod(metadataPathOf(context, id), 0o000);
+    try {
+      await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+    } finally {
+      await chmod(metadataPathOf(context, id), 0o600).catch(() => undefined);
+    }
+  });
+
+  it("refuses when metadata is missing required fields", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    for (const missing of ["toolName", "createdAt", "preview", "before", "relativePath"] as const) {
+      await rewriteMetadata(context, first.id, (record) => {
+        delete record[missing];
+      });
+      await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+    }
+  });
+
+  it("refuses on negative, fractional, and string byte lengths", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    for (const byteLength of [-1, 1.5, "14"]) {
+      await rewriteMetadata(context, first.id, (record) => {
+        (record["before"] as Record<string, unknown>)["byteLength"] = byteLength;
+      });
+      await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+    }
+  });
+
+  it("refuses when the before byte length exceeds the configured preimage maximum", async () => {
+    const content = "x".repeat(24);
+    const wide = await withStore({ maxPreimageBytes: 1024 });
+    await wide.store.prepare(
+      preparedUpdate({
+        before: {
+          exists: true,
+          sha256: hashOf(content),
+          byteLength: 24,
+          bytes: Buffer.from(content),
+        },
+      }),
+    );
+    const tight = await withStore({
+      workspaceRoot: wide.workspaceRoot,
+      rootDirectory: wide.rootDirectory,
+      maxPreimageBytes: 16,
+    });
+    await expectRefusalPreservesTree(tight, () => tight.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when metadata declares zero bytes while a preimage exists", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await rewriteMetadata(context, first.id, (record) => {
+      (record["before"] as Record<string, unknown>)["byteLength"] = 0;
+    });
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when the preimage size disagrees with metadata", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await rewriteMetadata(context, first.id, (record) => {
+      (record["before"] as Record<string, unknown>)["byteLength"] = 99;
+    });
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when a preimage declared by metadata is missing", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await rm(join(checkpointDirOf(context, first.id), "preimage.bin"), { force: true });
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when metadata declares no preimage but preimage.bin exists", async () => {
+    const context = await withStore();
+    const created = await context.store.prepare({
+      ...preparedUpdate(),
+      operation: "create",
+      before: { exists: false, sha256: null, byteLength: null, bytes: null },
+      after: { exists: true, sha256: hashOf("new\n"), byteLength: 4 },
+    });
+    await writeFile(join(checkpointDirOf(context, created.id), "preimage.bin"), "stray", "utf8");
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when a preimage is substituted with a directory", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await rm(join(checkpointDirOf(context, first.id), "preimage.bin"), { force: true });
+    await mkdir(join(checkpointDirOf(context, first.id), "preimage.bin"), { recursive: true });
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when metadata is a symbolic link", { skip: !SYMLINKS_SUPPORTED }, async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    const metadataPath = metadataPathOf(context, first.id);
+    const target = join(context.rootDirectory, "metadata-target.json");
+    await writeFile(target, "{}", "utf8");
+    await rm(metadataPath, { force: true });
+    const { symlink } = await import("node:fs/promises");
+    await symlink(target, metadataPath);
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("refuses when the preimage is a symbolic link", { skip: !SYMLINKS_SUPPORTED }, async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    const preimagePath = join(checkpointDirOf(context, first.id), "preimage.bin");
+    const target = join(context.rootDirectory, "preimage-target.bin");
+    await writeFile(target, "before content\n", "utf8");
+    await rm(preimagePath, { force: true });
+    const { symlink } = await import("node:fs/promises");
+    await symlink(target, preimagePath);
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("exact valid capacity boundary succeeds and one byte over refuses", async () => {
+    // "before content\n" is 15 bytes, so two checkpoints use exactly 30.
+    const context = await withStore({ maxStorageBytes: 30 });
+    await context.store.prepare(preparedUpdate());
+    // 15 + 15 == 30: exactly at the limit succeeds.
+    const second = await context.store.prepare(preparedUpdate());
+    expect(second.state).toBe("prepared");
+    // 30 + 15 > 30: a third refuses.
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+
+  it("one byte over capacity refuses before any write", async () => {
+    const context = await withStore({ maxStorageBytes: 29 });
+    await context.store.prepare(preparedUpdate());
+    // 15 + 15 = 30 > 29: one byte over the limit refuses.
+    await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+  });
+});
 
 describe("filesystem checkpoint store", () => {
   it("stores exact preimage bytes for an update", async () => {
