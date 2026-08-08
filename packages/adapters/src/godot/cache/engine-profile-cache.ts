@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 import type {
   GodotCommandCapabilities,
   GodotEdition,
@@ -14,6 +14,7 @@ import type {
 } from "@solaris/core";
 import { createEmptyGodotCommandCapabilities } from "@solaris/core";
 import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
+import { samePathIdentity } from "../../fs-path-identity.js";
 
 export const ENGINE_PROFILE_CACHE_SCHEMA_VERSION = 1;
 
@@ -82,38 +83,103 @@ export interface EngineProfileCacheOptions {
 export function createEngineProfileCache(
   options: EngineProfileCacheOptions = {},
 ): GodotEngineProfileCache {
-  const root = options.rootDirectory ?? join(homedir(), ".solaris", "godot", "engine-profiles");
+  const root =
+    options.rootDirectory ?? path.join(homedir(), ".solaris", "godot", "engine-profiles");
   const maxEntries = options.maxEntries ?? ENGINE_PROFILE_CACHE_MAX_ENTRIES;
 
+  /**
+   * Establishes the cache root as a verified real directory chain. Every
+   * existing component must be a real directory (never a symlink or
+   * junction); missing components are created one at a time with the
+   * verified parent's identity re-checked immediately before creation —
+   * `mkdir(root, { recursive: true })` is never used, so a linked ancestor
+   * can never redirect creation. The chain must resolve canonically to its
+   * logical path using platform-aware identity comparison (raw string
+   * equality would reject legitimate Windows canonical spellings).
+   */
   async function ensureVerifiedRoot(): Promise<string> {
+    const parsed = path.parse(root);
+    const relative = path.relative(parsed.root, root);
+    const components =
+      relative.length === 0 ? [] : relative.split(path.sep).filter((part) => part.length > 0);
+    let current = parsed.root;
+    for (const component of components) {
+      current = path.join(current, component);
+      const outcome = await ensureVerifiedCacheComponent(current);
+      if (!outcome.ok) {
+        throw new Error(outcome.message);
+      }
+    }
+    const rootMetadata = await lstat(root).catch(() => null);
+    if (rootMetadata === null || rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
+      throw new Error("The engine-profile cache root is not a real directory.");
+    }
+    const canonical = await realpath(root).catch(() => null);
+    if (canonical !== null && !samePathIdentity(canonical, root)) {
+      throw new Error("The engine-profile cache root resolves through a link; refusing to use it.");
+    }
+    return root;
+  }
+
+  async function ensureVerifiedCacheComponent(
+    target: string,
+  ): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
+    let stats;
     try {
-      const rootMetadata = await lstat(root);
-      if (rootMetadata.isSymbolicLink()) {
-        throw new Error("The engine-profile cache root is a symbolic link; refusing to use it.");
-      }
+      stats = await lstat(target);
     } catch (error: unknown) {
-      if (error instanceof Error && error.message.includes("symbolic link")) {
-        throw error;
-      }
       if (!isNotFoundError(error)) {
-        throw new Error(`The engine-profile cache root is not accessible: ${describeError(error)}`);
+        return { ok: false, message: `The cache path ${target} is not accessible.` };
       }
-      await mkdir(root, { recursive: true });
+      // Create the missing component only after the verified parent's
+      // identity is re-confirmed immediately before the create.
+      const parent = path.dirname(target);
+      const parentStats = await lstat(parent).catch(() => null);
+      if (parentStats === null || parentStats.isSymbolicLink() || !parentStats.isDirectory()) {
+        return {
+          ok: false,
+          message: `The cache parent ${parent} is not a real directory; refusing to create beneath it.`,
+        };
+      }
+      const parentCanonical = await realpath(parent).catch(() => null);
+      if (parentCanonical === null || !samePathIdentity(parentCanonical, parent)) {
+        return {
+          ok: false,
+          message: `The cache parent ${parent} resolves through a link; refusing to create beneath it.`,
+        };
+      }
+      try {
+        await mkdir(target);
+      } catch (createError: unknown) {
+        if (isExistsError(createError)) {
+          // Another creator won the race; verify what exists below.
+        } else {
+          return {
+            ok: false,
+            message: `The cache directory ${target} could not be created.`,
+          };
+        }
+      }
+      try {
+        stats = await lstat(target);
+      } catch {
+        return { ok: false, message: `The cache directory ${target} could not be verified.` };
+      }
     }
-    let canonical: string;
-    try {
-      canonical = await realpath(root);
-    } catch (error: unknown) {
-      throw new Error(`The engine-profile cache root is not accessible: ${describeError(error)}`);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      return {
+        ok: false,
+        message: `The cache directory ${target} is not a real directory.`,
+      };
     }
-    if (canonical !== root) {
-      throw new Error("The engine-profile cache root is a symbolic link; refusing to use it.");
+    const canonical = await realpath(target).catch(() => null);
+    if (canonical === null || !samePathIdentity(canonical, target)) {
+      return {
+        ok: false,
+        message: `The cache directory ${target} resolves through a link; refusing to use it.`,
+      };
     }
-    const rootMetadata = await lstat(canonical);
-    if (!rootMetadata.isDirectory()) {
-      throw new Error("The engine-profile cache root is not a directory.");
-    }
-    return canonical;
+    return { ok: true };
   }
 
   async function load(executableSha256: string): Promise<CachedEngineProfile | null> {
@@ -121,8 +187,8 @@ export function createEngineProfileCache(
       return null;
     }
     const verifiedRoot = await ensureVerifiedRoot();
-    const path = join(verifiedRoot, `${executableSha256}.json`);
-    const content = await readCachedEntryFile(path);
+    const cachePath = path.join(verifiedRoot, `${executableSha256}.json`);
+    const content = await readCachedEntryFile(cachePath);
     if (content === null) {
       return null;
     }
@@ -132,8 +198,8 @@ export function createEngineProfileCache(
   async function store(profile: CachedEngineProfile): Promise<void> {
     const verifiedRoot = await ensureVerifiedRoot();
     await evictIfNeeded(verifiedRoot, maxEntries);
-    const path = join(verifiedRoot, `${profile.executable.sha256}.json`);
-    const tempPath = join(verifiedRoot, `.${randomUUID()}.tmp`);
+    const cachePath = path.join(verifiedRoot, `${profile.executable.sha256}.json`);
+    const tempPath = path.join(verifiedRoot, `.${randomUUID()}.tmp`);
     const handle = await open(tempPath, "wx", 0o600);
     try {
       await handle.writeFile(JSON.stringify(profile), "utf8");
@@ -141,7 +207,7 @@ export function createEngineProfileCache(
     } finally {
       await handle.close().catch(() => undefined);
     }
-    await rename(tempPath, path);
+    await rename(tempPath, cachePath);
   }
 
   async function count(): Promise<number> {
@@ -191,13 +257,13 @@ async function evictIfNeeded(root: string, maxEntries: number): Promise<void> {
     if (Date.now() >= deadline) {
       break;
     }
-    const path = join(root, entry);
-    const content = await readCachedEntryFile(path);
+    const cachePath = path.join(root, entry);
+    const content = await readCachedEntryFile(cachePath);
     if (content !== null) {
       metadataBytes += Buffer.byteLength(content, "utf8");
     }
     const parsed = content === null ? null : parseCachedProfile(content);
-    dated.push({ path, probedAtMs: parsed?.probedAtMs ?? 0 });
+    dated.push({ path: cachePath, probedAtMs: parsed?.probedAtMs ?? 0 });
     if (metadataBytes >= ENGINE_PROFILE_CACHE_EVICTION_READ_BYTES) {
       break;
     }
@@ -524,9 +590,6 @@ function isNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "an unknown filesystem error occurred";
+function isExistsError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
 }

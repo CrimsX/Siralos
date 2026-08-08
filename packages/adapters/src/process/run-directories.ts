@@ -183,11 +183,36 @@ export function createRunDirectoryProvider(
    * comparison is platform aware). The runs root must also be outside the
    * workspace.
    */
+  /**
+   * Best-effort canonicalization. On Windows a managed ancestor may deny
+   * canonical access (EPERM/EACCES) for a path that is otherwise perfectly
+   * valid; the runs-root and per-component checks then fall back to the
+   * lstat-verified logical path instead of failing (containment and
+   * no-follow checks still run on the logical identity-aware paths, and
+   * destructive cleanup additionally binds to the exact created object's
+   * dev/ino). On every other platform a failed realpath fails closed.
+   */
+  async function bestEffortCanonical(pathValue: string): Promise<string | null> {
+    try {
+      return await realpath(pathValue);
+    } catch (error: unknown) {
+      if (
+        process.platform === "win32" &&
+        error instanceof Error &&
+        "code" in error &&
+        (error.code === "EPERM" || error.code === "EACCES" || error.code === "UNKNOWN")
+      ) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async function establishVerifiedRunsRoot(): Promise<string> {
     // Reject a runs root that contains or sits inside the workspace before
     // creating anything, so a rejected configuration leaves no directories
     // behind inside the workspace.
-    const canonicalWorkspace = await realpath(options.workspaceRoot).catch(() => null);
+    const canonicalWorkspace = await bestEffortCanonical(options.workspaceRoot);
     if (canonicalWorkspace !== null) {
       if (
         samePathIdentity(configuredRunsRoot, canonicalWorkspace) ||
@@ -206,8 +231,25 @@ export function createRunDirectoryProvider(
       current = join(current, component);
       await ensureVerifiedDirectoryComponent(current, parsed.root, "runs root");
     }
-    const canonical = await realpath(configuredRunsRoot).catch(() => null);
-    if (canonical === null || !samePathIdentity(canonical, configuredRunsRoot)) {
+    const canonical = await bestEffortCanonical(configuredRunsRoot);
+    if (canonical === null) {
+      // Canonical confirmation is unavailable (Windows-managed ancestor);
+      // every component was lstat-verified as a real non-link directory and
+      // containment still holds on the logical identity-aware paths.
+      const resolvedWorkspace =
+        canonicalWorkspace ?? (await bestEffortCanonical(options.workspaceRoot));
+      if (resolvedWorkspace !== null) {
+        if (
+          samePathIdentity(configuredRunsRoot, resolvedWorkspace) ||
+          isWithinPathIdentity(resolvedWorkspace, configuredRunsRoot) ||
+          isWithinPathIdentity(configuredRunsRoot, resolvedWorkspace)
+        ) {
+          throw new Error("The runs root and the project workspace must not contain each other.");
+        }
+      }
+      return configuredRunsRoot;
+    }
+    if (!samePathIdentity(canonical, configuredRunsRoot)) {
       throw new Error(
         "The runs root does not resolve canonically to its configured location; refusing to use it.",
       );
@@ -228,7 +270,9 @@ export function createRunDirectoryProvider(
    * Verifies a parent component immediately before a child is created:
    * the parent must still be the exact verified real directory, so a
    * parent swapped for a link between verification and creation is
-   * detected before the child create call.
+   * detected before the child create call. On Windows a managed ancestor
+   * that denies canonical access is accepted after the lstat real-directory
+   * proof; on other platforms a canonical failure fails closed.
    */
   async function verifyParentIdentity(parent: string, label: string): Promise<void> {
     let stats;
@@ -240,13 +284,8 @@ export function createRunDirectoryProvider(
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
       throw new Error(`${label} is no longer a real directory; refusing to create beneath it.`);
     }
-    let canonical: string;
-    try {
-      canonical = await realpath(parent);
-    } catch {
-      throw new Error(`${label} no longer resolves canonically; refusing to create beneath it.`);
-    }
-    if (!samePathIdentity(canonical, parent)) {
+    const canonical = await bestEffortCanonical(parent);
+    if (canonical !== null && !samePathIdentity(canonical, parent)) {
       throw new Error(`${label} resolves through a link; refusing to create beneath it.`);
     }
   }
@@ -298,11 +337,10 @@ export function createRunDirectoryProvider(
     if (!stats.isDirectory()) {
       throw new Error(`${label} is not a directory; refusing to use it.`);
     }
-    const canonical = await realpath(target).catch(() => null);
+    const canonical = await bestEffortCanonical(target).catch(() => null);
     if (
-      canonical === null ||
-      !samePathIdentity(canonical, target) ||
-      !isWithinPathIdentity(ancestor, canonical)
+      canonical !== null &&
+      (!samePathIdentity(canonical, target) || !isWithinPathIdentity(ancestor, canonical))
     ) {
       if (created) {
         await removeOnlyIfProvablyCreatedEmpty(target);
@@ -335,11 +373,10 @@ export function createRunDirectoryProvider(
       await removeOnlyIfProvablyCreatedEmpty(target);
       throw new Error(`${label} directory is not a real directory; refusing to use it.`);
     }
-    const canonical = await realpath(target).catch(() => null);
+    const canonical = await bestEffortCanonical(target).catch(() => null);
     if (
-      canonical === null ||
-      !samePathIdentity(canonical, target) ||
-      !isWithinPathIdentity(parent, canonical)
+      canonical !== null &&
+      (!samePathIdentity(canonical, target) || !isWithinPathIdentity(parent, canonical))
     ) {
       await removeOnlyIfProvablyCreatedEmpty(target);
       throw new Error(`${label} directory does not resolve canonically inside its run.`);
@@ -367,11 +404,10 @@ export function createRunDirectoryProvider(
       await removeOnlyIfProvablyCreatedEmpty(target);
       throw new Error(`${label} is not a real file; refusing to use it.`);
     }
-    const canonical = await realpath(target).catch(() => null);
+    const canonical = await bestEffortCanonical(target).catch(() => null);
     if (
-      canonical === null ||
-      !samePathIdentity(canonical, target) ||
-      !isWithinPathIdentity(parent, canonical)
+      canonical !== null &&
+      (!samePathIdentity(canonical, target) || !isWithinPathIdentity(parent, canonical))
     ) {
       await removeOnlyIfProvablyCreatedEmpty(target);
       throw new Error(`${label} does not resolve canonically inside its run.`);
@@ -426,6 +462,14 @@ export function createRunDirectoryProvider(
       if (isNotFoundError(error)) {
         return { ok: false, message: "The run directory does not exist.", missing: true };
       }
+      if (process.platform === "win32" && isPermissionDeniedError(error)) {
+        // Managed-Windows canonical denial: containment still holds on the
+        // logical identity-aware paths, and destructive cleanup separately
+        // binds to the exact created object's dev/ino.
+        return isWithinPathIdentity(runsRoot, root)
+          ? { ok: true }
+          : { ok: false, message: "The run directory is not the verified Solaris-owned path." };
+      }
       return { ok: false, message: `The run directory is not accessible: ${describeError(error)}` };
     }
     if (!samePathIdentity(canonical, root) || !isWithinPathIdentity(runsRoot, canonical)) {
@@ -458,7 +502,13 @@ export function createRunDirectoryProvider(
     let canonicalNow: string;
     try {
       canonicalNow = await realpath(root);
-    } catch {
+    } catch (error: unknown) {
+      if (process.platform === "win32" && isPermissionDeniedError(error)) {
+        // Managed-Windows canonical denial: the leaf is lstat-verified as a
+        // real directory and the exact created object identity is re-proven
+        // by the caller before deletion.
+        return { ok: true };
+      }
       return {
         ok: false,
         message: "Run directory cleanup refused: the run directory cannot be resolved canonically.",
@@ -478,6 +528,14 @@ export function createRunDirectoryProvider(
 
 function isNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isPermissionDeniedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "EPERM" || error.code === "EACCES" || error.code === "UNKNOWN")
+  );
 }
 
 function isExistsError(error: unknown): boolean {

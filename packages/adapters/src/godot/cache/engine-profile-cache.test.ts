@@ -133,7 +133,42 @@ describe("createEngineProfileCache", () => {
     } catch {
       return;
     }
-    await expect(cache.store(entry())).rejects.toThrow(/symbolic link/);
+    await expect(cache.store(entry())).rejects.toThrow("resolves through a link");
+    // Nothing was created inside the link target.
+    const entries = await readdir(realRoot);
+    expect(entries).toEqual([]);
+  });
+
+  it("never creates through a linked ancestor", async () => {
+    const root = await withTemp();
+    const real = join(root, "real-parent");
+    const link = join(root, "linked-parent");
+    const cacheRoot = join(link, "engine-profiles");
+    const cache = createEngineProfileCache({ rootDirectory: cacheRoot });
+    try {
+      await symlink(real, link, "dir");
+    } catch {
+      return;
+    }
+    await expect(cache.store(entry())).rejects.toThrow("link");
+    // The linked ancestor's target was never written.
+    const entries = await readdir(real).catch(() => []);
+    expect(entries).toEqual([]);
+  });
+
+  it("accepts canonical spelling differences of an existing root on case-insensitive platforms", async () => {
+    if (process.platform !== "win32" && process.platform !== "darwin") {
+      return;
+    }
+    const root = await withTemp();
+    const canonicalRoot = await import("node:fs/promises").then((fs) => fs.realpath(root));
+    await mkdir(join(canonicalRoot, "cache"), { recursive: true });
+    // A case-variant spelling of the SAME directory must be accepted: raw
+    // string equality would falsely reject it on Windows.
+    const variant = join(canonicalRoot, "CACHE");
+    const cache = createEngineProfileCache({ rootDirectory: variant });
+    await cache.store(entry());
+    expect(await cache.load("a".repeat(64))).not.toBeNull();
   });
 
   it("writes entries atomically", async () => {
