@@ -6,9 +6,8 @@ import {
   formatApprovalPrompt,
   formatUndoOutcome,
   formatGitDiff,
-  type GitDiffResult,
 } from "./output.js";
-import type { WorkspaceWriteApprovalRequest } from "@solaris/core";
+import type { GitDiffResult, WorkspaceWriteApprovalRequest } from "@solaris/core";
 
 describe("TerminalSanitizer", () => {
   it("preserves ordinary text and readable newlines", () => {
