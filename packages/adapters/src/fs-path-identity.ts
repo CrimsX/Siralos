@@ -16,8 +16,16 @@ import { isCaseInsensitivePlatform } from "./fs-case.js";
  * discipline — this module never weakens a link check.
  */
 
-/** Windows extended-length/device prefixes that do not change identity. */
+/**
+ * Windows extended-length/device prefixes that do not change identity.
+ * The extended-length UNC form (`\\?\UNC\server\share\...`) denotes the
+ * same object as `\\server\share\...` and is converted before the prefix
+ * itself is stripped.
+ */
 const WINDOWS_IDENTITY_PREFIXES: readonly string[] = ["\\\\?\\", "\\\\.\\"];
+
+/** Extended-length or device UNC prefix denoting a plain UNC path. */
+const WINDOWS_EXTENDED_UNC_PATTERN = /^\\\\(?:\?|\.)\\UNC\\/i;
 
 /**
  * Normalizes a path into its canonical identity spelling for comparison.
@@ -29,10 +37,14 @@ export function normalizePathIdentity(
 ): string {
   let normalized = value;
   if (platform === "win32") {
-    for (const prefix of WINDOWS_IDENTITY_PREFIXES) {
-      if (normalized.startsWith(prefix)) {
-        normalized = normalized.slice(prefix.length);
-        break;
+    if (WINDOWS_EXTENDED_UNC_PATTERN.test(normalized)) {
+      normalized = normalized.replace(WINDOWS_EXTENDED_UNC_PATTERN, "\\\\");
+    } else {
+      for (const prefix of WINDOWS_IDENTITY_PREFIXES) {
+        if (normalized.startsWith(prefix)) {
+          normalized = normalized.slice(prefix.length);
+          break;
+        }
       }
     }
     normalized = normalized.replaceAll("/", "\\");
@@ -53,7 +65,13 @@ export function normalizePathIdentity(
     normalized === "/" ||
     (platform === "win32" && /^[a-z]:[\\/]?$/i.test(normalized)) ||
     (platform === "win32" && /^\\\\[^\\]+\\[^\\]+$/.test(normalized));
-  if (!isRoot && (normalized.endsWith("\\") || normalized.endsWith("/"))) {
+  if (isRoot) {
+    // A bare drive letter and a drive root with a separator denote the same
+    // object: unify them so `C:` and `c:\` compare equal.
+    if (platform === "win32" && /^[a-z]:$/i.test(normalized)) {
+      normalized = `${normalized}\\`;
+    }
+  } else if (normalized.endsWith("\\") || normalized.endsWith("/")) {
     normalized = normalized.slice(0, -1);
   }
   return normalized;

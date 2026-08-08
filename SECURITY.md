@@ -11,7 +11,7 @@ Solaris will eventually run development commands, tests, formatters, package man
 - The **user is trusted** but may misconfigure Solaris; defaults are conservative.
 - The **host machine outside the configured workspace is sensitive** — credentials, SSH keys, browser profiles, and user documents must not be reachable from sandboxed processes.
 
-The current implementation provides provider-accessible read-only inspection, approval-gated workspace mutations, approval-gated sandboxed command execution, project-independent offline Godot engine probes, and one-time approved recovery-mode Godot project probes against a disposable mirror; the security boundary described here governs all of them.
+The current implementation provides provider-accessible read-only inspection, approval-gated workspace mutations, approval-gated sandboxed command execution, and project-independent offline Godot engine probes; the security boundary described here governs all of them.
 
 ## Sandbox versus approvals
 
@@ -53,36 +53,8 @@ Child environments are constructed from an explicit allowlist (`buildChildEnviro
 - **`develop-offline`**: workspace reads allowed, workspace writes require one-time approval, process execution requires one-time approval, network denied, minimal environment, protected metadata paths, timeouts, output limits, cancellation.
 - **`validation-offline`** (internal, never user-selectable): the effective profile under which every provider-accessible command executes. Workspace reads allowed, workspace writes denied, sandbox-private home/temp/npm-cache writable, network denied, minimal environment, closed stdin, process-tree confinement required. The active user profile may narrow command execution further, never broaden it. Notably, `develop-offline` permitting approved file edits does not make command execution workspace-writable.
 - **`godot-probe-offline`** (internal, never user-selectable): the effective profile for project-independent engine probes (`--version`, `--help`, `--dump-extension-api`). Read-only workspace, sandbox-private home/temp, network denied, minimal environment, closed stdin, confined process tree.
-- **`godot-recovery-probe-offline`** (internal, never user-selectable): the effective profile for recovery-mode project probes. The source workspace is **never writable** and is additionally **excluded from the host-read allowlist** where the backend can enforce one, so the probed engine cannot read the real project at all; the disposable mirror and the sandbox-private home/temp are the only writable roots; network and loopback are denied; stdin is closed; the process tree is confined; the environment is the minimal allowlist plus removal of Godot editor-path overrides and `LD_PRELOAD` / `LD_LIBRARY_PATH` / `DYLD_*` library-injection variables. On platforms whose backend cannot enforce the host-read allowlist (currently Windows), process execution is refused, so live recovery isolation is unverified there.
 
-There is no networked, unrestricted, or "full access" profile. No public configuration can set `process.execute` or `godot.probe_project` to unconditional `allow` in this milestone; a missing process rule fails closed.
-
-## Recovery-mode project probing
-
-The only path that lets Godot open a project is the approved recovery-mode probe, and it never opens the source workspace. The security boundary is the combination:
-
-```text
-User approval
-    +
-Disposable project mirror
-    +
-OS sandbox
-    +
-Network denial
-    +
-Credential removal
-    +
-Godot recovery mode
-    +
-Workspace integrity verification
-```
-
-- **Approval is one-time, digest-bound, and never persists.** Before every probe Solaris refreshes a static risk manifest (project file hash, selected engine identity and version, tool scripts, enabled editor plugins, GDExtension descriptors and referenced libraries, autoloads, .NET projects, bounded authored-file digest) and freezes a prepared-probe digest that additionally covers the fixed recovery command, the mirror-copy policy version, the sandbox profile, and the probe limits. If the project or the engine changes after approval, the probe is a conflict and a new approval is required. Approval never enables normal project opening, plugin/GDExtension loading, or network. The provider cannot approve itself: `godot.probe_project` is `ask` in the `inspect` and `develop-offline` profiles and fails closed everywhere else, with no public auto-allow option.
-- **The mirror is the only project directory Godot sees.** It lives at a Solaris-generated path beneath the verified run root, never inside the workspace, `.git`, or checkpoint storage, and the provider cannot choose it. Only regular files and directories are copied; symbolic links, junctions, and special files are rejected (never silently dereferenced); `.git`, `.godot`, `node_modules`, `dist`, `coverage`, `.solaris`, and Solaris temp prefixes are excluded; limits are fixed (100,000 files, 4 GiB total, 512 MiB per file, 1024-byte relative paths, depth 64, 120 s) and a project exceeding them is `probe_too_large` — never a fallback to opening the source. Every byte is hash-verified and the mirror is reverified (hashes, no unexpected files, no symlinks) immediately before launch.
-- **Recovery mode is required, not a sandbox.** The engine must advertise `--recovery-mode`, `--editor`, `--headless`, and `--path`; otherwise the probe is unsupported and no weaker mode is used. The fixed invocation is `<godot> --headless --editor --recovery-mode --path <mirror> --quit-after <bounded-count>`, with a separate executable and argument array (no shell), an external wall-clock timeout in addition to `--quit-after`, and never `--script`, `--scene`, `--import`, export, LSP/DAP, or debug options. Recovery mode reduces editor-side execution risk but does not make arbitrary project data inherently safe; the probe also relies on the disposable mirror and the OS sandbox, and Solaris never calls recovery mode a sandbox.
-- **Diagnostics and generated state are contained.** Raw output is bounded per stream (1 MiB) and by retained lines; classification recognizes well-known Godot markers only; messages are control-character sanitized; counts are capped with explicit truncation. Generated `.godot` state is inspected inside the mirror only, and the result distinguishes `project opened`, `imports observed`, `imports not observed`, and `import state unknown` instead of claiming a particular import happened.
-- **The source workspace is verified, not trusted.** A bounded baseline combines Git status (when available) with a deterministic authored-file manifest, because Git alone misses untracked and ignored state. Any unexpected change during the probe is reported as `workspace_changed`; Solaris never auto-reverts external changes.
-- **Cleanup is mandatory and contained.** After success, diagnostics, timeout, cancellation, crash, or preparation failure the mirror is destroyed with no-follow containment checks immediately before recursive deletion; cleanup never follows links, never uses broad wildcards, never touches other runs, never accepts a provider-supplied path, and never touches the source workspace. Cleanup failure is reported, never masked as success.
+There is no networked, unrestricted, or "full access" profile. No public configuration can set `process.execute` to unconditional `allow` in this milestone; a missing process rule fails closed.
 
 ## Why network is denied
 
@@ -100,7 +72,7 @@ Sandbox configuration is user-level only (`~/.solaris/config.json`). An untruste
 
 - **Linux / WSL2**: Bubblewrap-based. The adapter reports missing dependencies (`bwrap` etc.) as `dependency-missing` and never disables AppArmor, changes sysctls, installs packages, or falls back to host execution.
 - **macOS**: Seatbelt-based. Apple Events are never enabled; `open`/`osascript` escape behaviour is not allowed; network isolation is never weakened.
-- **Windows**: The native backend is an **alpha** backend. It requires a one-time elevated setup (`npx sandbox-runtime windows-install`, one UAC prompt). Solaris detects incomplete setup, reports `setup-required` with the exact package-supported command, never runs the elevated install automatically, never triggers UAC, and never stores or inspects the sandbox account password. Setup and host-read capability are separate conditions: because the pinned runtime cannot express a reliable host-read allowlist on Windows (per-execution filesystem grants are unsupported, and ACL stamping cannot override inherited well-known-group read access), Solaris never reports the Windows backend as generally available — even when setup is complete it reports a degraded/unavailable state with the host-read capability explicitly false, and `process.run`, Godot probes, and recovery probes are refused there. No Windows execution is ever claimed verified; `npm run test:sandbox` on Windows skips loudly.
+- **Windows**: The native backend is an **alpha** backend. It requires a one-time elevated setup (`npx sandbox-runtime windows-install`, one UAC prompt). Solaris detects incomplete setup, reports `setup-required` with the exact package-supported command, never runs the elevated install automatically, never triggers UAC, and never stores or inspects the sandbox account password. Setup and host-read capability are separate conditions: because the pinned runtime cannot express a reliable host-read allowlist on Windows (per-execution filesystem grants are unsupported, and ACL stamping cannot override inherited well-known-group read access), Solaris never reports the Windows backend as generally available — even when setup is complete it reports a degraded/unavailable state with the host-read capability explicitly false, and `process.run` and Godot probes are refused there. No Windows execution is ever claimed verified; `npm run test:sandbox` on Windows skips loudly.
 
 ## Profile configuration lifecycle
 

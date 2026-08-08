@@ -34,7 +34,7 @@ Solaris is a harness for driving and running the Godot engine, but nothing engin
 
 - **Selection is deterministic and never silently falls back.** Precedence (highest first): `--godot-path`, `--godot-installation`, `SOLARIS_GODOT`, `SOLARIS_GODOT_INSTALLATION`, `godot.activeInstallation`, preferred compatible PATH candidate, no selection. CLI/env path and id are mutually exclusive at the same level. An explicit selection that fails is a failure, never a silent fallback; the recorded rationale is shown by `/godot-installations`.
 
-- **Static project detection is conservative and non-authoritative.** Only the root `project.godot` is read (regular file, symlinks rejected, 4 MiB bound, UTF-8, SHA-256); parents and children are never searched and `--upwards` is never used. The scanner preserves sections/properties/raw values/line numbers and interprets only integers, booleans, quoted strings with escapes, `PackedStringArray(...)`, and `uid://` values; everything else stays raw and reported unknown, and nothing is evaluated. Static results are a fast, safe first view — never a substitute for engine truth, which is why recovery-mode project loading (the engine opening the project) is deferred to the next milestone with an explicit trusted-project decision.
+- **Static project detection is conservative and non-authoritative.** Only the root `project.godot` is read (regular file, symlinks rejected, 4 MiB bound, UTF-8, SHA-256); parents and children are never searched and `--upwards` is never used. The scanner preserves sections/properties/raw values/line numbers and interprets only integers, booleans, quoted strings with escapes, `PackedStringArray(...)`, and `uid://` values; everything else stays raw and reported unknown, and nothing is evaluated. Static results are a fast, safe first view — never a substitute for engine truth, which is why the engine is never pointed at a project in this milestone and project execution is deferred to later milestones.
 
 - **Tool scripts, editor plugins, GDExtensions, autoloads, and C# files are inventoried, never loaded.** An executable-content inventory (lexical tool-script scan outside comments/strings, head 32 KiB; `addons/*/plugin.cfg` descriptors with 256 KiB bound and enabled state from `project.godot`; GDExtension descriptors with 1 MiB bound; autoload keys; C# project files) gives the harness early knowledge of what a project would execute or import — crucial for the trusted-project decision — without running anything. Import plugins are recognized heuristically (`extends EditorImportPlugin`). Inventory is read-only evidence, not execution.
 
@@ -52,7 +52,7 @@ Solaris is a harness for driving and running the Godot engine, but nothing engin
 
 Positive:
 
-- The harness can now find, verify, and profile a Godot engine without ever running a project, which is the prerequisite for every later stage (project probing, knowledge profiles, script intelligence, diagnostics).
+- The harness can now find, verify, and profile a Godot engine without ever running a project, which is the prerequisite for every later stage (knowledge profiles, script intelligence, diagnostics).
 - Discovery, probing, and inspection are bounded, cancellable, offline, and provider-safe: no new one-time-approval burden, no new host-process execution, no project influence on invocation.
 - Static project detection and the content inventory give early signal about a project's engine requirements and executable surface before any engine is opened.
 
@@ -61,7 +61,7 @@ Negative:
 - Adversarial parsing and conservative classification mean some real installations are classed `unknown`/untested rather than supported; the harness will sometimes refuse to use an engine it could have run.
 - The API dump probe is expensive (up to 120 s, up to 128 MiB) and runs on every uncached or changed executable; caching mitigates this but does not remove the first-run cost.
 - Capability probes only advertise what help reports; deep operational verification remains future work, so `degradedCapabilities` will be populated conservatively at first.
-- Project execution, import, scene/script runs, and any project-loaded diagnostics remain unavailable until the recovery-mode project probe milestone completes.
+- Project execution, import, scene/script runs, and any project-loaded diagnostics remain unavailable at this stage.
 
 ## Alternatives rejected
 
@@ -72,6 +72,6 @@ Negative:
 - Loading the complete API dump into model context or persisting it: large, redundant, and polluting; rejected in favor of bounded normalized metadata (counts, API hash, size, SHA-256).
 - Treating filename `mono` as proof of .NET: false positives; rejected — combined-evidence conservative classification.
 - Evaluating `project.godot` or running tool scripts/plugins during inspection: executes untrusted project code during a read-only phase; rejected — static conservative scanning plus a read-only inventory.
-- Running the recovery-mode project probe in this milestone: requires a trusted-project decision and safe-isolation guarantees that have not been designed yet; deferred deliberately rather than rushed.
+- Opening or running the project in this milestone: requires a trusted-project decision and safe-isolation guarantees that have not been designed yet; deferred deliberately rather than rushed.
 - Caching engine profiles per-installation-path or per-version-string: paths and version strings are not identity; rejected — cache key is the executable SHA-256, with atomic writes, symlink rejection, and a 32-entry bound.
 - Lowering or user-configurable probe limits: unbounded output/time surfaces; rejected — limits are fixed and documented, provider input cannot raise them, and user config cannot disable them.

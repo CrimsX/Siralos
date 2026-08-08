@@ -22,7 +22,32 @@ describe("normalizePathIdentity", () => {
 
   it("keeps the drive root spelling", () => {
     expect(normalizePathIdentity("c:\\", "win32")).toBe("c:\\");
-    expect(normalizePathIdentity("C:", "win32")).toBe("c:");
+    expect(normalizePathIdentity("C:", "win32")).toBe("c:\\");
+  });
+
+  it("unifies a bare drive letter with a drive root", () => {
+    expect(normalizePathIdentity("c:", "win32")).toBe("c:\\");
+    expect(samePathIdentity("C:", "c:\\", "win32")).toBe(true);
+    expect(samePathIdentity("C:\\", "c:", "win32")).toBe(true);
+    expect(samePathIdentity("\\\\?\\C:\\", "c:", "win32")).toBe(true);
+  });
+
+  it("unifies extended-length UNC with plain UNC", () => {
+    expect(normalizePathIdentity("\\\\?\\UNC\\server\\share\\x", "win32")).toBe(
+      "\\\\server\\share\\x",
+    );
+    expect(samePathIdentity("\\\\?\\UNC\\Server\\Share\\x", "\\\\server\\share\\x", "win32")).toBe(
+      true,
+    );
+    expect(samePathIdentity("\\\\.\\UNC\\server\\share\\x", "\\\\server\\share\\x", "win32")).toBe(
+      true,
+    );
+    expect(samePathIdentity("\\\\?\\UNC\\server\\share\\x", "\\\\server\\share\\x", "linux")).toBe(
+      false,
+    );
+    expect(
+      isWithinPathIdentity("\\\\?\\UNC\\server\\share", "\\\\server\\share\\x", "win32"),
+    ).toBe(true);
   });
 
   it("strips trailing separators below the root", () => {

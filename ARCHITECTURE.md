@@ -249,40 +249,6 @@ apps/cli/                                Godot commands (/godot, /godot-installa
 
 **Probe argument discipline.** Probe invocation uses exactly three fixed tuples constructed by the single `fixedProbeArguments` constructor private to the Godot probe adapter: `--version`, `--help`, and `--dump-extension-api`. Project-affecting arguments (`--path`, `--upwards`, `--import`, `--scene`, `--script`) and `--editor` are never passed; there is no project path and no project working directory. The architecture check mirrors the runtime boundary structurally in probe invocation code: non-fixed `--` tokens, concatenated construction, imported argument arrays, and construction outside the fixed runner are rejected (a developer guardrail; the runtime boundary is the private constructor).
 
-## Disposable recovery-mode project probing
-
-The trusted-project decision is a new core-owned contract (`packages/core/src/godot/probe.ts` + `godot/mirror.ts`) with a single adapter implementation (`packages/adapters/src/godot/probe/` and `godot/mirror/`). Core owns the risk-manifest model, the deterministic SHA-256 digest logic (pure, Node-free, golden-value tested), the immutable preview and result models, the trust state (`untrusted` / `probe-approved` / `probe-invalidated`), the `GodotProjectProbe` port (prepare → one-time approval → execute), and the `ProjectMirror` port. Core never copies files, never resolves host paths, never spawns Godot, and never recursively deletes directories.
-
-```text
-packages/core/src/godot/
-  probe.ts                                risk manifest, preview, result,
-                                          trust state, digest logic, ports
-  mirror.ts                               ProjectMirror port (prepare/verify/destroy)
-packages/adapters/src/godot/
-  probe/
-    godot-project-probe-service.ts        risk refresh, digest binding, conflict
-                                          revalidation, run lifecycle, cleanup
-    authored-files.ts                     bounded authored-file baseline scan
-    recovery-diagnostics.ts               conservative bounded output classification
-    workspace-integrity.ts                Git + authored-file baseline comparison
-  mirror/project-mirror.ts                symlink-safe bounded copy, hash verify,
-                                          no-follow cleanup
-  process/godot-recovery-runner.ts        the ONLY module allowed to pass --path:
-                                          <godot> --headless --editor --recovery-mode
-                                          --path <mirror> --quit-after <count>
-  tools/godot-probe-project-tool.ts       reviewable godot.probe_project tool
-apps/cli/                                 /godot-probe, /godot-probe-status, approval
-                                          prompt, status line
-```
-
-- **Core owns**: the manifest and digest contracts, the approval binding (prepared-probe digest covers the manifest digest, the fixed recovery command digest, the mirror-copy policy version, the sandbox profile, and the probe limits), the result model with conservative diagnostic types, and the trust state. Nothing in core touches the filesystem.
-- **The probe service (adapter) owns**: refreshing the static risk inventory (fresh `project.godot` read/scan, content inventory, per-file hashing, authored-file baseline), freezing the preview and digest, revalidating the manifest and the executable identity before execution (any change is a `conflict`; approvals are never reused), recording the source baseline, constructing and verifying the mirror, running the recovery probe through the sandbox backend, classifying bounded diagnostics, inspecting generated `.godot` state inside the mirror, comparing the post-probe baseline, and destroying the mirror. A single in-memory status object backs `/godot-probe-status` and `/status`; nothing is persisted.
-- **The mirror adapter owns**: the copy policy (regular files and directories only; symlinks/junctions/special files rejected; fixed exclusions; fixed limits), per-byte hash verification, source-change detection during copy, pre-launch verification, and no-follow cleanup that re-verifies containment immediately before recursive deletion. The provider cannot choose the mirror path, and the request only ever names the Solaris-generated parent directory.
-- **The recovery runner owns**: the fixed command shape, the capability gate (`--recovery-mode`/`--editor`/`--headless`/`--path` advertised, else `unsupported` and never run weaker), the external timeout, and the sandboxed execution. The architecture check enforces that this module is the only runtime module that may carry `--path`, that it pairs it with the recovery-mode editor flags, that the path value is never a literal or the workspace root, and that the mirror and runner are reachable only from the probe adapter.
-- **CLI owns**: `/godot-probe` (preview → one-time approval → execution with Ctrl+C cancellation) and `/godot-probe-status`, plus the status/tools/permissions lines. The CLI never spawns Godot and never renders mirror or source paths.
-
-Normal project opening, explicit import, scene/script execution, and editor plugin/GDExtension loading remain unimplemented by design; the recovery probe is the only project-open path, and it opens a disposable mirror only.
-
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. A persistence port will be added only when a real requirement demands it.
@@ -293,7 +259,7 @@ The current workflow is one interactive primary agent. Multi-agent review, agent
 
 ## Deferred: process and write tools
 
-The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; approved single-file workspace mutations execute through them (identity-bound quarantine commits); read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete; and sandboxed validation-command execution (`process.run` with the `node-script` runner — the `npm-script` runner fails closed as unavailable because npm's execution cannot be bound to the approved package bytes under the pinned runtime) is complete: structured arguments only, immutable private script execution, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or normal Godot project execution exists (the only project-open path is the approved recovery-mode probe of a disposable mirror, and the only other Godot invocations are the project-independent probes — all through the sandbox); those remain deferred and, when added, must execute under the same enforcement.
+The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; approved single-file workspace mutations execute through them (identity-bound quarantine commits); read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete; and sandboxed validation-command execution (`process.run` with the `node-script` runner — the `npm-script` runner fails closed as unavailable because npm's execution cannot be bound to the approved package bytes under the pinned runtime) is complete: structured arguments only, immutable private script execution, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or normal Godot project execution exists (Solaris does not open, import, execute, or run any Godot project; the only Godot invocations are the project-independent probes — all through the sandbox); those remain deferred and, when added, must execute under the same enforcement.
 
 ## Git inspection
 
