@@ -35,6 +35,7 @@ const MAX_METADATA_BYTES = 64 * 1024;
 const MAX_TOOL_NAME_LENGTH = 256;
 const MAX_CREATED_AT_LENGTH = 64;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const CHECKPOINT_ID_PATTERN = /^cp_[0-9a-f-]{10,}$/;
 const CHECKPOINT_STATES: readonly string[] = [
   "prepared",
   "applied",
@@ -44,6 +45,38 @@ const CHECKPOINT_STATES: readonly string[] = [
   "uncertain",
 ];
 const CHECKPOINT_OPERATIONS: readonly string[] = ["create", "update", "delete"];
+
+/**
+ * Known per-checkpoint layout: `metadata.json` and `preimage.bin` only.
+ * A checkpoint directory is enumerated with this cap, so a fourth entry
+ * (junk, nested directories, leftovers) is provably unexpected.
+ */
+const CHECKPOINT_DIR_MAX_ENTRIES = 3;
+
+const STORED_RECORD_KEYS = [
+  "version",
+  "id",
+  "workspaceFingerprint",
+  "relativePath",
+  "operation",
+  "toolName",
+  "createdAt",
+  "state",
+  "before",
+  "after",
+  "preview",
+] as const;
+const FILE_STATE_KEYS = ["exists", "sha256", "byteLength"] as const;
+const PREVIEW_KEYS = ["addedLines", "removedLines"] as const;
+const PREPARED_RECORD_KEYS = [
+  "relativePath",
+  "operation",
+  "toolName",
+  "before",
+  "after",
+  "preview",
+] as const;
+const PREPARED_BEFORE_KEYS = ["exists", "sha256", "byteLength", "bytes"] as const;
 
 /** Wall-clock budget for one list or retention pass. */
 const CHECKPOINT_PASS_DEADLINE_MS = 5_000;
@@ -62,6 +95,24 @@ export class CheckpointStorageLimitError extends Error {
   }
 }
 
+/**
+ * Overflow-safe addition of two safe non-negative byte totals. Throws a
+ * `RangeError` when either operand is not a safe non-negative integer or
+ * the sum exceeds `Number.MAX_SAFE_INTEGER`. Exported from this module so
+ * the arithmetic boundary is directly testable; it is not part of the
+ * package's public API.
+ */
+export function checkedByteTotal(a: number, b: number): number {
+  if (!isSafeNonNegativeInteger(a) || !isSafeNonNegativeInteger(b)) {
+    throw new RangeError("Byte totals must be safe non-negative integers.");
+  }
+  const total = a + b;
+  if (total > Number.MAX_SAFE_INTEGER) {
+    throw new RangeError("Byte totals exceed the safe integer range.");
+  }
+  return total;
+}
+
 export async function createFilesystemCheckpointStore(
   options: FilesystemCheckpointStoreOptions,
 ): Promise<CheckpointStore> {
@@ -69,6 +120,12 @@ export async function createFilesystemCheckpointStore(
   const maxStorageBytes = options.maxStorageBytes ?? DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES;
   const maxPreimageBytes = options.maxPreimageBytes ?? DEFAULT_MAX_PREIMAGE_BYTES;
   const retentionDeadlineMs = options.retentionDeadlineMs ?? CHECKPOINT_PASS_DEADLINE_MS;
+  requireSafeNonNegativeIntegerOption(maxCheckpoints, "maxCheckpoints");
+  requireSafeNonNegativeIntegerOption(maxStorageBytes, "maxStorageBytes");
+  requireSafeNonNegativeIntegerOption(maxPreimageBytes, "maxPreimageBytes");
+  if (!Number.isFinite(retentionDeadlineMs)) {
+    throw new Error("Checkpoint store option retentionDeadlineMs must be a finite number.");
+  }
   let canonicalWorkspace: string;
   let canonicalRoot: string;
   try {
@@ -144,6 +201,19 @@ export async function createFilesystemCheckpointStore(
   }
 
   async function loadMetadata(id: string): Promise<FileCheckpoint> {
+    return (await loadMetadataWithByteCount(id)).checkpoint;
+  }
+
+  /**
+   * Reads and fully validates one checkpoint's metadata, returning the
+   * validated record together with the exact UTF-8 byte count of the raw
+   * metadata that was read. The byte count is used as the ACTUAL disk
+   * accounting for the metadata file in the storage-byte limit; it is never
+   * taken from the metadata's own declared lengths.
+   */
+  async function loadMetadataWithByteCount(
+    id: string,
+  ): Promise<{ readonly checkpoint: FileCheckpoint; readonly metadataBytes: number }> {
     const directory = checkpointPath(id);
     await assertCheckpointPathSecure(directory);
     const dirStats = await lstat(directory).catch(() => null);
@@ -179,17 +249,27 @@ export async function createFilesystemCheckpointStore(
     } catch {
       throw new Error(`Checkpoint metadata is not valid JSON: ${id}.`);
     }
-    return validateMetadata(parsed, id, workspaceFingerprint, maxPreimageBytes);
+    return {
+      checkpoint: validateMetadata(parsed, id, workspaceFingerprint, maxPreimageBytes),
+      metadataBytes: Buffer.byteLength(raw, "utf8"),
+    };
   }
 
   async function writeMetadata(checkpoint: FileCheckpoint): Promise<void> {
+    await writeMetadataSerialized(checkpoint, serializeCheckpoint(checkpoint));
+  }
+
+  async function writeMetadataSerialized(
+    checkpoint: FileCheckpoint,
+    serialized: string,
+  ): Promise<void> {
     const directory = checkpointPath(checkpoint.id);
     await assertCheckpointPathSecure(directory);
     const temporaryPath = join(directory, `metadata.json.tmp-${randomUUID()}`);
     const metadataPath = join(directory, "metadata.json");
     const handle = await open(temporaryPath, "wx", 0o600);
     try {
-      await handle.writeFile(JSON.stringify(checkpoint, null, 2), "utf8");
+      await handle.writeFile(serialized, "utf8");
       await handle.sync();
     } finally {
       await handle.close();
@@ -204,57 +284,122 @@ export async function createFilesystemCheckpointStore(
    * exceeded, it throws {@link CheckpointStorageLimitError} and deletes
    * nothing — every existing checkpoint is preserved for manual inspection.
    * A truncated enumeration (the checkpoint directory holds more entries
-   * than the retention cap plus one, or the pass deadline expired) also
+   * than the retention cap plus one, a checkpoint directory holds more
+   * entries than the known layout, or the pass deadline expired) also
    * fails closed: capacity cannot be proven, so no new checkpoint is
    * created. Refusal always happens before any write.
    *
-   * Every existing checkpoint must be fully inspectable: any entry whose
-   * metadata is invalid, unreadable, oversized, or linked — or whose
+   * The byte limit measures the total ACTUAL regular-file bytes stored
+   * beneath the workspace checkpoint directory, including metadata and
+   * preimages: every `metadata.json` byte (the exact UTF-8 length read from
+   * disk) and every `preimage.bin` byte (the actual observed size,
+   * cross-checked against the metadata-declared length). Filesystem
+   * allocation overhead is outside this logical byte limit. The proposed
+   * checkpoint's exact serialized metadata bytes and preimage bytes are
+   * added before any write. The serialized metadata used for accounting is
+   * exactly the content subsequently written.
+   *
+   * Every existing checkpoint must be fully inspectable and match the
+   * exact `cp_<valid-id>/{metadata.json,preimage.bin}` layout: any entry
+   * whose metadata is invalid, unreadable, oversized, or linked — or whose
    * preimage presence or actual size disagrees with its validated metadata
-   * — makes capacity unverifiable and refuses the new checkpoint. Byte
-   * accounting uses the ACTUAL preimage size observed on the filesystem,
-   * never the metadata-declared byte count alone.
+   * — as well as unknown files, nested directories, temporary files,
+   * case-variant duplicate names, links, special files, or entries that
+   * cannot be inspected, makes capacity unverifiable and refuses the new
+   * checkpoint. The store never deletes, renames, repairs, truncates, or
+   * quarantines unexpected entries: the entire tree is preserved for
+   * manual inspection. Inspection is incremental (per-directory entry
+   * caps), bounded (a global inspected-entry cap, pass deadline,
+   * cancellation), and link-free (dirent and lstat types are trusted;
+   * nothing is followed). Byte arithmetic is overflow-safe.
+   *
+   * Race note: the check-to-write sequence cannot be atomic against a
+   * same-user process modifying the checkpoint tree between accounting and
+   * the new checkpoint's writes (Node offers no directory-relative
+   * primitive). This is a fail-closed measurement of what could be
+   * verified at pass time, not an atomic global quota enforcement.
    */
-  async function assertRetentionCapacity(addedBytes: number, signal?: AbortSignal): Promise<void> {
+  async function assertRetentionCapacity(
+    proposed: { readonly metadataBytes: number; readonly preimageBytes: number },
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (signal?.aborted) {
       throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
     }
-    const names: string[] = [];
     const deadline = Date.now() + retentionDeadlineMs;
+    const maxTotalInspected = 4 * (maxCheckpoints + 1);
+    let totalInspected = 0;
+    const checkpointNames: string[] = [];
+    const refuse = (reason: string): never => {
+      throw new CheckpointStorageLimitError(
+        `Checkpoint storage capacity is unverifiable (${reason}); refusing to create a checkpoint. No checkpoint or filesystem entry was written or deleted; existing checkpoints are preserved for manual inspection.`,
+      );
+    };
     // The enumeration is incremental and capped at the retention maximum
-    // plus one, so a hostile directory can never be materialized.
+    // plus one, so a hostile directory can never be materialized. Only the
+    // exact checkpoint layout is accepted: any other entry — files,
+    // directories with unknown names, links, special files — makes capacity
+    // unverifiable.
     const outcome = await enumerateDirectoryBounded({
       directory: checkpointDirectory,
       maxEntries: maxCheckpoints + 1,
       signal,
       deadline,
       onEntry: (entry) => {
-        if (entry.isDirectory() && entry.name.startsWith("cp_")) {
-          names.push(entry.name);
+        totalInspected += 1;
+        if (totalInspected > maxTotalInspected) {
+          refuse("more entries were inspected than the global inspection bound allows");
         }
+        if (!entry.isDirectory() || !CHECKPOINT_ID_PATTERN.test(entry.name)) {
+          refuse(
+            `unexpected entry "${entry.name}" in the checkpoint directory (only checkpoint directories named "cp_<valid-id>" are permitted)`,
+          );
+        }
+        checkpointNames.push(entry.name);
       },
     });
     if (outcome.truncated) {
-      throw new CheckpointStorageLimitError(
-        `Checkpoint storage limits cannot be proven (the checkpoint directory enumeration was truncated); refusing to create a checkpoint. No checkpoint or filesystem entry was deleted.`,
-      );
+      refuse("the checkpoint directory enumeration was truncated");
     }
     let totalBytes = 0;
-    for (const name of names) {
+    for (const name of checkpointNames) {
       if (signal?.aborted) {
         throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
       }
       if (Date.now() >= deadline) {
-        throw new CheckpointStorageLimitError(
-          `Checkpoint storage limits could not be verified within the pass deadline; refusing to create a checkpoint. No checkpoint or filesystem entry was deleted.`,
-        );
+        refuse("the pass deadline expired before capacity could be verified");
       }
-      // One unreadable or inconsistent checkpoint makes the whole capacity
-      // unverifiable: nothing may be skipped or assumed to consume zero
-      // bytes.
-      let preimageSize: number;
       try {
-        const checkpoint = await loadMetadata(name);
+        const directory = checkpointPath(name);
+        // The checkpoint directory itself is enumerated entry by entry with
+        // a per-directory cap: the known layout is metadata.json and
+        // preimage.bin only, so a truncated enumeration proves unexpected
+        // content without ever materializing it.
+        const dirOutcome = await enumerateDirectoryBounded({
+          directory,
+          maxEntries: CHECKPOINT_DIR_MAX_ENTRIES,
+          signal,
+          deadline,
+          onEntry: (entry) => {
+            totalInspected += 1;
+            if (totalInspected > maxTotalInspected) {
+              refuse("more entries were inspected than the global inspection bound allows");
+            }
+            if (entry.name !== "metadata.json" && entry.name !== "preimage.bin") {
+              refuse(`unexpected entry "${entry.name}" inside checkpoint ${name}`);
+            }
+            if (entry.isSymbolicLink()) {
+              refuse(`entry "${entry.name}" inside checkpoint ${name} is a symbolic link`);
+            }
+            if (!entry.isFile()) {
+              refuse(`entry "${entry.name}" inside checkpoint ${name} is not a regular file`);
+            }
+          },
+        });
+        if (dirOutcome.truncated) {
+          refuse(`checkpoint ${name} holds more entries than the known checkpoint layout`);
+        }
+        const { checkpoint, metadataBytes } = await loadMetadataWithByteCount(name);
         const expectsPreimage = checkpoint.before.exists;
         const preimagePath = join(checkpointPath(checkpoint.id), "preimage.bin");
         // ENOENT means "no preimage"; ANY other inspection error makes the
@@ -266,13 +411,13 @@ export async function createFilesystemCheckpointStore(
           }
           throw error;
         });
+        let preimageSize = 0;
         if (preimageStats === null) {
           if (expectsPreimage) {
             throw new Error(
               `Checkpoint ${name} metadata declares a preimage but its preimage.bin is missing.`,
             );
           }
-          preimageSize = 0;
         } else {
           await assertCheckpointPathSecure(preimagePath);
           if (preimageStats.isSymbolicLink() || !preimageStats.isFile()) {
@@ -293,18 +438,33 @@ export async function createFilesystemCheckpointStore(
           }
           preimageSize = preimageStats.size;
         }
+        totalBytes = checkedByteTotal(totalBytes, checkedByteTotal(metadataBytes, preimageSize));
       } catch (error: unknown) {
-        throw new CheckpointStorageLimitError(
-          `Checkpoint storage capacity is unverifiable (${describeError(error)}); refusing to create a checkpoint. No checkpoint or filesystem entry was written or deleted; existing checkpoints are preserved for manual inspection.`,
-        );
+        if (error instanceof CheckpointStorageLimitError) {
+          throw error;
+        }
+        refuse(describeError(error));
       }
-      totalBytes += preimageSize;
     }
-    const wouldExceed =
-      names.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes;
-    if (wouldExceed) {
+    let proposedTotal: number;
+    try {
+      proposedTotal = checkedByteTotal(proposed.metadataBytes, proposed.preimageBytes);
+    } catch (error: unknown) {
       throw new CheckpointStorageLimitError(
-        `Checkpoint storage limits would be exceeded (${names.length + 1} checkpoints against a ${maxCheckpoints}-checkpoint limit, ${totalBytes + addedBytes} bytes against a ${maxStorageBytes}-byte limit); refusing to create a checkpoint. No checkpoint or filesystem entry was deleted; existing checkpoints are preserved for manual inspection.`,
+        `Checkpoint storage capacity is unverifiable (the proposed checkpoint contribution cannot be represented as a safe byte total (${describeError(error)})); refusing to create a checkpoint. No checkpoint or filesystem entry was written or deleted; existing checkpoints are preserved for manual inspection.`,
+      );
+    }
+    let combined: number;
+    try {
+      combined = checkedByteTotal(totalBytes, proposedTotal);
+    } catch (error: unknown) {
+      throw new CheckpointStorageLimitError(
+        `Checkpoint storage capacity is unverifiable (byte totals exceed the safe integer range (${describeError(error)})); refusing to create a checkpoint. No checkpoint or filesystem entry was written or deleted; existing checkpoints are preserved for manual inspection.`,
+      );
+    }
+    if (checkpointNames.length + 1 > maxCheckpoints || combined > maxStorageBytes) {
+      throw new CheckpointStorageLimitError(
+        `Checkpoint storage limits would be exceeded (${checkpointNames.length + 1} checkpoints against a ${maxCheckpoints}-checkpoint limit, ${combined} bytes against a ${maxStorageBytes}-byte limit); refusing to create a checkpoint. No checkpoint or filesystem entry was deleted; existing checkpoints are preserved for manual inspection.`,
       );
     }
   }
@@ -316,74 +476,64 @@ export async function createFilesystemCheckpointStore(
     if (signal?.aborted) {
       throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
     }
-    const pathValidation = validateRelativeWorkspacePath(checkpoint.relativePath);
-    if (pathValidation !== null) {
-      throw new Error(`Invalid checkpoint path: ${pathValidation}`);
-    }
-    if (checkpoint.before.bytes !== null) {
-      if (
-        checkpoint.before.byteLength === null ||
-        checkpoint.before.bytes.byteLength !== checkpoint.before.byteLength
-      ) {
-        throw new Error("Checkpoint preimage size does not match the recorded byte length.");
-      }
-      if (checkpoint.before.bytes.byteLength > maxPreimageBytes) {
-        throw new Error("Checkpoint preimage exceeds the size limit.");
-      }
-      const hash = createHash("sha256").update(checkpoint.before.bytes).digest("hex");
-      if (hash !== checkpoint.before.sha256) {
-        throw new Error("Checkpoint preimage hash does not match the recorded before hash.");
-      }
-    }
-    // The written metadata must always satisfy validateMetadata: an
-    // out-of-contract caller must not be able to poison retention with
-    // metadata the store itself would refuse to read.
-    if (
-      typeof checkpoint.toolName !== "string" ||
-      checkpoint.toolName.length === 0 ||
-      checkpoint.toolName.length > MAX_TOOL_NAME_LENGTH
-    ) {
-      throw new Error("Checkpoint tool name is invalid.");
-    }
-    const { addedLines, removedLines } = checkpoint.preview;
-    if (!isSafeNonNegativeInteger(addedLines) || !isSafeNonNegativeInteger(removedLines)) {
-      throw new Error("Checkpoint preview counts are invalid.");
-    }
+    // The complete prepared record is validated at runtime BEFORE any
+    // capacity inspection or filesystem activity: an out-of-contract caller
+    // must not be able to prepare a checkpoint the store's own loader would
+    // reject (for example `exists: true` with `bytes: null`), nor one whose
+    // presence, hash, length, and bytes disagree with each other.
+    const validated = validatePreparedCheckpoint(checkpoint, maxPreimageBytes);
     const id = `cp_${randomUUID()}`;
-    const createdAt = new Date().toISOString();
     const stored: FileCheckpoint = {
       version: 1,
       id,
       workspaceFingerprint,
-      relativePath: checkpoint.relativePath,
-      operation: checkpoint.operation,
-      toolName: checkpoint.toolName,
-      createdAt,
+      relativePath: validated.relativePath,
+      operation: validated.operation,
+      toolName: validated.toolName,
+      createdAt: new Date().toISOString(),
       state: "prepared",
       before: {
-        exists: checkpoint.before.exists,
-        sha256: checkpoint.before.sha256,
-        byteLength: checkpoint.before.byteLength,
+        exists: validated.before.exists,
+        sha256: validated.before.sha256,
+        byteLength: validated.before.byteLength,
       },
-      after: checkpoint.after,
-      preview: checkpoint.preview,
+      after: validated.after,
+      preview: validated.preview,
     };
-    await assertRetentionCapacity(checkpoint.before.byteLength ?? 0, signal);
+    // The exact record that would be written must satisfy the same
+    // structural rules used when loading metadata: the store never writes a
+    // record its own loader would reject.
+    validateMetadata(stored, id, workspaceFingerprint, maxPreimageBytes);
+    const serializedMetadata = serializeCheckpoint(stored);
+    const metadataBytes = Buffer.byteLength(serializedMetadata, "utf8");
+    if (metadataBytes > MAX_METADATA_BYTES) {
+      throw new Error("Checkpoint metadata would exceed the serialized metadata size limit.");
+    }
+    await assertRetentionCapacity(
+      {
+        metadataBytes,
+        preimageBytes: validated.before.exists ? validated.before.byteLength : 0,
+      },
+      signal,
+    );
+    if (signal?.aborted) {
+      throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
+    }
     const directory = checkpointPath(id);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await assertCheckpointPathSecure(directory);
-    if (checkpoint.before.bytes !== null) {
+    if (validated.before.exists) {
       const preimagePath = join(directory, "preimage.bin");
       const handle = await open(preimagePath, "wx", 0o600);
       try {
-        await handle.writeFile(checkpoint.before.bytes);
+        await handle.writeFile(validated.before.bytes);
         await handle.sync();
       } finally {
         await handle.close();
       }
       await assertCheckpointPathSecure(preimagePath);
     }
-    await writeMetadata(stored);
+    await writeMetadataSerialized(stored, serializedMetadata);
     return stored;
   }
 
@@ -520,7 +670,11 @@ export async function createFilesystemCheckpointStore(
  * must be safe non-negative integers (the before-state additionally within
  * the configured preimage bound), SHA-256 fields must be 64 hex digits,
  * and `null` is allowed only where the model permits it (a state that does
- * not exist carries neither a hash nor a byte length).
+ * not exist carries neither a hash nor a byte length). The record's key set
+ * is checked exactly: extra or substituted fields are rejected. This is the
+ * single stored-record validator: `prepare()` validates its constructed
+ * record with this same function, so the store can never write a record
+ * that `loadMetadata()` would reject.
  */
 function validateMetadata(
   parsed: unknown,
@@ -528,21 +682,21 @@ function validateMetadata(
   workspaceFingerprint: string,
   maxPreimageBytes: number,
 ): FileCheckpoint {
-  const record = asRecord(parsed, "Checkpoint metadata", id);
+  const record = asRecordStrict(parsed, "metadata", id, STORED_RECORD_KEYS);
   if (record["version"] !== 1 || record["id"] !== id) {
-    throw new Error(`Checkpoint metadata version or id mismatch: ${id}.`);
+    throw new Error(checkpointMessage(id, "Checkpoint metadata version or id mismatch"));
   }
   if (record["workspaceFingerprint"] !== workspaceFingerprint) {
-    throw new Error(`Checkpoint belongs to a different workspace: ${id}.`);
+    throw new Error(checkpointMessage(id, "Checkpoint belongs to a different workspace"));
   }
   const relativePath = record["relativePath"];
   if (typeof relativePath !== "string" || validateRelativeWorkspacePath(relativePath) !== null) {
-    throw new Error(`Checkpoint relative path is invalid: ${id}.`);
+    throw new Error(checkpointMessage(id, "Checkpoint relative path is invalid"));
   }
   const state = record["state"];
   const operation = record["operation"];
   if (!isCheckpointState(state) || !isCheckpointOperation(operation)) {
-    throw new Error(`Checkpoint state or operation is invalid: ${id}.`);
+    throw new Error(checkpointMessage(id, "Checkpoint state or operation is invalid"));
   }
   const toolName = record["toolName"];
   if (
@@ -550,7 +704,7 @@ function validateMetadata(
     toolName.length === 0 ||
     toolName.length > MAX_TOOL_NAME_LENGTH
   ) {
-    throw new Error(`Checkpoint tool name is invalid: ${id}.`);
+    throw new Error(checkpointMessage(id, "Checkpoint tool name is invalid"));
   }
   const createdAt = record["createdAt"];
   if (
@@ -559,15 +713,15 @@ function validateMetadata(
     createdAt.length > MAX_CREATED_AT_LENGTH ||
     Number.isNaN(Date.parse(createdAt))
   ) {
-    throw new Error(`Checkpoint creation timestamp is invalid: ${id}.`);
+    throw new Error(checkpointMessage(id, "Checkpoint creation timestamp is invalid"));
   }
   const before = validateFileState(record["before"], id, "before", maxPreimageBytes);
   const after = validateFileState(record["after"], id, "after", maxPreimageBytes);
-  const preview = asRecord(record["preview"], "preview", id);
+  const preview = asRecordStrict(record["preview"], "preview", id, PREVIEW_KEYS);
   const addedLines = preview["addedLines"];
   const removedLines = preview["removedLines"];
   if (!isSafeNonNegativeInteger(addedLines) || !isSafeNonNegativeInteger(removedLines)) {
-    throw new Error(`Checkpoint preview counts are invalid: ${id}.`);
+    throw new Error(checkpointMessage(id, "Checkpoint preview counts are invalid"));
   }
   return {
     version: 1,
@@ -584,46 +738,195 @@ function validateMetadata(
   };
 }
 
+interface ValidatedPreparedCheckpoint {
+  readonly relativePath: string;
+  readonly operation: CheckpointOperation;
+  readonly toolName: string;
+  readonly before:
+    | {
+        readonly exists: true;
+        readonly sha256: string;
+        readonly byteLength: number;
+        readonly bytes: Uint8Array;
+      }
+    | {
+        readonly exists: false;
+        readonly sha256: null;
+        readonly byteLength: null;
+        readonly bytes: null;
+      };
+  readonly after: { exists: boolean; sha256: string | null; byteLength: number | null };
+  readonly preview: { readonly addedLines: number; readonly removedLines: number };
+}
+
+/**
+ * Runtime validation of a complete prepared checkpoint before any capacity
+ * inspection or filesystem activity. Shares its structural primitives with
+ * the stored-record validator (file states, preview counts, tool name,
+ * operation, relative path), and additionally binds the preimage presence,
+ * bytes, hash, and length together: `exists: true` requires real bytes
+ * whose length and SHA-256 match the declared values within the configured
+ * bound; `exists: false` requires every field to be `null`. The record's
+ * key set is checked exactly; extra or substituted fields are rejected.
+ */
+function validatePreparedCheckpoint(
+  input: unknown,
+  maxPreimageBytes: number,
+): ValidatedPreparedCheckpoint {
+  const record = asRecordStrict(input, "prepared checkpoint", "", PREPARED_RECORD_KEYS);
+  const relativePath = record["relativePath"];
+  if (typeof relativePath !== "string" || validateRelativeWorkspacePath(relativePath) !== null) {
+    throw new Error("Checkpoint relative path is invalid.");
+  }
+  const operation = record["operation"];
+  if (!isCheckpointOperation(operation)) {
+    throw new Error("Checkpoint operation is invalid.");
+  }
+  const toolName = record["toolName"];
+  if (
+    typeof toolName !== "string" ||
+    toolName.length === 0 ||
+    toolName.length > MAX_TOOL_NAME_LENGTH
+  ) {
+    throw new Error("Checkpoint tool name is invalid.");
+  }
+  const before = validatePreparedFileState(record["before"], maxPreimageBytes);
+  const after = validateFileState(record["after"], "", "after", maxPreimageBytes);
+  const preview = asRecordStrict(record["preview"], "preview", "", PREVIEW_KEYS);
+  const addedLines = preview["addedLines"];
+  const removedLines = preview["removedLines"];
+  if (!isSafeNonNegativeInteger(addedLines) || !isSafeNonNegativeInteger(removedLines)) {
+    throw new Error("Checkpoint preview counts are invalid.");
+  }
+  return {
+    relativePath,
+    operation,
+    toolName,
+    before,
+    after,
+    preview: { addedLines, removedLines },
+  };
+}
+
+function validatePreparedFileState(
+  value: unknown,
+  maxPreimageBytes: number,
+): ValidatedPreparedCheckpoint["before"] {
+  const record = asRecordStrict(value, "before file state", "", PREPARED_BEFORE_KEYS);
+  const exists = record["exists"];
+  if (typeof exists !== "boolean") {
+    throw new Error("Checkpoint before existence flag is invalid.");
+  }
+  const sha256 = record["sha256"];
+  const byteLength = record["byteLength"];
+  const bytes = record["bytes"];
+  if (exists) {
+    if (typeof sha256 !== "string" || !SHA256_PATTERN.test(sha256)) {
+      throw new Error("Checkpoint before sha256 is invalid.");
+    }
+    if (!isSafeNonNegativeInteger(byteLength)) {
+      throw new Error("Checkpoint before byte length is invalid.");
+    }
+    if (byteLength > maxPreimageBytes) {
+      throw new Error("Checkpoint before byte length exceeds the configured maximum.");
+    }
+    if (!(bytes instanceof Uint8Array)) {
+      throw new Error("Checkpoint preimage bytes are missing or are not byte data.");
+    }
+    if (bytes.byteLength !== byteLength) {
+      throw new Error("Checkpoint preimage size does not match the recorded byte length.");
+    }
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    if (hash !== sha256) {
+      throw new Error("Checkpoint preimage hash does not match the recorded before hash.");
+    }
+    return { exists: true, sha256, byteLength, bytes };
+  }
+  if (bytes !== null) {
+    throw new Error("Checkpoint before exists is false but preimage bytes are present.");
+  }
+  if (sha256 !== null || byteLength !== null) {
+    throw new Error(
+      "Checkpoint before carries a hash or byte length for a state that does not exist.",
+    );
+  }
+  return { exists: false, sha256: null, byteLength: null, bytes: null };
+}
+
 function validateFileState(
   value: unknown,
   id: string,
   label: "before" | "after",
   maxPreimageBytes: number,
 ): { exists: boolean; sha256: string | null; byteLength: number | null } {
-  const record = asRecord(value, `${label} file state`, id);
+  const record = asRecordStrict(value, `${label} file state`, id, FILE_STATE_KEYS);
   const exists = record["exists"];
   if (typeof exists !== "boolean") {
-    throw new Error(`Checkpoint ${label} existence flag is invalid: ${id}.`);
+    throw new Error(checkpointMessage(id, `Checkpoint ${label} existence flag is invalid`));
   }
   const sha256 = record["sha256"];
   const byteLength = record["byteLength"];
   if (exists) {
     if (typeof sha256 !== "string" || !SHA256_PATTERN.test(sha256)) {
-      throw new Error(`Checkpoint ${label} sha256 is invalid: ${id}.`);
+      throw new Error(checkpointMessage(id, `Checkpoint ${label} sha256 is invalid`));
     }
     if (!isSafeNonNegativeInteger(byteLength)) {
-      throw new Error(`Checkpoint ${label} byte length is invalid: ${id}.`);
+      throw new Error(checkpointMessage(id, `Checkpoint ${label} byte length is invalid`));
     }
     if (label === "before" && byteLength > maxPreimageBytes) {
-      throw new Error(`Checkpoint ${label} byte length exceeds the configured maximum: ${id}.`);
+      throw new Error(
+        checkpointMessage(id, `Checkpoint ${label} byte length exceeds the configured maximum`),
+      );
     }
-  } else if (sha256 !== null || byteLength !== null) {
+    return { exists, sha256, byteLength };
+  }
+  if (sha256 !== null || byteLength !== null) {
     throw new Error(
-      `Checkpoint ${label} carries a hash or byte length for a state that does not exist: ${id}.`,
+      checkpointMessage(
+        id,
+        `Checkpoint ${label} carries a hash or byte length for a state that does not exist`,
+      ),
     );
   }
-  return {
-    exists,
-    sha256: exists ? sha256 : null,
-    byteLength: exists ? byteLength : null,
-  };
+  return { exists: false, sha256: null, byteLength: null };
+}
+
+function asRecordStrict(
+  value: unknown,
+  label: string,
+  id: string,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const record = asRecord(value, label, id);
+  const ownKeys = Object.keys(record);
+  if (
+    ownKeys.length !== keys.length ||
+    keys.some((key) => !Object.prototype.hasOwnProperty.call(record, key))
+  ) {
+    throw new Error(checkpointMessage(id, `Checkpoint ${label} carries unexpected fields`));
+  }
+  return record;
 }
 
 function asRecord(value: unknown, label: string, id: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
-    throw new Error(`Checkpoint ${label} is malformed: ${id}.`);
+    throw new Error(checkpointMessage(id, `Checkpoint ${label} is malformed`));
   }
   return value as Record<string, unknown>;
+}
+
+function serializeCheckpoint(checkpoint: FileCheckpoint): string {
+  return JSON.stringify(checkpoint, null, 2);
+}
+
+function checkpointMessage(id: string, message: string): string {
+  return id.length === 0 ? `${message}.` : `${message}: ${id}.`;
+}
+
+function requireSafeNonNegativeIntegerOption(value: number, name: string): void {
+  if (!isSafeNonNegativeInteger(value)) {
+    throw new Error(`Checkpoint store option ${name} must be a safe non-negative integer.`);
+  }
 }
 
 function isSafeNonNegativeInteger(value: unknown): value is number {
@@ -647,7 +950,7 @@ function assertState(checkpoint: FileCheckpoint, allowed: readonly CheckpointSta
 }
 
 function assertValidCheckpointId(id: string): void {
-  if (!/^cp_[0-9a-f-]{10,}$/.test(id)) {
+  if (!CHECKPOINT_ID_PATTERN.test(id)) {
     throw new Error(`Invalid checkpoint id: ${id}.`);
   }
 }
