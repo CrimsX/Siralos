@@ -64,9 +64,11 @@ process.stdin.pipe(process.stdout);
 `;
 }
 
-function installCleanFilterMarker(
-  repo: TempRepo,
-): { markerPath: string; scriptPath: string; filterCommand: string } {
+function installCleanFilterMarker(repo: TempRepo): {
+  markerPath: string;
+  scriptPath: string;
+  filterCommand: string;
+} {
   const markerPath = join(repo.root, "host-marker-ran.txt");
   const scriptPath = join(repo.root, "filter-marker.cjs");
   return { markerPath, scriptPath, filterCommand: `node ${JSON.stringify(scriptPath)}` };
