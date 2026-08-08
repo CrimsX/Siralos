@@ -533,11 +533,14 @@ export function createAnthropicSandboxRuntimeBackend(
       const deadlineTimer =
         options.deadline === undefined
           ? undefined
-          : setTimeout(() => {
-              if (!running) {
-                finish(options.settledBeforeStart());
-              }
-            }, Math.max(0, options.deadline - Date.now()));
+          : setTimeout(
+              () => {
+                if (!running) {
+                  finish(options.settledBeforeStart());
+                }
+              },
+              Math.max(0, options.deadline - Date.now()),
+            );
       options.signal?.addEventListener("abort", onAbort, { once: true });
       if (options.signal?.aborted) {
         finish(options.settledBeforeStart());

@@ -63,63 +63,116 @@ function isNotFoundError(error: unknown): boolean {
 /**
  * Bounded no-follow recursive deletion of a Solaris-owned directory tree.
  *
- * `fs.promises.rm(dir, { recursive: true })` is unbounded: a hostile local
- * writer can fill the tree with an arbitrary number of entries and the
- * removal cannot be interrupted. This helper walks the tree iteratively
- * (never recursing through the call stack), refuses to follow symbolic
- * links or junctions (the leaf must be a real directory before its children
- * are enumerated; a link planted mid-walk is removed as a leaf, never
- * followed), counts every entry examined, and fails closed with an error
- * when the entry budget is exceeded so the caller reports instead of
- * deleting without bound. The caller must have already verified that `root`
- * itself is a real, non-link directory.
+ * Deletion is TWO-PHASE so a refused operation never partially deletes:
+ *
+ * 1. Plan: the tree is walked iteratively (never recursing through the call
+ *    stack) without mutating anything, recording every entry with its type
+ *    (symbolic links and junctions are recorded as leaves, never followed)
+ *    and counting entries. If the entry budget is exceeded, the plan throws
+ *    BEFORE any deletion, so zero entries are removed.
+ * 2. Delete: the accepted plan is executed in post-order (children before
+ *    parents). A failure during execution (for example a directory that
+ *    became non-empty because the tree changed between phases) fails closed
+ *    with an error and the remaining tree is preserved for inspection.
+ *
+ * The caller must have already verified that `root` itself is the exact
+ * Solaris-created object (identity check) and is a real, non-link directory.
  */
 export async function removeDirectoryTreeBounded(root: string, maxEntries: number): Promise<void> {
-  type Work = { readonly path: string; readonly phase: "enter" | "exit" };
-  const pending: Work[] = [{ path: root, phase: "enter" }];
-  let examined = 0;
+  const plan = await planDirectoryRemoval(root, maxEntries);
+  // The plan records parents before children, so reverse order deletes
+  // deepest entries first; a directory is removed only after its subtree.
+  for (let index = plan.entries.length - 1; index >= 0; index -= 1) {
+    const entry = plan.entries[index];
+    if (entry === undefined) {
+      continue;
+    }
+    if (entry.isDirectory) {
+      await rmdir(entry.path).catch((error: unknown) => {
+        throw new Error(
+          `Directory removal failed at ${entry.path}: ${describeRemovalError(error)}; the remaining tree was preserved for manual inspection.`,
+        );
+      });
+    } else {
+      await unlink(entry.path).catch((error: unknown) => {
+        throw new Error(
+          `Directory removal failed at ${entry.path}: ${describeRemovalError(error)}; the remaining tree was preserved for manual inspection.`,
+        );
+      });
+    }
+  }
+}
+
+export interface DirectoryRemovalPlan {
+  /** Parents recorded before children; delete in reverse for post-order. */
+  readonly entries: readonly { readonly path: string; readonly isDirectory: boolean }[];
+  readonly examined: number;
+}
+
+/**
+ * Phase one of bounded removal: enumerates the full tree without mutating
+ * anything and records every entry, failing closed when the entry budget is
+ * exceeded so a refused removal has performed zero deletions. Symbolic
+ * links and junctions are recorded as leaves and never followed; a path
+ * that cannot be inspected fails the plan closed.
+ */
+export async function planDirectoryRemoval(
+  root: string,
+  maxEntries: number,
+): Promise<DirectoryRemovalPlan> {
+  const entries: { readonly path: string; readonly isDirectory: boolean }[] = [];
+  const pending: string[] = [root];
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined) {
       break;
     }
-    examined += 1;
-    if (examined > maxEntries) {
+    if (entries.length >= maxEntries) {
       throw new Error(
-        `Directory removal exceeded the ${maxEntries}-entry budget; the tree was preserved for manual inspection.`,
+        `Directory removal exceeded the ${maxEntries}-entry budget; the plan was refused before any deletion, so zero entries were removed.`,
       );
-    }
-    if (current.phase === "exit") {
-      await rmdir(current.path).catch(() => undefined);
-      continue;
     }
     let metadata;
     try {
-      metadata = await lstat(current.path);
-    } catch {
-      continue;
+      metadata = await lstat(current);
+    } catch (error: unknown) {
+      throw new Error(
+        `Directory removal could not inspect ${current} (${describeRemovalError(error)}); the plan was refused before any deletion.`,
+      );
     }
     if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-      // A link or non-directory leaf is removed as a leaf, never followed.
-      await unlink(current.path).catch(() => undefined);
+      // A link or non-directory leaf is recorded as a leaf; it is never
+      // followed during planning and removed by unlink during deletion.
+      entries.push({ path: current, isDirectory: false });
       continue;
     }
+    entries.push({ path: current, isDirectory: true });
     let handle;
     try {
-      handle = await opendir(current.path);
-    } catch {
-      continue;
+      handle = await opendir(current);
+    } catch (error: unknown) {
+      throw new Error(
+        `Directory removal could not enumerate ${current} (${describeRemovalError(error)}); the plan was refused before any deletion.`,
+      );
     }
-    // Post-order: the "exit" item is pushed before the children so the
-    // children (pushed later) pop first and the directory is removed only
-    // after its subtree.
-    pending.push({ path: current.path, phase: "exit" });
     try {
       for await (const entry of handle) {
-        pending.push({ path: join(current.path, entry.name), phase: "enter" });
+        pending.push(join(current, entry.name));
       }
+    } catch (error: unknown) {
+      throw new Error(
+        `Directory removal could not enumerate ${current} (${describeRemovalError(error)}); the plan was refused before any deletion.`,
+      );
     } finally {
       await handle.close().catch(() => undefined);
     }
   }
+  return { entries, examined: entries.length };
+}
+
+function describeRemovalError(error: unknown): string {
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  return "an unknown filesystem error occurred";
 }

@@ -253,6 +253,35 @@ describe("createRunDirectoryProvider", () => {
     }
   });
 
+  it("refuses cleanup when the run directory is substituted with a different real directory", async () => {
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    const replacement = join(tmpdir(), `solaris-run-replacement-${Date.now()}-${Math.random()}`);
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      const paths = await provider.create();
+      const { rm, rename } = await import("node:fs/promises");
+      await rm(paths.root, { recursive: true, force: true });
+      await mkdir(replacement, { recursive: true });
+      await writeFile(join(replacement, "keep.txt"), "keep me");
+      // A same-user process substitutes a different (non-link) directory at
+      // the run path immediately before cleanup.
+      await rename(replacement, paths.root);
+      const outcome = await provider.remove(paths.runId);
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.message).toContain("not the exact object Solaris created");
+      }
+      // The substituted directory and its content are preserved.
+      const content = await import("node:fs/promises").then((fs) =>
+        fs.readFile(join(paths.root, "keep.txt"), "utf8"),
+      );
+      expect(content).toBe("keep me");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("detects a parent substituted for a link between verification and child creation", async () => {
     if (!SYMLINKS_SUPPORTED) {
       return;

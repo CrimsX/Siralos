@@ -60,6 +60,12 @@ export function createRunDirectoryProvider(
     .update(options.workspaceRoot, "utf8")
     .digest("hex")
     .slice(0, 16);
+  // Exact filesystem identity of each run root as Solaris created it; a
+  // substituted directory (even a non-link replacement) is refused cleanup.
+  const runRootIdentities = new Map<
+    string,
+    { readonly dev: number | bigint; readonly ino: number | bigint }
+  >();
 
   async function create(): Promise<CommandRunPaths> {
     const runId = randomUUID();
@@ -91,6 +97,10 @@ export function createRunDirectoryProvider(
     } catch {
       // restrictive permissions are best-effort where the platform supports them
     }
+    // Record the exact created object's identity so cleanup can refuse a
+    // substituted directory even when the replacement is not a link.
+    const rootMetadata = await lstat(root);
+    runRootIdentities.set(runId, { dev: rootMetadata.dev, ino: rootMetadata.ino });
     return { runId, root, home, temp, npmCache, npmUserConfig, scriptCache };
   }
 
@@ -114,13 +124,29 @@ export function createRunDirectoryProvider(
     }
     // Re-verify immediately before deletion: the path must still resolve
     // canonically to itself and the leaf must be a real directory, so the
-    // recursive removal can never traverse a link planted in between.
-    // Removal is bounded and no-follow: every entry counts toward a fixed
-    // budget (exceeding it preserves the tree and reports failure) and a
-    // link planted inside is removed as a leaf, never followed.
+    // recursive removal can never traverse a link planted in between. The
+    // root's exact filesystem identity must still match the object Solaris
+    // created, so a substituted directory (even a non-link replacement) is
+    // refused cleanup. Removal is two-phase: the full plan is validated and
+    // budgeted without mutation, and a refused plan performs zero deletions.
     const preDelete = await verifyDeletableRoot(root);
     if (!preDelete.ok) {
       return { ok: false, message: preDelete.message };
+    }
+    const expectedIdentity = runRootIdentities.get(runId);
+    if (expectedIdentity !== undefined) {
+      const currentMetadata = await lstat(root).catch(() => null);
+      if (
+        currentMetadata === null ||
+        currentMetadata.dev !== expectedIdentity.dev ||
+        currentMetadata.ino !== expectedIdentity.ino
+      ) {
+        return {
+          ok: false,
+          message:
+            "Run directory cleanup refused: the directory at the run path is not the exact object Solaris created; it may have been substituted. It was preserved.",
+        };
+      }
     }
     try {
       await removeDirectoryTreeBounded(root, RUN_DIRECTORY_REMOVAL_ENTRY_BUDGET);

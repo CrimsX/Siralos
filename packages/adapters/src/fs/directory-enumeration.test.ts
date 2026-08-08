@@ -50,15 +50,49 @@ describe("removeDirectoryTreeBounded", () => {
     }
   });
 
-  it("fails closed when the entry budget is exceeded, preserving the tree", async () => {
+  it("fails closed when the entry budget is exceeded, performing ZERO deletions", async () => {
     const { root, cleanup } = await withTree();
     try {
       for (let index = 0; index < 30; index += 1) {
         await writeFile(join(root, `file-${index}.txt`), "x");
       }
+      await mkdir(join(root, "subdir"), { recursive: true });
+      await writeFile(join(root, "subdir", "nested.txt"), "y");
       await expect(removeDirectoryTreeBounded(root, 10)).rejects.toThrow("entry budget");
+      // The plan was refused before any deletion: every entry still exists.
       const remaining = await readdir(root);
-      expect(remaining.length).toBeGreaterThan(0);
+      expect(remaining).toHaveLength(31);
+      for (let index = 0; index < 30; index += 1) {
+        await expect(
+          import("node:fs/promises").then((fs) =>
+            fs.readFile(join(root, `file-${index}.txt`), "utf8"),
+          ),
+        ).resolves.toBe("x");
+      }
+      await expect(
+        import("node:fs/promises").then((fs) =>
+          fs.readFile(join(root, "subdir", "nested.txt"), "utf8"),
+        ),
+      ).resolves.toBe("y");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("plans without mutation and deletes post-order once the plan is accepted", async () => {
+    const { root, cleanup } = await withTree();
+    try {
+      await mkdir(join(root, "subdir"), { recursive: true });
+      await writeFile(join(root, "subdir", "a.txt"), "a");
+      await writeFile(join(root, "top.txt"), "t");
+      const { planDirectoryRemoval } = await import("./directory-enumeration.js");
+      // Planning is read-only: nothing is removed and the tree is intact.
+      const plan = await planDirectoryRemoval(root, 100);
+      expect(plan.examined).toBe(4);
+      expect(await readdir(root)).toHaveLength(3);
+      // Executing the accepted plan removes the complete tree.
+      await removeDirectoryTreeBounded(root, 100);
+      await expect(readdir(root)).rejects.toThrow();
     } finally {
       await cleanup();
     }
