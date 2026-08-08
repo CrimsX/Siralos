@@ -1,12 +1,16 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_USER_CONFIG, type UserGodotConfig } from "../../config/user-config.js";
 import { createEngineProfileCache } from "../cache/engine-profile-cache.js";
-import { createGodotEngineProfiler } from "./engine-profiler.js";
+import { createGodotEngineProfiler, deduplicateCandidates } from "./engine-profiler.js";
 import { createFakeGodotProbeRunner } from "../testing/fake-godot-probe-runner.js";
-import type { GodotApplicationEvent, GodotSelectionPreference } from "@solaris/core";
+import type {
+  GodotApplicationEvent,
+  GodotInstallation,
+  GodotSelectionPreference,
+} from "@solaris/core";
 import type { SandboxBackend } from "@solaris/core";
 
 const tempDirectories: string[] = [];
@@ -355,5 +359,176 @@ describe("createGodotEngineProfiler", () => {
     expect(events.some((event) => event.type === "godot_candidate_found")).toBe(true);
     const probes = events.filter((event) => event.type === "godot_probe_started");
     expect(probes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("serves unchanged executables from the cache without re-probing", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    const bin = join(root, "bin");
+    const executable = await executableFixture(bin);
+    const fake = createFakeGodotProbeRunner({
+      versionText: "4.7.1.stable.official",
+      advertiseApiDump: true,
+    });
+    const profiler = createGodotEngineProfiler({
+      config: {
+        activeInstallation: null,
+        installations: { primary: { path: executable, editionHint: "standard" } },
+        discoverOnPath: false,
+      },
+      preference: { kind: "auto" },
+      overrideSource: null,
+      workspaceRoot: workspace,
+      backend: availableBackend(),
+      probeRunner: fake.runner,
+      cache: createEngineProfileCache({ rootDirectory: join(root, "cache") }),
+      hostPath: null,
+      hostPathExt: null,
+      platform: "win32",
+    });
+    const first = await profiler.discover();
+    expect(fake.calls().version).toBe(1);
+    expect(first.selected?.fingerprint).toBeTruthy();
+    const second = await profiler.discover();
+    expect(fake.calls().version).toBe(1);
+    expect(second.selected?.fingerprint).toBe(first.selected?.fingerprint);
+  });
+
+  it("never serves a stale profile after a same-size content replacement with restored mtime", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    const bin = join(root, "bin");
+    const executable = await executableFixture(bin);
+    const fake = createFakeGodotProbeRunner({
+      versionText: "4.7.1.stable.official",
+      advertiseApiDump: true,
+    });
+    const profiler = createGodotEngineProfiler({
+      config: {
+        activeInstallation: null,
+        installations: { primary: { path: executable, editionHint: "standard" } },
+        discoverOnPath: false,
+      },
+      preference: { kind: "auto" },
+      overrideSource: null,
+      workspaceRoot: workspace,
+      backend: availableBackend(),
+      probeRunner: fake.runner,
+      cache: createEngineProfileCache({ rootDirectory: join(root, "cache") }),
+      hostPath: null,
+      hostPathExt: null,
+      platform: "win32",
+    });
+    const first = await profiler.discover();
+    expect(fake.calls().version).toBe(1);
+    const metadata = await stat(executable);
+    await writeFile(executable, "Y".repeat(metadata.size));
+    await utimes(executable, metadata.atime, metadata.mtime);
+    const second = await profiler.discover();
+    expect(fake.calls().version).toBe(2);
+    expect(second.selected?.fingerprint).not.toBe(first.selected?.fingerprint);
+  });
+
+  it("notices candidate additions and removals on every discover", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    const bin = join(root, "bin");
+    const first = await executableFixture(bin, "godot-a.exe");
+    const config: UserGodotConfig = {
+      activeInstallation: null,
+      installations: { a: { path: first, editionHint: "standard" } },
+      discoverOnPath: false,
+    };
+    const fake = createFakeGodotProbeRunner({
+      versionText: "4.7.1.stable.official",
+      advertiseApiDump: true,
+    });
+    const profiler = createGodotEngineProfiler({
+      config,
+      preference: { kind: "auto" },
+      overrideSource: null,
+      workspaceRoot: workspace,
+      backend: availableBackend(),
+      probeRunner: fake.runner,
+      cache: createEngineProfileCache({ rootDirectory: join(root, "cache") }),
+      hostPath: null,
+      hostPathExt: null,
+      platform: "win32",
+    });
+    const firstResult = await profiler.discover();
+    expect(firstResult.candidates).toHaveLength(1);
+    const second = await executableFixture(bin, "godot-b.exe");
+    const mutableInstallations = config.installations as Record<
+      string,
+      { readonly path: string; readonly editionHint: "standard" | "dotnet" | "unknown" }
+    >;
+    mutableInstallations["b"] = { path: second, editionHint: "standard" };
+    const secondResult = await profiler.discover();
+    expect(secondResult.candidates).toHaveLength(2);
+    await rm(second, { force: true });
+    const thirdResult = await profiler.discover();
+    expect(thirdResult.candidates).toHaveLength(2);
+    const valid = thirdResult.candidates.filter((candidate) => candidate.invalid === null);
+    expect(valid).toHaveLength(1);
+  });
+});
+
+describe("deduplicateCandidates", () => {
+  function candidate(id: string, canonicalPath: string): GodotInstallation {
+    return {
+      id,
+      sourceLabel: "user config",
+      source: "user-config",
+      canonicalPath,
+      sizeBytes: 1,
+      modifiedAtMs: 0,
+      sha256: "a".repeat(64),
+      editionHint: "unknown",
+      status: "valid",
+    };
+  }
+
+  it("does not deduplicate distinct case-sensitive paths on Linux", () => {
+    const { deduped, duplicates } = deduplicateCandidates(
+      [candidate("upper", "/opt/godot/Godot"), candidate("lower", "/opt/godot/godot")],
+      "linux",
+    );
+    expect(deduped).toHaveLength(2);
+    expect(duplicates.size).toBe(0);
+  });
+
+  it("folds case on Windows and macOS", () => {
+    const windows = deduplicateCandidates(
+      [
+        candidate("one", "C:\\Program Files\\Godot\\godot.exe"),
+        candidate("two", "c:\\program files\\godot\\GODOT.EXE"),
+      ],
+      "win32",
+    );
+    expect(windows.deduped).toHaveLength(1);
+    expect(windows.duplicates.has("two")).toBe(true);
+    const mac = deduplicateCandidates(
+      [
+        candidate("one", "/Applications/Godot.app/Contents/MacOS/Godot"),
+        candidate("two", "/APPLICATIONS/godot.app/CONTENTS/macos/godot"),
+      ],
+      "darwin",
+    );
+    expect(mac.deduped).toHaveLength(1);
+    expect(mac.duplicates.has("two")).toBe(true);
+  });
+
+  it("keeps invalid candidates visible and never folds them away", () => {
+    const invalidCandidate: GodotInstallation = {
+      ...candidate("broken", "/opt/godot/broken"),
+      status: "invalid",
+      error: "rejected",
+    };
+    const { deduped, duplicates } = deduplicateCandidates(
+      [invalidCandidate, candidate("broken2", "/opt/godot/broken")],
+      "linux",
+    );
+    expect(deduped).toHaveLength(2);
+    expect(duplicates.size).toBe(0);
   });
 });

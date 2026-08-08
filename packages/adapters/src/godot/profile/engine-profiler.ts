@@ -16,6 +16,7 @@ import {
   type SandboxBackend,
 } from "@solaris/core";
 import type { UserGodotConfig } from "../../config/user-config.js";
+import { samePathIdentity } from "../../fs-path-identity.js";
 import {
   ENGINE_PROFILE_CACHE_SCHEMA_VERSION,
   type CachedEngineProfile,
@@ -32,6 +33,21 @@ import { GodotSelectionError } from "../errors.js";
 
 const VERIFIED_BASELINE = { major: 4, minor: 7, patch: 1 };
 
+/**
+ * Engine discovery and profiling refresh policy:
+ *
+ * - Every `discover()` call re-collects candidates (the bounded
+ *   config/PATH scan) and revalidates every executable's full SHA-256, so
+ *   candidate additions, removals, and content changes are visible within
+ *   the session. There is no trusted in-memory discovery cache.
+ * - Profiles are served from the engine-profile cache only when the
+ *   executable's complete SHA-256 still matches (verified by a full bounded
+ *   re-hash of the canonical path on every `discover()`); a changed
+ *   executable misses the cache and is re-profiled.
+ * - The probe runner itself re-hashes the executable and executes only a
+ *   verified private copy, so the executed bytes always equal the recorded
+ *   fingerprint.
+ */
 export interface GodotEngineProfilerDependencies {
   readonly config: UserGodotConfig;
   readonly preference: GodotSelectionPreference;
@@ -67,7 +83,6 @@ export interface GodotProfiledCandidate {
 export function createGodotEngineProfiler(
   dependencies: GodotEngineProfilerDependencies,
 ): GodotEngineProfiler {
-  let cached: GodotDiscoveryResult | null = null;
   let lastProfiled: readonly GodotProfiledCandidate[] = [];
 
   function emit(event: GodotApplicationEvent): void {
@@ -75,9 +90,6 @@ export function createGodotEngineProfiler(
   }
 
   async function discover(signal?: AbortSignal): Promise<GodotDiscoveryResult> {
-    if (cached !== null) {
-      return cached;
-    }
     emit({ type: "godot_discovery_started" });
     const { candidates, duplicates } = await collectCandidates(signal);
     const profiled: GodotProfiledCandidate[] = [];
@@ -136,7 +148,6 @@ export function createGodotEngineProfiler(
       rationale: selection.rationale,
       diagnostics,
     };
-    cached = result;
     return result;
   }
 
@@ -250,7 +261,7 @@ export function createGodotEngineProfiler(
       }
       candidates.push(...pathResult.candidates);
     }
-    const { deduped, duplicates } = deduplicateCandidates(candidates);
+    const { deduped, duplicates } = deduplicateCandidates(candidates, dependencies.platform);
     return { candidates: deduped, duplicates };
   }
 
@@ -563,6 +574,12 @@ function profileFromCache(cached: CachedEngineProfile): GodotEngineProfile {
   };
 }
 
+/**
+ * A cached profile is served only when the executable's complete bounded
+ * SHA-256 is recomputed and still equals the recorded fingerprint. Size and
+ * modification time are never trusted: a same-size replacement with a
+ * restored mtime changes the hash and must miss the cache.
+ */
 async function cacheMatchesExecutable(
   cached: CachedEngineProfile,
   installation: GodotInstallation,
@@ -570,15 +587,14 @@ async function cacheMatchesExecutable(
   if (cached.executable.sha256 !== installation.sha256) {
     return false;
   }
-  const { stat } = await import("node:fs/promises");
-  try {
-    const metadata = await stat(installation.canonicalPath);
-    return (
-      metadata.size === installation.sizeBytes && metadata.mtimeMs === installation.modifiedAtMs
-    );
-  } catch {
-    return false;
-  }
+  const { revalidateExecutableIdentity } = await import("../discovery/executable-validation.js");
+  const result = await revalidateExecutableIdentity({
+    canonicalPath: installation.canonicalPath,
+    sizeBytes: installation.sizeBytes,
+    modifiedAtMs: installation.modifiedAtMs,
+    sha256: installation.sha256,
+  });
+  return result.unchanged;
 }
 
 function isExactVerifiedBaseline(
@@ -601,11 +617,20 @@ function isExactVerifiedBaseline(
   );
 }
 
-function deduplicateCandidates(candidates: readonly GodotInstallation[]): {
+/**
+ * Deduplicates candidates by canonical path identity, platform aware: on
+ * Windows and macOS (case-insensitive filesystems) paths differing only in
+ * case collapse; on Linux the comparison stays case-sensitive so genuinely
+ * distinct executables are never merged.
+ */
+export function deduplicateCandidates(
+  candidates: readonly GodotInstallation[],
+  platform: NodeJS.Platform,
+): {
   readonly deduped: readonly GodotInstallation[];
   readonly duplicates: ReadonlySet<string>;
 } {
-  const seen = new Set<string>();
+  const seen: string[] = [];
   const duplicates = new Set<string>();
   const deduped: GodotInstallation[] = [];
   for (const candidate of candidates) {
@@ -613,12 +638,11 @@ function deduplicateCandidates(candidates: readonly GodotInstallation[]): {
       deduped.push(candidate);
       continue;
     }
-    const key = candidate.canonicalPath.toLowerCase();
-    if (seen.has(key)) {
+    if (seen.some((existing) => samePathIdentity(existing, candidate.canonicalPath, platform))) {
       duplicates.add(candidate.id);
       continue;
     }
-    seen.add(key);
+    seen.push(candidate.canonicalPath);
     deduped.push(candidate);
   }
   return { deduped, duplicates };
