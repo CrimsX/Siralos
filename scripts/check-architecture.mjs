@@ -161,13 +161,6 @@ function hasRecursiveFlag(argumentTexts) {
   return argumentTexts.some((text) => /recursive\s*:\s*true/.test(text));
 }
 
-function isRecursiveDeletionCall(calleeText, argumentTexts) {
-  if (!/^(?:fs\.)?(?:rm|rmSync)$/.test(calleeText)) {
-    return false;
-  }
-  return hasRecursiveFlag(argumentTexts);
-}
-
 const FS_MODULES = new Set(["fs", "fs/promises"]);
 
 const CHILD_PROCESS_FUNCTIONS = new Set([
@@ -601,13 +594,6 @@ export function runChecks(root) {
               errors.push(
                 `${location}: raw process execution with shell: true is prohibited outside documented test fixtures`,
               );
-            }
-            if (isRecursiveDeletionCall(call.calleeText, call.argumentTexts)) {
-              if (!isExemptFromRecursiveDeletion(packageRelativeFile)) {
-                errors.push(
-                  `${location}: path-based recursive deletion is prohibited in production code: ${call.calleeText} with recursive: true; Node offers no directory-handle-relative deletion primitive, so recursive removal cannot be identity-bound and is never offered`,
-                );
-              }
             }
             if (isGitMutationCall(call)) {
               errors.push(

@@ -285,6 +285,46 @@ describe("fail-closed capacity verification", () => {
     await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
   });
 
+  it("rejects a prepared checkpoint whose byte length disagrees with its bytes", async () => {
+    const context = await withStore();
+    const content = "before content\n";
+    await expect(
+      context.store.prepare(
+        preparedUpdate({
+          before: {
+            exists: true,
+            sha256: hashOf(content),
+            byteLength: 99,
+            bytes: Buffer.from(content),
+          },
+        }),
+      ),
+    ).rejects.toThrow(/byte length/);
+  });
+
+  it(
+    "refuses when a preimage cannot be inspected at all",
+    { skip: process.platform === "win32" },
+    async () => {
+      const context = await withStore();
+      const created = await context.store.prepare({
+        ...preparedUpdate(),
+        operation: "create",
+        before: { exists: false, sha256: null, byteLength: null, bytes: null },
+        after: { exists: true, sha256: hashOf("new\n"), byteLength: 4 },
+      });
+      // An uninspectable checkpoint directory must make capacity
+      // unverifiable even though the metadata declares no preimage: an
+      // inspection failure is never assumed to consume zero bytes.
+      await chmod(checkpointDirOf(context, created.id), 0o000);
+      try {
+        await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+      } finally {
+        await chmod(checkpointDirOf(context, created.id), 0o700).catch(() => undefined);
+      }
+    },
+  );
+
   it("exact valid capacity boundary succeeds and one byte over refuses", async () => {
     // "before content\n" is 15 bytes, so two checkpoints use exactly 30.
     const context = await withStore({ maxStorageBytes: 30 });

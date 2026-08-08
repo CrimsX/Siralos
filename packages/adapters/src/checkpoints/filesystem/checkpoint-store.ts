@@ -257,7 +257,15 @@ export async function createFilesystemCheckpointStore(
         const checkpoint = await loadMetadata(name);
         const expectsPreimage = checkpoint.before.exists;
         const preimagePath = join(checkpointPath(checkpoint.id), "preimage.bin");
-        const preimageStats = await lstat(preimagePath).catch(() => null);
+        // ENOENT means "no preimage"; ANY other inspection error makes the
+        // entry's storage contribution unknowable and must fail closed
+        // rather than be assumed to consume zero bytes.
+        const preimageStats = await lstat(preimagePath).catch((error: unknown) => {
+          if (isNotFoundError(error)) {
+            return null;
+          }
+          throw error;
+        });
         if (preimageStats === null) {
           if (expectsPreimage) {
             throw new Error(
@@ -313,6 +321,12 @@ export async function createFilesystemCheckpointStore(
       throw new Error(`Invalid checkpoint path: ${pathValidation}`);
     }
     if (checkpoint.before.bytes !== null) {
+      if (
+        checkpoint.before.byteLength === null ||
+        checkpoint.before.bytes.byteLength !== checkpoint.before.byteLength
+      ) {
+        throw new Error("Checkpoint preimage size does not match the recorded byte length.");
+      }
       if (checkpoint.before.bytes.byteLength > maxPreimageBytes) {
         throw new Error("Checkpoint preimage exceeds the size limit.");
       }
@@ -320,6 +334,20 @@ export async function createFilesystemCheckpointStore(
       if (hash !== checkpoint.before.sha256) {
         throw new Error("Checkpoint preimage hash does not match the recorded before hash.");
       }
+    }
+    // The written metadata must always satisfy validateMetadata: an
+    // out-of-contract caller must not be able to poison retention with
+    // metadata the store itself would refuse to read.
+    if (
+      typeof checkpoint.toolName !== "string" ||
+      checkpoint.toolName.length === 0 ||
+      checkpoint.toolName.length > MAX_TOOL_NAME_LENGTH
+    ) {
+      throw new Error("Checkpoint tool name is invalid.");
+    }
+    const { addedLines, removedLines } = checkpoint.preview;
+    if (!isSafeNonNegativeInteger(addedLines) || !isSafeNonNegativeInteger(removedLines)) {
+      throw new Error("Checkpoint preview counts are invalid.");
     }
     const id = `cp_${randomUUID()}`;
     const createdAt = new Date().toISOString();
@@ -634,4 +662,8 @@ function describeError(error: unknown): string {
     return error.message;
   }
   return "Unknown checkpoint store failure.";
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
