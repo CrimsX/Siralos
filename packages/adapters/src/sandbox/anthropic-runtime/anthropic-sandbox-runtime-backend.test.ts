@@ -420,7 +420,7 @@ describe("sandbox lifecycle serialization", () => {
     );
   });
 
-  it("returns a cancelled result when a queued request is aborted before its turn", async () => {
+  it("returns a cancelled result promptly when a queued request is aborted while the active request hangs", async () => {
     const workspace = await withTempWorkspace();
     const seam = createSeamBackend(workspace);
     const first = seam.backend.execute(seam.request("blocked"));
@@ -428,27 +428,41 @@ describe("sandbox lifecycle serialization", () => {
     const controller = new AbortController();
     const queued = seam.backend.execute(seam.request("queued", { signal: controller.signal }));
     controller.abort();
+    // The queued request must settle without waiting for the hung active
+    // request: wait a bounded window while the first is still blocked.
+    const result = await Promise.race([
+      queued,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("queued cancellation was not prompt")), 2000);
+      }),
+    ]);
+    expect(result.status).toBe("cancelled");
+    // The active request is still hung and has not been disturbed.
+    expect(seam.started()).toEqual(["blocked"]);
     seam.releaseFirst();
     await expect(first).rejects.toThrow("seam barrier");
-    const result = await queued;
-    expect(result.status).toBe("cancelled");
-    // The aborted request never started anything: its body returned before
-    // the SandboxManager interaction seam.
+    // The cancelled slot skipped its task: nothing else ever started.
     expect(seam.started()).toEqual(["blocked"]);
   });
 
-  it("returns a timed-out result when a queued request expired before its turn", async () => {
+  it("returns a timed-out result promptly when a queued request expires while the active request hangs", async () => {
     const workspace = await withTempWorkspace();
     const seam = createSeamBackend(workspace);
     const first = seam.backend.execute(seam.request("blocked"));
     await waitFor(() => seam.started().includes("blocked"));
-    // A zero timeout means the deadline has already passed when the queued
-    // body finally runs: it must fail closed without starting a process.
-    const queued = seam.backend.execute(seam.request("queued", { timeoutMs: 0 }));
+    // A tiny timeout expires while the first request is still hung; the
+    // queued request must settle promptly without starting anything.
+    const queued = seam.backend.execute(seam.request("queued", { timeoutMs: 50 }));
+    const result = await Promise.race([
+      queued,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("queued expiry was not prompt")), 2000);
+      }),
+    ]);
+    expect(result.status).toBe("timed-out");
+    expect(seam.started()).toEqual(["blocked"]);
     seam.releaseFirst();
     await expect(first).rejects.toThrow("seam barrier");
-    const result = await queued;
-    expect(result.status).toBe("timed-out");
     expect(seam.started()).toEqual(["blocked"]);
   });
 

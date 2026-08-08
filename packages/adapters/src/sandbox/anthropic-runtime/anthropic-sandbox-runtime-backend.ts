@@ -240,8 +240,16 @@ export function createAnthropicSandboxRuntimeBackend(
     // config selection, reset, initialize, wrap, spawn, execution, violation
     // collection, and cleanupAfterCommand all happen one request at a time,
     // so no request can reset or clean the shared SandboxManager out from
-    // under another.
-    return serialized(() => executeSerialized(request, startedAt, deadline));
+    // under another. Queue acquisition races against the request's abort
+    // signal and the absolute deadline: a queued request settles promptly
+    // without waiting for the active execution.
+    return serializedCancellable({
+      task: () => executeSerialized(request, startedAt, deadline),
+      signal: request.signal,
+      deadline,
+      settledBeforeStart: () =>
+        preStartResult(request.signal?.aborted ? "cancelled" : "timed-out", startedAt),
+    });
   }
 
   async function executeSerialized(
@@ -483,6 +491,93 @@ export function createAnthropicSandboxRuntimeBackend(
       () => undefined,
     );
     return run;
+  }
+
+  /**
+   * Queue acquisition that races against the request's abort signal and the
+   * absolute deadline. A queued request settles promptly — with
+   * `settledBeforeStart()` — the moment its signal aborts or its deadline
+   * expires, without waiting for the active execution to finish; when its
+   * queue slot arrives the task is skipped entirely, so a settled request
+   * never starts anything and never disturbs the lifecycle of other
+   * requests. `tail` progression is preserved by the skipped slot.
+   */
+  function serializedCancellable<T>(options: {
+    readonly task: () => Promise<T>;
+    readonly signal?: AbortSignal | undefined;
+    readonly deadline?: number | undefined;
+    readonly settledBeforeStart: () => T;
+  }): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      let running = false;
+      const cleanup = (): void => {
+        options.signal?.removeEventListener("abort", onAbort);
+        if (deadlineTimer !== undefined) {
+          clearTimeout(deadlineTimer);
+        }
+      };
+      const finish = (value: T | Promise<T>): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        Promise.resolve(value).then(resolve, reject);
+      };
+      const onAbort = (): void => {
+        if (!running) {
+          finish(options.settledBeforeStart());
+        }
+      };
+      const deadlineTimer =
+        options.deadline === undefined
+          ? undefined
+          : setTimeout(() => {
+              if (!running) {
+                finish(options.settledBeforeStart());
+              }
+            }, Math.max(0, options.deadline - Date.now()));
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      if (options.signal?.aborted) {
+        finish(options.settledBeforeStart());
+        return;
+      }
+      if (options.deadline !== undefined && Date.now() >= options.deadline) {
+        finish(options.settledBeforeStart());
+        return;
+      }
+      const run = transition.then(
+        () => {
+          if (settled) {
+            return undefined;
+          }
+          running = true;
+          return options.task();
+        },
+        () => {
+          if (settled) {
+            return undefined;
+          }
+          running = true;
+          return options.task();
+        },
+      );
+      transition = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      run.then(
+        (value) => finish(value as T),
+        (error: unknown) => {
+          if (!settled) {
+            settled = true;
+            cleanup();
+            reject(error);
+          }
+        },
+      );
+    });
   }
 
   return {
