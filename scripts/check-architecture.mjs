@@ -179,6 +179,9 @@ const APPROVED_MUTATION_DIRECTORIES = [
   // the engine-profile cache performs verified atomic metadata writes
   // beneath ~/.solaris/godot/engine-profiles
   join("src", "godot", "cache"),
+  // the disposable project mirror copies and recursively removes only the
+  // Solaris-generated mirror directory beneath a verified run root
+  join("src", "godot", "mirror"),
 ];
 
 /**

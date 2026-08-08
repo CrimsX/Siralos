@@ -119,6 +119,13 @@ export {
 export { createEngineProfileCache } from "./godot/cache/engine-profile-cache.js";
 export { createGodotInspectEngineTool } from "./godot/tools/godot-inspect-engine-tool.js";
 export { createGodotInspectProjectTool } from "./godot/tools/godot-inspect-project-tool.js";
+export {
+  createProjectMirror,
+  DEFAULT_PROJECT_MIRROR_LIMITS,
+  MIRROR_EXCLUDED_DIRECTORIES,
+  type ProjectMirrorDependencies,
+  type ProjectMirrorLimits,
+} from "./godot/mirror/project-mirror.js";
 export { readGodotEnvironmentOverrides } from "./environment/godot-overrides.js";
 export {
   resolveGodotSelection,

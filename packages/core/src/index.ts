@@ -240,3 +240,11 @@ export type {
   PreparedProjectProbeTool,
 } from "./tools/prepared-probe-tool.js";
 export { isPreparedProbeTool } from "./tools/prepared-probe-tool.js";
+export type {
+  PreparedProjectMirror,
+  ProjectMirror,
+  ProjectMirrorFileEntry,
+  ProjectMirrorPreparationResult,
+  ProjectMirrorRequest,
+  ProjectMirrorVerification,
+} from "./godot/mirror.js";
