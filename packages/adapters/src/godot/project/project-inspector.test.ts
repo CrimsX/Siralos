@@ -799,8 +799,8 @@ describe("scanProjectFiles bounds", () => {
   });
 });
 
-describe("project inspection cache invalidation", () => {
-  it("reflects create, edit, and delete cycles across in-session inspections", async () => {
+describe("project inspection invalidation", () => {
+  it("rescans every inspection: create, edit, and delete cycles are visible immediately", async () => {
     const workspace = await withWorkspace();
     await writeFiles(workspace, {
       "project.godot": 'config_version=5\n[application]\nconfig/name="V1"\n',
@@ -810,7 +810,7 @@ describe("project inspection cache invalidation", () => {
     expect(first.detected).toBe(true);
     expect(first.name).toBe("V1");
     const second = await inspector.inspect();
-    expect(second).toBe(first);
+    expect(second).toEqual(first);
     await writeFiles(workspace, {
       "project.godot": 'config_version=5\n[application]\nconfig/name="V2"\n',
     });
@@ -821,14 +821,92 @@ describe("project inspection cache invalidation", () => {
     const fourth = await inspector.inspect();
     expect(fourth.detected).toBe(false);
     const stillMissing = await inspector.inspect();
-    expect(stillMissing).toBe(fourth);
+    expect(stillMissing).toEqual(fourth);
     await writeFiles(workspace, {
       "project.godot": 'config_version=5\n[application]\nconfig/name="V3"\n',
     });
     const fifth = await inspector.inspect();
     expect(fifth.detected).toBe(true);
     expect(fifth.name).toBe("V3");
-    const unchanged = await inspector.inspect();
-    expect(unchanged).toBe(fifth);
+  });
+
+  it("reflects a change to a tool script without touching project.godot", async () => {
+    const workspace = await withWorkspace();
+    await writeFiles(workspace, {
+      "project.godot": "config_version=5\n",
+      "src/tool.gd": "@tool\nextends Node\n",
+    });
+    const inspector = createGodotProjectInspector({ workspaceRoot: workspace });
+    expect((await inspector.inspect()).executableContent.toolScripts).toEqual(["src/tool.gd"]);
+    await writeFiles(workspace, { "src/tool.gd": "extends Node\n" });
+    expect((await inspector.inspect()).executableContent.toolScripts).toEqual([]);
+  });
+
+  it("reflects adding, editing, and deleting an editor plugin descriptor", async () => {
+    const workspace = await withWorkspace();
+    await writeFiles(workspace, { "project.godot": "config_version=5\n" });
+    const inspector = createGodotProjectInspector({ workspaceRoot: workspace });
+    expect((await inspector.inspect()).executableContent.editorPlugins).toEqual([]);
+    await writeFiles(workspace, {
+      "addons/demo/plugin.cfg": '[plugin]\nname="Demo"\nscript="demo.gd"\n',
+      "addons/demo/demo.gd": "@tool\nextends EditorPlugin\n",
+    });
+    const withPlugin = await inspector.inspect();
+    expect(withPlugin.executableContent.editorPlugins.map((plugin) => plugin.path)).toEqual([
+      "addons/demo",
+    ]);
+    // Editing the plugin script changes the inventory.
+    await writeFiles(workspace, { "addons/demo/demo.gd": "extends Node\n" });
+    const afterScriptEdit = await inspector.inspect();
+    expect(
+      afterScriptEdit.executableContent.editorPlugins.find(
+        (plugin) => plugin.path === "addons/demo",
+      )?.importPluginHeuristic,
+    ).toBe(false);
+    // Deleting the descriptor removes the plugin from the inventory.
+    await rm(join(workspace, "addons", "demo", "plugin.cfg"));
+    expect((await inspector.inspect()).executableContent.editorPlugins).toEqual([]);
+  });
+
+  it("reflects adding, editing, and deleting a GDExtension descriptor", async () => {
+    const workspace = await withWorkspace();
+    await writeFiles(workspace, { "project.godot": "config_version=5\n" });
+    const inspector = createGodotProjectInspector({ workspaceRoot: workspace });
+    expect((await inspector.inspect()).executableContent.gdextensionDescriptors).toEqual([]);
+    await writeFiles(workspace, {
+      "lib/ext.gdextension":
+        '[configuration]\ncompatibility_minimum="4.3"\n[entry]\nWindows.64="bin/ext.dll"\n',
+      "lib/bin/ext.dll": "fake native library",
+    });
+    const withExtension = await inspector.inspect();
+    expect(withExtension.executableContent.gdextensionDescriptors).toHaveLength(1);
+    await rm(join(workspace, "lib", "ext.gdextension"));
+    expect((await inspector.inspect()).executableContent.gdextensionDescriptors).toEqual([]);
+  });
+
+  it("reflects a change to the main scene reference without touching project.godot", async () => {
+    const workspace = await withWorkspace();
+    await writeFiles(workspace, {
+      "project.godot": 'config_version=5\n[application]\nrun/main_scene="res://main.tscn"\n',
+      "main.tscn": "[gd_scene format=3]\n",
+    });
+    const inspector = createGodotProjectInspector({ workspaceRoot: workspace });
+    expect((await inspector.inspect()).mainSceneExists).toBe(true);
+    await rm(join(workspace, "main.tscn"));
+    expect((await inspector.inspect()).mainSceneExists).toBe(false);
+  });
+
+  it("reflects a renamed inventoried file", async () => {
+    const workspace = await withWorkspace();
+    await writeFiles(workspace, {
+      "project.godot": "config_version=5\n",
+      "src/tool.gd": "@tool\nextends Node\n",
+    });
+    const inspector = createGodotProjectInspector({ workspaceRoot: workspace });
+    expect((await inspector.inspect()).executableContent.toolScripts).toEqual(["src/tool.gd"]);
+    await import("node:fs/promises").then((fs) =>
+      fs.rename(join(workspace, "src", "tool.gd"), join(workspace, "src", "renamed.gd")),
+    );
+    expect((await inspector.inspect()).executableContent.toolScripts).toEqual(["src/renamed.gd"]);
   });
 });

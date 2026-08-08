@@ -36,44 +36,35 @@ export interface GodotProjectInspector {
  *
  * The workspace root is canonicalized once per inspection and every
  * project-controlled path value is lexically and canonically contained
- * before any filesystem access. The profile cache is keyed by the complete
- * `project.godot` SHA-256: each `inspect()` re-reads the bounded project
- * file and reuses the cached profile only when the file is unchanged, so
- * creating, editing, or deleting `project.godot` during a session is
- * visible on the next inspection.
+ * before any filesystem access. Every inspection rescans the complete
+ * bounded project: changes to `project.godot`, tool scripts, plugin
+ * descriptors and plugin scripts, GDExtension descriptors, C# files, and
+ * main-scene/resource references are always visible on the next inspection.
+ * A stale-profile cache is never used, because no bounded digest of the
+ * inventoried content could be proven complete against a same-user writer;
+ * size and mtime are never trusted for security-relevant invalidation.
  */
 export function createGodotProjectInspector(
   dependencies: GodotProjectInspectorDependencies,
 ): GodotProjectInspector {
   const fsOps = dependencies.fsOps ?? DEFAULT_FS_OPS;
-  let cached: { readonly profile: GodotProjectProfile; readonly sha256: string | null } | null =
-    null;
 
   async function inspect(signal?: AbortSignal): Promise<GodotProjectProfile> {
     let canonicalRoot: string;
     try {
       canonicalRoot = await fsOps.realpath(dependencies.workspaceRoot);
     } catch {
-      const profile = notDetected(
+      return notDetected(
         {
           severity: "warning",
           message: "The workspace root could not be resolved; project inspection is unavailable.",
         },
         dependencies,
       );
-      cached = { profile, sha256: null };
-      return profile;
     }
     const read = await readProjectFile(canonicalRoot, signal, fsOps);
-    if (cached !== null) {
-      const cacheMatches =
-        (read.ok && cached.sha256 === read.sha256) || (!read.ok && cached.sha256 === null);
-      if (cacheMatches) {
-        return cached.profile;
-      }
-    }
     if (!read.ok) {
-      const profile = notDetected(
+      return notDetected(
         {
           severity: "info",
           message:
@@ -83,8 +74,6 @@ export function createGodotProjectInspector(
         },
         dependencies,
       );
-      cached = { profile, sha256: null };
-      return profile;
     }
     const scan = scanProjectFile(read.content);
     const warnings: SafeDiagnostic[] = [...scan.warnings];
@@ -156,7 +145,6 @@ export function createGodotProjectInspector(
       detected: true,
       warnings: warnings.length,
     });
-    cached = { profile, sha256: read.sha256 };
     return profile;
   }
 
