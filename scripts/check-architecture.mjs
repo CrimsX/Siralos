@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -179,9 +177,6 @@ const APPROVED_MUTATION_DIRECTORIES = [
   // the engine-profile cache performs verified atomic metadata writes
   // beneath ~/.solaris/godot/engine-profiles
   join("src", "godot", "cache"),
-  // the disposable project mirror copies and recursively removes only the
-  // Solaris-generated mirror directory beneath a verified run root
-  join("src", "godot", "mirror"),
   // the probe executable-copy staging writes only the verified private
   // executable copy inside the Solaris-created run directory
   join("src", "godot", "process", "executable-copy.ts"),
@@ -285,11 +280,6 @@ function isGodotProbeInvocationModule(packageRelativeFile, file) {
   if (isTestSupportFile(file)) {
     return false;
   }
-  // The recovery runner is the one legitimate operational user of the
-  // project path option and is governed by its own pairing rules below.
-  if (packageRelativeFile === GODOT_RECOVERY_RUNNER_FILE) {
-    return false;
-  }
   if (!packageRelativeFile.startsWith(join("src", "godot", "process") + sep)) {
     return false;
   }
@@ -357,72 +347,6 @@ function checkGodotProbeTupleDiscipline(
     );
   }
 }
-
-/**
- * The recovery-mode editor probe is the one legitimate operational user of
- * `--path`, scoped to a single module. The recovery module must pair the
- * project path with `--editor`, `--headless`, and `--recovery-mode`, must
- * never carry script/scene/import/export/LSP/DAP/debug options, and must
- * take the path value from the prepared mirror (never a literal string and
- * never the workspace root).
- */
-const GODOT_RECOVERY_RUNNER_FILE = join("src", "godot", "process", "godot-recovery-runner.ts");
-
-const FORBIDDEN_GODOT_RECOVERY_ARGUMENTS = [
-  "--script",
-  "--scene",
-  "--import",
-  "--upwards",
-  "--export",
-  "--build-solutions",
-  "--lsp",
-  "--dap",
-  "--debug-server",
-  "--write-movie",
-  "--benchmark",
-  "--doctool",
-  "--main-pack",
-];
-
-const REQUIRED_GODOT_RECOVERY_ARGUMENTS = ["--editor", "--headless", "--recovery-mode"];
-
-function checkGodotRecoveryRunner(packageRelativeFile, source, location, errors) {
-  if (packageRelativeFile !== GODOT_RECOVERY_RUNNER_FILE) {
-    return;
-  }
-  for (const token of REQUIRED_GODOT_RECOVERY_ARGUMENTS) {
-    if (!source.includes(token)) {
-      errors.push(
-        `${location}: the Godot recovery runner must pair the project path with ${token}`,
-      );
-    }
-  }
-  for (const token of FORBIDDEN_GODOT_RECOVERY_ARGUMENTS) {
-    if (source.includes(token)) {
-      errors.push(
-        `${location}: the Godot recovery runner must not pass ${token}; recovery-mode probing is the only allowed editor invocation`,
-      );
-    }
-  }
-  if (/"--path"\s*,\s*["']/.test(source)) {
-    errors.push(
-      `${location}: the Godot project path must come from the prepared disposable mirror, never from a literal path`,
-    );
-  }
-  if (/"--path"\s*,\s*[^,\]]*workspaceRoot/.test(source)) {
-    errors.push(`${location}: the Godot project path must never be the source workspace root`);
-  }
-  if (!source.includes("--path")) {
-    errors.push(`${location}: the Godot recovery runner must pass --path to the disposable mirror`);
-  }
-}
-
-/** Modules that may use the disposable mirror or the recovery runner. */
-const GODOT_RECOVERY_APPROVED_USERS = [
-  join("src", "godot", "probe"),
-  join("src", "godot", "mirror"),
-  join("src", "godot", "process"),
-];
 
 /**
  * Structural scan of one source file. Returns import bindings (named,
@@ -576,7 +500,6 @@ export function runChecks(root) {
               `${location}: project-affecting Godot arguments (--path, --upwards, --import, --scene, --script) are prohibited in probe invocation code`,
             );
           }
-          checkGodotRecoveryRunner(packageRelativeFile, source, location, errors);
           checkGodotProbeTupleDiscipline(
             packageRelativeFile,
             file,
@@ -685,34 +608,6 @@ export function runChecks(root) {
             }
             if (inSandbox && isUnder(target, join(pkg.path, "src", "providers"))) {
               errors.push(`${location}: sandbox adapters must not import provider adapters`);
-            }
-            if (!isTestSupportFile(file)) {
-              const mirrorRoot = join(pkg.path, "src", "godot", "mirror");
-              const recoveryRunner = join(
-                pkg.path,
-                "src",
-                "godot",
-                "process",
-                "godot-recovery-runner.ts",
-              );
-              const isRecoveryUser = GODOT_RECOVERY_APPROVED_USERS.some((directory) =>
-                packageRelativeFile.startsWith(directory + sep),
-              );
-              if (!isRecoveryUser) {
-                if (isUnder(target, mirrorRoot)) {
-                  errors.push(
-                    `${location}: the disposable project mirror may only be used by the approved Godot probe adapter`,
-                  );
-                }
-                if (
-                  target === recoveryRunner ||
-                  target === recoveryRunner.replace(/\.ts$/, ".js")
-                ) {
-                  errors.push(
-                    `${location}: the Godot recovery runner may only be used by the approved Godot probe adapter`,
-                  );
-                }
-              }
             }
           }
           if (pkg.name === "@solaris/cli" && specifier.startsWith("@solaris/adapters")) {

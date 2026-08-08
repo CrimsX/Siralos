@@ -11,9 +11,7 @@ import {
   createGodotInspectEngineTool,
   createGodotInspectProjectTool,
   createGodotInspector,
-  createGodotProbeProjectTool,
   createGodotProbeRunner,
-  createGodotProjectProbeService,
   createMutationLock,
   createNpmScriptRunner,
   createNodeScriptRunner,
@@ -27,7 +25,6 @@ import {
   createWorkspaceListTool,
   createWorkspaceReadTool,
   createWorkspaceSearchTool,
-  DEFAULT_CHECKPOINT_ROOT,
   getDefaultUserConfigPath,
   loadUserConfig,
   readGodotEnvironmentOverrides,
@@ -49,7 +46,6 @@ import {
   type CommandRunnerRegistry,
   type GitInspector,
   type GodotInspector,
-  type GodotProjectProbe,
   type RegisteredToolInfo,
   type SandboxBackend,
   type SolarisApplication,
@@ -76,7 +72,6 @@ export interface CliApplication {
   readonly checkpoints: CheckpointStore;
   readonly git: GitInspector;
   readonly godot: GodotInspector;
-  readonly godotProbe: GodotProjectProbe;
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
 }
@@ -159,26 +154,6 @@ export async function createCliApplication(
     hostPathExt: parentEnvironment["PATHEXT"] ?? null,
     platform: process.platform,
   });
-  const godotProbe = createGodotProjectProbeService({
-    workspaceRoot,
-    config: config.godot,
-    preference: resolvedSelection.preference,
-    overrideSource,
-    backend: sandbox,
-    probeRunner: createGodotProbeRunner({
-      backend: sandbox,
-      runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
-      parentEnvironment,
-    }),
-    cache: createEngineProfileCache({}),
-    hostPath: parentEnvironment["PATH"] ?? null,
-    hostPathExt: parentEnvironment["PATHEXT"] ?? null,
-    platform: process.platform,
-    runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
-    checkpointRoot: DEFAULT_CHECKPOINT_ROOT,
-    git,
-    parentEnvironment,
-  });
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
     createWorkspaceReadTool(workspaceRoot),
@@ -188,7 +163,6 @@ export async function createCliApplication(
     createWorkspaceDeleteFileTool(workspaceRoot, mutationLock, checkpoints),
     createGodotInspectEngineTool(godot),
     createGodotInspectProjectTool(godot),
-    createGodotProbeProjectTool(godotProbe),
     processTool,
   ];
   if (sandboxAvailable) {
@@ -214,7 +188,6 @@ export async function createCliApplication(
     checkpoints,
     git,
     godot,
-    godotProbe,
     undo,
     runners,
   };

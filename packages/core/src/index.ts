@@ -99,7 +99,6 @@ export type { UndoOutcome, UndoService } from "./checkpoints/undo-service.js";
 export type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "./security/approval.js";
 export { DEFAULT_MAX_PENDING_APPROVAL_MS } from "./security/approval.js";
 export type {
-  GodotProjectProbeApprovalRequest,
   ProcessExecutionApprovalRequest,
   WorkspaceWriteApprovalRequest,
 } from "./security/approval.js";
@@ -111,7 +110,6 @@ export type {
 export {
   DEVELOP_OFFLINE_PROFILE,
   GODOT_PROBE_OFFLINE_PROFILE,
-  GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
   INSPECT_PROFILE,
   VALIDATION_OFFLINE_PROFILE,
   getBuiltInProfile,
@@ -213,39 +211,3 @@ export type {
   GodotSelectedInstallation,
 } from "./godot/inspector.js";
 export type { GodotApplicationEvent } from "./godot/events.js";
-export {
-  computeGodotPreparedProbeDigest,
-  computeGodotRiskManifestDigest,
-  createPreparedGodotProbe,
-  type GodotAutoloadRiskEntry,
-  type GodotDiagnostic,
-  type GodotFileRiskEntry,
-  type GodotGDExtensionRiskEntry,
-  type GodotImportState,
-  type GodotLibraryRiskEntry,
-  type GodotPluginRiskEntry,
-  type GodotPreparedProbeDigestParts,
-  type GodotProbeExecutionContext,
-  type GodotProbePreparationResult,
-  type GodotProbePreview,
-  type GodotProbeStatus,
-  type GodotProjectProbe,
-  type GodotProjectProbeStatus,
-  type GodotProjectRiskManifest,
-  type GodotProjectTrustState,
-  type GodotRecoveryProbeResult,
-  type PreparedGodotProbe,
-} from "./godot/probe.js";
-export type {
-  GodotProbeToolPreparationResult,
-  PreparedProjectProbeTool,
-} from "./tools/prepared-probe-tool.js";
-export { isPreparedProbeTool } from "./tools/prepared-probe-tool.js";
-export type {
-  PreparedProjectMirror,
-  ProjectMirror,
-  ProjectMirrorFileEntry,
-  ProjectMirrorPreparationResult,
-  ProjectMirrorRequest,
-  ProjectMirrorVerification,
-} from "./godot/mirror.js";

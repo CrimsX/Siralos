@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEVELOP_OFFLINE_PROFILE,
   GODOT_PROBE_OFFLINE_PROFILE,
-  GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
   INSPECT_PROFILE,
   VALIDATION_OFFLINE_PROFILE,
   SandboxError,
@@ -211,17 +210,17 @@ describe("effective profile configuration isolation", () => {
     expect(readable.some((root) => root === "/runs" || root === "/runs/fingerprint")).toBe(false);
   });
 
-  it("excludes the workspace from readable roots for recovery probes", async () => {
+  it("excludes the workspace from readable roots for engine probe profiles", async () => {
     const runDirectory = "/runs/fingerprint/run-1";
-    const recoveryConfig = await buildPerExecutionConfig(
+    const probeConfig = await buildPerExecutionConfig(
       options,
-      GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
+      GODOT_PROBE_OFFLINE_PROFILE,
       runDirectory,
     );
-    const readable = recoveryConfig.filesystem?.allowRead ?? [];
+    const readable = probeConfig.filesystem?.allowRead ?? [];
     expect(readable).not.toContain("/workspace");
     expect(readable).toContain(runDirectory);
-    const writable = recoveryConfig.filesystem?.allowWrite ?? [];
+    const writable = probeConfig.filesystem?.allowWrite ?? [];
     expect(writable).not.toContain("/workspace");
     expect(writable).toContain(runDirectory);
   });
@@ -311,22 +310,20 @@ describe("effective profile configuration isolation", () => {
       const config = await buildPerExecutionConfig(options, profile, "/runs/fingerprint/run-1");
       expect(config.filesystem?.allowRead).toContain("/workspace");
     }
-    // Both Godot probe profiles exclude the workspace from readable roots:
+    // The Godot probe profile excludes the workspace from readable roots:
     // the probed engine must not read the real project at all.
-    for (const profile of [GODOT_PROBE_OFFLINE_PROFILE, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE]) {
-      expect(profile.filesystem.excludeWorkspaceRead).toBe(true);
-      const config = await buildPerExecutionConfig(options, profile, "/runs/fingerprint/run-1");
-      expect(config.filesystem?.allowRead).not.toContain("/workspace");
-    }
+    expect(GODOT_PROBE_OFFLINE_PROFILE.filesystem.excludeWorkspaceRead).toBe(true);
+    const config = await buildPerExecutionConfig(
+      options,
+      GODOT_PROBE_OFFLINE_PROFILE,
+      "/runs/fingerprint/run-1",
+    );
+    expect(config.filesystem?.allowRead).not.toContain("/workspace");
   });
 
   it("collapses profiles with identical effective configuration into the same key", () => {
-    // The recovery and probe profiles now share the same effective
-    // configuration (identical workspace/filesystem/process policy), so the
-    // reset-before-reinit key must treat them as one configuration; a real
-    // behavioral difference still changes the key.
-    expect(effectiveConfigKey(options, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE)).toBe(
-      effectiveConfigKey(options, GODOT_PROBE_OFFLINE_PROFILE),
+    expect(effectiveConfigKey(options, DEVELOP_OFFLINE_PROFILE)).toBe(
+      effectiveConfigKey(options, DEVELOP_OFFLINE_PROFILE),
     );
     expect(effectiveConfigKey(options, DEVELOP_OFFLINE_PROFILE)).not.toBe(
       effectiveConfigKey(options, {

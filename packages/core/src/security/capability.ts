@@ -3,7 +3,6 @@ export type Capability =
   | "workspace.write"
   | "git.inspect"
   | "godot.inspect"
-  | "godot.probe_project"
   | "process.execute"
   | "network.outbound";
 

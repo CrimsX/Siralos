@@ -1,6 +1,5 @@
 import type { ChangePreview } from "./change-preview.js";
 import type { CommandPreview } from "../commands/command-runners.js";
-import type { GodotProbePreview } from "../godot/probe.js";
 
 export interface WorkspaceWriteApprovalRequest {
   readonly id: string;
@@ -28,26 +27,7 @@ export interface ProcessExecutionApprovalRequest {
   readonly digest: string;
 }
 
-export interface GodotProjectProbeApprovalRequest {
-  readonly id: string;
-  readonly capability: "godot.probe_project";
-  readonly toolName: string;
-  readonly summary: string;
-  /** The immutable recovery-probe preview; approval applies to the digest below. */
-  readonly preview: GodotProbePreview;
-  /**
-   * SHA-256 over the prepared recovery probe: the risk-manifest digest, the
-   * fixed recovery command, the mirror-copy policy version, the sandbox
-   * profile, and the probe limits. Approval binds to this exact plan;
-   * anything changing before execution is a conflict.
-   */
-  readonly digest: string;
-}
-
-export type ApprovalRequest =
-  | WorkspaceWriteApprovalRequest
-  | ProcessExecutionApprovalRequest
-  | GodotProjectProbeApprovalRequest;
+export type ApprovalRequest = WorkspaceWriteApprovalRequest | ProcessExecutionApprovalRequest;
 
 export type ApprovalDecision =
   | {

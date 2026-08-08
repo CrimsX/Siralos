@@ -83,7 +83,7 @@ function formatGitFinalText(scenario: GitScenario, result: ToolExecutionResult):
   return `Solaris inspected a ${scenario === "diff-working" ? "working" : scenario === "diff-staged" ? "staged" : "HEAD"} diff of ${files.length} file${files.length === 1 ? "" : "s"}.`;
 }
 
-type GodotScenario = "inspect-engine" | "inspect-project" | "probe-project";
+type GodotScenario = "inspect-engine" | "inspect-project";
 
 function findGodotScenario(messages: readonly ConversationItem[]): GodotScenario | null {
   const latestUserPrompt = findLatestUserPrompt(messages);
@@ -96,30 +96,14 @@ function findGodotScenario(messages: readonly ConversationItem[]): GodotScenario
   if (latestUserPrompt === "is this project compatible with godot") {
     return "inspect-project";
   }
-  if (
-    latestUserPrompt === "probe godot project" ||
-    latestUserPrompt === "run godot project probe"
-  ) {
-    return "probe-project";
-  }
   return null;
 }
 
 function godotScenarioTool(scenario: GodotScenario): string {
-  switch (scenario) {
-    case "inspect-engine":
-      return "godot.inspect_engine";
-    case "inspect-project":
-      return "godot.inspect_project";
-    case "probe-project":
-      return "godot.probe_project";
-  }
+  return scenario === "inspect-engine" ? "godot.inspect_engine" : "godot.inspect_project";
 }
 
 function formatGodotFinalText(scenario: GodotScenario, result: ToolExecutionResult): string {
-  if (scenario === "probe-project") {
-    return formatProbeFinalText(result);
-  }
   if (result.status !== "success") {
     return `Solaris could not complete the Godot inspection: ${result.message}`;
   }
@@ -167,13 +151,6 @@ async function* streamGodotScenario(
       yield { type: "completed" };
       return;
     }
-    if (scenario === "probe-project") {
-      yield* streamTextChunks(
-        "Solaris cannot probe the Godot project in this profile (godot.probe_project is unavailable).",
-        signal,
-      );
-      return;
-    }
     yield* streamTextChunks(
       "Solaris cannot inspect Godot in this profile (Godot inspection tools are unavailable).",
       signal,
@@ -181,62 +158,6 @@ async function* streamGodotScenario(
     return;
   }
   yield* streamTextChunks(formatGodotFinalText(scenario, result), signal);
-}
-
-function formatProbeFinalText(result: ToolExecutionResult): string {
-  switch (result.status) {
-    case "success": {
-      const record = result.output as JsonObject;
-      const status = typeof record["status"] === "string" ? record["status"] : "unknown";
-      const diagnostics =
-        typeof record["diagnostics"] === "object" && record["diagnostics"] !== null
-          ? (record["diagnostics"] as JsonObject)
-          : null;
-      const errors =
-        diagnostics !== null && Array.isArray(diagnostics["errors"])
-          ? (diagnostics["errors"] as readonly unknown[]).length
-          : 0;
-      const warnings =
-        diagnostics !== null && Array.isArray(diagnostics["warnings"])
-          ? (diagnostics["warnings"] as readonly unknown[]).length
-          : 0;
-      const integrity =
-        typeof record["workspaceIntegrity"] === "object" && record["workspaceIntegrity"] !== null
-          ? (record["workspaceIntegrity"] as JsonObject)
-          : null;
-      const unchanged = integrity?.["unchanged"] === true;
-      const cleanup =
-        typeof record["cleanup"] === "object" && record["cleanup"] !== null
-          ? (record["cleanup"] as JsonObject)
-          : null;
-      const cleaned = cleanup?.["completed"] === true;
-      const engine =
-        typeof record["engine"] === "object" && record["engine"] !== null
-          ? (record["engine"] as JsonObject)
-          : null;
-      const version = typeof engine?.["version"] === "string" ? engine["version"] : "unknown";
-      return `Solaris ran a recovery-mode Godot project probe with ${version}: ${status} with ${errors} error${errors === 1 ? "" : "s"} and ${warnings} warning${warnings === 1 ? "" : "s"}. Recovery mode was used, the source workspace was not loaded${unchanged ? " and was unchanged" : ""}, and the disposable mirror was ${cleaned ? "removed" : "not removed"}.`;
-    }
-    case "denied":
-      return `The Godot project probe was not approved, so Solaris did not run it.`;
-    case "conflict":
-      return `The project or engine changed after approval, so Solaris did not run the probe. Approve the probe again.`;
-    case "cancelled":
-      return `The Godot project probe was cancelled before completion.`;
-    case "timed_out":
-      return `The Godot project probe timed out and the engine process tree was terminated.`;
-    case "sandbox_denied":
-    case "sandbox_unavailable":
-      return `The sandbox could not enforce the probe boundaries, so the probe did not run.`;
-    case "workspace_violation":
-      return `Solaris detected unexpected source workspace changes during the probe; nothing was reverted.`;
-    case "output_limit":
-      return `The Godot project probe exceeded its output limit and was terminated.`;
-    case "invalid_input":
-    case "unavailable":
-    case "failed":
-      return `Solaris could not probe the Godot project: ${result.message}`;
-  }
 }
 
 async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {

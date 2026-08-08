@@ -15,8 +15,6 @@ import {
   isPreparedMutationTool,
   toolCapability,
 } from "../tools/prepared-mutation-tool.js";
-import { isPreparedProbeTool } from "../tools/prepared-probe-tool.js";
-import type { PreparedProjectProbeTool } from "../tools/prepared-probe-tool.js";
 import type { PreparedCommandTool } from "../commands/command-tool.js";
 import type { CommandAuditRecord, CommandApplicationEvent } from "../commands/command-events.js";
 import { MAX_RETAINED_COMMAND_AUDIT_RECORDS } from "../commands/command-events.js";
@@ -75,7 +73,7 @@ export type ApplicationEvent =
       readonly type: "approval_requested";
       readonly requestId: string;
       readonly toolName: string;
-      readonly capability: "workspace.write" | "process.execute" | "godot.probe_project";
+      readonly capability: "workspace.write" | "process.execute";
       readonly summary: string;
     }
   | {
@@ -476,18 +474,6 @@ export function createSolarisApplication(
       yield* emitToolOutcome(call.callId, call.toolName, result);
       return result;
     }
-    if (isPreparedProbeTool(tool)) {
-      const result = yield* runPreparedProbeTool(
-        tool,
-        call.callId,
-        call.toolName,
-        call.input,
-        permission,
-        signal,
-      );
-      yield* emitToolOutcome(call.callId, call.toolName, result);
-      return result;
-    }
     if (!isPreparedMutationTool(tool)) {
       if (permission.decision === "ask") {
         const message =
@@ -606,99 +592,6 @@ export function createSolarisApplication(
       }
     }
     yield* emitToolOutcome(call.callId, call.toolName, result);
-    return result;
-  }
-
-  async function* runPreparedProbeTool(
-    tool: PreparedProjectProbeTool,
-    callId: string,
-    toolName: string,
-    input: unknown,
-    permission: PermissionEvaluation,
-    signal?: AbortSignal,
-  ): AsyncGenerator<ApplicationEvent, ToolExecutionResult, void> {
-    const prepared = await tool.prepare(input, signal === undefined ? {} : { signal });
-    if (prepared.status !== "ready") {
-      yield {
-        type: "tool_failed",
-        callId,
-        toolName,
-        message: prepared.message,
-      };
-      return { status: "failed", message: prepared.message };
-    }
-    const { probe, preview, digest } = prepared;
-    if (permission.decision === "ask") {
-      const requestId = `approval-${(approvalCounter += 1)}`;
-      const approvalRequest: ApprovalRequest = {
-        id: requestId,
-        capability: "godot.probe_project",
-        toolName,
-        summary: summarizeProbePreview(preview),
-        preview,
-        digest,
-      };
-      yield {
-        type: "approval_requested",
-        requestId,
-        toolName,
-        capability: "godot.probe_project",
-        summary: approvalRequest.summary,
-      };
-      yield {
-        type: "tool_awaiting_approval",
-        callId,
-        toolName,
-        requestId,
-      };
-      pendingApproval = true;
-      let decision: ApprovalDecision;
-      try {
-        decision =
-          reviewer === undefined
-            ? { type: "deny", reason: "No approval reviewer is available." }
-            : await reviewer.review(approvalRequest, signal);
-      } catch {
-        decision = {
-          type: "deny",
-          reason: "The approval reviewer failed; the probe was denied.",
-        };
-      } finally {
-        pendingApproval = false;
-      }
-      yield {
-        type: "approval_resolved",
-        requestId,
-        decision:
-          decision.type === "approve_once"
-            ? "approved"
-            : decision.type === "deny"
-              ? "denied"
-              : "cancelled",
-      };
-      if (decision.type !== "approve_once") {
-        if (decision.type === "cancelled") {
-          yield { type: "tool_cancelled", callId, toolName };
-          return { status: "cancelled", message: "The project probe approval was cancelled." };
-        }
-        const message = decision.reason ?? "The project probe was denied by the user.";
-        yield { type: "tool_failed", callId, toolName, message };
-        return { status: "denied", message };
-      }
-    }
-    let result: ToolExecutionResult;
-    try {
-      result = await tool.executePrepared(probe, {
-        ...(signal === undefined ? {} : { signal }),
-        approvedDigest: digest,
-      });
-    } catch (error: unknown) {
-      if (signal?.aborted || isCancellationError(error)) {
-        result = { status: "cancelled", message: "The project probe was cancelled." };
-      } else {
-        result = { status: "failed", message: describeError(error) };
-      }
-    }
     return result;
   }
 
@@ -1033,26 +926,6 @@ function summarizePreview(preview: {
 }): string {
   const fileLabel = preview.files.length === 1 ? "1 file" : `${preview.files.length} files`;
   return `${fileLabel}, +${preview.totalAddedLines} -${preview.totalRemovedLines}`;
-}
-
-function summarizeProbePreview(preview: {
-  readonly risks: {
-    readonly toolScripts: number;
-    readonly enabledEditorPlugins: number;
-    readonly gdextensions: number;
-    readonly autoloads: number;
-    readonly dotnetProjects: number;
-  };
-}): string {
-  const { risks } = preview;
-  const parts = [
-    `tool scripts ${risks.toolScripts}`,
-    `plugins ${risks.enabledEditorPlugins}`,
-    `GDExtensions ${risks.gdextensions}`,
-    `autoloads ${risks.autoloads}`,
-    `.NET ${risks.dotnetProjects}`,
-  ];
-  return `recovery-mode project probe (${parts.join(", ")})`;
 }
 
 function readCheckpointId(output: JsonValue): string | null {

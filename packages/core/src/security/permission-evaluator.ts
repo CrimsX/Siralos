@@ -61,12 +61,5 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // Godot inspection is fixed, project-independent, read-only, and
       // offline; no profile constraint applies beyond the policy rule.
       return null;
-    case "godot.probe_project":
-      // The recovery probe is a fixed, Solaris-owned workflow: the probe
-      // service itself revalidates the sandbox, the disposable mirror, the
-      // engine, and the project manifest before anything runs. The policy
-      // rule (ask in every user-facing profile) is the approval gate; no
-      // additional profile constraint applies.
-      return null;
   }
 }

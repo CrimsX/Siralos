@@ -9,7 +9,6 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "workspace.read": "allow",
           "git.inspect": "allow",
           "godot.inspect": "allow",
-          "godot.probe_project": "ask",
           "workspace.write": "deny",
           "process.execute": "deny",
           "network.outbound": "deny",
@@ -21,7 +20,6 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "workspace.read": "allow",
           "git.inspect": "allow",
           "godot.inspect": "allow",
-          "godot.probe_project": "ask",
           "workspace.write": "ask",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -33,7 +31,6 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "workspace.read": "allow",
           "git.inspect": "allow",
           "godot.inspect": "allow",
-          "godot.probe_project": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -48,21 +45,6 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "workspace.read": "allow",
           "git.inspect": "allow",
           "godot.inspect": "allow",
-          "godot.probe_project": "deny",
-          "workspace.write": "deny",
-          "process.execute": "ask",
-          "network.outbound": "deny",
-        },
-      };
-    case "godot-recovery-probe-offline":
-      // Internal execution profile: never user-selectable and never used for
-      // tool permission evaluation. Recovery probes are Solaris-fixed.
-      return {
-        rules: {
-          "workspace.read": "allow",
-          "git.inspect": "allow",
-          "godot.inspect": "allow",
-          "godot.probe_project": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",

@@ -3,7 +3,6 @@ import {
   createCommandRunnerRegistry,
   createDefaultPolicy,
   createPreparedCommand,
-  createPreparedGodotProbe,
   createSolarisApplication,
   createSolarisSecurity,
   createToolRegistry,
@@ -11,9 +10,6 @@ import {
   GitError,
   INSPECT_PROFILE,
   createEmptyGodotProjectProfile,
-  type ApprovalDecision,
-  type ApprovalRequest,
-  type ApprovalReviewer,
   type CheckpointStore,
   type CommandRunner,
   type CommandToolPreparationResult,
@@ -26,11 +22,7 @@ import {
   type GodotDiscoveryResult,
   type GodotDoctorReport,
   type GodotInspector,
-  type GodotProbePreparationResult,
-  type GodotProjectProbe,
-  type GodotProjectProbeStatus,
   type GodotProjectProfile,
-  type GodotRecoveryProbeResult,
   type GodotSelectedInstallation,
   type ModelEvent,
   type ModelProvider,
@@ -95,7 +87,6 @@ async function createComposedSession(lines: readonly string[]) {
     security,
     git,
     godot,
-    godotProbe,
     checkpoints,
     undo,
     runners,
@@ -107,8 +98,6 @@ async function createComposedSession(lines: readonly string[]) {
     security,
     git,
     godot,
-    godotProbe,
-    reviewer: { review: () => Promise.resolve({ type: "deny" as const }) },
     checkpoints,
     undo,
     runners,
@@ -183,8 +172,6 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     security: createFakeSecurity(),
     git: createStubGit(),
     godot: createStubGodotInspector(),
-    godotProbe: createStubGodotProbe(),
-    reviewer: createStubReviewer([{ type: "deny" }]),
     checkpoints: createStubCheckpointStore(),
     undo: createStubUndo(),
     runners: createCommandRunnerRegistry([]),
@@ -202,87 +189,6 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       },
     }),
     ...overrides,
-  };
-}
-
-function createStubGodotProbe(): GodotProjectProbe {
-  return {
-    prepare(): Promise<GodotProbePreparationResult> {
-      return Promise.resolve({
-        status: "ready",
-        probe: createPreparedGodotProbe(),
-        preview: {
-          projectName: "Fixture",
-          engineVersion: "4.7.1.stable.official",
-          installationId: "path-1",
-          engineEdition: "standard",
-          support: "verified",
-          compatibility: "compatible",
-          risks: {
-            toolScripts: 1,
-            enabledEditorPlugins: 0,
-            gdextensions: 0,
-            autoloads: 0,
-            dotnetProjects: 0,
-          },
-          mirror: { estimatedFileCount: 3, estimatedBytes: 42 },
-          isolation: {
-            sourceWorkspace: "not-used-as-project",
-            disposableMirror: true,
-            recoveryMode: true,
-            headless: true,
-            network: "denied",
-            environment: "minimal",
-            stdin: "closed",
-          },
-          manifestDigest: "m".repeat(64),
-        },
-        digest: "prepared-digest",
-      });
-    },
-    execute(): Promise<GodotRecoveryProbeResult> {
-      return Promise.resolve({
-        status: "completed",
-        engine: {
-          installationId: "path-1",
-          version: "4.7.1.stable.official",
-          executableFingerprint: "abc",
-        },
-        recoveryMode: true,
-        mirror: {
-          sourceFiles: 3,
-          sourceBytes: 42,
-          generatedGodotDirectory: true,
-          generatedBytes: 100,
-          generatedFiles: 2,
-          importState: "imports observed",
-        },
-        diagnostics: { errors: [], warnings: [], truncated: false },
-        process: { exitCode: 0, durationMs: 1200, timedOut: false },
-        workspaceIntegrity: { unchanged: true, bounded: false },
-        cleanup: { completed: true },
-        message: "The recovery-mode probe completed with no diagnostics.",
-      });
-    },
-    status(): GodotProjectProbeStatus {
-      return {
-        state: "untrusted",
-        lastResult: null,
-        lastManifestDigest: null,
-        lastEngineVersion: null,
-      };
-    },
-  };
-}
-
-function createStubReviewer(decisions: readonly ApprovalDecision[]): ApprovalReviewer {
-  let index = 0;
-  return {
-    review(_request: ApprovalRequest): Promise<ApprovalDecision> {
-      const decision = decisions[index] ?? { type: "deny", reason: "Not approved." };
-      index += 1;
-      return Promise.resolve(decision);
-    },
   };
 }
 
@@ -480,13 +386,12 @@ describe("runInteractiveSession tool activity", () => {
     const { io, application, sessionInfo } = await createComposedSession(["/status", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Workspace:");
-    expect(io.text).toContain("Tools: 10");
+    expect(io.text).toContain("Tools: 9");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
     expect(io.text).toContain("Command runners: 2");
     expect(io.text).toContain("Last command exit: none");
-    expect(io.text).toContain("Project probe: never run");
   });
 
   it("renders list-files tool activity and a final response", async () => {
@@ -1218,188 +1123,3 @@ class AbortTriggeringIO extends ScriptedIO {
     return super.ask(prompt);
   }
 }
-
-describe("runInteractiveSession godot project probe", () => {
-  it("shows godot.probe_project in /tools with approval required", async () => {
-    const sessionInfo = buildSessionInfo({
-      tools: [
-        {
-          definition: {
-            name: "godot.probe_project",
-            description: "Recovery-mode Godot project probe.",
-            inputSchema: {},
-          },
-          capability: "godot.probe_project",
-        },
-      ],
-    });
-    const application = createSolarisApplication({
-      provider: createScriptedProvider([[{ type: "completed" }]]),
-      tools: createToolRegistry([]),
-    });
-    const io = new ScriptedIO(["/tools", "/exit"]);
-    await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("godot.probe_project");
-    expect(io.text).toContain("approval required");
-  });
-
-  it("shows godot.probe_project as ask in /permissions", async () => {
-    const sessionInfo = buildSessionInfo();
-    const application = createSolarisApplication({
-      provider: createScriptedProvider([[{ type: "completed" }]]),
-      tools: createToolRegistry([]),
-    });
-    const io = new ScriptedIO(["/permissions", "/exit"]);
-    await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("godot.probe_project");
-    expect(io.text).toContain("ask");
-  });
-
-  it("denies /godot-probe when the user refuses and never runs the probe", async () => {
-    const sessionInfo = buildSessionInfo({
-      godotProbe: createStubGodotProbe(),
-      reviewer: createStubReviewer([{ type: "deny", reason: "Not now." }]),
-    });
-    const application = createSolarisApplication({
-      provider: createScriptedProvider([[{ type: "completed" }]]),
-      tools: createToolRegistry([]),
-    });
-    const io = new ScriptedIO(["/godot-probe", "/exit"]);
-    await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Godot project probe requires approval.");
-    expect(io.text).toContain("Static risk inventory");
-    expect(io.text).toContain("Recovery mode        required");
-    expect(io.text).toContain("probe denied: Not now.");
-    expect(io.text).not.toContain("Recovery probe:");
-  });
-
-  it("runs /godot-probe after one-time approval and shows the result", async () => {
-    const sessionInfo = buildSessionInfo({
-      godotProbe: createStubGodotProbe(),
-      reviewer: createStubReviewer([{ type: "approve_once" }]),
-    });
-    const application = createSolarisApplication({
-      provider: createScriptedProvider([[{ type: "completed" }]]),
-      tools: createToolRegistry([]),
-    });
-    const io = new ScriptedIO(["/godot-probe", "/exit"]);
-    await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Godot project probe requires approval.");
-    expect(io.text).toContain("approval approved");
-    expect(io.text).toContain("Recovery probe:");
-    expect(io.text).toContain("Status: completed");
-    expect(io.text).toContain("Recovery mode: active");
-    expect(io.text).toContain("Source workspace loaded: no");
-    expect(io.text).toContain("Mirror removed: yes");
-    expect(io.text).toContain(
-      "Recovery mode reduces editor-side execution risk but does not make arbitrary",
-    );
-  });
-
-  it("shows the last probe result via /godot-probe-status", async () => {
-    const probeWithResult: GodotProjectProbe = {
-      prepare(): Promise<GodotProbePreparationResult> {
-        return Promise.resolve({ status: "failed", message: "not used" });
-      },
-      execute(): Promise<GodotRecoveryProbeResult> {
-        return Promise.reject(new Error("not used"));
-      },
-      status(): GodotProjectProbeStatus {
-        return {
-          state: "untrusted",
-          lastResult: {
-            status: "completed_with_diagnostics",
-            engine: {
-              installationId: "path-1",
-              version: "4.7.1.stable.official",
-              executableFingerprint: "abc",
-            },
-            recoveryMode: true,
-            mirror: {
-              sourceFiles: 3,
-              sourceBytes: 42,
-              generatedGodotDirectory: true,
-              generatedBytes: 100,
-              generatedFiles: 2,
-              importState: "imports observed",
-            },
-            diagnostics: {
-              errors: [],
-              warnings: [{ severity: "warning", category: "import", message: "import warning" }],
-              truncated: false,
-            },
-            process: { exitCode: 0, durationMs: 1200, timedOut: false },
-            workspaceIntegrity: { unchanged: true, bounded: false },
-            cleanup: { completed: true },
-            message: "completed",
-          },
-          lastManifestDigest: "m".repeat(64),
-          lastEngineVersion: "4.7.1.stable.official",
-        };
-      },
-    };
-    const sessionInfo = buildSessionInfo({ godotProbe: probeWithResult });
-    const application = createSolarisApplication({
-      provider: createScriptedProvider([[{ type: "completed" }]]),
-      tools: createToolRegistry([]),
-    });
-    const io = new ScriptedIO(["/godot-probe-status", "/exit"]);
-    await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Project probe:");
-    expect(io.text).toContain("Last result: completed_with_diagnostics");
-    expect(io.text).toContain("0 errors, 1 warnings");
-    expect(io.text).toContain("Mirror removed: yes");
-  });
-
-  it("shows probe status in /status after a completed probe", async () => {
-    const probeWithResult: GodotProjectProbe = {
-      prepare(): Promise<GodotProbePreparationResult> {
-        return Promise.resolve({ status: "failed", message: "not used" });
-      },
-      execute(): Promise<GodotRecoveryProbeResult> {
-        return Promise.reject(new Error("not used"));
-      },
-      status(): GodotProjectProbeStatus {
-        return {
-          state: "untrusted",
-          lastResult: {
-            status: "completed_with_diagnostics",
-            engine: {
-              installationId: "path-1",
-              version: "4.7.1.stable.official",
-              executableFingerprint: "abc",
-            },
-            recoveryMode: true,
-            mirror: {
-              sourceFiles: 3,
-              sourceBytes: 42,
-              generatedGodotDirectory: true,
-              generatedBytes: 100,
-              generatedFiles: 2,
-              importState: "imports observed",
-            },
-            diagnostics: {
-              errors: [],
-              warnings: [],
-              truncated: false,
-            },
-            process: { exitCode: 0, durationMs: 1200, timedOut: false },
-            workspaceIntegrity: { unchanged: true, bounded: false },
-            cleanup: { completed: true },
-            message: "completed",
-          },
-          lastManifestDigest: "m".repeat(64),
-          lastEngineVersion: "4.7.1.stable.official",
-        };
-      },
-    };
-    const sessionInfo = buildSessionInfo({ godotProbe: probeWithResult });
-    const application = createSolarisApplication({
-      provider: createScriptedProvider([[{ type: "completed" }]]),
-      tools: createToolRegistry([]),
-    });
-    const io = new ScriptedIO(["/status", "/exit"]);
-    await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Project probe: completed_with_diagnostics with no diagnostics");
-  });
-});
