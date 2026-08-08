@@ -9,14 +9,16 @@ export type GodotApiDumpExtraction =
  * Validates the high-level structure of an `extension_api.json` dump and
  * extracts only bounded profile metadata. The complete dump never enters
  * provider context and is never persisted by this milestone.
+ *
+ * The fingerprint covers the exact raw dump bytes: the caller passes the
+ * raw file buffer (never a decoded/re-encoded string), so the reported
+ * SHA-256 identifies the exact bytes on disk and `fileSizeBytes` equals the
+ * raw byte length.
  */
-export function extractGodotApiDumpSummary(
-  content: string,
-  fileSizeBytes: number,
-): GodotApiDumpExtraction {
+export function extractGodotApiDumpSummary(content: Buffer): GodotApiDumpExtraction {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    parsed = JSON.parse(content.toString("utf8"));
   } catch {
     return { ok: false, message: "The API dump is not valid JSON." };
   }
@@ -46,7 +48,7 @@ export function extractGodotApiDumpSummary(
     typeof (configurations as Record<string, unknown>)["format_version"] === "number"
       ? ((configurations as Record<string, unknown>)["format_version"] as number)
       : null;
-  const sha256 = createHash("sha256").update(content, "utf8").digest("hex");
+  const sha256 = createHash("sha256").update(content).digest("hex");
   return {
     ok: true,
     summary: {
@@ -57,7 +59,7 @@ export function extractGodotApiDumpSummary(
       globalEnumCount,
       utilityFunctionCount,
       configurationVersion,
-      fileSizeBytes,
+      fileSizeBytes: content.length,
       sha256,
     },
   };

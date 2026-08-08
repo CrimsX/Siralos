@@ -182,6 +182,9 @@ const APPROVED_MUTATION_DIRECTORIES = [
   // the disposable project mirror copies and recursively removes only the
   // Solaris-generated mirror directory beneath a verified run root
   join("src", "godot", "mirror"),
+  // the probe executable-copy staging writes only the verified private
+  // executable copy inside the Solaris-created run directory
+  join("src", "godot", "process", "executable-copy.ts"),
 ];
 
 /**
@@ -222,8 +225,9 @@ function isApprovedWriteApiLocation(packageRelativeFile, file) {
   if (isTestSupportFile(file)) {
     return true;
   }
-  return APPROVED_MUTATION_DIRECTORIES.some((directory) =>
-    packageRelativeFile.startsWith(directory + sep),
+  return APPROVED_MUTATION_DIRECTORIES.some(
+    (directory) =>
+      packageRelativeFile === directory || packageRelativeFile.startsWith(directory + sep),
   );
 }
 
@@ -293,6 +297,65 @@ function isGodotProbeInvocationModule(packageRelativeFile, file) {
     return false;
   }
   return true;
+}
+
+/** The only argument tuples a Solaris Godot probe may pass. */
+const ALLOWED_GODOT_PROBE_ARGUMENTS = ["--version", "--help", "--dump-extension-api"];
+
+const GODOT_PROBE_RUNNER_FILE = join("src", "godot", "process", "godot-probe-runner.ts");
+
+/**
+ * Fixed Godot probe tuple guardrail. The probe adapter constructs every
+ * probe argument array through one narrow `fixedProbeArguments` constructor
+ * private to the adapter; the guardrail is the developer-side structural
+ * mirror of that runtime boundary (the runtime boundary is the private
+ * constructor itself). It detects alternate construction through:
+ * non-fixed `--` tokens, string concatenation, arrays imported from moved
+ * modules, and tuple construction in any probe module other than the fixed
+ * runner.
+ */
+function checkGodotProbeTupleDiscipline(
+  packageRelativeFile,
+  file,
+  source,
+  location,
+  analysis,
+  errors,
+) {
+  if (!isGodotProbeInvocationModule(packageRelativeFile, file)) {
+    return;
+  }
+  for (const match of source.matchAll(/"--[a-z][a-z0-9-]*"/g)) {
+    const token = match[0].slice(1, -1);
+    if (!ALLOWED_GODOT_PROBE_ARGUMENTS.includes(token)) {
+      errors.push(
+        `${location}: non-fixed Godot probe argument ${match[0]} is prohibited; probes pass exactly one of --version, --help, or --dump-extension-api`,
+      );
+    }
+  }
+  if (/\+?\s*"--"|"--"\s*\+/.test(source)) {
+    errors.push(
+      `${location}: Godot probe arguments must not be constructed by string concatenation`,
+    );
+  }
+  for (const imported of analysis.importedNames) {
+    if (/Arguments$|_ARGS$/i.test(imported.originalName)) {
+      errors.push(
+        `${location}: probe argument arrays must not be imported (${imported.originalName} from ${imported.module}); the fixed constructor in the probe runner is the only builder`,
+      );
+    }
+  }
+  if (packageRelativeFile === GODOT_PROBE_RUNNER_FILE) {
+    if (!/\bfunction\s+fixedProbeArguments\b/.test(source)) {
+      errors.push(
+        `${location}: the Godot probe adapter must construct every probe argument tuple through the single fixedProbeArguments constructor`,
+      );
+    }
+  } else if (/"--[a-z]/.test(source)) {
+    errors.push(
+      `${location}: Godot probe argument construction is allowed only inside the fixedProbeArguments constructor in godot-probe-runner.ts`,
+    );
+  }
 }
 
 /**
@@ -376,6 +439,7 @@ function analyzeSource(source) {
   const calls = []; // { module, api, calleeText }
   const spawnCalls = []; // { calleeText, argumentTexts, shellTrue }
   const destructiveFsImports = []; // { module, api } imported from fs modules
+  const importedNames = []; // { local, originalName, module } for every named binding
   const imports = new Set();
 
   const addCall = (module, api, calleeText) => {
@@ -404,6 +468,7 @@ function analyzeSource(source) {
                 const local = element.name.text;
                 const imported = element.propertyName?.text ?? local;
                 bindings.set(local, { module, originalName: imported });
+                importedNames.push({ local, originalName: imported, module });
                 if (FS_MODULES.has(module) && DESTRUCTIVE_FS_APIS.has(imported)) {
                   destructiveFsImports.push({ module, api: imported });
                 }
@@ -459,7 +524,7 @@ function analyzeSource(source) {
     ts.forEachChild(node, visit);
   };
   visit(file);
-  return { imports, calls, spawnCalls, destructiveFsImports };
+  return { imports, calls, spawnCalls, destructiveFsImports, importedNames };
 }
 
 function isGitMutationCall(call) {
@@ -512,6 +577,14 @@ export function runChecks(root) {
             );
           }
           checkGodotRecoveryRunner(packageRelativeFile, source, location, errors);
+          checkGodotProbeTupleDiscipline(
+            packageRelativeFile,
+            file,
+            source,
+            location,
+            analysis,
+            errors,
+          );
           for (const imported of analysis.destructiveFsImports) {
             if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
               errors.push(

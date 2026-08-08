@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 export type MacOsBundleResolution =
   | {
@@ -11,6 +11,28 @@ export type MacOsBundleResolution =
       readonly ok: false;
       readonly error: string;
     };
+
+/**
+ * Returns the enclosing `.app` bundle directory when `executablePath` lives
+ * inside one, walking from the executable's parent toward the root. The
+ * first ancestor whose name ends in `.app` (case-insensitively) is the
+ * bundle; the walk is bounded by the filesystem depth and stops at the
+ * root. Returns null when no enclosing bundle exists.
+ */
+export function enclosingAppBundle(executablePath: string): string | null {
+  let current = dirname(executablePath);
+  for (let depth = 0; depth < 64; depth += 1) {
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    if (basename(current).toLowerCase().endsWith(".app")) {
+      return current;
+    }
+    current = parent;
+  }
+  return null;
+}
 
 /**
  * Resolves the exact executable of a macOS Godot application bundle.

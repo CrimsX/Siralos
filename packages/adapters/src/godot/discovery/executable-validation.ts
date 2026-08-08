@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import { GODOT_LIMITS } from "@solaris/core";
+import { samePathIdentity } from "../../fs-path-identity.js";
+import { enclosingAppBundle } from "./macos-bundle.js";
 
 export interface ExecutableIdentity {
   /** Canonical absolute path (symlinks resolved). */
@@ -9,6 +11,12 @@ export interface ExecutableIdentity {
   readonly sizeBytes: number;
   readonly modifiedAtMs: number;
   readonly sha256: string;
+  /**
+   * Enclosing `.app` bundle directory when the canonical executable lives
+   * inside one (macOS). Recorded as part of the identity plan; the private
+   * probe copy is always the executable file only.
+   */
+  readonly bundlePath?: string | null;
 }
 
 export type ExecutableValidationResult =
@@ -30,7 +38,15 @@ export interface ValidateExecutableOptions {
  * target even when the configured path resolves through a symlink), require
  * a regular file, reject special files, bound the size, and compute a
  * SHA-256. Executables inside the project workspace are rejected by
- * default; the project is untrusted and cannot host the engine.
+ * default; the project is untrusted and cannot host the engine. The
+ * enclosing `.app` bundle path is recorded when the canonical executable
+ * lives inside one.
+ *
+ * Note: validation and fingerprinting are best-effort snapshots of a
+ * mutable configured path. The probe runner never executes this path: it
+ * re-hashes it, stages a verified private copy inside the probe's run
+ * directory, verifies the copy's SHA-256 against this fingerprint, and
+ * executes only the verified copy.
  */
 export async function validateExecutable(
   options: ValidateExecutableOptions,
@@ -78,7 +94,7 @@ export async function validateExecutable(
         "The executable resolves inside the project workspace; workspace-contained engines are rejected by default.",
     };
   }
-  const sha256 = await hashFile(canonical, options.signal);
+  const sha256 = await hashFile(canonical, options.signal, maxBytes);
   if (sha256 === null) {
     return { ok: false, error: "The executable could not be read for fingerprinting." };
   }
@@ -89,18 +105,45 @@ export async function validateExecutable(
       sizeBytes: metadata.size,
       modifiedAtMs: metadata.mtimeMs,
       sha256,
+      bundlePath: enclosingAppBundle(canonical),
     },
   };
 }
 
 /**
- * Lightweight identity revalidation before every probe: size and
- * modification time must be unchanged. A changed executable invalidates the
- * prepared profile and requires rediscovery.
+ * Full identity revalidation before every probe.
+ *
+ * Size and modification time are no longer trusted: both can be restored
+ * after a same-size replacement. Revalidation instead recomputes the
+ * complete bounded SHA-256 of the canonical path and requires it to equal
+ * the recorded fingerprint, re-verifies that the canonical path is still a
+ * regular non-link file, and re-verifies that the path still resolves
+ * canonically to itself (no symlink/junction substitution). A changed
+ * executable invalidates the prepared profile and requires rediscovery.
+ *
+ * The probe runner additionally stages a verified private copy of the
+ * executable inside the probe's run directory and verifies the copy's
+ * SHA-256 before execution, so the executed bytes are always the verified
+ * bytes even if the mutable configured path changes after this check.
  */
 export async function revalidateExecutableIdentity(
   identity: ExecutableIdentity,
 ): Promise<{ readonly unchanged: true } | { readonly unchanged: false; readonly error: string }> {
+  let canonical: string;
+  try {
+    canonical = await realpath(identity.canonicalPath);
+  } catch (error: unknown) {
+    return {
+      unchanged: false,
+      error: `The executable is no longer accessible: ${describeFileError(identity.canonicalPath, error, "inspect")}`,
+    };
+  }
+  if (!samePathIdentity(canonical, identity.canonicalPath)) {
+    return {
+      unchanged: false,
+      error: "The executable now resolves through a different path; rediscovery is required.",
+    };
+  }
   let metadata;
   try {
     metadata = await lstat(identity.canonicalPath);
@@ -110,13 +153,27 @@ export async function revalidateExecutableIdentity(
       error: `The executable is no longer accessible: ${describeFileError(identity.canonicalPath, error, "inspect")}`,
     };
   }
-  if (!metadata.isFile() || metadata.size !== identity.sizeBytes) {
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
     return {
       unchanged: false,
-      error: "The executable changed after validation; rediscovery is required.",
+      error: "The executable path is no longer a regular file; rediscovery is required.",
     };
   }
-  if (metadata.mtimeMs !== identity.modifiedAtMs) {
+  const maxBytes = GODOT_LIMITS.maxExecutableBytes;
+  if (metadata.size > maxBytes) {
+    return {
+      unchanged: false,
+      error: "The executable now exceeds the size limit; rediscovery is required.",
+    };
+  }
+  const sha256 = await hashFile(identity.canonicalPath, undefined, maxBytes);
+  if (sha256 === null) {
+    return {
+      unchanged: false,
+      error: "The executable could not be read for re-fingerprinting.",
+    };
+  }
+  if (sha256 !== identity.sha256) {
     return {
       unchanged: false,
       error: "The executable changed after validation; rediscovery is required.",
@@ -130,7 +187,6 @@ export async function hashFile(
   signal?: AbortSignal,
   maxBytes?: number,
 ): Promise<string | null> {
-  const { open } = await import("node:fs/promises");
   let handle;
   try {
     handle = await open(path, "r");

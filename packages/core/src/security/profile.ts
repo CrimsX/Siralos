@@ -114,7 +114,10 @@ export const VALIDATION_OFFLINE_PROFILE: SandboxProfile = {
  *
  * Godot probes are project-independent, read-only, offline, and fixed by
  * Solaris: they run in a Solaris-private probe directory with a sandbox
- * private home and temp, the project workspace is never writable, network
+ * private home and temp, the project workspace is never writable and, where
+ * the backend can enforce a host-read allowlist, is excluded from readable
+ * roots entirely (the probe executes a verified private copy inside its run
+ * directory and needs no workspace or installation-parent access), network
  * and loopback are denied, stdin is closed, and the process tree is
  * confined. This profile is never user-selectable and must never be
  * broadened by public configuration.
@@ -126,7 +129,7 @@ export const GODOT_PROBE_OFFLINE_PROFILE: SandboxProfile = {
     protectGitMetadata: true,
     protectSolarisMetadata: true,
     denySensitiveProjectFiles: true,
-    excludeWorkspaceRead: false,
+    excludeWorkspaceRead: true,
   },
   process: {
     enabled: true,

@@ -12,8 +12,9 @@ import {
   type SandboxedProcessResult,
 } from "@solaris/core";
 import { buildChildEnvironment } from "../../environment/child-environment.js";
-import type { RunDirectoryProvider } from "../../process/run-directories.js";
+import type { CommandRunPaths, RunDirectoryProvider } from "../../process/run-directories.js";
 import { extractGodotApiDumpSummary } from "../api-dump/api-dump-summary.js";
+import { stageVerifiedExecutableCopy } from "./executable-copy.js";
 import { parseGodotVersionText } from "./version-parser.js";
 import { parseHelpCapabilities } from "./help-capabilities-parser.js";
 
@@ -21,10 +22,26 @@ import { parseHelpCapabilities } from "./help-capabilities-parser.js";
  * Fixed Solaris probe invocations. The adapter chooses every argument and
  * no other argument array may ever be constructed for a Godot probe.
  * Project-affecting options are prohibited here by the architecture check.
+ *
+ * `fixedProbeArguments` is THE single constructor of Godot probe argument
+ * tuples. It is private to this adapter module: no other module may build,
+ * import, or re-export a Godot probe argument array, and the architecture
+ * check verifies that only the three fixed tuples ever appear in probe
+ * invocation code. Every sandboxed Godot probe request below derives its
+ * arguments exclusively from this constructor.
  */
-export const GODOT_VERSION_ARGUMENTS: readonly string[] = ["--version"];
-export const GODOT_HELP_ARGUMENTS: readonly string[] = ["--help"];
-export const GODOT_API_DUMP_ARGUMENTS: readonly string[] = ["--dump-extension-api"];
+type GodotFixedProbeKind = "version" | "help" | "api-dump";
+
+function fixedProbeArguments(kind: GodotFixedProbeKind): readonly string[] {
+  switch (kind) {
+    case "version":
+      return ["--version"];
+    case "help":
+      return ["--help"];
+    case "api-dump":
+      return ["--dump-extension-api"];
+  }
+}
 
 export interface GodotProbeRunnerDependencies {
   readonly backend: SandboxBackend;
@@ -33,6 +50,24 @@ export interface GodotProbeRunnerDependencies {
   readonly parentEnvironment: Readonly<Record<string, string>>;
 }
 
+/**
+ * Godot probe execution is bound to the fingerprinted executable bytes:
+ *
+ * 1. Revalidate: the complete bounded SHA-256 of the canonical path is
+ *    recomputed before every probe and must equal the validated identity.
+ * 2. Stage: a private executable copy is created exclusively inside the
+ *    probe's run directory, size-bounded, and chmod 0755 on POSIX.
+ * 3. Verify: the copy's complete SHA-256 must equal the validated
+ *    fingerprint before execution; a mismatch fails the probe closed.
+ * 4. Execute: only the private copy path is executed — never the mutable
+ *    configured path.
+ *
+ * Probes are project-independent: requests carry no workspace root in the
+ * executable, arguments, working directory, environment, or sandbox
+ * configuration (`explicitReadRoots` is empty; the run directory grants
+ * everything the copy needs). Sandbox enforcement requires every
+ * restriction (read, write, network, process tree) plus an available state.
+ */
 export function createGodotProbeRunner(
   dependencies: GodotProbeRunnerDependencies,
 ): GodotProbeRunner {
@@ -40,7 +75,7 @@ export function createGodotProbeRunner(
     installation: GodotInstallation,
     signal?: AbortSignal,
   ): Promise<GodotVersionProbe> {
-    const outcome = await runProbe(installation, GODOT_VERSION_ARGUMENTS, {
+    const outcome = await runProbe(installation, fixedProbeArguments("version"), {
       timeoutMs: GODOT_LIMITS.versionProbeTimeoutMs,
       stdoutLimitBytes: GODOT_LIMITS.maxVersionOutputBytes,
       stderrLimitBytes: GODOT_LIMITS.maxVersionOutputBytes,
@@ -64,7 +99,7 @@ export function createGodotProbeRunner(
     installation: GodotInstallation,
     signal?: AbortSignal,
   ): Promise<GodotHelpProbe> {
-    const outcome = await runProbe(installation, GODOT_HELP_ARGUMENTS, {
+    const outcome = await runProbe(installation, fixedProbeArguments("help"), {
       timeoutMs: GODOT_LIMITS.helpProbeTimeoutMs,
       stdoutLimitBytes: GODOT_LIMITS.maxHelpOutputBytes,
       stderrLimitBytes: GODOT_LIMITS.maxHelpOutputBytes,
@@ -90,15 +125,15 @@ export function createGodotProbeRunner(
     installation: GodotInstallation,
     signal?: AbortSignal,
   ): Promise<GodotApiDumpProbe> {
-    const probeDir = await beginProbe(installation, signal);
-    if (probeDir === null) {
+    const prepared = await beginProbe(installation, signal);
+    if (prepared === null) {
       return { status: "failed", message: "The probe sandbox is unavailable." };
     }
-    const { runPaths, release } = probeDir;
+    const { runPaths, executablePath, release } = prepared;
     let result: SandboxedProcessResult;
     try {
       result = await dependencies.backend.execute(
-        probeRequest(installation, GODOT_API_DUMP_ARGUMENTS, runPaths, {
+        probeRequest(fixedProbeArguments("api-dump"), executablePath, runPaths, {
           timeoutMs: GODOT_LIMITS.apiDumpTimeoutMs,
           stdoutLimitBytes: 1024 * 1024,
           stderrLimitBytes: 1024 * 1024,
@@ -117,6 +152,13 @@ export function createGodotProbeRunner(
       await release();
       return { status: "failed", message: describeProbeOutcome(result) };
     }
+    if (result.exitCode !== 0) {
+      await release();
+      return {
+        status: "degraded",
+        message: `The API dump probe exited with code ${String(result.exitCode)}; its dump output was not trusted.`,
+      };
+    }
     const summary = await extractApiDumpFromDirectory(runPaths.temp);
     const cleanupMessage = await release();
     if (!summary.ok) {
@@ -131,41 +173,73 @@ export function createGodotProbeRunner(
     return { status: "success", summary: summary.summary };
   }
 
-  async function beginProbe(
-    installation: GodotInstallation,
-    signal?: AbortSignal,
-  ): Promise<{
-    readonly runPaths: {
-      readonly runId: string;
-      readonly root: string;
-      readonly home: string;
-      readonly temp: string;
-    };
+  interface PreparedProbeRun {
+    readonly runPaths: CommandRunPaths;
+    /** Verified private copy path; the only path ever executed. */
+    readonly executablePath: string;
     readonly release: () => Promise<string | null>;
-  } | null> {
+  }
+
+  /**
+   * Common probe-run preparation: full identity revalidation, sandbox
+   * enforcement, private run directory creation, and private executable
+   * copy staging. Any failure fails the probe closed with a precise message
+   * and never falls back to executing the mutable configured path.
+   */
+  async function prepareProbeRun(
+    installation: GodotInstallation,
+    signal: AbortSignal | undefined,
+  ): Promise<
+    | { readonly ok: true; readonly value: PreparedProbeRun }
+    | { readonly ok: false; readonly error: string }
+  > {
     if (signal?.aborted) {
       throw createAbortError();
     }
     const identity = await revalidateInstallation(installation);
     if (!identity.ok) {
-      return null;
+      return { ok: false, error: identity.error };
     }
-    if (!(await sandboxEnforced())) {
-      return null;
+    const sandbox = await sandboxEnforced();
+    if (!sandbox.enforced) {
+      return { ok: false, error: sandbox.message };
     }
-    let runPaths;
+    let runPaths: CommandRunPaths;
     try {
       runPaths = await dependencies.runDirectories.create();
     } catch {
-      return null;
+      return {
+        ok: false,
+        error: "The private probe directory could not be created; the probe did not run.",
+      };
     }
-    return {
-      runPaths,
-      release: async () => {
-        const cleanup = await dependencies.runDirectories.remove(runPaths.runId);
-        return cleanup.ok ? null : cleanup.message;
-      },
+    const release = async (): Promise<string | null> => {
+      const cleanup = await dependencies.runDirectories.remove(runPaths.runId);
+      return cleanup.ok ? null : cleanup.message;
     };
+    const staged = await stageVerifiedExecutableCopy({
+      sourcePath: installation.canonicalPath,
+      runRoot: runPaths.root,
+      expectedSha256: installation.sha256,
+      maxBytes: GODOT_LIMITS.maxExecutableBytes,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!staged.ok) {
+      await release();
+      if (signal?.aborted) {
+        throw createAbortError();
+      }
+      return { ok: false, error: staged.error };
+    }
+    return { ok: true, value: { runPaths, executablePath: staged.copyPath, release } };
+  }
+
+  async function beginProbe(
+    installation: GodotInstallation,
+    signal?: AbortSignal,
+  ): Promise<PreparedProbeRun | null> {
+    const prepared = await prepareProbeRun(installation, signal);
+    return prepared.ok ? prepared.value : null;
   }
 
   async function runProbe(
@@ -181,40 +255,24 @@ export function createGodotProbeRunner(
     if (limits.signal?.aborted) {
       throw createAbortError();
     }
-    const identity = await revalidateInstallation(installation);
-    if (!identity.ok) {
-      return { status: "failed", message: identity.error, result: emptyResult() };
+    const prepared = await prepareProbeRun(installation, limits.signal);
+    if (!prepared.ok) {
+      return { status: "failed", message: prepared.error, result: emptyResult() };
     }
-    if (!(await sandboxEnforced())) {
-      return {
-        status: "failed",
-        message: "The sandbox is unavailable; the Godot probe did not run (fail closed).",
-        result: emptyResult(),
-      };
-    }
-    let runPaths;
-    try {
-      runPaths = await dependencies.runDirectories.create();
-    } catch {
-      return {
-        status: "failed",
-        message: "The private probe directory could not be created; the probe did not run.",
-        result: emptyResult(),
-      };
-    }
+    const { runPaths, executablePath, release } = prepared.value;
     let result: SandboxedProcessResult;
     try {
       result = await dependencies.backend.execute(
-        probeRequest(installation, arguments_, runPaths, limits),
+        probeRequest(arguments_, executablePath, runPaths, limits),
       );
     } catch (error: unknown) {
-      await dependencies.runDirectories.remove(runPaths.runId).catch(() => undefined);
+      await release();
       if (limits.signal?.aborted) {
         throw createAbortError();
       }
       return { status: "failed", message: describeProbeFailure(error), result: emptyResult() };
     }
-    const cleanup = await dependencies.runDirectories.remove(runPaths.runId);
+    const cleanupMessage = await release();
     if (result.status === "cancelled" || limits.signal?.aborted) {
       throw createAbortError();
     }
@@ -228,10 +286,10 @@ export function createGodotProbeRunner(
         result,
       };
     }
-    if (!cleanup.ok) {
+    if (cleanupMessage !== null) {
       return {
         status: "failed",
-        message: `The probe completed, but its private directory could not be cleaned: ${cleanup.message}`,
+        message: `The probe completed, but its private directory could not be cleaned: ${cleanupMessage}`,
         result,
       };
     }
@@ -239,8 +297,8 @@ export function createGodotProbeRunner(
   }
 
   function probeRequest(
-    installation: GodotInstallation,
     arguments_: readonly string[],
+    executablePath: string,
     runPaths: {
       readonly root: string;
       readonly home: string;
@@ -254,7 +312,7 @@ export function createGodotProbeRunner(
     },
   ): SandboxedProcessRequest {
     return {
-      executable: installation.canonicalPath,
+      executable: executablePath,
       arguments: arguments_,
       workingDirectory: runPaths.temp,
       profile: GODOT_PROBE_OFFLINE_PROFILE,
@@ -263,6 +321,10 @@ export function createGodotProbeRunner(
         temp: runPaths.temp,
       }),
       runDirectory: runPaths.root,
+      // Exact read-only mode: the private copy lives inside the run
+      // directory; no additional host roots are required, so the broad
+      // trusted-runner/workspace surfaces are not granted by the backend.
+      explicitReadRoots: [],
       timeoutMs: limits.timeoutMs,
       stdoutLimitBytes: limits.stdoutLimitBytes,
       stderrLimitBytes: limits.stderrLimitBytes,
@@ -286,19 +348,52 @@ export function createGodotProbeRunner(
     return result.unchanged ? { ok: true } : { ok: false, error: result.error };
   }
 
-  async function sandboxEnforced(): Promise<boolean> {
+  async function sandboxEnforced(): Promise<
+    { readonly enforced: true } | { readonly enforced: false; readonly message: string }
+  > {
     let status: SandboxBackendStatus;
     try {
       status = await dependencies.backend.inspect();
     } catch {
-      return false;
+      return {
+        enforced: false,
+        message:
+          "The sandbox state could not be inspected; the Godot probe did not run (fail closed).",
+      };
     }
-    return (
-      status.state === "available" &&
-      status.capabilities.filesystemWriteRestriction &&
-      status.capabilities.networkRestriction &&
-      status.capabilities.processTreeRestriction
-    );
+    if (status.state !== "available") {
+      if (process.platform === "win32") {
+        return {
+          enforced: false,
+          message:
+            "The sandbox is unavailable; host-read enforcement is not available on this platform; the Godot probe did not run (fail closed).",
+        };
+      }
+      return {
+        enforced: false,
+        message: `The sandbox is unavailable (state: ${status.state}); the Godot probe did not run (fail closed).`,
+      };
+    }
+    const missing: string[] = [];
+    if (!status.capabilities.filesystemReadRestriction) {
+      missing.push("filesystem read restriction");
+    }
+    if (!status.capabilities.filesystemWriteRestriction) {
+      missing.push("filesystem write restriction");
+    }
+    if (!status.capabilities.networkRestriction) {
+      missing.push("network restriction");
+    }
+    if (!status.capabilities.processTreeRestriction) {
+      missing.push("process-tree restriction");
+    }
+    if (missing.length > 0) {
+      return {
+        enforced: false,
+        message: `The sandbox lacks ${missing.join(", ")}; the Godot probe did not run (fail closed).`,
+      };
+    }
+    return { enforced: true };
   }
 
   return { probeVersion, probeHelp, dumpExtensionApi };
@@ -324,6 +419,8 @@ async function extractApiDumpFromDirectory(
         "The API dump command completed, but no extension_api.json was produced; the capability is advertised but operationally failed.",
     };
   }
+  // Only the fixed `extension_api.json` inside the private probe temp is
+  // examined; any other output files are ignored and removed with the run.
   const dumpPath = `${directory}${process.platform === "win32" ? "\\" : "/"}extension_api.json`;
   let metadata;
   try {
@@ -331,7 +428,7 @@ async function extractApiDumpFromDirectory(
   } catch {
     return { ok: false, message: "The API dump file could not be inspected." };
   }
-  if (!metadata.isFile()) {
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
     return { ok: false, message: "The API dump output is not a regular file; rejecting it." };
   }
   if (metadata.size > GODOT_LIMITS.maxApiDumpBytes) {
@@ -340,20 +437,26 @@ async function extractApiDumpFromDirectory(
       message: `The API dump exceeds the ${Math.round(GODOT_LIMITS.maxApiDumpBytes / (1024 * 1024))} MiB limit; the dump failed safely.`,
     };
   }
-  let content: string;
+  let content: Buffer;
   try {
     const handle = await open(dumpPath, "r");
     try {
       const buffer = Buffer.alloc(metadata.size);
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      content = buffer.subarray(0, bytesRead).toString("utf8");
+      if (bytesRead !== metadata.size) {
+        return {
+          ok: false,
+          message: "The API dump file changed while it was read; rejecting it.",
+        };
+      }
+      content = buffer.subarray(0, bytesRead);
     } finally {
       await handle.close().catch(() => undefined);
     }
   } catch {
     return { ok: false, message: "The API dump could not be read." };
   }
-  const summary = extractGodotApiDumpSummary(content, metadata.size);
+  const summary = extractGodotApiDumpSummary(content);
   if (!summary.ok) {
     return { ok: false, message: summary.message };
   }

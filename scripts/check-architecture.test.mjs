@@ -466,12 +466,62 @@ describe("check-architecture", () => {
     expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(false);
   });
 
-  it("rejects full API dumps in provider-facing core types via the probe module boundary", () => {
+  it("rejects a non-fixed Godot probe argument tuple reaching sandbox execution", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
-      'import { createHash } from "node:crypto";\nexport const V = ["--version"];\n';
+      'export const ARGS = ["--version", "--import"];\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(errors.some((error) => error.includes("direct file write APIs"))).toBe(false);
+    expect(errors.some((error) => error.includes("non-fixed Godot probe argument"))).toBe(true);
+  });
+
+  it("rejects Godot probe arguments constructed by string concatenation", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'export const ARGS = ["--" + "version"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must not be constructed by string concatenation")),
+    ).toBe(true);
+  });
+
+  it("rejects Godot probe argument arrays imported from a moved module", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'import { PROBE_ARGS } from "../probe/constants.js";\nexport const ARGS = PROBE_ARGS;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not be imported"))).toBe(true);
+  });
+
+  it("rejects Godot probe argument construction outside the fixed runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/other-probe-module.ts"] =
+      'export const ARGS = ["--version"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("allowed only inside the fixedProbeArguments")),
+    ).toBe(true);
+  });
+
+  it("requires the fixedProbeArguments constructor in the probe runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'export const ARGS = ["--version"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must construct every probe argument tuple")),
+    ).toBe(true);
+  });
+
+  it("accepts the fixed probe tuple constructor in the probe runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'function fixedProbeArguments(kind) {\n  switch (kind) {\n    case "version":\n      return ["--version"];\n    case "help":\n      return ["--help"];\n    case "api-dump":\n      return ["--dump-extension-api"];\n  }\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("non-fixed Godot probe argument"))).toBe(false);
+    expect(
+      errors.some((error) => error.includes("must construct every probe argument tuple")),
+    ).toBe(false);
+    expect(errors.some((error) => error.includes("string concatenation"))).toBe(false);
   });
 
   it("allows --path only in the recovery runner and requires the recovery pairing", () => {
