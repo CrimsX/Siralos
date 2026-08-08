@@ -190,4 +190,119 @@ describe("createRunDirectoryProvider", () => {
       await workspace.cleanup();
     }
   });
+
+  it("accepts equivalent canonical spellings on case-insensitive platforms", async () => {
+    const platform = process.platform;
+    const caseInsensitive = platform === "win32" || platform === "darwin";
+    if (!caseInsensitive) {
+      return;
+    }
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      const paths = await provider.create();
+      const outcome = await provider.remove(paths.runId);
+      expect(outcome.ok).toBe(true);
+      const realsRoot = await import("node:fs/promises").then((fs) => fs.realpath(runsRoot));
+      const variants: string[] = [realsRoot];
+      if (platform === "win32") {
+        variants.push(realsRoot.replaceAll("\\", "/"));
+        variants.push(`\\\\?\\${realsRoot}`);
+        variants.push(realsRoot.replace(/^[A-Za-z]:/, (letter) => letter.toUpperCase()));
+      } else {
+        variants.push(realsRoot.toUpperCase());
+      }
+      for (const variant of variants) {
+        const alternate = createRunDirectoryProvider({
+          workspaceRoot: workspace.root,
+          runsRoot: variant,
+        });
+        const altPaths = await alternate.create();
+        const altOutcome = await alternate.remove(altPaths.runId);
+        expect(altOutcome.ok).toBe(true);
+      }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("refuses cleanup when the run directory is replaced by a junction-like link", async () => {
+    if (!SYMLINKS_SUPPORTED) {
+      return;
+    }
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    const outside = join(tmpdir(), `solaris-junction-outside-${Date.now()}-${Math.random()}`);
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      const paths = await provider.create();
+      const { rm, symlink } = await import("node:fs/promises");
+      await rm(paths.root, { recursive: true, force: true });
+      await mkdir(outside, { recursive: true });
+      await writeFile(join(outside, "victim.txt"), "keep me");
+      await symlink(outside, paths.root, "junction");
+      const outcome = await provider.remove(paths.runId);
+      expect(outcome.ok).toBe(false);
+      const content = await import("node:fs/promises").then((fs) =>
+        fs.readFile(join(outside, "victim.txt"), "utf8"),
+      );
+      expect(content).toBe("keep me");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("detects a parent substituted for a link between verification and child creation", async () => {
+    if (!SYMLINKS_SUPPORTED) {
+      return;
+    }
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    try {
+      // First create completes the runs root and fingerprint directory.
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      const first = await provider.create();
+      const fingerprint = first.home.split("\\").at(-3) as string;
+      await provider.remove(first.runId);
+      const outside = join(tmpdir(), `solaris-swap-outside-${Date.now()}-${Math.random()}`);
+      await mkdir(outside, { recursive: true });
+      // Plant a link at the fingerprint directory: every subsequent child
+      // creation must refuse rather than create through it.
+      const { rm, symlink } = await import("node:fs/promises");
+      await rm(join(runsRoot, fingerprint), { recursive: true, force: true });
+      await symlink(outside, join(runsRoot, fingerprint), "dir");
+      await expect(provider.create()).rejects.toThrow();
+      const outsideEntries = await readdir(outside);
+      expect(outsideEntries).toEqual([]);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("preserves and reports cleanup failure when removal leaves the run directory behind", async () => {
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      const paths = await provider.create();
+      const { chmod } = await import("node:fs/promises");
+      try {
+        await chmod(paths.root, 0o500);
+      } catch {
+        return; // permission-based failure injection unsupported here
+      }
+      const outcome = await provider.remove(paths.runId);
+      await import("node:fs/promises").then((fs) =>
+        fs.chmod(paths.root, 0o700).catch(() => undefined),
+      );
+      if (!outcome.ok) {
+        expect(outcome.message.length).toBeGreaterThan(0);
+        const finalOutcome = await provider.remove(paths.runId);
+        expect(finalOutcome.ok).toBe(true);
+      }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
