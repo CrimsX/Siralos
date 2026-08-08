@@ -878,6 +878,124 @@ describe("deterministic fake provider godot scenarios", () => {
     description: "Statically inspect the Godot project.",
     inputSchema: {},
   };
+  const PROBE_TOOL: ToolDefinition = {
+    name: "godot.probe_project",
+    description: "Recovery-mode Godot project probe.",
+    inputSchema: {},
+  };
+
+  it("requests godot.probe_project for `probe godot project`", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "probe godot project" }],
+      tools: [PROBE_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.probe_project",
+      input: {},
+    });
+  });
+
+  it("requests godot.probe_project for `run godot project probe`", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "run godot project probe" }],
+      tools: [PROBE_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.probe_project",
+      input: {},
+    });
+  });
+
+  it("summarizes a completed probe result truthfully", async () => {
+    const { events: probeEvents } = await collect({
+      messages: [
+        { type: "user_message", content: "probe godot project" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.probe_project",
+          input: {},
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.probe_project",
+          result: {
+            status: "success",
+            output: {
+              status: "completed",
+              engine: {
+                installationId: "path-1",
+                version: "4.7.1.stable.official",
+                executableFingerprint: "abc",
+              },
+              recoveryMode: true,
+              sourceWorkspaceLoaded: false,
+              mirror: {
+                sourceFiles: 3,
+                sourceBytes: 42,
+                generatedGodotDirectory: true,
+                generatedBytes: 10,
+                generatedFiles: 2,
+                importState: "imports observed",
+              },
+              diagnostics: {
+                errors: [],
+                warnings: [{ severity: "warning", category: "import", message: "import warning" }],
+                truncated: false,
+              },
+              process: { exitCode: 0, durationMs: 100, timedOut: false },
+              workspaceIntegrity: { unchanged: true, bounded: false },
+              cleanup: { completed: true },
+            },
+            summary: "probe completed",
+          },
+        },
+      ],
+      tools: [PROBE_TOOL],
+    });
+    expect(textOf(probeEvents)).toContain("recovery-mode Godot project probe");
+    expect(textOf(probeEvents)).toContain("4.7.1.stable.official");
+    expect(textOf(probeEvents)).toContain("completed");
+    expect(textOf(probeEvents)).toContain("1 warning");
+    expect(textOf(probeEvents)).toContain("source workspace was not loaded");
+    expect(textOf(probeEvents)).toContain("was unchanged");
+    expect(textOf(probeEvents)).toContain("removed");
+  });
+
+  it("summarizes a denied probe without claiming execution", async () => {
+    const { events: probeEvents } = await collect({
+      messages: [
+        { type: "user_message", content: "probe godot project" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.probe_project",
+          input: {},
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.probe_project",
+          result: { status: "denied", message: "The project probe was denied." },
+        },
+      ],
+      tools: [PROBE_TOOL],
+    });
+    expect(textOf(probeEvents)).toContain("not approved");
+  });
+
+  it("explains when the probe tool is unavailable in the profile", async () => {
+    const { events: probeEvents } = await collect({
+      messages: [{ type: "user_message", content: "probe godot project" }],
+      tools: [],
+    });
+    expect(textOf(probeEvents)).toContain("godot.probe_project is unavailable");
+  });
 
   it("requests godot.inspect_engine for `inspect godot`", async () => {
     const { events } = await collect({

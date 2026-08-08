@@ -1,8 +1,11 @@
 import type {
+  ApprovalReviewer,
   CheckpointStore,
   CommandRunnerRegistry,
   GitInspector,
   GodotInspector,
+  GodotProjectProbe,
+  GodotProjectProbeStatus,
   RegisteredToolInfo,
   SandboxBackend,
   SandboxBackendStatus,
@@ -26,6 +29,10 @@ import {
   formatGitStatus,
   formatGodotDoctor,
   formatGodotInstallations,
+  formatGodotProbePreview,
+  formatGodotProbeResult,
+  formatGodotProbeStatus,
+  formatGodotProbeTerminal,
   formatGodotProject,
   formatGodotSummary,
   formatHelp,
@@ -58,6 +65,8 @@ export interface SessionInfo {
   readonly security: SolarisSecurity;
   readonly git: GitInspector;
   readonly godot: GodotInspector;
+  readonly godotProbe: GodotProjectProbe;
+  readonly reviewer: ApprovalReviewer;
   readonly checkpoints: CheckpointStore;
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
@@ -172,6 +181,12 @@ export async function runInteractiveSession(
           case "godot-doctor":
             await runGodotDoctorCommand(io, sessionInfo);
             break;
+          case "godot-probe":
+            await runGodotProbeCommand(io, sessionInfo, controls);
+            break;
+          case "godot-probe-status":
+            io.write(formatGodotProbeStatus(sessionInfo.godotProbe.status()));
+            break;
           case "cancel":
             io.write(formatNoActiveCommand());
             break;
@@ -267,7 +282,21 @@ async function buildStatusView(
     godotProjectDetected: godotProject?.detected ?? false,
     godotCompatibility: godotCompatibility?.status ?? null,
     godotWarningCount: godotProject?.warnings.length ?? 0,
+    projectProbe: describeProjectProbe(sessionInfo.godotProbe.status()),
   };
+}
+
+function describeProjectProbe(status: {
+  readonly state: string;
+  readonly lastResult: GodotProjectProbeStatus["lastResult"];
+}): string {
+  if (status.lastResult === null) {
+    return status.state === "probe-invalidated" ? "approval invalidated" : "never run";
+  }
+  const diagnostics = status.lastResult.diagnostics;
+  const count = diagnostics.errors.length + diagnostics.warnings.length;
+  const summary = count === 0 ? "no diagnostics" : `${count} diagnostic${count === 1 ? "" : "s"}`;
+  return `${status.lastResult.status} with ${summary}`;
 }
 
 function shortenId(id: string): string {
@@ -356,6 +385,56 @@ async function runGodotDoctorCommand(io: SessionIO, sessionInfo: SessionInfo): P
     io.write(formatGodotDoctor(report));
   } catch (error: unknown) {
     io.write(formatProviderFailure(describeGodotFailure(error)));
+  }
+}
+
+async function runGodotProbeCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+): Promise<void> {
+  const controller = controls.beginPrompt();
+  try {
+    io.write("Preparing the Godot project probe\u2026\n");
+    const prepared = await sessionInfo.godotProbe.prepare(controller.signal);
+    if (prepared.status !== "ready") {
+      io.write(formatGodotProbeTerminal(prepared.status, prepared.message));
+      return;
+    }
+    io.write(formatGodotProbePreview(prepared.preview));
+    const decision = await sessionInfo.reviewer.review(
+      {
+        id: "godot-probe",
+        capability: "godot.probe_project",
+        toolName: "godot.probe_project",
+        summary: `recovery-mode project probe (${prepared.preview.risks.toolScripts} tool scripts, ${prepared.preview.risks.enabledEditorPlugins} plugins)`,
+        preview: prepared.preview,
+        digest: prepared.digest,
+      },
+      controller.signal,
+    );
+    if (decision.type !== "approve_once") {
+      if (decision.type === "cancelled") {
+        io.write("  \u2715 probe approval cancelled\n");
+      } else {
+        io.write(`  \u2715 probe denied: ${decision.reason ?? "not approved"}\n`);
+      }
+      return;
+    }
+    io.write("  approval approved\n");
+    const result = await sessionInfo.godotProbe.execute(prepared.probe, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    io.write(formatGodotProbeResult(result));
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 probe cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  } finally {
+    controls.endPrompt();
   }
 }
 

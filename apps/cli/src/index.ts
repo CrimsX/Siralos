@@ -102,6 +102,7 @@ async function main(): Promise<number> {
     checkpoints,
     git,
     godot,
+    godotProbe,
     undo,
     runners,
   } = await createCliApplication({
@@ -116,6 +117,8 @@ async function main(): Promise<number> {
     security,
     git,
     godot,
+    godotProbe,
+    reviewer,
     checkpoints,
     undo,
     runners,

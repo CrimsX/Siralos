@@ -102,6 +102,9 @@ export {
 } from "./git/cli/git-process.js";
 export { createGodotInspector, type GodotInspectorDependencies } from "./godot/godot-inspector.js";
 export { createGodotProbeRunner } from "./godot/process/godot-probe-runner.js";
+export { createGodotInspectEngineTool } from "./godot/tools/godot-inspect-engine-tool.js";
+export { createGodotInspectProjectTool } from "./godot/tools/godot-inspect-project-tool.js";
+export { createGodotProbeProjectTool } from "./godot/tools/godot-probe-project-tool.js";
 export {
   validateExecutable,
   revalidateExecutableIdentity,
@@ -117,15 +120,32 @@ export {
   type PathDiscoveryOptions,
 } from "./godot/discovery/path-discovery.js";
 export { createEngineProfileCache } from "./godot/cache/engine-profile-cache.js";
-export { createGodotInspectEngineTool } from "./godot/tools/godot-inspect-engine-tool.js";
-export { createGodotInspectProjectTool } from "./godot/tools/godot-inspect-project-tool.js";
 export {
-  createProjectMirror,
-  DEFAULT_PROJECT_MIRROR_LIMITS,
-  MIRROR_EXCLUDED_DIRECTORIES,
-  type ProjectMirrorDependencies,
-  type ProjectMirrorLimits,
-} from "./godot/mirror/project-mirror.js";
+  createGodotProjectProbeService,
+  GODOT_MIRROR_COPY_POLICY_VERSION,
+  type GodotProjectProbeServiceDependencies,
+} from "./godot/probe/godot-project-probe-service.js";
+export {
+  classifyRecoveryDiagnostics,
+  classifyDiagnosticLine,
+  sanitizeDiagnosticText,
+  type RecoveryDiagnosticLimits,
+  type RecoveryDiagnosticSummary,
+} from "./godot/probe/recovery-diagnostics.js";
+export {
+  canonicalizeGitStatus,
+  compareWorkspaceIntegrity,
+  snapshotWorkspaceIntegrity,
+  type WorkspaceIntegrityComparison,
+  type WorkspaceIntegritySnapshot,
+} from "./godot/probe/workspace-integrity.js";
+export {
+  computeAuthoredFileDigest,
+  scanAuthoredFiles,
+  type AuthoredFileEntry,
+  type AuthoredFileManifest,
+  type ScanAuthoredFilesOptions,
+} from "./godot/probe/authored-files.js";
 export { readGodotEnvironmentOverrides } from "./environment/godot-overrides.js";
 export {
   resolveGodotSelection,
