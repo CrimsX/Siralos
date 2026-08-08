@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { SYMLINKS_SUPPORTED } from "../workspace-fixtures.js";
 import {
   REAL_REPLACEMENT_FS_OPS,
   replaceFileWithQuarantine,
@@ -28,24 +29,37 @@ function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function injectedError(code: string, message: string): Error & { readonly code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
+}
+
 /**
- * Fault-injection seam: fails specific rename/readFile/unlink calls by
- * 1-based call index and runs optional deterministic barriers before each
- * call, so race scenarios are reproducible without timing.
+ * Fault-injection seam: fails specific rename/link/readFile/unlink/lstat/rm
+ * calls by 1-based call index and runs optional deterministic barriers
+ * before each call, so race scenarios are reproducible without timing.
  */
 function recordingOps(
   options: {
     readonly failRenameCalls?: readonly number[];
+    readonly failLinkCalls?: readonly number[];
     readonly failReadFileCalls?: readonly number[];
     readonly failRmCalls?: readonly number[];
     readonly failUnlinkCalls?: readonly number[];
+    readonly failLstatCalls?: readonly number[];
     readonly beforeRename?: (from: string, to: string, callIndex: number) => Promise<void>;
+    readonly beforeLink?: (from: string, to: string, callIndex: number) => Promise<void>;
+    readonly beforeUnlink?: (path: string, callIndex: number) => Promise<void>;
+    readonly beforeLstat?: (path: string, callIndex: number) => Promise<void>;
   } = {},
 ): ReplacementFsOps {
   let renameCalls = 0;
+  let linkCalls = 0;
   let readFileCalls = 0;
   let rmCalls = 0;
   let unlinkCalls = 0;
+  let lstatCalls = 0;
   return {
     async rename(from, to) {
       renameCalls += 1;
@@ -57,8 +71,21 @@ function recordingOps(
       }
       await REAL_REPLACEMENT_FS_OPS.rename(from, to);
     },
+    async link(from, to) {
+      linkCalls += 1;
+      if (options.beforeLink !== undefined) {
+        await options.beforeLink(from, to, linkCalls);
+      }
+      if ((options.failLinkCalls ?? []).includes(linkCalls)) {
+        throw new Error(`injected link failure (call ${linkCalls})`);
+      }
+      await REAL_REPLACEMENT_FS_OPS.link(from, to);
+    },
     async unlink(path) {
       unlinkCalls += 1;
+      if (options.beforeUnlink !== undefined) {
+        await options.beforeUnlink(path, unlinkCalls);
+      }
       if ((options.failUnlinkCalls ?? []).includes(unlinkCalls)) {
         throw new Error(`injected unlink failure (call ${unlinkCalls})`);
       }
@@ -72,6 +99,13 @@ function recordingOps(
       return REAL_REPLACEMENT_FS_OPS.readFile(path);
     },
     async lstat(path) {
+      lstatCalls += 1;
+      if (options.beforeLstat !== undefined) {
+        await options.beforeLstat(path, lstatCalls);
+      }
+      if ((options.failLstatCalls ?? []).includes(lstatCalls)) {
+        throw new Error(`injected lstat failure (call ${lstatCalls})`);
+      }
       return REAL_REPLACEMENT_FS_OPS.lstat(path);
     },
     async rm(path) {
@@ -113,6 +147,7 @@ describe("safe replacement state machine", () => {
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: originalHash,
+      expectedStagedSha256: newHash,
       ops,
     });
     expect(outcome.kind).toBe("success");
@@ -122,6 +157,9 @@ describe("safe replacement state machine", () => {
     expect(outcome.quarantinePath).not.toBeNull();
     expect(sha256(await readFile(target))).toBe(newHash);
     expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+    // The staged temp file remains as a hard link to the committed object;
+    // the caller removes the temp link once the outcome is final.
+    expect(sha256(await readFile(temp))).toBe(newHash);
   });
 
   it("fails without committing when the original cannot be moved to quarantine", async () => {
@@ -131,6 +169,7 @@ describe("safe replacement state machine", () => {
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
       ops,
     });
     expect(outcome.kind).toBe("failed");
@@ -146,6 +185,7 @@ describe("safe replacement state machine", () => {
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: sha256(Buffer.from("original content\n")),
+      expectedStagedSha256: null,
       ops,
     });
     expect(outcome.kind).toBe("failed");
@@ -166,19 +206,21 @@ describe("safe replacement state machine", () => {
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
       ops,
     });
     expect(outcome.kind).toBe("failed");
     expect(sha256(await readFile(target))).toBe(sha256(concurrent));
   });
 
-  it("restores the original when the commit rename fails", async () => {
-    const ops = recordingOps({ failRenameCalls: [2] });
+  it("restores the original when the commit link fails", async () => {
+    const ops = recordingOps({ failLinkCalls: [1] });
     const { target, temp, originalHash } = await setupReplacement();
     const outcome = await replaceFileWithQuarantine({
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
       ops,
     });
     expect(outcome.kind).toBe("failed");
@@ -186,12 +228,13 @@ describe("safe replacement state machine", () => {
   });
 
   it("reports an uncertain state with a recoverable quarantine when rollback fails", async () => {
-    const ops = recordingOps({ failRenameCalls: [2, 3] });
+    const ops = recordingOps({ failLinkCalls: [1, 2] });
     const { directory, target, temp, originalHash } = await setupReplacement();
     const outcome = await replaceFileWithQuarantine({
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
       ops,
     });
     expect(outcome.kind).toBe("uncertain");
@@ -210,19 +253,156 @@ describe("safe replacement state machine", () => {
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
       ops,
     });
     expect(outcome.kind).toBe("failed");
     expect(sha256(await readFile(target))).toBe(originalHash);
   });
 
-  it("restores the original when the committed replacement is not a regular file", async () => {
+  it("never overwrites a new target that appears after the quarantine verification", async () => {
+    // Seam variant: the commit link itself reports EEXIST.
+    const { target, temp, originalHash } = await setupReplacement();
+    const raced = Buffer.from("new file created by another process\n");
     const ops = recordingOps({
-      beforeRename: async (_from, to, callIndex) => {
-        if (callIndex === 2) {
-          const temp = await import("node:fs/promises");
-          await temp.rm(to, { force: true });
-          await temp.symlink("elsewhere", to);
+      failLinkCalls: [1],
+      beforeLink: async (from, _to, callIndex) => {
+        if (callIndex === 1 && from.endsWith("staged.tmp")) {
+          await writeFile(target, raced);
+        }
+      },
+    });
+    const outcome = await replaceFileWithQuarantine({
+      tempPath: temp,
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
+      ops,
+    });
+    expect(outcome.kind).toBe("uncertain");
+    if (outcome.kind !== "uncertain") {
+      return;
+    }
+    expect(sha256(await readFile(target))).toBe(sha256(raced));
+    expect(outcome.message).toContain("recoverable original");
+    expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+  });
+
+  it("never overwrites a target re-created through the real filesystem after verification", async () => {
+    // Real-fs variant: everything except the barrier is the real fs, so the
+    // commit link fails with a real EEXIST from the operating system.
+    const { target, temp, originalHash } = await setupReplacement();
+    const ops = recordingOps({
+      beforeLink: async (from, _to, callIndex) => {
+        if (callIndex === 1 && from.endsWith("staged.tmp")) {
+          await writeFile(target, "raced between verification and commit\n");
+        }
+      },
+    });
+    const outcome = await replaceFileWithQuarantine({
+      tempPath: temp,
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
+      ops,
+    });
+    expect(outcome.kind).toBe("uncertain");
+    if (outcome.kind !== "uncertain") {
+      return;
+    }
+    expect(await readFile(target, "utf8")).toBe("raced between verification and commit\n");
+    expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+  });
+
+  it("leaves the original in quarantine and reports uncertain when a new target appears before rollback", async () => {
+    const { target, temp, originalHash } = await setupReplacement();
+    const ops = recordingOps({
+      failReadFileCalls: [1],
+      beforeLink: async (from, _to, callIndex) => {
+        if (callIndex === 1 && from.includes(".solaris-quarantine-")) {
+          await writeFile(target, "appeared before rollback\n");
+        }
+      },
+    });
+    const outcome = await replaceFileWithQuarantine({
+      tempPath: temp,
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
+      ops,
+    });
+    expect(outcome.kind).toBe("uncertain");
+    if (outcome.kind !== "uncertain") {
+      return;
+    }
+    expect(await readFile(target, "utf8")).toBe("appeared before rollback\n");
+    expect(outcome.message).toContain("recoverable original");
+    expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+  });
+
+  it(
+    "fails closed when a symbolic link appears at the target before the commit",
+    { skip: !SYMLINKS_SUPPORTED },
+    async () => {
+      const ops = recordingOps({
+        beforeLink: async (from, to, callIndex) => {
+          if (callIndex === 1 && from.endsWith("staged.tmp")) {
+            // The target was already displaced to quarantine, so a symlink
+            // can be placed at the target without unlinking anything.
+            await symlink("elsewhere", to);
+          }
+        },
+      });
+      const { target, temp, originalHash } = await setupReplacement();
+      const outcome = await replaceFileWithQuarantine({
+        tempPath: temp,
+        targetPath: target,
+        expectedTargetSha256: originalHash,
+        expectedStagedSha256: null,
+        ops,
+      });
+      expect(outcome.kind).toBe("uncertain");
+      if (outcome.kind !== "uncertain") {
+        return;
+      }
+      const stats = await REAL_REPLACEMENT_FS_OPS.lstat(target);
+      expect(stats.isSymbolicLink()).toBe(true);
+      expect(outcome.message).toContain("recoverable original");
+      expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+    },
+  );
+
+  it("fails closed when hard links are unsupported, preserving the quarantine", async () => {
+    const ops: ReplacementFsOps = {
+      ...recordingOps(),
+      link() {
+        throw injectedError("ENOTSUP", "hard links are not supported on this filesystem");
+      },
+    };
+    const { directory, target, temp, originalHash } = await setupReplacement();
+    const outcome = await replaceFileWithQuarantine({
+      tempPath: temp,
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
+      ops,
+    });
+    expect(outcome.kind).toBe("uncertain");
+    if (outcome.kind !== "uncertain") {
+      return;
+    }
+    expect(outcome.quarantinePath.startsWith(directory)).toBe(true);
+    expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+    await expect(readFile(target)).rejects.toThrow();
+  });
+
+  it("rolls back the committed object when its hash no longer matches the staged content", async () => {
+    const ops = recordingOps({
+      beforeLink: async (from, _to, callIndex) => {
+        if (callIndex === 1 && from.endsWith("staged.tmp")) {
+          // Tamper the staged file in place (same inode): the exclusive
+          // link commits the tampered bytes.
+          await writeFile(from, "tampered staged content\n");
         }
       },
     });
@@ -231,10 +411,38 @@ describe("safe replacement state machine", () => {
       tempPath: temp,
       targetPath: target,
       expectedTargetSha256: originalHash,
+      expectedStagedSha256: sha256(Buffer.from("new content\n")),
       ops,
     });
     expect(outcome.kind).toBe("failed");
     expect(sha256(await readFile(target))).toBe(originalHash);
+  });
+
+  it("reports uncertain and preserves the quarantine when the committed object is replaced", async () => {
+    const ops = recordingOps({
+      beforeLink: async (_from, to, callIndex) => {
+        if (callIndex === 1 && to.endsWith("file.txt")) {
+          const fs = await import("node:fs/promises");
+          await fs.rm(to, { force: true });
+          await fs.writeFile(to, "replaced after commit\n");
+        }
+      },
+    });
+    const { target, temp, originalHash } = await setupReplacement();
+    const outcome = await replaceFileWithQuarantine({
+      tempPath: temp,
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      expectedStagedSha256: sha256(Buffer.from("new content\n")),
+      ops,
+    });
+    expect(outcome.kind).toBe("uncertain");
+    if (outcome.kind !== "uncertain") {
+      return;
+    }
+    expect(await readFile(target, "utf8")).toBe("replaced after commit\n");
+    expect(outcome.message).toContain("recoverable original");
+    expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
   });
 });
 
@@ -282,7 +490,7 @@ describe("safe deletion state machine", () => {
   });
 
   it("reports an uncertain state with a recoverable quarantine when deletion rollback fails", async () => {
-    const ops = recordingOps({ failUnlinkCalls: [1], failRenameCalls: [2] });
+    const ops = recordingOps({ failUnlinkCalls: [1], failLinkCalls: [1] });
     const { directory, target, originalHash } = await setupReplacement();
     const outcome = await unlinkWithIdentityVerification({
       targetPath: target,
@@ -294,6 +502,31 @@ describe("safe deletion state machine", () => {
       return;
     }
     expect(outcome.quarantinePath.startsWith(directory)).toBe(true);
+    expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+  });
+
+  it("never unlinks the quarantine while a new target occupies the path", async () => {
+    const ops = recordingOps({
+      beforeLstat: async (path, callIndex) => {
+        // The second lstat is the pre-unlink target-absence check: a new
+        // object appears exactly there.
+        if (callIndex === 2 && path.endsWith("file.txt")) {
+          await writeFile(path, "new target appeared\n");
+        }
+      },
+    });
+    const { target, originalHash } = await setupReplacement();
+    const outcome = await unlinkWithIdentityVerification({
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      ops,
+    });
+    expect(outcome.kind).toBe("uncertain");
+    if (outcome.kind !== "uncertain") {
+      return;
+    }
+    expect(await readFile(target, "utf8")).toBe("new target appeared\n");
+    expect(outcome.message).toContain("recoverable original");
     expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
   });
 });

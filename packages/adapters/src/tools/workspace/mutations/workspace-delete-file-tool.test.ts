@@ -262,6 +262,25 @@ describe("workspace.delete_file", () => {
       "failed",
     );
   });
+
+  it(
+    "deletes a file through a case-variant spelling on case-insensitive platforms",
+    { skip: process.platform === "linux" },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/obsolete.md": "line one\n" });
+      const { tool } = await createTool(workspace.root);
+      const hash = await hashOf(path.join(workspace.root, "docs", "obsolete.md"));
+      const prepared = await tool.prepare({ path: "DOCS/Obsolete.MD", expectedSha256: hash }, {});
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+      expect(result.status).toBe("success");
+      await expect(readFile(path.join(workspace.root, "docs", "obsolete.md"))).rejects.toThrow();
+    },
+  );
 });
 
 describe("workspace.delete_file adversarial commit", () => {
@@ -270,6 +289,10 @@ describe("workspace.delete_file adversarial commit", () => {
       async rename(from: string, to: string) {
         const { rename } = await import("node:fs/promises");
         await rename(from, to);
+      },
+      async link(from: string, to: string) {
+        const { link } = await import("node:fs/promises");
+        await link(from, to);
       },
       async unlink(p: string) {
         const { unlink } = await import("node:fs/promises");

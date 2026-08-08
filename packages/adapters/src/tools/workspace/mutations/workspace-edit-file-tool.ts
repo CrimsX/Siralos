@@ -335,12 +335,15 @@ export function createWorkspaceEditFileTool(
         tempPath,
         targetPath: payload.absolutePath,
         expectedTargetSha256: payload.expectedSha256,
+        // The staged bytes are verified by hash again after the commit, so
+        // a staged file tampered between staging and the exclusive link is
+        // detected before the operation can be reported as success.
+        expectedStagedSha256: payload.afterSha256,
         ...(replacementOps === undefined ? {} : { ops: replacementOps }),
       });
-      if (commitOutcome.kind === "success") {
-        // The staged content was consumed by the commit rename.
-        tempPath = undefined;
-      }
+      // On success the staged temp file remains as a hard link to the
+      // committed object; it is left defined so the finally block removes
+      // the temp link (never the target) once the outcome is final.
       if (commitOutcome.kind !== "success") {
         if (commitOutcome.kind === "uncertain") {
           quarantinePath = commitOutcome.quarantinePath;

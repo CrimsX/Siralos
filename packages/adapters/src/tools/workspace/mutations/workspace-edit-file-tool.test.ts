@@ -375,6 +375,28 @@ describe("workspace.edit_file", () => {
     const prepared = await prepareEdit(tool, "a.txt", "a".repeat(64), replacements);
     expect(prepared).toMatchObject({ status: "invalid_input" });
   });
+
+  it(
+    "edits a file through a case-variant spelling on case-insensitive platforms",
+    { skip: process.platform === "linux" },
+    async () => {
+      const workspace = await withWorkspace();
+      await writeFixtureFiles(workspace.root, { "docs/note.md": "original\n" });
+      const { tool } = await createTool(workspace.root);
+      const hash = await hashOf(path.join(workspace.root, "docs", "note.md"));
+      const prepared = await prepareEdit(tool, "DOCS/NOTE.MD", hash, [
+        { oldText: "original", newText: "changed" },
+      ]);
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+      expect(result.status).toBe("success");
+      const bytes = await readFile(path.join(workspace.root, "docs", "note.md"));
+      expect(bytes.toString("utf8")).toBe("changed\n");
+    },
+  );
 });
 
 describe("workspace.edit_file replacement recovery", () => {
@@ -393,6 +415,10 @@ describe("workspace.edit_file replacement recovery", () => {
           }
           const { rename } = await import("node:fs/promises");
           await rename(from, to);
+        },
+        async link(from: string, to: string) {
+          const { link } = await import("node:fs/promises");
+          await link(from, to);
         },
         async unlink(p: string) {
           const { unlink } = await import("node:fs/promises");
@@ -544,14 +570,14 @@ describe("workspace.edit_file replacement recovery", () => {
     const { tool } = await createTool(workspace.root, {
       replacementOps: {
         ...failingOps().replacementOps,
-        async rename(from: string, to: string) {
-          if (to.endsWith("a.txt")) {
+        async link(from: string, to: string) {
+          if (to.endsWith("a.txt") && from.includes(".solaris-mutation-")) {
             // The staged content is swapped for different bytes right
-            // before the commit rename consumes it.
+            // before the exclusive commit link consumes it (same inode).
             const fs = await import("node:fs/promises");
             await fs.writeFile(from, "injected staged content\n");
           }
-          await failingOps().replacementOps.rename(from, to);
+          await failingOps().replacementOps.link(from, to);
         },
       },
     });
@@ -567,10 +593,14 @@ describe("workspace.edit_file replacement recovery", () => {
     if (result.status !== "failed") {
       return;
     }
-    expect(result.message).toContain("Post-write verification failed");
-    expect(result.message).toContain(".solaris-quarantine-");
+    expect(result.message).toContain("does not match the expected staged content hash");
+    // The committed object was rolled back: the original was restored and
+    // no quarantine or temp file remains.
+    const content = await readFile(path.join(workspace.root, "a.txt"), "utf8");
+    expect(content).toBe("original\n");
     const entries = await (await import("node:fs/promises")).readdir(workspace.root);
-    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(true);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(false);
+    expect(entries.some((entry) => entry.startsWith(".solaris-mutation-"))).toBe(false);
   });
 
   it("keeps the original recoverable when post-commit verification fails", async () => {
@@ -581,11 +611,15 @@ describe("workspace.edit_file replacement recovery", () => {
     const tool = createWorkspaceEditFileTool(workspace.root, createMutationLock(), store, {
       replacementOps: {
         ...failingOps().replacementOps,
-        async rename(from: string, to: string) {
-          await failingOps().replacementOps.rename(from, to);
+        async link(from: string, to: string) {
+          await failingOps().replacementOps.link(from, to);
           if (to.endsWith("a.txt")) {
+            // The committed object is replaced by a different inode right
+            // after the exclusive link, so the staged-hash verification
+            // fails and rollback cannot prove the target is ours.
             const fs = await import("node:fs/promises");
-            await fs.appendFile(to, "tampered after commit\n");
+            await fs.rm(to, { force: true });
+            await fs.writeFile(to, "tampered after commit\n");
           }
         },
       },
@@ -602,7 +636,49 @@ describe("workspace.edit_file replacement recovery", () => {
     if (result.status !== "failed") {
       return;
     }
-    expect(result.message).toContain("Post-write verification failed");
+    expect(result.message).toContain("does not match the expected staged content hash");
+    expect(result.message).toContain(".solaris-quarantine-");
+    expect(await readFile(path.join(workspace.root, "a.txt"), "utf8")).toBe(
+      "tampered after commit\n",
+    );
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(true);
+  });
+
+  it("never overwrites a target that reappears before the commit link", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "a.txt": "original\n" });
+    const hash = await hashOf(path.join(workspace.root, "a.txt"));
+    const { tool } = await createTool(workspace.root, {
+      replacementOps: {
+        ...failingOps().replacementOps,
+        async link(from: string, to: string) {
+          if (to.endsWith("a.txt")) {
+            // A new file lands at the target after the displacement and
+            // quarantine verification, immediately before the commit link.
+            const fs = await import("node:fs/promises");
+            await fs.writeFile(to, "raced replacement\n");
+          }
+          await failingOps().replacementOps.link(from, to);
+        },
+      },
+    });
+    const prepared = await prepareEdit(tool, "a.txt", hash, [
+      { oldText: "original", newText: "changed" },
+    ]);
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") {
+      return;
+    }
+    expect(result.message).toContain(".solaris-quarantine-");
+    expect(await readFile(path.join(workspace.root, "a.txt"), "utf8")).toBe("raced replacement\n");
+    const entries = await (await import("node:fs/promises")).readdir(workspace.root);
+    expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(true);
   });
 
   it("fails closed without touching the target when the quarantine cannot be created", async () => {

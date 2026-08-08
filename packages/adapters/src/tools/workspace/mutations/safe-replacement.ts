@@ -1,9 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, rename, rm, unlink } from "node:fs/promises";
+import { link, lstat, readFile, rename, rm, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface ReplacementFsOps {
   rename(from: string, to: string): Promise<void>;
+  /**
+   * Creates `to` as a hard link to `from`. Must fail (EEXIST) when `to`
+   * already exists and never overwrite, unlike rename. This is the commit
+   * and restore primitive: it atomically requires the destination to stay
+   * absent, so a target that reappears between displacement and commit can
+   * never be silently overwritten.
+   */
+  link(from: string, to: string): Promise<void>;
   unlink(path: string): Promise<void>;
   readFile(path: string): Promise<Buffer>;
   lstat(path: string): Promise<Awaited<ReturnType<typeof lstat>>>;
@@ -12,6 +20,7 @@ export interface ReplacementFsOps {
 
 export const REAL_REPLACEMENT_FS_OPS: ReplacementFsOps = {
   rename,
+  link,
   unlink,
   readFile,
   lstat,
@@ -59,6 +68,14 @@ export interface ReplaceFileWithQuarantineOptions {
    * destroyed on any platform.
    */
   readonly expectedTargetSha256: string | null;
+  /**
+   * SHA-256 of the content staged at `tempPath`. When provided, the
+   * committed target is verified after the commit: it must be a regular
+   * non-symlink file whose bytes hash to exactly this value. A staged file
+   * tampered between staging and commit is therefore detected before the
+   * operation can be reported as success.
+   */
+  readonly expectedStagedSha256: string | null;
   readonly ops?: ReplacementFsOps;
 }
 
@@ -69,11 +86,23 @@ export interface ReplaceFileWithQuarantineOptions {
  * same-directory quarantine (an atomic displacement of exactly the object
  * that currently sits at the target), the displaced object is verified
  * against the expected hash, the staged content is committed, and the
- * original is rolled back automatically if the commit fails. The quarantine
- * dance runs on every platform — a successful direct rename is not treated
- * as a compare-and-swap. Recovery information (the quarantine path) is
- * preserved in every failure result so an intermediate state that survives a
- * process crash is never reported as success or silently cleaned up.
+ * original is rolled back automatically if the commit fails.
+ *
+ * The commit and every restore is an exclusive hard link: `link` fails with
+ * EEXIST when the destination exists and never overwrites, so a new target
+ * created by another process between displacement and commit is preserved
+ * (outcome `uncertain`, original kept in quarantine) instead of being
+ * silently destroyed by a rename. Filesystems without hard-link support fail
+ * closed (uncertain or failed with the quarantine preserved) — an
+ * overwrite-capable rename is never used as a fallback. The staged temp file
+ * is kept until the outcome is known and is removed only after success, via
+ * an unlink of the temp link, never of the target.
+ *
+ * The quarantine dance runs on every platform — a successful direct rename
+ * is not treated as a compare-and-swap. Recovery information (the quarantine
+ * path) is preserved in every failure result so an intermediate state that
+ * survives a process crash is never reported as success or silently cleaned
+ * up.
  */
 export async function replaceFileWithQuarantine(
   options: ReplaceFileWithQuarantineOptions,
@@ -106,13 +135,16 @@ export async function replaceFileWithQuarantine(
       }
       return {
         kind: "uncertain",
-        message: `${identityCheck.message} and the original could not be restored; the recoverable original is at ${quarantinePath}.`,
+        message: `${identityCheck.message} and the original could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
         quarantinePath,
       };
     }
   }
+  // The commit is an exclusive hard link: it atomically requires the target
+  // to remain absent (EEXIST) and can never overwrite a target that
+  // reappeared after the displacement.
   try {
-    await ops.rename(options.tempPath, options.targetPath);
+    await ops.link(options.tempPath, options.targetPath);
   } catch (error: unknown) {
     const rollback = await restoreOriginal(ops, quarantinePath, options.targetPath);
     if (rollback.ok) {
@@ -124,13 +156,22 @@ export async function replaceFileWithQuarantine(
     }
     return {
       kind: "uncertain",
-      message: `The replacement could not be committed (${describeError(error)}) and the original could not be restored; the recoverable original is at ${quarantinePath}.`,
+      message: `The replacement could not be committed (${describeError(error)}) and the original could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
       quarantinePath,
     };
   }
-  const committed = await verifyCommittedTarget(ops, options.targetPath);
+  const committed = await verifyCommittedTarget(
+    ops,
+    options.targetPath,
+    options.expectedStagedSha256,
+  );
   if (!committed.ok) {
-    const rollback = await restoreOriginal(ops, quarantinePath, options.targetPath);
+    const rollback = await rollbackCommittedTarget(
+      ops,
+      options.tempPath,
+      options.targetPath,
+      quarantinePath,
+    );
     if (rollback.ok) {
       return {
         kind: "failed",
@@ -140,7 +181,7 @@ export async function replaceFileWithQuarantine(
     }
     return {
       kind: "uncertain",
-      message: `${committed.message} and the original could not be restored; the recoverable original is at ${quarantinePath}.`,
+      message: `${committed.message} and the original could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
       quarantinePath,
     };
   }
@@ -189,6 +230,15 @@ export interface UnlinkWithIdentityVerificationOptions {
  * quarantine, verified against the expected hash, and only then unlinked.
  * A target replaced between validation and deletion is detected by hash and
  * restored, so a later user change is never deleted.
+ *
+ * The quarantine is never unlinked while anything occupies the target path:
+ * the target's absence is re-verified immediately before the unlink, and a
+ * reoccupied target forces a link-based restore (which fails with EEXIST and
+ * leaves the original recoverable in quarantine rather than overwriting).
+ * Node offers no atomic unlink-if-absent primitive, so a target recreated in
+ * the remaining window between the absence check and the unlink is preserved
+ * (the unlink targets the quarantine path, never the target path) and the
+ * caller's post-deletion verification reports the reappeared object.
  */
 export async function unlinkWithIdentityVerification(
   options: UnlinkWithIdentityVerificationOptions,
@@ -221,10 +271,29 @@ export async function unlinkWithIdentityVerification(
       }
       return {
         kind: "uncertain",
-        message: `${identityCheck.message} and the original could not be restored; the recoverable original is at ${quarantinePath}.`,
+        message: `${identityCheck.message} and the original could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
         quarantinePath,
       };
     }
+  }
+  if (await targetIsOccupied(ops, options.targetPath)) {
+    // A new object appeared at the target after the displacement. The
+    // quarantine (the only remaining copy of the original) must not be
+    // unlinked while it does, and the restore must not overwrite it.
+    const rollback = await restoreOriginal(ops, quarantinePath, options.targetPath);
+    if (rollback.ok) {
+      return {
+        kind: "failed",
+        message:
+          "A new target appeared before deletion; the original was restored and nothing was deleted.",
+        quarantinePath: null,
+      };
+    }
+    return {
+      kind: "uncertain",
+      message: `A new target appeared before deletion and the original could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
+      quarantinePath,
+    };
   }
   try {
     await ops.unlink(quarantinePath);
@@ -239,7 +308,7 @@ export async function unlinkWithIdentityVerification(
     }
     return {
       kind: "uncertain",
-      message: `The file could not be deleted (${describeError(error)}) and the original could not be restored; the recoverable original is at ${quarantinePath}.`,
+      message: `The file could not be deleted (${describeError(error)}) and the original could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
       quarantinePath,
     };
   }
@@ -251,6 +320,24 @@ async function verifyQuarantinedIdentity(
   quarantinePath: string,
   expectedSha256: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  let stats;
+  try {
+    stats = await ops.lstat(quarantinePath);
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      message: `The quarantined original could not be inspected (${describeError(error)})`,
+    };
+  }
+  // The displaced object must be a regular file, never a symlink: a symlink
+  // displaced to quarantine would make readFile follow it and hash content
+  // that is not the displaced object itself.
+  if (stats.isSymbolicLink()) {
+    return { ok: false, message: "The displaced object is a symbolic link" };
+  }
+  if (!stats.isFile()) {
+    return { ok: false, message: "The displaced object is not a regular file" };
+  }
   let bytes: Buffer;
   try {
     bytes = await ops.readFile(quarantinePath);
@@ -273,6 +360,7 @@ async function verifyQuarantinedIdentity(
 async function verifyCommittedTarget(
   ops: ReplacementFsOps,
   targetPath: string,
+  expectedStagedSha256: string | null,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   let stats;
   try {
@@ -289,19 +377,92 @@ async function verifyCommittedTarget(
   if (!stats.isFile()) {
     return { ok: false, message: "The committed replacement is not a regular file" };
   }
+  if (expectedStagedSha256 !== null) {
+    let bytes: Buffer;
+    try {
+      bytes = await ops.readFile(targetPath);
+    } catch (error: unknown) {
+      return {
+        ok: false,
+        message: `The committed replacement could not be read for verification (${describeError(error)})`,
+      };
+    }
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    if (hash !== expectedStagedSha256) {
+      return {
+        ok: false,
+        message:
+          "Post-write verification failed: the committed replacement does not match the expected staged content hash",
+      };
+    }
+  }
   return { ok: true };
 }
 
+/**
+ * Link-based restore: creates the original at the target only when the
+ * target is still absent. EEXIST (a newly appeared target) and hard-link
+ * unsupported errors both fail the restore; the quarantine stays in place as
+ * the recoverable copy. An overwrite-capable rename is never used here.
+ */
 async function restoreOriginal(
   ops: ReplacementFsOps,
   quarantinePath: string,
   targetPath: string,
-): Promise<{ ok: true } | { ok: false }> {
+): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
-    await ops.rename(quarantinePath, targetPath);
-    return { ok: true };
+    await ops.link(quarantinePath, targetPath);
+  } catch (error: unknown) {
+    return { ok: false, message: describeError(error) };
+  }
+  // The target now holds the original; the quarantine name is a redundant
+  // hard link to the same inode, never the only copy, so it can be removed.
+  // Best-effort: a failed removal leaves a harmless duplicate.
+  try {
+    await ops.unlink(quarantinePath);
   } catch {
-    return { ok: false };
+    // The duplicate link remains; the original is recoverable at the target.
+  }
+  return { ok: true };
+}
+
+/**
+ * Rollback after a committed-but-unverified target: only the exact staged
+ * inode may be displaced, so the target is verified against the staged temp
+ * file's dev+ino before the target link is unlinked; anything else at the
+ * target is preserved and the original stays in quarantine (uncertain).
+ */
+async function rollbackCommittedTarget(
+  ops: ReplacementFsOps,
+  tempPath: string,
+  targetPath: string,
+  quarantinePath: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let targetStats;
+  let tempStats;
+  try {
+    targetStats = await ops.lstat(targetPath);
+    tempStats = await ops.lstat(tempPath);
+  } catch (error: unknown) {
+    return { ok: false, message: describeError(error) };
+  }
+  if (targetStats.ino !== tempStats.ino || targetStats.dev !== tempStats.dev) {
+    return { ok: false, message: "the committed object was replaced before rollback" };
+  }
+  try {
+    await ops.unlink(targetPath);
+  } catch (error: unknown) {
+    return { ok: false, message: describeError(error) };
+  }
+  return restoreOriginal(ops, quarantinePath, targetPath);
+}
+
+async function targetIsOccupied(ops: ReplacementFsOps, targetPath: string): Promise<boolean> {
+  try {
+    await ops.lstat(targetPath);
+    return true;
+  } catch {
+    return false;
   }
 }
 
