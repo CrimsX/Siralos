@@ -40,6 +40,11 @@ import { scanProjectFile } from "../project/project-scanner.js";
 import { inventoryExecutableContent } from "../project/content-inventory.js";
 import { detectLanguageProfile } from "../project/language-profile.js";
 import {
+  DEFAULT_FS_OPS,
+  validateProjectRelativePath,
+  verifyProjectPathContainment,
+} from "../project/traversal-limits.js";
+import {
   computeGodotRecoveryCommandDigest,
   createGodotRecoveryRunner,
   godotRecoveryArgumentTemplate,
@@ -594,13 +599,34 @@ export function createGodotProjectProbeService(
       if (hashed === null) {
         continue;
       }
-      const descriptorDirectory = dirname(join(dependencies.workspaceRoot, descriptor.path));
       const referencedLibraries: GodotLibraryRiskEntry[] = [];
       for (const target of descriptor.libraryTargets) {
-        const absoluteTarget = target.startsWith("res://")
-          ? join(dependencies.workspaceRoot, target.slice("res://".length))
-          : join(descriptorDirectory, target.replace(/^\.\//, ""));
-        const library = await hashAbsoluteFile(absoluteTarget, signal);
+        // Library targets are project-controlled: the absolute target must
+        // pass lexical + canonical containment before any filesystem call.
+        // An escaping target is reported as an unverified library (null
+        // hash) and never read.
+        const relativeTarget = target.startsWith("res://")
+          ? target.slice("res://".length)
+          : join(dirname(descriptor.path), target.replace(/^\.\//, "")).split(sep).join("/");
+        let verifiedTarget: string | null = null;
+        if (
+          validateProjectRelativePath(relativeTarget, GODOT_LIMITS.maxResReferencePathBytes).ok ===
+          true
+        ) {
+          const canonicalRoot = await canonicalWorkspaceRoot();
+          if (canonicalRoot !== null) {
+            const verified = await verifyProjectPathContainment(
+              canonicalRoot,
+              join(dependencies.workspaceRoot, relativeTarget),
+              DEFAULT_FS_OPS,
+            );
+            if (verified.ok) {
+              verifiedTarget = verified.canonicalPath;
+            }
+          }
+        }
+        const library =
+          verifiedTarget === null ? null : await hashAbsoluteFile(verifiedTarget, signal);
         referencedLibraries.push(
           library === null
             ? { path: target, sha256: null, bytes: null }
@@ -788,7 +814,41 @@ export function createGodotProjectProbeService(
     relativePath: string,
     signal: AbortSignal | undefined,
   ): Promise<{ readonly path: string; readonly sha256: string; readonly bytes: number } | null> {
-    return hashAbsoluteFile(join(dependencies.workspaceRoot, relativePath), signal);
+    if (
+      validateProjectRelativePath(relativePath, GODOT_LIMITS.maxResReferencePathBytes).ok !== true
+    ) {
+      return null;
+    }
+    const canonicalRoot = await canonicalWorkspaceRoot();
+    if (canonicalRoot === null) {
+      return null;
+    }
+    const verified = await verifyProjectPathContainment(
+      canonicalRoot,
+      join(dependencies.workspaceRoot, relativePath),
+      DEFAULT_FS_OPS,
+    );
+    if (!verified.ok) {
+      return null;
+    }
+    return hashAbsoluteFile(verified.canonicalPath, signal);
+  }
+
+  let canonicalRootCache: string | null | undefined;
+
+  async function canonicalWorkspaceRoot(): Promise<string | null> {
+    if (canonicalRootCache !== undefined) {
+      return canonicalRootCache;
+    }
+    try {
+      const { realpath } = await import("node:fs/promises");
+      const canonical = await realpath(dependencies.workspaceRoot);
+      canonicalRootCache = canonical;
+      return canonical;
+    } catch {
+      canonicalRootCache = null;
+      return null;
+    }
   }
 
   async function hashAbsoluteFile(

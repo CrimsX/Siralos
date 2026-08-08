@@ -886,6 +886,68 @@ describe("risk manifest coverage", () => {
     expect(prepared.digest).toMatch(/^[0-9a-f]{64}$/);
     expect(prepared.digest).not.toBe(prepared.preview.manifestDigest);
   });
+
+  it("never reads escaping plugin scripts or GDExtension library targets", async () => {
+    const workspaceRoot = await withTempRoot();
+    const runsRoot = await withTempRoot();
+    const executableRoot = await withTempRoot();
+    const executable = path.join(executableRoot, "godot-test.exe");
+    await writeFile(executable, "#!/bin/sh\necho fixture\n");
+    // The outside sentinel: content-inventory and the probe service must
+    // never open it, even when project-controlled paths escape the root.
+    const outside = await withTempRoot();
+    const sentinel = path.join(outside, "secret.gd");
+    await writeFile(sentinel, "extends Node\n# SECRET\n");
+    await writeFiles(workspaceRoot, {
+      "project.godot":
+        '[application]\nconfig/name="Fixture"\nconfig/features=PackedStringArray("4.7")\n',
+      "addons/evil/plugin.cfg": '[plugin]\nname="Evil"\nscript="../../../secret.gd"\n',
+      "lib.gdextension":
+        '[configuration]\ncompatibility_minimum="4.7"\n[entry]\nlinux="../../secret.gd"\n',
+      "src/main.gd": "extends Node\n",
+    });
+    const config: UserGodotConfig = {
+      activeInstallation: null,
+      installations: { "test-install": { path: executable, editionHint: "standard" } },
+      discoverOnPath: false,
+    };
+    const service = createGodotProjectProbeService({
+      workspaceRoot,
+      config,
+      preference: { kind: "installation-id", installationId: "test-install" },
+      overrideSource: "cli",
+      backend: createScriptedBackend([]).backend,
+      probeRunner: createFakeGodotProbeRunner({ helpText: DEFAULT_HELP_TEXT }).runner,
+      cache: {
+        load: () => Promise.resolve(null),
+        store: () => Promise.resolve(),
+        count: () => Promise.resolve(0),
+      },
+      hostPath: null,
+      hostPathExt: null,
+      platform: process.platform,
+      runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
+      mirror: createProjectMirror(),
+      checkpointRoot: null,
+      parentEnvironment: {},
+    });
+    try {
+      const prepared = await service.prepare();
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+      // The escaping script cannot be hashed, so the plugin contributes no
+      // manifest entry, and the outside sentinel is never read.
+      expect(prepared.preview.risks.enabledEditorPlugins).toBe(0);
+      expect(prepared.preview.risks.gdextensions).toBeGreaterThanOrEqual(1);
+      expect(await readFile(sentinel, "utf8")).toBe("extends Node\n# SECRET\n");
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+      await rm(runsRoot, { recursive: true, force: true }).catch(() => undefined);
+      await rm(executableRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
 });
 
 function createStubGitInspector(
