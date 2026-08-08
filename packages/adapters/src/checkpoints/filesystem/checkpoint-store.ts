@@ -25,6 +25,14 @@ export interface FilesystemCheckpointStoreOptions {
    * negative value expires the pass immediately. Test-visible so the
    * expired-deadline fail-closed path is exercised deterministically. */
   readonly retentionDeadlineMs?: number;
+  /**
+   * Test-visible observation point invoked by retention capacity
+   * verification between the preimage lstat and the bounded read, so the
+   * changed-during-inspection fail-closed path is exercised
+   * deterministically. Never invoked by `loadPreimage()` or any other
+   * store path.
+   */
+  readonly retentionPreimageInspectionHook?: (preimagePath: string) => Promise<void> | void;
 }
 
 export const DEFAULT_CHECKPOINT_ROOT = join(homedir(), ".solaris", "checkpoints");
@@ -45,6 +53,21 @@ const CHECKPOINT_STATES: readonly string[] = [
   "uncertain",
 ];
 const CHECKPOINT_OPERATIONS: readonly string[] = ["create", "update", "delete"];
+
+/**
+ * The canonical operation-state invariant: an operation's meaning IS its
+ * before/after existence transition. `create` records the absence of a
+ * file that will appear; `update` records an existing file replaced by
+ * another state; `delete` records an existing file that will be removed.
+ */
+const OPERATION_STATE_MATRIX: Record<
+  CheckpointOperation,
+  { readonly beforeExists: boolean; readonly afterExists: boolean }
+> = {
+  create: { beforeExists: false, afterExists: true },
+  update: { beforeExists: true, afterExists: true },
+  delete: { beforeExists: true, afterExists: false },
+};
 
 /**
  * Known per-checkpoint layout: `metadata.json` and `preimage.bin` only.
@@ -111,6 +134,139 @@ export function checkedByteTotal(a: number, b: number): number {
     throw new RangeError("Byte totals exceed the safe integer range.");
   }
   return total;
+}
+
+export type VerifiedPreimageOutcome =
+  | { readonly status: "missing" }
+  | { readonly status: "verified"; readonly bytes: Buffer }
+  | { readonly status: "invalid"; readonly message: string }
+  | { readonly status: "aborted" }
+  | { readonly status: "expired" };
+
+/**
+ * Shared bounded preimage reading and hash verification. This is the single
+ * content-verification primitive for BOTH retention capacity verification
+ * and `loadPreimage()`: the exact bytes on disk are read (never assumed
+ * from a size), capped at `maxBytes + 1`, and required to match the
+ * metadata-declared byte length and SHA-256. Symlinks, junctions (detected
+ * through the caller's canonical-identity check), directories, and special
+ * files are rejected without being opened; non-`ENOENT` inspection failures
+ * are reported as `invalid` and are never treated as absence.
+ *
+ * The single-shot buffer is justified by the per-preimage bound: at most
+ * `maxBytes + 1` bytes are ever materialized, the pre-read lstat enforces
+ * the bound before any allocation-sensitive read, and the post-read length
+ * check enforces it again — so a file grown, shrunk, or substituted between
+ * the lstat and the read is detected through a length or hash mismatch and
+ * never fully materialized. Cancellation and deadline are honored between
+ * every inspection phase, and `onInspect` (used only by the retention pass
+ * through the test-visible store option) runs between the lstat and the
+ * open so a changed-during-inspection substitution can be exercised
+ * deterministically.
+ */
+export async function verifyPreimageBounded(options: {
+  readonly path: string;
+  readonly expected: { readonly sha256: string | null; readonly byteLength: number | null };
+  readonly maxBytes: number;
+  readonly context: string;
+  readonly signal?: AbortSignal | undefined;
+  readonly deadline?: number | undefined;
+  readonly onInspect?: ((path: string) => Promise<void> | void) | undefined;
+}): Promise<VerifiedPreimageOutcome> {
+  let stats;
+  try {
+    stats = await lstat(options.path);
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
+      return { status: "missing" };
+    }
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage cannot be inspected: ${describeError(error)}`,
+    };
+  }
+  const interrupted = verificationInterruption(options.signal, options.deadline);
+  if (interrupted !== null) {
+    return interrupted;
+  }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage is not a regular file.`,
+    };
+  }
+  if (stats.size > options.maxBytes) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage is oversized.`,
+    };
+  }
+  if (options.onInspect !== undefined) {
+    await options.onInspect(options.path);
+  }
+  const afterHook = verificationInterruption(options.signal, options.deadline);
+  if (afterHook !== null) {
+    return afterHook;
+  }
+  let handle;
+  try {
+    handle = await open(options.path, "r");
+  } catch (error: unknown) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage cannot be opened: ${describeError(error)}`,
+    };
+  }
+  let bytes: Buffer;
+  try {
+    const buffer = Buffer.allocUnsafe(options.maxBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > options.maxBytes) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${options.context} preimage is oversized.`,
+      };
+    }
+    bytes = buffer.subarray(0, bytesRead);
+  } catch (error: unknown) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage cannot be read: ${describeError(error)}`,
+    };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+  const afterRead = verificationInterruption(options.signal, options.deadline);
+  if (afterRead !== null) {
+    return afterRead;
+  }
+  if (options.expected.byteLength !== null && bytes.length !== options.expected.byteLength) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage size (${bytes.length} bytes) disagrees with its metadata (${options.expected.byteLength} bytes).`,
+    };
+  }
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  if (options.expected.sha256 !== null && hash !== options.expected.sha256) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage hash does not match its metadata.`,
+    };
+  }
+  return { status: "verified", bytes };
+}
+
+function verificationInterruption(
+  signal: AbortSignal | undefined,
+  deadline: number | undefined,
+): VerifiedPreimageOutcome | null {
+  if (signal?.aborted) {
+    return { status: "aborted" };
+  }
+  if (deadline !== undefined && Date.now() >= deadline) {
+    return { status: "expired" };
+  }
+  return null;
 }
 
 export async function createFilesystemCheckpointStore(
@@ -302,13 +458,19 @@ export async function createFilesystemCheckpointStore(
    * Every existing checkpoint must be fully inspectable and match the
    * exact `cp_<valid-id>/{metadata.json,preimage.bin}` layout: any entry
    * whose metadata is invalid, unreadable, oversized, or linked — or whose
-   * preimage presence or actual size disagrees with its validated metadata
-   * — as well as unknown files, nested directories, temporary files,
-   * case-variant duplicate names, links, special files, or entries that
-   * cannot be inspected, makes capacity unverifiable and refuses the new
-   * checkpoint. The store never deletes, renames, repairs, truncates, or
-   * quarantines unexpected entries: the entire tree is preserved for
-   * manual inspection. Inspection is incremental (per-directory entry
+   * preimage presence, actual size, or actual SHA-256 disagrees with its
+   * validated metadata — as well as unknown files, nested directories,
+   * temporary files, case-variant duplicate names, links, special files,
+   * or entries that cannot be inspected, makes capacity unverifiable and
+   * refuses the new checkpoint. A declared preimage is read through the
+   * shared bounded verifier, which materializes at most
+   * `maxPreimageBytes + 1` bytes and requires the exact bytes read to
+   * match the metadata byte length and SHA-256: a same-size corrupted
+   * preimage is a refusal, and any change that is detectable between the
+   * lstat and the read (growth, shrinkage, substitution, disappearance,
+   * unreadability) is a refusal. The store never deletes, renames, repairs,
+   * truncates, or quarantines unexpected entries: the entire tree is
+   * preserved for manual inspection. Inspection is incremental (per-directory entry
    * caps), bounded (a global inspected-entry cap, pass deadline,
    * cancellation), and link-free (dirent and lstat types are trusted;
    * nothing is followed). Byte arithmetic is overflow-safe.
@@ -402,45 +564,64 @@ export async function createFilesystemCheckpointStore(
         const { checkpoint, metadataBytes } = await loadMetadataWithByteCount(name);
         const expectsPreimage = checkpoint.before.exists;
         const preimagePath = join(checkpointPath(checkpoint.id), "preimage.bin");
-        // ENOENT means "no preimage"; ANY other inspection error makes the
-        // entry's storage contribution unknowable and must fail closed
-        // rather than be assumed to consume zero bytes.
-        const preimageStats = await lstat(preimagePath).catch((error: unknown) => {
-          if (isNotFoundError(error)) {
-            return null;
-          }
-          throw error;
-        });
         let preimageSize = 0;
-        if (preimageStats === null) {
-          if (expectsPreimage) {
-            throw new Error(
-              `Checkpoint ${name} metadata declares a preimage but its preimage.bin is missing.`,
-            );
-          }
-        } else {
-          await assertCheckpointPathSecure(preimagePath);
-          if (preimageStats.isSymbolicLink() || !preimageStats.isFile()) {
-            throw new Error(`Checkpoint ${name} preimage is not a regular file.`);
-          }
-          if (!expectsPreimage) {
+        if (!expectsPreimage) {
+          // The metadata declares no preimage: only absence is acceptable.
+          // ENOENT means "no preimage"; ANY other inspection outcome makes
+          // the entry's storage contribution unknowable and must fail
+          // closed rather than be assumed to consume zero bytes.
+          const preimageStats = await lstat(preimagePath).catch((error: unknown) => {
+            if (isNotFoundError(error)) {
+              return null;
+            }
+            throw error;
+          });
+          if (preimageStats !== null) {
             throw new Error(
               `Checkpoint ${name} metadata declares no preimage but a preimage.bin exists.`,
             );
           }
-          if (preimageStats.size > maxPreimageBytes) {
-            throw new Error(`Checkpoint ${name} preimage is oversized.`);
+        } else {
+          await assertCheckpointPathSecure(preimagePath);
+          // The actual bytes on disk are read and hash-verified against the
+          // metadata: a same-size corrupted preimage is detected, and the
+          // exact bytes read are the disk accounting (never a size guess).
+          const outcome = await verifyPreimageBounded({
+            path: preimagePath,
+            expected: checkpoint.before,
+            maxBytes: maxPreimageBytes,
+            context: name,
+            signal,
+            deadline,
+            onInspect: options.retentionPreimageInspectionHook,
+          });
+          if (outcome.status === "aborted") {
+            throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
           }
-          if (preimageStats.size !== checkpoint.before.byteLength) {
+          if (outcome.status === "expired") {
+            refuse("the pass deadline expired before capacity could be verified");
+          }
+          if (outcome.status === "missing") {
             throw new Error(
-              `Checkpoint ${name} preimage size (${preimageStats.size} bytes) disagrees with its metadata (${checkpoint.before.byteLength} bytes).`,
+              `Checkpoint ${name} metadata declares a preimage but its preimage.bin is missing.`,
             );
           }
-          preimageSize = preimageStats.size;
+          if (outcome.status === "invalid") {
+            throw new Error(outcome.message);
+          }
+          if (outcome.status !== "verified") {
+            throw new Error(
+              `Checkpoint ${name} preimage verification returned an unexpected outcome.`,
+            );
+          }
+          preimageSize = outcome.bytes.length;
         }
         totalBytes = checkedByteTotal(totalBytes, checkedByteTotal(metadataBytes, preimageSize));
       } catch (error: unknown) {
         if (error instanceof CheckpointStorageLimitError) {
+          throw error;
+        }
+        if (error instanceof DOMException && error.name === "AbortError") {
           throw error;
         }
         refuse(describeError(error));
@@ -635,29 +816,24 @@ export async function createFilesystemCheckpointStore(
     }
     const preimagePath = join(checkpointPath(checkpointId), "preimage.bin");
     await assertCheckpointPathSecure(preimagePath);
-    const stats = await lstat(preimagePath).catch(() => null);
-    if (stats === null || stats.isSymbolicLink()) {
-      throw new Error(`Checkpoint preimage is missing or a symbolic link: ${checkpointId}.`);
+    const outcome = await verifyPreimageBounded({
+      path: preimagePath,
+      expected: checkpoint.before,
+      maxBytes: maxPreimageBytes,
+      context: checkpointId,
+    });
+    if (outcome.status === "missing") {
+      throw new Error(`Checkpoint preimage is missing: ${checkpointId}.`);
     }
-    if (stats.size > maxPreimageBytes) {
-      throw new Error(`Checkpoint preimage is oversized: ${checkpointId}.`);
+    if (outcome.status === "invalid") {
+      throw new Error(outcome.message);
     }
-    let bytes: Buffer;
-    try {
-      bytes = await readFile(preimagePath);
-    } catch (error: unknown) {
-      throw new Error(`Checkpoint preimage cannot be read: ${describeError(error)}`);
+    if (outcome.status === "aborted" || outcome.status === "expired") {
+      throw new Error(
+        `Checkpoint preimage verification was interrupted: ${checkpointId}. (Unreachable without a signal or deadline.)`,
+      );
     }
-    // Post-read byte re-check: a preimage grown or swapped after the lstat
-    // is rejected even though it was already read.
-    if (bytes.length > maxPreimageBytes) {
-      throw new Error(`Checkpoint preimage is oversized: ${checkpointId}.`);
-    }
-    const hash = createHash("sha256").update(bytes).digest("hex");
-    if (checkpoint.before.sha256 !== null && hash !== checkpoint.before.sha256) {
-      throw new Error(`Checkpoint preimage hash does not match its metadata: ${checkpointId}.`);
-    }
-    return new Uint8Array(bytes);
+    return new Uint8Array(outcome.bytes);
   }
 
   return { prepare, finalizeApplied, markUndone, markState, get, list, loadPreimage };
@@ -694,9 +870,8 @@ function validateMetadata(
     throw new Error(checkpointMessage(id, "Checkpoint relative path is invalid"));
   }
   const state = record["state"];
-  const operation = record["operation"];
-  if (!isCheckpointState(state) || !isCheckpointOperation(operation)) {
-    throw new Error(checkpointMessage(id, "Checkpoint state or operation is invalid"));
+  if (!isCheckpointState(state)) {
+    throw new Error(checkpointMessage(id, "Checkpoint state is invalid"));
   }
   const toolName = record["toolName"];
   if (
@@ -717,6 +892,12 @@ function validateMetadata(
   }
   const before = validateFileState(record["before"], id, "before", maxPreimageBytes);
   const after = validateFileState(record["after"], id, "after", maxPreimageBytes);
+  const operation = validateOperationFileStates(
+    record["operation"],
+    before.exists,
+    after.exists,
+    id,
+  );
   const preview = asRecordStrict(record["preview"], "preview", id, PREVIEW_KEYS);
   const addedLines = preview["addedLines"];
   const removedLines = preview["removedLines"];
@@ -778,10 +959,6 @@ function validatePreparedCheckpoint(
   if (typeof relativePath !== "string" || validateRelativeWorkspacePath(relativePath) !== null) {
     throw new Error("Checkpoint relative path is invalid.");
   }
-  const operation = record["operation"];
-  if (!isCheckpointOperation(operation)) {
-    throw new Error("Checkpoint operation is invalid.");
-  }
   const toolName = record["toolName"];
   if (
     typeof toolName !== "string" ||
@@ -792,6 +969,12 @@ function validatePreparedCheckpoint(
   }
   const before = validatePreparedFileState(record["before"], maxPreimageBytes);
   const after = validateFileState(record["after"], "", "after", maxPreimageBytes);
+  const operation = validateOperationFileStates(
+    record["operation"],
+    before.exists,
+    after.exists,
+    "",
+  );
   const preview = asRecordStrict(record["preview"], "preview", "", PREVIEW_KEYS);
   const addedLines = preview["addedLines"];
   const removedLines = preview["removedLines"];
@@ -889,6 +1072,36 @@ function validateFileState(
     );
   }
   return { exists: false, sha256: null, byteLength: null };
+}
+
+/**
+ * Shared operation-state validator: `operation` must be one of the three
+ * checkpoint operations AND its before/after existence flags must match the
+ * canonical invariant matrix (create: absent->present; update:
+ * present->present; delete: present->absent). Used by BOTH the prepared-
+ * record validator and the stored-metadata validator so the two paths can
+ * never diverge; the operation-state relationship is the invariant, never
+ * an inference from tool names.
+ */
+function validateOperationFileStates(
+  operation: unknown,
+  beforeExists: boolean,
+  afterExists: boolean,
+  id: string,
+): CheckpointOperation {
+  if (!isCheckpointOperation(operation)) {
+    throw new Error(checkpointMessage(id, "Checkpoint operation is invalid"));
+  }
+  const expected = OPERATION_STATE_MATRIX[operation];
+  if (beforeExists !== expected.beforeExists || afterExists !== expected.afterExists) {
+    throw new Error(
+      checkpointMessage(
+        id,
+        `Checkpoint operation "${operation}" requires the before/after existence transition ${expected.beforeExists}->${expected.afterExists}, but the record declares ${beforeExists}->${afterExists}`,
+      ),
+    );
+  }
+  return operation;
 }
 
 function asRecordStrict(

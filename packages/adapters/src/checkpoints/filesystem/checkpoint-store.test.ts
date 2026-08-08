@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PreparedCheckpoint } from "@solaris/core";
+import type { CheckpointOperation, PreparedCheckpoint } from "@solaris/core";
 import {
   CheckpointStorageLimitError,
   checkedByteTotal,
@@ -639,6 +639,409 @@ describe("prepared record validation", () => {
     });
     expect(checkpoint.after.exists).toBe(false);
     expect(await context.store.loadPreimage(checkpoint.id)).not.toBeNull();
+  });
+});
+
+describe("operation-state invariants", () => {
+  const beforeContent = "before content\n";
+  const afterContent = "after content\n";
+
+  function combinationBefore(beforeExists: boolean): PreparedCheckpoint["before"] {
+    if (beforeExists) {
+      return {
+        exists: true,
+        sha256: hashOf(beforeContent),
+        byteLength: Buffer.byteLength(beforeContent),
+        bytes: Buffer.from(beforeContent),
+      };
+    }
+    return { exists: false, sha256: null, byteLength: null, bytes: null };
+  }
+
+  function combinationAfter(afterExists: boolean): PreparedCheckpoint["after"] {
+    if (afterExists) {
+      return {
+        exists: true,
+        sha256: hashOf(afterContent),
+        byteLength: Buffer.byteLength(afterContent),
+      };
+    }
+    return { exists: false, sha256: null, byteLength: null };
+  }
+
+  const MATRIX_COMBINATIONS: ReadonlyArray<
+    readonly [CheckpointOperation, boolean, boolean, boolean]
+  > = [
+    ["create", false, false, false],
+    ["create", false, true, true],
+    ["create", true, false, false],
+    ["create", true, true, false],
+    ["update", false, false, false],
+    ["update", false, true, false],
+    ["update", true, false, false],
+    ["update", true, true, true],
+    ["delete", false, false, false],
+    ["delete", false, true, false],
+    ["delete", true, false, true],
+    ["delete", true, true, false],
+  ];
+
+  it("CREATE_WITH_PREIMAGE_REFUSED: rejects create with an existing before-state", async () => {
+    const context = await withStore();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate({ operation: "create" }))).rejects.toThrow(
+      /existence transition/,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    const valid = await context.store.prepare({
+      ...preparedUpdate(),
+      operation: "create",
+      before: { exists: false, sha256: null, byteLength: null, bytes: null },
+      after: { exists: true, sha256: hashOf("new\n"), byteLength: 4 },
+    });
+    expect(valid.state).toBe("prepared");
+  });
+
+  it("enforces the operation-state matrix for prepared records with zero filesystem changes on refusal", async () => {
+    for (const [operation, beforeExists, afterExists, shouldPass] of MATRIX_COMBINATIONS) {
+      const context = await withStore();
+      const before = await snapshotTree(context.rootDirectory);
+      const pending = context.store.prepare(
+        preparedUpdate({
+          operation,
+          before: combinationBefore(beforeExists),
+          after: combinationAfter(afterExists),
+        }),
+      );
+      if (shouldPass) {
+        const checkpoint = await pending;
+        expect(checkpoint.operation).toBe(operation);
+      } else {
+        await expect(pending).rejects.toThrow(/existence transition/);
+        expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+        const valid = await context.store.prepare(preparedUpdate());
+        expect(valid.state).toBe("prepared");
+      }
+    }
+  });
+
+  it("enforces the operation-state matrix for stored metadata: get() refuses and capacity is unverifiable", async () => {
+    for (const [operation, beforeExists, afterExists, shouldPass] of MATRIX_COMBINATIONS) {
+      const context = await withStore();
+      const first = await context.store.prepare(preparedUpdate());
+      await rewriteMetadata(context, first.id, (record) => {
+        record["operation"] = operation;
+        record["before"] = {
+          exists: beforeExists,
+          sha256: beforeExists ? hashOf(beforeContent) : null,
+          byteLength: beforeExists ? Buffer.byteLength(beforeContent) : null,
+        };
+        record["after"] = {
+          exists: afterExists,
+          sha256: afterExists ? hashOf(afterContent) : null,
+          byteLength: afterExists ? Buffer.byteLength(afterContent) : null,
+        };
+      });
+      if (shouldPass) {
+        expect((await context.store.get(first.id))?.operation).toBe(operation);
+      } else {
+        expect(await context.store.get(first.id)).toBeNull();
+        await expectRefusalPreservesTree(context, () => context.store.prepare(preparedUpdate()));
+      }
+    }
+  });
+
+  it("rejects delete without a required preimage", async () => {
+    const context = await withStore();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(
+      context.store.prepare(
+        preparedUpdate({
+          operation: "delete",
+          before: { exists: false, sha256: null, byteLength: null, bytes: null },
+          after: { exists: false, sha256: null, byteLength: null },
+        }),
+      ),
+    ).rejects.toThrow(/existence transition/);
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("rejects create whose after-state is absent", async () => {
+    const context = await withStore();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(
+      context.store.prepare(
+        preparedUpdate({
+          operation: "create",
+          before: { exists: false, sha256: null, byteLength: null, bytes: null },
+          after: { exists: false, sha256: null, byteLength: null },
+        }),
+      ),
+    ).rejects.toThrow(/existence transition/);
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("rejects update whose before-state is absent", async () => {
+    const context = await withStore();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(
+      context.store.prepare(
+        preparedUpdate({
+          operation: "update",
+          before: { exists: false, sha256: null, byteLength: null, bytes: null },
+        }),
+      ),
+    ).rejects.toThrow(/existence transition/);
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("rejects update whose after-state is absent", async () => {
+    const context = await withStore();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(
+      context.store.prepare(
+        preparedUpdate({
+          operation: "update",
+          after: { exists: false, sha256: null, byteLength: null },
+        }),
+      ),
+    ).rejects.toThrow(/existence transition/);
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+
+  it("rejects delete whose after-state is present", async () => {
+    const context = await withStore();
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate({ operation: "delete" }))).rejects.toThrow(
+      /existence transition/,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  });
+});
+
+describe("capacity preimage content verification", () => {
+  const originalContent = "before content\n";
+
+  function preimagePathOf(context: StoreContext, checkpointId: string): string {
+    return join(checkpointDirOf(context, checkpointId), "preimage.bin");
+  }
+
+  function restorePreimage(
+    context: StoreContext,
+    checkpointId: string,
+    content: string,
+  ): Promise<void> {
+    return writeFile(preimagePathOf(context, checkpointId), content, "utf8");
+  }
+
+  async function expectCorruptionRefusal(context: StoreContext): Promise<void> {
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+  }
+
+  it("CORRUPT_PREIMAGE_REFUSED: refuses a same-size corrupted preimage and accepts after repair", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await restorePreimage(context, first.id, "tampered bytes!");
+    await expectCorruptionRefusal(context);
+    // Repair: the original bytes make capacity provable again.
+    await restorePreimage(context, first.id, originalContent);
+    const valid = await context.store.prepare(preparedUpdate());
+    expect(valid.state).toBe("prepared");
+  });
+
+  it("refuses a shorter corrupted preimage and accepts after repair", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await restorePreimage(context, first.id, "short");
+    await expectCorruptionRefusal(context);
+    await restorePreimage(context, first.id, originalContent);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses a longer corrupted preimage and accepts after repair", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await restorePreimage(context, first.id, "this content is far too long");
+    await expectCorruptionRefusal(context);
+    await restorePreimage(context, first.id, originalContent);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses an empty preimage replaced with non-empty content and accepts after repair", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(
+      preparedUpdate({
+        before: { exists: true, sha256: hashOf(""), byteLength: 0, bytes: Buffer.alloc(0) },
+      }),
+    );
+    await restorePreimage(context, first.id, "x");
+    await expectCorruptionRefusal(context);
+    await writeFile(preimagePathOf(context, first.id), "");
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses a non-empty preimage replaced with empty content and accepts after repair", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    await writeFile(preimagePathOf(context, first.id), "");
+    await expectCorruptionRefusal(context);
+    await restorePreimage(context, first.id, originalContent);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses when the metadata hash is changed while bytes remain unchanged and accepts after repair", async () => {
+    const context = await withStore();
+    const first = await context.store.prepare(preparedUpdate());
+    const originalHash = (await readMetadata(context, first.id))["before"] as Record<
+      string,
+      unknown
+    >;
+    await rewriteMetadata(context, first.id, (record) => {
+      (record["before"] as Record<string, unknown>)["sha256"] = "a".repeat(64);
+    });
+    await expectCorruptionRefusal(context);
+    await rewriteMetadata(context, first.id, (record) => {
+      (record["before"] as Record<string, unknown>)["sha256"] = originalHash["sha256"];
+    });
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses a preimage substituted during inspection via the deterministic hook and accepts after repair", async () => {
+    let substituted = false;
+    const context = await withStore({
+      retentionPreimageInspectionHook: async (preimagePath: string) => {
+        if (!substituted) {
+          substituted = true;
+          await writeFile(preimagePath, "swapped bytes!", "utf8");
+        }
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    // The hook swaps the preimage between the lstat and the open: the
+    // bounded verifier reads the substituted content and its hash does not
+    // match the metadata.
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    // Repair the hook's own substitution, then prove the store changed
+    // nothing beyond it and capacity is provable again.
+    await restorePreimage(context, first.id, originalContent);
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses a preimage that disappears during inspection via the deterministic hook", async () => {
+    let deleted = false;
+    const context = await withStore({
+      retentionPreimageInspectionHook: async (preimagePath: string) => {
+        if (!deleted) {
+          deleted = true;
+          await rm(preimagePath, { force: true });
+        }
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    // Repair the hook's own deletion, then prove the store changed nothing
+    // beyond it and capacity is provable again.
+    await restorePreimage(context, first.id, originalContent);
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it(
+    "refuses a preimage that becomes unreadable",
+    { skip: process.platform === "win32" },
+    async () => {
+      const context = await withStore();
+      const first = await context.store.prepare(preparedUpdate());
+      await chmod(preimagePathOf(context, first.id), 0o000);
+      try {
+        await expectCorruptionRefusal(context);
+      } finally {
+        await chmod(preimagePathOf(context, first.id), 0o600).catch(() => undefined);
+      }
+      expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+    },
+  );
+
+  it("refuses an oversized preimage and accepts after repair", async () => {
+    const context = await withStore({ maxPreimageBytes: 16 });
+    const first = await context.store.prepare(preparedUpdate());
+    await writeFile(preimagePathOf(context, first.id), "x".repeat(24), "utf8");
+    await expectCorruptionRefusal(context);
+    await restorePreimage(context, first.id, originalContent);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it(
+    "refuses a junction substituted for the preimage and accepts after repair",
+    { skip: process.platform !== "win32" },
+    async () => {
+      const context = await withStore();
+      const first = await context.store.prepare(preparedUpdate());
+      const preimagePath = preimagePathOf(context, first.id);
+      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-junction-"));
+      registerTempDir(outside);
+      await rm(preimagePath, { force: true });
+      const { execFileSync } = await import("node:child_process");
+      try {
+        execFileSync("cmd", ["/c", "mklink", "/J", preimagePath, outside], { stdio: "ignore" });
+      } catch {
+        return; // junction creation unsupported in this environment
+      }
+      await expectCorruptionRefusal(context);
+      await rm(preimagePath, { recursive: true, force: true });
+      await restorePreimage(context, first.id, originalContent);
+      expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+    },
+  );
+
+  it("cancellation during bounded verification aborts without mutation", async () => {
+    const controller = new AbortController();
+    const context = await withStore({
+      retentionPreimageInspectionHook: () => {
+        controller.abort();
+      },
+    });
+    await context.store.prepare(preparedUpdate());
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate(), controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    // A fresh (non-aborted) preparation succeeds.
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("deadline expiry during bounded verification refuses without mutation", async () => {
+    const context = await withStore({
+      retentionDeadlineMs: 60,
+      retentionPreimageInspectionHook: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      },
+    });
+    await context.store.prepare(preparedUpdate());
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    // A fresh store over the same tree (default deadline, no sleeping hook)
+    // proves capacity and accepts a new checkpoint.
+    const refreshed = await withStore({
+      workspaceRoot: context.workspaceRoot,
+      rootDirectory: context.rootDirectory,
+    });
+    expect((await refreshed.store.prepare(preparedUpdate())).state).toBe("prepared");
   });
 });
 
