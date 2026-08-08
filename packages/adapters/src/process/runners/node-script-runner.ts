@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   COMMAND_LIMITS,
   createPreparedCommand,
@@ -31,6 +32,181 @@ export interface NodeScriptRunnerOptions {
 
 const ALLOWED_SCRIPT_EXTENSIONS: readonly string[] = [".js", ".mjs", ".cjs"];
 
+/**
+ * Node startup flags for the spawned request. They must all precede the
+ * script path (the first non-option argument).
+ *  - `--no-addons` denies native addon loading (process.dlopen).
+ *  - `--disallow-code-generation-from-strings` denies eval and new Function.
+ */
+const NODE_SELF_CONTAINMENT_FLAGS: readonly string[] = [
+  "--no-addons",
+  "--disallow-code-generation-from-strings",
+];
+
+/** Solaris-owned ESM preload that denies every additional module load. */
+export const SOLARIS_ESM_DENIAL_BOOTSTRAP_FILE = "solaris-deny-imports.bootstrap.mjs";
+
+/** Solaris-owned CommonJS preload that denies every additional module load. */
+export const SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE = "solaris-deny-requires.bootstrap.cjs";
+
+/**
+ * Private environment variable carrying the staged entry path to the
+ * Solaris-owned bootstraps. It is added only to the spawned child
+ * environment after the allowlisted base is built, and it is never part of
+ * the approval digest (it is derived from the approved plan at execution).
+ */
+const STAGED_ENTRY_ENVIRONMENT_NAME = "SOLARIS_STAGED_ENTRY";
+
+/**
+ * CommonJS preload (loaded via `--require`) that mechanically denies every
+ * module-loading surface of the spawned process: `require` and direct
+ * `Module._load` calls throw for every request except the single staged
+ * entry (which Node itself loads as the main module) and Node's own
+ * builtin modules (which keep Node's internals functional and never load
+ * user code). The `Worker` constructor is replaced with a throwing stub so
+ * worker threads cannot load unapproved files; the vm code-generation
+ * surfaces and the child-process spawn surfaces are replaced with throwing
+ * stubs so unapproved code cannot be compiled or executed in child
+ * processes. This file is CommonJS (`.cjs`) because `--require` preloads
+ * must be CommonJS. Its bytes are a Solaris-controlled constant.
+ */
+const SOLARIS_CJS_DENIAL_BOOTSTRAP_CONTENT = `"use strict";
+const Module = require("node:module");
+const path = require("node:path");
+const workerThreads = require("node:worker_threads");
+const vm = require("node:vm");
+const childProcess = require("node:child_process");
+const cluster = require("node:cluster");
+
+const entryPath = path.resolve(process.env.SOLARIS_STAGED_ENTRY);
+const originalModuleLoad = Module._load;
+
+function denied(request) {
+  const error = new Error(
+    "Solaris: additional module loading is denied (requested \\"" +
+      String(request) +
+      '\\"); the approved node-script executes alone from its private copy and must be self-contained',
+  );
+  error.code = "SOLARIS_DENIED_MODULE_LOAD";
+  throw error;
+}
+
+function denySurface(target, property) {
+  Object.defineProperty(target, property, {
+    configurable: true,
+    writable: true,
+    value: function deniedSurface() {
+      return denied(property);
+    },
+  });
+}
+
+Module._load = function (request, parent, isMain) {
+  if (typeof request !== "string") {
+    return denied(request);
+  }
+  if (request.startsWith("node:") || Module.builtinModules.includes(request)) {
+    return originalModuleLoad(request, parent, isMain);
+  }
+  if (isMain === true) {
+    try {
+      if (path.resolve(Module._resolveFilename(request, parent, isMain)) === entryPath) {
+        return originalModuleLoad(request, parent, isMain);
+      }
+    } catch (error) {
+      // a request the resolver rejects falls through to the denial below
+    }
+  }
+  return denied(request);
+};
+
+Module.prototype.require = function (request) {
+  return denied(request);
+};
+
+denySurface(workerThreads, "Worker");
+for (const property of [
+  "Script",
+  "SourceTextModule",
+  "SyntheticModule",
+  "compileFunction",
+  "runInThisContext",
+  "runInNewContext",
+  "runInContext",
+]) {
+  denySurface(vm, property);
+}
+for (const property of [
+  "spawn",
+  "spawnSync",
+  "exec",
+  "execSync",
+  "execFile",
+  "execFileSync",
+  "fork",
+]) {
+  denySurface(childProcess, property);
+}
+denySurface(cluster, "fork");
+`;
+
+/**
+ * ESM preload (loaded via `--import`) that registers a module loader whose
+ * `resolve` hook throws for every specifier except the single staged entry.
+ * The hook chain applies process-wide (static and dynamic imports in ESM
+ * and in CommonJS `import()`), so no additional module can ever be loaded.
+ * The entry href is embedded into the inline loader source, so the loader
+ * itself needs no imports. Loader-hook registration on the `node:module`
+ * exports is additionally shadowed (best-effort) so the script cannot
+ * re-register hooks. Its bytes are a Solaris-controlled constant.
+ */
+const SOLARIS_ESM_DENIAL_BOOTSTRAP_CONTENT = `import { register } from "node:module";
+import { pathToFileURL } from "node:url";
+
+const entryHref = pathToFileURL(process.env.SOLARIS_STAGED_ENTRY).href;
+const loaderSource =
+  "let entryHref = " + JSON.stringify(entryHref) + ";\\n" +
+  "export async function resolve(specifier, context, nextResolve) {\\n" +
+  "  if (specifier === entryHref) {\\n" +
+  "    return nextResolve(specifier, context);\\n" +
+  "  }\\n" +
+  "  const e = new Error(\\"Solaris: additional code loading is denied; the approved node-script executes alone and must be self-contained\\");\\n" +
+  "  e.code = \\"SOLARIS_DENIED_LOAD\\";\\n" +
+  "  throw e;\\n" +
+  "}\\n";
+const previousNoDeprecation = process.noDeprecation;
+try {
+  process.noDeprecation = true;
+} catch {
+  // best-effort suppression of the module.register() deprecation warning
+}
+register("data:text/javascript," + encodeURIComponent(loaderSource));
+try {
+  process.noDeprecation = previousNoDeprecation;
+} catch {
+  // best-effort restore
+}
+
+const moduleExports = process.getBuiltinModule("node:module");
+for (const property of ["register", "registerHooks"]) {
+  try {
+    Object.defineProperty(moduleExports, property, {
+      configurable: true,
+      writable: true,
+      value: function deniedHooks() {
+        const error = new Error(
+          "Solaris: module loader hook registration is denied; the approved node-script executes alone",
+        );
+        error.code = "SOLARIS_DENIED_HOOKS";
+        throw error;
+      },
+    });
+  } catch {
+    // shadowing is best-effort; the deny-all resolve hook remains authoritative
+  }
+}
+`;
+
 interface NodeScriptFile {
   readonly workspaceRelativePath: string;
   readonly absolutePath: string;
@@ -46,13 +222,23 @@ interface NodeScriptPlan {
   readonly nodeIdentity: TrustedNodeIdentity;
 }
 
+interface StagedRunFiles {
+  readonly scriptPath: string;
+  readonly esmBootstrapPath: string;
+  readonly cjsBootstrapPath: string;
+  readonly scriptSha256: string;
+  readonly esmBootstrapSha256: string;
+  readonly cjsBootstrapSha256: string;
+}
+
 export function createNodeScriptRunner(options: NodeScriptRunnerOptions): CommandRunner {
   const plans = new WeakMap<PreparedCommand, NodeScriptPlan>();
 
   return {
     definition: {
       id: "node-script",
-      description: "Run one JavaScript file through Solaris's trusted Node.js executable.",
+      description:
+        "Run one self-contained JavaScript file through Solaris's trusted Node.js executable; the file executes alone from a digest-bound private copy and every additional code-loading mechanism is denied at runtime.",
     },
     async prepare(
       input: unknown,
@@ -133,23 +319,68 @@ export function createNodeScriptRunner(options: NodeScriptRunnerOptions): Comman
       if (stagedScript.status !== "ready") {
         return stagedScript;
       }
-      const environment = buildCommandEnvironment(
-        readParentEnvironment(),
-        {
-          home: context.runPaths.home,
-          temp: context.runPaths.temp,
-          npmCache: context.runPaths.npmCache,
-          npmUserConfig: context.runPaths.npmUserConfig,
-        },
-        { npm: false },
+      const esmBootstrap = await stageBootstrapFile(
+        context.runPaths.scriptCache,
+        SOLARIS_ESM_DENIAL_BOOTSTRAP_FILE,
+        SOLARIS_ESM_DENIAL_BOOTSTRAP_CONTENT,
       );
+      if (esmBootstrap.status !== "ready") {
+        return esmBootstrap;
+      }
+      const cjsBootstrap = await stageBootstrapFile(
+        context.runPaths.scriptCache,
+        SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE,
+        SOLARIS_CJS_DENIAL_BOOTSTRAP_CONTENT,
+      );
+      if (cjsBootstrap.status !== "ready") {
+        return cjsBootstrap;
+      }
+      const stagedFiles: StagedRunFiles = {
+        scriptPath: stagedScript.privatePath,
+        esmBootstrapPath: esmBootstrap.privatePath,
+        cjsBootstrapPath: cjsBootstrap.privatePath,
+        scriptSha256: plan.script.sha256,
+        esmBootstrapSha256: sha256OfUtf8(SOLARIS_ESM_DENIAL_BOOTSTRAP_CONTENT),
+        cjsBootstrapSha256: sha256OfUtf8(SOLARIS_CJS_DENIAL_BOOTSTRAP_CONTENT),
+      };
+      const finalVerification = await verifyStagedRunFiles(stagedFiles);
+      if (finalVerification !== null) {
+        return { status: "conflict", message: finalVerification };
+      }
+      // The run directory is Solaris-private (0700); the residual window
+      // between this final verification and the backend's spawn stays
+      // within that trust domain. It is documented, not claimed closed.
+      const environment: Record<string, string> = {
+        ...buildCommandEnvironment(
+          readParentEnvironment(),
+          {
+            home: context.runPaths.home,
+            temp: context.runPaths.temp,
+            npmCache: context.runPaths.npmCache,
+            npmUserConfig: context.runPaths.npmUserConfig,
+          },
+          { npm: false },
+        ),
+      };
+      // Belt and braces: the child-environment allowlist already excludes
+      // NODE_OPTIONS; never leave a startup-options injection vector open.
+      delete environment["NODE_OPTIONS"];
+      environment[STAGED_ENTRY_ENVIRONMENT_NAME] = stagedScript.privatePath;
       return {
         status: "ready",
         request: {
           executable: plan.nodeIdentity.executable,
           executableIdentity: `node ${plan.nodeIdentity.version}`,
           executableVersion: plan.nodeIdentity.version,
-          arguments: [stagedScript.privatePath, ...plan.arguments],
+          arguments: [
+            ...NODE_SELF_CONTAINMENT_FLAGS,
+            "--import",
+            pathToFileURL(esmBootstrap.privatePath).href,
+            "--require",
+            cjsBootstrap.privatePath,
+            stagedScript.privatePath,
+            ...plan.arguments,
+          ],
           workingDirectory: plan.workingDirectory.absolutePath,
           environment,
           digest: revalidated.digest,
@@ -219,6 +450,82 @@ async function stageApprovedScript(
     };
   }
   return { status: "ready", privatePath };
+}
+
+/**
+ * Writes one Solaris-owned bootstrap file into the private run directory
+ * with exclusive creation (`wx`) and verifies the written bytes against the
+ * expected Solaris-controlled content. A pre-existing or tampered file at
+ * the staging path always conflicts; nothing is ever overwritten.
+ */
+async function stageBootstrapFile(
+  scriptCacheDirectory: string,
+  fileName: string,
+  expectedContent: string,
+): Promise<
+  | { readonly status: "conflict"; readonly message: string }
+  | { readonly status: "ready"; readonly privatePath: string }
+> {
+  const expectedBytes = Buffer.from(expectedContent, "utf8");
+  const expectedSha256 = sha256OfUtf8(expectedContent);
+  const privatePath = path.join(scriptCacheDirectory, fileName);
+  try {
+    await writeFile(privatePath, expectedBytes, { flag: "wx" });
+  } catch (error: unknown) {
+    return {
+      status: "conflict",
+      message: `The Solaris loading-denial bootstrap could not be staged in the private run directory: ${describeFsError(error)}`,
+    };
+  }
+  let stagedBytes: Buffer;
+  try {
+    stagedBytes = await readFile(privatePath);
+  } catch (error: unknown) {
+    return {
+      status: "conflict",
+      message: `The Solaris loading-denial bootstrap could not be verified: ${describeFsError(error)}`,
+    };
+  }
+  if (
+    stagedBytes.length !== expectedBytes.length ||
+    !stagedBytes.equals(expectedBytes) ||
+    createHash("sha256").update(stagedBytes).digest("hex") !== expectedSha256
+  ) {
+    return {
+      status: "conflict",
+      message: "The Solaris loading-denial bootstrap does not match the Solaris-controlled bytes.",
+    };
+  }
+  return { status: "ready", privatePath };
+}
+
+/**
+ * Immediate re-verification of every staged run file (the script and both
+ * bootstraps) right before the execution request is returned. Any file that
+ * no longer carries its expected bytes refuses the execution.
+ */
+async function verifyStagedRunFiles(files: StagedRunFiles): Promise<string | null> {
+  const entries: ReadonlyArray<readonly [string, string, string]> = [
+    ["The staged script", files.scriptPath, files.scriptSha256],
+    ["The ESM loading-denial bootstrap", files.esmBootstrapPath, files.esmBootstrapSha256],
+    ["The CommonJS loading-denial bootstrap", files.cjsBootstrapPath, files.cjsBootstrapSha256],
+  ];
+  for (const [label, filePath, expectedSha256] of entries) {
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(filePath);
+    } catch (error: unknown) {
+      return `${label} could not be verified before execution: ${describeFsError(error)}`;
+    }
+    if (createHash("sha256").update(bytes).digest("hex") !== expectedSha256) {
+      return `${label} changed after staging; refusing to execute.`;
+    }
+  }
+  return null;
+}
+
+function sha256OfUtf8(content: string): string {
+  return createHash("sha256").update(Buffer.from(content, "utf8")).digest("hex");
 }
 
 async function revalidateNodeScriptPlan(
@@ -335,7 +642,7 @@ function buildNodeScriptPreview(plan: NodeScriptPlan): CommandPreview {
     environmentPolicy: "minimal",
     stdinPolicy: "closed",
     executionNotice:
-      "The script runs from an immutable private copy inside the sandbox run directory; __dirname and import.meta.url refer to that private copy, while process.cwd() stays in the workspace.",
+      "The approved single file executes alone: Solaris stages an immutable private copy of it into the sandbox run directory and binds the approval digest to that copy's SHA-256. The script must be self-contained — the runtime mechanically denies every additional code-loading mechanism (static and dynamic imports, require(), worker threads, eval and new Function, and native addons), so any attempt to load other code fails closed. __dirname and import.meta.url refer to the private copy while process.cwd() stays in the workspace; the workspace stays read-only and network access is denied.",
   };
 }
 

@@ -1,15 +1,23 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   COMMAND_LIMITS,
   createPreparedCommand,
   type CommandExecutionContext,
+  type CommandExecutionRequest,
   type CommandPreparationResult,
 } from "@solaris/core";
 import { createSha256CommandDigestService } from "../command-digest.js";
-import { createNodeScriptRunner } from "./node-script-runner.js";
+import {
+  createNodeScriptRunner,
+  SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE,
+  SOLARIS_ESM_DENIAL_BOOTSTRAP_FILE,
+} from "./node-script-runner.js";
 import {
   createFile,
   createSymlink,
@@ -23,6 +31,7 @@ function createRunner() {
 }
 
 const runPathDirectories: string[] = [];
+const sentinelRoots: string[] = [];
 
 async function createRunPaths(): Promise<CommandExecutionContext["runPaths"]> {
   const root = await mkdtemp(join(tmpdir(), "solaris-run-paths-"));
@@ -46,8 +55,17 @@ async function createRunPaths(): Promise<CommandExecutionContext["runPaths"]> {
   };
 }
 
+async function createSentinelRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "solaris-sentinel-"));
+  sentinelRoots.push(root);
+  return root;
+}
+
 afterEach(async () => {
   for (const directory of runPathDirectories.splice(0)) {
+    await rm(directory, { recursive: true, force: true });
+  }
+  for (const directory of sentinelRoots.splice(0)) {
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -63,6 +81,64 @@ function ready(
     throw new Error(`Expected ready, got ${result.status}: ${result.message}`);
   }
   return result;
+}
+
+async function prepareAndExecute(
+  workspaceRoot: string,
+  input: unknown,
+): Promise<CommandExecutionRequest> {
+  const runner = createRunner();
+  const prepared = ready(await runner.prepare(input, { workspaceRoot }));
+  const runPaths = await createRunPaths();
+  const execution = await runner.toExecutionRequest(prepared.command, {
+    approvedDigest: prepared.digest,
+    runPaths,
+  });
+  expect(execution.status).toBe("ready");
+  if (execution.status !== "ready") {
+    throw new Error(`Expected ready, got ${execution.status}`);
+  }
+  return execution.request;
+}
+
+interface SpawnedResult {
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** Executes the exact request argv the runner produced, through a real spawn. */
+function executeRequest(request: CommandExecutionRequest): Promise<SpawnedResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(request.executable, [...request.arguments], {
+      cwd: request.workingDirectory,
+      env: { ...request.environment },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (exitCode: number | null) => {
+      resolve({ exitCode, stdout, stderr });
+    });
+  });
+}
+
+function scriptIndex(request: CommandExecutionRequest, scriptCache: string): number {
+  const bootstrapPath = join(scriptCache, SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE);
+  const index = request.arguments.findIndex(
+    (argument) => argument.startsWith(scriptCache) && argument !== bootstrapPath,
+  );
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
 }
 
 describe("node-script runner input validation", () => {
@@ -339,11 +415,15 @@ describe("node-script runner preparation and execution", () => {
       }
       expect(execution.request.executable).toBe(process.execPath);
       expect(execution.request.executableVersion).toBe(process.version);
-      const scriptArgument = execution.request.arguments[0];
+      const index = scriptIndex(execution.request, runPaths.scriptCache);
+      const scriptArgument = execution.request.arguments[index];
       expect(scriptArgument).toBeDefined();
       expect(scriptArgument?.startsWith(runPaths.scriptCache)).toBe(true);
       expect(scriptArgument).not.toContain(workspace.root);
-      expect(execution.request.arguments.slice(1)).toEqual(["--flag", "tests/example test.ts"]);
+      expect(execution.request.arguments.slice(index + 1)).toEqual([
+        "--flag",
+        "tests/example test.ts",
+      ]);
       // The private copy carries the exact approved bytes.
       const privateBytes = await readFile(scriptArgument as string, "utf8");
       expect(privateBytes).toBe("console.log('ok');");
@@ -353,6 +433,49 @@ describe("node-script runner preparation and execution", () => {
       await writeFile(join(workspace.root, "a.mjs"), "console.log('MALICIOUS');");
       const staged = await readFile(join(runPaths.scriptCache, basename("a.mjs")), "utf8");
       expect(staged).toBe("console.log('ok');");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("places every self-containment flag before the staged script path", async () => {
+    const workspace = await createTempWorkspace();
+    const runner = createRunner();
+    try {
+      await writeFixtureFiles(workspace.root, { "a.js": "console.log('ok');" });
+      const prepared = ready(
+        await runner.prepare(
+          {
+            runner: "node-script",
+            path: "a.js",
+            arguments: ["--user-flag"],
+          },
+          { workspaceRoot: workspace.root },
+        ),
+      );
+      const runPaths = await createRunPaths();
+      const execution = await runner.toExecutionRequest(prepared.command, {
+        approvedDigest: prepared.digest,
+        runPaths,
+      });
+      expect(execution.status).toBe("ready");
+      if (execution.status !== "ready") {
+        return;
+      }
+      const args = execution.request.arguments;
+      expect(args[0]).toBe("--no-addons");
+      expect(args[1]).toBe("--disallow-code-generation-from-strings");
+      expect(args.indexOf("--import")).toBe(2);
+      expect(args.indexOf("--require")).toBe(4);
+      const esmUrl = args[3];
+      expect(esmUrl).toBeDefined();
+      expect(esmUrl?.startsWith("file://")).toBe(true);
+      expect(esmUrl).toContain(SOLARIS_ESM_DENIAL_BOOTSTRAP_FILE);
+      expect(args[5]).toBe(join(runPaths.scriptCache, SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE));
+      const index = scriptIndex(execution.request, runPaths.scriptCache);
+      expect(index).toBe(6);
+      expect(args[index]).toBe(join(runPaths.scriptCache, "a.js"));
+      expect(args.slice(index + 1)).toEqual(["--user-flag"]);
     } finally {
       await workspace.cleanup();
     }
@@ -372,6 +495,88 @@ describe("node-script runner preparation and execution", () => {
       const runPaths = await createRunPaths();
       // A pre-existing entry at the staging name must never be overwritten.
       await writeFile(join(runPaths.scriptCache, "a.js"), "attacker bytes");
+      const execution = await runner.toExecutionRequest(prepared.command, {
+        approvedDigest: prepared.digest,
+        runPaths,
+      });
+      expect(execution.status).toBe("conflict");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("conflicts when the staged private copy is replaced after staging", async () => {
+    const workspace = await createTempWorkspace();
+    const runner = createRunner();
+    try {
+      await writeFixtureFiles(workspace.root, { "a.js": "console.log('one');" });
+      const prepared = ready(
+        await runner.prepare(
+          { runner: "node-script", path: "a.js" },
+          { workspaceRoot: workspace.root },
+        ),
+      );
+      const runPaths = await createRunPaths();
+      const first = await runner.toExecutionRequest(prepared.command, {
+        approvedDigest: prepared.digest,
+        runPaths,
+      });
+      expect(first.status).toBe("ready");
+      // The staged private copy is replaced after staging; the replaced
+      // bytes must never be executed by any subsequent execution attempt.
+      const stagedPath = join(runPaths.scriptCache, "a.js");
+      await writeFile(stagedPath, "console.log('attacker');");
+      expect(await readFile(stagedPath, "utf8")).toBe("console.log('attacker');");
+      const second = await runner.toExecutionRequest(prepared.command, {
+        approvedDigest: prepared.digest,
+        runPaths,
+      });
+      expect(second.status).toBe("conflict");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("conflicts when a Solaris bootstrap staging path is already occupied", async () => {
+    const workspace = await createTempWorkspace();
+    const runner = createRunner();
+    try {
+      await writeFixtureFiles(workspace.root, { "a.js": "console.log('ok');" });
+      const prepared = ready(
+        await runner.prepare(
+          { runner: "node-script", path: "a.js" },
+          { workspaceRoot: workspace.root },
+        ),
+      );
+      const runPaths = await createRunPaths();
+      await writeFile(
+        join(runPaths.scriptCache, SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE),
+        "attacker bytes",
+      );
+      const execution = await runner.toExecutionRequest(prepared.command, {
+        approvedDigest: prepared.digest,
+        runPaths,
+      });
+      expect(execution.status).toBe("conflict");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("conflicts when a workspace script name collides with a Solaris bootstrap name", async () => {
+    const workspace = await createTempWorkspace();
+    const runner = createRunner();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        [SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE]: "console.log('ok');",
+      });
+      const prepared = ready(
+        await runner.prepare(
+          { runner: "node-script", path: SOLARIS_CJS_DENIAL_BOOTSTRAP_FILE },
+          { workspaceRoot: workspace.root },
+        ),
+      );
+      const runPaths = await createRunPaths();
       const execution = await runner.toExecutionRequest(prepared.command, {
         approvedDigest: prepared.digest,
         runPaths,
@@ -490,6 +695,8 @@ describe("node-script runner preparation and execution", () => {
       expect(environment["TEMP"]).toBe(runPaths.temp);
       expect(environment["NO_COLOR"]).toBe("1");
       expect(environment["NPM_CONFIG_CACHE"]).toBeUndefined();
+      // The staged entry path reaches the Solaris-owned bootstraps privately.
+      expect(environment["SOLARIS_STAGED_ENTRY"]).toBe(join(runPaths.scriptCache, "a.js"));
     } finally {
       await workspace.cleanup();
     }
@@ -534,6 +741,255 @@ describe("node-script runner preparation and execution", () => {
         runPaths: await createRunPaths(),
       });
       expect(execution.status).toBe("conflict");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+describe("node-script runner approval preview", () => {
+  it("describes the honest single-file executable boundary", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, { "a.js": "console.log('ok');" });
+      const result = ready(await prepare(workspace.root, { runner: "node-script", path: "a.js" }));
+      expect(result.preview.executionNotice).toContain("executes alone");
+      expect(result.preview.executionNotice).toContain("self-contained");
+      expect(result.preview.executionNotice).toContain("fails closed");
+      expect(result.preview.executionNotice).toContain("SHA-256");
+      expect(result.preview.executionNotice).not.toContain("continue through the workspace");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+describe("node-script runner runtime code-loading denial (real spawns)", () => {
+  it("runs a trivial script with no imports through the full flag stack", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "trivial.mjs":
+          "console.log('trivial-ok');\nconsole.log(JSON.stringify(process.argv.slice(2)));",
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "trivial.mjs",
+        arguments: ["--flag", "value with space"],
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("trivial-ok");
+      expect(result.stdout).toContain(JSON.stringify(["--flag", "value with space"]));
+      expect(result.stderr).not.toContain("DeprecationWarning");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies a relative static ESM import and never executes the imported module", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const sentinelRoot = await createSentinelRoot();
+      const depSentinel = join(sentinelRoot, "dep-ran");
+      await writeFixtureFiles(workspace.root, {
+        "main.mjs": `import "./dep.mjs";\nconsole.log("main-ran");`,
+        "dep.mjs": `const fs = process.getBuiltinModule("node:fs");\nfs.writeFileSync(${JSON.stringify(depSentinel)}, "dep-ran");`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.mjs",
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("SOLARIS_DENIED_LOAD");
+      expect(result.stdout).not.toContain("main-ran");
+      expect(existsSync(depSentinel)).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies a CommonJS require and never executes the required module", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const sentinelRoot = await createSentinelRoot();
+      const okSentinel = join(sentinelRoot, "main-ok");
+      const depSentinel = join(sentinelRoot, "dep-ran");
+      await writeFixtureFiles(workspace.root, {
+        "main.cjs": `const fs = process.getBuiltinModule("node:fs");\ntry {\n  require("./dep.cjs");\n  fs.writeFileSync(${JSON.stringify(okSentinel)}, "ok");\n} catch (error) {\n  console.log("DENIED", error.code);\n}`,
+        "dep.cjs": `const fs = process.getBuiltinModule("node:fs");\nfs.writeFileSync(${JSON.stringify(depSentinel)}, "dep-ran");`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.cjs",
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED SOLARIS_DENIED_MODULE_LOAD");
+      expect(existsSync(okSentinel)).toBe(false);
+      expect(existsSync(depSentinel)).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies a dynamic import() in an ESM script", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const sentinelRoot = await createSentinelRoot();
+      const okSentinel = join(sentinelRoot, "main-ok");
+      const depSentinel = join(sentinelRoot, "dep-ran");
+      await writeFixtureFiles(workspace.root, {
+        "main.mjs": `const fs = process.getBuiltinModule("node:fs");\ntry {\n  await import("./dep.mjs");\n  fs.writeFileSync(${JSON.stringify(okSentinel)}, "ok");\n} catch (error) {\n  console.log("DENIED", error.code);\n}`,
+        "dep.mjs": `const fs = process.getBuiltinModule("node:fs");\nfs.writeFileSync(${JSON.stringify(depSentinel)}, "dep-ran");`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.mjs",
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED SOLARIS_DENIED_LOAD");
+      expect(existsSync(okSentinel)).toBe(false);
+      expect(existsSync(depSentinel)).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies a dynamic import() in a CommonJS script", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const sentinelRoot = await createSentinelRoot();
+      const okSentinel = join(sentinelRoot, "main-ok");
+      const depSentinel = join(sentinelRoot, "dep-ran");
+      await writeFixtureFiles(workspace.root, {
+        "main.cjs": `const fs = process.getBuiltinModule("node:fs");\nimport("./dep.mjs").then(\n  () => fs.writeFileSync(${JSON.stringify(okSentinel)}, "ok"),\n  (error) => console.log("DENIED", error.code),\n);`,
+        "dep.mjs": `const fs = process.getBuiltinModule("node:fs");\nfs.writeFileSync(${JSON.stringify(depSentinel)}, "dep-ran");`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.cjs",
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED SOLARIS_DENIED_LOAD");
+      expect(existsSync(okSentinel)).toBe(false);
+      expect(existsSync(depSentinel)).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies an absolute-path import", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const sentinelRoot = await createSentinelRoot();
+      const okSentinel = join(sentinelRoot, "main-ok");
+      const depSentinel = join(sentinelRoot, "dep-ran");
+      await writeFixtureFiles(workspace.root, {
+        "main.mjs": `const fs = process.getBuiltinModule("node:fs");\ntry {\n  await import(process.argv[2]);\n  fs.writeFileSync(${JSON.stringify(okSentinel)}, "ok");\n} catch (error) {\n  console.log("DENIED", error.code);\n}`,
+        "dep.mjs": `const fs = process.getBuiltinModule("node:fs");\nfs.writeFileSync(${JSON.stringify(depSentinel)}, "dep-ran");`,
+      });
+      const depUrl = pathToFileURL(join(workspace.root, "dep.mjs")).href;
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.mjs",
+        arguments: [depUrl],
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED SOLARIS_DENIED_LOAD");
+      expect(existsSync(okSentinel)).toBe(false);
+      expect(existsSync(depSentinel)).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies a CWD-based module load", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const sentinelRoot = await createSentinelRoot();
+      const okSentinel = join(sentinelRoot, "main-ok");
+      const depSentinel = join(sentinelRoot, "dep-ran");
+      await writeFixtureFiles(workspace.root, {
+        "main.cjs": `const fs = process.getBuiltinModule("node:fs");\ntry {\n  require(process.cwd() + "/cwd-helper.cjs");\n  fs.writeFileSync(${JSON.stringify(okSentinel)}, "ok");\n} catch (error) {\n  console.log("DENIED", error.code);\n}`,
+        "cwd-helper.cjs": `const fs = process.getBuiltinModule("node:fs");\nfs.writeFileSync(${JSON.stringify(depSentinel)}, "dep-ran");`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.cjs",
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED SOLARIS_DENIED_MODULE_LOAD");
+      expect(existsSync(okSentinel)).toBe(false);
+      expect(existsSync(depSentinel)).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies new Worker() construction even through process.getBuiltinModule", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const sentinelRoot = await createSentinelRoot();
+      const okSentinel = join(sentinelRoot, "main-ok");
+      const workerSentinel = join(sentinelRoot, "worker-ran");
+      await writeFixtureFiles(workspace.root, {
+        "main.cjs": `const fs = process.getBuiltinModule("node:fs");\ntry {\n  const workerThreads = process.getBuiltinModule("node:worker_threads");\n  new workerThreads.Worker(process.argv[2]);\n  fs.writeFileSync(${JSON.stringify(okSentinel)}, "ok");\n} catch (error) {\n  console.log("DENIED", error.code);\n}`,
+        "worker-target.cjs": `const fs = process.getBuiltinModule("node:fs");\nfs.writeFileSync(${JSON.stringify(workerSentinel)}, "worker-ran");`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.cjs",
+        arguments: [join(workspace.root, "worker-target.cjs")],
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED SOLARIS_DENIED_MODULE_LOAD");
+      expect(existsSync(okSentinel)).toBe(false);
+      expect(existsSync(workerSentinel)).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies eval at runtime", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "main.cjs": `try {\n  eval("1 + 1");\n  console.log("EVAL-OK");\n} catch (error) {\n  console.log("DENIED", error.name);\n}`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.cjs",
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED EvalError");
+      expect(result.stdout).not.toContain("EVAL-OK");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("denies new Function at runtime", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "main.cjs": `try {\n  new Function("return 1")();\n  console.log("FN-OK");\n} catch (error) {\n  console.log("DENIED", error.name);\n}`,
+      });
+      const request = await prepareAndExecute(workspace.root, {
+        runner: "node-script",
+        path: "main.cjs",
+      });
+      const result = await executeRequest(request);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("DENIED EvalError");
+      expect(result.stdout).not.toContain("FN-OK");
     } finally {
       await workspace.cleanup();
     }
