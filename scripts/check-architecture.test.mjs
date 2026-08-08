@@ -281,12 +281,12 @@ describe("check-architecture", () => {
     expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
   });
 
-  it("accepts child-process imports in the approved git adapter", () => {
+  it("rejects child-process imports in the git adapter (Git must run inside the sandbox)", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/git/cli/runner.ts"] =
       'import { spawn } from "node:child_process";\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(false);
+    expect(errors.some((error) => error.includes("unsandboxed process spawning"))).toBe(true);
   });
 
   it("rejects provider adapters importing checkpoint or git adapters", () => {

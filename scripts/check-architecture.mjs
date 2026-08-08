@@ -167,7 +167,7 @@ const GIT_MUTATION_VERBS = new Set([
   "branch",
 ]);
 
-const APPROVED_CHILD_PROCESS_DIRECTORIES = [join("src", "sandbox"), join("src", "git", "cli")];
+const APPROVED_CHILD_PROCESS_DIRECTORIES = [join("src", "sandbox")];
 
 const APPROVED_MUTATION_DIRECTORIES = [
   join("src", "tools", "workspace", "mutations"),

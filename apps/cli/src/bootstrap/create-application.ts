@@ -89,7 +89,12 @@ export async function createCliApplication(
   const mutationLock = createMutationLock();
   const checkpoints = await createFilesystemCheckpointStore({ workspaceRoot });
   await reconcileWorkspaceCheckpoints({ workspaceRoot, store: checkpoints });
-  const git = createGitCliAdapter({ workspaceRoot });
+  const runDirectories = createRunDirectoryProvider({ workspaceRoot, runsRoot });
+  const git = createGitCliAdapter({
+    workspaceRoot,
+    backend: sandbox,
+    runDirectories,
+  });
   const reviewer: ApprovalReviewer = options.reviewer ?? {
     review(): Promise<{ type: "deny" }> {
       return Promise.resolve({
@@ -113,13 +118,12 @@ export async function createCliApplication(
     workspaceRoot,
     runners,
     backend: sandbox,
-    runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
+    runDirectories,
     lock: mutationLock,
     git,
     executionProfile: VALIDATION_OFFLINE_PROFILE,
     executionPolicy: createDefaultPolicy("validation-offline"),
   });
-  const sandboxAvailable = (await sandbox.inspect()).state === "available";
   const environmentOverrides = readGodotEnvironmentOverrides();
   const resolvedSelection = resolveGodotSelection({
     cliPath: options.godotPath ?? null,
@@ -163,12 +167,10 @@ export async function createCliApplication(
     createWorkspaceDeleteFileTool(workspaceRoot, mutationLock, checkpoints),
     createGodotInspectEngineTool(godot),
     createGodotInspectProjectTool(godot),
+    createGitStatusTool(git),
+    createGitDiffTool(git),
     processTool,
   ];
-  if (sandboxAvailable) {
-    workspaceTools.push(createGitStatusTool(git));
-    workspaceTools.push(createGitDiffTool(git));
-  }
   const registry = createToolRegistry(workspaceTools);
   const provider = createDeterministicFakeProvider();
   const application = createSolarisApplication({

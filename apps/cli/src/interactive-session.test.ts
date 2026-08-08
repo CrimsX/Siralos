@@ -387,7 +387,9 @@ describe("runInteractiveSession tool activity", () => {
     const { io, application, sessionInfo } = await createComposedSession(["/status", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Workspace:");
-    expect(io.text).toContain("Tools: 9");
+    // git.status and git.diff are always registered; the adapter gates
+    // availability (unavailable backends never execute Git).
+    expect(io.text).toContain("Tools: 11");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");

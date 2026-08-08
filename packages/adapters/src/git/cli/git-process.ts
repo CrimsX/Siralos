@@ -1,6 +1,4 @@
-import { spawn } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
-import { GitError } from "@solaris/core";
+import { GitError, type SandboxedProcessResult } from "@solaris/core";
 
 export const GIT_ALLOWED_SUBCOMMANDS: readonly string[] = [
   "version",
@@ -84,6 +82,15 @@ const GIT_STRIPPED_ENVIRONMENT_PATTERNS: readonly RegExp[] = [
  *   environment and disabled with `--no-ext-diff` by the adapter).
  * - `alias.<command>`: shell aliases; each allowed subcommand is mapped to
  *   itself so a repository alias like `alias.status = !evil` cannot run.
+ *
+ * This override set is NOT the security boundary by itself: repository- and
+ * worktree-configured mechanisms Git may gain in the future (for example
+ * `filter.<name>.*` clean/smudge/process filters selected through
+ * `.gitattributes`) cannot all be enumerated or disabled from the command
+ * line. The mechanical boundary is that Git always executes inside the
+ * sandboxed runtime with network denied, writes limited to the exact private
+ * run directory, and host reads limited to the minimum repository and
+ * trusted Git runtime roots; the overrides here are defense in depth.
  */
 const GIT_DISABLING_CONFIG: readonly string[] = [
   "-c",
@@ -116,6 +123,32 @@ export function sanitizeGitEnvironment(
   return { ...sanitized, ...GIT_SAFETY_ENVIRONMENT };
 }
 
+/**
+ * Builds the full Git argument array for one allowed subcommand: the
+ * disabling configuration overrides, no pager, literal pathspecs, the
+ * subcommand, and the fixed argument list. Provider input can only select
+ * validated high-level options that arrive as `args`; the construction is
+ * fixed and never includes a shell.
+ */
+export function buildGitInvocation(
+  subcommand: string,
+  args: readonly string[],
+): readonly string[] {
+  if (!GIT_ALLOWED_SUBCOMMANDS.includes(subcommand)) {
+    throw new GitError(
+      "git_status_failed",
+      `Git subcommand "${subcommand}" is not allowed by Solaris.`,
+    );
+  }
+  return [
+    ...GIT_DISABLING_CONFIG,
+    "--no-pager",
+    "--literal-pathspecs",
+    subcommand,
+    ...args,
+  ];
+}
+
 export interface GitProcessResult {
   readonly exitCode: number;
   readonly stdout: string;
@@ -124,124 +157,48 @@ export interface GitProcessResult {
   readonly stderrTruncated: boolean;
 }
 
-export interface GitProcessOptions {
-  readonly subcommand: string;
-  readonly args: readonly string[];
-  readonly cwd: string;
-  readonly environment: Readonly<Record<string, string>>;
-  readonly signal?: AbortSignal;
-  readonly timeoutMs: number;
-  readonly maxOutputBytes: number;
-  readonly gitExecutable?: string;
-}
-
-export async function runGitProcess(options: GitProcessOptions): Promise<GitProcessResult> {
-  if (!GIT_ALLOWED_SUBCOMMANDS.includes(options.subcommand)) {
-    throw new GitError(
-      "git_status_failed",
-      `Git subcommand "${options.subcommand}" is not allowed by Solaris.`,
-    );
+/**
+ * Maps one sandboxed process result to the Git inspection result model.
+ * Sandbox failures never surface as Git output: timeouts, cancellation,
+ * denials, and sandbox unavailability become typed Git errors so callers
+ * can never mistake a confined failure for repository content.
+ */
+export function mapSandboxedGitResult(
+  result: SandboxedProcessResult,
+  subcommand: string,
+): GitProcessResult {
+  switch (result.status) {
+    case "completed":
+      return {
+        exitCode: result.exitCode ?? 1,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        stdoutTruncated: result.stdoutTruncated,
+        stderrTruncated: result.stderrTruncated,
+      };
+    case "timed-out":
+      throw new GitError("git_timeout", "The git command timed out.");
+    case "cancelled":
+      throw new GitError("git_cancelled", "The git command was cancelled.");
+    case "sandbox-denied":
+      throw new GitError(
+        "git_status_failed",
+        `Git inspection was denied by the sandbox while running ${subcommand}; repository-configured helpers cannot execute on the host.`,
+      );
+    case "sandbox-unavailable":
+      throw new GitError(
+        "git_unavailable",
+        "Git inspection is unavailable: the sandbox backend cannot enforce the required boundary.",
+      );
+    case "output-limit":
+      throw new GitError(
+        "git_status_failed",
+        `Git inspection exceeded its output limit while running ${subcommand}.`,
+      );
+    case "failed":
+      throw new GitError(
+        "git_status_failed",
+        `Git inspection failed while running ${subcommand} inside the sandbox.`,
+      );
   }
-  const fullArgs = [
-    ...GIT_DISABLING_CONFIG,
-    "--no-pager",
-    "--literal-pathspecs",
-    options.subcommand,
-    ...options.args,
-  ];
-  const timeoutController = new AbortController();
-  let timedOut = false;
-  const timeoutTimer = setTimeout(() => {
-    timedOut = true;
-    timeoutController.abort();
-  }, options.timeoutMs);
-  const signals: AbortSignal[] = [timeoutController.signal];
-  if (options.signal !== undefined) {
-    signals.push(options.signal);
-  }
-  const child = spawn(options.gitExecutable ?? "git", fullArgs, {
-    cwd: options.cwd,
-    env: sanitizeGitEnvironment(options.environment),
-    shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
-    signal: AbortSignal.any(signals),
-  });
-  const stdoutSink = createOutputSink(options.maxOutputBytes);
-  const stderrSink = createOutputSink(options.maxOutputBytes);
-  child.stdout?.on("data", (chunk: Buffer) => {
-    stdoutSink.push(chunk);
-  });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderrSink.push(chunk);
-  });
-  try {
-    const result = await new Promise<GitProcessResult>((resolve, reject) => {
-      child.on("error", (error: NodeJS.ErrnoException) => {
-        if (timedOut) {
-          reject(new GitError("git_timeout", "The git command timed out.", error));
-          return;
-        }
-        if (options.signal?.aborted) {
-          reject(new GitError("git_cancelled", "The git command was cancelled.", error));
-          return;
-        }
-        if (error.code === "ENOENT") {
-          reject(new GitError("git_unavailable", "The git executable was not found.", error));
-          return;
-        }
-        reject(new GitError("git_status_failed", `Cannot start git: ${error.message}`, error));
-      });
-      child.on("close", (exitCode: number | null) => {
-        if (timedOut) {
-          reject(new GitError("git_timeout", "The git command timed out."));
-          return;
-        }
-        if (options.signal?.aborted) {
-          reject(new GitError("git_cancelled", "The git command was cancelled."));
-          return;
-        }
-        resolve({
-          exitCode: exitCode ?? 1,
-          stdout: stdoutSink.text,
-          stderr: stderrSink.text,
-          stdoutTruncated: stdoutSink.truncated,
-          stderrTruncated: stderrSink.truncated,
-        });
-      });
-    });
-    return result;
-  } finally {
-    clearTimeout(timeoutTimer);
-  }
-}
-
-function createOutputSink(maxBytes: number): {
-  text: string;
-  truncated: boolean;
-  push(chunk: Buffer): void;
-} {
-  const decoder = new StringDecoder("utf8");
-  let text = "";
-  let remaining = maxBytes;
-  let truncated = false;
-  return {
-    get text(): string {
-      return text;
-    },
-    get truncated(): boolean {
-      return truncated;
-    },
-    push(chunk: Buffer): void {
-      if (truncated) {
-        return;
-      }
-      if (chunk.length >= remaining) {
-        text += decoder.write(chunk.subarray(0, Math.max(remaining, 0)));
-        truncated = true;
-        return;
-      }
-      remaining -= chunk.length;
-      text += decoder.write(chunk);
-    },
-  };
 }

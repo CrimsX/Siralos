@@ -2,9 +2,14 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createGitCliAdapter } from "./git-cli-adapter.js";
-import { runGitProcess, sanitizeGitEnvironment } from "./git-process.js";
-import { cleanupTempDirs, createTempRepo, type TempRepo } from "./git-test-support.js";
+import { buildGitInvocation, sanitizeGitEnvironment } from "./git-process.js";
+import {
+  cleanupTempDirs,
+  createHostGitBackend,
+  createTempRepo,
+  createTestGitAdapter,
+  type TempRepo,
+} from "./git-test-support.js";
 
 afterEach(async () => {
   await cleanupTempDirs();
@@ -45,7 +50,7 @@ describe("git executable-helper hardening", () => {
     repo.commit("initial");
     const markerPath = await installMarker(repo);
     repo.git("config", "core.fsmonitor", quotedNodeCommand(join(repo.root, "marker.cjs")));
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getStatus({});
     expect(result.repository).toBe(true);
     expect(result.changes).toEqual([]);
@@ -60,7 +65,7 @@ describe("git executable-helper hardening", () => {
     const markerPath = await installMarker(repo);
     repo.git("config", "alias.status", `!${quotedNodeCommand(join(repo.root, "marker.cjs"))}`);
     repo.git("config", "alias.diff", `!${quotedNodeCommand(join(repo.root, "marker.cjs"))}`);
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getStatus({});
     expect(result.repository).toBe(true);
     await adapter.getDiff({ scope: "working" });
@@ -78,7 +83,7 @@ describe("git executable-helper hardening", () => {
     repo.git("config", "core.pager", command);
     repo.git("config", "pager.diff", command);
     repo.git("config", "pager.status", command);
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     await adapter.getStatus({});
     await adapter.getDiff({ scope: "working" });
     await assertMarkerAbsent(markerPath);
@@ -92,7 +97,7 @@ describe("git executable-helper hardening", () => {
     await repo.write("a.txt", "world\n");
     const markerPath = await installMarker(repo);
     repo.git("config", "diff.external", quotedNodeCommand(join(repo.root, "marker.cjs")));
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.patch).toContain("diff --git");
     await assertMarkerAbsent(markerPath);
@@ -107,7 +112,7 @@ describe("git executable-helper hardening", () => {
     const markerPath = await installMarker(repo);
     repo.git("config", "diff.textexec.textconv", quotedNodeCommand(join(repo.root, "marker.cjs")));
     await repo.write(".gitattributes", "*.txt diff=textexec\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.patch).toContain("diff --git");
     await assertMarkerAbsent(markerPath);
@@ -121,7 +126,7 @@ describe("git executable-helper hardening", () => {
     const markerPath = await installMarker(repo);
     repo.git("config", "credential.helper", quotedNodeCommand(join(repo.root, "marker.cjs")));
     repo.git("config", "core.askPass", quotedNodeCommand(join(repo.root, "marker.cjs")));
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getStatus({});
     expect(result.repository).toBe(true);
     await assertMarkerAbsent(markerPath);
@@ -138,27 +143,37 @@ describe("git executable-helper hardening", () => {
       hostileConfigPath,
       `[core]\nfsmonitor = ${quotedNodeCommand(join(repo.root, "marker.cjs"))}\n`,
     );
-    const result = await runGitProcess({
-      subcommand: "status",
-      args: ["--porcelain=v2", "-z"],
-      cwd: repo.root,
-      environment: {
-        GIT_CONFIG_COUNT: "1",
-        GIT_CONFIG_KEY_0: "core.fsmonitor",
-        GIT_CONFIG_VALUE_0: quotedNodeCommand(join(repo.root, "marker.cjs")),
-        GIT_CONFIG_PARAMETERS: `'core.fsmonitor=${quotedNodeCommand(join(repo.root, "marker.cjs"))}'`,
-        GIT_CONFIG_GLOBAL: hostileConfigPath,
-        GIT_CONFIG_SYSTEM: hostileConfigPath,
-        GIT_TEST_FSMONITOR: quotedNodeCommand(join(repo.root, "marker.cjs")),
-        GIT_DIR: join(repo.root, ".git", "..", ".git"),
-        GIT_WORK_TREE: tmpdir(),
-        GIT_INDEX_FILE: join(repo.root, ".git", "index"),
-        GIT_PAGER: quotedNodeCommand(join(repo.root, "marker.cjs")),
-      },
-      timeoutMs: 15_000,
-      maxOutputBytes: 1024 * 1024,
+    const hostileEnvironment = {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.fsmonitor",
+      GIT_CONFIG_VALUE_0: quotedNodeCommand(join(repo.root, "marker.cjs")),
+      GIT_CONFIG_PARAMETERS: `'core.fsmonitor=${quotedNodeCommand(join(repo.root, "marker.cjs"))}'`,
+      GIT_CONFIG_GLOBAL: hostileConfigPath,
+      GIT_CONFIG_SYSTEM: hostileConfigPath,
+      GIT_TEST_FSMONITOR: quotedNodeCommand(join(repo.root, "marker.cjs")),
+      GIT_DIR: join(repo.root, ".git", "..", ".git"),
+      GIT_WORK_TREE: tmpdir(),
+      GIT_INDEX_FILE: join(repo.root, ".git", "index"),
+      GIT_PAGER: quotedNodeCommand(join(repo.root, "marker.cjs")),
+    };
+    // The sanitizer strips every hostile variable; the fixed invocation
+    // carries the disabling overrides; the resulting confined request can
+    // never execute the marker.
+    const sanitized = sanitizeGitEnvironment(hostileEnvironment);
+    for (const [name, hostileValue] of Object.entries(hostileEnvironment)) {
+      // Hostile values are never carried: either the variable is stripped
+      // or it is re-pinned to the Solaris-controlled safety value.
+      expect(sanitized[name]).not.toBe(hostileValue);
+    }
+    const git = createHostGitBackend({ workspaceRoot: repo.root });
+    const result = await git.backend.execute({
+      executable: "git",
+      arguments: [...buildGitInvocation("status", ["--porcelain=v2", "-z"])],
+      workingDirectory: repo.root,
+      profile: {} as never,
+      environment: sanitized,
     });
-    expect(result.exitCode).toBe(0);
+    expect(result.status).toBe("completed");
     await assertMarkerAbsent(markerPath);
   });
 
@@ -170,7 +185,7 @@ describe("git executable-helper hardening", () => {
     const markerPath = await installMarker(repo);
     repo.git("config", "alias.status", `!${quotedNodeCommand(join(repo.root, "marker.cjs"))}`);
     repo.git("config", "core.fsmonitor", quotedNodeCommand(join(repo.root, "marker.cjs")));
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     await adapter.getStatus({});
     await adapter.getDiff({ scope: "working", paths: ["a.txt", "-c", "core.fsmonitor=node x"] });
     await assertMarkerAbsent(markerPath);
@@ -263,7 +278,7 @@ describe("git special filenames", () => {
     if (process.platform !== "win32") {
       await repo.write('quote"name.txt', "world\n");
     }
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getStatus({});
     const paths = result.changes.map((change) => change.path);
     expect(paths).toContain("sp ace.txt");
@@ -294,7 +309,7 @@ describe("git special filenames", () => {
     } else {
       await repo.write("plain.txt", "world\n");
     }
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getStatus({});
     const paths = result.changes.map((change) => change.path);
     if (process.platform !== "win32") {
@@ -316,7 +331,7 @@ describe("git configuration isolation", () => {
     const markerPath = await installMarker(repo);
     const outside = await mkdtemp(join(tmpdir(), "solaris-git-config-"));
     try {
-      const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+      const { adapter } = createTestGitAdapter(repo.root);
       await adapter.getStatus({});
       await adapter.getDiff({ scope: "working" });
       await assertMarkerAbsent(markerPath);

@@ -1,11 +1,9 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GitError } from "@solaris/core";
-import { createGitCliAdapter } from "./git-cli-adapter.js";
-import { runGitProcess } from "./git-process.js";
 import { parseNumstatDiff } from "./diff-parser.js";
 import { parseBranchFromTruncatedOutput } from "./status-parser.js";
-import { cleanupTempDirs, createTempRepo, type TempRepo } from "./git-test-support.js";
+import { cleanupTempDirs, createTempRepo, createTestGitAdapter, type TempRepo } from "./git-test-support.js";
 
 afterEach(async () => {
   await cleanupTempDirs();
@@ -21,7 +19,7 @@ describe("git status inspection", () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.repository).toBe(true);
     expect(status.changes).toEqual([]);
@@ -36,7 +34,7 @@ describe("git status inspection", () => {
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.changes).toEqual([
       {
@@ -55,7 +53,7 @@ describe("git status inspection", () => {
     commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     repo.git("add", "a.txt");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.changes[0]).toMatchObject({
       path: "a.txt",
@@ -71,7 +69,7 @@ describe("git status inspection", () => {
     await repo.write("a.txt", "two\n");
     repo.git("add", "a.txt");
     await repo.write("a.txt", "three\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.changes[0]).toMatchObject({
       indexStatus: "modified",
@@ -84,7 +82,7 @@ describe("git status inspection", () => {
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
     await repo.write("new file.txt", "x\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.untracked).toEqual(["new file.txt"]);
   });
@@ -95,7 +93,7 @@ describe("git status inspection", () => {
     commitAll(repo, "initial");
     const { rm } = await import("node:fs/promises");
     await rm(join(repo.root, "a.txt"));
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.changes[0]).toMatchObject({
       path: "a.txt",
@@ -108,7 +106,7 @@ describe("git status inspection", () => {
     await repo.write("old.txt", "one\n");
     commitAll(repo, "initial");
     repo.git("mv", "old.txt", "new.txt");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.changes[0]).toMatchObject({
       path: "new.txt",
@@ -130,7 +128,7 @@ describe("git status inspection", () => {
     commitAll(repo, "main change");
     const merge = repo.git("merge", "other");
     expect(merge.status).not.toBe(0);
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.conflicts.length).toBeGreaterThan(0);
     expect(status.conflicts[0]?.path).toBe("conflict.txt");
@@ -150,7 +148,7 @@ describe("git status inspection", () => {
     if (tabSupported) {
       await repo.write("with\ttab.txt", "changed\n");
     }
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     const paths = status.changes.map((change) => change.path).sort();
     const expected = tabSupported
@@ -179,7 +177,7 @@ describe("git status inspection", () => {
     spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "ahead"], {
       cwd: cloneRoot,
     });
-    const adapter = createGitCliAdapter({ workspaceRoot: cloneRoot });
+    const { adapter } = createTestGitAdapter(cloneRoot);
     const status = await adapter.getStatus({});
     expect(status.branch.upstream).toBeDefined();
     expect(status.branch.ahead).toBe(1);
@@ -189,7 +187,7 @@ describe("git status inspection", () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const status = await adapter.getStatus({});
     expect(status.branch.upstream).toBeNull();
     expect(status.branch.ahead).toBeNull();
@@ -206,7 +204,7 @@ describe("git status inspection", () => {
     for (let i = 0; i < 300; i += 1) {
       await repo.write(`untracked-file-${i}-with-a-reasonably-long-name.txt`, "x\n");
     }
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root, maxOutputBytes: 1024 });
+    const { adapter } = createTestGitAdapter(repo.root, { maxOutputBytes: 1024 });
     const status = await adapter.getStatus({});
     expect(status.repository).toBe(true);
     expect(status.truncated).toBe(true);
@@ -304,7 +302,7 @@ describe("git diff inspection", () => {
     await repo.write("a.txt", "one\ntwo\n");
     commitAll(repo, "initial");
     await repo.write("a.txt", "one\nchanged\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.scope).toBe("working");
     expect(result.files).toEqual([
@@ -328,7 +326,7 @@ describe("git diff inspection", () => {
     await repo.write("a.txt", "two\n");
     repo.git("add", "a.txt");
     await repo.write("a.txt", "three\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const staged = await adapter.getDiff({ scope: "staged" });
     expect(staged.patch).toContain("+two");
     expect(staged.patch).not.toContain("+three");
@@ -340,7 +338,7 @@ describe("git diff inspection", () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.files).toEqual([]);
     expect(result.patch).toBe("");
@@ -348,7 +346,7 @@ describe("git diff inspection", () => {
 
   it("handles repositories with no HEAD for the head scope", async () => {
     const repo = await createTempRepo();
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "head" });
     expect(result.files).toEqual([]);
     expect(result.patch).toBe("");
@@ -361,7 +359,7 @@ describe("git diff inspection", () => {
     commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
     await repo.write("b.txt", "two\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working", paths: ["a.txt"] });
     expect(result.files.map((file) => file.path)).toEqual(["a.txt"]);
   });
@@ -370,7 +368,7 @@ describe("git diff inspection", () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     await expect(
       adapter.getDiff({ scope: "working", paths: ["../outside"] }),
     ).rejects.toMatchObject({
@@ -383,7 +381,7 @@ describe("git diff inspection", () => {
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
     await repo.write("a.txt", "two\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working", paths: ["*.txt"] });
     expect(result.files).toEqual([]);
   });
@@ -394,7 +392,7 @@ describe("git diff inspection", () => {
     commitAll(repo, "initial");
     const { writeFile } = await import("node:fs/promises");
     await writeFile(join(repo.root, "bin.dat"), Buffer.from([0x00, 0x01, 0x02, 0x03]));
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.files[0]).toMatchObject({ path: "bin.dat", binary: true });
     expect(result.patch).not.toContain("\\x00");
@@ -405,7 +403,7 @@ describe("git diff inspection", () => {
     await repo.write("old.txt", "one\n");
     commitAll(repo, "initial");
     repo.git("mv", "old.txt", "new.txt");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "staged" });
     expect(result.files[0]).toMatchObject({
       path: "new.txt",
@@ -419,10 +417,7 @@ describe("git diff inspection", () => {
     await repo.write("a.txt", "x\n".repeat(2000));
     commitAll(repo, "initial");
     await repo.write("a.txt", "y\n".repeat(2000));
-    const adapter = createGitCliAdapter({
-      workspaceRoot: repo.root,
-      maxOutputBytes: 1024,
-    });
+    const { adapter } = createTestGitAdapter(repo.root, { maxOutputBytes: 1024 });
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.truncated).toBe(true);
   });
@@ -436,7 +431,7 @@ describe("git diff inspection", () => {
     for (let i = 0; i < 300; i += 1) {
       await repo.write(`file-${i}.txt`, "two\n");
     }
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root, maxOutputBytes: 1024 });
+    const { adapter } = createTestGitAdapter(repo.root, { maxOutputBytes: 1024 });
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.truncated).toBe(true);
     expect(typeof result.patch).toBe("string");
@@ -449,7 +444,7 @@ describe("git diff inspection", () => {
     repo.git("config", "diff.external", "echo EXTERNAL-DIFF-RAN");
     repo.git("config", "diff.a.textconv", "echo TEXTCONV-RAN");
     await repo.write("a.txt", "two\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.patch).toContain("diff --git");
     expect(result.patch).not.toContain("EXTERNAL-DIFF-RAN");
@@ -461,7 +456,7 @@ describe("git diff inspection", () => {
     await repo.write("a.txt", "one\n");
     commitAll(repo, "initial");
     await repo.write("untracked.txt", "secret untracked content\n");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.files).toEqual([]);
     expect(result.patch).toBe("");
@@ -481,7 +476,7 @@ describe("git diff inspection", () => {
     for (const name of names) {
       await repo.write(name, "two\n");
     }
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "working" });
     const paths = result.files.map((file) => file.path);
     for (const name of names) {
@@ -499,7 +494,7 @@ describe("git diff inspection", () => {
       const { rm, symlink } = await import("node:fs/promises");
       await rm(join(repo.root, "t.txt"));
       await symlink("somewhere", join(repo.root, "t.txt"));
-      const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+      const { adapter } = createTestGitAdapter(repo.root);
       const result = await adapter.getStatus({});
       const change = result.changes.find((entry) => entry.path === "t.txt");
       expect(change).toBeDefined();
@@ -513,19 +508,12 @@ describe("git diff inspection", () => {
     commitAll(repo, "initial");
     const { writeFile } = await import("node:fs/promises");
     await writeFile(join(repo.root, "uni-\u00e9\u4e2d.txt"), "\u00e9".repeat(4000));
-    const result = await runGitProcess({
-      subcommand: "diff",
-      args: ["--no-ext-diff", "--no-textconv", "--no-color", "--", "uni-\u00e9\u4e2d.txt"],
-      cwd: repo.root,
-      environment: {},
-      timeoutMs: 15_000,
-      maxOutputBytes: 997,
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.stdoutTruncated).toBe(true);
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(997);
+    const { adapter } = createTestGitAdapter(repo.root, { maxOutputBytes: 997 });
+    const result = await adapter.getDiff({ scope: "working" });
+    expect(result.truncated).toBe(true);
+    expect(Buffer.byteLength(result.patch, "utf8")).toBeLessThanOrEqual(997);
     const fatal = new TextDecoder("utf-8", { fatal: true });
-    expect(() => fatal.decode(Buffer.from(result.stdout, "utf8"))).not.toThrow();
+    expect(() => fatal.decode(Buffer.from(result.patch, "utf8"))).not.toThrow();
   });
 
   it("preserves rename counts from numstat records", async () => {
@@ -535,7 +523,7 @@ describe("git diff inspection", () => {
     await repo.write("new.txt", "one\ntwo\nthree\n");
     repo.git("rm", "-q", "old.txt");
     repo.git("add", "new.txt");
-    const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
+    const { adapter } = createTestGitAdapter(repo.root);
     const result = await adapter.getDiff({ scope: "staged" });
     const renamed = result.files.find((file) => file.operation === "rename");
     expect(renamed).toMatchObject({
