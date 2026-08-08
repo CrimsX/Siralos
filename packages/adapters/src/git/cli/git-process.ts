@@ -130,23 +130,14 @@ export function sanitizeGitEnvironment(
  * validated high-level options that arrive as `args`; the construction is
  * fixed and never includes a shell.
  */
-export function buildGitInvocation(
-  subcommand: string,
-  args: readonly string[],
-): readonly string[] {
+export function buildGitInvocation(subcommand: string, args: readonly string[]): readonly string[] {
   if (!GIT_ALLOWED_SUBCOMMANDS.includes(subcommand)) {
     throw new GitError(
       "git_status_failed",
       `Git subcommand "${subcommand}" is not allowed by Solaris.`,
     );
   }
-  return [
-    ...GIT_DISABLING_CONFIG,
-    "--no-pager",
-    "--literal-pathspecs",
-    subcommand,
-    ...args,
-  ];
+  return [...GIT_DISABLING_CONFIG, "--no-pager", "--literal-pathspecs", subcommand, ...args];
 }
 
 export interface GitProcessResult {

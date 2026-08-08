@@ -1,473 +1,50 @@
-import { open, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import type {
-  ChangePreview,
-  CheckpointStore,
-  FileCheckpoint,
   PreparedMutation,
   PreparedMutationTool,
   ToolExecutionContext,
   ToolExecutionResult,
   ToolPreparationResult,
 } from "@solaris/core";
-import { createPreparedMutation } from "@solaris/core";
-import { WORKSPACE_LIMITS } from "../limits.js";
-import { buildUnifiedDiff } from "./diff.js";
-import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
+import type { CheckpointStore } from "@solaris/core";
 import type { MutationLock } from "./mutation-lock.js";
-import { resolveMutationTarget, verifyParentChainIdentityOrThrow } from "./mutation-paths.js";
-import {
-  removeQuarantinedCopy,
-  replaceFileWithQuarantine,
-  type ReplacementFsOps,
-} from "./safe-replacement.js";
-import {
-  createMutationTempPath,
-  removeMutationTemp,
-  type StagedTempIdentity,
-} from "./mutation-temp.js";
-import { decodeUtf8, looksBinary } from "../text.js";
-import {
-  readArrayField,
-  readJsonObject,
-  readOptionalString,
-  readRequiredString,
-  type ParsedValue,
-} from "../validation.js";
 
-interface Replacement {
-  readonly oldText: string;
-  readonly newText: string;
-}
+export const WORKSPACE_EDIT_UNAVAILABLE_MESSAGE =
+  "workspace.edit_file is unavailable: Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary can redirect pathname-based staging and replacement outside the workspace. The operation fails closed before any write; it will become available when a mechanically identity-bound commit primitive exists.";
 
-interface EditInput {
-  readonly path: string;
-  readonly expectedSha256: string;
-  readonly replacements: readonly Replacement[];
-}
-
-interface EditPayload {
-  readonly workspaceRelativePath: string;
-  readonly absolutePath: string;
-  readonly expectedSha256: string;
-  readonly originalBytes: Buffer;
-  readonly newContent: Buffer;
-  readonly afterSha256: string;
-  readonly addedLines: number;
-  readonly removedLines: number;
-  readonly digest: string;
-}
-
-const SHA256_PATTERN = /^[0-9a-f]{64}$/;
-
-function parseEditInput(input: unknown): ParsedValue<EditInput> {
-  const object = readJsonObject(input);
-  if (!object.ok) {
-    return object;
-  }
-  const parsedPath = readRequiredString(object.value, "path");
-  if (!parsedPath.ok) {
-    return parsedPath;
-  }
-  const parsedHash = readRequiredString(object.value, "expectedSha256");
-  if (!parsedHash.ok) {
-    return parsedHash;
-  }
-  if (!SHA256_PATTERN.test(parsedHash.value)) {
-    return {
-      ok: false,
-      message: '"expectedSha256" must be a lowercase 64-character SHA-256 hex digest.',
-    };
-  }
-  const replacementsField = readArrayField(object.value, "replacements");
-  if (!replacementsField.ok) {
-    return replacementsField;
-  }
-  const replacementsValue = replacementsField.value;
-  if (replacementsValue.length === 0) {
-    return { ok: false, message: "At least one replacement is required." };
-  }
-  if (replacementsValue.length > WORKSPACE_LIMITS.maxReplacements) {
-    return {
-      ok: false,
-      message: `At most ${WORKSPACE_LIMITS.maxReplacements} replacements are allowed.`,
-    };
-  }
-  const replacements: Replacement[] = [];
-  for (let index = 0; index < replacementsValue.length; index += 1) {
-    const entry = replacementsValue[index];
-    const entryObject = readJsonObject(entry);
-    if (!entryObject.ok) {
-      return { ok: false, message: `replacements[${index}] must be an object.` };
-    }
-    const oldText = readOptionalString(entryObject.value, "oldText");
-    if (!oldText.ok) {
-      return oldText;
-    }
-    const newText = readOptionalString(entryObject.value, "newText");
-    if (!newText.ok) {
-      return newText;
-    }
-    if (oldText.value === undefined || oldText.value.length === 0) {
-      return { ok: false, message: `replacements[${index}].oldText must be non-empty.` };
-    }
-    if (newText.value === undefined) {
-      return { ok: false, message: `replacements[${index}].newText is required.` };
-    }
-    if (Buffer.byteLength(oldText.value, "utf8") > WORKSPACE_LIMITS.maxReplacementTextBytes) {
-      return { ok: false, message: `replacements[${index}].oldText exceeds the size limit.` };
-    }
-    if (Buffer.byteLength(newText.value, "utf8") > WORKSPACE_LIMITS.maxReplacementTextBytes) {
-      return { ok: false, message: `replacements[${index}].newText exceeds the size limit.` };
-    }
-    replacements.push({ oldText: oldText.value, newText: newText.value });
-  }
-  return {
-    ok: true,
-    value: { path: parsedPath.value, expectedSha256: parsedHash.value, replacements },
-  };
-}
-
+/**
+ * The workspace mutation tools fail closed before any write.
+ *
+ * The required invariant — no mutation may create, write, link, rename,
+ * replace, unlink, or remove an outside entry even when a same-user process
+ * swaps a parent or target at any instruction boundary — cannot be enforced
+ * with Node's pathname-based filesystem APIs: every open, rename, link, and
+ * unlink resolves a mutable pathname, and verification-then-use is not
+ * atomic. The pinned runtime exposes no dirfd-relative primitive and no
+ * native adapter is shipped. Rather than performing a partial outside
+ * mutation and describing cleanup as prevention, every workspace mutation is
+ * refused before any filesystem activity, approval, or checkpoint recording.
+ */
 export function createWorkspaceEditFileTool(
-  workspaceRoot: string,
-  lock: MutationLock,
-  store: CheckpointStore,
-  dependencies: { readonly replacementOps?: ReplacementFsOps } = {},
+  _workspaceRoot: string,
+  _lock: MutationLock,
+  _store: CheckpointStore,
 ): PreparedMutationTool {
-  const payloads = new WeakMap<PreparedMutation, EditPayload>();
-  const replacementOps = dependencies.replacementOps;
-
-  async function prepare(
-    input: unknown,
-    context: ToolExecutionContext,
-  ): Promise<ToolPreparationResult> {
-    if (context.signal?.aborted) {
-      return { status: "cancelled", message: "Preparation was cancelled." };
-    }
-    const parsed = parseEditInput(input);
-    if (!parsed.ok) {
-      return { status: "invalid_input", message: parsed.message };
-    }
-    const resolved = await resolveMutationTarget(workspaceRoot, parsed.value.path);
-    if (resolved.status === "missing") {
-      return { status: "conflict", message: resolved.message };
-    }
-    if (resolved.status !== "resolved") {
-      return { status: "denied", message: resolved.message };
-    }
-    const readResult = await readBoundedFile(resolved.absolutePath);
-    if (readResult.status === "too_large") {
-      return { status: "failed", message: readResult.message };
-    }
-    if (looksBinary(readResult.bytes)) {
-      return {
-        status: "failed",
-        message: "File appears to be binary; only UTF-8 text files can be edited.",
-      };
-    }
-    const currentHash = hashBuffer(readResult.bytes);
-    if (currentHash !== parsed.value.expectedSha256) {
-      return {
-        status: "conflict",
-        message: "The file hash does not match expectedSha256; reread the file.",
-      };
-    }
-    const originalText = decodeUtf8(readResult.bytes);
-    if (originalText === null) {
-      return { status: "failed", message: "File is not valid UTF-8 text." };
-    }
-    const replacementOutcome = applyReplacements(originalText, parsed.value.replacements);
-    if (replacementOutcome.status !== "applied") {
-      return { status: "conflict", message: replacementOutcome.message };
-    }
-    if (replacementOutcome.text === originalText) {
-      return {
-        status: "failed",
-        message: "The resulting content is identical; there is no change to apply.",
-      };
-    }
-    const newBytes = Buffer.from(replacementOutcome.text, "utf8");
-    if (newBytes.length > WORKSPACE_LIMITS.maxTextFileSizeBytes) {
-      return {
-        status: "failed",
-        message: `The resulting file exceeds the ${WORKSPACE_LIMITS.maxTextFileSizeBytes}-byte text limit.`,
-      };
-    }
-    const diff = buildUnifiedDiff(
-      resolved.workspaceRelativePath,
-      originalText,
-      replacementOutcome.text,
-    );
-    if (diff.status === "too_large") {
-      return { status: "failed", message: diff.message };
-    }
-    const afterSha256 = hashBuffer(newBytes);
-    const filePreview = {
-      path: resolved.workspaceRelativePath,
-      operation: "update" as const,
-      beforeSha256: currentHash,
-      afterSha256,
-      addedLines: diff.diff.addedLines,
-      removedLines: diff.diff.removedLines,
-      unifiedDiff: diff.diff.unifiedDiff,
-    };
-    const preview: ChangePreview = {
-      files: [filePreview],
-      totalAddedLines: diff.diff.addedLines,
-      totalRemovedLines: diff.diff.removedLines,
-      truncated: false,
-    };
-    const mutation = createPreparedMutation();
-    const digest = hashMutationPlan({
-      relativePath: resolved.workspaceRelativePath,
-      operation: "update",
-      beforeSha256: currentHash,
-      afterSha256,
-    });
-    payloads.set(mutation, {
-      workspaceRelativePath: resolved.workspaceRelativePath,
-      absolutePath: resolved.absolutePath,
-      expectedSha256: parsed.value.expectedSha256,
-      originalBytes: readResult.bytes,
-      newContent: newBytes,
-      afterSha256,
-      addedLines: diff.diff.addedLines,
-      removedLines: diff.diff.removedLines,
-      digest,
-    });
-    return { status: "ready", mutation, preview, digest };
-  }
-
-  async function apply(
-    prepared: PreparedMutation,
-    context: ToolExecutionContext,
-  ): Promise<ToolExecutionResult> {
-    const payload = payloads.get(prepared);
-    payloads.delete(prepared);
-    if (payload === undefined) {
-      return {
-        status: "failed",
-        message: "The prepared mutation is not valid for this tool or has already been used.",
-      };
-    }
-    if (context.approvedDigest !== payload.digest) {
-      return {
-        status: "denied",
-        message: "The prepared plan does not match the approved plan; the mutation was denied.",
-      };
-    }
-    let release: () => void;
-    try {
-      release = await lock.acquire(context.signal);
-    } catch (error: unknown) {
-      if (context.signal?.aborted || isAbortError(error)) {
-        return {
-          status: "cancelled",
-          message: "The mutation was cancelled while waiting for the lock.",
-        };
-      }
-      throw error;
-    }
-    let tempPath: string | undefined;
-    let tempIdentity: StagedTempIdentity | undefined;
-    let quarantinePath: string | null = null;
-    try {
-      const conflict = await revalidateTarget(payload);
-      if (conflict !== null) {
-        return { status: "conflict", message: conflict };
-      }
-      if (context.signal?.aborted) {
-        return { status: "cancelled", message: "The mutation was cancelled before writing." };
-      }
-      let checkpoint: FileCheckpoint;
-      try {
-        checkpoint = await store.prepare(
-          {
-            relativePath: payload.workspaceRelativePath,
-            operation: "update",
-            toolName: "workspace.edit_file",
-            before: {
-              exists: true,
-              sha256: payload.expectedSha256,
-              byteLength: payload.originalBytes.length,
-              bytes: new Uint8Array(payload.originalBytes),
-            },
-            after: {
-              exists: true,
-              sha256: payload.afterSha256,
-              byteLength: payload.newContent.length,
-            },
-            preview: { addedLines: payload.addedLines, removedLines: payload.removedLines },
-          },
-          context.signal,
-        );
-      } catch (error: unknown) {
-        return {
-          status: "failed",
-          message: `Checkpoint could not be recorded; the mutation was not applied: ${describeError(error)}`,
-        };
-      }
-      tempPath = createMutationTempPath(dirname(payload.absolutePath));
-      try {
-        // The staging open follows intermediate links; the parent chain is
-        // re-verified immediately before it so a parent swapped since the
-        // revalidation can never redirect the staged write outside the
-        // workspace.
-        await verifyParentChainIdentityOrThrow(workspaceRoot, payload.absolutePath);
-        const handle = await open(tempPath, "wx");
-        try {
-          const stagedStats = await handle.stat();
-          tempIdentity = { dev: stagedStats.dev, ino: stagedStats.ino };
-          await handle.writeFile(payload.newContent);
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-      } catch (error: unknown) {
-        await removeMutationTemp(tempPath, tempIdentity);
-        return {
-          status: "failed",
-          message: `Cannot stage the replacement: ${describeError(error)}`,
-        };
-      }
-      if (context.signal?.aborted) {
-        await removeMutationTemp(tempPath, tempIdentity);
-        return { status: "cancelled", message: "The mutation was cancelled during staging." };
-      }
-      const finalConflict = await revalidateTarget(payload);
-      if (finalConflict !== null) {
-        await removeMutationTemp(tempPath, tempIdentity);
-        return { status: "conflict", message: finalConflict };
-      }
-      if (context.signal?.aborted) {
-        await removeMutationTemp(tempPath, tempIdentity);
-        return { status: "cancelled", message: "The mutation was cancelled before commit." };
-      }
-      const commitOutcome = await replaceFileWithQuarantine({
-        tempPath,
-        targetPath: payload.absolutePath,
-        expectedTargetSha256: payload.expectedSha256,
-        // The staged bytes are verified by hash again after the commit, so
-        // a staged file tampered between staging and the exclusive link is
-        // detected before the operation can be reported as success.
-        expectedStagedSha256: payload.afterSha256,
-        // The parent chain is re-verified immediately before the
-        // displacement rename, and the displaced object's identity is
-        // re-proven after it, so a parent swapped in the final window can
-        // never commit or destroy anything outside the workspace.
-        verifyParentIdentity: () =>
-          verifyParentChainIdentityOrThrow(workspaceRoot, payload.absolutePath),
-        ...(replacementOps === undefined ? {} : { ops: replacementOps }),
-      });
-      // On success the staged temp file remains as a hard link to the
-      // committed object; it is left defined so the finally block removes
-      // the temp link (never the target) once the outcome is final.
-      if (commitOutcome.kind !== "success") {
-        if (commitOutcome.kind === "uncertain") {
-          quarantinePath = commitOutcome.quarantinePath;
-          return {
-            status: "failed",
-            message: `${commitOutcome.message} The quarantine copy at ${commitOutcome.quarantinePath} must not be deleted; recover the original from it.`,
-          };
-        }
-        return { status: "failed", message: commitOutcome.message };
-      }
-      quarantinePath = commitOutcome.quarantinePath;
-      const verification = await verifyEditedFile(payload);
-      if (verification !== null) {
-        return {
-          status: "failed",
-          message: `${verification} The original copy is preserved at ${quarantinePath}; do not delete it.`,
-        };
-      }
-      try {
-        await store.finalizeApplied(checkpoint.id, {
-          afterSha256: payload.afterSha256,
-          absent: false,
-        });
-      } catch (error: unknown) {
-        return {
-          status: "failed",
-          message: `The mutation was applied but its checkpoint could not be finalized; recovery state is uncertain: ${describeError(error)}. The original copy is preserved at ${quarantinePath}; do not delete it.`,
-        };
-      }
-      let cleanupWarning: string | undefined;
-      try {
-        await removeQuarantinedCopy(quarantinePath, replacementOps);
-      } catch (error: unknown) {
-        cleanupWarning = `The quarantine copy at ${quarantinePath} could not be removed: ${describeError(error)}`;
-      }
-      return {
-        status: "success",
-        output: {
-          path: payload.workspaceRelativePath,
-          operation: "update",
-          checkpointId: checkpoint.id,
-          beforeSha256: payload.expectedSha256,
-          afterSha256: payload.afterSha256,
-          addedLines: payload.addedLines,
-          removedLines: payload.removedLines,
-          ...(cleanupWarning === undefined ? {} : { cleanupWarning }),
-        },
-        summary: `Applied +${payload.addedLines} -${payload.removedLines}`,
-      };
-    } finally {
-      if (tempPath !== undefined) {
-        await removeMutationTemp(tempPath, tempIdentity).catch(() => {});
-      }
-      release();
-    }
-  }
-
-  async function revalidateTarget(payload: EditPayload): Promise<string | null> {
-    const revalidated = await resolveMutationTarget(workspaceRoot, payload.workspaceRelativePath);
-    if (revalidated.status !== "resolved") {
-      return `The target changed since the proposal: ${revalidated.message}`;
-    }
-    const readResult = await readBoundedFile(revalidated.absolutePath);
-    if (readResult.status === "too_large") {
-      return `The target changed since the proposal: ${readResult.message}`;
-    }
-    if (hashBuffer(readResult.bytes) !== payload.expectedSha256) {
-      return "The file changed since the proposal was approved; reread the file.";
-    }
-    return null;
-  }
-
-  async function verifyEditedFile(payload: EditPayload): Promise<string | null> {
-    let bytes: Buffer;
-    try {
-      bytes = await readFile(payload.absolutePath);
-    } catch (error: unknown) {
-      return `Post-write verification could not read the file: ${describeError(error)}`;
-    }
-    if (bytes.length !== payload.newContent.length || !bytes.equals(payload.newContent)) {
-      return "Post-write verification failed: the written bytes do not match the proposal.";
-    }
-    if (hashBuffer(bytes) !== payload.afterSha256) {
-      return "Post-write verification failed: the written hash does not match the proposal.";
-    }
-    return null;
-  }
-
   return {
     kind: "prepared_mutation",
     definition: {
       name: "workspace.edit_file",
       description:
-        "Apply a bounded sequence of exact text replacements to one existing UTF-8 text file.",
+        "Unavailable: Node cannot bind pathname-based replacement to a verified parent against a same-user adversary, so the operation fails closed before any write.",
       inputSchema: {
         type: "object",
         properties: {
-          path: { type: "string", description: "File path relative to the workspace root." },
+          path: { type: "string", description: "Workspace-relative file path." },
           expectedSha256: {
             type: "string",
-            description: "Complete-file SHA-256 of the current file, from workspace.read.",
+            description: "Complete SHA-256 of the file's current bytes.",
           },
           replacements: {
             type: "array",
-            description:
-              "Exact text replacements applied sequentially; each oldText must match exactly once.",
             items: {
               type: "object",
               properties: {
@@ -475,6 +52,7 @@ export function createWorkspaceEditFileTool(
                 newText: { type: "string" },
               },
               required: ["oldText", "newText"],
+              additionalProperties: false,
             },
           },
         },
@@ -483,76 +61,17 @@ export function createWorkspaceEditFileTool(
       },
     },
     capability: "workspace.write",
-    prepare,
-    apply,
+    async prepare(_input: unknown, context: ToolExecutionContext): Promise<ToolPreparationResult> {
+      if (context.signal?.aborted) {
+        return { status: "cancelled", message: "Preparation was cancelled." };
+      }
+      return { status: "unavailable", message: WORKSPACE_EDIT_UNAVAILABLE_MESSAGE };
+    },
+    async apply(
+      _prepared: PreparedMutation,
+      _context: ToolExecutionContext,
+    ): Promise<ToolExecutionResult> {
+      return { status: "unavailable", message: WORKSPACE_EDIT_UNAVAILABLE_MESSAGE };
+    },
   };
-}
-
-type ReplacementOutcome =
-  | { readonly status: "applied"; readonly text: string }
-  | { readonly status: "conflict"; readonly message: string };
-
-function applyReplacements(text: string, replacements: readonly Replacement[]): ReplacementOutcome {
-  let current = text;
-  for (const replacement of replacements) {
-    const occurrences = countOccurrences(current, replacement.oldText);
-    if (occurrences === 0) {
-      return {
-        status: "conflict",
-        message: `oldText "${truncate(replacement.oldText)}" was not found in the file; reread the file.`,
-      };
-    }
-    if (occurrences > 1) {
-      return {
-        status: "conflict",
-        message: `oldText "${truncate(replacement.oldText)}" matched ${occurrences} times; the replacement is ambiguous.`,
-      };
-    }
-    current = current.replace(replacement.oldText, replacement.newText);
-  }
-  return { status: "applied", text: current };
-}
-
-function countOccurrences(text: string, needle: string): number {
-  let count = 0;
-  let index = text.indexOf(needle);
-  while (index >= 0) {
-    count += 1;
-    index = text.indexOf(needle, index + needle.length);
-  }
-  return count;
-}
-
-async function readBoundedFile(
-  absolutePath: string,
-): Promise<{ status: "ok"; bytes: Buffer } | { status: "too_large"; message: string }> {
-  let bytes: Buffer;
-  try {
-    bytes = await readFile(absolutePath);
-  } catch (error: unknown) {
-    return { status: "too_large", message: `Cannot read the file: ${describeError(error)}` };
-  }
-  if (bytes.length > WORKSPACE_LIMITS.maxTextFileSizeBytes) {
-    return {
-      status: "too_large",
-      message: `File is too large (limit ${WORKSPACE_LIMITS.maxTextFileSizeBytes} bytes).`,
-    };
-  }
-  return { status: "ok", bytes };
-}
-
-function truncate(text: string): string {
-  const limit = 60;
-  return text.length > limit ? `${text.slice(0, limit)}...` : text;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown mutation failure occurred.";
 }

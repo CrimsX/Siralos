@@ -282,7 +282,9 @@ export function createTestRunDirectories(): {
           scriptCache,
         };
       },
-      async remove(runId: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
+      async remove(
+        runId: string,
+      ): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
         const index = Number(runId.replace("run-", "")) - 1;
         const root = created[index];
         if (root === undefined) {

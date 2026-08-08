@@ -169,7 +169,11 @@ describe("git inspection live confinement (real enforcing sandbox only)", () => 
     repo.git("add", "data.txt");
     repo.commit("initial");
     const { markerPath } = await installCleanFilterMarker(repo);
-    repo.git("config", "filter.evil.clean", `node ${JSON.stringify(join(repo.root, "filter-marker.cjs"))}`);
+    repo.git(
+      "config",
+      "filter.evil.clean",
+      `node ${JSON.stringify(join(repo.root, "filter-marker.cjs"))}`,
+    );
     await repo.write(".gitattributes", "data.txt filter=evil\n");
     repo.git("add", ".gitattributes");
     repo.commit("attrs");

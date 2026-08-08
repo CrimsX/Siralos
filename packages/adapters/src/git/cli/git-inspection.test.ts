@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { GitError } from "@solaris/core";
 import { parseNumstatDiff } from "./diff-parser.js";
 import { parseBranchFromTruncatedOutput } from "./status-parser.js";
-import { cleanupTempDirs, createTempRepo, createTestGitAdapter, type TempRepo } from "./git-test-support.js";
+import {
+  cleanupTempDirs,
+  createTempRepo,
+  createTestGitAdapter,
+  type TempRepo,
+} from "./git-test-support.js";
 
 afterEach(async () => {
   await cleanupTempDirs();

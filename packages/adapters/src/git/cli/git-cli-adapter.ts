@@ -100,10 +100,7 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
       }
       const metadata = await lstat(options.gitExecutable).catch(() => null);
       if (metadata === null || metadata.isSymbolicLink() || !metadata.isFile()) {
-        throw new GitError(
-          "git_unavailable",
-          "The git executable override is not a regular file.",
-        );
+        throw new GitError("git_unavailable", "The git executable override is not a regular file.");
       }
       cachedExecutable = options.gitExecutable;
       return options.gitExecutable;
@@ -175,10 +172,7 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
         stderrLimitBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         // The repository root is the minimum read surface Git needs, plus
         // the trusted Git runtime roots; nothing else on the host is granted.
-        explicitReadRoots: [
-          options.workspaceRoot,
-          ...(await gitRuntimeReadRoots(gitPath)),
-        ],
+        explicitReadRoots: [options.workspaceRoot, ...(await gitRuntimeReadRoots(gitPath))],
         ...(signal === undefined ? {} : { signal }),
       });
       return mapSandboxedGitResult(result, subcommand);

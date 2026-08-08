@@ -12,7 +12,8 @@ export type ToolPreparationResult =
       readonly digest: string;
     }
   | {
-      readonly status: "invalid_input" | "denied" | "conflict" | "failed" | "cancelled";
+      readonly status:
+        "invalid_input" | "denied" | "conflict" | "failed" | "cancelled" | "unavailable";
       readonly message: string;
     };
 
