@@ -11,7 +11,7 @@ Solaris will eventually run development commands, tests, formatters, package man
 - The **user is trusted** but may misconfigure Solaris; defaults are conservative.
 - The **host machine outside the configured workspace is sensitive** — credentials, SSH keys, browser profiles, and user documents must not be reachable from sandboxed processes.
 
-The current implementation provides provider-accessible read-only inspection, approval-gated workspace mutations, approval-gated sandboxed command execution, and project-independent offline Godot engine probes; the security boundary described here governs all of them.
+The current implementation provides provider-accessible read-only inspection, approval-gated workspace mutations, approval-gated sandboxed command execution, project-independent offline Godot engine probes, and one-time approved recovery-mode Godot project probes against a disposable mirror; the security boundary described here governs all of them.
 
 ## Sandbox versus approvals
 
@@ -45,15 +45,44 @@ Provider credentials and Solaris internal secrets stay in the provider adapter o
 - sent to future tools,
 - available to project scripts, Godot, or delegated agents.
 
-Child environments are constructed from an explicit allowlist (`buildChildEnvironment` in `packages/adapters/src/environment/`); `process.env` is never forwarded verbatim. Variables matching `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_*`, `AZURE_*`, `GOOGLE_*`, `GITHUB_TOKEN`, `GH_TOKEN`, `SSH_AUTH_SOCK`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENCODE_API_KEY`, `SOLARIS_CONFIG`, `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `CDPATH`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG*`, `NPM_CONFIG_USERCONFIG`, `NPM_CONFIG_SCRIPT_SHELL`, and proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`) are denied, case-insensitively (Windows environment names are case-insensitive). Sandbox `HOME`/`USERPROFILE` and `TEMP`/`TMP`/`TMPDIR` are controlled by Solaris, and the sandbox wrapper's runtime-required environment is merged under the rules described in "Sandbox wrapper environment contract" below — the same deny patterns apply to wrapper-required variables, and Solaris-controlled values always win. Command environments additionally fix `NO_COLOR=1`, `FORCE_COLOR=0`, `TERM=dumb`, and `GIT_TERMINAL_PROMPT=0`, and the npm runner adds safe npm configuration (`NPM_CONFIG_IGNORE_SCRIPTS=true` disables pre/post hooks while the explicitly requested script still runs, plus audit/fund/update-notifier/color off) with the npm cache and user configuration pointed at sandbox-private run paths. The architecture check prohibits `process.env` inspection in package source.
+Child environments are constructed from an explicit allowlist (`buildChildEnvironment` in `packages/adapters/src/environment/`); `process.env` is never forwarded verbatim. Variables matching `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `AWS_*`, `AZURE_*`, `GOOGLE_*`, `GITHUB_TOKEN`, `GH_TOKEN`, `SSH_AUTH_SOCK`, `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENCODE_API_KEY`, `SOLARIS_CONFIG`, `NODE_OPTIONS`, `BASH_ENV`, `ENV`, `CDPATH`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG*`, `NPM_CONFIG_USERCONFIG`, `NPM_CONFIG_SCRIPT_SHELL`, proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`), Godot editor-path overrides (`GODOT_EDITOR_PATH`, `GODOT4_EDITOR_PATH`), and dynamic-library/executable-loading injection variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_*`) are denied, case-insensitively (Windows environment names are case-insensitive). Sandbox `HOME`/`USERPROFILE` and `TEMP`/`TMP`/`TMPDIR` are controlled by Solaris, and the sandbox wrapper's runtime-required environment is merged under the rules described in "Sandbox wrapper environment contract" below — the same deny patterns apply to wrapper-required variables, and Solaris-controlled values always win. Command environments additionally fix `NO_COLOR=1`, `FORCE_COLOR=0`, `TERM=dumb`, and `GIT_TERMINAL_PROMPT=0`, and the npm runner adds safe npm configuration (`NPM_CONFIG_IGNORE_SCRIPTS=true` disables pre/post hooks while the explicitly requested script still runs, plus audit/fund/update-notifier/color off) with the npm cache and user configuration pointed at sandbox-private run paths. The architecture check prohibits `process.env` inspection in package source.
 
 ## Built-in profiles
 
 - **`inspect`** (default): workspace read-only, no writes, no process execution, no network. This is the profile under which the read-only workspace tools operate; write and process tools are not sent to the provider.
 - **`develop-offline`**: workspace reads allowed, workspace writes require one-time approval, process execution requires one-time approval, network denied, minimal environment, protected metadata paths, timeouts, output limits, cancellation.
 - **`validation-offline`** (internal, never user-selectable): the effective profile under which every provider-accessible command executes. Workspace reads allowed, workspace writes denied, sandbox-private home/temp/npm-cache writable, network denied, minimal environment, closed stdin, process-tree confinement required. The active user profile may narrow command execution further, never broaden it. Notably, `develop-offline` permitting approved file edits does not make command execution workspace-writable.
+- **`godot-probe-offline`** (internal, never user-selectable): the effective profile for project-independent engine probes (`--version`, `--help`, `--dump-extension-api`). Read-only workspace, sandbox-private home/temp, network denied, minimal environment, closed stdin, confined process tree.
+- **`godot-recovery-probe-offline`** (internal, never user-selectable): the effective profile for recovery-mode project probes. The source workspace is **never writable** and is additionally **excluded from the host-read allowlist** where the backend can enforce one, so the probed engine cannot read the real project at all; the disposable mirror and the sandbox-private home/temp are the only writable roots; network and loopback are denied; stdin is closed; the process tree is confined; the environment is the minimal allowlist plus removal of Godot editor-path overrides and `LD_PRELOAD` / `LD_LIBRARY_PATH` / `DYLD_*` library-injection variables. On platforms whose backend cannot enforce the host-read allowlist (currently Windows), process execution is refused, so live recovery isolation is unverified there.
 
-There is no networked, unrestricted, or "full access" profile. No public configuration can set `process.execute` to unconditional `allow` in this milestone; a missing process rule fails closed.
+There is no networked, unrestricted, or "full access" profile. No public configuration can set `process.execute` or `godot.probe_project` to unconditional `allow` in this milestone; a missing process rule fails closed.
+
+## Recovery-mode project probing
+
+The only path that lets Godot open a project is the approved recovery-mode probe, and it never opens the source workspace. The security boundary is the combination:
+
+```text
+User approval
+    +
+Disposable project mirror
+    +
+OS sandbox
+    +
+Network denial
+    +
+Credential removal
+    +
+Godot recovery mode
+    +
+Workspace integrity verification
+```
+
+- **Approval is one-time, digest-bound, and never persists.** Before every probe Solaris refreshes a static risk manifest (project file hash, selected engine identity and version, tool scripts, enabled editor plugins, GDExtension descriptors and referenced libraries, autoloads, .NET projects, bounded authored-file digest) and freezes a prepared-probe digest that additionally covers the fixed recovery command, the mirror-copy policy version, the sandbox profile, and the probe limits. If the project or the engine changes after approval, the probe is a conflict and a new approval is required. Approval never enables normal project opening, plugin/GDExtension loading, or network. The provider cannot approve itself: `godot.probe_project` is `ask` in the `inspect` and `develop-offline` profiles and fails closed everywhere else, with no public auto-allow option.
+- **The mirror is the only project directory Godot sees.** It lives at a Solaris-generated path beneath the verified run root, never inside the workspace, `.git`, or checkpoint storage, and the provider cannot choose it. Only regular files and directories are copied; symbolic links, junctions, and special files are rejected (never silently dereferenced); `.git`, `.godot`, `node_modules`, `dist`, `coverage`, `.solaris`, and Solaris temp prefixes are excluded; limits are fixed (100,000 files, 4 GiB total, 512 MiB per file, 1024-byte relative paths, depth 64, 120 s) and a project exceeding them is `probe_too_large` — never a fallback to opening the source. Every byte is hash-verified and the mirror is reverified (hashes, no unexpected files, no symlinks) immediately before launch.
+- **Recovery mode is required, not a sandbox.** The engine must advertise `--recovery-mode`, `--editor`, `--headless`, and `--path`; otherwise the probe is unsupported and no weaker mode is used. The fixed invocation is `<godot> --headless --editor --recovery-mode --path <mirror> --quit-after <bounded-count>`, with a separate executable and argument array (no shell), an external wall-clock timeout in addition to `--quit-after`, and never `--script`, `--scene`, `--import`, export, LSP/DAP, or debug options. Recovery mode reduces editor-side execution risk but does not make arbitrary project data inherently safe; the probe also relies on the disposable mirror and the OS sandbox, and Solaris never calls recovery mode a sandbox.
+- **Diagnostics and generated state are contained.** Raw output is bounded per stream (1 MiB) and by retained lines; classification recognizes well-known Godot markers only; messages are control-character sanitized; counts are capped with explicit truncation. Generated `.godot` state is inspected inside the mirror only, and the result distinguishes `project opened`, `imports observed`, `imports not observed`, and `import state unknown` instead of claiming a particular import happened.
+- **The source workspace is verified, not trusted.** A bounded baseline combines Git status (when available) with a deterministic authored-file manifest, because Git alone misses untracked and ignored state. Any unexpected change during the probe is reported as `workspace_changed`; Solaris never auto-reverts external changes.
+- **Cleanup is mandatory and contained.** After success, diagnostics, timeout, cancellation, crash, or preparation failure the mirror is destroyed with no-follow containment checks immediately before recursive deletion; cleanup never follows links, never uses broad wildcards, never touches other runs, never accepts a provider-supplied path, and never touches the source workspace. Cleanup failure is reported, never masked as success.
 
 ## Why network is denied
 

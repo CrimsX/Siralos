@@ -114,6 +114,32 @@ Major mismatch or an engine minor older than declared = error; same minor = comp
 
 `npm run test:godot` runs live Godot probe conformance against a real engine on the host, but only when opted in: without `SOLARIS_TEST_GODOT=1` the suite refuses to run or skips loudly — it never pretends a skipped or unavailable probe passed. Like `npm run test:sandbox`, it reports truthfully per probe.
 
+`npm run test:godot-recovery` runs live recovery-mode project-probe conformance (same `SOLARIS_TEST_GODOT` opt-in, plus an enforcing sandbox): it builds a disposable fixture project whose `@tool` script and enabled editor plugin would write marker files if executed, runs the full approved probe flow, and verifies the command shape, recovery mode, network denial, credential removal, marker absence, source-workspace integrity, and mirror cleanup. If the sandbox cannot enforce the boundaries the suite reports the probes as skipped/unverified — never passed.
+
+### Recovery-probe limits
+
+Fixed, non-negotiable bounds for the disposable project probe (mirror copying, engine launch, diagnostics, baseline, cleanup):
+
+| Bound                       | Value                  |
+| --------------------------- | ---------------------- |
+| Risk refresh                | 30 s                   |
+| Mirror files                | 100,000                |
+| Mirror total bytes          | 4 GiB                  |
+| Mirror single file          | 512 MiB                |
+| Mirror relative path length | 1,024 B                |
+| Mirror directory depth      | 64                     |
+| Mirror preparation          | 120 s                  |
+| Recovery probe wall-clock   | 60 s                   |
+| `--quit-after` iterations   | 120                    |
+| Per-stream output capture   | 1 MiB                  |
+| Retained diagnostic lines   | 200                    |
+| Classified diagnostics/kind | 100                    |
+| `.godot` inspection         | 20,000 files / 512 MiB |
+| Authored baseline           | 100,000 files / 4 GiB  |
+| Cleanup                     | 60 s                   |
+
+Exceeding a mirror bound is `probe_too_large` (exact limit reported, partial mirror cleaned, no source-workspace fallback). A timeout is a `timed_out` result, never a completion. Provider input cannot raise these limits and the project cannot configure them.
+
 ## Explicit dependency composition
 
 Concrete dependencies are created in exactly one composition root (`apps/cli/src/bootstrap/create-application.ts`) by direct manual composition:

@@ -9,7 +9,7 @@ This repository currently contains the **foundation vertical slice**: an executa
 Working today:
 
 - Interactive terminal session (`npm run solaris`)
-- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/git-status`, `/diff`, `/checkpoints`, `/undo`, `/commands`, `/cancel`, `/exit`, `/godot`, `/godot-installations`, `/godot-project`, `/godot-doctor`
+- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/git-status`, `/diff`, `/checkpoints`, `/undo`, `/commands`, `/cancel`, `/exit`, `/godot`, `/godot-installations`, `/godot-project`, `/godot-doctor`, `/godot-probe`, `/godot-probe-status`
 - Prompt submission with incrementally streamed responses
 - A bounded provider/tool loop with approved workspace mutations: `workspace.create_file`, `workspace.edit_file` (exact text replacements), and `workspace.delete_file` — each gated by capability policy, a complete reviewable diff, and one-time user approval, with SHA-256 conflict detection, mutation serialization, and post-write verification. Every approved mutation first durably records a Solaris-owned recovery checkpoint (exact pre-change bytes), reconciled at startup after crashes.
 - Read-only workspace tools: `workspace.list`, `workspace.read` (with complete-file SHA-256), `workspace.search` — all paths are canonicalized and contained within the launch directory
@@ -20,15 +20,16 @@ Working today:
 - Godot executable discovery and engine profiling, before any project execution: trusted user-configured installations (absolute paths with optional edition hints) plus fixed-name PATH search — no broad filesystem scanning; exact executable fingerprints (canonical path, size, mtime, SHA-256) revalidated before every probe; project-independent probes (`--version`, `--help`, `--dump-extension-api`) with fixed arguments through the sandbox backend under the internal `godot-probe-offline` profile; adversarial version parsing with release channels preserved; conservative edition classification; deterministic selection ranking with recorded rationale (explicit selection never falls back silently); and an engine-profile cache at `~/.solaris/godot/engine-profiles` (bounded, atomic, symlink-rejected, invalidated by executable hash change)
 - Static Godot project detection and profiling: only the root `project.godot` is read (regular file, symlinks rejected, never parents/children), everything parsed conservatively and never evaluated, plus an executable-content inventory (tool scripts, editor plugins, GDExtension descriptors, autoloads, C# project files) that never loads or runs anything
 - Godot provider tools and CLI surface: `godot.inspect_engine` and `godot.inspect_project` (allow in every built-in policy, no one-time approval), `/godot`, `/godot-installations`, `/godot-project`, `/godot-doctor`, the `--godot-path` / `--godot-installation` / `--godot-doctor` startup flags, and the `SOLARIS_GODOT` / `SOLARIS_GODOT_INSTALLATION` environment overrides
+- A trusted-project decision and disposable recovery-mode project probe (`godot.probe_project`, `/godot-probe`, `/godot-probe-status`): every probe refreshes a static risk manifest, requires explicit one-time approval bound to the manifest and the fixed recovery command, copies the project into a Solaris-generated disposable mirror (regular files only; symlinks/special files rejected; generated directories excluded; 100k files / 4 GiB / 512 MiB per file / depth-64 / 120 s bounds; every byte hash-verified), and launches the selected editor only as `<godot> --headless --editor --recovery-mode --path <mirror> --quit-after <count>` through the sandbox backend under the internal `godot-recovery-probe-offline` profile (source workspace never writable and excluded from the host-read allowlist where supported, network denied, credentials and library-injection variables removed, closed stdin, confined process tree, external timeout). Diagnostics are classified conservatively with hard bounds, generated `.godot` state is inspected inside the mirror only, the source workspace baseline (Git status plus a bounded authored-file digest) is verified before and after the probe, and the mirror is always destroyed with no-follow containment checks. The provider can never auto-approve, choose the executable or mirror path, or remove recovery mode; the capability is `ask` in both user profiles with no public auto-allow option
 - In-process conversation history
 - Cancellation support through `AbortSignal`
-- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic scenarios for read tools, the approved write workflow (`create solaris-write-test`, `edit solaris-write-test`, `delete solaris-write-test`), Git inspection (`git status`, `show working diff`, `show staged diff`, `show head diff`), and development commands (`run npm check`, `run npm test`, `run node validation fixture`)
+- Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic scenarios for read tools, the approved write workflow (`create solaris-write-test`, `edit solaris-write-test`, `delete solaris-write-test`), Git inspection (`git status`, `show working diff`, `show staged diff`, `show head diff`), development commands (`run npm check`, `run npm test`, `run node validation fixture`), and the recovery probe (`probe godot project`, `run godot project probe`)
 
 Not yet implemented:
 
 - General shell access, arbitrary executables, writable command execution, package installation, or background processes — the only active command runner is `node-script`, workspace-read-only and offline; `npm-script` requests fail closed with an explanation
 - Git writes of any kind: staging, commits, reset, restore, checkout, clean, stash, branches, worktrees, remotes
-- Godot project execution: no project loading, no import, no scene or script execution — the engine is only ever probed outside any project. GDScript programming and editor/runtime integration remain unimplemented
+- Godot project execution: no normal project opening, no explicit import, no scene or script execution. The only project-open path is the approved recovery-mode probe against a disposable mirror, described above. GDScript programming and editor/runtime integration remain unimplemented
 - Real model providers (e.g. Anthropic, OpenAI)
 - Persistent sessions or transcript storage
 - Multi-agent functionality, skills, or agent profiles
@@ -58,23 +59,24 @@ npm run solaris      # launch the interactive CLI
 
 ## npm commands
 
-| Command                               | Purpose                                                                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `npm run build`                       | Build all workspaces into their `dist/` directories                                                                      |
-| `npm run clean`                       | Remove all build output                                                                                                  |
-| `npm run format`                      | Format the repository with Prettier (may modify files)                                                                   |
-| `npm run format:check`                | Verify formatting without modifying files                                                                                |
-| `npm run lint`                        | Lint with type-aware ESLint rules                                                                                        |
-| `npm run typecheck`                   | Type-check with strict TypeScript                                                                                        |
-| `npm test`                            | Run all tests once (Vitest)                                                                                              |
-| `npm run test:watch`                  | Run tests in watch mode                                                                                                  |
-| `npm run check:architecture`          | Verify workspace dependency boundaries (structural parsing, not regex-only)                                              |
-| `npm run test:sandbox`                | Run live sandbox conformance probes (skips loudly when the backend is unavailable)                                       |
-| `npm run test:godot`                  | Run live Godot probe conformance (opt-in; requires `SOLARIS_TEST_GODOT=1`)                                               |
-| `npm run check`                       | Run all non-mutating validation                                                                                          |
-| `npm run solaris`                     | Build and launch the interactive CLI                                                                                     |
-| `npm run solaris -- --sandbox-doctor` | Print sandbox diagnostics (add `--run-probes` to run fixed probes; exit 0 passed, 1 probe failure, 3 probes unavailable) |
-| `npm run solaris -- --godot-doctor`   | Print Godot discovery, selection, and cache diagnostics                                                                  |
+| Command                               | Purpose                                                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run build`                       | Build all workspaces into their `dist/` directories                                                                                                          |
+| `npm run clean`                       | Remove all build output                                                                                                                                      |
+| `npm run format`                      | Format the repository with Prettier (may modify files)                                                                                                       |
+| `npm run format:check`                | Verify formatting without modifying files                                                                                                                    |
+| `npm run lint`                        | Lint with type-aware ESLint rules                                                                                                                            |
+| `npm run typecheck`                   | Type-check with strict TypeScript                                                                                                                            |
+| `npm test`                            | Run all tests once (Vitest)                                                                                                                                  |
+| `npm run test:watch`                  | Run tests in watch mode                                                                                                                                      |
+| `npm run check:architecture`          | Verify workspace dependency boundaries (structural parsing, not regex-only)                                                                                  |
+| `npm run test:sandbox`                | Run live sandbox conformance probes (skips loudly when the backend is unavailable)                                                                           |
+| `npm run test:godot`                  | Run live Godot probe conformance (opt-in; requires `SOLARIS_TEST_GODOT=1`)                                                                                   |
+| `npm run test:godot-recovery`         | Run live recovery-mode probe conformance with side-effect fixtures (opt-in; requires `SOLARIS_TEST_GODOT` and an enforcing sandbox; never passes unverified) |
+| `npm run check`                       | Run all non-mutating validation                                                                                                                              |
+| `npm run solaris`                     | Build and launch the interactive CLI                                                                                                                         |
+| `npm run solaris -- --sandbox-doctor` | Print sandbox diagnostics (add `--run-probes` to run fixed probes; exit 0 passed, 1 probe failure, 3 probes unavailable)                                     |
+| `npm run solaris -- --godot-doctor`   | Print Godot discovery, selection, and cache diagnostics                                                                                                      |
 
 ## Sandbox configuration
 
@@ -89,7 +91,7 @@ User-level configuration lives at `~/.solaris/config.json`:
 }
 ```
 
-Supported profiles: `inspect` (default; read-only, no processes, no network — write and process tools are not exposed to the provider) and `develop-offline` (workspace writes require one-time approval, processes require one-time approval per exact command plan, network denied). Backends: `auto` and `anthropic-runtime`. An untrusted repository can never broaden these settings. Commands always execute under the internal `validation-offline` profile: the project workspace is readable but never writable. See `SECURITY.md` for the full security model.
+Supported profiles: `inspect` (default; read-only, no processes, no network — write and process tools are not exposed to the provider) and `develop-offline` (workspace writes require one-time approval, processes require one-time approval per exact command plan, network denied). Backends: `auto` and `anthropic-runtime`. An untrusted repository can never broaden these settings. Commands always execute under the internal `validation-offline` profile: the project workspace is readable but never writable. Recovery-mode project probes execute under the internal `godot-recovery-probe-offline` profile: the source workspace is never writable and is excluded from the host-read allowlist where the backend can enforce it. See `SECURITY.md` for the full security model.
 
 ## Example command session
 
@@ -206,6 +208,9 @@ packages/
                            runners
       providers/           deterministic fake provider (with tool scenarios)
       sandbox/             Anthropic Sandbox Runtime backend, conformance probes
+      godot/               discovery, profiling, static project inspection,
+                           disposable project mirror, recovery-mode runner,
+                           project probe service and provider tool
       tools/workspace/     read-only workspace tools + approved mutation tools
 docs/
   adr/                     architecture decision records
@@ -233,4 +238,4 @@ runs formatting, linting, type checking, tests, and the architecture check witho
 
 ## Next planned milestone
 
-Godot executable discovery, exact-version profiling, project detection, and read-only engine capability probes are complete. The next narrow task is an explicit trusted-project decision and a read-only recovery-mode project probe that opens Godot headlessly, disables tool scripts/plugins/GDExtensions, isolates generated `.godot` and editor state where technically possible, captures startup/import diagnostics without modifying authored project files, and fails closed when safe isolation cannot be proven. See `ROADMAP.md`.
+Godot executable discovery, exact-version profiling, project detection, read-only engine capability probes, and the trusted-project decision with disposable recovery-mode probing are complete. The next narrow task is to add version-matched Godot knowledge profiles and GDScript language intelligence — official documentation/API indexing and a read-only GDScript diagnostic path — before normal project execution. See `ROADMAP.md`.
