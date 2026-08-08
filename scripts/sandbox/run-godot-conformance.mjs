@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtemp, readdir, utimes } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +8,6 @@ import {
   createAnthropicSandboxRuntimeBackend,
   createGodotProbeRunner,
   createRunDirectoryProvider,
-  getSandboxDirectories,
   installationFromIdentity,
   validateExecutable,
 } from "@solaris/adapters";
@@ -29,6 +28,35 @@ function record(probeId, ok, detail) {
   console.log(`  [${ok ? "PASS" : "FAIL"}] ${probeId}: ${detail}`);
 }
 
+/**
+ * Disposable fixture executables for the process-level probes. The
+ * user-supplied Godot engine is never modified and never used for
+ * timeout/cancellation/identity tests: those run against these fixed
+ * fixtures, so their outcomes never depend on real engine timing.
+ */
+async function writeFixtureExecutable(directory, name, body) {
+  const fixturePath = join(directory, name);
+  await writeFile(fixturePath, body);
+  await chmod(fixturePath, 0o755).catch(() => undefined);
+  return fixturePath;
+}
+
+const HANG_FIXTURE = "#!/bin/sh\nwhile true; do sleep 1; done\n";
+const DESCENDANT_FIXTURE =
+  "#!/bin/sh\n(sleep 1000 & echo $! > child.pid)\nwhile true; do sleep 1; done\n";
+const STDIN_FIXTURE =
+  '#!/bin/sh\nif read -t 3 line; then echo "STDIN_OPEN"; else echo "STDIN_CLOSED"; fi\n';
+const FAKE_VERSION_FIXTURE = '#!/bin/sh\necho "4.7.1.stable.official (conformance fixture)"\n';
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const godotPath = process.env["SOLARIS_TEST_GODOT"];
   if (godotPath === undefined || godotPath.trim().length === 0) {
@@ -38,14 +66,10 @@ async function main() {
     );
     return 0;
   }
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "solaris-godot-fixtures-"));
   const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-godot-conformance-"));
-  const sandboxDirectories = getSandboxDirectories();
   const runsRoot = join(tmpdir(), "solaris-godot-conformance-runs");
-  const backend = createAnthropicSandboxRuntimeBackend({
-    workspaceRoot,
-    sandboxHome: sandboxDirectories.home,
-    sandboxTemp: sandboxDirectories.temp,
-  });
+  const backend = createAnthropicSandboxRuntimeBackend({ workspaceRoot });
   const recorded = [];
   const recordingBackend = {
     ...backend,
@@ -56,18 +80,19 @@ async function main() {
   };
   const parentEnvironment = buildChildEnvironment(
     { ...process.env, ...FAKE_PROBE_SECRETS },
-    sandboxDirectories,
+    { home: join(fixtureRoot, "home"), temp: join(fixtureRoot, "tmp") },
   );
   const runner = createGodotProbeRunner({
     backend: recordingBackend,
     runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
     parentEnvironment,
   });
+  let exitCode = 1;
   try {
     const status = await backend.inspect();
-    if (status.state !== "available") {
+    if (status.state !== "available" || !status.capabilities.filesystemReadRestriction) {
       console.log(
-        `GODOT CONFORMANCE: SKIPPED - backend unavailable (state: ${status.state}, platform: ${status.platform}).`,
+        `GODOT CONFORMANCE: SKIPPED - backend unavailable or host-read isolation unenforced (state: ${status.state}, platform: ${status.platform}).`,
       );
       console.log(
         "The live Godot probes did not run; an unavailable backend is never treated as secure.",
@@ -103,17 +128,35 @@ async function main() {
       `--help: ${helpProbe.status}`,
     );
 
-    const versionRequests = recorded.filter((request) => request.arguments.includes("--version"));
+    const probeRequests = recorded.filter((request) =>
+      ["--version", "--help", "--dump-extension-api"].some((argument) =>
+        request.arguments.includes(argument),
+      ),
+    );
     record(
       "no-project-args",
-      versionRequests.length > 0 &&
-        versionRequests.every((request) => request.arguments.length === 1),
+      probeRequests.length > 0 && probeRequests.every((request) => request.arguments.length === 1),
       "probes pass exactly one fixed argument and never a project path",
     );
     record(
-      "stdin-closed",
-      true,
-      "the sandbox backend spawns with stdin closed (enforced by the backend contract)",
+      "executed-private-copy",
+      probeRequests.length > 0 &&
+        probeRequests.every((request) => request.executable.startsWith(runsRoot)),
+      "every probe executes the verified private copy inside the run directory, never the configured executable path",
+    );
+    record(
+      "exact-read-only-roots",
+      probeRequests.length > 0 &&
+        probeRequests.every((request) => Array.isArray(request.explicitReadRoots)),
+      "every probe request carries an explicit read-roots list (no workspace or install-parent surface)",
+    );
+    record(
+      "no-workspace-request-path",
+      probeRequests.every((request) => {
+        const serialized = JSON.stringify(request);
+        return !serialized.includes(workspaceRoot);
+      }),
+      "no probe request contains the workspace path in arguments, environment, or config",
     );
 
     const apiProbe =
@@ -168,33 +211,195 @@ async function main() {
     );
     record("private-home", homePrivate, "probe home points into the private run directory");
 
-    const timeoutRequest = {
-      executable: installation.canonicalPath,
-      arguments: ["--version"],
-      workingDirectory: workspaceRoot,
-      profile: GODOT_PROBE_OFFLINE_PROFILE,
-      environment: parentEnvironment,
-      timeoutMs: 250,
-    };
-    const timeoutResult = await recordingBackend
-      .execute(timeoutRequest)
-      .catch((error) => ({ status: "failed", message: error.message }));
-    record(
-      "timeout",
-      timeoutResult.status === "timed-out",
-      `a bounded probe times out and terminates: ${timeoutResult.status}`,
-    );
+    // ---- Fixed internal process fixtures (never the real engine) ----
 
-    const controller = new AbortController();
-    const cancelledProbe = runner.dumpExtensionApi(installation, controller.signal);
-    setTimeout(() => controller.abort(), 400);
-    let cancelled = false;
+    const hangExecutable = await writeFixtureExecutable(fixtureRoot, "hang-fixture", HANG_FIXTURE);
+    const hangRun = await createRunDirectoryProvider({
+      workspaceRoot,
+      runsRoot,
+    }).create();
     try {
-      await cancelledProbe;
-    } catch {
-      cancelled = true;
+      // The fixture never exits, so a bounded timeout is deterministic.
+      const timeoutRequest = {
+        executable: hangExecutable,
+        arguments: [],
+        workingDirectory: hangRun.temp,
+        profile: GODOT_PROBE_OFFLINE_PROFILE,
+        environment: parentEnvironment,
+        runDirectory: hangRun.root,
+        timeoutMs: 250,
+      };
+      const timeoutResult = await recordingBackend
+        .execute(timeoutRequest)
+        .catch((error) => ({ status: "failed", message: error.message }));
+      record(
+        "timeout",
+        timeoutResult.status === "timed-out",
+        `a bounded process is terminated on timeout: ${timeoutResult.status}`,
+      );
+
+      // Aborting a never-exiting process is deterministic.
+      const abortController = new AbortController();
+      const cancellationPromise = recordingBackend
+        .execute({ ...timeoutRequest, timeoutMs: 60_000, signal: abortController.signal })
+        .catch((error) => ({ status: "failed", message: error.message }));
+      const abortTimer = setTimeout(() => abortController.abort(), 100);
+      const cancellationResult = await cancellationPromise;
+      clearTimeout(abortTimer);
+      record(
+        "cancellation",
+        cancellationResult.status === "cancelled",
+        `cancelling a bounded process terminates it: ${cancellationResult.status}`,
+      );
+
+      // Descendant termination: the fixture spawns a child and records its
+      // pid; cancellation must terminate the whole tree.
+      const descendantExecutable = await writeFixtureExecutable(
+        fixtureRoot,
+        "descendant-fixture",
+        DESCENDANT_FIXTURE,
+      );
+      const descendantRun = await createRunDirectoryProvider({
+        workspaceRoot,
+        runsRoot,
+      }).create();
+      try {
+        const descendantController = new AbortController();
+        const descendantPromise = recordingBackend
+          .execute({
+            executable: descendantExecutable,
+            arguments: [],
+            workingDirectory: descendantRun.temp,
+            profile: GODOT_PROBE_OFFLINE_PROFILE,
+            environment: parentEnvironment,
+            runDirectory: descendantRun.root,
+            timeoutMs: 60_000,
+            signal: descendantController.signal,
+          })
+          .catch((error) => ({ status: "failed", message: error.message }));
+        const childPidPath = join(descendantRun.temp, "child.pid");
+        let childPid = null;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          try {
+            const { readFile } = await import("node:fs/promises");
+            const content = await readFile(childPidPath, "utf8");
+            const parsed = Number(content.trim());
+            if (Number.isSafeInteger(parsed) && parsed > 0) {
+              childPid = parsed;
+              break;
+            }
+          } catch {
+            // the fixture has not written the pid yet; keep waiting
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        descendantController.abort();
+        const descendantResult = await descendantPromise;
+        let descendantTerminated = false;
+        if (childPid !== null && descendantResult.status === "cancelled") {
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            if (!processAlive(childPid)) {
+              descendantTerminated = true;
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        }
+        record(
+          "descendant-termination",
+          descendantTerminated,
+          `cancellation terminates the descendant process tree: ${descendantTerminated ? "child terminated" : `child ${String(childPid)} still alive`}`,
+        );
+      } finally {
+        await createRunDirectoryProvider({ workspaceRoot, runsRoot })
+          .remove(descendantRun.runId)
+          .catch(() => undefined);
+      }
+
+      // Closed stdin is observed, not assumed: the fixture reports whether
+      // a read from stdin returns immediately.
+      const stdinExecutable = await writeFixtureExecutable(
+        fixtureRoot,
+        "stdin-fixture",
+        STDIN_FIXTURE,
+      );
+      const stdinResult = await recordingBackend.execute({
+        executable: stdinExecutable,
+        arguments: [],
+        workingDirectory: hangRun.temp,
+        profile: GODOT_PROBE_OFFLINE_PROFILE,
+        environment: parentEnvironment,
+        runDirectory: hangRun.root,
+        timeoutMs: 10_000,
+      });
+      record(
+        "stdin-closed",
+        stdinResult.status === "completed" && stdinResult.stdout.includes("STDIN_CLOSED"),
+        `probe stdin is closed: ${stdinResult.status === "completed" ? stdinResult.stdout.trim().split(/\r?\n/).pop() : stdinResult.status}`,
+      );
+    } finally {
+      await createRunDirectoryProvider({ workspaceRoot, runsRoot })
+        .remove(hangRun.runId)
+        .catch(() => undefined);
     }
-    record("cancellation", cancelled, "cancelling a probe aborts the Godot process tree");
+
+    // Identity invalidation runs against a disposable fixture copy, never
+    // the user-supplied engine: same-size replacement with restored mtime
+    // must invalidate the prepared probe identity.
+    const fakeExecutable = await writeFixtureExecutable(
+      fixtureRoot,
+      "identity-fixture",
+      FAKE_VERSION_FIXTURE,
+    );
+    const fakeValidated = await validateExecutable({ path: fakeExecutable, workspaceRoot });
+    if (fakeValidated.ok) {
+      const fakeInstallation = installationFromIdentity(
+        "identity-fixture",
+        "user-config",
+        "user config",
+        fakeValidated.identity,
+        "standard",
+      );
+      const before = await runner.probeVersion(fakeInstallation);
+      record(
+        "fixture-version",
+        before.status === "success",
+        `the disposable fixture itself probes successfully: ${before.status === "success" ? before.version.raw : before.message}`,
+      );
+      const originalBytes = await import("node:fs/promises").then((fs) =>
+        fs.readFile(fakeExecutable),
+      );
+      // Same-size replacement with a restored mtime: only the full-hash
+      // revalidation can detect it.
+      const replacement = Buffer.from(
+        '#!/bin/sh\necho "4.7.1.stable.official (conformance fixtur3)"\n',
+      );
+      if (replacement.length === originalBytes.length) {
+        const { stat, utimes } = await import("node:fs/promises");
+        const originalTime = fakeValidated.identity.modifiedAtMs;
+        await writeFile(fakeExecutable, replacement);
+        await utimes(fakeExecutable, new Date(originalTime), new Date(originalTime));
+        const sizeUnchanged = (await stat(fakeExecutable)).size === originalBytes.length;
+        const after = await runner.probeVersion(fakeInstallation);
+        record(
+          "identity-invalidation",
+          sizeUnchanged && after.status === "failed",
+          `same-size content replacement with restored mtime invalidates the prepared identity: ${after.status === "failed" ? after.message : `unexpected ${after.status}`}`,
+        );
+      } else {
+        record(
+          "identity-invalidation",
+          false,
+          "the fixture replacement fixture was not same-size; the invalidation probe could not be exercised",
+        );
+      }
+    } else {
+      record(
+        "identity-invalidation",
+        false,
+        `the disposable fixture could not be validated: ${fakeValidated.error}`,
+      );
+    }
 
     const runsEntries = await readdir(runsRoot);
     const runDirectoriesLeft = [];
@@ -204,25 +409,15 @@ async function main() {
     }
     record("probe-cleanup", runDirectoriesLeft.length === 0, "probe run directories are cleaned");
 
-    const originalTime = validated.identity.modifiedAtMs;
-    await utimes(
-      installation.canonicalPath,
-      new Date(originalTime + 5000),
-      new Date(originalTime + 5000),
-    );
-    const identityProbe = await runner.probeVersion(installation);
-    record(
-      "identity-invalidation",
-      identityProbe.status === "failed" && identityProbe.message.includes("rediscovery"),
-      "an executable identity change invalidates a prepared probe",
-    );
-    await utimes(installation.canonicalPath, new Date(originalTime), new Date(originalTime));
-
     const failed = results.filter((result) => !result.ok).length;
     console.log(`Result: ${results.length - failed} passed, ${failed} failed, 0 skipped.`);
-    return failed > 0 ? 1 : 0;
+    exitCode = failed > 0 ? 1 : 0;
+    return exitCode;
   } finally {
     await backend.close().catch(() => {});
+    await rm(fixtureRoot, { recursive: true, force: true }).catch(() => undefined);
+    await rm(workspaceRoot, { recursive: true, force: true }).catch(() => undefined);
+    await rm(runsRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
