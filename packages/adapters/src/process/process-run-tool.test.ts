@@ -887,6 +887,131 @@ describe("process.run tool run directories", () => {
     }
   });
 
+  it("observes cleanup refusal after a timed-out operation without losing the timeout result", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "scripts/validate.mjs": "console.log('x');",
+      });
+      const digest = createSha256CommandDigestService();
+      const registry = createCommandRunnerRegistry([createTestNodeRunner(digest)]);
+      const fake = createFakeSandboxBackend({
+        results: [{ ...completedResult(), status: "timed-out", exitCode: null }],
+      });
+      const tool = createProcessRunTool({
+        workspaceRoot: workspace.root,
+        runners: registry,
+        backend: fake.backend,
+        runDirectories: {
+          create: async () => {
+            const { mkdir } = await import("node:fs/promises");
+            const runDirectory = join(RUNS_ROOT, `timeout-cleanup-${Date.now()}-${Math.random()}`);
+            const directories = {
+              runId: "run-x",
+              root: runDirectory,
+              home: join(runDirectory, "home"),
+              temp: join(runDirectory, "tmp"),
+              npmCache: join(runDirectory, "npm-cache"),
+              npmUserConfig: join(runDirectory, "npmrc"),
+              scriptCache: join(runDirectory, "script-cache"),
+            };
+            await mkdir(directories.root, { recursive: true });
+            await mkdir(directories.scriptCache, { recursive: true });
+            return { ok: true as const, paths: directories };
+          },
+          remove: () =>
+            Promise.resolve({
+              ok: false as const,
+              reason: "refused" as const,
+              message: "still locked",
+            }),
+        },
+        lock: createMutationLock(),
+        executionProfile: VALIDATION_OFFLINE_PROFILE,
+        executionPolicy: createDefaultPolicy("validation-offline"),
+      });
+      const prepared = await tool.prepare(
+        { runner: "node-script", path: "scripts/validate.mjs" },
+        {},
+      );
+      if (prepared.status !== "ready") {
+        throw new Error("Expected ready.");
+      }
+      const result = await tool.executePrepared(prepared.command, {
+        approvedDigest: prepared.digest,
+      });
+      // The timeout result is preserved and the cleanup refusal is attached.
+      expect(result.status).toBe("timed_out");
+      if (result.status === "timed_out") {
+        expect(result.message).toContain("cleanup also failed");
+      }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("observes cleanup refusal after a cancelled operation without losing the cancellation result", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "scripts/validate.mjs": "console.log('x');",
+      });
+      const digest = createSha256CommandDigestService();
+      const registry = createCommandRunnerRegistry([createTestNodeRunner(digest)]);
+      const fake = createFakeSandboxBackend({
+        results: [{ ...completedResult(), status: "cancelled", exitCode: null }],
+      });
+      const tool = createProcessRunTool({
+        workspaceRoot: workspace.root,
+        runners: registry,
+        backend: fake.backend,
+        runDirectories: {
+          create: async () => {
+            const { mkdir } = await import("node:fs/promises");
+            const runDirectory = join(RUNS_ROOT, `cancel-cleanup-${Date.now()}-${Math.random()}`);
+            const directories = {
+              runId: "run-x",
+              root: runDirectory,
+              home: join(runDirectory, "home"),
+              temp: join(runDirectory, "tmp"),
+              npmCache: join(runDirectory, "npm-cache"),
+              npmUserConfig: join(runDirectory, "npmrc"),
+              scriptCache: join(runDirectory, "script-cache"),
+            };
+            await mkdir(directories.root, { recursive: true });
+            await mkdir(directories.scriptCache, { recursive: true });
+            return { ok: true as const, paths: directories };
+          },
+          remove: () =>
+            Promise.resolve({
+              ok: false as const,
+              reason: "failed" as const,
+              message: "directory is busy",
+            }),
+        },
+        lock: createMutationLock(),
+        executionProfile: VALIDATION_OFFLINE_PROFILE,
+        executionPolicy: createDefaultPolicy("validation-offline"),
+      });
+      const prepared = await tool.prepare(
+        { runner: "node-script", path: "scripts/validate.mjs" },
+        {},
+      );
+      if (prepared.status !== "ready") {
+        throw new Error("Expected ready.");
+      }
+      const result = await tool.executePrepared(prepared.command, {
+        approvedDigest: prepared.digest,
+      });
+      expect(result.status).toBe("cancelled");
+      if (result.status === "cancelled") {
+        expect(result.message).toContain("cleanup also failed");
+      }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   it("reports run-directory cleanup failures truthfully", async () => {
     const workspace = await createTempWorkspace();
     try {
