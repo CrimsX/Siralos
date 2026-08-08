@@ -80,6 +80,7 @@ export interface GodotDoctorReport {
   readonly sandbox: {
     readonly state: string;
     readonly backendId: string;
+    readonly filesystemReadRestriction: boolean;
     readonly networkRestriction: boolean;
     readonly filesystemWriteRestriction: boolean;
     readonly processTreeRestriction: boolean;
@@ -97,7 +98,12 @@ export interface GodotDoctorReport {
  * the CLI and provider tools consume only this port.
  */
 export interface GodotInspector {
-  /** Discover, validate, probe, and select installations (cached per session). */
+  /**
+   * Discover, validate, and select installations. Re-collects candidates
+   * and revalidates executable fingerprints on every call; profiles are
+   * served from the engine-profile cache only while the full SHA-256
+   * matches.
+   */
   discover(signal?: AbortSignal): Promise<GodotDiscoveryResult>;
 
   /** Selected installation after discovery, or null. */

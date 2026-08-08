@@ -335,6 +335,7 @@ function createStubGodotInspector(): GodotInspector {
         sandbox: {
           state: "available",
           backendId: "stub-backend",
+          filesystemReadRestriction: true,
           networkRestriction: true,
           filesystemWriteRestriction: true,
           processTreeRestriction: true,

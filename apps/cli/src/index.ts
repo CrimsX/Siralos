@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
 import { createCliApplication } from "./bootstrap/create-application.js";
-import { runGodotDoctor } from "./bootstrap/godot-doctor.js";
+import { godotDoctorExitCode, runGodotDoctor } from "./bootstrap/godot-doctor.js";
 import { doctorExitCode, runSandboxDoctor } from "./bootstrap/sandbox-doctor.js";
 import { createInputQueue, type InputQueue } from "./input/input-queue.js";
 import {
@@ -47,7 +47,7 @@ async function main(): Promise<number> {
     });
     const sanitizer = new TerminalSanitizer();
     stdout.write(sanitizer.push(formatGodotDoctor(report)) + sanitizer.flush());
-    return 0;
+    return godotDoctorExitCode(report);
   }
   const readline = createInterface({ input: stdin, output: stdout });
   const controls: SessionControls = createSessionControls();

@@ -149,6 +149,7 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
       sandbox: {
         state: sandboxStatus.state,
         backendId: sandboxStatus.backendId,
+        filesystemReadRestriction: sandboxStatus.capabilities.filesystemReadRestriction,
         networkRestriction: sandboxStatus.capabilities.networkRestriction,
         filesystemWriteRestriction: sandboxStatus.capabilities.filesystemWriteRestriction,
         processTreeRestriction: sandboxStatus.capabilities.processTreeRestriction,
