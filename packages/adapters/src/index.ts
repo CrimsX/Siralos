@@ -71,6 +71,7 @@ export { createWorkspaceEditFileTool } from "./tools/workspace/mutations/workspa
 export { createWorkspaceDeleteFileTool } from "./tools/workspace/mutations/workspace-delete-file-tool.js";
 export { createMutationLock } from "./tools/workspace/mutations/mutation-lock.js";
 export {
+  CheckpointStorageLimitError,
   createFilesystemCheckpointStore,
   DEFAULT_CHECKPOINT_ROOT,
   DEFAULT_MAX_CHECKPOINTS,
