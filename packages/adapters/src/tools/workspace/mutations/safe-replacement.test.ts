@@ -53,7 +53,12 @@ function recordingOps(
     readonly beforeUnlink?: (path: string, callIndex: number) => Promise<void>;
     readonly beforeLstat?: (path: string, callIndex: number) => Promise<void>;
   } = {},
-): ReplacementFsOps {
+): ReplacementFsOps & {
+  readonly renameCalls: () => number;
+  readonly linkCalls: () => number;
+  readonly lstatCalls: () => number;
+  readonly rmCalls: () => number;
+} {
   let renameCalls = 0;
   let linkCalls = 0;
   let readFileCalls = 0;
@@ -115,6 +120,10 @@ function recordingOps(
       }
       await REAL_REPLACEMENT_FS_OPS.rm(path, { force: true });
     },
+    renameCalls: () => renameCalls,
+    linkCalls: () => linkCalls,
+    lstatCalls: () => lstatCalls,
+    rmCalls: () => rmCalls,
   };
 }
 
@@ -508,9 +517,11 @@ describe("safe deletion state machine", () => {
   it("never unlinks the quarantine while a new target occupies the path", async () => {
     const ops = recordingOps({
       beforeLstat: async (path, callIndex) => {
-        // The second lstat is the pre-unlink target-absence check: a new
-        // object appears exactly there.
-        if (callIndex === 2 && path.endsWith("file.txt")) {
+        // The lstat calls are: (1) target identity capture, (2) displaced
+        // identity verification, (3) quarantined hash verification, and
+        // (4) the pre-unlink target-absence check: a new object appears
+        // exactly there.
+        if (callIndex === 4 && path.endsWith("file.txt")) {
           await writeFile(path, "new target appeared\n");
         }
       },
@@ -528,5 +539,55 @@ describe("safe deletion state machine", () => {
     expect(await readFile(target, "utf8")).toBe("new target appeared\n");
     expect(outcome.message).toContain("recoverable original");
     expect(sha256(await readFile(outcome.quarantinePath))).toBe(originalHash);
+  });
+
+  it("fails closed before any rename when the parent chain no longer verifies", async () => {
+    const ops = recordingOps({});
+    const { target, originalHash } = await setupReplacement();
+    const outcome = await replaceFileWithQuarantine({
+      tempPath: join(join(target, ".."), "staged.tmp"),
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      expectedStagedSha256: null,
+      ops,
+      verifyParentIdentity: () => Promise.reject(new Error("parent path component swapped")),
+    });
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") {
+      return;
+    }
+    expect(outcome.message).toContain("refused before any change");
+    expect(outcome.quarantinePath).toBeNull();
+    // Nothing was renamed: the original is untouched at the target.
+    expect(await readFile(target, "utf8")).toBe("original content\n");
+    expect(ops.renameCalls()).toBe(0);
+  });
+
+  it("restores and fails closed when the displaced object is not the captured one", async () => {
+    const ops = recordingOps({
+      beforeRename: async (_from, _to) => {
+        // Between the identity capture and the displacement rename the
+        // target is substituted with a different object (a swapped parent
+        // would do the same): the rename displaces the substitute, whose
+        // dev+ino differs from the captured identity.
+        await rm(_from, { force: true });
+        await writeFile(_from, "swapped content\n");
+      },
+    });
+    const { target, originalHash } = await setupReplacement();
+    const outcome = await unlinkWithIdentityVerification({
+      targetPath: target,
+      expectedTargetSha256: originalHash,
+      ops,
+    });
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") {
+      return;
+    }
+    expect(outcome.message).toContain("not the object that was at the target");
+    expect(outcome.quarantinePath).toBeNull();
+    // The displaced substitute was restored to the target; nothing was
+    // deleted and nothing committed.
+    expect(await readFile(target, "utf8")).toBe("swapped content\n");
   });
 });

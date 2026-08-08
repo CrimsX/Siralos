@@ -101,6 +101,20 @@ export async function verifyParentChainIdentity(
 }
 
 /**
+ * Parent-chain verification that throws on failure, for use as the
+ * fail-closed hook of the rename-based commit primitives.
+ */
+export async function verifyParentChainIdentityOrThrow(
+  workspaceRoot: string,
+  absolutePath: string,
+): Promise<void> {
+  const result = await verifyParentChainIdentity(workspaceRoot, absolutePath);
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+}
+
+/**
  * Proves, through the opened handle, that the object created by an
  * exclusive ("wx") open is exactly the object the path now resolves to and
  * that no link lies anywhere in the path chain: handle dev+ino must equal

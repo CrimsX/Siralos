@@ -76,6 +76,17 @@ export interface ReplaceFileWithQuarantineOptions {
    * operation can be reported as success.
    */
   readonly expectedStagedSha256: string | null;
+  /**
+   * Optional final parent-chain identity verification, invoked immediately
+   * before the displacement rename. It must throw when any parent
+   * component of `targetPath` is a symbolic link or no longer resolves
+   * canonically inside its verified root; the operation then fails closed
+   * before modifying anything. Node exposes no dirfd-relative rename, so
+   * this shrinks the parent-swap window to the single rename syscall, and
+   * the displaced object's identity (dev+ino captured immediately before
+   * the rename) is re-verified afterwards.
+   */
+  readonly verifyParentIdentity?: () => Promise<void>;
   readonly ops?: ReplacementFsOps;
 }
 
@@ -108,7 +119,31 @@ export async function replaceFileWithQuarantine(
   options: ReplaceFileWithQuarantineOptions,
 ): Promise<ReplacementOutcome> {
   const ops = options.ops ?? REAL_REPLACEMENT_FS_OPS;
+  if (options.verifyParentIdentity !== undefined) {
+    try {
+      await options.verifyParentIdentity();
+    } catch (error: unknown) {
+      return {
+        kind: "failed",
+        message: `The replacement was refused before any change: the target's parent chain no longer verifies (${describeError(error)}).`,
+        quarantinePath: null,
+      };
+    }
+  }
   const quarantinePath = join(dirname(options.targetPath), `.solaris-quarantine-${randomUUID()}`);
+  // Identity capture immediately before the displacement: the object that
+  // sits at the target at this instant is the only object the operation may
+  // displace, and its dev+ino is re-verified on the quarantined path after
+  // the rename, so a parent swapped in the final window (which would
+  // displace an object outside the workspace) is detected and rolled back.
+  const expectedDevIno = await captureTargetIdentity(ops, options.targetPath);
+  if (expectedDevIno === null) {
+    return {
+      kind: "failed",
+      message: "The replacement could not be committed: the target is not accessible.",
+      quarantinePath: null,
+    };
+  }
   try {
     await ops.rename(options.targetPath, quarantinePath);
   } catch (error: unknown) {
@@ -116,6 +151,22 @@ export async function replaceFileWithQuarantine(
       kind: "failed",
       message: `The replacement could not be committed and the original could not be moved to quarantine: ${describeError(error)}`,
       quarantinePath: null,
+    };
+  }
+  const displacedIdentity = await verifyDisplacedIdentity(ops, quarantinePath, expectedDevIno);
+  if (!displacedIdentity.ok) {
+    const rollback = await restoreOriginal(ops, quarantinePath, options.targetPath);
+    if (rollback.ok) {
+      return {
+        kind: "failed",
+        message: `${displacedIdentity.message}; the displaced object was restored and the replacement was not committed.`,
+        quarantinePath: null,
+      };
+    }
+    return {
+      kind: "uncertain",
+      message: `${displacedIdentity.message} and the displaced object could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
+      quarantinePath,
     };
   }
   if (options.expectedTargetSha256 !== null) {
@@ -221,6 +272,12 @@ export interface UnlinkWithIdentityVerificationOptions {
    * validated object can ever be unlinked.
    */
   readonly expectedTargetSha256: string | null;
+  /**
+   * Optional final parent-chain identity verification, invoked immediately
+   * before the displacement rename; see
+   * `ReplaceFileWithQuarantineOptions.verifyParentIdentity`.
+   */
+  readonly verifyParentIdentity?: () => Promise<void>;
   readonly ops?: ReplacementFsOps;
 }
 
@@ -244,7 +301,26 @@ export async function unlinkWithIdentityVerification(
   options: UnlinkWithIdentityVerificationOptions,
 ): Promise<UnlinkOutcome> {
   const ops = options.ops ?? REAL_REPLACEMENT_FS_OPS;
+  if (options.verifyParentIdentity !== undefined) {
+    try {
+      await options.verifyParentIdentity();
+    } catch (error: unknown) {
+      return {
+        kind: "failed",
+        message: `The deletion was refused before any change: the target's parent chain no longer verifies (${describeError(error)}).`,
+        quarantinePath: null,
+      };
+    }
+  }
   const quarantinePath = join(dirname(options.targetPath), `.solaris-quarantine-${randomUUID()}`);
+  const expectedDevIno = await captureTargetIdentity(ops, options.targetPath);
+  if (expectedDevIno === null) {
+    return {
+      kind: "failed",
+      message: "The file could not be moved to quarantine: the target is not accessible.",
+      quarantinePath: null,
+    };
+  }
   try {
     await ops.rename(options.targetPath, quarantinePath);
   } catch (error: unknown) {
@@ -252,6 +328,22 @@ export async function unlinkWithIdentityVerification(
       kind: "failed",
       message: `The file could not be moved to quarantine for deletion: ${describeError(error)}`,
       quarantinePath: null,
+    };
+  }
+  const displacedIdentity = await verifyDisplacedIdentity(ops, quarantinePath, expectedDevIno);
+  if (!displacedIdentity.ok) {
+    const rollback = await restoreOriginal(ops, quarantinePath, options.targetPath);
+    if (rollback.ok) {
+      return {
+        kind: "failed",
+        message: `${displacedIdentity.message}; the displaced object was restored and nothing was deleted.`,
+        quarantinePath: null,
+      };
+    }
+    return {
+      kind: "uncertain",
+      message: `${displacedIdentity.message} and the displaced object could not be restored (${rollback.message}); the recoverable original is at ${quarantinePath}.`,
+      quarantinePath,
     };
   }
   if (options.expectedTargetSha256 !== null) {
@@ -313,6 +405,54 @@ export async function unlinkWithIdentityVerification(
     };
   }
   return { kind: "success", quarantinePath: null };
+}
+
+/**
+ * Captures the dev+ino of the object currently at the target path. Returns
+ * null when the target is not accessible (the rename would fail anyway).
+ */
+async function captureTargetIdentity(
+  ops: ReplacementFsOps,
+  targetPath: string,
+): Promise<{ readonly dev: number | bigint; readonly ino: number | bigint } | null> {
+  try {
+    const stats = await ops.lstat(targetPath);
+    return { dev: stats.dev, ino: stats.ino };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verifies that the quarantined path is the exact object that was captured
+ * immediately before the displacement rename. A parent swapped in the final
+ * window makes the rename displace a different object (or an object outside
+ * the workspace), which the dev+ino comparison detects; the caller restores
+ * the displaced object and fails closed instead of ever unlinking or
+ * committing through it.
+ */
+async function verifyDisplacedIdentity(
+  ops: ReplacementFsOps,
+  quarantinePath: string,
+  expected: { readonly dev: number | bigint; readonly ino: number | bigint },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let stats;
+  try {
+    stats = await ops.lstat(quarantinePath);
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      message: `The displaced object could not be inspected (${describeError(error)})`,
+    };
+  }
+  if (stats.dev !== expected.dev || stats.ino !== expected.ino) {
+    return {
+      ok: false,
+      message:
+        "The displaced object is not the object that was at the target immediately before the commit; the target's parent may have been swapped",
+    };
+  }
+  return { ok: true };
 }
 
 async function verifyQuarantinedIdentity(

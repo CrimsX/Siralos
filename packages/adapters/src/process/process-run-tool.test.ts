@@ -52,10 +52,7 @@ function createTestNodeRunner(digest: CommandDigestService): CommandRunner {
       id: "node-script",
       description: "Test-only deterministic stand-in for the unavailable node-script runner.",
     },
-    prepare(
-      input: unknown,
-      context: CommandPreparationContext,
-    ): Promise<CommandPreparationResult> {
+    prepare(input: unknown, context: CommandPreparationContext): Promise<CommandPreparationResult> {
       if (context.signal?.aborted) {
         return Promise.resolve({ status: "cancelled", message: "Preparation was cancelled." });
       }

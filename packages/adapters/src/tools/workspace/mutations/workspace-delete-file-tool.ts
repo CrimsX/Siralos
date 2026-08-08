@@ -14,7 +14,7 @@ import { WORKSPACE_LIMITS } from "../limits.js";
 import { buildUnifiedDiff } from "./diff.js";
 import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
 import type { MutationLock } from "./mutation-lock.js";
-import { resolveMutationTarget } from "./mutation-paths.js";
+import { resolveMutationTarget, verifyParentChainIdentityOrThrow } from "./mutation-paths.js";
 import { unlinkWithIdentityVerification, type ReplacementFsOps } from "./safe-replacement.js";
 import { decodeUtf8, looksBinary } from "../text.js";
 import { readJsonObject, readRequiredString, type ParsedValue } from "../validation.js";
@@ -238,6 +238,12 @@ export function createWorkspaceDeleteFileTool(
       const commitOutcome = await unlinkWithIdentityVerification({
         targetPath: payload.absolutePath,
         expectedTargetSha256: payload.expectedSha256,
+        // The parent chain is re-verified immediately before the
+        // displacement rename, and the displaced object's identity is
+        // re-proven after it, so a parent swapped in the final window can
+        // never delete anything outside the workspace.
+        verifyParentIdentity: () =>
+          verifyParentChainIdentityOrThrow(workspaceRoot, payload.absolutePath),
         ...(replacementOps === undefined ? {} : { ops: replacementOps }),
       });
       if (commitOutcome.kind !== "success") {

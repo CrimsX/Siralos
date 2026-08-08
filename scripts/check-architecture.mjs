@@ -180,6 +180,9 @@ const APPROVED_MUTATION_DIRECTORIES = [
   // the probe executable-copy staging writes only the verified private
   // executable copy inside the Solaris-created run directory
   join("src", "godot", "process", "executable-copy.ts"),
+  // the bounded no-follow removal and bounded file reads are Solaris-owned
+  // filesystem primitives operating only on verified Solaris-created roots
+  join("src", "fs"),
 ];
 
 /**

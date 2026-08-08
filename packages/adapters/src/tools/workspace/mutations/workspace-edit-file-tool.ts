@@ -15,13 +15,17 @@ import { WORKSPACE_LIMITS } from "../limits.js";
 import { buildUnifiedDiff } from "./diff.js";
 import { hashBuffer, hashMutationPlan } from "./mutation-hash.js";
 import type { MutationLock } from "./mutation-lock.js";
-import { resolveMutationTarget } from "./mutation-paths.js";
+import { resolveMutationTarget, verifyParentChainIdentityOrThrow } from "./mutation-paths.js";
 import {
   removeQuarantinedCopy,
   replaceFileWithQuarantine,
   type ReplacementFsOps,
 } from "./safe-replacement.js";
-import { createMutationTempPath, removeMutationTemp } from "./mutation-temp.js";
+import {
+  createMutationTempPath,
+  removeMutationTemp,
+  type StagedTempIdentity,
+} from "./mutation-temp.js";
 import { decodeUtf8, looksBinary } from "../text.js";
 import {
   readArrayField,
@@ -265,6 +269,7 @@ export function createWorkspaceEditFileTool(
       throw error;
     }
     let tempPath: string | undefined;
+    let tempIdentity: StagedTempIdentity | undefined;
     let quarantinePath: string | null = null;
     try {
       const conflict = await revalidateTarget(payload);
@@ -304,31 +309,38 @@ export function createWorkspaceEditFileTool(
       }
       tempPath = createMutationTempPath(dirname(payload.absolutePath));
       try {
+        // The staging open follows intermediate links; the parent chain is
+        // re-verified immediately before it so a parent swapped since the
+        // revalidation can never redirect the staged write outside the
+        // workspace.
+        await verifyParentChainIdentityOrThrow(workspaceRoot, payload.absolutePath);
         const handle = await open(tempPath, "wx");
         try {
+          const stagedStats = await handle.stat();
+          tempIdentity = { dev: stagedStats.dev, ino: stagedStats.ino };
           await handle.writeFile(payload.newContent);
           await handle.sync();
         } finally {
           await handle.close();
         }
       } catch (error: unknown) {
-        await removeMutationTemp(tempPath);
+        await removeMutationTemp(tempPath, tempIdentity);
         return {
           status: "failed",
           message: `Cannot stage the replacement: ${describeError(error)}`,
         };
       }
       if (context.signal?.aborted) {
-        await removeMutationTemp(tempPath);
+        await removeMutationTemp(tempPath, tempIdentity);
         return { status: "cancelled", message: "The mutation was cancelled during staging." };
       }
       const finalConflict = await revalidateTarget(payload);
       if (finalConflict !== null) {
-        await removeMutationTemp(tempPath);
+        await removeMutationTemp(tempPath, tempIdentity);
         return { status: "conflict", message: finalConflict };
       }
       if (context.signal?.aborted) {
-        await removeMutationTemp(tempPath);
+        await removeMutationTemp(tempPath, tempIdentity);
         return { status: "cancelled", message: "The mutation was cancelled before commit." };
       }
       const commitOutcome = await replaceFileWithQuarantine({
@@ -339,6 +351,12 @@ export function createWorkspaceEditFileTool(
         // a staged file tampered between staging and the exclusive link is
         // detected before the operation can be reported as success.
         expectedStagedSha256: payload.afterSha256,
+        // The parent chain is re-verified immediately before the
+        // displacement rename, and the displaced object's identity is
+        // re-proven after it, so a parent swapped in the final window can
+        // never commit or destroy anything outside the workspace.
+        verifyParentIdentity: () =>
+          verifyParentChainIdentityOrThrow(workspaceRoot, payload.absolutePath),
         ...(replacementOps === undefined ? {} : { ops: replacementOps }),
       });
       // On success the staged temp file remains as a hard link to the
@@ -395,7 +413,7 @@ export function createWorkspaceEditFileTool(
       };
     } finally {
       if (tempPath !== undefined) {
-        await removeMutationTemp(tempPath).catch(() => {});
+        await removeMutationTemp(tempPath, tempIdentity).catch(() => {});
       }
       release();
     }

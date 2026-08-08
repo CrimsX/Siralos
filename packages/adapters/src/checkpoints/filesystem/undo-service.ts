@@ -19,6 +19,7 @@ import {
   resolveMutationTarget,
   verifyExclusiveOpenIdentity,
   verifyParentChainIdentity,
+  verifyParentChainIdentityOrThrow,
 } from "../../tools/workspace/mutations/mutation-paths.js";
 import {
   createMutationTempPath,
@@ -260,6 +261,12 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       const commitOutcome = await unlinkWithIdentityVerification({
         targetPath: absolute,
         expectedTargetSha256: checkpoint.after.sha256,
+        // The parent chain is re-verified immediately before the
+        // displacement rename, and the displaced object's identity is
+        // re-proven after it, so a parent swapped in the final window can
+        // never delete anything outside the workspace.
+        verifyParentIdentity: () =>
+          verifyParentChainIdentityOrThrow(dependencies.workspaceRoot, absolute),
       });
       if (commitOutcome.kind !== "success") {
         if (commitOutcome.kind === "uncertain") {
@@ -371,10 +378,18 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
         return { kind: "failed", message: resolved.message };
       }
       const tempPath = createMutationTempPath(path.dirname(absolute));
+      let tempIdentity: { readonly dev: number; readonly ino: number } | undefined;
       let quarantinePath: string | null = null;
       try {
+        // The staging open follows intermediate links; the parent chain is
+        // re-verified immediately before it so a parent swapped since the
+        // revalidation can never redirect the staged write outside the
+        // workspace.
+        await verifyParentChainIdentityOrThrow(dependencies.workspaceRoot, absolute);
         const handle = await open(tempPath, "wx");
         try {
+          const stagedStats = await handle.stat();
+          tempIdentity = { dev: stagedStats.dev, ino: stagedStats.ino };
           await handle.writeFile(preimage);
           await handle.sync();
         } finally {
@@ -394,6 +409,12 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
           // commit, so a staged file tampered between staging and the
           // exclusive link is detected before the restore is reported.
           expectedStagedSha256: createHash("sha256").update(preimage).digest("hex"),
+          // The parent chain is re-verified immediately before the
+          // displacement rename, and the displaced object's identity is
+          // re-proven after it, so a parent swapped in the final window can
+          // never restore anything outside the workspace.
+          verifyParentIdentity: () =>
+            verifyParentChainIdentityOrThrow(dependencies.workspaceRoot, absolute),
         });
         if (commitOutcome.kind !== "success") {
           if (commitOutcome.kind === "uncertain") {
@@ -413,7 +434,7 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
           };
         }
       } finally {
-        await removeMutationTemp(tempPath).catch(() => {});
+        await removeMutationTemp(tempPath, tempIdentity).catch(() => {});
       }
       return { kind: "ok", quarantinePath };
     }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   createDefaultPolicy,
@@ -342,6 +343,55 @@ describe("workspace.delete_file adversarial commit", () => {
     expect(content).toBe("user content replaced after approval\n");
     const entries = await (await import("node:fs/promises")).readdir(workspace.root);
     expect(entries.some((entry) => entry.startsWith(".solaris-quarantine-"))).toBe(false);
+  });
+
+  it("refuses the deletion when the target's parent is swapped for a link in the final window", async () => {
+    if (!SYMLINKS_SUPPORTED) {
+      return;
+    }
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, { "docs/obsolete.md": "approved content\n" });
+    const hash = await hashOf(path.join(workspace.root, "docs", "obsolete.md"));
+    const outside = await mkdtemp(path.join(tmpdir(), "solaris-delete-swap-"));
+    let swapped = false;
+    const { tool } = await createTool(workspace.root, {
+      replacementOps: {
+        ...realOps(),
+        async rename(from: string, to: string) {
+          if (!swapped && to.includes(".solaris-quarantine-")) {
+            // The parent directory is swapped for a symlink to an outside
+            // directory immediately before the displacement rename; the
+            // outside directory holds a planted file of the same name.
+            const fs = await import("node:fs/promises");
+            const parent = path.join(workspace.root, "docs");
+            await fs.rename(parent, path.join(workspace.root, "docs-real"));
+            await fs.mkdir(outside, { recursive: true });
+            await fs.writeFile(path.join(outside, "obsolete.md"), "outside planted file\n");
+            await fs.symlink(outside, parent, "dir");
+            swapped = true;
+          }
+          await realOps().rename(from, to);
+        },
+      },
+    });
+    const prepared = await tool.prepare({ path: "docs/obsolete.md", expectedSha256: hash }, {});
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const result = await tool.apply(prepared.mutation, { approvedDigest: prepared.digest });
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      // The displaced identity proof detected the swap and refused the
+      // deletion; nothing outside was deleted.
+      expect(result.message).toContain("not the object that was at the target");
+    }
+    // The real workspace file is untouched.
+    const original = await readFile(path.join(workspace.root, "docs-real", "obsolete.md"), "utf8");
+    expect(original).toBe("approved content\n");
+    // The outside planted file was restored, never deleted.
+    const outsideContent = await readFile(path.join(outside, "obsolete.md"), "utf8");
+    expect(outsideContent).toBe("outside planted file\n");
   });
 
   it("reports an uncertain finalize failure after the file is deleted", async () => {
