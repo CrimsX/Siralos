@@ -20,6 +20,7 @@ import {
   type TraversalBudget,
 } from "./traversal-limits.js";
 import { samePathIdentity } from "../../fs-path-identity.js";
+import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
 
 export interface ContentInventoryOptions {
   readonly workspaceRoot: string;
@@ -49,6 +50,7 @@ export interface ContentInventoryOptions {
   readonly maxInventoryItems?: number;
   readonly maxTotalReadBytes?: number;
   readonly maxSourceBytesInspected?: number;
+  readonly maxDepth?: number;
 }
 
 type ReadHeadResult =
@@ -105,6 +107,7 @@ export async function inventoryExecutableContent(options: ContentInventoryOption
     maxPluginDirectories: options.maxPluginDirectories ?? GODOT_LIMITS.maxProjectPluginDirectories,
     maxDescriptorsParsed: options.maxDescriptorsParsed ?? GODOT_LIMITS.maxProjectDescriptorsParsed,
     maxInventoryItems: options.maxInventoryItems ?? GODOT_LIMITS.maxProjectInventoryItems,
+    maxDepth: options.maxDepth ?? GODOT_LIMITS.maxProjectScanDepth,
   });
   const scan =
     options.scan ??
@@ -271,13 +274,28 @@ async function scanEditorPlugins(
   fsOps: GodotProjectFsOps,
 ): Promise<readonly GodotPluginSummary[]> {
   const addonsDirectory = join(canonicalRoot, "addons");
-  let entries: Dirent[];
+  // Entries are enumerated incrementally and collected only up to the
+  // remaining entry budget, so a hostile addons directory can never
+  // materialize an unbounded listing; the collected set is sorted for
+  // deterministic output order.
+  const remainingEntries = Math.max(0, budget.maxEntries - budget.entriesExamined);
+  const collected: Dirent[] = [];
+  let truncatedListing = false;
   try {
-    entries = await fsOps.readdir(addonsDirectory, { withFileTypes: true });
+    const outcome = await enumerateDirectoryBounded({
+      directory: addonsDirectory,
+      maxEntries: remainingEntries,
+      signal: options.signal,
+      deadline: budget.deadline,
+      onEntry: (entry) => {
+        collected.push(entry);
+      },
+    });
+    truncatedListing = outcome.truncated;
   } catch {
     return [];
   }
-  const sorted = [...entries].sort((left, right) => left.name.localeCompare(right.name));
+  const sorted = collected.sort((left, right) => left.name.localeCompare(right.name));
   const plugins: GodotPluginSummary[] = [];
   for (const entry of sorted) {
     if (budget.exhausted) {
@@ -457,6 +475,14 @@ async function scanEditorPlugins(
       language,
       enabled,
       importPluginHeuristic,
+    });
+  }
+  if (truncatedListing && !budget.exhausted) {
+    budget.stop("entry-limit");
+    warnings.push({
+      severity: "warning",
+      message:
+        "The plugin enumeration stopped at the entries-examined bound (maxProjectEntriesExamined); the plugin inventory is partial.",
     });
   }
   return plugins;

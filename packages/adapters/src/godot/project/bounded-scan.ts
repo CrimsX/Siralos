@@ -1,7 +1,9 @@
-import { lstat, readdir } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { GODOT_LIMITS, type GodotScanTruncationReason, type SafeDiagnostic } from "@solaris/core";
 import { createTraversalBudget, type TraversalBudget } from "./traversal-limits.js";
+import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
+import { foldPathComponent } from "../../fs-case.js";
 
 export const PROJECT_SCAN_EXCLUDED_DIRECTORIES: readonly string[] = [
   ".git",
@@ -21,6 +23,7 @@ export interface BoundedScanOptions {
   readonly maxDirectories?: number;
   readonly maxEntries?: number;
   readonly maxSurfaced?: number;
+  readonly maxDepth?: number;
   /** When true, only surface `.gd` files (used by the tool-script scan). */
   readonly onlyGdFiles?: boolean;
   /** When true, also surface `.cs` files and root `.csproj`/`.sln` files. */
@@ -63,11 +66,12 @@ export async function scanProjectFiles(options: BoundedScanOptions): Promise<Bou
       maxPluginDirectories: GODOT_LIMITS.maxProjectPluginDirectories,
       maxDescriptorsParsed: GODOT_LIMITS.maxProjectDescriptorsParsed,
       maxInventoryItems: GODOT_LIMITS.maxProjectInventoryItems,
+      maxDepth: options.maxDepth ?? GODOT_LIMITS.maxProjectScanDepth,
     });
   const warnings: SafeDiagnostic[] = [];
   const files: string[] = [];
 
-  async function walk(directory: string): Promise<void> {
+  async function walk(directory: string, depth: number): Promise<void> {
     if (budget.exhausted) {
       return;
     }
@@ -75,22 +79,38 @@ export async function scanProjectFiles(options: BoundedScanOptions): Promise<Bou
     if (!budget.isWithinDeadline()) {
       return;
     }
+    if (depth > budget.maxDepth) {
+      budget.stop("depth-limit");
+      return;
+    }
     budget.directoriesVisited += 1;
     if (budget.directoriesVisited > budget.maxDirectories) {
       budget.stop("directory-limit");
       return;
     }
-    let entries: readonly { readonly name: string; readonly isDirectory: () => boolean }[];
+    // Entries are enumerated incrementally and collected only up to the
+    // remaining entry budget, so a hostile wide directory can never
+    // materialize an unbounded listing. The collected set is sorted for
+    // deterministic output order; entries beyond the budget stop the walk.
+    const remainingEntries = Math.max(0, budget.maxEntries - budget.entriesExamined);
+    const collected: Array<{ readonly name: string; readonly isDirectory: () => boolean }> = [];
+    let truncatedListing = false;
     try {
-      entries = await readdir(directory, { withFileTypes: true });
+      const outcome = await enumerateDirectoryBounded({
+        directory,
+        maxEntries: remainingEntries,
+        signal: options.signal,
+        deadline: budget.deadline,
+        onEntry: (entry) => {
+          collected.push({ name: entry.name, isDirectory: () => entry.isDirectory() });
+        },
+      });
+      truncatedListing = outcome.truncated;
     } catch {
       return;
     }
-    const sorted = [...entries].sort((left, right) => left.name.localeCompare(right.name));
-    // Cap the materialized listing slice to the remaining entry budget so a
-    // hostile wide directory can never drive unbounded iteration.
-    const remainingEntries = Math.max(0, budget.maxEntries - budget.entriesExamined);
-    for (const entry of sorted.slice(0, remainingEntries)) {
+    const sorted = collected.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of sorted) {
       if (budget.exhausted) {
         return;
       }
@@ -103,7 +123,11 @@ export async function scanProjectFiles(options: BoundedScanOptions): Promise<Bou
         budget.stop("entry-limit");
         return;
       }
-      if (PROJECT_SCAN_EXCLUDED_DIRECTORIES.includes(entry.name)) {
+      if (
+        PROJECT_SCAN_EXCLUDED_DIRECTORIES.some(
+          (excluded) => foldPathComponent(excluded) === foldPathComponent(entry.name),
+        )
+      ) {
         continue;
       }
       const full = join(directory, entry.name);
@@ -117,7 +141,7 @@ export async function scanProjectFiles(options: BoundedScanOptions): Promise<Bou
         continue;
       }
       if (metadata.isDirectory()) {
-        await walk(full);
+        await walk(full, depth + 1);
         continue;
       }
       if (!metadata.isFile()) {
@@ -145,14 +169,14 @@ export async function scanProjectFiles(options: BoundedScanOptions): Promise<Bou
         files.push(full);
       }
     }
-    if (sorted.length > remainingEntries) {
+    if (truncatedListing) {
       // More entries exist than the remaining entry budget allowed; the
       // listing was capped and the walk is truncated by the entry bound.
       budget.stop("entry-limit");
     }
   }
 
-  await walk(options.workspaceRoot);
+  await walk(options.workspaceRoot, 0);
   const truncated = budget.reason !== "none";
   if (truncated && budget.reason !== "none") {
     warnings.push({
@@ -175,6 +199,8 @@ function describeWalkTruncation(reason: Exclude<GodotScanTruncationReason, "none
       return "The project scan stopped at the maximum files-scanned bound (maxProjectFilesScanned); the traversal is partial.";
     case "directory-limit":
       return "The project scan stopped at the maximum directories-visited bound (maxProjectDirectoriesVisited); the traversal is partial.";
+    case "depth-limit":
+      return "The project scan stopped at the maximum directory-depth bound (maxProjectScanDepth); the traversal is partial.";
     case "entry-limit":
       return "The project scan stopped at the maximum entries-examined bound (maxProjectEntriesExamined); the traversal is partial.";
     case "surfaced-limit":

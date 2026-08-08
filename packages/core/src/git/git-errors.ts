@@ -2,7 +2,6 @@ export type GitErrorCode =
   | "git_unavailable"
   | "git_not_repository"
   | "git_root_mismatch"
-  | "git_unsupported_version"
   | "git_status_failed"
   | "git_diff_failed"
   | "git_cancelled"

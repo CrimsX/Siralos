@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -13,6 +13,7 @@ import type {
   SolarisGodotSupport,
 } from "@solaris/core";
 import { createEmptyGodotCommandCapabilities } from "@solaris/core";
+import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
 
 export const ENGINE_PROFILE_CACHE_SCHEMA_VERSION = 1;
 
@@ -24,6 +25,12 @@ export const ENGINE_PROFILE_CACHE_MAX_FILE_BYTES = 1024 * 1024;
 
 /** Cap on directory entries inspected by eviction and count. */
 export const ENGINE_PROFILE_CACHE_SCAN_CAP = 256;
+
+/** Aggregate byte budget for metadata reads during one eviction. */
+export const ENGINE_PROFILE_CACHE_EVICTION_READ_BYTES = 16 * 1024 * 1024;
+
+/** Wall-clock budget for one count or eviction pass. */
+const ENGINE_PROFILE_CACHE_PASS_DEADLINE_MS = 5_000;
 
 /** Cached bounded engine-profile data. Never contains credentials, dumps, or project files. */
 export interface CachedEngineProfile {
@@ -139,34 +146,61 @@ export function createEngineProfileCache(
 
   async function count(): Promise<number> {
     const verifiedRoot = await ensureVerifiedRoot();
-    const entries = await readdir(verifiedRoot);
-    return entries
-      .filter((entry) => /^[0-9a-f]{64}\.json$/.test(entry))
-      .slice(0, ENGINE_PROFILE_CACHE_SCAN_CAP).length;
+    let matching = 0;
+    await enumerateDirectoryBounded({
+      directory: verifiedRoot,
+      maxEntries: ENGINE_PROFILE_CACHE_SCAN_CAP,
+      deadline: Date.now() + ENGINE_PROFILE_CACHE_PASS_DEADLINE_MS,
+      onEntry: (entry) => {
+        if (/^[0-9a-f]{64}\.json$/.test(entry.name)) {
+          matching += 1;
+        }
+      },
+    });
+    return matching;
   }
 
   return { load, store, count };
 }
 
 async function evictIfNeeded(root: string, maxEntries: number): Promise<void> {
-  let entries: string[];
-  try {
-    entries = await readdir(root);
-  } catch {
+  // Entries are enumerated incrementally with a hard cap so a hostile cache
+  // directory can never be materialized; the pass also has a wall-clock
+  // deadline.
+  const deadline = Date.now() + ENGINE_PROFILE_CACHE_PASS_DEADLINE_MS;
+  const profileNames: string[] = [];
+  await enumerateDirectoryBounded({
+    directory: root,
+    maxEntries: ENGINE_PROFILE_CACHE_SCAN_CAP,
+    deadline,
+    onEntry: (entry) => {
+      if (/^[0-9a-f]{64}\.json$/.test(entry.name)) {
+        profileNames.push(entry.name);
+      }
+    },
+  });
+  if (profileNames.length < maxEntries) {
     return;
   }
-  const profiles = entries
-    .filter((entry) => /^[0-9a-f]{64}\.json$/.test(entry))
-    .slice(0, ENGINE_PROFILE_CACHE_SCAN_CAP);
-  if (profiles.length < maxEntries) {
-    return;
-  }
+  // Metadata reads during eviction are bounded by an aggregate byte budget:
+  // entries beyond the budget are treated as oldest so the eviction work is
+  // always bounded while never evicting more than the surplus.
   const dated: { readonly path: string; readonly probedAtMs: number }[] = [];
-  for (const entry of profiles) {
+  let metadataBytes = 0;
+  for (const entry of profileNames) {
+    if (Date.now() >= deadline) {
+      break;
+    }
     const path = join(root, entry);
     const content = await readCachedEntryFile(path);
+    if (content !== null) {
+      metadataBytes += Buffer.byteLength(content, "utf8");
+    }
     const parsed = content === null ? null : parseCachedProfile(content);
     dated.push({ path, probedAtMs: parsed?.probedAtMs ?? 0 });
+    if (metadataBytes >= ENGINE_PROFILE_CACHE_EVICTION_READ_BYTES) {
+      break;
+    }
   }
   dated.sort((left, right) => left.probedAtMs - right.probedAtMs);
   const surplus = dated.length - (maxEntries - 1);

@@ -26,6 +26,8 @@ export const GODOT_LIMITS = {
   maxProjectFilesScanned: 50_000,
   /** Maximum project directories visited during static traversal (root counts). */
   maxProjectDirectoriesVisited: 10_000,
+  /** Maximum project directory depth during static traversal (root counts). */
+  maxProjectScanDepth: 64,
   /** Maximum readdir entries examined (excluded and non-regular entries count). */
   maxProjectEntriesExamined: 200_000,
   /** Maximum files surfaced in a static scan result. */

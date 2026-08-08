@@ -19,4 +19,6 @@ export const WORKSPACE_LIMITS = {
   maxSearchInputBytes: 64 * 1024 * 1024,
   maxSearchOutputBytes: 200_000,
   maxSearchDurationMs: 10_000,
+  /** Maximum directory depth for recursive workspace.search (root counts). */
+  maxSearchDepth: 64,
 } as const;

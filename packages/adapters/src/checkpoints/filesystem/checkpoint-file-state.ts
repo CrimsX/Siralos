@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceFileState } from "@solaris/core";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
+import { readFileBounded } from "../../fs/file-read.js";
 
 export const DEFAULT_MAX_STATE_BYTES = 1024 * 1024;
 
@@ -28,10 +29,10 @@ export async function readWorkspaceFileState(
   if (stats.size > maxStateBytes) {
     return { exists: true, sha256: null };
   }
-  let bytes: Buffer;
-  try {
-    bytes = await readFile(absolute);
-  } catch {
+  // The read is capped: a file grown or swapped after the lstat is never
+  // fully materialized and a FIFO substitution can never block it.
+  const bytes = await readFileBounded(absolute, maxStateBytes);
+  if (bytes === null) {
     return { exists: true, sha256: null };
   }
   return { exists: true, sha256: createHash("sha256").update(bytes).digest("hex") };

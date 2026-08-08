@@ -60,11 +60,6 @@ describe("git executable-helper hardening", () => {
     const markerPath = await installMarker(repo);
     repo.git("config", "alias.status", `!${quotedNodeCommand(join(repo.root, "marker.cjs"))}`);
     repo.git("config", "alias.diff", `!${quotedNodeCommand(join(repo.root, "marker.cjs"))}`);
-    repo.git(
-      "config",
-      "alias.check-ignore",
-      `!${quotedNodeCommand(join(repo.root, "marker.cjs"))}`,
-    );
     const adapter = createGitCliAdapter({ workspaceRoot: repo.root });
     const result = await adapter.getStatus({});
     expect(result.repository).toBe(true);
@@ -138,6 +133,11 @@ describe("git executable-helper hardening", () => {
     repo.git("add", "a.txt");
     repo.commit("initial");
     const markerPath = await installMarker(repo);
+    const hostileConfigPath = join(repo.root, "hostile-global.cfg");
+    await writeFile(
+      hostileConfigPath,
+      `[core]\nfsmonitor = ${quotedNodeCommand(join(repo.root, "marker.cjs"))}\n`,
+    );
     const result = await runGitProcess({
       subcommand: "status",
       args: ["--porcelain=v2", "-z"],
@@ -147,6 +147,9 @@ describe("git executable-helper hardening", () => {
         GIT_CONFIG_KEY_0: "core.fsmonitor",
         GIT_CONFIG_VALUE_0: quotedNodeCommand(join(repo.root, "marker.cjs")),
         GIT_CONFIG_PARAMETERS: `'core.fsmonitor=${quotedNodeCommand(join(repo.root, "marker.cjs"))}'`,
+        GIT_CONFIG_GLOBAL: hostileConfigPath,
+        GIT_CONFIG_SYSTEM: hostileConfigPath,
+        GIT_TEST_FSMONITOR: quotedNodeCommand(join(repo.root, "marker.cjs")),
         GIT_DIR: join(repo.root, ".git", "..", ".git"),
         GIT_WORK_TREE: tmpdir(),
         GIT_INDEX_FILE: join(repo.root, ".git", "index"),
@@ -182,6 +185,9 @@ describe("git environment sanitization", () => {
       GIT_CONFIG_VALUE_0: "node marker.cjs",
       GIT_CONFIG_PARAMETERS: "'x=y'",
       GIT_CONFIG_NOSYSTEM: "0",
+      GIT_CONFIG_GLOBAL: "/evil/global.cfg",
+      GIT_CONFIG_SYSTEM: "/evil/system.cfg",
+      GIT_TEST_FSMONITOR: "node marker.cjs",
       GIT_DIR: "/evil",
       GIT_WORK_TREE: "/evil",
       GIT_INDEX_FILE: "/evil/index",
@@ -204,6 +210,9 @@ describe("git environment sanitization", () => {
       "GIT_CONFIG_KEY_0",
       "GIT_CONFIG_VALUE_0",
       "GIT_CONFIG_PARAMETERS",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_SYSTEM",
+      "GIT_TEST_FSMONITOR",
       "GIT_DIR",
       "GIT_WORK_TREE",
       "GIT_INDEX_FILE",
@@ -225,6 +234,7 @@ describe("git environment sanitization", () => {
       GIT_PAGER: "cat",
       PAGER: "cat",
       GIT_CONFIG_NOSYSTEM: "1",
+      GIT_ATTR_NOSYSTEM: "1",
       GIT_EXTERNAL_DIFF: "",
     });
   });

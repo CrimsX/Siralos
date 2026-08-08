@@ -7,7 +7,6 @@ export const GIT_ALLOWED_SUBCOMMANDS: readonly string[] = [
   "rev-parse",
   "status",
   "diff",
-  "check-ignore",
 ];
 
 /**
@@ -22,6 +21,7 @@ export const GIT_SAFETY_ENVIRONMENT: Readonly<Record<string, string>> = {
   GIT_PAGER: "cat",
   PAGER: "cat",
   GIT_CONFIG_NOSYSTEM: "1",
+  GIT_ATTR_NOSYSTEM: "1",
   GIT_EXTERNAL_DIFF: "",
   LC_ALL: "C",
   LANG: "C",
@@ -42,6 +42,8 @@ const GIT_STRIPPED_ENVIRONMENT_PATTERNS: readonly RegExp[] = [
   /^GIT_CONFIG_VALUE_\d+$/i,
   /^GIT_CONFIG_PARAMETERS$/i,
   /^GIT_CONFIG_NOSYSTEM$/i,
+  /^GIT_CONFIG_GLOBAL$/i,
+  /^GIT_CONFIG_SYSTEM$/i,
   /^GIT_DIR$/i,
   /^GIT_WORK_TREE$/i,
   /^GIT_INDEX_FILE$/i,
@@ -58,6 +60,7 @@ const GIT_STRIPPED_ENVIRONMENT_PATTERNS: readonly RegExp[] = [
   /^PAGER$/i,
   /^GIT_TERMINAL_PROMPT$/i,
   /^GIT_OPTIONAL_LOCKS$/i,
+  /^GIT_TEST_FSMONITOR$/i,
   /^GIT_EXTERNAL_DIFF$/i,
 ];
 

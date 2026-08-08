@@ -531,6 +531,56 @@ describe("inventoryExecutableContent bounds", () => {
     ).toBe(true);
   });
 
+  it("stops at the depth bound on a deep chain", async () => {
+    const workspace = await withWorkspace();
+    const nested = ["d"];
+    for (let index = 0; index < 8; index += 1) {
+      nested.push(`d${index}`);
+    }
+    await mkdir(join(workspace, nested.join("/")), { recursive: true });
+    await writeFile(join(workspace, nested.join("/"), "deep.gd"), "extends Node\n");
+    const result = await inventoryExecutableContent({
+      workspaceRoot: workspace,
+      enabledPlugins: [],
+      autoloadCount: 0,
+      maxDepth: 4,
+    });
+    expect(result.inventory.scanTruncationReason).toBe("depth-limit");
+  });
+
+  it("treats case-variant excluded directories as excluded on case-insensitive platforms", async () => {
+    const platform = process.platform;
+    const caseInsensitive = platform === "win32" || platform === "darwin";
+    const workspace = await withWorkspace();
+    // A case-variant spelling of node_modules; on case-insensitive
+    // filesystems it is the same directory and must not be traversed.
+    await mkdir(join(workspace, "NODE_MODULES"), { recursive: true });
+    await writeFile(join(workspace, "NODE_MODULES", "tool.gd"), "@tool\nextends Node\n");
+    const result = await inventoryExecutableContent({
+      workspaceRoot: workspace,
+      enabledPlugins: [],
+      autoloadCount: 0,
+    });
+    if (caseInsensitive) {
+      expect(result.inventory.toolScripts).toEqual([]);
+    } else {
+      // On case-sensitive filesystems NODE_MODULES is a distinct directory
+      // and is legitimately traversed.
+      expect(result.inventory.toolScripts).toEqual(["NODE_MODULES/tool.gd"]);
+    }
+  });
+
+  it("rejects a project file whose raw bytes exceed the limit even when its character count is below it", async () => {
+    const workspace = await withWorkspace();
+    // 2 MiB of two-byte characters: 4 MiB of UTF-8 bytes, while the decoded
+    // character count (2 MiB) stays below the 4 MiB limit — the bound must
+    // count raw bytes, never decoded characters.
+    await writeFile(join(workspace, "project.godot"), "\u00e9".repeat(2 * 1024 * 1024 + 1));
+    const inspector = createGodotProjectInspector({ workspaceRoot: workspace });
+    const profile = await inspector.inspect();
+    expect(profile.detected).toBe(false);
+  });
+
   it("hits the plugin-directory bound on huge addon fanout", async () => {
     const workspace = await withWorkspace();
     const files: Record<string, string> = {};

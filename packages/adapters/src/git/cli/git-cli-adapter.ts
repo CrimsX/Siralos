@@ -16,8 +16,8 @@ import {
 import { getSandboxDirectories } from "../../sandbox/sandbox-directories.js";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
 import { GIT_SAFETY_ENVIRONMENT, runGitProcess, type GitProcessResult } from "./git-process.js";
-import { parsePorcelainV2 } from "./status-parser.js";
-import { parseNumstatDiff } from "./diff-parser.js";
+import { parseBranchFromTruncatedOutput, parsePorcelainV2 } from "./status-parser.js";
+import { parseNumstatDiff, type ParsedDiff } from "./diff-parser.js";
 
 export interface GitCliAdapterOptions {
   readonly workspaceRoot: string;
@@ -199,7 +199,22 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
     if (result.exitCode !== 0) {
       throw new GitError("git_status_failed", result.stderr.trim() || "git status failed.");
     }
-    const parsed = parsePorcelainV2(result.stdout);
+    let parsed: GitStatusResult;
+    try {
+      parsed = parsePorcelainV2(result.stdout);
+    } catch (error: unknown) {
+      if (!result.stdoutTruncated) {
+        throw error;
+      }
+      return {
+        repository: true,
+        branch: parseBranchFromTruncatedOutput(result.stdout),
+        changes: [],
+        conflicts: [],
+        untracked: [],
+        truncated: true,
+      };
+    }
     if (result.stdoutTruncated) {
       return { ...parsed, truncated: true };
     }
@@ -264,7 +279,15 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
     if (summaryResult.exitCode !== 0) {
       throw new GitError("git_diff_failed", summaryResult.stderr.trim() || "git diff failed.");
     }
-    const parsed = parseNumstatDiff(summaryResult.stdout);
+    let parsed: ParsedDiff;
+    try {
+      parsed = parseNumstatDiff(summaryResult.stdout);
+    } catch (error: unknown) {
+      if (!summaryResult.stdoutTruncated) {
+        throw error;
+      }
+      parsed = { files: [], truncated: true };
+    }
     return {
       scope: request.scope,
       files: parsed.files,

@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, open, readFile, readdir, realpath, rename, rm, lstat } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, rename, lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative as pathRelative, sep } from "node:path";
 import type {
@@ -12,6 +12,10 @@ import type {
   PreparedCheckpoint,
 } from "@solaris/core";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
+import {
+  enumerateDirectoryBounded,
+  removeDirectoryTreeBounded,
+} from "../../fs/directory-enumeration.js";
 
 export interface FilesystemCheckpointStoreOptions {
   readonly workspaceRoot: string;
@@ -26,6 +30,12 @@ export const DEFAULT_MAX_CHECKPOINTS = 100;
 export const DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_MAX_PREIMAGE_BYTES = 1024 * 1024;
 const MAX_METADATA_BYTES = 64 * 1024;
+
+/** Wall-clock budget for one list or prune pass. */
+const CHECKPOINT_PASS_DEADLINE_MS = 5_000;
+
+/** Entry budget for one bounded recursive checkpoint-tree removal. */
+const CHECKPOINT_REMOVAL_ENTRY_BUDGET = 10_000;
 
 const PRUNE_ORDER: readonly CheckpointState[] = ["undone", "abandoned", "applied"];
 
@@ -134,6 +144,11 @@ export async function createFilesystemCheckpointStore(
     } catch (error: unknown) {
       throw new Error(`Checkpoint metadata cannot be read: ${describeError(error)}`);
     }
+    // Post-read byte re-check: a metadata file grown or swapped after the
+    // lstat is rejected even though it was already read.
+    if (Buffer.byteLength(raw, "utf8") > MAX_METADATA_BYTES) {
+      throw new Error(`Checkpoint metadata is oversized: ${id}.`);
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -158,34 +173,57 @@ export async function createFilesystemCheckpointStore(
     await rename(temporaryPath, metadataPath);
   }
 
-  async function pruneIfNeeded(addedBytes: number): Promise<void> {
-    const entries = await readdir(checkpointDirectory).catch(() => []);
-    const checkpoints: FileCheckpoint[] = [];
-    for (const entry of entries) {
+  async function pruneIfNeeded(addedBytes: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
+    }
+    const names: string[] = [];
+    const deadline = Date.now() + CHECKPOINT_PASS_DEADLINE_MS;
+    // The enumeration is incremental and capped: entries beyond the
+    // retention maximum plus one are junk and can never be materialized.
+    await enumerateDirectoryBounded({
+      directory: checkpointDirectory,
+      maxEntries: maxCheckpoints + 1,
+      signal,
+      deadline,
+      onEntry: (entry) => {
+        if (entry.isDirectory() && entry.name.startsWith("cp_")) {
+          names.push(entry.name);
+        }
+      },
+    });
+    const loaded: FileCheckpoint[] = [];
+    for (const name of names) {
+      if (signal?.aborted) {
+        throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
+      }
+      if (Date.now() >= deadline) {
+        break;
+      }
       try {
-        checkpoints.push(await loadMetadata(entry));
+        loaded.push(await loadMetadata(name));
       } catch {
         // skip unreadable entries during pruning
       }
     }
     let totalBytes = 0;
-    for (const checkpoint of checkpoints) {
+    for (const checkpoint of loaded) {
       if (checkpoint.before.exists && checkpoint.before.byteLength !== null) {
         totalBytes += checkpoint.before.byteLength;
       }
     }
     const wouldExceed =
-      checkpoints.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes;
+      loaded.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes;
     if (!wouldExceed) {
       return;
     }
     const terminal = PRUNE_ORDER.flatMap((state) =>
-      checkpoints
+      loaded
         .filter((checkpoint) => checkpoint.state === state)
         .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)),
     );
     for (const checkpoint of terminal) {
-      if (checkpoints.length + 1 <= maxCheckpoints && totalBytes + addedBytes <= maxStorageBytes) {
+      if (loaded.length + 1 <= maxCheckpoints && totalBytes + addedBytes <= maxStorageBytes) {
         break;
       }
       const target = checkpointPath(checkpoint.id);
@@ -194,11 +232,11 @@ export async function createFilesystemCheckpointStore(
       if (!isInside(rootDirectory, leafCanonical)) {
         throw new Error(`Retention refuses to delete through a link: ${checkpoint.id}.`);
       }
-      await rm(target, { recursive: true, force: true });
+      await removeDirectoryTreeBounded(target, CHECKPOINT_REMOVAL_ENTRY_BUDGET);
       totalBytes -= checkpoint.before.byteLength ?? 0;
-      checkpoints.splice(checkpoints.indexOf(checkpoint), 1);
+      loaded.splice(loaded.indexOf(checkpoint), 1);
     }
-    if (checkpoints.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes) {
+    if (loaded.length + 1 > maxCheckpoints || totalBytes + addedBytes > maxStorageBytes) {
       throw new Error(
         "Checkpoint storage limits were reached and terminal checkpoints could not free enough space.",
       );
@@ -244,7 +282,7 @@ export async function createFilesystemCheckpointStore(
       after: checkpoint.after,
       preview: checkpoint.preview,
     };
-    await pruneIfNeeded(checkpoint.before.byteLength ?? 0);
+    await pruneIfNeeded(checkpoint.before.byteLength ?? 0, signal);
     const directory = checkpointPath(id);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await assertCheckpointPathSecure(directory);
@@ -320,11 +358,27 @@ export async function createFilesystemCheckpointStore(
   }
 
   async function list(query?: CheckpointListQuery): Promise<readonly FileCheckpoint[]> {
-    const entries = await readdir(checkpointDirectory).catch(() => []);
+    const names: string[] = [];
+    const deadline = Date.now() + CHECKPOINT_PASS_DEADLINE_MS;
+    // The enumeration is incremental and capped; unreadable or non-checkpoint
+    // entries are counted but never materialized beyond the retention cap.
+    await enumerateDirectoryBounded({
+      directory: checkpointDirectory,
+      maxEntries: maxCheckpoints + 1,
+      deadline,
+      onEntry: (entry) => {
+        if (entry.isDirectory() && entry.name.startsWith("cp_")) {
+          names.push(entry.name);
+        }
+      },
+    });
     const checkpoints: FileCheckpoint[] = [];
-    for (const entry of entries) {
+    for (const name of names) {
+      if (Date.now() >= deadline) {
+        break;
+      }
       try {
-        checkpoints.push(await loadMetadata(entry));
+        checkpoints.push(await loadMetadata(name));
       } catch {
         // skip unreadable entries
       }
@@ -357,6 +411,11 @@ export async function createFilesystemCheckpointStore(
       bytes = await readFile(preimagePath);
     } catch (error: unknown) {
       throw new Error(`Checkpoint preimage cannot be read: ${describeError(error)}`);
+    }
+    // Post-read byte re-check: a preimage grown or swapped after the lstat
+    // is rejected even though it was already read.
+    if (bytes.length > maxPreimageBytes) {
+      throw new Error(`Checkpoint preimage is oversized: ${checkpointId}.`);
     }
     const hash = createHash("sha256").update(bytes).digest("hex");
     if (checkpoint.before.sha256 !== null && hash !== checkpoint.before.sha256) {

@@ -93,13 +93,6 @@ export { resolveWorkspaceRoot } from "./tools/workspace/workspace-path.js";
 export { createGitCliAdapter, type GitCliAdapterOptions } from "./git/cli/git-cli-adapter.js";
 export { createGitStatusTool } from "./git/tools/git-status-tool.js";
 export { createGitDiffTool } from "./git/tools/git-diff-tool.js";
-export {
-  runGitProcess,
-  GIT_ALLOWED_SUBCOMMANDS,
-  GIT_SAFETY_ENVIRONMENT,
-  type GitProcessOptions,
-  type GitProcessResult,
-} from "./git/cli/git-process.js";
 export { createGodotInspector, type GodotInspectorDependencies } from "./godot/godot-inspector.js";
 export { createGodotProbeRunner } from "./godot/process/godot-probe-runner.js";
 export {

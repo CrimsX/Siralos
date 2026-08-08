@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
@@ -8,6 +8,7 @@ import {
   findExcludedComponent,
   resolveWorkspacePath,
 } from "./workspace-path.js";
+import { readFileBounded } from "../../fs/file-read.js";
 import { decodeUtf8, looksBinary, splitIntoLines } from "./text.js";
 import {
   readJsonObject,
@@ -112,11 +113,18 @@ export function createWorkspaceReadTool(workspaceRoot: string): Tool {
           message: `File is too large (${stats.size} bytes; limit ${WORKSPACE_LIMITS.maxReadFileSizeBytes}).`,
         };
       }
-      let buffer: Buffer;
-      try {
-        buffer = await readFile(resolved.absolutePath);
-      } catch (error: unknown) {
-        return { status: "failed", message: `Cannot read file: ${describeFsError(error)}` };
+      // The read itself is capped: a file grown or swapped after the stat is
+      // read only up to the size bound plus one byte, so a hostile
+      // replacement can never drive an unbounded read or block on a FIFO.
+      const buffer = await readFileBounded(
+        resolved.absolutePath,
+        WORKSPACE_LIMITS.maxReadFileSizeBytes,
+      );
+      if (buffer === null) {
+        return {
+          status: "failed",
+          message: `Cannot read file: it is missing, not a regular file, or exceeds the ${WORKSPACE_LIMITS.maxReadFileSizeBytes}-byte limit.`,
+        };
       }
       if (context.signal?.aborted) {
         return { status: "cancelled", message: "Reading was cancelled." };

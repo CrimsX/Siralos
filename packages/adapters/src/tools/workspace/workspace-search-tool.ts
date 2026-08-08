@@ -1,8 +1,9 @@
-import { lstat, opendir, readFile } from "node:fs/promises";
+import { lstat, opendir } from "node:fs/promises";
 import path from "node:path";
 import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
 import { foldPathComponent } from "../../fs-case.js";
+import { readFileBounded } from "../../fs/file-read.js";
 import {
   DEFAULT_EXCLUDED_DIRECTORIES,
   findExcludedComponent,
@@ -68,6 +69,7 @@ export interface SearchBoundsOverrides {
   readonly maxSearchDurationMs?: number;
   readonly maxSearchFileSizeBytes?: number;
   readonly maxSearchLineLengthChars?: number;
+  readonly maxSearchDepth?: number;
 }
 
 export type SearchBounds = {
@@ -175,7 +177,8 @@ type TruncationReason =
   | "input_budget"
   | "output_budget"
   | "time_budget"
-  | "match_limit";
+  | "match_limit"
+  | "depth_budget";
 
 async function search(
   resolved: { readonly workspaceRelativePath: string; readonly absolutePath: string },
@@ -207,8 +210,8 @@ async function search(
       truncationReason,
     };
   };
-  const pendingDirectories: Array<{ absolute: string; relative: string }> = [
-    { absolute: resolved.absolutePath, relative: resolved.workspaceRelativePath },
+  const pendingDirectories: Array<{ absolute: string; relative: string; depth: number }> = [
+    { absolute: resolved.absolutePath, relative: resolved.workspaceRelativePath, depth: 0 },
   ];
   while (pendingDirectories.length > 0) {
     if (context.signal?.aborted) {
@@ -224,6 +227,9 @@ async function search(
     directoriesVisited += 1;
     if (directoriesVisited > bounds.maxSearchDirectories) {
       return stop("directory_budget");
+    }
+    if (directory.depth > bounds.maxSearchDepth) {
+      return stop("depth_budget");
     }
     const names: string[] = [];
     let directoryHandle;
@@ -277,6 +283,7 @@ async function search(
         pendingDirectories.push({
           absolute,
           relative: childRelativePath(directory.relative, name),
+          depth: directory.depth + 1,
         });
         continue;
       }
@@ -299,10 +306,11 @@ async function search(
       if (context.signal?.aborted) {
         return { status: "cancelled" };
       }
-      let buffer: Buffer;
-      try {
-        buffer = await readFile(absolute);
-      } catch {
+      // The read itself is capped: a file grown or swapped after the lstat
+      // is read only up to the size bound plus one byte, so a hostile
+      // replacement can never drive an unbounded read or block on a FIFO.
+      const buffer = await readFileBounded(absolute, bounds.maxSearchFileSizeBytes);
+      if (buffer === null) {
         skippedFiles += 1;
         continue;
       }
@@ -325,6 +333,14 @@ async function search(
         const line = lines[lineIndex];
         if (line === undefined) {
           continue;
+        }
+        if ((lineIndex & 63) === 0) {
+          if (context.signal?.aborted) {
+            return { status: "cancelled" };
+          }
+          if (Date.now() >= deadline) {
+            return stop("time_budget");
+          }
         }
         const column = line.indexOf(query);
         if (column >= 0) {

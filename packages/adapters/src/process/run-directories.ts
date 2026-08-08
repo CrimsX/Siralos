@@ -1,19 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  chmod,
-  lstat,
-  mkdir,
-  readdir,
-  realpath,
-  rm,
-  rmdir,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, realpath, rmdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { CommandRunPaths } from "@solaris/core";
 import { isWithinPathIdentity, samePathIdentity } from "../fs-path-identity.js";
+import { removeDirectoryTreeBounded } from "../fs/directory-enumeration.js";
+
+/** Entry budget for one bounded run-directory removal. */
+const RUN_DIRECTORY_REMOVAL_ENTRY_BUDGET = 50_000;
 
 function join(...parts: readonly string[]): string {
   return path.join(...parts);
@@ -121,16 +115,15 @@ export function createRunDirectoryProvider(
     // Re-verify immediately before deletion: the path must still resolve
     // canonically to itself and the leaf must be a real directory, so the
     // recursive removal can never traverse a link planted in between.
-    // `rm` never follows a symbolic link or junction planted at the leaf —
-    // it removes the link itself — and the leaf was just re-verified as a
-    // real directory, so substitution between check and remove can only
-    // cause the link to be removed, never its target.
+    // Removal is bounded and no-follow: every entry counts toward a fixed
+    // budget (exceeding it preserves the tree and reports failure) and a
+    // link planted inside is removed as a leaf, never followed.
     const preDelete = await verifyDeletableRoot(root);
     if (!preDelete.ok) {
       return { ok: false, message: preDelete.message };
     }
     try {
-      await rm(root, { recursive: true, force: true });
+      await removeDirectoryTreeBounded(root, RUN_DIRECTORY_REMOVAL_ENTRY_BUDGET);
     } catch (error: unknown) {
       return {
         ok: false,

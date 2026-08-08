@@ -52,6 +52,7 @@ export interface TraversalBudgetSpec {
   readonly maxPluginDirectories: number;
   readonly maxDescriptorsParsed: number;
   readonly maxInventoryItems: number;
+  readonly maxDepth: number;
 }
 
 export class TraversalBudget {
@@ -64,6 +65,7 @@ export class TraversalBudget {
   readonly maxPluginDirectories: number;
   readonly maxDescriptorsParsed: number;
   readonly maxInventoryItems: number;
+  readonly maxDepth: number;
   directoriesVisited = 0;
   entriesExamined = 0;
   filesScanned = 0;
@@ -84,6 +86,7 @@ export class TraversalBudget {
     this.maxPluginDirectories = spec.maxPluginDirectories;
     this.maxDescriptorsParsed = spec.maxDescriptorsParsed;
     this.maxInventoryItems = spec.maxInventoryItems;
+    this.maxDepth = spec.maxDepth;
   }
 
   get exhausted(): boolean {

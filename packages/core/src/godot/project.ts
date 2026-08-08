@@ -47,6 +47,7 @@ export type GodotScanTruncationReason =
   | "file-limit"
   | "directory-limit"
   | "entry-limit"
+  | "depth-limit"
   | "surfaced-limit"
   | "plugin-limit"
   | "descriptor-limit"

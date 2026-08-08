@@ -1,5 +1,6 @@
 import {
   GitError,
+  type GitBranchStatus,
   type GitChangeEntry,
   type GitConflictEntry,
   type GitFileStatus,
@@ -80,6 +81,33 @@ export function parsePorcelainV2(output: string): GitStatusResult {
     throw new GitError("git_parse_failed", "Malformed porcelain v2 status record.");
   }
   return { repository: true, branch: { ...branch }, changes, conflicts, untracked, truncated };
+}
+
+/**
+ * Recovers whatever branch records are intact in a truncated status output.
+ * Used when `parsePorcelainV2` cannot complete because truncation cut a
+ * record mid-stream; the result defaults to a detached-HEAD-shaped branch
+ * when no branch records survive.
+ */
+export function parseBranchFromTruncatedOutput(output: string): GitBranchStatus {
+  const branch: BranchAccumulator = {
+    head: "HEAD",
+    oid: null,
+    upstream: null,
+    ahead: null,
+    behind: null,
+    detached: false,
+    unborn: false,
+  };
+  for (const record of output.split("\0")) {
+    if (record.startsWith("# ")) {
+      parseBranchRecord(record, branch);
+    }
+  }
+  if (branch.detached) {
+    branch.head = "HEAD";
+  }
+  return { ...branch };
 }
 
 function totalEntries(

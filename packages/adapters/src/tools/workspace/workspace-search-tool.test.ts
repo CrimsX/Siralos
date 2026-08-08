@@ -313,6 +313,45 @@ describe("workspace.search global traversal bounds", () => {
     expect(truncationOf(result)).toBe("time_budget");
   });
 
+  it("bounds directory depth independently of the entry budget", async () => {
+    const workspace = await withWorkspace();
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const deep = Array.from({ length: 8 }, (_, index) => `level${index}`).join("/");
+    await mkdir(path.join(workspace.root, deep), { recursive: true });
+    await writeFile(path.join(workspace.root, deep, "target.txt"), "needle\n");
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchDepth: 3 });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("depth_budget");
+    expect(fieldArray(expectSuccess(result), "matches")).toHaveLength(0);
+  });
+
+  it("counts excluded directories toward the entry budget", async () => {
+    const workspace = await withWorkspace();
+    await writeFixtureFiles(workspace.root, {
+      "node_modules/x.txt": "needle\n",
+      "a.txt": "needle\n",
+      "b.txt": "needle\n",
+    });
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchEntries: 2 });
+    const result = await tool.execute({ query: "needle" }, {});
+    expect(fieldBoolean(expectSuccess(result), "truncated")).toBe(true);
+    expect(truncationOf(result)).toBe("entry_budget");
+  });
+
+  it("skips a file beyond the size bound without treating it as a match", async () => {
+    const workspace = await withWorkspace();
+    const { writeFile } = await import("node:fs/promises");
+    const target = path.join(workspace.root, "grown.txt");
+    await writeFile(target, "needle inside a larger file\n");
+    const tool = createWorkspaceSearchTool(workspace.root, { maxSearchFileSizeBytes: 8 });
+    const result = await tool.execute({ query: "needle" }, {});
+    const output = expectSuccess(result);
+    expect(fieldBoolean(output, "truncated")).toBe(false);
+    expect(fieldArray(output, "matches")).toHaveLength(0);
+    expect(fieldNumber(output, "skippedFiles")).toBeGreaterThanOrEqual(1);
+  });
+
   it("cancels during enumeration", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "needle\n", "b.txt": "needle\n" });

@@ -119,7 +119,8 @@ export async function readProjectFile(
       total += bytesRead;
       hash.update(buffer.subarray(0, bytesRead));
       content += buffer.subarray(0, bytesRead).toString("utf8");
-      if (content.length > GODOT_LIMITS.maxProjectFileBytes) {
+      // The bound counts raw UTF-8 bytes, never decoded characters.
+      if (total > GODOT_LIMITS.maxProjectFileBytes) {
         return {
           ok: false,
           reason: "oversized",

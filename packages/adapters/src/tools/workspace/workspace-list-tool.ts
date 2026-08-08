@@ -1,4 +1,4 @@
-import { lstat, readdir, stat } from "node:fs/promises";
+import { lstat, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Tool, ToolExecutionContext, ToolExecutionResult, JsonValue } from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
@@ -9,6 +9,8 @@ import {
   findExcludedComponent,
   resolveWorkspacePath,
 } from "./workspace-path.js";
+import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
+import { foldPathComponent } from "../../fs-case.js";
 import { readJsonObject, readOptionalString, type ParsedValue } from "./validation.js";
 
 interface ListInput {
@@ -75,22 +77,44 @@ export function createWorkspaceListTool(workspaceRoot: string): Tool {
       if (!stats.isDirectory()) {
         return { status: "failed", message: "Target is not a directory." };
       }
-      let names: string[];
+      // Entries are enumerated incrementally with a hard cap so a hostile
+      // directory with millions of entries can never be materialized; the
+      // cap counts excluded and hidden entries too. Exclusions fold case on
+      // case-insensitive platforms so a `NODE_MODULES` spelling cannot
+      // bypass the filter.
+      const names: string[] = [];
+      let truncated = false;
       try {
-        names = await readdir(resolved.absolutePath);
+        const outcome = await enumerateDirectoryBounded({
+          directory: resolved.absolutePath,
+          maxEntries: WORKSPACE_LIMITS.maxDirectoryEntries + 1,
+          signal: context.signal,
+          onEntry: (entry) => {
+            if (
+              !DEFAULT_EXCLUDED_DIRECTORIES.some(
+                (excluded) => foldPathComponent(excluded) === foldPathComponent(entry.name),
+              ) &&
+              !entry.name.startsWith(MUTATION_TEMP_PREFIX)
+            ) {
+              names.push(entry.name);
+            }
+          },
+        });
+        truncated = outcome.truncated;
       } catch (error: unknown) {
+        if (context.signal?.aborted) {
+          return { status: "cancelled", message: "Listing was cancelled." };
+        }
         return { status: "failed", message: `Cannot list directory: ${describeFsError(error)}` };
       }
-      const visibleNames = names
-        .filter(
-          (name) =>
-            !DEFAULT_EXCLUDED_DIRECTORIES.includes(name) && !name.startsWith(MUTATION_TEMP_PREFIX),
-        )
-        .sort();
-      const truncated = visibleNames.length > WORKSPACE_LIMITS.maxDirectoryEntries;
-      const selectedNames = visibleNames.slice(0, WORKSPACE_LIMITS.maxDirectoryEntries);
+      names.sort();
+      truncated = truncated || names.length > WORKSPACE_LIMITS.maxDirectoryEntries;
+      const selectedNames = names.slice(0, WORKSPACE_LIMITS.maxDirectoryEntries);
       const entries: JsonValue[] = [];
       for (const name of selectedNames) {
+        if (context.signal?.aborted) {
+          return { status: "cancelled", message: "Listing was cancelled." };
+        }
         let entryStats;
         try {
           entryStats = await lstat(path.join(resolved.absolutePath, name));

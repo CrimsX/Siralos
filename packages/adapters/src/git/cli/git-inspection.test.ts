@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { GitError } from "@solaris/core";
 import { createGitCliAdapter } from "./git-cli-adapter.js";
 import { runGitProcess } from "./git-process.js";
+import { parseNumstatDiff } from "./diff-parser.js";
+import { parseBranchFromTruncatedOutput } from "./status-parser.js";
 import { cleanupTempDirs, createTempRepo, type TempRepo } from "./git-test-support.js";
 
 afterEach(async () => {
@@ -198,6 +200,102 @@ describe("git status inspection", () => {
     const { parsePorcelainV2 } = await import("./status-parser.js");
     expect(() => parsePorcelainV2("### nonsense\n")).toThrow(GitError);
   });
+
+  it("returns truncated status without throwing when output is cut mid-record", async () => {
+    const repo = await createTempRepo();
+    for (let i = 0; i < 300; i += 1) {
+      await repo.write(`untracked-file-${i}-with-a-reasonably-long-name.txt`, "x\n");
+    }
+    const adapter = createGitCliAdapter({ workspaceRoot: repo.root, maxOutputBytes: 1024 });
+    const status = await adapter.getStatus({});
+    expect(status.repository).toBe(true);
+    expect(status.truncated).toBe(true);
+    expect(typeof status.branch.head).toBe("string");
+  });
+});
+
+describe("git numstat parser", () => {
+  it("keeps full paths that contain tabs", () => {
+    const parsed = parseNumstatDiff("1\t1\ttab\tname.txt");
+    expect(parsed).toEqual({
+      files: [
+        {
+          path: "tab\tname.txt",
+          originalPath: null,
+          operation: "modify",
+          addedLines: 1,
+          removedLines: 1,
+          binary: false,
+        },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("keeps full rename paths that contain tabs", () => {
+    const parsed = parseNumstatDiff("1\t0\t\0old\tname.txt\0new\tname.txt");
+    expect(parsed.files).toEqual([
+      {
+        path: "new\tname.txt",
+        originalPath: "old\tname.txt",
+        operation: "rename",
+        addedLines: 1,
+        removedLines: 0,
+        binary: false,
+      },
+    ]);
+  });
+
+  it("preserves basic rename records", () => {
+    const parsed = parseNumstatDiff("1\t0\t\0old.txt\0new.txt");
+    expect(parsed.files[0]).toMatchObject({
+      path: "new.txt",
+      originalPath: "old.txt",
+      operation: "rename",
+      addedLines: 1,
+      removedLines: 0,
+    });
+  });
+
+  it("fails with a structured error on malformed rename records", () => {
+    let caught: unknown;
+    try {
+      parseNumstatDiff("1\t0\t");
+    } catch (error: unknown) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(GitError);
+    expect((caught as GitError).code).toBe("git_parse_failed");
+  });
+});
+
+describe("truncated output recovery", () => {
+  it("recovers intact branch records from truncated status output", () => {
+    const branch = parseBranchFromTruncatedOutput(
+      "# branch.oid abc123def\0# branch.head main\0# branch.ab +2 -1\0? trun",
+    );
+    expect(branch).toEqual({
+      head: "main",
+      oid: "abc123def",
+      upstream: null,
+      ahead: 2,
+      behind: -1,
+      detached: false,
+      unborn: false,
+    });
+  });
+
+  it("defaults to a detached-HEAD-shaped branch when no records survive", () => {
+    expect(parseBranchFromTruncatedOutput("? trun")).toEqual({
+      head: "HEAD",
+      oid: null,
+      upstream: null,
+      ahead: null,
+      behind: null,
+      detached: false,
+      unborn: false,
+    });
+  });
 });
 
 describe("git diff inspection", () => {
@@ -327,6 +425,21 @@ describe("git diff inspection", () => {
     });
     const result = await adapter.getDiff({ scope: "working" });
     expect(result.truncated).toBe(true);
+  });
+
+  it("returns a truncated diff without throwing when numstat is cut mid-record", async () => {
+    const repo = await createTempRepo();
+    for (let i = 0; i < 300; i += 1) {
+      await repo.write(`file-${i}.txt`, "one\n");
+    }
+    commitAll(repo, "initial");
+    for (let i = 0; i < 300; i += 1) {
+      await repo.write(`file-${i}.txt`, "two\n");
+    }
+    const adapter = createGitCliAdapter({ workspaceRoot: repo.root, maxOutputBytes: 1024 });
+    const result = await adapter.getDiff({ scope: "working" });
+    expect(result.truncated).toBe(true);
+    expect(typeof result.patch).toBe("string");
   });
 
   it("ignores external diff helpers and textconv configuration", async () => {
