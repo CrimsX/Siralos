@@ -457,7 +457,7 @@ async function buildSessionConfig(
     },
     filesystem: {
       denyRead: hostReadBoundaryPatterns(),
-      allowRead: [options.workspaceRoot, options.sandboxHome, options.sandboxTemp, ...surface],
+      allowRead: [...profileReadRoots(options, profile), ...surface],
       allowWrite: profileWriteRoots(options, profile),
       denyWrite: protectedPathPatterns(profile, options.workspaceRoot),
     },
@@ -476,7 +476,7 @@ export async function buildPerExecutionConfig(
   runDirectory: string | undefined,
 ): Promise<Partial<SandboxRuntimeConfig>> {
   const surface = await hostReadAllowSurface();
-  const readableRoots = [options.workspaceRoot, options.sandboxHome, options.sandboxTemp];
+  const readableRoots = profileReadRoots(options, profile);
   if (runDirectory !== undefined) {
     readableRoots.push(runDirectory);
   }
@@ -499,6 +499,23 @@ export async function buildPerExecutionConfig(
     enableWeakerNetworkIsolation: false,
     allowAppleEvents: false,
   };
+}
+
+/**
+ * Readable roots for the profile: the sandbox-private directories always;
+ * the source workspace only when the profile does not exclude it. Recovery
+ * probes exclude the workspace so the probed engine cannot read the real
+ * project at all where the backend enforces the host-read allowlist.
+ */
+function profileReadRoots(
+  options: AnthropicSandboxRuntimeBackendOptions,
+  profile: SandboxProfile,
+): string[] {
+  const readableRoots = [options.sandboxHome, options.sandboxTemp];
+  if (profile.filesystem.excludeWorkspaceRead !== true) {
+    readableRoots.push(options.workspaceRoot);
+  }
+  return readableRoots;
 }
 
 function profileWriteRoots(
@@ -527,6 +544,7 @@ export function effectiveConfigKey(
     protectGitMetadata: profile.filesystem.protectGitMetadata,
     protectSolarisMetadata: profile.filesystem.protectSolarisMetadata,
     denySensitiveProjectFiles: profile.filesystem.denySensitiveProjectFiles,
+    excludeWorkspaceRead: profile.filesystem.excludeWorkspaceRead,
     processEnabled: profile.process.enabled,
     workspaceRoot: options.workspaceRoot,
   });

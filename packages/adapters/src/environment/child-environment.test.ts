@@ -147,9 +147,36 @@ describe("isDeniedVariable", () => {
     expect(isDeniedVariable("HTTPS_PROXY")).toBe(true);
     expect(isDeniedVariable("ALL_PROXY")).toBe(true);
     expect(isDeniedVariable("NO_PROXY")).toBe(true);
+    expect(isDeniedVariable("GODOT_EDITOR_PATH")).toBe(true);
+    expect(isDeniedVariable("godot4_editor_path")).toBe(true);
+    expect(isDeniedVariable("LD_PRELOAD")).toBe(true);
+    expect(isDeniedVariable("LD_LIBRARY_PATH")).toBe(true);
+    expect(isDeniedVariable("DYLD_INSERT_LIBRARIES")).toBe(true);
+    expect(isDeniedVariable("DYLD_FALLBACK_LIBRARY_PATH")).toBe(true);
+    expect(isDeniedVariable("DYLD_VARIABLE")).toBe(true);
     expect(isDeniedVariable("PATH")).toBe(false);
     expect(isDeniedVariable("TOKENIZED")).toBe(false);
     expect(isDeniedVariable("SECRETARY")).toBe(false);
+  });
+
+  it("removes Godot and library-injection variables from child environments", () => {
+    const environment = buildChildEnvironment(
+      {
+        GODOT_EDITOR_PATH: "/evil/godot",
+        GODOT4_EDITOR_PATH: "C:\\evil\\godot.exe",
+        LD_PRELOAD: "/lib/evil.so",
+        LD_LIBRARY_PATH: "/lib/evil",
+        DYLD_INSERT_LIBRARIES: "/lib/evil.dylib",
+        PATH: "/usr/bin",
+      },
+      { home: "/home", temp: "/tmp" },
+    );
+    expect(environment["GODOT_EDITOR_PATH"]).toBeUndefined();
+    expect(environment["GODOT4_EDITOR_PATH"]).toBeUndefined();
+    expect(environment["LD_PRELOAD"]).toBeUndefined();
+    expect(environment["LD_LIBRARY_PATH"]).toBeUndefined();
+    expect(environment["DYLD_INSERT_LIBRARIES"]).toBeUndefined();
+    expect(environment["PATH"]).toBe("/usr/bin");
   });
 
   it("removes secret names case-insensitively", () => {

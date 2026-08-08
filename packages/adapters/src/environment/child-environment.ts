@@ -48,6 +48,14 @@ const DENIED_PATTERNS: readonly RegExp[] = [
   /^HTTPS_PROXY$/i,
   /^ALL_PROXY$/i,
   /^NO_PROXY$/i,
+  // Godot executable/editor-data redirection
+  /^GODOT_EDITOR_PATH$/i,
+  /^GODOT4_EDITOR_PATH$/i,
+  // dynamic-library and executable-loading injection (Linux/macOS; the
+  // allowlist already rejects anything else platform-appropriately)
+  /^LD_PRELOAD$/i,
+  /^LD_LIBRARY_PATH$/i,
+  /^DYLD_/,
 ];
 
 const HOME_VARIABLES: readonly string[] = ["HOME", "USERPROFILE"];

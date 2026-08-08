@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEVELOP_OFFLINE_PROFILE,
+  GODOT_PROBE_OFFLINE_PROFILE,
+  GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
   INSPECT_PROFILE,
+  VALIDATION_OFFLINE_PROFILE,
   SandboxError,
   type SandboxBackendStatus,
   type SandboxedProcessResult,
@@ -207,6 +210,42 @@ describe("effective profile configuration isolation", () => {
     );
     const readable = config.filesystem?.allowRead ?? [];
     expect(readable.some((root) => root === "/runs" || root === "/runs/fingerprint")).toBe(false);
+  });
+
+  it("excludes the workspace from readable roots for recovery probes", async () => {
+    const runDirectory = "/runs/fingerprint/run-1";
+    const recoveryConfig = await buildPerExecutionConfig(
+      options,
+      GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
+      runDirectory,
+    );
+    const readable = recoveryConfig.filesystem?.allowRead ?? [];
+    expect(readable).not.toContain("/workspace");
+    expect(readable).toContain(runDirectory);
+    expect(readable).toContain("/sandbox-home");
+    expect(readable).toContain("/sandbox-temp");
+    const writable = recoveryConfig.filesystem?.allowWrite ?? [];
+    expect(writable).not.toContain("/workspace");
+    expect(writable).toContain(runDirectory);
+  });
+
+  it("keeps the workspace readable for every profile except recovery probes", async () => {
+    for (const profile of [
+      INSPECT_PROFILE,
+      DEVELOP_OFFLINE_PROFILE,
+      VALIDATION_OFFLINE_PROFILE,
+      GODOT_PROBE_OFFLINE_PROFILE,
+    ]) {
+      const config = await buildPerExecutionConfig(options, profile, "/runs/fingerprint/run-1");
+      expect(config.filesystem?.allowRead).toContain("/workspace");
+    }
+    expect(GODOT_RECOVERY_PROBE_OFFLINE_PROFILE.filesystem.excludeWorkspaceRead).toBe(true);
+  });
+
+  it("distinguishes the recovery profile in the effective configuration key", () => {
+    const recoveryKey = effectiveConfigKey(options, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE);
+    expect(recoveryKey).not.toBe(effectiveConfigKey(options, GODOT_PROBE_OFFLINE_PROFILE));
+    expect(effectiveConfigKey(options, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE)).toBe(recoveryKey);
   });
 });
 
