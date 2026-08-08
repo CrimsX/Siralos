@@ -174,7 +174,7 @@ describe("path-bearing display output", () => {
       scope: "working",
       files: [
         {
-          operation: "modified",
+          operation: "modify" as const,
           path: "x\nsecond-line.txt",
           originalPath: "y\rname.txt",
           binary: false,
@@ -186,7 +186,7 @@ describe("path-bearing display output", () => {
       truncated: false,
       untrackedExcluded: true,
     } satisfies GitDiffResult);
-    expect(diff).toContain("modified x\\nsecond-line.txt (from y\\rname.txt)");
+    expect(diff).toContain("modify x\\nsecond-line.txt (from y\\rname.txt)");
     // The hostile path renders as one single line: no line begins with the
     // text that followed the embedded newline.
     expect(diff.split("\n").some((line) => line.startsWith("second-line.txt"))).toBe(false);
