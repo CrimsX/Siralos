@@ -136,6 +136,7 @@ export function createProcessRunTool(
       };
     }
     if (
+      !backendStatus.capabilities.filesystemReadRestriction ||
       !backendStatus.capabilities.filesystemWriteRestriction ||
       !backendStatus.capabilities.networkRestriction ||
       !backendStatus.capabilities.processTreeRestriction
@@ -143,7 +144,7 @@ export function createProcessRunTool(
       return {
         status: "sandbox_unavailable",
         message:
-          "The sandbox backend cannot enforce read-only workspace, network denial, and process-tree confinement; the command did not run.",
+          "The sandbox backend cannot enforce the host-read allowlist, read-only workspace, network denial, and process-tree confinement; the command did not run.",
       };
     }
     let runPaths;

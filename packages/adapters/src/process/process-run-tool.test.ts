@@ -399,6 +399,40 @@ describe("process.run tool execution", () => {
     }
   });
 
+  it("fails closed when the backend cannot enforce the host-read allowlist", async () => {
+    const weak: SandboxBackend = {
+      id: "weak-read-backend",
+      inspect: () =>
+        Promise.resolve({
+          backendId: "weak-read-backend",
+          state: "available",
+          platform: "windows",
+          version: "0.0.0",
+          capabilities: {
+            filesystemReadRestriction: false,
+            filesystemWriteRestriction: true,
+            networkRestriction: true,
+            processTreeRestriction: true,
+            violationReporting: true,
+          },
+        }),
+      execute: () => Promise.reject(new Error("must not run")),
+      close: async () => {},
+    };
+    const harness = await createHarness({ backend: weak });
+    try {
+      const { command, digest } = await prepareCommand(harness.tool, {
+        runner: "node-script",
+        path: "scripts/validate.mjs",
+      });
+      const result = await harness.tool.executePrepared(command, { approvedDigest: digest });
+      expect(result.status).toBe("sandbox_unavailable");
+      expect(harness.backend.requests()).toHaveLength(0);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("reports a nonzero exit as a completed command", async () => {
     const harness = await createHarness({
       results: [completedResult({ exitCode: 2, stdout: "tests failed" })],

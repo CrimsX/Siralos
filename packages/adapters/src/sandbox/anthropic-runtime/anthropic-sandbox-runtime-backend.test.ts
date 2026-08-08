@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEVELOP_OFFLINE_PROFILE,
@@ -11,6 +11,7 @@ import {
   VALIDATION_OFFLINE_PROFILE,
   SandboxError,
   type SandboxBackendStatus,
+  type SandboxedProcessRequest,
   type SandboxedProcessResult,
 } from "@solaris/core";
 import {
@@ -25,6 +26,7 @@ import {
   hostReadAllowSurface,
   hostReadBoundaryPatterns,
   isWithinHostReadAllowSurface,
+  type AnthropicSandboxRuntimeBackendHooks,
 } from "./anthropic-sandbox-runtime-backend.js";
 import { completedResult, createFakeSandboxBackend } from "../fake-sandbox-backend.js";
 
@@ -42,11 +44,10 @@ afterEach(async () => {
   }
 });
 
-function createBackend(workspaceRoot: string) {
+function createBackend(workspaceRoot: string, hooks?: AnthropicSandboxRuntimeBackendHooks) {
   return createAnthropicSandboxRuntimeBackend({
     workspaceRoot,
-    sandboxHome: join(workspaceRoot, ".sandbox-home"),
-    sandboxTemp: join(workspaceRoot, ".sandbox-temp"),
+    ...(hooks === undefined ? {} : { hooks }),
   });
 }
 
@@ -140,8 +141,6 @@ describe("host-read allowlist boundary", () => {
 describe("effective profile configuration isolation", () => {
   const options = {
     workspaceRoot: "/workspace",
-    sandboxHome: "/sandbox-home",
-    sandboxTemp: "/sandbox-temp",
   };
 
   it("compares effective configuration, not only the profile id", () => {
@@ -222,31 +221,277 @@ describe("effective profile configuration isolation", () => {
     const readable = recoveryConfig.filesystem?.allowRead ?? [];
     expect(readable).not.toContain("/workspace");
     expect(readable).toContain(runDirectory);
-    expect(readable).toContain("/sandbox-home");
-    expect(readable).toContain("/sandbox-temp");
     const writable = recoveryConfig.filesystem?.allowWrite ?? [];
     expect(writable).not.toContain("/workspace");
     expect(writable).toContain(runDirectory);
   });
 
-  it("keeps the workspace readable for every profile except recovery probes", async () => {
-    for (const profile of [
-      INSPECT_PROFILE,
+  it("grants the run directory and never the shared sandbox directories", async () => {
+    const runDirectory = "/runs/fingerprint/run-1";
+    const config = await buildPerExecutionConfig(
+      options,
+      {
+        ...DEVELOP_OFFLINE_PROFILE,
+        filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+      },
+      runDirectory,
+    );
+    const readable = config.filesystem?.allowRead ?? [];
+    const writable = config.filesystem?.allowWrite ?? [];
+    for (const roots of [readable, writable]) {
+      expect(roots).toContain(runDirectory);
+      expect(roots.some((root) => root.includes("sandbox-home"))).toBe(false);
+      expect(roots.some((root) => root.includes("sandbox-temp"))).toBe(false);
+    }
+  });
+
+  it("grants each run exactly its own run directory across executions", async () => {
+    const first = await buildPerExecutionConfig(
+      options,
+      {
+        ...DEVELOP_OFFLINE_PROFILE,
+        filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+      },
+      "/runs/fingerprint/run-1",
+    );
+    const second = await buildPerExecutionConfig(
+      options,
+      {
+        ...DEVELOP_OFFLINE_PROFILE,
+        filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+      },
+      "/runs/fingerprint/run-2",
+    );
+    const firstReadable = first.filesystem?.allowRead ?? [];
+    const firstWritable = first.filesystem?.allowWrite ?? [];
+    const secondReadable = second.filesystem?.allowRead ?? [];
+    const secondWritable = second.filesystem?.allowWrite ?? [];
+    for (const roots of [firstReadable, firstWritable]) {
+      expect(roots).toContain("/runs/fingerprint/run-1");
+      expect(roots.some((root) => root === "/runs/fingerprint/run-2")).toBe(false);
+      expect(roots.some((root) => root === "/runs/fingerprint")).toBe(false);
+      expect(roots.some((root) => root === "/runs")).toBe(false);
+    }
+    for (const roots of [secondReadable, secondWritable]) {
+      expect(roots).toContain("/runs/fingerprint/run-2");
+      expect(roots.some((root) => root === "/runs/fingerprint/run-1")).toBe(false);
+      expect(roots.some((root) => root === "/runs/fingerprint")).toBe(false);
+      expect(roots.some((root) => root === "/runs")).toBe(false);
+    }
+  });
+
+  it("replaces the workspace and trusted-runner surface with explicit read roots", async () => {
+    const runDirectory = "/runs/fingerprint/run-1";
+    const explicitRoots = ["/opt/godot-engine"];
+    const config = await buildPerExecutionConfig(
+      options,
       DEVELOP_OFFLINE_PROFILE,
-      VALIDATION_OFFLINE_PROFILE,
-      GODOT_PROBE_OFFLINE_PROFILE,
-    ]) {
+      runDirectory,
+      explicitRoots,
+    );
+    const readable = config.filesystem?.allowRead ?? [];
+    expect(readable).toContain(runDirectory);
+    expect(readable).toContain("/opt/godot-engine");
+    expect(readable).not.toContain("/workspace");
+    expect(readable).not.toContain(process.execPath);
+    expect(readable).not.toContain(dirname(process.execPath));
+  });
+
+  it("keeps the profile workspace and trusted-runner surface without explicit read roots", async () => {
+    const runDirectory = "/runs/fingerprint/run-1";
+    const config = await buildPerExecutionConfig(options, DEVELOP_OFFLINE_PROFILE, runDirectory);
+    const readable = config.filesystem?.allowRead ?? [];
+    expect(readable).toContain(runDirectory);
+    expect(readable).toContain("/workspace");
+    expect(readable).toContain(process.execPath);
+  });
+
+  it("keeps the workspace readable for every profile except the probe profiles", async () => {
+    for (const profile of [INSPECT_PROFILE, DEVELOP_OFFLINE_PROFILE, VALIDATION_OFFLINE_PROFILE]) {
       const config = await buildPerExecutionConfig(options, profile, "/runs/fingerprint/run-1");
       expect(config.filesystem?.allowRead).toContain("/workspace");
     }
-    expect(GODOT_RECOVERY_PROBE_OFFLINE_PROFILE.filesystem.excludeWorkspaceRead).toBe(true);
+    // Both Godot probe profiles exclude the workspace from readable roots:
+    // the probed engine must not read the real project at all.
+    for (const profile of [GODOT_PROBE_OFFLINE_PROFILE, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE]) {
+      expect(profile.filesystem.excludeWorkspaceRead).toBe(true);
+      const config = await buildPerExecutionConfig(options, profile, "/runs/fingerprint/run-1");
+      expect(config.filesystem?.allowRead).not.toContain("/workspace");
+    }
   });
 
-  it("distinguishes the recovery profile in the effective configuration key", () => {
-    const recoveryKey = effectiveConfigKey(options, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE);
-    expect(recoveryKey).not.toBe(effectiveConfigKey(options, GODOT_PROBE_OFFLINE_PROFILE));
-    expect(effectiveConfigKey(options, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE)).toBe(recoveryKey);
+  it("collapses profiles with identical effective configuration into the same key", () => {
+    // The recovery and probe profiles now share the same effective
+    // configuration (identical workspace/filesystem/process policy), so the
+    // reset-before-reinit key must treat them as one configuration; a real
+    // behavioral difference still changes the key.
+    expect(effectiveConfigKey(options, GODOT_RECOVERY_PROBE_OFFLINE_PROFILE)).toBe(
+      effectiveConfigKey(options, GODOT_PROBE_OFFLINE_PROFILE),
+    );
+    expect(effectiveConfigKey(options, DEVELOP_OFFLINE_PROFILE)).not.toBe(
+      effectiveConfigKey(options, {
+        ...DEVELOP_OFFLINE_PROFILE,
+        filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+      }),
+    );
   });
+});
+
+describe("sandbox lifecycle serialization", () => {
+  /**
+   * Test seam backend: the onExecuteStarted hook is the stand-in for the
+   * SandboxManager interaction point. It records entry order, blocks the
+   * first request on a barrier, and always throws so no test ever reaches
+   * the real SandboxManager; ordering is therefore deterministic without
+   * sleeps.
+   */
+  function createSeamBackend(workspace: string) {
+    let releaseFirst: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started: string[] = [];
+    const backend = createBackend(workspace, {
+      onExecuteStarted: async (request) => {
+        started.push(request.executable);
+        if (request.executable === "blocked") {
+          await gate;
+        }
+        throw new Error("seam barrier");
+      },
+    });
+    return {
+      backend,
+      started: () => started,
+      releaseFirst: () => releaseFirst?.(),
+      request: (
+        executable: string,
+        extra: Partial<SandboxedProcessRequest> = {},
+      ): SandboxedProcessRequest => ({
+        executable,
+        arguments: [],
+        workingDirectory: workspace,
+        profile: DEVELOP_OFFLINE_PROFILE,
+        environment: {},
+        ...extra,
+      }),
+    };
+  }
+
+  it("serializes concurrent executions so the second cannot start until the first finishes", async () => {
+    const workspace = await withTempWorkspace();
+    const seam = createSeamBackend(workspace);
+    const first = seam.backend.execute(seam.request("blocked"));
+    await waitFor(() => seam.started().includes("blocked"));
+    const second = seam.backend.execute(seam.request("second"));
+    // The second request is queued; its serialized body must not have started.
+    expect(seam.started()).toEqual(["blocked"]);
+    seam.releaseFirst();
+    await expect(first).rejects.toThrow("seam barrier");
+    await expect(second).rejects.toThrow("seam barrier");
+    expect(seam.started()).toEqual(["blocked", "second"]);
+  });
+
+  it("queues a profile-change reset behind the active execution", async () => {
+    const workspace = await withTempWorkspace();
+    const seam = createSeamBackend(workspace);
+    const first = seam.backend.execute(seam.request("blocked"));
+    await waitFor(() => seam.started().includes("blocked"));
+    // A different effective configuration would force reset-before-reinit;
+    // it must be queued, never interleaved with the active request.
+    const second = seam.backend.execute(
+      seam.request("reconfigure", {
+        profile: {
+          ...DEVELOP_OFFLINE_PROFILE,
+          filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+        },
+      }),
+    );
+    expect(seam.started()).toEqual(["blocked"]);
+    seam.releaseFirst();
+    await expect(first).rejects.toThrow("seam barrier");
+    await expect(second).rejects.toThrow("seam barrier");
+    expect(seam.started()).toEqual(["blocked", "reconfigure"]);
+    expect(effectiveConfigKey({ workspaceRoot: workspace }, DEVELOP_OFFLINE_PROFILE)).not.toBe(
+      effectiveConfigKey(
+        { workspaceRoot: workspace },
+        {
+          ...DEVELOP_OFFLINE_PROFILE,
+          filesystem: { ...DEVELOP_OFFLINE_PROFILE.filesystem, workspaceAccess: "read-only" },
+        },
+      ),
+    );
+  });
+
+  it("returns a cancelled result when a queued request is aborted before its turn", async () => {
+    const workspace = await withTempWorkspace();
+    const seam = createSeamBackend(workspace);
+    const first = seam.backend.execute(seam.request("blocked"));
+    await waitFor(() => seam.started().includes("blocked"));
+    const controller = new AbortController();
+    const queued = seam.backend.execute(seam.request("queued", { signal: controller.signal }));
+    controller.abort();
+    seam.releaseFirst();
+    await expect(first).rejects.toThrow("seam barrier");
+    const result = await queued;
+    expect(result.status).toBe("cancelled");
+    // The aborted request never started anything: its body returned before
+    // the SandboxManager interaction seam.
+    expect(seam.started()).toEqual(["blocked"]);
+  });
+
+  it("returns a timed-out result when a queued request expired before its turn", async () => {
+    const workspace = await withTempWorkspace();
+    const seam = createSeamBackend(workspace);
+    const first = seam.backend.execute(seam.request("blocked"));
+    await waitFor(() => seam.started().includes("blocked"));
+    // A zero timeout means the deadline has already passed when the queued
+    // body finally runs: it must fail closed without starting a process.
+    const queued = seam.backend.execute(seam.request("queued", { timeoutMs: 0 }));
+    seam.releaseFirst();
+    await expect(first).rejects.toThrow("seam barrier");
+    const result = await queued;
+    expect(result.status).toBe("timed-out");
+    expect(seam.started()).toEqual(["blocked"]);
+  });
+
+  it("close() waits for the active execution before resetting and rejects later executions", async () => {
+    const workspace = await withTempWorkspace();
+    const seam = createSeamBackend(workspace);
+    const first = seam.backend.execute(seam.request("blocked"));
+    await waitFor(() => seam.started().includes("blocked"));
+    let closingSettled = false;
+    const closing = seam.backend.close().then(() => {
+      closingSettled = true;
+    });
+    // Execute after close rejects immediately, even while draining.
+    await expect(seam.backend.execute(seam.request("late"))).rejects.toThrow(SandboxError);
+    await expect(seam.backend.execute(seam.request("late"))).rejects.toThrow("closed");
+    // The reset task is queued behind the active execution: synchronously
+    // after releasing the barrier it still cannot have run.
+    seam.releaseFirst();
+    expect(closingSettled).toBe(false);
+    await expect(first).rejects.toThrow("seam barrier");
+    await closing;
+    expect(closingSettled).toBe(true);
+    await expect(seam.backend.execute(seam.request("after"))).rejects.toThrow(SandboxError);
+  });
+});
+
+describe("Windows status truthfulness", () => {
+  it.skipIf(process.platform !== "win32")(
+    "never reports available and never claims host-read enforcement",
+    async () => {
+      const workspace = await withTempWorkspace();
+      const backend = createBackend(workspace);
+      const status = await backend.inspect();
+      expect(status.state).not.toBe("available");
+      expect(status.capabilities.filesystemReadRestriction).toBe(false);
+      if (status.state === "degraded") {
+        expect(status.message).toContain("host-read");
+      }
+    },
+  );
 });
 
 describe("output sink hard limits", () => {
@@ -458,3 +703,15 @@ describe("sandbox backend status contract", () => {
     expect(Object.values(status.capabilities).every((value) => value === false)).toBe(true);
   });
 });
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for the expected state.");
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 5);
+    });
+  }
+}

@@ -193,6 +193,43 @@ describe("runSandboxDoctor", () => {
     expect(report.conformance).toBeNull();
     expect(report.state).toBe("setup-required");
   });
+
+  it("reports a Windows-degraded backend truthfully and never runs probes", async () => {
+    const directory = await withTempDirectory();
+    const configPath = join(directory, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ sandbox: { profile: "develop-offline", backend: "auto" } }),
+    );
+    const backend = createFakeSandboxBackend({
+      status: {
+        backendId: "fake-backend",
+        state: "degraded",
+        platform: "windows",
+        version: "0.0.0",
+        capabilities: {
+          filesystemReadRestriction: false,
+          filesystemWriteRestriction: false,
+          networkRestriction: false,
+          processTreeRestriction: false,
+          violationReporting: false,
+        },
+        message:
+          "Windows sandbox runtime setup is complete, but host-read enforcement is unavailable and execution is refused.",
+      },
+    });
+    const report = await runSandboxDoctor({
+      includeProbes: true,
+      configPath,
+      backendFactory: () => backend.backend,
+    });
+    expect(report.state).toBe("degraded");
+    expect(report.capabilities.filesystemReadRestriction).toBe(false);
+    expect(report.statusMessage).toContain("host-read enforcement is unavailable");
+    expect(report.probesRun).toBe(false);
+    expect(report.conformance).toBeNull();
+    expect(doctorExitCode(report, true)).toBe(3);
+  });
 });
 
 describe("doctorExitCode", () => {

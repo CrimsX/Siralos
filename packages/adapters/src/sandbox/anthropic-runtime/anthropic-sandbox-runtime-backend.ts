@@ -26,18 +26,38 @@ export const ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID = "anthropic-runtime";
 
 export const ANTHROPIC_SANDBOX_RUNTIME_VERSION = "0.0.70";
 
+export interface AnthropicSandboxRuntimeBackendHooks {
+  /**
+   * Test-only seam: invoked inside the serialized execution queue for each
+   * request, after the queued-state checks (closed, aborted, timed-out) and
+   * before any SandboxManager interaction. Production callers never set it.
+   */
+  readonly onExecuteStarted?: (request: SandboxedProcessRequest) => Promise<void> | void;
+}
+
 export interface AnthropicSandboxRuntimeBackendOptions {
+  /** The active Solaris workspace; granted only when the profile allows it. */
   readonly workspaceRoot: string;
-  readonly sandboxHome: string;
-  readonly sandboxTemp: string;
+  /**
+   * Test-only backend seams. Never used by production callers.
+   */
+  readonly hooks?: AnthropicSandboxRuntimeBackendHooks;
 }
 
 /**
- * The approved host-readable surface for sandboxed commands: the active
- * workspace, the Solaris-owned sandbox-private directories, the current
- * run's private directory, the exact trusted runner executables and their
- * installation directories, and the minimum system runtime/library paths the
- * selected trusted runner requires. Everything else on the host is denied.
+ * The approved host-readable surface for sandboxed commands when the caller
+ * does not pin explicit read roots: the exact trusted runner executables and
+ * their installation directories plus the minimum system runtime/library
+ * paths the selected trusted runner requires. The workspace and the current
+ * run directory are granted separately per profile/per request; shared
+ * Solaris-owned sandbox directories no longer exist. Everything else on the
+ * host is denied.
+ *
+ * When a request pins `explicitReadRoots`, the caller takes over the
+ * identity-bound read surface entirely: the sandboxed child may read only
+ * its own run directory, the exact explicit roots, and the minimum system
+ * runtime paths — never the workspace, the trusted-runner installation
+ * directories, or the npm CLI directories.
  */
 export async function hostReadAllowSurface(): Promise<readonly string[]> {
   const system = systemRuntimeReadPaths(detectPlatform());
@@ -148,15 +168,11 @@ export function createAnthropicSandboxRuntimeBackend(
       return unsupportedStatus(platform);
     }
     if (platform === "windows") {
-      const status = await inspectWindows();
-      if (status.state !== "available") {
-        return status;
-      }
-      return {
-        ...status,
-        message:
-          "The pinned Sandbox Runtime cannot express a reliable host-read allowlist on Windows (per-execution grants are unsupported and ACL stamping cannot override inherited well-known-group read access). Host-read enforcement is reported unavailable and process execution is refused.",
-      };
+      // Windows must NEVER report "available": even a fully provisioned,
+      // WFP-installed runtime cannot enforce the host-read allowlist there,
+      // so process execution is always refused. The windows branch returns
+      // only failed / setup-required / degraded states.
+      return inspectWindows();
     }
     if (platform === "linux") {
       const dependencies = await SandboxManager.checkDependenciesAsync();
@@ -195,7 +211,17 @@ export function createAnthropicSandboxRuntimeBackend(
         message: windowsInstallInstructions(undefined),
       };
     }
-    return baseStatus("available", "windows");
+    // Runtime setup can be complete while the required process boundary is
+    // still impossible: per-execution filesystem grants are unsupported and
+    // ACL stamping cannot override inherited well-known-group read access,
+    // so a deny-by-default host-read allowlist cannot be established.
+    // Availability is never claimed and execution is refused; the two
+    // conditions (runtime setup and host-read capability) are separate.
+    return {
+      ...baseStatus("degraded", "windows"),
+      message:
+        "Windows sandbox runtime setup is complete, but the pinned Sandbox Runtime cannot express a reliable host-read allowlist on Windows (per-execution grants are unsupported and ACL stamping cannot override inherited well-known-group read access). Host-read enforcement is unavailable and process execution is refused. Windows runtime setup and host-read capability are separate conditions: setup can be complete while host-read enforcement is still unavailable and execution is still refused.",
+    };
   }
 
   async function execute(request: SandboxedProcessRequest): Promise<SandboxedProcessResult> {
@@ -208,12 +234,49 @@ export function createAnthropicSandboxRuntimeBackend(
         `Profile ${request.profile.id} does not allow process execution.`,
       );
     }
+    const startedAt = Date.now();
+    const deadline = startedAt + (request.timeoutMs ?? request.profile.process.timeoutMs);
+    // The COMPLETE lifecycle runs inside the serialized queue: effective-
+    // config selection, reset, initialize, wrap, spawn, execution, violation
+    // collection, and cleanupAfterCommand all happen one request at a time,
+    // so no request can reset or clean the shared SandboxManager out from
+    // under another.
+    return serialized(() => executeSerialized(request, startedAt, deadline));
+  }
+
+  async function executeSerialized(
+    request: SandboxedProcessRequest,
+    startedAt: number,
+    deadline: number,
+  ): Promise<SandboxedProcessResult> {
+    if (closed) {
+      throw new SandboxError("sandbox_configuration_error", "The sandbox backend is closed.");
+    }
+    if (request.signal?.aborted) {
+      // The request was cancelled while queued behind another execution;
+      // fail closed without starting any process.
+      return preStartResult("cancelled", startedAt);
+    }
+    if (Date.now() >= deadline) {
+      // The request timed out while queued behind another execution; fail
+      // closed without starting any process.
+      return preStartResult("timed-out", startedAt);
+    }
+    await options.hooks?.onExecuteStarted?.(request);
+    // The Windows refusal guards the SandboxManager interaction itself; it
+    // runs after the test-only seam (never present in production) so the
+    // serialized lifecycle stays observable on every host.
     if (detectPlatform() === "windows") {
       assertHostReadBoundarySupported("windows");
     }
-    await serialized(() => ensureInitialized(request.profile));
+    await ensureInitialized(request.profile);
     const runDirectory = request.runDirectory;
-    const customConfig = await buildPerExecutionConfig(options, request.profile, runDirectory);
+    const customConfig = await buildPerExecutionConfig(
+      options,
+      request.profile,
+      runDirectory,
+      request.explicitReadRoots,
+    );
     const command = buildCommand(request.executable, request.arguments);
     let wrapped: { argv: string[]; env: NodeJS.ProcessEnv };
     try {
@@ -233,7 +296,6 @@ export function createAnthropicSandboxRuntimeBackend(
     } catch (error: unknown) {
       throw classifyExecutionError(error);
     }
-    const startedAt = Date.now();
     const timeoutMs = request.timeoutMs ?? request.profile.process.timeoutMs;
     const stdoutLimitBytes = request.stdoutLimitBytes ?? request.profile.process.maxOutputBytes;
     const stderrLimitBytes = request.stderrLimitBytes ?? request.profile.process.maxOutputBytes;
@@ -391,16 +453,22 @@ export function createAnthropicSandboxRuntimeBackend(
     if (closed) {
       return;
     }
+    // Mark closed first so a failed reset can never leave a half-reset
+    // manager serving requests: every subsequent execute rejects.
     closed = true;
-    try {
-      await SandboxManager.reset();
-    } catch (error: unknown) {
-      throw new SandboxError(
-        "sandbox_cleanup_failed",
-        `Sandbox cleanup failed: ${describeError(error)}`,
-        error,
-      );
-    }
+    // Drain the serialization queue (active and queued executions settle
+    // first), then reset. The reset task is enqueued behind everything.
+    await serialized(async () => {
+      try {
+        await SandboxManager.reset();
+      } catch (error: unknown) {
+        throw new SandboxError(
+          "sandbox_cleanup_failed",
+          `Sandbox cleanup failed: ${describeError(error)}`,
+          error,
+        );
+      }
+    });
   }
 
   function serialized<T>(task: () => Promise<T>): Promise<T> {
@@ -422,6 +490,9 @@ export function createAnthropicSandboxRuntimeBackend(
 
 function baseStatus(state: SandboxBackendStatus["state"], platform: string): SandboxBackendStatus {
   const available = state === "available";
+  // Windows can never claim host-read enforcement, and no caller may pass
+  // "available" for Windows: the inspect windows branch returns only failed,
+  // setup-required, or degraded states.
   const readRestrictionAvailable = available && platform !== "windows";
   return {
     backendId: ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID,
@@ -470,15 +541,39 @@ async function buildSessionConfig(
   };
 }
 
+/**
+ * Builds the per-execution sandbox configuration for one command run. The
+ * command may access ONLY:
+ *   - its own run directory (home/temp/cache/script-cache are its children;
+ *     the environment already names runDirectory/home and runDirectory/tmp),
+ *   - the explicit read roots when the caller pins them,
+ *   - the workspace when the exact profile allows it,
+ *   - the minimum system runtime surface.
+ * Previous and concurrent run directories are never granted. When
+ * `explicitReadRoots` is present, the readable roots are exactly
+ * [runDirectory, ...explicitReadRoots, systemRuntimeReadPaths(platform)]:
+ * the caller takes over the identity-bound read surface, so the workspace
+ * and the broad trusted-runner surfaces (Node installation, npm CLI,
+ * /usr/local/bin-style directories) are NOT granted — the caller adds any
+ * path the child needs to the explicit list. When absent, the profile
+ * decides the workspace and the trusted-runner surface remains available.
+ * Nothing outside the run directory is writable by any profile except the
+ * workspace under a read-write profile.
+ */
 export async function buildPerExecutionConfig(
   options: AnthropicSandboxRuntimeBackendOptions,
   profile: SandboxProfile,
   runDirectory: string | undefined,
+  explicitReadRoots?: readonly string[],
 ): Promise<Partial<SandboxRuntimeConfig>> {
-  const surface = await hostReadAllowSurface();
-  const readableRoots = profileReadRoots(options, profile);
+  const readableRoots = profileReadRoots(options, profile, explicitReadRoots);
   if (runDirectory !== undefined) {
     readableRoots.push(runDirectory);
+  }
+  if (explicitReadRoots !== undefined) {
+    readableRoots.push(...systemRuntimeReadPaths(detectPlatform()));
+  } else {
+    readableRoots.push(...(await hostReadAllowSurface()));
   }
   const writableRoots = profileWriteRoots(options, profile);
   if (runDirectory !== undefined) {
@@ -491,7 +586,7 @@ export async function buildPerExecutionConfig(
     },
     filesystem: {
       denyRead: hostReadBoundaryPatterns(),
-      allowRead: [...readableRoots, ...surface],
+      allowRead: readableRoots,
       allowWrite: writableRoots,
       denyWrite: protectedPathPatterns(profile, options.workspaceRoot),
     },
@@ -502,16 +597,20 @@ export async function buildPerExecutionConfig(
 }
 
 /**
- * Readable roots for the profile: the sandbox-private directories always;
- * the source workspace only when the profile does not exclude it. Recovery
- * probes exclude the workspace so the probed engine cannot read the real
- * project at all where the backend enforces the host-read allowlist.
+ * Readable roots for the profile: the source workspace only when the
+ * profile does not exclude it and the caller has not pinned explicit read
+ * roots (with explicit roots the caller owns the entire read surface).
+ * Shared sandbox directories no longer exist and are never granted.
  */
 function profileReadRoots(
   options: AnthropicSandboxRuntimeBackendOptions,
   profile: SandboxProfile,
+  explicitReadRoots?: readonly string[],
 ): string[] {
-  const readableRoots = [options.sandboxHome, options.sandboxTemp];
+  if (explicitReadRoots !== undefined) {
+    return [...explicitReadRoots];
+  }
+  const readableRoots: string[] = [];
   if (profile.filesystem.excludeWorkspaceRead !== true) {
     readableRoots.push(options.workspaceRoot);
   }
@@ -522,11 +621,7 @@ function profileWriteRoots(
   options: AnthropicSandboxRuntimeBackendOptions,
   profile: SandboxProfile,
 ): string[] {
-  const writableRoots =
-    profile.filesystem.workspaceAccess === "read-write"
-      ? [options.workspaceRoot, options.sandboxHome, options.sandboxTemp]
-      : [options.sandboxHome, options.sandboxTemp];
-  return writableRoots;
+  return profile.filesystem.workspaceAccess === "read-write" ? [options.workspaceRoot] : [];
 }
 
 /**
@@ -553,13 +648,15 @@ export function effectiveConfigKey(
 /**
  * The host-read boundary is an allowlist, not a blocklist. The runtime's
  * read model allows everything by default, so the whole host root is denied
- * first and only the approved surface is re-allowed: the active workspace,
- * the current command's private run directory, the Solaris-owned sandbox
- * directories, the exact trusted runner executables, and the minimum system
+ * first and only the approved surface is re-allowed: the active workspace
+ * (when the profile allows it), the current command's private run
+ * directory, the exact trusted runner executables, and the minimum system
  * runtime/library paths the selected trusted runner requires. Nothing else —
  * other user profiles, shared temporary areas, mounted volumes, other
  * drives, system configuration beyond the listed runtime paths, service
- * data, logs, caches, or credential locations — is readable.
+ * data, logs, caches, or credential locations — is readable. Requests that
+ * pin explicit read roots replace the workspace and trusted-runner surface
+ * with their exact identity-bound list.
  */
 export function hostReadBoundaryPatterns(
   platform: ReturnType<typeof detectPlatform> = detectPlatform(),
@@ -804,13 +901,40 @@ function terminateProcessTree(child: ChildProcess): void {
 }
 
 function collectViolations(): readonly SandboxViolation[] {
-  const violations = SandboxManager.getSandboxViolationStore().getViolations();
-  const normalized: SandboxViolation[] = violations.map((violation) => ({
-    category: "sandbox",
-    summary: truncateSummary(violation.line),
-  }));
-  SandboxManager.getSandboxViolationStore().clear();
-  return normalized;
+  try {
+    const violations = SandboxManager.getSandboxViolationStore().getViolations();
+    const normalized: SandboxViolation[] = violations.map((violation) => ({
+      category: "sandbox",
+      summary: truncateSummary(violation.line),
+    }));
+    SandboxManager.getSandboxViolationStore().clear();
+    return normalized;
+  } catch {
+    // Violation collection must never corrupt the command result: a failing
+    // store is reported as "no violations" instead of an error.
+    return [];
+  }
+}
+
+/**
+ * Result for a request that failed closed before any process started: it
+ * was cancelled or timed out while queued behind another execution.
+ */
+function preStartResult(
+  status: "cancelled" | "timed-out",
+  startedAt: number,
+): SandboxedProcessResult {
+  return {
+    status,
+    exitCode: null,
+    signal: null,
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    durationMs: Date.now() - startedAt,
+    violations: [],
+  };
 }
 
 function truncateSummary(text: string): string {

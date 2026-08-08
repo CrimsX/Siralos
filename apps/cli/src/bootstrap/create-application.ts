@@ -29,7 +29,6 @@ import {
   createWorkspaceSearchTool,
   DEFAULT_CHECKPOINT_ROOT,
   getDefaultUserConfigPath,
-  getSandboxDirectories,
   loadUserConfig,
   readGodotEnvironmentOverrides,
   readParentEnvironment,
@@ -89,13 +88,8 @@ export async function createCliApplication(
   const profile = getBuiltInProfile(config.sandbox.profile);
   const policy = createDefaultPolicy(config.sandbox.profile);
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
-  const sandboxDirectories = getSandboxDirectories();
   const runsRoot = join(homedir(), ".solaris", "runs");
-  const sandbox = createAnthropicSandboxRuntimeBackend({
-    workspaceRoot,
-    sandboxHome: sandboxDirectories.home,
-    sandboxTemp: sandboxDirectories.temp,
-  });
+  const sandbox = createAnthropicSandboxRuntimeBackend({ workspaceRoot });
   const security = createSolarisSecurity({ backend: sandbox, policy, profile });
   const mutationLock = createMutationLock();
   const checkpoints = await createFilesystemCheckpointStore({ workspaceRoot });

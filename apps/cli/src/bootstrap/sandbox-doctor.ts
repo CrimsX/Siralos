@@ -1,7 +1,6 @@
 import {
   createAnthropicSandboxRuntimeBackend,
   getDefaultUserConfigPath,
-  getSandboxDirectories,
   loadUserConfig,
   removeConformanceArtifacts,
   runSandboxConformance,
@@ -57,7 +56,6 @@ export async function runSandboxDoctor(
 ): Promise<SandboxDoctorReport> {
   const config = await loadUserConfig(options.configPath ?? getDefaultUserConfigPath());
   const profile = getBuiltInProfile(config.sandbox.profile);
-  const sandboxDirectories = getSandboxDirectories();
   let conformance: ConformanceReport | null = null;
   let probesRun = false;
   let probeWorkspace: string | undefined;
@@ -71,11 +69,7 @@ export async function runSandboxDoctor(
     }
     const backend =
       options.backendFactory === undefined
-        ? createAnthropicSandboxRuntimeBackend({
-            workspaceRoot,
-            sandboxHome: sandboxDirectories.home,
-            sandboxTemp: sandboxDirectories.temp,
-          })
+        ? createAnthropicSandboxRuntimeBackend({ workspaceRoot })
         : options.backendFactory(workspaceRoot);
     try {
       const status = await backend.inspect();

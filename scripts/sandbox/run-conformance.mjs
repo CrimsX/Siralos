@@ -4,9 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  buildChildEnvironment,
   createAnthropicSandboxRuntimeBackend,
-  getSandboxDirectories,
   removeConformanceArtifacts,
   runSandboxConformance,
 } from "@solaris/adapters";
@@ -23,14 +21,7 @@ const FAKE_PROBE_SECRETS = {
 
 async function main() {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-conformance-"));
-  const sandboxDirectories = getSandboxDirectories();
-  const runsRoot = join(tmpdir(), "solaris-conformance-runs");
-  const backend = createAnthropicSandboxRuntimeBackend({
-    workspaceRoot,
-    sandboxHome: sandboxDirectories.home,
-    sandboxTemp: sandboxDirectories.temp,
-    runRoot: runsRoot,
-  });
+  const backend = createAnthropicSandboxRuntimeBackend({ workspaceRoot });
   try {
     const status = await backend.inspect();
     if (status.state !== "available") {
@@ -57,10 +48,10 @@ async function main() {
       );
       return 0;
     }
-    const environment = buildChildEnvironment(
-      { ...process.env, ...FAKE_PROBE_SECRETS },
-      sandboxDirectories,
-    );
+    // The per-request run directories (and their home/temp) are created and
+    // granted by the conformance runner itself; the parent environment only
+    // supplies the allowlisted base plus fake secrets for the env probes.
+    const environment = { ...process.env, ...FAKE_PROBE_SECRETS };
     const report = await runSandboxConformance(backend, {
       workspaceRoot,
       profile: DEVELOP_OFFLINE_PROFILE,

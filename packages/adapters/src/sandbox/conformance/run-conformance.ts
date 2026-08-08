@@ -142,6 +142,7 @@ export async function runSandboxConformance(
         },
         { npm: false },
       ),
+      runDirectory: runPaths.root,
       timeoutMs: COMMAND_LIMITS.defaultTimeoutMs,
     });
 
@@ -168,6 +169,7 @@ export async function runSandboxConformance(
         },
         { npm: true },
       ),
+      runDirectory: runPaths.root,
       timeoutMs: COMMAND_LIMITS.defaultTimeoutMs,
     });
   };
