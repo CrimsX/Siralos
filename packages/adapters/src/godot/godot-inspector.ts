@@ -93,11 +93,15 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
   }
 
   async function doctor(signal?: AbortSignal): Promise<GodotDoctorReport> {
-    const [discovery, project] = await Promise.all([
-      profiler.discover(signal),
+    // ONE immutable discovery generation: the discovery result and the
+    // selected profile come from the same run, so the report can never
+    // combine snapshots from different discovery generations (the engine
+    // cannot change or disappear between the discovery and the lookup).
+    const [{ discovery, selected }, project] = await Promise.all([
+      profiler.discoverWithSelection(signal),
       projectInspector.inspect(signal),
     ]);
-    const selectedProfile = await selectedEngineProfile(signal);
+    const selectedProfile = selected?.profile ?? null;
     const compatibilityAssessment = assessGodotCompatibility(selectedProfile, project);
     let sandboxStatus;
     try {

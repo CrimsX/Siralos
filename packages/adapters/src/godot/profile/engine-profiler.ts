@@ -68,6 +68,20 @@ export interface GodotEngineProfilerDependencies {
 export interface GodotEngineProfiler {
   discover(signal?: AbortSignal): Promise<GodotDiscoveryResult>;
 
+  /**
+   * One discovery generation with its selected candidate: the discovery
+   * result and the selected profile come from the SAME run, so consumers
+   * (for example the doctor) can never combine snapshots from different
+   * discovery generations.
+   */
+  discoverWithSelection(signal?: AbortSignal): Promise<{
+    readonly discovery: GodotDiscoveryResult;
+    readonly selected: {
+      readonly installation: GodotInstallation;
+      readonly profile: GodotEngineProfile;
+    } | null;
+  }>;
+
   /** Selected installation with its full profile after discovery, or null. */
   selectedProfile(signal?: AbortSignal): Promise<{
     readonly installation: GodotInstallation;
@@ -84,13 +98,44 @@ export interface GodotProfiledCandidate {
 export function createGodotEngineProfiler(
   dependencies: GodotEngineProfilerDependencies,
 ): GodotEngineProfiler {
-  let lastProfiled: readonly GodotProfiledCandidate[] = [];
-
   function emit(event: GodotApplicationEvent): void {
     dependencies.onEvent?.(event);
   }
 
   async function discover(signal?: AbortSignal): Promise<GodotDiscoveryResult> {
+    return (await discoverInternal(signal)).discovery;
+  }
+
+  async function discoverWithSelection(signal?: AbortSignal): Promise<{
+    readonly discovery: GodotDiscoveryResult;
+    readonly selected: {
+      readonly installation: GodotInstallation;
+      readonly profile: GodotEngineProfile;
+    } | null;
+  }> {
+    const { discovery, selectedCandidate } = await discoverInternal(signal);
+    if (selectedCandidate === null || selectedCandidate.profile === null) {
+      return { discovery, selected: null };
+    }
+    return {
+      discovery,
+      selected: {
+        installation: selectedCandidate.installation,
+        profile: selectedCandidate.profile,
+      },
+    };
+  }
+
+  /**
+   * One discovery generation: candidates are collected, profiled, and
+   * selected in a single run, and the selected candidate is returned
+   * together with the discovery result so consumers never combine snapshots
+   * from different generations.
+   */
+  async function discoverInternal(signal?: AbortSignal): Promise<{
+    readonly discovery: GodotDiscoveryResult;
+    readonly selectedCandidate: GodotProfiledCandidate | null;
+  }> {
     emit({ type: "godot_discovery_started" });
     const { candidates, duplicates } = await collectCandidates(signal);
     const profiled: GodotProfiledCandidate[] = [];
@@ -100,7 +145,6 @@ export function createGodotEngineProfiler(
       }
       profiled.push(await profileCandidate(installation, signal));
     }
-    lastProfiled = profiled;
     const selection = await select(profiled);
     const diagnostics: SafeDiagnostic[] = [];
     if (selection.configActiveError !== null) {
@@ -149,7 +193,11 @@ export function createGodotEngineProfiler(
       rationale: selection.rationale,
       diagnostics,
     };
-    return result;
+    const selectedCandidate = profiled.find(
+      (candidate) =>
+        selection.installation !== null && candidate.installation.id === selection.installation.id,
+    );
+    return { discovery: result, selectedCandidate: selectedCandidate ?? null };
   }
 
   async function collectCandidates(signal?: AbortSignal): Promise<{
@@ -552,20 +600,18 @@ export function createGodotEngineProfiler(
     readonly installation: GodotInstallation;
     readonly profile: GodotEngineProfile;
   } | null> {
-    const discovery = await discover(signal);
-    if (discovery.selected === null) {
+    const { discovery, selectedCandidate } = await discoverInternal(signal);
+    if (
+      discovery.selected === null ||
+      selectedCandidate === null ||
+      selectedCandidate.profile === null
+    ) {
       return null;
     }
-    const candidate = lastProfiled.find(
-      (entry) => entry.installation.id === discovery.selected?.installationId,
-    );
-    if (candidate === undefined || candidate.profile === null) {
-      return null;
-    }
-    return { installation: candidate.installation, profile: candidate.profile };
+    return { installation: selectedCandidate.installation, profile: selectedCandidate.profile };
   }
 
-  return { discover, selectedProfile };
+  return { discover, discoverWithSelection, selectedProfile };
 }
 
 function profileFromCache(cached: CachedEngineProfile): GodotEngineProfile {
