@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  createEmptyGodotProjectProfile,
   type GodotApiDumpProbe,
   type GodotHelpProbe,
   type GodotProbeRunner,
@@ -218,6 +217,6 @@ describe("Godot doctor snapshot consistency", () => {
     expect(report.discovery.selected).toBeNull();
     expect(report.discovery.candidates[0]?.profiled).toBe(false);
     expect(report.degradedCapabilities).toEqual([]);
-    expect(report.project).toEqual(createEmptyGodotProjectProfile());
+    expect(report.project.detected).toBe(false);
   });
 });

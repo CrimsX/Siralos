@@ -2,6 +2,8 @@
 
 Status: accepted
 
+> **Status note (fail-closed).** The mutation design in this ADR is **not offered at this stage**: every entry point of `workspace.create_file`, `workspace.edit_file`, `workspace.delete_file`, and `/undo` fails closed as `unavailable` before any write, approval, or checkpoint, because Node offers no directory-relative (openat/renameat) primitive and a same-user process can swap a parent or target at any instruction boundary. The machinery exists as tested internal code the product cannot reach; no approval for mutations is ever requested, and checkpoints may still be listed (empty). This ADR documents the design for a future commit primitive that can mechanically bind the operation to the exact object.
+
 ## Context
 
 Solaris can inspect the workspace but not change it. The sandbox and permission foundation (ADR 0004) exists, but no provider-accessible mutation does. This milestone adds the first three: create one UTF-8 text file, apply exact text replacements to one existing UTF-8 text file, and delete one existing UTF-8 text file — each gated by capability policy, a complete preview, and one-time user approval.
@@ -26,9 +28,9 @@ Solaris can inspect the workspace but not change it. The sandbox and permission 
 
 Positive:
 
-- The first provider-accessible mutations execute under the full security stack from day one: policy, approval, path safety, conflict detection, serialization, and verification.
+- The first provider-accessible mutations would execute under the full security stack from day one: policy, approval, path safety, conflict detection, serialization, and verification. At this stage they fail closed as `unavailable` instead (see the status note above).
 - Providers can never approve, retry-denied, or bypass a decision; every retry produces a new proposal and a new approval.
-- The fake provider can demonstrate the full create → read → edit → delete workflow deterministically.
+- The fake provider can demonstrate the full create → read → edit → delete workflow deterministically, exercising the fail-closed path until the commit primitive exists.
 
 Negative:
 

@@ -527,6 +527,17 @@ describe("check-architecture", () => {
     ).toBe(true);
   });
 
+  it("accepts the fail-closed probe runner that never constructs tuples", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'export function createGodotProbeRunner() {\n  return {\n    isAvailable() { return Promise.resolve(false); },\n    probeVersion() { return Promise.resolve({ status: "unavailable", message: "x" }); },\n  };\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must construct every probe argument tuple")),
+    ).toBe(false);
+    expect(errors.some((error) => error.includes("non-fixed Godot probe argument"))).toBe(false);
+  });
+
   it("accepts the fixed probe tuple constructor in the probe runner", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =

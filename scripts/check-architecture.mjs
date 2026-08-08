@@ -341,7 +341,14 @@ function checkGodotProbeTupleDiscipline(
     }
   }
   if (packageRelativeFile === GODOT_PROBE_RUNNER_FILE) {
-    if (!/\bfunction\s+fixedProbeArguments\b/.test(source)) {
+    // Engine probing is fail-closed at this stage: the runner never spawns
+    // and never constructs an argument tuple, so the fixedProbeArguments
+    // requirement is waived for the fail-closed runner only.
+    const failClosedRunner =
+      /isAvailable\s*\(\s*\)\s*:\s*Promise<boolean>\s*\{\s*return\s+Promise\.resolve\(false\)/.test(
+        source,
+      ) || /isAvailable\s*\(\)\s*\{\s*return\s+Promise\.resolve\(false\)/.test(source);
+    if (!failClosedRunner && !/\bfunction\s+fixedProbeArguments\b/.test(source)) {
       errors.push(
         `${location}: the Godot probe adapter must construct every probe argument tuple through the single fixedProbeArguments constructor`,
       );

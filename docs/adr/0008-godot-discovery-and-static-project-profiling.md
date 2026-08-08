@@ -2,6 +2,8 @@
 
 Status: accepted
 
+> **Status note (fail-closed).** Engine probing as designed in this ADR is **not offered at this stage**: the probe runner reports `unavailable` for every probe and never spawns the executable, because the backend re-opens the staged copy's pathname at spawn time and a same-user process can substitute bytes between final verification and launch (no exec-by-handle primitive). No engine profile can be produced, the engine-profile cache exists but is bypassed while probing is unavailable, `godot.inspect_engine` cannot return a profile, `/godot-installations` lists unprofiled candidates with the reason, and `--godot-doctor` exits nonzero (no valid engine). Discovery, validation, static project detection, and the executable-content inventory are implemented and available, and every project inspection rescans the complete bounded project (no profile cache). Solaris does not open, import, execute, or run a Godot project at this stage; recovery-mode project probing is not implemented. This ADR documents the design for a future mechanically identity-bound launch primitive.
+
 ## Context
 
 Solaris is a harness for driving and running the Godot engine, but nothing engine-related can run until a Godot executable is found, trusted, and understood. The foundation (ADR 0001–0007) provides the sandbox boundary, read-only tools, and sandboxed command execution, but no Godot integration exists. This milestone adds the first Godot capability: executable discovery, exact-version profiling, engine capability probing, static project detection, and an executable-content inventory — all project-independent, read-only, and offline. Project execution (import, scene/script runs) is deliberately not part of this milestone.
@@ -52,8 +54,8 @@ Solaris is a harness for driving and running the Godot engine, but nothing engin
 
 Positive:
 
-- The harness can now find, verify, and profile a Godot engine without ever running a project, which is the prerequisite for every later stage (knowledge profiles, script intelligence, diagnostics).
-- Discovery, probing, and inspection are bounded, cancellable, offline, and provider-safe: no new one-time-approval burden, no new host-process execution, no project influence on invocation.
+- The harness can now find, verify, and statically understand a Godot engine and project without ever running a project, which is the prerequisite for every later stage (knowledge profiles, script intelligence, diagnostics). Engine profiling remains unavailable at this stage until an identity-bound launch primitive exists (see the status note above).
+- Discovery, inspection, and (when available) probing are bounded, cancellable, offline, and provider-safe: no new one-time-approval burden, no new host-process execution, no project influence on invocation.
 - Static project detection and the content inventory give early signal about a project's engine requirements and executable surface before any engine is opened.
 
 Negative:

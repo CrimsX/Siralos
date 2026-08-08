@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
-import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 
 /**
  * Live Godot conformance.

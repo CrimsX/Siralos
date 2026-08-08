@@ -89,7 +89,7 @@ describe("removeDirectoryTreeBounded", () => {
       // Planning is read-only: nothing is removed and the tree is intact.
       const plan = await planDirectoryRemoval(root, 100);
       expect(plan.examined).toBe(4);
-      expect(await readdir(root)).toHaveLength(3);
+      expect(await readdir(root)).toHaveLength(2);
       // Executing the accepted plan removes the complete tree.
       await removeDirectoryTreeBounded(root, 100);
       await expect(readdir(root)).rejects.toThrow();

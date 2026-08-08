@@ -18,8 +18,8 @@ function validInstallation(): GodotInstallation {
 
 describe("Godot probe runner fail-closed availability", () => {
   const runner = createGodotProbeRunner({
-    backend: {} as never,
-    runDirectories: {} as never,
+    backend: {},
+    runDirectories: {},
     parentEnvironment: {},
   });
 
@@ -40,7 +40,7 @@ describe("Godot probe runner fail-closed availability", () => {
     expect(api.status).toBe("unavailable");
   });
 
-  it("states the verify-to-launch substitution boundary in the message", async () => {
+  it("states the verify-to-launch substitution boundary in the message", () => {
     expect(GODOT_PROBING_UNAVAILABLE_MESSAGE).toContain("substitute");
     expect(GODOT_PROBING_UNAVAILABLE_MESSAGE).toContain("never spawned");
   });

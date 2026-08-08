@@ -576,7 +576,7 @@ export function createAnthropicSandboxRuntimeBackend(
           if (!settled) {
             settled = true;
             cleanup();
-            reject(error);
+            reject(error instanceof Error ? error : new Error(describeError(error)));
           }
         },
       );
