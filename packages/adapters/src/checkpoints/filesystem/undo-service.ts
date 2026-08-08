@@ -14,8 +14,11 @@ import type {
 import { planUndo } from "@solaris/core";
 import type { MutationLock } from "../../tools/workspace/mutations/mutation-lock.js";
 import {
+  removeCreatedObjectIfSame,
   resolveCreateTarget,
   resolveMutationTarget,
+  verifyExclusiveOpenIdentity,
+  verifyParentChainIdentity,
 } from "../../tools/workspace/mutations/mutation-paths.js";
 import {
   createMutationTempPath,
@@ -41,6 +44,11 @@ export interface UndoServiceDependencies {
    * irreversible commit open, after every final revalidation.
    */
   readonly beforeCommitOpen?: () => Promise<void>;
+  /**
+   * Test seam: deterministic barrier invoked after an escaped create is
+   * detected and its handle closed, immediately before conditional cleanup.
+   */
+  readonly beforeObjectCleanup?: () => Promise<void>;
 }
 
 type UndoAction = "create" | "restore" | "delete";
@@ -287,14 +295,29 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       if (signal?.aborted) {
         return { kind: "cancelled" };
       }
-      if (dependencies.beforeCommitOpen !== undefined) {
-        await dependencies.beforeCommitOpen();
-      }
       let canonicalRoot: string;
       try {
         canonicalRoot = await realpath(dependencies.workspaceRoot);
       } catch (error: unknown) {
         return { kind: "failed", message: describeError(error) };
+      }
+      // Exclusive restoration is not no-follow on intermediate components:
+      // a parent swapped for a symlink or junction after the final
+      // revalidation would restore the preimage outside the workspace. The
+      // parent chain identity is re-verified immediately before the open;
+      // Node offers no openat-style dirfd primitive, so a swap in the
+      // remaining window is detected AFTER the open but BEFORE any byte is
+      // written, through the opened handle, and the exact created object is
+      // removed only when identity-provable.
+      const parentChain = await verifyParentChainIdentity(dependencies.workspaceRoot, absolute);
+      if (!parentChain.ok) {
+        return { kind: "failed", message: parentChain.message };
+      }
+      if (signal?.aborted) {
+        return { kind: "cancelled" };
+      }
+      if (dependencies.beforeCommitOpen !== undefined) {
+        await dependencies.beforeCommitOpen();
       }
       let handle;
       try {
@@ -302,36 +325,42 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
       } catch (error: unknown) {
         return { kind: "failed", message: describeError(error) };
       }
-      let escaped = false;
+      const openedIdentity = await verifyExclusiveOpenIdentity(handle, absolute, canonicalRoot);
+      if (!openedIdentity.ok) {
+        await handle.close().catch(() => {});
+        if (dependencies.beforeObjectCleanup !== undefined) {
+          await dependencies.beforeObjectCleanup();
+        }
+        const cleanup = await removeCreatedObjectIfSame(
+          absolute,
+          openedIdentity.dev,
+          openedIdentity.ino,
+        );
+        if (cleanup === "preserved") {
+          return {
+            kind: "failed",
+            message: `${openedIdentity.message}; nothing was written. The created object could not be identity-proven and was left in place; it was not deleted.`,
+          };
+        }
+        if (cleanup === "absent") {
+          return {
+            kind: "failed",
+            message: `${openedIdentity.message}; nothing was written and no stray object remained.`,
+          };
+        }
+        return {
+          kind: "failed",
+          message: `${openedIdentity.message}; nothing was written and the created object was removed.`,
+        };
+      }
       try {
-        // Exclusive creation is not no-follow on intermediate components: a
-        // parent swapped for a symlink or junction after the final
-        // revalidation would restore the preimage outside the workspace.
-        let createdCanonical: string;
-        try {
-          createdCanonical = await realpath(absolute);
-        } catch (error: unknown) {
-          escaped = true;
-          return {
-            kind: "failed",
-            message: `The restored file could not be resolved canonically: ${describeError(error)}`,
-          };
-        }
-        if (!isInside(canonicalRoot, createdCanonical)) {
-          escaped = true;
-          return {
-            kind: "failed",
-            message:
-              "A parent directory was swapped for a link before the restore; nothing was written.",
-          };
-        }
+        // Write only through the verified handle: the path is never
+        // reopened, so a substitution made after the open cannot redirect
+        // the restore.
         await handle.writeFile(preimage);
         await handle.sync();
       } finally {
         await handle.close();
-        if (escaped) {
-          await import("node:fs/promises").then((fs) => fs.unlink(absolute).catch(() => {}));
-        }
       }
     } else {
       const resolved = await resolveMutationTarget(
@@ -361,6 +390,10 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
           tempPath,
           targetPath: absolute,
           expectedTargetSha256: checkpoint.after.sha256,
+          // The staged preimage bytes are verified by hash again after the
+          // commit, so a staged file tampered between staging and the
+          // exclusive link is detected before the restore is reported.
+          expectedStagedSha256: createHash("sha256").update(preimage).digest("hex"),
         });
         if (commitOutcome.kind !== "success") {
           if (commitOutcome.kind === "uncertain") {
@@ -471,11 +504,6 @@ export function createUndoService(dependencies: UndoServiceDependencies): UndoSe
 
 function joinAbsolute(workspaceRoot: string, relativePath: string): string {
   return path.join(workspaceRoot, ...relativePath.split("/"));
-}
-
-function isInside(root: string, target: string): boolean {
-  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  return target === root || target.startsWith(rootPrefix);
 }
 
 function describeError(error: unknown): string {

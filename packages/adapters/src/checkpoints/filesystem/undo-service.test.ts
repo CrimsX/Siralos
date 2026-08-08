@@ -33,7 +33,10 @@ interface UndoContext {
 
 async function withContext(
   decision: "approve" | "deny" | "cancel" = "approve",
-  extra: { readonly beforeCommitOpen?: () => Promise<void> } = {},
+  extra: {
+    readonly beforeCommitOpen?: () => Promise<void>;
+    readonly beforeObjectCleanup?: () => Promise<void>;
+  } = {},
 ): Promise<UndoContext> {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-undo-workspace-"));
   registerTempDir(workspaceRoot);
@@ -492,6 +495,66 @@ describe("safe undo adversarial commit", () => {
       expect(outcome.type).toBe("conflict");
       const entries = await (await import("node:fs/promises")).readdir(outsideRoot);
       expect(entries).not.toContain("note.md");
+    },
+  );
+
+  it(
+    "does not unlink an uncertain restored object when the parent is swapped again before cleanup",
+    {
+      skip: process.platform === "win32",
+    },
+    async () => {
+      const before = "deleted content\n";
+      const outsideRoot = await mkdtemp(join(tmpdir(), "solaris-undo-outside-"));
+      registerTempDir(outsideRoot);
+      const otherOutside = await mkdtemp(join(tmpdir(), "solaris-undo-outside-"));
+      registerTempDir(otherOutside);
+      const sentinel = "sentinel that must not change\n";
+      await writeFile(join(otherOutside, "note.md"), sentinel);
+      const context = await withContext("approve", {
+        beforeCommitOpen: async () => {
+          const { rm, symlink } = await import("node:fs/promises");
+          await rm(join(context.workspaceRoot, "docs"), { recursive: true });
+          await symlink(outsideRoot, join(context.workspaceRoot, "docs"), "dir");
+        },
+        beforeObjectCleanup: async () => {
+          const { unlink, symlink } = await import("node:fs/promises");
+          await unlink(join(context.workspaceRoot, "docs"));
+          await symlink(otherOutside, join(context.workspaceRoot, "docs"), "dir");
+        },
+      });
+      const checkpoint = await context.store.prepare(
+        prepared("docs/note.md", before, "unused", "delete"),
+      );
+      await applyCheckpoint(context, checkpoint);
+
+      const outcome = await context.undo(checkpoint.id);
+      expect(outcome.type).toBe("conflict");
+      if (outcome.type === "conflict") {
+        expect(outcome.message).toContain("left in place");
+      }
+      // The pre-existing sentinel at the newly-resolving path is intact;
+      // the uncertain path was never unlinked.
+      expect(await readFile(join(otherOutside, "note.md"), "utf8")).toBe(sentinel);
+    },
+  );
+
+  it(
+    "round-trips a case-variant checkpoint path on case-insensitive platforms",
+    { skip: process.platform === "linux" },
+    async () => {
+      const context = await withContext();
+      const before = "original content\n";
+      const after = "edited content\n";
+      await writeFile(join(context.workspaceRoot, "docs", "note.md"), before);
+      const checkpoint = await context.store.prepare(prepared("docs/Note.md", before, after));
+      await applyCheckpoint(context, checkpoint);
+      await writeFile(join(context.workspaceRoot, "docs", "note.md"), after);
+
+      const outcome = await context.undo(checkpoint.id);
+      expect(outcome.type).toBe("undone");
+      const restored = await readFile(join(context.workspaceRoot, "docs", "note.md"), "utf8");
+      expect(restored).toBe(before);
     },
   );
 });
