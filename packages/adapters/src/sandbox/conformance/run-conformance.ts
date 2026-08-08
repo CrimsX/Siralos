@@ -223,14 +223,30 @@ export async function runSandboxConformance(
       description: "One command cannot read another run's private directory",
       buildRequest: async (_context, runPaths) => {
         const other = await runDirectories.create();
-        try {
-          await writeFile(join(other.home, "other-run-secret.txt"), "OTHER-RUN-SECRET\n");
-          return nodeRequest("cross-run-read", options.profile, runPaths, [
-            join(other.home, "other-run-secret.txt"),
-          ]);
-        } finally {
-          await runDirectories.remove(other.runId).catch(() => {});
+        if (!other.ok) {
+          throw new SkipProbeError(`Private run directory unavailable: ${other.message}`);
         }
+        let failure: unknown = null;
+        try {
+          await writeFile(join(other.paths.home, "other-run-secret.txt"), "OTHER-RUN-SECRET\n");
+        } catch (error: unknown) {
+          failure = error;
+        }
+        const request = nodeRequest("cross-run-read", options.profile, runPaths, [
+          join(other.paths.home, "other-run-secret.txt"),
+        ]);
+        // The auxiliary run-directory cleanup outcome is OBSERVED: a failed
+        // cleanup is never silently ignored.
+        const cleanup = await runDirectories.remove(other.paths.runId);
+        if (!cleanup.ok) {
+          throw new SkipProbeError(
+            `The probe's auxiliary run directory could not be cleaned up and was preserved: ${cleanup.message}`,
+          );
+        }
+        if (failure !== null) {
+          throw failure instanceof Error ? failure : new Error(describeError(failure));
+        }
+        return request;
       },
       check: (result) => !result.stdout.includes("cross-run-ok"),
     },
@@ -441,7 +457,11 @@ export async function runSandboxConformance(
       buildRequest: async (_context, runPaths) => {
         const outcome = await runDirectories.remove(runPaths.runId);
         if (!outcome.ok) {
-          throw new Error(outcome.message);
+          // Cleanup is unavailable or refused: the probe cannot verify
+          // cleanup and reports the truthful reason as a skip.
+          throw new SkipProbeError(
+            `Run-directory cleanup is unavailable or refused; the probe cannot verify it: ${outcome.message}`,
+          );
         }
         const entries = await readdir(runPaths.home).catch(() => []);
         if (entries.length > 0) {
@@ -471,6 +491,28 @@ export async function runSandboxConformance(
   ];
 
   const results: ConformanceProbeResult[] = [];
+  // The suite can only execute when Solaris can create a verified private
+  // run directory for every sandboxed command. Creation fails closed (Node
+  // offers no directory-relative primitive), so an unavailable provider
+  // skips every probe truthfully: skipped is never treated as passed.
+  const availabilityProbe = await runDirectories.create();
+  if (!availabilityProbe.ok) {
+    const reason = `Private run directories are unavailable, so no sandboxed command can execute with a verified Solaris-owned run directory: ${availabilityProbe.message}`;
+    return {
+      backendId: backend.id,
+      platform: process.platform,
+      profileId: options.profile.id,
+      results: probes.map((probe) => ({
+        probeId: probe.id,
+        description: probe.description,
+        outcome: "skipped" as const,
+        detail: reason,
+      })),
+      passed: 0,
+      failed: 0,
+      skipped: probes.length,
+    };
+  }
   let loopbackServer: Server | undefined;
   for (const probe of probes) {
     let loopbackPort = 0;
@@ -495,21 +537,21 @@ export async function runSandboxConformance(
         : setTimeout(() => {
             controller.abort();
           }, probe.cancelAfterMs);
-    let outcome: ConformanceProbeResult["outcome"];
-    let detail: string;
-    const runPaths = await runDirectories.create();
-    probeContext.runTemp = runPaths.temp;
+    let outcome: ConformanceProbeResult["outcome"] = "failed";
+    let detail = "The probe did not complete.";
+    let runPaths: CommandRunPaths | null = null;
     try {
-      let request: SandboxedProcessRequest;
-      try {
-        request = await probe.buildRequest(probeContext, runPaths);
-      } finally {
-        if (probe.id === "run-dir-cleanup") {
-          await runDirectories.remove(runPaths.runId).catch(() => {});
-        }
+      const created = await runDirectories.create();
+      if (!created.ok) {
+        throw new SkipProbeError(`Private run directory unavailable: ${created.message}`);
       }
-      request = {
-        ...request,
+      runPaths = created.paths;
+      probeContext.runTemp = runPaths.temp;
+      // The run-dir-cleanup probe removes its own run directory inside its
+      // buildRequest; no second removal is attempted here.
+      const builtRequest = await probe.buildRequest(probeContext, runPaths);
+      const request: SandboxedProcessRequest = {
+        ...builtRequest,
         profile,
         signal: controller.signal,
         ...(probe.timeoutMs === undefined ? {} : { timeoutMs: probe.timeoutMs }),
@@ -541,7 +583,16 @@ export async function runSandboxConformance(
         await closeLoopbackServer(loopbackServer);
         loopbackServer = undefined;
       }
-      await runDirectories.remove(runPaths.runId).catch(() => {});
+      // The per-probe run directory cleanup outcome is OBSERVED: a refused
+      // or failed cleanup downgrades the probe result and is reported, and
+      // the preserved directory is never silently left behind.
+      if (runPaths !== null) {
+        const cleanup = await runDirectories.remove(runPaths.runId);
+        if (!cleanup.ok) {
+          outcome = outcome === "passed" ? "failed" : outcome;
+          detail = `${detail} Run-directory cleanup failed and was observed: ${cleanup.message}`;
+        }
+      }
     }
     results.push({ probeId: probe.id, description: probe.description, outcome, detail });
   }

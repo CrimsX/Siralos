@@ -156,15 +156,20 @@ export function createProcessRunTool(
         message: `The command run directory could not be prepared: ${describeError(error)}`,
       };
     }
+    if (!runPaths.ok) {
+      // Run-directory creation fails closed: a command never executes
+      // without a verified Solaris-owned private run directory.
+      return { status: "unavailable", message: runPaths.message };
+    }
     let result: ToolExecutionResult;
     let failure: unknown;
     try {
-      result = await executeWithinLock(payload, context, runPaths);
+      result = await executeWithinLock(payload, context, runPaths.paths);
     } catch (error: unknown) {
       failure = error;
       result = { status: "failed", message: describeError(error) };
     }
-    const cleanup = await dependencies.runDirectories.remove(runPaths.runId);
+    const cleanup = await dependencies.runDirectories.remove(runPaths.paths.runId);
     if (!cleanup.ok) {
       result = attachCleanupWarning(result, cleanup.message);
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readdir, stat } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   COMMAND_LIMITS,
@@ -23,7 +23,12 @@ import {
   type SandboxedProcessResult,
 } from "@solaris/core";
 import { createSha256CommandDigestService } from "./command-digest.js";
-import { createRunDirectoryProvider } from "./run-directories.js";
+import {
+  createRunDirectoryProvider,
+  type RunCleanupOutcome,
+  type RunCreateOutcome,
+  type RunDirectoryProvider,
+} from "./run-directories.js";
 import { buildCommandEnvironment } from "../environment/command-environment.js";
 import { readParentEnvironment } from "../environment/child-environment.js";
 import { createNpmScriptRunner } from "./runners/npm-script-runner.js";
@@ -33,6 +38,50 @@ import { createMutationLock } from "../tools/workspace/mutations/mutation-lock.j
 import { createTempWorkspace, writeFixtureFiles } from "../tools/workspace/workspace-fixtures.js";
 
 const RUNS_ROOT = join(process.cwd(), "node_modules", ".solaris-test-runs");
+
+/**
+ * TEST-ONLY run-directory provider: creates a unique directory beneath a
+ * per-harness runs root and removes it again. Mirrors the production
+ * provider's typed outcomes so the process tool mechanics (locking, output
+ * windowing, workspace protection, cleanup observation) stay testable. The
+ * production provider fails closed as unavailable and never creates
+ * anything; this stand-in is never used by production code.
+ */
+function createTestRunDirectoryProvider(runsRoot: string): RunDirectoryProvider {
+  const created: string[] = [];
+  return {
+    async create(): Promise<RunCreateOutcome> {
+      const root = join(runsRoot, `run-${created.length}-${Math.random().toString(36).slice(2)}`);
+      await mkdir(join(root, "home"), { recursive: true });
+      await mkdir(join(root, "tmp"), { recursive: true });
+      await mkdir(join(root, "npm-cache"), { recursive: true });
+      await mkdir(join(root, "script-cache"), { recursive: true });
+      await writeFile(join(root, "npmrc"), "");
+      created.push(root);
+      return {
+        ok: true,
+        paths: {
+          runId: `run-${created.length}`,
+          root,
+          home: join(root, "home"),
+          temp: join(root, "tmp"),
+          npmCache: join(root, "npm-cache"),
+          npmUserConfig: join(root, "npmrc"),
+          scriptCache: join(root, "script-cache"),
+        },
+      };
+    },
+    async remove(runId: string): Promise<RunCleanupOutcome> {
+      const index = Number(runId.replace("run-", "")) - 1;
+      const root = created[index];
+      if (root === undefined) {
+        return { ok: false, reason: "failed", message: "unknown run" };
+      }
+      await rm(root, { recursive: true, force: true });
+      return { ok: true };
+    },
+  };
+}
 
 /**
  * Test-only deterministic stand-in for the node-script runner. The real
@@ -207,7 +256,7 @@ async function createHarness(
     workspaceRoot: workspace.root,
     runners: registry,
     backend,
-    runDirectories: createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot }),
+    runDirectories: createTestRunDirectoryProvider(runsRoot),
     lock: createMutationLock(),
     ...(options.git === undefined ? {} : { git: options.git }),
     executionProfile: VALIDATION_OFFLINE_PROFILE,
@@ -867,9 +916,14 @@ describe("process.run tool run directories", () => {
             };
             await mkdir(directories.root, { recursive: true });
             await mkdir(directories.scriptCache, { recursive: true });
-            return directories;
+            return { ok: true as const, paths: directories };
           },
-          remove: () => Promise.resolve({ ok: false, message: "The directory is locked." }),
+          remove: () =>
+            Promise.resolve({
+              ok: false as const,
+              reason: "failed" as const,
+              message: "The directory is locked.",
+            }),
         },
         lock: createMutationLock(),
         executionProfile: VALIDATION_OFFLINE_PROFILE,
@@ -891,6 +945,50 @@ describe("process.run tool run directories", () => {
           "directory is locked",
         );
       }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+describe("process.run tool fail-closed run directories", () => {
+  it("fails closed with the unavailable production provider: execute reports unavailable and nothing is created or executed", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      await writeFixtureFiles(workspace.root, {
+        "scripts/validate.mjs": "console.log('x');",
+      });
+      const digest = createSha256CommandDigestService();
+      const registry = createCommandRunnerRegistry([createTestNodeRunner(digest)]);
+      const fake = createFakeSandboxBackend({ results: [completedResult()] });
+      const runsRoot = join(RUNS_ROOT, "unavailable-provider");
+      const tool = createProcessRunTool({
+        workspaceRoot: workspace.root,
+        runners: registry,
+        backend: fake.backend,
+        runDirectories: createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot }),
+        lock: createMutationLock(),
+        executionProfile: VALIDATION_OFFLINE_PROFILE,
+        executionPolicy: createDefaultPolicy("validation-offline"),
+      });
+      const prepared = await tool.prepare(
+        { runner: "node-script", path: "scripts/validate.mjs" },
+        {},
+      );
+      if (prepared.status !== "ready") {
+        throw new Error("Expected ready.");
+      }
+      const result = await tool.executePrepared(prepared.command, {
+        approvedDigest: prepared.digest,
+      });
+      expect(result.status).toBe("unavailable");
+      if (result.status === "unavailable") {
+        expect(result.message).toContain("unavailable");
+      }
+      // The command never executed and nothing was created on the host.
+      expect(fake.requests()).toHaveLength(0);
+      expect(await stat(runsRoot).catch(() => null)).toBeNull();
+      expect(await readdir(workspace.root)).toEqual(["scripts"]);
     } finally {
       await workspace.cleanup();
     }

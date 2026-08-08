@@ -1,17 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readdir, realpath, rmdir, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import path from "node:path";
 import type { CommandRunPaths } from "@solaris/core";
-import { isWithinPathIdentity, samePathIdentity } from "../fs-path-identity.js";
-import { removeDirectoryTreeBounded } from "../fs/directory-enumeration.js";
-
-/** Entry budget for one bounded run-directory removal. */
-const RUN_DIRECTORY_REMOVAL_ENTRY_BUDGET = 50_000;
-
-function join(...parts: readonly string[]): string {
-  return path.join(...parts);
-}
 
 export type { CommandRunPaths };
 
@@ -27,524 +14,70 @@ export type RunCleanupOutcome =
     }
   | {
       readonly ok: false;
+      readonly reason: "unavailable" | "refused" | "failed";
+      readonly message: string;
+    };
+
+export type RunCreateOutcome =
+  | {
+      readonly ok: true;
+      readonly paths: CommandRunPaths;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: "unavailable";
       readonly message: string;
     };
 
 export interface RunDirectoryProvider {
-  create(): Promise<CommandRunPaths>;
+  create(): Promise<RunCreateOutcome>;
   remove(runId: string): Promise<RunCleanupOutcome>;
 }
 
-const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const RUN_DIRECTORY_CREATION_UNAVAILABLE_MESSAGE =
+  "Private run-directory creation is unavailable: Node offers no directory-relative (openat/mkdirat-style) or handle-relative primitive, so a same-user process can substitute a verified parent between identity verification and the pathname-based create, placing a new entry outside the intended verified root. Solaris never creates run directories at this stage; nothing was created.";
+
+export const RUN_DIRECTORY_CLEANUP_UNAVAILABLE_MESSAGE =
+  "Run-directory cleanup is unavailable: without a delete-by-handle or directory-relative primitive, removal cannot be bound to the exact objects inspected and accepted in the removal transaction, and a substituted root, child, or leaf could be deleted by pathname. Nothing is deleted; any existing run directory is preserved for manual inspection.";
 
 /**
- * Each command run gets its own directory beneath a verified Solaris-owned
- * location, outside the project workspace and never provider-selectable.
- * Every component of the path is verified with no-follow semantics before
- * anything is created beneath it; components are created exclusively with
- * the verified parent identity re-checked immediately before the create;
- * the full chain is re-verified canonically before the paths are returned;
- * and cleanup re-verifies containment immediately before deletion and never
- * recursively deletes through a link. Identity comparisons are platform
- * aware (case/separator/prefix normalized on Windows). If a safe state
- * cannot be proven, the directory is preserved and the failure is
- * reported — nothing uncertain is ever deleted.
+ * Private run-directory provider that fails closed.
+ *
+ * Creation and cleanup are both UNAVAILABLE. The required invariants —
+ * "no run-directory operation may create an entry outside the intended
+ * verified root at any instruction boundary" and "cleanup may delete only
+ * the exact objects inspected and accepted in the removal transaction" —
+ * cannot be enforced with Node's pathname-based filesystem API against a
+ * same-user adversary: there is no openat/mkdirat-style primitive to bind a
+ * child create to an exact verified parent object, and no delete-by-handle
+ * primitive to bind removal to the exact inspected objects. Rather than
+ * weakening the threat model to keep the surface available, this provider
+ * performs ZERO filesystem operations: `create()` reports a typed
+ * unavailable outcome before creating anything (nothing is created and no
+ * cleanup is attempted afterwards), and `remove()` reports a truthful
+ * cleanup failure while preserving anything that exists. Every dependent
+ * capability (sandboxed Git, command execution, Godot probing, conformance
+ * workflows) must fail closed on the unavailable outcome; the provider will
+ * become available only when a mechanically identity-bound create/delete
+ * primitive exists.
  */
 export function createRunDirectoryProvider(
-  options: RunDirectoryProviderOptions,
+  _options: RunDirectoryProviderOptions,
 ): RunDirectoryProvider {
-  const configuredRunsRoot = path.resolve(
-    options.runsRoot ?? path.join(homedir(), ".solaris", "runs"),
-  );
-  const fingerprint = createHash("sha256")
-    .update(options.workspaceRoot, "utf8")
-    .digest("hex")
-    .slice(0, 16);
-  // Exact filesystem identity of each run root as Solaris created it; a
-  // substituted directory (even a non-link replacement) is refused cleanup.
-  const runRootIdentities = new Map<
-    string,
-    { readonly dev: number | bigint; readonly ino: number | bigint }
-  >();
-
-  async function create(): Promise<CommandRunPaths> {
-    const runId = randomUUID();
-    const canonicalRunsRoot = await establishVerifiedRunsRoot();
-    const fingerprintPath = join(canonicalRunsRoot, fingerprint);
-    await ensureVerifiedDirectoryComponent(
-      fingerprintPath,
-      canonicalRunsRoot,
-      "fingerprint directory",
-    );
-    const root = join(fingerprintPath, runId);
-    await ensureVerifiedDirectoryComponent(root, fingerprintPath, "run directory");
-    const home = join(root, "home");
-    const temp = join(root, "tmp");
-    const npmCache = join(root, "npm-cache");
-    const scriptCache = join(root, "script-cache");
-    await createVerifiedChildDirectory(home, root, "home");
-    await createVerifiedChildDirectory(temp, root, "tmp");
-    await createVerifiedChildDirectory(npmCache, root, "npm-cache");
-    await createVerifiedChildDirectory(scriptCache, root, "script-cache");
-    const npmUserConfig = join(root, "npmrc");
-    await createVerifiedChildFile(npmUserConfig, root, "npmrc");
-    const verified = await verifyCanonicalRoot(root, canonicalRunsRoot);
-    if (!verified.ok) {
-      throw new Error(verified.message);
-    }
-    try {
-      await chmod(root, 0o700);
-    } catch {
-      // restrictive permissions are best-effort where the platform supports them
-    }
-    // Record the exact created object's identity so cleanup can refuse a
-    // substituted directory even when the replacement is not a link.
-    const rootMetadata = await lstat(root);
-    runRootIdentities.set(runId, { dev: rootMetadata.dev, ino: rootMetadata.ino });
-    return { runId, root, home, temp, npmCache, npmUserConfig, scriptCache };
-  }
-
-  async function remove(runId: string): Promise<RunCleanupOutcome> {
-    if (!RUN_ID_PATTERN.test(runId)) {
-      return { ok: false, message: "Cleanup refused: the run id is invalid." };
-    }
-    let canonicalRunsRoot: string;
-    try {
-      canonicalRunsRoot = await establishVerifiedRunsRoot();
-    } catch (error: unknown) {
-      return { ok: false, message: describeError(error) };
-    }
-    const root = join(canonicalRunsRoot, fingerprint, runId);
-    const verified = await verifyCanonicalRoot(root, canonicalRunsRoot);
-    if (!verified.ok) {
-      if (verified.missing) {
-        return { ok: true };
-      }
-      return { ok: false, message: verified.message };
-    }
-    // Re-verify immediately before deletion: the path must still resolve
-    // canonically to itself and the leaf must be a real directory, so the
-    // recursive removal can never traverse a link planted in between. The
-    // root's exact filesystem identity must still match the object Solaris
-    // created, so a substituted directory (even a non-link replacement) is
-    // refused cleanup. Removal is two-phase: the full plan is validated and
-    // budgeted without mutation, and a refused plan performs zero deletions.
-    const preDelete = await verifyDeletableRoot(root);
-    if (!preDelete.ok) {
-      return { ok: false, message: preDelete.message };
-    }
-    const expectedIdentity = runRootIdentities.get(runId);
-    if (expectedIdentity !== undefined) {
-      const currentMetadata = await lstat(root).catch(() => null);
-      if (
-        currentMetadata === null ||
-        currentMetadata.dev !== expectedIdentity.dev ||
-        currentMetadata.ino !== expectedIdentity.ino
-      ) {
-        return {
-          ok: false,
-          message:
-            "Run directory cleanup refused: the directory at the run path is not the exact object Solaris created; it may have been substituted. It was preserved.",
-        };
-      }
-    }
-    try {
-      await removeDirectoryTreeBounded(root, RUN_DIRECTORY_REMOVAL_ENTRY_BUDGET);
-    } catch (error: unknown) {
-      return {
+  return {
+    create(): Promise<RunCreateOutcome> {
+      return Promise.resolve({
         ok: false,
-        message: `Run directory cleanup failed: ${describeError(error)}`,
-      };
-    }
-    try {
-      await lstat(root);
-      return {
+        reason: "unavailable",
+        message: RUN_DIRECTORY_CREATION_UNAVAILABLE_MESSAGE,
+      });
+    },
+    remove(_runId: string): Promise<RunCleanupOutcome> {
+      return Promise.resolve({
         ok: false,
-        message:
-          "Run directory cleanup failed: the run directory still exists after removal; it was preserved and must be inspected manually.",
-      };
-    } catch (error: unknown) {
-      if (isNotFoundError(error)) {
-        return { ok: true };
-      }
-      return {
-        ok: false,
-        message: `Run directory cleanup failed: ${describeError(error)}`,
-      };
-    }
-  }
-
-  /**
-   * Establishes the runs root as a verified real directory chain: every
-   * existing component must be a real directory (never a symlink or
-   * junction), missing components are created exclusively with the verified
-   * parent identity re-checked immediately before creation, and the full
-   * chain must resolve canonically to its logical path (identity
-   * comparison is platform aware). The runs root must also be outside the
-   * workspace.
-   */
-  /**
-   * Best-effort canonicalization. On Windows a managed ancestor may deny
-   * canonical access (EPERM/EACCES) for a path that is otherwise perfectly
-   * valid; the runs-root and per-component checks then fall back to the
-   * lstat-verified logical path instead of failing (containment and
-   * no-follow checks still run on the logical identity-aware paths, and
-   * destructive cleanup additionally binds to the exact created object's
-   * dev/ino). On every other platform a failed realpath fails closed.
-   */
-  async function bestEffortCanonical(pathValue: string): Promise<string | null> {
-    try {
-      return await realpath(pathValue);
-    } catch (error: unknown) {
-      if (
-        process.platform === "win32" &&
-        error instanceof Error &&
-        "code" in error &&
-        (error.code === "EPERM" || error.code === "EACCES" || error.code === "UNKNOWN")
-      ) {
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  async function establishVerifiedRunsRoot(): Promise<string> {
-    // Reject a runs root that contains or sits inside the workspace before
-    // creating anything, so a rejected configuration leaves no directories
-    // behind inside the workspace.
-    const canonicalWorkspace = await bestEffortCanonical(options.workspaceRoot);
-    if (canonicalWorkspace !== null) {
-      if (
-        samePathIdentity(configuredRunsRoot, canonicalWorkspace) ||
-        isWithinPathIdentity(canonicalWorkspace, configuredRunsRoot) ||
-        isWithinPathIdentity(configuredRunsRoot, canonicalWorkspace)
-      ) {
-        throw new Error("The runs root and the project workspace must not contain each other.");
-      }
-    }
-    const parsed = path.parse(configuredRunsRoot);
-    const relative = path.relative(parsed.root, configuredRunsRoot);
-    const relativeComponents =
-      relative.length === 0 ? [] : relative.split(path.sep).filter((part) => part.length > 0);
-    let current = parsed.root;
-    for (const component of relativeComponents) {
-      current = join(current, component);
-      await ensureVerifiedDirectoryComponent(current, parsed.root, "runs root");
-    }
-    const canonical = await bestEffortCanonical(configuredRunsRoot);
-    if (canonical === null) {
-      // Canonical confirmation is unavailable (Windows-managed ancestor);
-      // every component was lstat-verified as a real non-link directory and
-      // containment still holds on the logical identity-aware paths.
-      const resolvedWorkspace =
-        canonicalWorkspace ?? (await bestEffortCanonical(options.workspaceRoot));
-      if (resolvedWorkspace !== null) {
-        if (
-          samePathIdentity(configuredRunsRoot, resolvedWorkspace) ||
-          isWithinPathIdentity(resolvedWorkspace, configuredRunsRoot) ||
-          isWithinPathIdentity(configuredRunsRoot, resolvedWorkspace)
-        ) {
-          throw new Error("The runs root and the project workspace must not contain each other.");
-        }
-      }
-      return configuredRunsRoot;
-    }
-    if (!samePathIdentity(canonical, configuredRunsRoot)) {
-      throw new Error(
-        "The runs root does not resolve canonically to its configured location; refusing to use it.",
-      );
-    }
-    if (canonicalWorkspace !== null) {
-      if (
-        samePathIdentity(canonical, canonicalWorkspace) ||
-        isWithinPathIdentity(canonicalWorkspace, canonical) ||
-        isWithinPathIdentity(canonical, canonicalWorkspace)
-      ) {
-        throw new Error("The runs root and the project workspace must not contain each other.");
-      }
-    }
-    return canonical;
-  }
-
-  /**
-   * Verifies a parent component immediately before a child is created:
-   * the parent must still be the exact verified real directory, so a
-   * parent swapped for a link between verification and creation is
-   * detected before the child create call. On Windows a managed ancestor
-   * that denies canonical access is accepted after the lstat real-directory
-   * proof; on other platforms a canonical failure fails closed.
-   */
-  async function verifyParentIdentity(parent: string, label: string): Promise<void> {
-    let stats;
-    try {
-      stats = await lstat(parent);
-    } catch (error: unknown) {
-      throw new Error(`${label} is not accessible before child creation: ${describeError(error)}`);
-    }
-    if (stats.isSymbolicLink() || !stats.isDirectory()) {
-      throw new Error(`${label} is no longer a real directory; refusing to create beneath it.`);
-    }
-    const canonical = await bestEffortCanonical(parent);
-    if (canonical !== null && !samePathIdentity(canonical, parent)) {
-      throw new Error(`${label} resolves through a link; refusing to create beneath it.`);
-    }
-  }
-
-  /**
-   * Verifies or exclusively creates one directory component. An existing
-   * component must be a real directory, never a symbolic link or junction;
-   * a missing component is created without recursion (after the verified
-   * parent identity is re-checked) and then verified. An escaped created
-   * component is removed only when the exact created empty object can be
-   * identified and verified; otherwise it is preserved and reported.
-   */
-  async function ensureVerifiedDirectoryComponent(
-    target: string,
-    ancestor: string,
-    label: string,
-  ): Promise<void> {
-    let created = false;
-    let stats;
-    try {
-      stats = await lstat(target);
-    } catch (error: unknown) {
-      if (!isNotFoundError(error)) {
-        throw new Error(`${label} is not accessible: ${describeError(error)}`);
-      }
-      created = true;
-      await verifyParentIdentity(path.dirname(target), label);
-      try {
-        await mkdir(target);
-      } catch (mkdirError: unknown) {
-        if (isExistsError(mkdirError)) {
-          // Another concurrent creator won the race; verify what exists.
-          created = false;
-        } else {
-          throw new Error(`${label} could not be created: ${describeError(mkdirError)}`);
-        }
-      }
-      try {
-        stats = await lstat(target);
-      } catch (verifyError: unknown) {
-        throw new Error(
-          `${label} could not be verified after creation: ${describeError(verifyError)}`,
-        );
-      }
-    }
-    if (stats.isSymbolicLink()) {
-      throw new Error(`${label} is a symbolic link; refusing to use it.`);
-    }
-    if (!stats.isDirectory()) {
-      throw new Error(`${label} is not a directory; refusing to use it.`);
-    }
-    const canonical = await bestEffortCanonical(target).catch(() => null);
-    if (
-      canonical !== null &&
-      (!samePathIdentity(canonical, target) || !isWithinPathIdentity(ancestor, canonical))
-    ) {
-      if (created) {
-        await removeOnlyIfProvablyCreatedEmpty(target);
-      }
-      throw new Error(`${label} does not resolve canonically inside its verified parent.`);
-    }
-  }
-
-  async function createVerifiedChildDirectory(
-    target: string,
-    parent: string,
-    label: string,
-  ): Promise<void> {
-    await verifyParentIdentity(parent, label);
-    try {
-      await mkdir(target);
-    } catch (error: unknown) {
-      if (isExistsError(error)) {
-        throw new Error(`${label} directory already exists; refusing to use it.`);
-      }
-      throw new Error(`${label} directory could not be created: ${describeError(error)}`);
-    }
-    let stats;
-    try {
-      stats = await lstat(target);
-    } catch (error: unknown) {
-      throw new Error(`${label} directory could not be verified: ${describeError(error)}`);
-    }
-    if (stats.isSymbolicLink() || !stats.isDirectory()) {
-      await removeOnlyIfProvablyCreatedEmpty(target);
-      throw new Error(`${label} directory is not a real directory; refusing to use it.`);
-    }
-    const canonical = await bestEffortCanonical(target).catch(() => null);
-    if (
-      canonical !== null &&
-      (!samePathIdentity(canonical, target) || !isWithinPathIdentity(parent, canonical))
-    ) {
-      await removeOnlyIfProvablyCreatedEmpty(target);
-      throw new Error(`${label} directory does not resolve canonically inside its run.`);
-    }
-  }
-
-  async function createVerifiedChildFile(
-    target: string,
-    parent: string,
-    label: string,
-  ): Promise<void> {
-    await verifyParentIdentity(parent, label);
-    try {
-      await writeFile(target, "", { flag: "wx" });
-    } catch (error: unknown) {
-      throw new Error(`${label} could not be created: ${describeError(error)}`);
-    }
-    let stats;
-    try {
-      stats = await lstat(target);
-    } catch (error: unknown) {
-      throw new Error(`${label} could not be verified: ${describeError(error)}`);
-    }
-    if (stats.isSymbolicLink() || !stats.isFile()) {
-      await removeOnlyIfProvablyCreatedEmpty(target);
-      throw new Error(`${label} is not a real file; refusing to use it.`);
-    }
-    const canonical = await bestEffortCanonical(target).catch(() => null);
-    if (
-      canonical !== null &&
-      (!samePathIdentity(canonical, target) || !isWithinPathIdentity(parent, canonical))
-    ) {
-      await removeOnlyIfProvablyCreatedEmpty(target);
-      throw new Error(`${label} does not resolve canonically inside its run.`);
-    }
-  }
-
-  /**
-   * Removes a component that was exclusively created but escaped the
-   * verified tree. The removal targets the exact object that now occupies
-   * the created location — resolved canonically and verified to be a real,
-   * empty directory (or an empty regular file) — never a link and never an
-   * uncertain target. If the object cannot be proven to be the exact empty
-   * created one, it is preserved and the failure is reported.
-   */
-  async function removeOnlyIfProvablyCreatedEmpty(target: string): Promise<void> {
-    const canonical = await realpath(target).catch(() => null);
-    if (canonical === null) {
-      return;
-    }
-    let stats;
-    try {
-      stats = await lstat(canonical);
-    } catch {
-      return;
-    }
-    if (stats.isSymbolicLink()) {
-      return;
-    }
-    try {
-      if (stats.isDirectory()) {
-        const entries = await readdir(canonical);
-        if (entries.length !== 0) {
-          return;
-        }
-        await rmdir(canonical);
-      } else if (stats.isFile()) {
-        await unlink(canonical);
-      }
-    } catch {
-      // never delete an uncertain target; report the original failure
-    }
-  }
-
-  async function verifyCanonicalRoot(
-    root: string,
-    runsRoot: string,
-  ): Promise<{ ok: true } | { ok: false; message: string; missing?: boolean }> {
-    let canonical: string;
-    try {
-      canonical = await realpath(root);
-    } catch (error: unknown) {
-      if (isNotFoundError(error)) {
-        return { ok: false, message: "The run directory does not exist.", missing: true };
-      }
-      if (process.platform === "win32" && isPermissionDeniedError(error)) {
-        // Managed-Windows canonical denial: containment still holds on the
-        // logical identity-aware paths, and destructive cleanup separately
-        // binds to the exact created object's dev/ino.
-        return isWithinPathIdentity(runsRoot, root)
-          ? { ok: true }
-          : { ok: false, message: "The run directory is not the verified Solaris-owned path." };
-      }
-      return { ok: false, message: `The run directory is not accessible: ${describeError(error)}` };
-    }
-    if (!samePathIdentity(canonical, root) || !isWithinPathIdentity(runsRoot, canonical)) {
-      return {
-        ok: false,
-        message: "The run directory is not the verified Solaris-owned path.",
-      };
-    }
-    return { ok: true };
-  }
-
-  async function verifyDeletableRoot(
-    root: string,
-  ): Promise<{ ok: true } | { ok: false; message: string }> {
-    let leafStats;
-    try {
-      leafStats = await lstat(root);
-    } catch (error: unknown) {
-      if (isNotFoundError(error)) {
-        return { ok: true };
-      }
-      return { ok: false, message: `Run directory cleanup refused: ${describeError(error)}` };
-    }
-    if (!leafStats.isDirectory() || leafStats.isSymbolicLink()) {
-      return {
-        ok: false,
-        message: "Run directory cleanup refused: the run directory is not a real directory.",
-      };
-    }
-    let canonicalNow: string;
-    try {
-      canonicalNow = await realpath(root);
-    } catch (error: unknown) {
-      if (process.platform === "win32" && isPermissionDeniedError(error)) {
-        // Managed-Windows canonical denial: the leaf is lstat-verified as a
-        // real directory and the exact created object identity is re-proven
-        // by the caller before deletion.
-        return { ok: true };
-      }
-      return {
-        ok: false,
-        message: "Run directory cleanup refused: the run directory cannot be resolved canonically.",
-      };
-    }
-    if (!samePathIdentity(canonicalNow, root)) {
-      return {
-        ok: false,
-        message: "Run directory cleanup refused: the run directory resolves through a link.",
-      };
-    }
-    return { ok: true };
-  }
-
-  return { create, remove };
-}
-
-function isNotFoundError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-function isPermissionDeniedError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error.code === "EPERM" || error.code === "EACCES" || error.code === "UNKNOWN")
-  );
-}
-
-function isExistsError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "EEXIST";
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "an unknown filesystem error occurred";
+        reason: "unavailable",
+        message: RUN_DIRECTORY_CLEANUP_UNAVAILABLE_MESSAGE,
+      });
+    },
+  };
 }

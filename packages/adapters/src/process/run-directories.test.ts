@@ -1,307 +1,64 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createRunDirectoryProvider } from "./run-directories.js";
+import {
+  createRunDirectoryProvider,
+  RUN_DIRECTORY_CLEANUP_UNAVAILABLE_MESSAGE,
+  RUN_DIRECTORY_CREATION_UNAVAILABLE_MESSAGE,
+} from "./run-directories.js";
 import { createTempWorkspace, SYMLINKS_SUPPORTED } from "../tools/workspace/workspace-fixtures.js";
 
 function uniqueRunsRoot(): string {
   return join(tmpdir(), `solaris-runs-${Date.now()}-${Math.random()}`);
 }
 
-describe("createRunDirectoryProvider", () => {
-  it("creates sandbox-private home, temp, cache, npmrc, and script cache beneath the runs root", async () => {
+/**
+ * The private run-directory provider fails closed: Node offers no
+ * directory-relative or delete-by-handle primitive, so creation and cleanup
+ * are both UNAVAILABLE and the provider performs ZERO filesystem operations.
+ * No run-directory operation can create an entry outside an intended
+ * verified root (nothing is ever created), and cleanup can never delete a
+ * substituted object (nothing is ever deleted).
+ */
+describe("createRunDirectoryProvider (fail-closed contract)", () => {
+  it("reports creation unavailable and creates nothing", async () => {
     const workspace = await createTempWorkspace();
     const runsRoot = uniqueRunsRoot();
     try {
       const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      expect(paths.home).toContain("home");
-      expect(paths.temp).toContain("tmp");
-      expect(paths.npmCache).toContain("npm-cache");
-      expect(paths.scriptCache).toContain("script-cache");
-      expect(paths.npmUserConfig.endsWith("npmrc")).toBe(true);
-      expect(paths.runId).toBeTruthy();
-      const homeEntries = await readdir(paths.home);
-      expect(homeEntries).toEqual([]);
-      const npmrc = await import("node:fs/promises").then((fs) =>
-        fs.readFile(paths.npmUserConfig, "utf8"),
-      );
-      expect(npmrc).toBe("");
-      await provider.remove(paths.runId);
-      await expect(import("node:fs/promises").then((fs) => fs.stat(paths.home))).rejects.toThrow();
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("uses a deterministic workspace fingerprint", async () => {
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    try {
-      const providerA = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const providerB = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const pathsA = await providerA.create();
-      const pathsB = await providerB.create();
-      expect(pathsA.home.split("\\").at(-3)).toBe(pathsB.home.split("\\").at(-3));
-      expect(pathsA.root).not.toBe(pathsB.root);
-      expect(pathsA.runId).not.toBe(pathsB.runId);
-      await providerA.remove(pathsA.runId);
-      await providerB.remove(pathsB.runId);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("refuses cleanup for invalid run ids", async () => {
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const outcome = await provider.remove("../../evil");
-      expect(outcome.ok).toBe(false);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("never deletes outside the verified run root", async () => {
-    if (!SYMLINKS_SUPPORTED) {
-      return;
-    }
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      const victim = join(runsRoot, "victim.txt");
-      await writeFile(victim, "keep me");
-      await provider.remove(paths.runId);
-      const content = await import("node:fs/promises").then((fs) => fs.readFile(victim, "utf8"));
-      expect(content).toBe("keep me");
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("rejects a run root that resolves through a symbolic link", async () => {
-    if (!SYMLINKS_SUPPORTED) {
-      return;
-    }
-    const workspace = await createTempWorkspace();
-    const realRoot = uniqueRunsRoot();
-    const linkedRoot = uniqueRunsRoot();
-    try {
-      await mkdir(realRoot, { recursive: true });
-      await symlink(realRoot, linkedRoot, "dir");
-      const provider = createRunDirectoryProvider({
-        workspaceRoot: workspace.root,
-        runsRoot: linkedRoot,
-      });
-      await expect(provider.create()).rejects.toThrow();
-      // Nothing was created inside the link target.
-      const entries = await readdir(realRoot);
-      expect(entries).toEqual([]);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("rejects a fingerprint directory that is a symbolic link before creating anything", async () => {
-    if (!SYMLINKS_SUPPORTED) {
-      return;
-    }
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    const outside = join(tmpdir(), `solaris-fingerprint-outside-${Date.now()}-${Math.random()}`);
-    try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const first = await provider.create();
-      const fingerprint = first.home.split("\\").at(-3) as string;
-      await provider.remove(first.runId);
-      // Plant a symlink at the predictable fingerprint path.
-      const { rm } = await import("node:fs/promises");
-      await rm(join(runsRoot, fingerprint), { recursive: true, force: true });
-      await mkdir(outside, { recursive: true });
-      await symlink(outside, join(runsRoot, fingerprint), "dir");
-      await expect(provider.create()).rejects.toThrow();
-      const outsideEntries = await readdir(outside);
-      expect(outsideEntries).toEqual([]);
-      const runsEntries = await readdir(runsRoot);
-      expect(runsEntries).toEqual([fingerprint]);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("rejects a runs root inside the project workspace before creating anything", async () => {
-    const workspace = await createTempWorkspace();
-    const runsRoot = join(workspace.root, ".solaris-runs");
-    try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      await expect(provider.create()).rejects.toThrow();
-      const entries = await readdir(workspace.root);
-      expect(entries).toEqual([]);
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("refuses cleanup when the run directory resolves through a link", async () => {
-    if (!SYMLINKS_SUPPORTED) {
-      return;
-    }
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    const outside = join(tmpdir(), `solaris-run-link-outside-${Date.now()}-${Math.random()}`);
-    try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      const { rm } = await import("node:fs/promises");
-      await rm(paths.root, { recursive: true, force: true });
-      await mkdir(outside, { recursive: true });
-      await writeFile(join(outside, "victim.txt"), "keep me");
-      await symlink(outside, paths.root, "dir");
-      const outcome = await provider.remove(paths.runId);
+      const outcome = await provider.create();
       expect(outcome.ok).toBe(false);
       if (!outcome.ok) {
-        expect(outcome.message).toContain("refused");
+        expect(outcome.reason).toBe("unavailable");
+        expect(outcome.message).toContain("unavailable");
       }
-      const content = await import("node:fs/promises").then((fs) =>
-        fs.readFile(join(outside, "victim.txt"), "utf8"),
-      );
-      expect(content).toBe("keep me");
+      // Zero entries anywhere: the runs root, the workspace, and the tmp
+      // parent are all untouched.
+      await expect(import("node:fs/promises").then((fs) => fs.stat(runsRoot))).rejects.toThrow();
+      const workspaceEntries = await readdir(workspace.root);
+      expect(workspaceEntries).toEqual([]);
     } finally {
       await workspace.cleanup();
     }
   });
 
-  it("removes the complete run directory", async () => {
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      await writeFile(join(paths.home, "output.txt"), "content");
-      const outcome = await provider.remove(paths.runId);
-      expect(outcome.ok).toBe(true);
-      await expect(import("node:fs/promises").then((fs) => fs.stat(paths.home))).rejects.toThrow();
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("accepts equivalent canonical spellings on case-insensitive platforms", async () => {
-    const platform = process.platform;
-    const caseInsensitive = platform === "win32" || platform === "darwin";
-    if (!caseInsensitive) {
-      return;
-    }
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      const outcome = await provider.remove(paths.runId);
-      expect(outcome.ok).toBe(true);
-      const realsRoot = await import("node:fs/promises").then((fs) => fs.realpath(runsRoot));
-      const variants: string[] = [realsRoot];
-      if (platform === "win32") {
-        variants.push(realsRoot.replaceAll("\\", "/"));
-        variants.push(`\\\\?\\${realsRoot}`);
-        variants.push(realsRoot.replace(/^[A-Za-z]:/, (letter) => letter.toUpperCase()));
-      } else {
-        variants.push(realsRoot.toUpperCase());
-      }
-      for (const variant of variants) {
-        const alternate = createRunDirectoryProvider({
-          workspaceRoot: workspace.root,
-          runsRoot: variant,
-        });
-        const altPaths = await alternate.create();
-        const altOutcome = await alternate.remove(altPaths.runId);
-        expect(altOutcome.ok).toBe(true);
-      }
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("refuses cleanup when the run directory is replaced by a junction-like link", async () => {
+  it("creates nothing even when the runs-root location is a hostile symlink", async () => {
     if (!SYMLINKS_SUPPORTED) {
       return;
     }
     const workspace = await createTempWorkspace();
     const runsRoot = uniqueRunsRoot();
-    const outside = join(tmpdir(), `solaris-junction-outside-${Date.now()}-${Math.random()}`);
+    const outside = join(tmpdir(), `solaris-runs-outside-${Date.now()}-${Math.random()}`);
     try {
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      const { rm, symlink } = await import("node:fs/promises");
-      await rm(paths.root, { recursive: true, force: true });
+      // Deterministic race at the verification-to-create boundary: a
+      // same-user process plants a link at the runs root. Because creation
+      // is unavailable, zero entries appear inside the link target.
       await mkdir(outside, { recursive: true });
-      await writeFile(join(outside, "victim.txt"), "keep me");
-      await symlink(outside, paths.root, "junction");
-      const outcome = await provider.remove(paths.runId);
-      expect(outcome.ok).toBe(false);
-      const content = await import("node:fs/promises").then((fs) =>
-        fs.readFile(join(outside, "victim.txt"), "utf8"),
-      );
-      expect(content).toBe("keep me");
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("refuses cleanup when the run directory is substituted with a different real directory", async () => {
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    const replacement = join(tmpdir(), `solaris-run-replacement-${Date.now()}-${Math.random()}`);
-    try {
+      await symlink(outside, runsRoot, "dir");
       const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      const { rm, rename } = await import("node:fs/promises");
-      await rm(paths.root, { recursive: true, force: true });
-      await mkdir(replacement, { recursive: true });
-      await writeFile(join(replacement, "keep.txt"), "keep me");
-      // A same-user process substitutes a different (non-link) directory at
-      // the run path immediately before cleanup.
-      await rename(replacement, paths.root);
-      const outcome = await provider.remove(paths.runId);
+      const outcome = await provider.create();
       expect(outcome.ok).toBe(false);
-      if (!outcome.ok) {
-        expect(outcome.message).toContain("not the exact object Solaris created");
-      }
-      // The substituted directory and its content are preserved.
-      const content = await import("node:fs/promises").then((fs) =>
-        fs.readFile(join(paths.root, "keep.txt"), "utf8"),
-      );
-      expect(content).toBe("keep me");
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  it("detects a parent substituted for a link between verification and child creation", async () => {
-    if (!SYMLINKS_SUPPORTED) {
-      return;
-    }
-    const workspace = await createTempWorkspace();
-    const runsRoot = uniqueRunsRoot();
-    try {
-      // First create completes the runs root and fingerprint directory.
-      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const first = await provider.create();
-      const fingerprint = first.home.split("\\").at(-3) as string;
-      await provider.remove(first.runId);
-      const outside = join(tmpdir(), `solaris-swap-outside-${Date.now()}-${Math.random()}`);
-      await mkdir(outside, { recursive: true });
-      // Plant a link at the fingerprint directory: every subsequent child
-      // creation must refuse rather than create through it.
-      const { rm, symlink } = await import("node:fs/promises");
-      await rm(join(runsRoot, fingerprint), { recursive: true, force: true });
-      await symlink(outside, join(runsRoot, fingerprint), "dir");
-      await expect(provider.create()).rejects.toThrow();
       const outsideEntries = await readdir(outside);
       expect(outsideEntries).toEqual([]);
     } finally {
@@ -309,29 +66,132 @@ describe("createRunDirectoryProvider", () => {
     }
   });
 
-  it("preserves and reports cleanup failure when removal leaves the run directory behind", async () => {
+  it("creates nothing even when the runs root already exists and is swapped for a link", async () => {
+    if (!SYMLINKS_SUPPORTED) {
+      return;
+    }
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    const real = uniqueRunsRoot();
+    const outside = uniqueRunsRoot();
+    try {
+      // A hostile process pre-creates the runs root, then swaps it for a
+      // link to a victim directory before the provider is invoked.
+      await mkdir(real, { recursive: true });
+      await mkdir(outside, { recursive: true });
+      await writeFile(join(outside, "victim.txt"), "keep me");
+      await symlink(outside, real, "dir");
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      const outcome = await provider.create();
+      expect(outcome.ok).toBe(false);
+      const content = await readFile(join(outside, "victim.txt"), "utf8");
+      expect(content).toBe("keep me");
+      expect(await readdir(outside)).toEqual(["victim.txt"]);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("reports cleanup unavailable and deletes nothing", async () => {
     const workspace = await createTempWorkspace();
     const runsRoot = uniqueRunsRoot();
     try {
       const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
-      const paths = await provider.create();
-      const { chmod } = await import("node:fs/promises");
-      try {
-        await chmod(paths.root, 0o500);
-      } catch {
-        return; // permission-based failure injection unsupported here
-      }
-      const outcome = await provider.remove(paths.runId);
-      await import("node:fs/promises").then((fs) =>
-        fs.chmod(paths.root, 0o700).catch(() => undefined),
-      );
+      const outcome = await provider.remove("00000000-0000-4000-8000-000000000000");
+      expect(outcome.ok).toBe(false);
       if (!outcome.ok) {
-        expect(outcome.message.length).toBeGreaterThan(0);
-        const finalOutcome = await provider.remove(paths.runId);
-        expect(finalOutcome.ok).toBe(true);
+        expect(outcome.reason).toBe("unavailable");
+        expect(outcome.message).toContain("preserved");
       }
     } finally {
       await workspace.cleanup();
     }
+  });
+
+  it("preserves substituted content: root substitution after validation leaves every entry intact", async () => {
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      // Simulate the directory a previous version could have left behind:
+      // the root holds a victim tree that a hostile process substituted in.
+      await mkdir(join(runsRoot, "run-id"), { recursive: true });
+      await writeFile(join(runsRoot, "run-id", "keep.txt"), "keep me");
+      await mkdir(join(runsRoot, "run-id", "subdir"), { recursive: true });
+      await writeFile(join(runsRoot, "run-id", "subdir", "deep.txt"), "deep keep");
+      const outcome = await provider.remove("00000000-0000-4000-8000-000000000000");
+      expect(outcome.ok).toBe(false);
+      // Nothing was deleted: every substituted leaf survives unchanged.
+      const content = await readFile(join(runsRoot, "run-id", "keep.txt"), "utf8");
+      expect(content).toBe("keep me");
+      const deep = await readFile(join(runsRoot, "run-id", "subdir", "deep.txt"), "utf8");
+      expect(deep).toBe("deep keep");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("preserves a leaf that a hostile process substitutes in during cleanup", async () => {
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      await mkdir(join(runsRoot, "run-id", "home"), { recursive: true });
+      await writeFile(join(runsRoot, "run-id", "home", "real.txt"), "original");
+      // Concurrent addition during cleanup: a new entry appears after the
+      // cleanup call starts. Cleanup is unavailable, so it survives.
+      await writeFile(join(runsRoot, "run-id", "home", "added.txt"), "added");
+      const outcome = await provider.remove("00000000-0000-4000-8000-000000000000");
+      expect(outcome.ok).toBe(false);
+      const real = await readFile(join(runsRoot, "run-id", "home", "real.txt"), "utf8");
+      expect(real).toBe("original");
+      const added = await readFile(join(runsRoot, "run-id", "home", "added.txt"), "utf8");
+      expect(added).toBe("added");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("never follows or deletes through a link planted at the run path", async () => {
+    if (!SYMLINKS_SUPPORTED) {
+      return;
+    }
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    const outside = uniqueRunsRoot();
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      await mkdir(outside, { recursive: true });
+      await writeFile(join(outside, "victim.txt"), "keep me");
+      await symlink(outside, join(runsRoot, "run-id"), "dir");
+      const outcome = await provider.remove("00000000-0000-4000-8000-000000000000");
+      expect(outcome.ok).toBe(false);
+      const content = await readFile(join(outside, "victim.txt"), "utf8");
+      expect(content).toBe("keep me");
+      expect(await readdir(outside)).toEqual(["victim.txt"]);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("performs zero filesystem operations on every method", async () => {
+    const workspace = await createTempWorkspace();
+    const runsRoot = uniqueRunsRoot();
+    try {
+      const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      const createOutcome = await provider.create();
+      const removeOutcome = await provider.remove("00000000-0000-4000-8000-000000000000");
+      expect(createOutcome.ok).toBe(false);
+      expect(removeOutcome.ok).toBe(false);
+      await expect(import("node:fs/promises").then((fs) => fs.stat(runsRoot))).rejects.toThrow();
+      expect(await readdir(workspace.root)).toEqual([]);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it("exposes truthful unavailable messages", () => {
+    expect(RUN_DIRECTORY_CREATION_UNAVAILABLE_MESSAGE).toContain("unavailable");
+    expect(RUN_DIRECTORY_CLEANUP_UNAVAILABLE_MESSAGE).toContain("preserved");
   });
 });

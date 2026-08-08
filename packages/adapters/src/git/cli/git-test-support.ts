@@ -240,22 +240,32 @@ export function createTestGitAdapter(
 /**
  * TEST-ONLY run-directory provider: each create() makes a unique temporary
  * directory that remove() deletes. Mirrors the shape of the production
- * provider for adapter tests that exercise sandboxed execution.
+ * provider (typed outcomes) for adapter tests that exercise sandboxed
+ * execution.
  */
 export function createTestRunDirectories(): {
   provider: {
-    create(): Promise<{
-      runId: string;
-      root: string;
-      home: string;
-      temp: string;
-      npmCache: string;
-      npmUserConfig: string;
-      scriptCache: string;
-    }>;
+    create(): Promise<
+      | {
+          readonly ok: true;
+          readonly paths: {
+            runId: string;
+            root: string;
+            home: string;
+            temp: string;
+            npmCache: string;
+            npmUserConfig: string;
+            scriptCache: string;
+          };
+        }
+      | { readonly ok: false; readonly reason: "unavailable"; readonly message: string }
+    >;
     remove(
       runId: string,
-    ): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }>;
+    ): Promise<
+      | { readonly ok: true }
+      | { readonly ok: false; readonly reason: "failed"; readonly message: string }
+    >;
   };
   roots: () => readonly string[];
 } {
@@ -273,22 +283,28 @@ export function createTestRunDirectories(): {
         await mkdir(home, { recursive: true });
         await mkdir(temp, { recursive: true });
         return {
-          runId: `run-${created.length}`,
-          root,
-          home,
-          temp,
-          npmCache,
-          npmUserConfig,
-          scriptCache,
+          ok: true,
+          paths: {
+            runId: `run-${created.length}`,
+            root,
+            home,
+            temp,
+            npmCache,
+            npmUserConfig,
+            scriptCache,
+          },
         };
       },
       async remove(
         runId: string,
-      ): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
+      ): Promise<
+        | { readonly ok: true }
+        | { readonly ok: false; readonly reason: "failed"; readonly message: string }
+      > {
         const index = Number(runId.replace("run-", "")) - 1;
         const root = created[index];
         if (root === undefined) {
-          return { ok: false, message: "unknown run" };
+          return { ok: false, reason: "failed", message: "unknown run" };
         }
         await rm(root, { recursive: true, force: true }).catch(() => undefined);
         return { ok: true };
