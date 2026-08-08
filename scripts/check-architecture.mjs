@@ -139,10 +139,9 @@ const DESTRUCTIVE_FS_APIS = new Set([
  * `recursive: true` are flagged: single-file `rm(path, { force: true })`
  * is an unlink and stays governed by the destructive-API location rule.
  */
-const RECURSIVE_DELETION_APIS = new Set(["rm", "rmSync"]);
 
 function isRecursiveDeletionCall(calleeText, argumentTexts) {
-  if (!RECURSIVE_DELETION_APIS.has(calleeText) && !/\b(?:fs\.)?(?:rm|rmSync)\b/.test(calleeText)) {
+  if (!/^(?:fs\.)?(?:rm|rmSync)$/.test(calleeText)) {
     return false;
   }
   return argumentTexts.some((text) => /recursive\s*:\s*true/.test(text));
@@ -464,7 +463,7 @@ function analyzeSource(source) {
         const namespace = namespaceImports.get(objectText);
         if (namespace !== undefined) {
           addCall(namespace, node.expression.name.text, calleeText);
-          if (namespace === CHILD_PROCESS_MODULE) {
+          if (namespace === CHILD_PROCESS_MODULE || FS_MODULES.has(namespace)) {
             spawnCalls.push({ calleeText, argumentTexts, shellTrue });
           }
         } else {
