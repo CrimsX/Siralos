@@ -8,12 +8,7 @@ import {
   GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
   createEmptyGodotCommandCapabilities,
 } from "@solaris/core";
-import type {
-  GodotEngineProfile,
-  GodotInstallation,
-  SandboxBackendStatus,
-  SandboxedProcessRequest,
-} from "@solaris/core";
+import type { GodotEngineProfile, GodotInstallation, SandboxBackendStatus } from "@solaris/core";
 import { completedResult, createFakeSandboxBackend } from "../../sandbox/fake-sandbox-backend.js";
 import {
   computeGodotRecoveryCommandDigest,
@@ -142,7 +137,7 @@ describe("recovery-mode command shape", () => {
       runPaths: runPaths(),
     });
     expect(outcome.status).toBe("completed");
-    const request = fake.requests()[0] as SandboxedProcessRequest | undefined;
+    const request = fake.requests()[0];
     expect(request?.arguments).toContain("--headless");
     expect(request?.arguments).toContain("--editor");
     expect(request?.arguments).toContain("--recovery-mode");
@@ -161,7 +156,7 @@ describe("recovery-mode command shape", () => {
       runPaths: runPaths(),
     });
     expect(outcome.status).toBe("completed");
-    const request = fake.requests()[0] as SandboxedProcessRequest | undefined;
+    const request = fake.requests()[0];
     const pathIndex = request?.arguments.indexOf("--path") ?? -1;
     expect(pathIndex).toBeGreaterThanOrEqual(0);
     expect(request?.arguments[pathIndex + 1]).toBe(MIRROR_PATH);
@@ -187,7 +182,7 @@ describe("recovery-mode command shape", () => {
       mirrorProjectPath: MIRROR_PATH,
       runPaths: runPaths(),
     });
-    const request = fake.requests()[0] as SandboxedProcessRequest | undefined;
+    const request = fake.requests()[0];
     const sourcePath = "SolarisSourceWorkspace";
     for (const argument of request?.arguments ?? []) {
       expect(argument).not.toContain(sourcePath);
@@ -198,21 +193,21 @@ describe("recovery-mode command shape", () => {
     }
   });
 
-  it("binds a bounded --quit-after iteration count", async () => {
+  it("binds a bounded --quit-after iteration count", () => {
     const arguments_ = godotRecoveryArguments(MIRROR_PATH);
     const quitIndex = arguments_.indexOf("--quit-after");
     expect(quitIndex).toBeGreaterThanOrEqual(0);
     expect(Number(arguments_[quitIndex + 1])).toBe(GODOT_LIMITS.recoveryQuitAfterIterations);
   });
 
-  it("never passes --upwards, --scene, --script, or --import", async () => {
+  it("never passes --upwards, --scene, --script, or --import", () => {
     const arguments_ = godotRecoveryArguments(MIRROR_PATH);
     for (const forbidden of ["--upwards", "--scene", "--script", "--import"]) {
       expect(arguments_).not.toContain(forbidden);
     }
   });
 
-  it("never passes export, LSP, DAP, debug-server, movie, or benchmark options", async () => {
+  it("never passes export, LSP, DAP, debug-server, movie, or benchmark options", () => {
     const arguments_ = godotRecoveryArguments(MIRROR_PATH);
     for (const forbidden of [
       "--export",
@@ -230,7 +225,7 @@ describe("recovery-mode command shape", () => {
     }
   });
 
-  it("accepts no user arguments after the fixed set", async () => {
+  it("accepts no user arguments after the fixed set", () => {
     const arguments_ = godotRecoveryArguments(MIRROR_PATH);
     expect(arguments_).toEqual([
       "--headless",
@@ -255,7 +250,7 @@ describe("recovery-mode command shape", () => {
       mirrorProjectPath: MIRROR_PATH,
       runPaths: runPaths(),
     });
-    const request = fake.requests()[0] as SandboxedProcessRequest | undefined;
+    const request = fake.requests()[0];
     expect(typeof request?.executable).toBe("string");
     expect(Array.isArray(request?.arguments)).toBe(true);
   });
@@ -287,7 +282,7 @@ describe("recovery-mode command shape", () => {
       mirrorProjectPath: MIRROR_PATH,
       runPaths: runPaths(),
     });
-    const request = fake.requests()[0] as SandboxedProcessRequest | undefined;
+    const request = fake.requests()[0];
     expect(request?.profile.id).toBe(GODOT_RECOVERY_PROBE_OFFLINE_PROFILE.id);
     expect(request?.profile.network.outbound).toBe("deny");
     expect(request?.profile.environment.policy).toBe("minimal");
@@ -318,7 +313,7 @@ describe("recovery-mode command shape", () => {
       mirrorProjectPath: MIRROR_PATH,
       runPaths: runPaths(),
     });
-    const request = fake.requests()[0] as SandboxedProcessRequest | undefined;
+    const request = fake.requests()[0];
     const environment = request?.environment ?? {};
     for (const [name, value] of Object.entries(environment)) {
       expect(name).not.toMatch(/_API_KEY$|_TOKEN$|_SECRET$|_PASSWORD$/i);
@@ -346,7 +341,7 @@ describe("recovery-mode command shape", () => {
       mirrorProjectPath: MIRROR_PATH,
       runPaths: runPaths(),
     });
-    const request = fake.requests()[0] as SandboxedProcessRequest | undefined;
+    const request = fake.requests()[0];
     expect(request?.timeoutMs).toBe(42_000);
   });
 
