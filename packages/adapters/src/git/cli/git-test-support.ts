@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { tmpdir } from "node:os";
@@ -241,9 +241,17 @@ export function createTestGitAdapter(
  * TEST-ONLY run-directory provider: each create() makes a unique temporary
  * directory that remove() deletes. Mirrors the shape of the production
  * provider (typed outcomes) for adapter tests that exercise sandboxed
- * execution.
+ * execution. When `resultArchivePath` is given, remove() copies the
+ * sandbox-private clean-filter result file (`home/clean-filter-result.json`
+ * inside the run root, written by the confined filter through its
+ * Solaris-controlled HOME) to that host-side path before deleting the run
+ * directory, so tests can observe the filter's outcomes after cleanup.
  */
-export function createTestRunDirectories(): {
+export function createTestRunDirectories(
+  options: {
+    readonly resultArchivePath?: string;
+  } = {},
+): {
   provider: {
     create(): Promise<
       | {
@@ -305,6 +313,10 @@ export function createTestRunDirectories(): {
         const root = created[index];
         if (root === undefined) {
           return { ok: false, reason: "failed", message: "unknown run" };
+        }
+        if (options.resultArchivePath !== undefined) {
+          const resultFile = join(root, "home", "clean-filter-result.json");
+          await copyFile(resultFile, options.resultArchivePath).catch(() => undefined);
         }
         await rm(root, { recursive: true, force: true }).catch(() => undefined);
         return { ok: true };

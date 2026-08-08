@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   cleanupTempDirs,
   createTempRepo,
   createTestRunDirectories,
+  registerTempDir,
   type TempRepo,
 } from "./git-test-support.js";
 import { completedResult, createFakeSandboxBackend } from "../../sandbox/fake-sandbox-backend.js";
@@ -31,47 +32,111 @@ afterEach(async () => {
  * that cannot invoke Git helpers.
  */
 
-/** The malicious clean-filter script attempts a host marker write and an
- * outbound network connection; every failure is swallowed so the filter
- * passes data through and `git status` can complete inside the sandbox. */
-function filterScriptSource(markerPath: string): string {
+/** Distinct bounded outcomes the confined filter records into the
+ * sandbox-private result channel (its Solaris-controlled HOME inside the
+ * private run directory, which the sandbox profile permits it to write):
+ *   - `filter-ran`:            the helper executed inside the sandbox
+ *   - `repo-write-denied`:     a workspace write attempt was refused
+ *   - `repo-write-succeeded`:  the workspace write attempt SUCCEEDED (fail)
+ *   - `network-denied`:        the outbound connection attempt was refused
+ *   - `network-connected`:     the outbound connection SUCCEEDED (fail)
+ *   - `network-timeout`:       no immediate denial observed (fail on an
+ *                              enforcing backend)
+ * Exactly one network outcome is recorded: the helper settles on the first
+ * of connect/error/timeout and destroys the socket, so a later event can
+ * never overwrite or append a second network outcome.
+ */
+const RESULT_FILE_NAME = "clean-filter-result.json";
+const REPO_WRITE_PROBE_NAME = "clean-filter-repo-write-probe.txt";
+
+function filterScriptSource(): string {
   return `"use strict";
 const fs = require("node:fs");
 const net = require("node:net");
-function mark(text) {
-  try {
-    fs.writeFileSync(${JSON.stringify(markerPath)}, text + "\\n");
-  } catch (error) {
-    // the marker write is denied by the sandbox; never let the filter fail
+const path = require("node:path");
+const home = process.env.HOME || process.env.USERPROFILE;
+const resultPath = home ? path.join(home, ${JSON.stringify(RESULT_FILE_NAME)}) : null;
+function record(outcome) {
+  if (resultPath) {
+    try {
+      fs.appendFileSync(resultPath, outcome + "\\n");
+    } catch (error) {
+      // never let the result write fail the filter; a missing result file
+      // is itself a test failure
+    }
   }
 }
-mark("ran");
+record("filter-ran");
+try {
+  fs.writeFileSync(path.join(process.cwd(), ${JSON.stringify(REPO_WRITE_PROBE_NAME)}), "denied?\\n");
+  record("repo-write-succeeded");
+} catch (error) {
+  record("repo-write-denied");
+}
 const socket = net.connect({ host: "1.1.1.1", port: 53 });
 socket.setTimeout(1500);
-socket.once("connect", function () {
+let settled = false;
+function settle(outcome) {
+  if (settled) {
+    return;
+  }
+  settled = true;
   socket.destroy();
-  mark("net-ok");
+  record(outcome);
+}
+socket.once("connect", function () {
+  settle("network-connected");
 });
 socket.once("error", function () {
-  socket.destroy();
-  mark("net-denied");
+  settle("network-denied");
 });
 socket.once("timeout", function () {
-  socket.destroy();
-  mark("net-timeout");
+  settle("network-timeout");
 });
 process.stdin.pipe(process.stdout);
 `;
 }
 
-function installCleanFilterMarker(repo: TempRepo): {
-  markerPath: string;
-  scriptPath: string;
-  filterCommand: string;
-} {
-  const markerPath = join(repo.root, "host-marker-ran.txt");
+/**
+ * Reads the archived sandbox-private result channel. Fails (rejects) when
+ * the file is missing or malformed, so a helper that never executed, a
+ * result that was never written, or a truncated file is a test failure.
+ */
+async function readResultOutcomes(archivePath: string): Promise<readonly string[]> {
+  const raw = await readFile(archivePath, "utf8");
+  const outcomes = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (outcomes.length === 0) {
+    throw new Error(`The clean-filter result channel ${archivePath} is empty.`);
+  }
+  const known = new Set([
+    "filter-ran",
+    "repo-write-denied",
+    "repo-write-succeeded",
+    "network-denied",
+    "network-connected",
+    "network-timeout",
+  ]);
+  for (const outcome of outcomes) {
+    if (!known.has(outcome)) {
+      throw new Error(`The clean-filter result channel contains an unknown outcome: ${outcome}`);
+    }
+  }
+  return outcomes;
+}
+
+/** Creates a host-side archive path for the sandbox-private result channel. */
+async function createResultArchivePath(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "solaris-git-live-result-"));
+  registerTempDir(directory);
+  return join(directory, RESULT_FILE_NAME);
+}
+
+function installCleanFilterScript(repo: TempRepo): { scriptPath: string; filterCommand: string } {
   const scriptPath = join(repo.root, "filter-marker.cjs");
-  return { markerPath, scriptPath, filterCommand: `node ${JSON.stringify(scriptPath)}` };
+  return { scriptPath, filterCommand: `node ${JSON.stringify(scriptPath)}` };
 }
 
 /** Racy-clean index: file content changed but the mtime is restored, so a
@@ -99,24 +164,19 @@ async function makeRacyClean(repo: TempRepo, relativePath: string, content: stri
  *
  * From step 3 onward, only direct filesystem operations are used.
  */
-async function setupHostileCleanFilter(
-  repo: TempRepo,
-): Promise<{ markerPath: string; scriptPath: string }> {
+async function setupHostileCleanFilter(repo: TempRepo): Promise<void> {
   await repo.write("data.txt", "original\n");
   repo.git("add", "data.txt");
   repo.commit("initial");
   await repo.write(".gitattributes", "data.txt filter=evil\n");
   repo.git("add", ".gitattributes");
   repo.commit("attrs");
-  const { markerPath, scriptPath, filterCommand } = installCleanFilterMarker(repo);
+  const { scriptPath, filterCommand } = installCleanFilterScript(repo);
   // The only host git invocation that follows is the `git config` write
   // itself; it cannot execute repository-selected helpers.
   repo.git("config", "filter.evil.clean", filterCommand);
-  await import("node:fs/promises").then((fs) =>
-    fs.writeFile(scriptPath, filterScriptSource(markerPath)),
-  );
+  await import("node:fs/promises").then((fs) => fs.writeFile(scriptPath, filterScriptSource()));
   await makeRacyClean(repo, "data.txt", "changed-content\n");
-  return { markerPath, scriptPath };
 }
 
 /**
@@ -149,9 +209,8 @@ async function snapshotRepoBytes(root: string): Promise<ReadonlyMap<string, stri
 describe("git inspection helper-execution confinement", () => {
   it("requests sandboxed confinement when the repository selects a clean filter", async () => {
     const repo = await createTempRepo();
-    const { markerPath } = await setupHostileCleanFilter(repo);
-    // Defense in depth: clear any marker the harness could have left.
-    await rm(markerPath, { force: true });
+    await setupHostileCleanFilter(repo);
+    const archivePath = await createResultArchivePath();
 
     const { backend, requests } = createFakeSandboxBackend({
       results: [
@@ -160,7 +219,7 @@ describe("git inspection helper-execution confinement", () => {
         completedResult({ stdout: "# branch.head main\n" }),
       ],
     });
-    const runs = createTestRunDirectories();
+    const runs = createTestRunDirectories({ resultArchivePath: archivePath });
     const adapter = createGitCliAdapter({
       workspaceRoot: repo.root,
       backend,
@@ -182,9 +241,9 @@ describe("git inspection helper-execution confinement", () => {
       expect(request.environment["GIT_OPTIONAL_LOCKS"]).toBe("0");
       expect(request.environment["GIT_CONFIG_NOSYSTEM"]).toBe("1");
     }
-    // The adapter itself never executed the filter: only the backend saw
-    // the request, and the marker was never created on the host.
-    await expect(readFile(markerPath, "utf8")).rejects.toThrow();
+    // The fake backend never executes, so the filter never ran: no result
+    // channel file may exist anywhere.
+    await expect(readFile(archivePath, "utf8")).rejects.toThrow();
   });
 
   it("reports git inspection unavailable and never requests execution when the backend cannot enforce", async () => {
@@ -226,10 +285,11 @@ describe("git inspection helper-execution confinement", () => {
     // proves the repository state is fully prepared without any post-filter
     // host Git invocation by construction (the helper never receives a git
     // function after configuration) and that the adapter phase leaves the
-    // repository byte-identical.
+    // repository byte-identical and never executes the filter on the host
+    // (the fake backend does not execute; the result channel stays empty).
     const repo = await createTempRepo();
-    const { markerPath } = await setupHostileCleanFilter(repo);
-    await rm(markerPath, { force: true });
+    await setupHostileCleanFilter(repo);
+    const archivePath = await createResultArchivePath();
     const baseline = await snapshotRepoBytes(repo.root);
 
     const { backend } = createFakeSandboxBackend({
@@ -239,7 +299,7 @@ describe("git inspection helper-execution confinement", () => {
         completedResult({ stdout: "# branch.head main\n" }),
       ],
     });
-    const runs = createTestRunDirectories();
+    const runs = createTestRunDirectories({ resultArchivePath: archivePath });
     const adapter = createGitCliAdapter({
       workspaceRoot: repo.root,
       backend,
@@ -249,6 +309,7 @@ describe("git inspection helper-execution confinement", () => {
     expect(status.repository).toBe(true);
     const after = await snapshotRepoBytes(repo.root);
     expect(after).toEqual(baseline);
+    await expect(readFile(archivePath, "utf8")).rejects.toThrow();
   });
 });
 
@@ -257,7 +318,7 @@ describe("git inspection live confinement (real enforcing sandbox only)", () => 
     workspaceRoot: join(tmpdir(), "solaris-git-live-probe"),
   });
 
-  it("never creates the clean-filter marker and never writes the repository", async (context) => {
+  it("proves the clean filter ran inside the sandbox, wrote only to the permitted result channel, and had its network denied", async (context) => {
     const status = await liveBackend.inspect().catch(() => null);
     const enforcing =
       status !== null &&
@@ -278,14 +339,13 @@ describe("git inspection live confinement (real enforcing sandbox only)", () => 
     }
     const repo = await createTempRepo();
     try {
-      const { markerPath } = await setupHostileCleanFilter(repo);
+      await setupHostileCleanFilter(repo);
       // The repository state the adapter phase must preserve, captured with
       // direct filesystem reads that cannot invoke Git helpers.
       const baseline = await snapshotRepoBytes(repo.root);
-      // Defense in depth: clear any marker the harness could have left.
-      await rm(markerPath, { force: true });
+      const archivePath = await createResultArchivePath();
 
-      const runs = createTestRunDirectories();
+      const runs = createTestRunDirectories({ resultArchivePath: archivePath });
       const adapter = createGitCliAdapter({
         workspaceRoot: repo.root,
         backend: liveBackend,
@@ -293,13 +353,28 @@ describe("git inspection live confinement (real enforcing sandbox only)", () => 
       });
       const result = await adapter.getStatus({});
       expect(result.repository).toBe(true);
-      // The clean filter may execute inside the sandbox, but it can never
-      // write its marker to the host repository, and its network attempts
-      // are denied.
-      await expect(readFile(markerPath, "utf8")).rejects.toThrow();
-      // The repository must be byte-identical: no index, object, config,
-      // attributes, or worktree writes. If the sandbox allowed any write,
-      // the marker (or another mutation) would appear and this test fails.
+
+      // 1. The hostile clean filter actually executed inside the sandbox:
+      //    its outcome is observed through the archived sandbox-private
+      //    result channel (missing or malformed fails the test).
+      const outcomes = await readResultOutcomes(archivePath);
+      expect(outcomes).toContain("filter-ran");
+
+      // 2. It could write ONLY to the permitted sandbox-private result
+      //    location: its workspace write probe was denied and never
+      //    succeeded.
+      expect(outcomes).toContain("repo-write-denied");
+      expect(outcomes).not.toContain("repo-write-succeeded");
+
+      // 3. Its outbound network connection was denied, not connected and
+      //    not merely timed out: an enforcing backend denies immediately.
+      expect(outcomes).toContain("network-denied");
+      expect(outcomes).not.toContain("network-connected");
+      expect(outcomes).not.toContain("network-timeout");
+
+      // 4. It could not write into the repository, and 5. the repository
+      //    bytes remained unchanged (any index, object, config, attributes,
+      //    or worktree write would change this snapshot).
       const after = await snapshotRepoBytes(repo.root);
       expect(after).toEqual(baseline);
     } finally {
