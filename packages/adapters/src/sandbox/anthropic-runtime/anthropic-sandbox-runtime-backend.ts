@@ -19,7 +19,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { realpathSync } from "node:fs";
 import path from "node:path";
-import { environmentKeyOf, isDeniedVariable } from "../../environment/child-environment.js";
+import {
+  environmentKeyOf,
+  isDeniedVariable,
+  isProtectedEnvironmentKey,
+} from "../../environment/child-environment.js";
 import { resolveNpmCli } from "../../process/trusted-executables.js";
 
 export const ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID = "anthropic-runtime";
@@ -809,13 +813,15 @@ export function isWithinHostReadAllowSurface(
  * Merges the sandbox wrapper's runtime-required environment into Solaris's
  * minimal allowlisted environment. The wrapper (Sandbox Runtime) returns the
  * environment its wrapped invocation needs; only that explicit set is
- * merged — never the host environment wholesale. Collisions resolve to the
- * Solaris-controlled value (the wrapper can never override protected
- * variables such as HOME/TEMP), wrapper-only keys are added, keys matching
- * the credential/proxy/Node-injection deny patterns fail closed, and keys
- * are normalized through the same case-insensitive Windows comparison used
- * by `buildChildEnvironment`, so duplicate spellings cannot bypass
- * filtering (canonical casing wins on Windows).
+ * merged — never the host environment wholesale. Solaris-controlled keys
+ * (HOME, USERPROFILE, TEMP, TMP, TMPDIR, compared case-insensitively on
+ * Windows) can never be replaced or introduced by the wrapper: a collision
+ * resolves to the Solaris-controlled value, and a protected key absent from
+ * the base fails closed. Wrapper-only keys are added, keys matching the
+ * credential/proxy/Node-injection deny patterns fail closed, and keys are
+ * normalized through the same case-insensitive Windows comparison used by
+ * `buildChildEnvironment`, so duplicate spellings cannot bypass filtering
+ * (canonical casing wins on Windows).
  */
 export function mergeWrapperEnvironment(
   base: Readonly<Record<string, string>>,
@@ -841,6 +847,17 @@ export function mergeWrapperEnvironment(
       throw new SandboxError(
         "sandbox_configuration_error",
         `The sandbox wrapper requires environment variable ${name}, which Solaris denies; refusing to execute.`,
+      );
+    }
+    if (isProtectedEnvironmentKey(name, platform)) {
+      if (baseKeys.has(keyOf(name))) {
+        // The Solaris-controlled value already in the base wins; the
+        // wrapper can never replace it.
+        continue;
+      }
+      throw new SandboxError(
+        "sandbox_configuration_error",
+        `The sandbox wrapper requires environment variable ${name}, which Solaris controls; refusing to execute.`,
       );
     }
     if (baseKeys.has(keyOf(name))) {

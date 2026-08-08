@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildChildEnvironment, environmentKeyOf, isDeniedVariable } from "./child-environment.js";
+import {
+  buildChildEnvironment,
+  environmentKeyOf,
+  isDeniedVariable,
+  isProtectedEnvironmentKey,
+  PROTECTED_ENVIRONMENT_KEYS,
+} from "./child-environment.js";
 
 const PATHS = {
   home: "/sandbox/home",
@@ -192,6 +198,109 @@ describe("buildChildEnvironment", () => {
     expect(environment["TEMP"]).toBe("/sandbox/temp");
     expect(environment["TMP"]).toBe("/sandbox/temp");
     expect(environment["TMPDIR"]).toBe("/sandbox/temp");
+  });
+
+  it("emits BOTH HOME and USERPROFILE with the Solaris-controlled home on Windows", () => {
+    const environment = buildChildEnvironment(
+      { USERPROFILE: "C:\\Users\\host-user" },
+      PATHS,
+      "win32",
+    );
+    expect(environment["HOME"]).toBe("/sandbox/home");
+    expect(environment["USERPROFILE"]).toBe("/sandbox/home");
+    expect(environment["TEMP"]).toBe("/sandbox/temp");
+    expect(environment["TMP"]).toBe("/sandbox/temp");
+    expect(environment["TMPDIR"]).toBe("/sandbox/temp");
+  });
+
+  it("emits HOME only on POSIX, still Solaris-controlled", () => {
+    const environment = buildChildEnvironment(
+      { HOME: "/home/host-user", USERPROFILE: "C:\\Users\\host-user" },
+      PATHS,
+      "linux",
+    );
+    expect(environment["HOME"]).toBe("/sandbox/home");
+    expect(environment["USERPROFILE"]).toBeUndefined();
+    expect(environment["TEMP"]).toBe("/sandbox/temp");
+    expect(environment["TMP"]).toBe("/sandbox/temp");
+    expect(environment["TMPDIR"]).toBe("/sandbox/temp");
+  });
+
+  it("every emitted protected key carries exactly the Solaris-controlled path", () => {
+    for (const platform of ["win32", "linux"] as const) {
+      const environment = buildChildEnvironment(
+        {
+          home: "/evil/home",
+          userprofile: "C:\\evil\\profile",
+          temp: "/evil/temp",
+          tmp: "/evil/tmp",
+          tmpdir: "/evil/tmpdir",
+          HOME: "/evil/home-upper",
+          USERPROFILE: "C:\\evil\\profile-upper",
+          TEMP: "/evil/temp-upper",
+          TMP: "/evil/tmp-upper",
+          TMPDIR: "/evil/tmpdir-upper",
+        },
+        PATHS,
+        platform,
+      );
+      for (const key of PROTECTED_ENVIRONMENT_KEYS) {
+        const value = environment[key];
+        if (value === undefined) {
+          // On POSIX USERPROFILE is not a home variable and is not emitted.
+          expect(platform).toBe("linux");
+          expect(key).toBe("USERPROFILE");
+          continue;
+        }
+        const expected =
+          key === "HOME" || key === "USERPROFILE" ? "/sandbox/home" : "/sandbox/temp";
+        expect(value).toBe(expected);
+      }
+      // No alternate casing of a protected key can survive.
+      const canonical = new Set(PROTECTED_ENVIRONMENT_KEYS.map((key) => key.toLowerCase()));
+      for (const [name] of Object.entries(environment)) {
+        if (canonical.has(name.toLowerCase()) && !PROTECTED_ENVIRONMENT_KEYS.includes(name)) {
+          expect(environment[name]).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it("recognizes protected keys case-insensitively on Windows and case-sensitively on POSIX", () => {
+    for (const name of ["HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR"]) {
+      expect(isProtectedEnvironmentKey(name, "win32")).toBe(true);
+      expect(isProtectedEnvironmentKey(name, "linux")).toBe(true);
+    }
+    expect(isProtectedEnvironmentKey("home", "win32")).toBe(true);
+    expect(isProtectedEnvironmentKey("UserProfile", "win32")).toBe(true);
+    expect(isProtectedEnvironmentKey("temp", "win32")).toBe(true);
+    expect(isProtectedEnvironmentKey("TmpDir", "win32")).toBe(true);
+    // POSIX keys are case-sensitive: alternate casings are DIFFERENT
+    // variables there and are not Solaris-owned.
+    expect(isProtectedEnvironmentKey("home", "linux")).toBe(false);
+    expect(isProtectedEnvironmentKey("UserProfile", "linux")).toBe(false);
+    expect(isProtectedEnvironmentKey("Temp", "linux")).toBe(false);
+    expect(isProtectedEnvironmentKey("PATH", "win32")).toBe(false);
+    expect(isProtectedEnvironmentKey("PATH", "linux")).toBe(false);
+  });
+
+  it("never forwards the host profile or host temp directory values", () => {
+    const environment = buildChildEnvironment(
+      {
+        USERPROFILE: "C:\\Users\\host-user",
+        HOME: "/home/host-user",
+        TEMP: "C:\\Users\\host-user\\AppData\\Local\\Temp",
+        TMP: "/tmp",
+        TMPDIR: "/var/tmp",
+      },
+      PATHS,
+      "win32",
+    );
+    for (const key of ["HOME", "USERPROFILE", "TEMP", "TMP", "TMPDIR"]) {
+      expect(environment[key]).not.toMatch(/host-user/);
+      expect(environment[key]).not.toBe("/tmp");
+      expect(environment[key]).not.toBe("/var/tmp");
+    }
   });
 
   it("preserves case-sensitive matching on POSIX", () => {

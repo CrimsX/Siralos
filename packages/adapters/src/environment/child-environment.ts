@@ -62,6 +62,29 @@ const HOME_VARIABLES: readonly string[] = ["HOME", "USERPROFILE"];
 const TEMP_VARIABLES: readonly string[] = ["TEMP", "TMP", "TMPDIR"];
 
 /**
+ * The Solaris-controlled environment keys. These variables are owned by
+ * the sandbox boundary: their values are always the Solaris-controlled
+ * sandbox home/temp paths, and neither the host parent environment nor the
+ * sandbox wrapper may ever replace them or introduce an alternative
+ * spelling of them. On Windows the comparison is case-insensitive
+ * (`UserProfile` and `USERPROFILE` are the same variable); on POSIX keys
+ * keep their platform case-sensitive semantics and the same names are
+ * still protected.
+ */
+export const PROTECTED_ENVIRONMENT_KEYS: readonly string[] = [...HOME_VARIABLES, ...TEMP_VARIABLES];
+
+/** True when `name` is a Solaris-controlled environment key. */
+export function isProtectedEnvironmentKey(
+  name: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const key = environmentKeyOf(name, platform);
+  return PROTECTED_ENVIRONMENT_KEYS.some(
+    (protectedKey) => environmentKeyOf(protectedKey, platform) === key,
+  );
+}
+
+/**
  * The canonical comparison spelling of one environment key. Windows
  * environment keys are case-insensitive (`Path` and `PATH` denote the same
  * variable), so every key comparison and deduplication funnels through this
@@ -96,9 +119,10 @@ function findCaseInsensitive(
  * so `Path`/`PATH`, `ComSpec`/`COMSPEC`, and similar aliases collapse into a
  * single variable and no allowed variable is dropped for an alternate
  * casing. On POSIX matching stays case-sensitive. Denied variables are
- * always excluded regardless of casing, Solaris-controlled home/temp values
- * always win over any parent spelling, and the returned environment never
- * equals the parent verbatim.
+ * always excluded regardless of casing, the Solaris-controlled home/temp
+ * keys (HOME, USERPROFILE on Windows, TEMP, TMP, TMPDIR) always carry the
+ * sandbox-controlled values under their canonical spellings, and the
+ * returned environment never equals the parent verbatim.
  */
 export function buildChildEnvironment(
   parent: Readonly<Record<string, string>>,
@@ -135,12 +159,17 @@ export function buildChildEnvironment(
       environment[name] = value;
     }
   }
-  const homeVariable = HOME_VARIABLES.find((name) => environment[name] !== undefined);
-  if (homeVariable !== undefined) {
-    environment[homeVariable] = paths.home;
-  } else {
-    environment[HOME_VARIABLES[0] ?? "HOME"] = paths.home;
+  // Solaris-controlled home: on Windows both HOME and USERPROFILE are
+  // emitted under their canonical spellings with the sandbox-home value
+  // (Windows processes and tools may read either), on POSIX HOME is the
+  // home variable. The parent can never influence these values.
+  environment["HOME"] = paths.home;
+  if (platform === "win32") {
+    environment["USERPROFILE"] = paths.home;
   }
+  // Solaris-controlled temp aliases: every supported platform spelling is
+  // emitted with the sandbox-temp value; wrapper or parent values can
+  // never replace them (enforced again at wrapper-merge time).
   for (const name of TEMP_VARIABLES) {
     environment[name] = paths.temp;
   }

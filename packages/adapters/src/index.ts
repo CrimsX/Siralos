@@ -33,6 +33,8 @@ export {
 export {
   buildChildEnvironment,
   isDeniedVariable,
+  isProtectedEnvironmentKey,
+  PROTECTED_ENVIRONMENT_KEYS,
   readParentEnvironment,
   type SandboxEnvironmentPaths,
 } from "./environment/child-environment.js";
