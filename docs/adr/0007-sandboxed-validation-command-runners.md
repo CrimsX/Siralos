@@ -2,6 +2,8 @@
 
 Status: accepted
 
+> **Status note (fail-closed).** The `node-script` design in this ADR is **not offered**: the pinned Node runtime cannot mechanically bind execution to the approved script bytes — the script can reach internal surfaces such as `process.binding` (e.g. `spawn_sync`) to spawn an unconstrained interpreter, and the staged private copy can be substituted by a same-user process in the verify-to-launch window. `node-script` therefore fails closed as `unavailable`, exactly like `npm-script`: `isAvailable()` returns false for both runners, every command request is refused during preparation before any approval, no validation command can execute at this stage, and `/commands` shows both as unavailable. This ADR documents the design for a future runtime that can bind execution to the approved bytes.
+
 ## Context
 
 Solaris needs to run development commands (type checking, linting, tests, validation, build diagnostics, and later Godot command-line operation) but must not expose a general shell. The sandbox and permission foundation (ADR 0004), approved workspace mutations (ADR 0005), and Git inspection/checkpoints (ADR 0006) exist, but no provider-accessible command execution does. This milestone adds `process.run` with two Solaris-owned runners — `npm-script` and `node-script` — and proves the full workflow: structured request, validated plan, digest-bound one-time approval, sandboxed execution, streamed bounded output, structured result.
@@ -41,7 +43,7 @@ Positive:
 Negative:
 
 - Command execution requires interactive approval per exact plan; deliberate until a reviewed policy exists.
-- npm package scripts cannot execute through `process.run` yet: the `npm-script` runner fails closed as unavailable until a binding mechanism for the approved package bytes exists under the pinned runtime; validated single-file execution (`node-script`) remains the available path.
+- npm package scripts cannot execute through `process.run` yet: the `npm-script` runner fails closed as unavailable until a binding mechanism for the approved package bytes exists under the pinned runtime; the validated single-file execution (`node-script`) design documented here is likewise not offered until the pinned runtime can bind execution to the approved bytes (see the status note above).
 - The Anthropic Sandbox Runtime backend is a beta research preview (pinned `0.0.70`), so live conformance remains the gate: `npm run test:sandbox` must pass on the current platform before the backend is treated as secure. Windows setup requires the one-time `sandbox-runtime windows-install` step, but setup and host-read capability are separate conditions: because the pinned runtime cannot express the host-read allowlist on Windows, Solaris never reports the Windows backend as generally available and `process.run` is refused there; `npm run test:sandbox` on Windows skips loudly and a skip is never treated as a pass.
 - Approval reads are cancellable through a single terminal-read owner (the input queue): timeouts deny, aborts cancel, EOF denies, and a stale approval read can never consume the next main-loop command.
 

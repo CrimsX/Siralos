@@ -33,10 +33,13 @@ export interface GodotDoctorOptions {
  *   valid probe result).
  * - 5: identity mismatch — an executable changed after validation and must
  *   be rediscovered before anything can run.
+ * - 6: degraded result — the selected installation profiled but a required
+ *   probe degraded (e.g. a degraded `--help` or `--dump-extension-api`
+ *   probe), so capabilities are not fully verified.
  *
- * Policy: version/help probes and sandbox readiness are required; an API
- * dump failure stays a DEGRADED diagnostic and never fails the doctor by
- * itself. Failed cleanup with uncertain safety surfaces as a probe failure.
+ * Policy: version/help probes and sandbox readiness are required; a
+ * degraded probe result is a nonzero doctor outcome (never a pass). Failed
+ * cleanup with uncertain safety surfaces as a probe failure.
  */
 export const GODOT_DOCTOR_EXIT_CODES = {
   success: 0,
@@ -45,12 +48,13 @@ export const GODOT_DOCTOR_EXIT_CODES = {
   sandboxUnavailable: 3,
   probeFailure: 4,
   identityMismatch: 5,
+  degraded: 6,
 } as const;
 
 /**
  * Computes the `--godot-doctor` exit code from the report. Returns 0 only
- * for a successful doctor outcome; degraded optional capabilities (e.g. a
- * degraded extension-api dump) do not fail the doctor.
+ * for a successful doctor outcome; any degraded required probe is a
+ * nonzero degraded result.
  */
 export function godotDoctorExitCode(report: GodotDoctorReport): number {
   const sandbox = report.sandbox;
@@ -78,6 +82,9 @@ export function godotDoctorExitCode(report: GodotDoctorReport): number {
   }
   if (!report.discovery.selected.profiled || report.discovery.selected.invalid !== null) {
     return GODOT_DOCTOR_EXIT_CODES.probeFailure;
+  }
+  if (report.degradedCapabilities.length > 0) {
+    return GODOT_DOCTOR_EXIT_CODES.degraded;
   }
   return GODOT_DOCTOR_EXIT_CODES.success;
 }

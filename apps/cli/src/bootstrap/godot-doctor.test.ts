@@ -64,6 +64,7 @@ function report(overrides: Partial<GodotDoctorReport> = {}): GodotDoctorReport {
       processTreeRestriction: true,
     },
     probes: [{ installationId: "primary", probe: "profile", status: "success" }],
+    degradedCapabilities: [],
     ...overrides,
   };
 }
@@ -73,10 +74,12 @@ describe("godotDoctorExitCode", () => {
     expect(godotDoctorExitCode(report())).toBe(GODOT_DOCTOR_EXIT_CODES.success);
   });
 
-  it("returns 0 when only optional capabilities are degraded", () => {
+  it("returns the degraded code when a required probe degraded", () => {
     const degraded = report();
     const probes = [{ installationId: "primary", probe: "api", status: "degraded" }];
-    expect(godotDoctorExitCode({ ...degraded, probes })).toBe(GODOT_DOCTOR_EXIT_CODES.success);
+    expect(
+      godotDoctorExitCode({ ...degraded, probes, degradedCapabilities: ["extension-api-dump"] }),
+    ).toBe(GODOT_DOCTOR_EXIT_CODES.degraded);
   });
 
   it("returns the sandbox-unavailable code when the backend state is not available", () => {

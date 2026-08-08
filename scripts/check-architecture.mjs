@@ -268,6 +268,8 @@ const FORBIDDEN_GODOT_PROJECT_ARGUMENTS = [
   "--path",
   "--upwards",
   "--import",
+  "--editor",
+  "--recovery-mode",
   "--scene",
   "--script",
 ];
@@ -497,7 +499,7 @@ export function runChecks(root) {
             containsForbiddenGodotProjectArgument(source)
           ) {
             errors.push(
-              `${location}: project-affecting Godot arguments (--path, --upwards, --import, --scene, --script) are prohibited in probe invocation code`,
+              `${location}: project-affecting Godot arguments (--path, --upwards, --import, --editor, --recovery-mode, --scene, --script) are prohibited in probe invocation code`,
             );
           }
           checkGodotProbeTupleDiscipline(

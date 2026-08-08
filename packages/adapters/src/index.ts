@@ -60,12 +60,7 @@ export {
   type NodeScriptRunnerOptions,
 } from "./process/runners/node-script-runner.js";
 export { createSha256CommandDigestService } from "./process/command-digest.js";
-export {
-  resolveNpmCli,
-  resolveTrustedNode,
-  type NpmCliResolution,
-  type TrustedNodeIdentity,
-} from "./process/trusted-executables.js";
+export { resolveNpmCli, type NpmCliResolution } from "./process/trusted-executables.js";
 export { createWorkspaceListTool } from "./tools/workspace/workspace-list-tool.js";
 export { createWorkspaceReadTool } from "./tools/workspace/workspace-read-tool.js";
 export { createWorkspaceSearchTool } from "./tools/workspace/workspace-search-tool.js";

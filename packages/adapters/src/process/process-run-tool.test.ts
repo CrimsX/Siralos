@@ -7,9 +7,16 @@ import {
   createDefaultPolicy,
   createPreparedCommand,
   VALIDATION_OFFLINE_PROFILE,
+  type CommandDigestService,
+  type CommandExecutionContext,
+  type CommandPreparationContext,
+  type CommandPreparationResult,
+  type CommandPreview,
+  type CommandRunner,
   type GitInspector,
   type GitStatusResult,
   type GitWorkspaceStatus,
+  type PreparedCommand,
   type PreparedCommandTool,
   type SandboxBackend,
   type SandboxedProcessRequest,
@@ -17,7 +24,8 @@ import {
 } from "@solaris/core";
 import { createSha256CommandDigestService } from "./command-digest.js";
 import { createRunDirectoryProvider } from "./run-directories.js";
-import { createNodeScriptRunner } from "./runners/node-script-runner.js";
+import { buildCommandEnvironment } from "../environment/command-environment.js";
+import { readParentEnvironment } from "../environment/child-environment.js";
 import { createNpmScriptRunner } from "./runners/npm-script-runner.js";
 import { createProcessRunTool } from "./process-run-tool.js";
 import { createFakeSandboxBackend, completedResult } from "../sandbox/fake-sandbox-backend.js";
@@ -25,6 +33,131 @@ import { createMutationLock } from "../tools/workspace/mutations/mutation-lock.j
 import { createTempWorkspace, writeFixtureFiles } from "../tools/workspace/workspace-fixtures.js";
 
 const RUNS_ROOT = join(process.cwd(), "node_modules", ".solaris-test-runs");
+
+/**
+ * Test-only deterministic stand-in for the node-script runner. The real
+ * node-script runner fails closed as unavailable (the pinned runtime cannot
+ * bind execution to the approved bytes), so these tool-mechanics tests use
+ * this fixture to exercise the process.run tool itself: preparation, digest
+ * plumbing, run directories, output streaming, and workspace protection.
+ * It is never used by production code.
+ */
+function createTestNodeRunner(digest: CommandDigestService): CommandRunner {
+  const plans = new WeakMap<
+    PreparedCommand,
+    { readonly preview: CommandPreview; readonly planDigest: string }
+  >();
+  return {
+    definition: {
+      id: "node-script",
+      description: "Test-only deterministic stand-in for the unavailable node-script runner.",
+    },
+    prepare(
+      input: unknown,
+      context: CommandPreparationContext,
+    ): Promise<CommandPreparationResult> {
+      if (context.signal?.aborted) {
+        return Promise.resolve({ status: "cancelled", message: "Preparation was cancelled." });
+      }
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        return Promise.resolve({ status: "invalid_input", message: "Invalid command input." });
+      }
+      const record = input as Record<string, unknown>;
+      if (typeof record["path"] !== "string" || record["path"].length === 0) {
+        return Promise.resolve({ status: "invalid_input", message: '"path" is required.' });
+      }
+      if (record["environment"] !== undefined || record["network"] !== undefined) {
+        return Promise.resolve({
+          status: "invalid_input",
+          message: "Provider-controlled fields are rejected.",
+        });
+      }
+      const argumentsValue =
+        Array.isArray(record["arguments"]) &&
+        record["arguments"].every((argument) => typeof argument === "string")
+          ? record["arguments"]
+          : [];
+      const timeoutMs =
+        typeof record["timeoutMs"] === "number"
+          ? record["timeoutMs"]
+          : COMMAND_LIMITS.defaultTimeoutMs;
+      const command = createPreparedCommand();
+      const preview: CommandPreview = {
+        runnerId: "node-script",
+        displayName: `node ${record["path"]}`,
+        workingDirectory: "/",
+        executableIdentity: "node (test stand-in)",
+        arguments: [record["path"], ...argumentsValue],
+        timeoutMs,
+        stdoutLimitBytes: COMMAND_LIMITS.stdoutHardLimitBytes,
+        stderrLimitBytes: COMMAND_LIMITS.stderrHardLimitBytes,
+        workspaceAccess: "read-only",
+        networkAccess: "denied",
+        environmentPolicy: "minimal",
+        stdinPolicy: "closed",
+      };
+      const planDigest = digest.compute({
+        runnerId: "node-script",
+        executableIdentity: "node (test stand-in)",
+        executableVersion: process.versions.node,
+        script: record["path"],
+        fileHash: null,
+        repositoryScript: null,
+        arguments: argumentsValue,
+        workingDirectory: "/",
+        profileId: VALIDATION_OFFLINE_PROFILE.id,
+        environmentPolicy: "minimal",
+        timeoutMs,
+        stdoutLimitBytes: COMMAND_LIMITS.stdoutHardLimitBytes,
+        stderrLimitBytes: COMMAND_LIMITS.stderrHardLimitBytes,
+        stdinPolicy: "closed",
+        networkPolicy: "denied",
+      });
+      plans.set(command, { preview, planDigest });
+      return Promise.resolve({
+        status: "ready",
+        command,
+        preview,
+        digest: planDigest,
+        commandId: `test-cmd-${Math.random().toString(36).slice(2, 10)}`,
+      });
+    },
+    toExecutionRequest(command: PreparedCommand, context: CommandExecutionContext) {
+      const plan = plans.get(command);
+      if (plan === undefined) {
+        return Promise.resolve({ status: "failed", message: "The prepared command is unknown." });
+      }
+      if (context.signal?.aborted) {
+        return Promise.resolve({ status: "failed", message: "The command was cancelled." });
+      }
+      const environment = buildCommandEnvironment(
+        readParentEnvironment(),
+        {
+          home: context.runPaths.home,
+          temp: context.runPaths.temp,
+          npmCache: context.runPaths.npmCache,
+          npmUserConfig: context.runPaths.npmUserConfig,
+        },
+        { npm: false },
+      );
+      return Promise.resolve({
+        status: "ready",
+        request: {
+          executable: process.execPath,
+          executableIdentity: "node (test stand-in)",
+          executableVersion: process.versions.node,
+          arguments: plan.preview.arguments,
+          workingDirectory: "/",
+          environment,
+          digest: plan.planDigest,
+        },
+      });
+    },
+    isAvailable(): Promise<boolean> {
+      return Promise.resolve(true);
+    },
+  };
+}
 
 interface ToolHarness {
   readonly tool: PreparedCommandTool;
@@ -52,7 +185,7 @@ async function createHarness(
     }),
   });
   const digest = createSha256CommandDigestService();
-  const nodeRunner = createNodeScriptRunner({ digest });
+  const nodeRunner = createTestNodeRunner(digest);
   const npmRunner = createNpmScriptRunner({
     digest,
     npmResolver: () =>
@@ -715,7 +848,7 @@ describe("process.run tool run directories", () => {
         "scripts/validate.mjs": "console.log('x');",
       });
       const digest = createSha256CommandDigestService();
-      const registry = createCommandRunnerRegistry([createNodeScriptRunner({ digest })]);
+      const registry = createCommandRunnerRegistry([createTestNodeRunner(digest)]);
       const fake = createFakeSandboxBackend({ results: [completedResult()] });
       const runsRoot = join(RUNS_ROOT, "cleanup-fail");
       const tool = createProcessRunTool({

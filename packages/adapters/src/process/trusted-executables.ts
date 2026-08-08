@@ -2,18 +2,6 @@ import { lstat, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { readParentEnvironment } from "../environment/child-environment.js";
 
-export interface TrustedNodeIdentity {
-  readonly executable: string;
-  readonly version: string;
-}
-
-export function resolveTrustedNode(): TrustedNodeIdentity {
-  return {
-    executable: process.execPath,
-    version: process.version,
-  };
-}
-
 export type NpmCliResolution =
   | {
       readonly status: "resolved";

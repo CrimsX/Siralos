@@ -85,6 +85,12 @@ export interface GodotDoctorReport {
     readonly filesystemWriteRestriction: boolean;
     readonly processTreeRestriction: boolean;
   };
+  /**
+   * Capabilities of the selected installation that could not be verified
+   * because a required probe degraded (e.g. a degraded `--help` or
+   * `--dump-extension-api` probe). Empty when everything verified.
+   */
+  readonly degradedCapabilities: readonly string[];
   /** Bounded per-probe status lines. */
   readonly probes: readonly {
     readonly installationId: string;

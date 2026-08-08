@@ -2,7 +2,7 @@
 
 import { mkdtemp, readdir, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   buildChildEnvironment,
   createAnthropicSandboxRuntimeBackend,
@@ -61,6 +61,17 @@ async function main() {
   const godotPath = process.env["SOLARIS_TEST_GODOT"];
   if (godotPath === undefined || godotPath.trim().length === 0) {
     console.log("GODOT CONFORMANCE: SKIPPED - SOLARIS_TEST_GODOT is not set.");
+    console.log(
+      "No live Godot probes ran; skipped or unavailable is never treated as a live security pass.",
+    );
+    return 0;
+  }
+  if (!isAbsolute(godotPath.trim())) {
+    console.log(
+      "GODOT CONFORMANCE: SKIPPED - SOLARIS_TEST_GODOT must be an absolute path to a Godot executable, for example:",
+    );
+    console.log('  $env:SOLARIS_TEST_GODOT = "C:\\absolute\\path\\to\\godot.exe"');
+    console.log("  npm run test:godot");
     console.log(
       "No live Godot probes ran; skipped or unavailable is never treated as a live security pass.",
     );
@@ -147,8 +158,11 @@ async function main() {
     record(
       "exact-read-only-roots",
       probeRequests.length > 0 &&
-        probeRequests.every((request) => Array.isArray(request.explicitReadRoots)),
-      "every probe request carries an explicit read-roots list (no workspace or install-parent surface)",
+        probeRequests.every(
+          (request) =>
+            Array.isArray(request.explicitReadRoots) && request.explicitReadRoots.length === 0,
+        ),
+      "every probe request carries an explicit EMPTY read-roots list (no workspace or install-parent surface)",
     );
     record(
       "no-workspace-request-path",

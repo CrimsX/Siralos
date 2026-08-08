@@ -296,7 +296,12 @@ export function createAnthropicSandboxRuntimeBackend(
     } catch (error: unknown) {
       throw classifyExecutionError(error);
     }
-    const timeoutMs = request.timeoutMs ?? request.profile.process.timeoutMs;
+    // The total timeout is the ABSOLUTE deadline from request entry: time
+    // spent queued behind other executions counts toward it, so the child
+    // never receives a fresh full timeout after dequeue. A request that
+    // expired while queued already returned a timed-out result above.
+    const remainingMs = deadline - Date.now();
+    const timeoutMs = Math.max(0, remainingMs);
     const stdoutLimitBytes = request.stdoutLimitBytes ?? request.profile.process.maxOutputBytes;
     const stderrLimitBytes = request.stderrLimitBytes ?? request.profile.process.maxOutputBytes;
     const timeoutController = new AbortController();

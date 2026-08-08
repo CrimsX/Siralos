@@ -154,6 +154,7 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
         filesystemWriteRestriction: sandboxStatus.capabilities.filesystemWriteRestriction,
         processTreeRestriction: sandboxStatus.capabilities.processTreeRestriction,
       },
+      degradedCapabilities: selectedProfile === null ? [] : selectedProfile.degradedCapabilities,
       probes,
     };
   }

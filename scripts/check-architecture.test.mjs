@@ -442,6 +442,21 @@ describe("check-architecture", () => {
     expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(true);
   });
 
+  it("rejects --editor and --recovery-mode in probe invocation code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'export const ARGS = ["--editor"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(true);
+    const second = cleanWorkspaceFixture();
+    second["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'export const ARGS = ["--recovery-mode"];\n';
+    const secondErrors = runChecks(writeFixture(second));
+    expect(secondErrors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(
+      true,
+    );
+  });
+
   it("accepts fixed probe arguments in probe invocation code", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =

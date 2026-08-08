@@ -698,6 +698,12 @@ export function formatGodotDoctor(report: GodotDoctorReport): string {
   ];
   lines.push("");
   lines.push(formatGodotInstallations(discovery).trimEnd());
+  if (report.degradedCapabilities.length > 0) {
+    lines.push("");
+    lines.push(
+      `Degraded capabilities: ${report.degradedCapabilities.join(", ")} (probes ran but did not fully verify)`,
+    );
+  }
   if (report.project.detected) {
     lines.push("");
     lines.push(formatGodotProject(report.project, report.compatibility).trimEnd());

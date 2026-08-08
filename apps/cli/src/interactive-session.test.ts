@@ -246,6 +246,7 @@ function createStubGodotInspector(): GodotInspector {
           filesystemWriteRestriction: true,
           processTreeRestriction: true,
         },
+        degradedCapabilities: [],
         probes: [],
       });
     },
