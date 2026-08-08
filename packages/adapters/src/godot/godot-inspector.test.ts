@@ -6,7 +6,6 @@ import {
   createEmptyGodotProjectProfile,
   type GodotApiDumpProbe,
   type GodotHelpProbe,
-  type GodotInstallation,
   type GodotProbeRunner,
   type GodotVersionProbe,
   type SandboxBackend,
@@ -160,7 +159,7 @@ describe("Godot doctor snapshot consistency", () => {
     const { runner, versionCalls } = disappearingRunner();
     const config = {
       activeInstallation: null,
-      installations: { primary: { path: executable, editionHint: "standard" } },
+      installations: { primary: { path: executable, editionHint: "standard" as const } },
       discoverOnPath: false,
     };
     const inspector = createGodotInspector({
@@ -199,7 +198,7 @@ describe("Godot doctor snapshot consistency", () => {
     const fake = createFakeGodotProbeRunner({ available: false });
     const config = {
       activeInstallation: null,
-      installations: { primary: { path: executable, editionHint: "standard" } },
+      installations: { primary: { path: executable, editionHint: "standard" as const } },
       discoverOnPath: false,
     };
     const inspector = createGodotInspector({
