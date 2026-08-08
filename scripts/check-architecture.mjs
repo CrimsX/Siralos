@@ -631,7 +631,10 @@ export function runChecks(root) {
                     `${location}: the disposable project mirror may only be used by the approved Godot probe adapter`,
                   );
                 }
-                if (target === recoveryRunner) {
+                if (
+                  target === recoveryRunner ||
+                  target === recoveryRunner.replace(/\.ts$/, ".js")
+                ) {
                   errors.push(
                     `${location}: the Godot recovery runner may only be used by the approved Godot probe adapter`,
                   );

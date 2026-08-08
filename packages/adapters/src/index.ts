@@ -101,6 +101,12 @@ export {
   type GitProcessResult,
 } from "./git/cli/git-process.js";
 export { createGodotInspector, type GodotInspectorDependencies } from "./godot/godot-inspector.js";
+export {
+  createGodotEngineProfiler,
+  type GodotEngineProfiler,
+  type GodotEngineProfilerDependencies,
+  type GodotProfiledCandidate,
+} from "./godot/profile/engine-profiler.js";
 export { createGodotProbeRunner } from "./godot/process/godot-probe-runner.js";
 export { createGodotInspectEngineTool } from "./godot/tools/godot-inspect-engine-tool.js";
 export { createGodotInspectProjectTool } from "./godot/tools/godot-inspect-project-tool.js";
