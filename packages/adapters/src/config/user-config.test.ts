@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -102,6 +102,25 @@ describe("loadUserConfig", () => {
   it("fails on unknown profiles in a file", async () => {
     const path = await withConfigFile(JSON.stringify({ sandbox: { profile: "nope" } }));
     await expect(loadUserConfig(path)).rejects.toThrow("Unknown sandbox profile");
+  });
+
+  it("rejects a config file beyond the byte limit without reading it fully", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "solaris-config-"));
+    tempDirectories.push(directory);
+    const path = join(directory, "huge.json");
+    await writeFile(path, " ".repeat(1024 * 1024 + 1));
+    await expect(loadUserConfig(path)).rejects.toThrow("byte limit");
+  });
+
+  it("rejects a config file that is not a regular file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "solaris-config-"));
+    tempDirectories.push(directory);
+    const path = join(directory, "config.json");
+    await writeFile(path, "{}");
+    const { rm } = await import("node:fs/promises");
+    await rm(path, { force: true });
+    await mkdir(path);
+    await expect(loadUserConfig(path)).rejects.toThrow("not a regular file");
   });
 });
 

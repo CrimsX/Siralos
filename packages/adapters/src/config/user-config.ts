@@ -1,7 +1,8 @@
-import { readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { GODOT_LIMITS } from "@solaris/core";
+import { readFileBounded } from "../fs/file-read.js";
 
 export type UserSandboxProfileId = "inspect" | "develop-offline";
 
@@ -55,16 +56,34 @@ export function getDefaultUserConfigPath(): string {
   return join(homedir(), ".solaris", "config.json");
 }
 
+/** Maximum user configuration file size (1 MiB). */
+const MAX_CONFIG_FILE_BYTES = 1024 * 1024;
+
 export async function loadUserConfig(configPath: string): Promise<UserConfig> {
-  let content: string;
+  let stats;
   try {
-    content = await readFile(configPath, "utf8");
+    stats = await lstat(configPath);
   } catch (error: unknown) {
     if (isNotFoundError(error)) {
       return DEFAULT_USER_CONFIG;
     }
     throw new Error(`Cannot read Solaris configuration at ${configPath}: ${describeError(error)}`);
   }
+  if (stats.isSymbolicLink() || !stats.isFile()) {
+    throw new Error(`Solaris configuration at ${configPath} is not a regular file.`);
+  }
+  if (stats.size > MAX_CONFIG_FILE_BYTES) {
+    throw new Error(
+      `Solaris configuration at ${configPath} exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`,
+    );
+  }
+  const bytes = await readFileBounded(configPath, MAX_CONFIG_FILE_BYTES);
+  if (bytes === null) {
+    throw new Error(
+      `Solaris configuration at ${configPath} could not be read within the ${MAX_CONFIG_FILE_BYTES}-byte limit.`,
+    );
+  }
+  const content = bytes.toString("utf8");
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
