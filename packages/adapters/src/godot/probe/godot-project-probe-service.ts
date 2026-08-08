@@ -128,6 +128,10 @@ export function createGodotProjectProbeService(
         message: "No trusted Godot editor is selected; the project probe cannot run.",
       };
     }
+    const capability = requireRecoveryCapabilities(selection.profile);
+    if (!capability.ok) {
+      return { status: "unsupported", message: capability.message };
+    }
     const refresh = await refreshRiskManifest(selection.installation, selection.profile, signal);
     if (!refresh.ok) {
       return { status: "failed", message: refresh.message };
@@ -888,6 +892,41 @@ function mapMirrorPreparationStatus(
     case "ready":
       return "failed";
   }
+}
+
+function requireRecoveryCapabilities(profile: GodotEngineProfile):
+  | {
+      readonly ok: true;
+    }
+  | {
+      readonly ok: false;
+      readonly message: string;
+    } {
+  if (profile.edition === "runtime-only") {
+    return {
+      ok: false,
+      message: "The selected executable is runtime-only; it cannot run the editor recovery probe.",
+    };
+  }
+  if (!profile.capabilities.recoveryMode) {
+    return {
+      ok: false,
+      message:
+        "The selected Godot version does not advertise --recovery-mode; the recovery probe is unsupported and no weaker mode is used.",
+    };
+  }
+  if (
+    !profile.capabilities.editor ||
+    !profile.capabilities.headless ||
+    !profile.capabilities.projectPath
+  ) {
+    return {
+      ok: false,
+      message:
+        "The selected Godot version does not advertise the required --editor, --headless, and --path options; the recovery probe is unsupported.",
+    };
+  }
+  return { ok: true };
 }
 
 function mapOutcomeStatus(outcome: GodotRecoveryRunOutcome): GodotRecoveryProbeResult["status"] {

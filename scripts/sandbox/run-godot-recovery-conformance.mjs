@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtemp, mkdir, rm, writeFile, readdir, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
