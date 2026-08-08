@@ -132,7 +132,7 @@ Prepared command tools follow the same pattern: `prepare` (validate + build the 
 
 ## Ports
 
-External capabilities the application needs are narrow interfaces owned by core: the `ModelProvider` port (`stream(request): AsyncIterable<ModelEvent>` with an optional `AbortSignal`), the `SandboxBackend` port, the `ApprovalReviewer` port, the `GitInspector` port, the `CheckpointStore` port, the `UndoService` port, and the `CommandDigestService` port (hashing is injected so core stays free of Node imports). The command tool consumes the sandbox, approval, git, lock, runner-registry, and run-directory ports; runners are core contracts implemented in adapters.
+External capabilities the application needs are narrow interfaces owned by core: the `ModelProvider` port (`stream(request): AsyncIterable<ModelEvent>` with an optional `AbortSignal`), the `SandboxBackend` port, the `ApprovalReviewer` port, the `GitInspector` port, the `CheckpointStore` port, the `UndoService` port, the `CommandDigestService` port (hashing is injected so core stays free of Node imports), the `GodotProbeRunner` port (fixed project-independent engine probes executed through a backend), and the `GodotInspector` port (engine and project inspection results). The command tool consumes the sandbox, approval, git, lock, runner-registry, and run-directory ports; runners are core contracts implemented in adapters.
 
 ## Adapters (`packages/adapters`)
 
@@ -146,6 +146,7 @@ Adapters implement core-owned ports. Providers, concrete tools, configuration, e
 - Command layer (`src/process`): trusted Node CLI resolution (`resolveTrustedNode` — npm CLI resolution remains for the conformance suite, but the `npm-script` runner fails closed as unavailable because npm's execution cannot be bound to the approved package bytes under the pinned runtime), the `node-script` runner (structured validation, file hashing, digest computation, full revalidation, and staging of the exact approved script bytes into the run's private script cache with hash verification — the child executes the immutable private copy, never the mutable workspace path), the sandbox-private run-directory provider (every path component verified with no-follow semantics before creation, exclusive creation, canonical re-verification before use, runs root outside the workspace, cleanup that re-verifies immediately before deletion and never traverses links), and the `process.run` tool that executes approved plans through the `SandboxBackend` under `validation-offline`, granting the sandbox exactly the current run directory. No module in this layer spawns processes.
 - `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). Only this module may import the runtime package. It enforces a deny-by-default host-read allowlist (deny `/` and re-allow the workspace, the current run directory, the trusted runner executables, and the minimum system runtime paths on Linux/macOS; refused as unavailable on Windows), gives every request its own per-execution filesystem/network configuration so no request can inherit a broader earlier profile, resets and reinitializes the shared manager when the effective configuration changes, streams bounded decoded output accounted on raw bytes with the hard limit enforced inside the crossing chunk, terminates the process tree on timeout/cancellation/output-limit, runs cleanup in `finally` on every path, and isolates failing output callbacks.
 - Conformance runner (`runSandboxConformance`): writes fixed fixture programs into a temporary workspace and executes them through the backend, reporting pass/fail per probe. Host-read probes use existing regular files in representative unapproved locations selected independently of the deny surface, plus cross-run isolation and bidirectional profile-isolation probes.
+- Godot adapters (`src/godot`): discovery (configured user installations — absolute paths only, edition hints — plus fixed-name PATH search with safe PATHEXT handling and macOS `.app` bundle resolution), probe invocation through the `SandboxBackend` under the internal `godot-probe-offline` profile, API-dump execution and bounded metadata extraction, executable fingerprinting/version parsing/edition classification/selection ranking, the engine-profile cache (`~/.solaris/godot/engine-profiles`, atomic and bounded), static project detection and profiling, and the `godot.inspect_engine` / `godot.inspect_project` tools. Only this adapter invokes the engine, always through the sandbox backend; providers never run Godot.
 
 The workspace root is the canonicalized directory Solaris was launched from; it is stored privately by the tools and displayed in `/status`. Provider adapters never import sandbox, environment, tool, checkpoint, git, or process modules — the architecture check enforces that boundary.
 
@@ -154,7 +155,7 @@ The workspace root is the canonicalized directory Solaris was launched from; it 
 The CLI is an input/output adapter:
 
 - Reads terminal input and renders terminal output through a small `SessionIO` interface
-- Parses slash commands (`/help`, `/status`, `/clear`, `/exit`) in a pure module separate from rendering
+- Parses slash commands (`/help`, `/status`, `/clear`, `/exit`, and the Godot commands `/godot`, `/godot-installations`, `/godot-project`, `/godot-doctor`) in a pure module separate from rendering
 - Renders application events incrementally
 - Handles process startup, EOF, `Ctrl+C`, and shutdown
 - Exposes the `solaris` binary and the composition root
@@ -214,9 +215,41 @@ Provider neutrality is a stated product requirement, so the provider contract be
 
 The application must remain usable without a terminal (headless tests, future Godot-facing surfaces). Conversation policy and state transitions live in core; the terminal only translates between user intent and application events.
 
-## Deferred: Godot integration
+## Godot engine discovery and profiling
 
-No Godot integration exists in this slice: no Godot executable or project detection, no GDScript handling, no editor or runtime bridges. When it arrives it will live behind new core-owned ports as adapters.
+Godot discovery and profiling follow the same inward pattern as the other capabilities: neutral contracts in core, a single implementation in adapters, thin commands in the CLI. The CLI never runs Godot itself; only the Godot probe adapter in `@solaris/adapters` invokes the engine, always through the sandbox backend. Providers never run Godot. Core remains Node-free and process-independent.
+
+```text
+packages/core/src/godot/                 Godot models, classification, selection
+                                         policy, compatibility, inspector ports,
+                                         probe and selection events
+packages/adapters/src/godot/
+  discovery/                             configured installations + fixed-name PATH
+                                         search, .app bundle resolution
+  process/                               probe invocation through the SandboxBackend
+  api-dump/                              --dump-extension-api execution, metadata
+                                         extraction, dump cleanup
+  profile/                               fingerprints, version parsing, edition
+                                         classification, selection ranking
+  cache/                                 engine-profile cache (atomic, bounded,
+                                         symlink-rejected)
+  project/                               static project detection and profiling,
+                                         language profile, content inventory
+  tools/                                 godot.inspect_engine, godot.inspect_project
+apps/cli/                                Godot commands (/godot, /godot-installations,
+                                         /godot-project, /godot-doctor), godot doctor,
+                                         --godot-path / --godot-installation startup
+                                         flags, SOLARIS_GODOT /
+                                         SOLARIS_GODOT_INSTALLATION overrides
+```
+
+- **Core owns**: the Godot models (engine profile, version and release channel, edition, capability sets, support classification), classification rules, the deterministic selection policy with recorded rationale, compatibility assessment, the `GodotProbeRunner` and `GodotInspector` ports, and probe/selection events. Core never discovers, invokes, parses, or stores anything itself.
+- **Adapters own**: discovery (configured installations and fixed-name PATH search), invocation of the exact probe argument arrays, output parsing, project scanning, inventory, and cache storage. The probe adapter is the only code that ever spawns Godot.
+- **CLI owns**: command parsing, rendering, and composition — `/godot-installations` displays the recorded selection rationale, `/godot-project` renders static project findings, `/godot-doctor` reports discovery/selection/cache diagnostics, and the startup flags and environment overrides seed selection at the highest precedence.
+
+**Probe argument discipline.** Probe invocation uses fixed argument arrays and exactly three forms: `<godot> --version`, `<godot> --help`, and `<godot> --dump-extension-api`. Project-affecting arguments (`--path`, `--upwards`, `--import`, `--scene`, `--script`) and `--editor` are never passed; there is no project path and no project working directory. The architecture check rejects these project-affecting Godot arguments structurally in probe invocation code.
+
+Project execution — loading a project, import, or scene/script execution — remains deferred behind the trusted-project decision and recovery-mode project probe milestone; the engine is only ever probed outside any project.
 
 ## Deferred: persistence
 
@@ -228,7 +261,7 @@ The current workflow is one interactive primary agent. Multi-agent review, agent
 
 ## Deferred: process and write tools
 
-The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; approved single-file workspace mutations execute through them (identity-bound quarantine commits); read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete; and sandboxed validation-command execution (`process.run` with the `node-script` runner — the `npm-script` runner fails closed as unavailable because npm's execution cannot be bound to the approved package bytes under the pinned runtime) is complete: structured arguments only, immutable private script execution, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or Godot execution exists; those remain deferred and, when added, must execute under the same enforcement.
+The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; approved single-file workspace mutations execute through them (identity-bound quarantine commits); read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) and Solaris-owned recovery checkpoints with safe undo are complete; and sandboxed validation-command execution (`process.run` with the `node-script` runner — the `npm-script` runner fails closed as unavailable because npm's execution cannot be bound to the approved package bytes under the pinned runtime) is complete: structured arguments only, immutable private script execution, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or Godot project execution exists (the sole Godot exception is the project-independent probe invocation through the sandbox); those remain deferred and, when added, must execute under the same enforcement.
 
 ## Git inspection
 

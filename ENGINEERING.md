@@ -73,6 +73,47 @@ These properties are established and tested; weakening any of them is an archite
 
 Tool output limits live in one discoverable module: `WORKSPACE_LIMITS` in `packages/adapters/src/tools/workspace/limits.ts` (directory entries 200, readable file size 512 KiB, returned read content 64 000 chars, search file size 512 KiB, files scanned 500, search matches 100, returned line length 400 chars, text file size 1 MiB, created content 512 KiB, replacements 32, replacement text 64 KiB, complete diff 256 KiB, diff lines 10 000). Command limits live in `COMMAND_LIMITS` in `@solaris/core` (arguments 64 / 8 KiB each / 64 KiB total, package.json 1 MiB, npm script 32 KiB, Node script 4 MiB, timeout 120 s default / 10 min max, stdout and stderr hard limits 1 MiB, provider return window 256 KiB, output event 16 KiB). The provider tool-round limit is `DEFAULT_MAX_TOOL_ROUNDS` (8) in `@solaris/core`. The approval timeout is `DEFAULT_MAX_PENDING_APPROVAL_MS` (10 minutes) in `@solaris/core`. Sandbox process limits come from the active profile (`timeoutMs`, `maxOutputBytes`); the backend is pinned exactly (`@anthropic-ai/sandbox-runtime@0.0.70`) and isolated behind the `SandboxBackend` port. See `SECURITY.md` for the threat model and platform support details.
 
+## Godot engine profiling pipeline
+
+Godot discovery happens before any project execution and follows a fixed pipeline: **discovery → validation → probes → classification → selection → cache**. Each stage is bounded and cancellable; a cancelled probe kills the Godot process tree, removes run directories and partial dumps, caches nothing, and returns to the prompt.
+
+1. **Discovery**: configured user installations (absolute paths only, with optional edition hints `standard`/`dotnet`/`unknown`) plus a fixed-name PATH search (`godot.exe`, `godot4.exe`, `godot-mono.exe`, `godot4-mono.exe` on Windows; `godot`, `godot4`, `godot-mono`, `godot4-mono` elsewhere). No broad filesystem scanning, no registry/Spotlight/package-database searches, no `where`/`which`, no shell. Windows PATHEXT is honored safely (only `.exe` is ever appended; `.bat`/`.cmd` never considered). macOS `.app` bundles resolve to their exact `Contents/MacOS` executable (CFBundleExecutable from the XML Info.plist with a "Godot" fallback) and are never launched via `open` or Apple Events. At most 16 candidates are considered.
+2. **Validation**: exact executable fingerprints — canonical path, size, mtime, SHA-256 (512 MiB size bound) — revalidated before every probe. A changed executable invalidates prepared profiles and the cache; rediscovery is required. Executables inside the project workspace are rejected by default.
+3. **Probes** (project-independent, through the sandbox backend under the internal `godot-probe-offline` profile): exactly `<godot> --version` (10 s, 64 KiB output), `<godot> --help` (15 s, 2 MiB), and `<godot> --dump-extension-api` (120 s). Never `--path`/`--upwards`/`--import`/`--scene`/`--script`/`--editor`; no project path, no project working directory, stdin closed, network denied, sandbox-private home/temp, no provider or project credentials, process tree confined, fail-closed when the sandbox backend is unavailable. The probe working directory is a Solaris-private run directory under `~/.solaris/runs`; the API dump lands there and is deleted after parsing (exactly `extension_api.json` is expected; unexpected files ignored; symlinked output rejected). Only bounded metadata — header version, API hash, class/builtin-class/global-enum/utility-function counts, configuration format version, size, SHA-256 — is kept; the complete dump never enters provider context and is not persisted.
+4. **Classification**: adversarial version parsing (release channels stable/rc/beta/alpha/dev/custom/unknown preserved; prereleases never normalized to stable; control characters sanitized; empty/non-Godot/non-numeric major-minor output fails). Edition classification is conservative: filename `mono` is never proof of .NET; explicit hint + filename + `--build-solutions` + API features + probe success combine, conflicting evidence lowers confidence and is reported, uncertain → unknown, and a help probe without any editor signal is a runtime-only heuristic that is never selected. Solaris support classification is never taken from the internet: exact 4.7.1 stable standard = verified; other stable 4.7 standard = compatible-untested; 4.7/4.8 prereleases and dev builds = prerelease-untested; custom builds = custom-build-untested; Godot 3 = unsupported-major; .NET = compatible-untested; runtime-only = runtime-only.
+5. **Selection**: precedence is `--godot-path`, `--godot-installation`, `SOLARIS_GODOT`, `SOLARIS_GODOT_INSTALLATION`, `godot.activeInstallation`, preferred compatible PATH candidate, no selection. CLI/env path and id are mutually exclusive at the same level; an explicit selection that fails never falls back silently. Deterministic ranking within compatible candidates: verified baseline (4.7.1 stable standard) > compatible stable standard > compatible stable .NET > prerelease editor; stable over prerelease, standard over .NET, higher patch within a tested minor line, deterministic path tie-breaker. Godot 3.x and runtime-only binaries are never auto-selected. The rationale is recorded and shown by `/godot-installations`.
+6. **Cache**: engine profiles are cached at `~/.solaris/godot/engine-profiles`, keyed by executable SHA-256, bounded to 32 entries, atomic metadata writes, symlinked cache paths rejected, user-level only. Only bounded normalized data is stored — never credentials, complete dumps, project files, or absolute project paths; an executable hash change invalidates the entry. No provider tool can delete or modify the cache.
+
+### Milestone limits
+
+| Limit                            | Value   |
+| -------------------------------- | ------- |
+| Discovery candidates             | 16      |
+| Executable size                  | 512 MiB |
+| Version probe output             | 64 KiB  |
+| Help probe output                | 2 MiB   |
+| API dump                         | 128 MiB |
+| Version probe timeout            | 10 s    |
+| Help probe timeout               | 15 s    |
+| API dump timeout                 | 120 s   |
+| Project file (`project.godot`)   | 4 MiB   |
+| Plugin descriptor                | 256 KiB |
+| GDExtension descriptor           | 1 MiB   |
+| Files scanned (language profile) | 50,000  |
+| Inspected source bytes           | 64 MiB  |
+| Static scan time                 | 30 s    |
+| Cache entries                    | 32      |
+
+Provider input cannot raise these limits and user config cannot disable them; truncation is explicit and reported. Capability probing is token-matched exactly against a fixed set (complete option tokens, never substrings); advertised capabilities and operationally verified capabilities are distinct (`verifiedCapabilities`/`degradedCapabilities`), and `--dump-extension-api-with-docs` and `--doctool` are never invoked.
+
+### Compatibility assessment
+
+Major mismatch or an engine minor older than declared = error; same minor = compatible (never guaranteed); newer minor = likely-compatible warning. .NET project + standard engine = edition-mismatch; GDScript + .NET engine = likely-compatible warning. Custom/prerelease engines = engine-unverified; missing declared version = project-version-unknown. Every assessment explains itself.
+
+### Opt-in live conformance
+
+`npm run test:godot` runs live Godot probe conformance against a real engine on the host, but only when opted in: without `SOLARIS_TEST_GODOT=1` the suite refuses to run or skips loudly — it never pretends a skipped or unavailable probe passed. Like `npm run test:sandbox`, it reports truthfully per probe.
+
 ## Explicit dependency composition
 
 Concrete dependencies are created in exactly one composition root (`apps/cli/src/bootstrap/create-application.ts`) by direct manual composition:

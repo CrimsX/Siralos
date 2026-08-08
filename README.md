@@ -9,7 +9,7 @@ This repository currently contains the **foundation vertical slice**: an executa
 Working today:
 
 - Interactive terminal session (`npm run solaris`)
-- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/git-status`, `/diff`, `/checkpoints`, `/undo`, `/commands`, `/cancel`, `/exit`
+- Slash commands: `/help`, `/status`, `/clear`, `/tools`, `/sandbox`, `/permissions`, `/git-status`, `/diff`, `/checkpoints`, `/undo`, `/commands`, `/cancel`, `/exit`, `/godot`, `/godot-installations`, `/godot-project`, `/godot-doctor`
 - Prompt submission with incrementally streamed responses
 - A bounded provider/tool loop with approved workspace mutations: `workspace.create_file`, `workspace.edit_file` (exact text replacements), and `workspace.delete_file` — each gated by capability policy, a complete reviewable diff, and one-time user approval, with SHA-256 conflict detection, mutation serialization, and post-write verification. Every approved mutation first durably records a Solaris-owned recovery checkpoint (exact pre-change bytes), reconciled at startup after crashes.
 - Read-only workspace tools: `workspace.list`, `workspace.read` (with complete-file SHA-256), `workspace.search` — all paths are canonicalized and contained within the launch directory
@@ -17,6 +17,9 @@ Working today:
 - Safe user-invoked undo (`/undo`) that restores only Solaris-owned changes with a complete reverse diff, one-time approval, and exact post-state hash validation rechecked immediately before the destructive commit; user changes after a Solaris mutation cause a conflict, never an overwrite
 - A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port with an enforced host-read allowlist (deny-root with re-allow on Linux/macOS; reported unavailable and refused on Windows), allowlist-based child environments with the wrapper's runtime-required environment merged under strict rules, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command with trustworthy exit codes (0 passed, 1 probe failure, 3 probes unavailable)
 - Sandboxed development-command execution (`process.run`) with the Solaris-owned `node-script` runner (one JavaScript file through Solaris's trusted Node executable, executed from an immutable private copy of the exact approved bytes). Every command uses structured arguments (never a provider-supplied shell string), runs inside the OS sandbox with a **read-only** workspace, denied network, a minimal sanitized environment, closed stdin, bounded streamed output, a bounded timeout, and process-tree cancellation. Commands require explicit one-time approval of the exact immutable plan (digest-bound); the script file is hashed before approval, revalidated after, copied into the run's private directory, and executed from that verified copy. The `npm-script` runner is defined but fails closed as unavailable until npm's execution can be bound to the approved package bytes under the pinned runtime.
+- Godot executable discovery and engine profiling, before any project execution: trusted user-configured installations (absolute paths with optional edition hints) plus fixed-name PATH search — no broad filesystem scanning; exact executable fingerprints (canonical path, size, mtime, SHA-256) revalidated before every probe; project-independent probes (`--version`, `--help`, `--dump-extension-api`) with fixed arguments through the sandbox backend under the internal `godot-probe-offline` profile; adversarial version parsing with release channels preserved; conservative edition classification; deterministic selection ranking with recorded rationale (explicit selection never falls back silently); and an engine-profile cache at `~/.solaris/godot/engine-profiles` (bounded, atomic, symlink-rejected, invalidated by executable hash change)
+- Static Godot project detection and profiling: only the root `project.godot` is read (regular file, symlinks rejected, never parents/children), everything parsed conservatively and never evaluated, plus an executable-content inventory (tool scripts, editor plugins, GDExtension descriptors, autoloads, C# project files) that never loads or runs anything
+- Godot provider tools and CLI surface: `godot.inspect_engine` and `godot.inspect_project` (allow in every built-in policy, no one-time approval), `/godot`, `/godot-installations`, `/godot-project`, `/godot-doctor`, the `--godot-path` / `--godot-installation` / `--godot-doctor` startup flags, and the `SOLARIS_GODOT` / `SOLARIS_GODOT_INSTALLATION` environment overrides
 - In-process conversation history
 - Cancellation support through `AbortSignal`
 - Deterministic fake provider (`deterministic-fake`) that requires no credentials and no network, with synthetic scenarios for read tools, the approved write workflow (`create solaris-write-test`, `edit solaris-write-test`, `delete solaris-write-test`), Git inspection (`git status`, `show working diff`, `show staged diff`, `show head diff`), and development commands (`run npm check`, `run npm test`, `run node validation fixture`)
@@ -25,7 +28,7 @@ Not yet implemented:
 
 - General shell access, arbitrary executables, writable command execution, package installation, or background processes — the only active command runner is `node-script`, workspace-read-only and offline; `npm-script` requests fail closed with an explanation
 - Git writes of any kind: staging, commits, reset, restore, checkout, clean, stash, branches, worktrees, remotes
-- Godot project understanding, GDScript programming, or editor/runtime integration (including Godot executable discovery — that is the next narrow task)
+- Godot project execution: no project loading, no import, no scene or script execution — the engine is only ever probed outside any project. GDScript programming and editor/runtime integration remain unimplemented
 - Real model providers (e.g. Anthropic, OpenAI)
 - Persistent sessions or transcript storage
 - Multi-agent functionality, skills, or agent profiles
@@ -67,9 +70,11 @@ npm run solaris      # launch the interactive CLI
 | `npm run test:watch`                  | Run tests in watch mode                                                                                                  |
 | `npm run check:architecture`          | Verify workspace dependency boundaries (structural parsing, not regex-only)                                              |
 | `npm run test:sandbox`                | Run live sandbox conformance probes (skips loudly when the backend is unavailable)                                       |
+| `npm run test:godot`                  | Run live Godot probe conformance (opt-in; requires `SOLARIS_TEST_GODOT=1`)                                               |
 | `npm run check`                       | Run all non-mutating validation                                                                                          |
 | `npm run solaris`                     | Build and launch the interactive CLI                                                                                     |
 | `npm run solaris -- --sandbox-doctor` | Print sandbox diagnostics (add `--run-probes` to run fixed probes; exit 0 passed, 1 probe failure, 3 probes unavailable) |
+| `npm run solaris -- --godot-doctor`   | Print Godot discovery, selection, and cache diagnostics                                                                  |
 
 ## Sandbox configuration
 
@@ -228,4 +233,4 @@ runs formatting, linting, type checking, tests, and the architecture check witho
 
 ## Next planned milestone
 
-The next narrow task is Godot executable discovery, exact-version profiling, project detection, and read-only engine capability probes using a dedicated Godot runner — still read-only and offline. See `ROADMAP.md`.
+Godot executable discovery, exact-version profiling, project detection, and read-only engine capability probes are complete. The next narrow task is an explicit trusted-project decision and a read-only recovery-mode project probe that opens Godot headlessly, disables tool scripts/plugins/GDExtensions, isolates generated `.godot` and editor state where technically possible, captures startup/import diagnostics without modifying authored project files, and fails closed when safe isolation cannot be proven. See `ROADMAP.md`.

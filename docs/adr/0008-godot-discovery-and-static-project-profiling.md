@@ -1,0 +1,77 @@
+# ADR 0008: Godot executable discovery and static project profiling
+
+Status: accepted
+
+## Context
+
+Solaris is a harness for driving and running the Godot engine, but nothing engine-related can run until a Godot executable is found, trusted, and understood. The foundation (ADR 0001–0007) provides the sandbox boundary, read-only tools, and sandboxed command execution, but no Godot integration exists. This milestone adds the first Godot capability: executable discovery, exact-version profiling, engine capability probing, static project detection, and an executable-content inventory — all project-independent, read-only, and offline. Project execution (import, scene/script runs) is deliberately not part of this milestone.
+
+## Decision
+
+- **Discovery happens before any project execution.** The harness cannot reason about a project it cannot attribute to a known engine, and it must never execute a project through an unverified engine. Discovery is therefore the first Godot stage, and the engine profile it produces is the prerequisite for every later project-facing capability.
+
+- **Discovery is configured installations plus fixed-name PATH search — no broad filesystem scanning.** Candidate sources are (1) user-configured installations in `~/.solaris/config.json` — absolute paths only, with optional edition hints `standard`/`dotnet`/`unknown` — and (2) a fixed-name search of `PATH` (`godot.exe`, `godot4.exe`, `godot-mono.exe`, `godot4-mono.exe` on Windows; `godot`, `godot4`, `godot-mono`, `godot4-mono` elsewhere). There is no registry/Spotlight/package-database search, no `where`/`which`, no shell, and no recursive or home-directory scan: a broad scan would surface arbitrary executables with unknown provenance and unbounded cost, while configured-plus-fixed-name gives the user explicit control and keeps the candidate space small (maximum 16 candidates). Windows PATHEXT is honored safely (only `.exe` is ever appended; `.bat`/`.cmd` never considered). macOS `.app` bundles are resolved to their exact `Contents/MacOS` executable (CFBundleExecutable from the XML Info.plist, with a "Godot" fallback) and are never launched via `open` or Apple Events.
+
+- **Executable selection is user configuration, never provider input.** Explicit executable paths live in user-level configuration, CLI flags, or environment variables — sources only the user controls. The provider can never select an executable or pass arguments; a provider request can only inspect already-selected installations through fixed probes. This is the same principle as command runners: provider-controlled executables would be an unbounded attack surface.
+
+- **Project files can never select an executable.** Untrusted repository content (a `project.godot`, a plugin descriptor, scanned sources) must not influence which binary runs or how it is invoked. Probe commands are fixed and project-independent, so a malicious project cannot redirect a probe to another executable or inject arguments.
+
+- **Exact executable fingerprints matter.** Every candidate is fingerprinted by canonical path, size, mtime, and SHA-256 (512 MiB size bound). Identity is revalidated before every probe: a changed executable invalidates prepared profiles and the cache and requires rediscovery. A fingerprint is the only reliable way to bind a cached profile to the exact binary it describes and to detect replacement between preparation and execution.
+
+- **Probing is three separate fixed probes.** `<godot> --version` (10 s timeout, 64 KiB output) establishes identity and version; `<godot> --help` (15 s, 2 MiB) establishes capability advertisement; `<godot> --dump-extension-api` (120 s) establishes the concrete API surface. They are separate because they have different costs, failure modes, and trust levels: version output is tiny and fast, help is larger and bounded, and the API dump is expensive and the least trustworthy, so its output is handled separately (see below). Probing never uses `--path`/`--upwards`/`--import`/`--scene`/`--script`/`--editor`: no project path, no project working directory. `--dump-extension-api-with-docs` and `--doctool` are never invoked.
+
+- **Advertised and verified capabilities are distinct.** Help output is token-matched exactly (complete option tokens, never substrings) against a fixed set, giving advertised capabilities; operational verification is a separate stage, so results carry both `verifiedCapabilities` and `degradedCapabilities`. Advertisements are claims, not proof; degrading gracefully and reporting the difference is required for honest diagnostics.
+
+- **Dumps are generated outside the project.** The probe working directory is a Solaris-private run directory under `~/.solaris/runs`, never the project and never the workspace, so no probe can observe or modify project files even by accident. The API dump lands there and is deleted after parsing; exactly `extension_api.json` is expected, unexpected files are ignored, and symlinked output is rejected.
+
+- **The complete API dump never enters model context and is not persisted.** Parsing keeps only bounded metadata — header version, API hash, class/builtin-class/global-enum/utility-function counts, configuration format version, size, and SHA-256 (dump bound 128 MiB). A full API surface is a large, redundant, provider-cookie-sized payload; keeping bounded metadata protects provider context, transcript storage, and the cache.
+
+- **Version parsing is adversarial.** Godot version strings are irregular: `4.7.1.stable.official`, `4.7.2.rc1.official`, `4.8.dev2.custom_build`, patchless versions, commit-hash tokens, and unknown suffixes. Parsing preserves unknown suffixes, never normalizes prereleases to stable, sanitizes control characters, and fails closed on empty/non-Godot/non-numeric major-minor output. Release channels are stable/rc/beta/alpha/dev/custom/unknown.
+
+- **Edition classification is conservative.** The filename `mono` is never proof of .NET. Classification combines the explicit config hint, filename, `--build-solutions` capability, API features, and probe success; conflicting evidence lowers confidence and is reported; uncertain evidence yields `unknown`. A help probe without any editor signal yields a runtime-only heuristic that is never selected. .NET is detected but classed compatible-untested: detection is cheap and safe, but .NET project support is not on the current GDScript-first roadmap, and untested claims are not made.
+
+- **Support classification is never taken from the internet.** Exact 4.7.1 stable standard = verified; other stable 4.7 standard = compatible-untested; 4.7/4.8 prereleases and dev builds = prerelease-untested; custom builds = custom-build-untested; Godot 3 = unsupported-major; .NET = compatible-untested; runtime-only = runtime-only. 4.7.1 stable standard is the initial baseline because it is the current stable line the harness is being developed against; classifying by exact match keeps "verified" honest and everything else explicitly less certain. Custom/prerelease versions are handled by classification plus deterministic ranking (stable over prerelease, standard over .NET, higher patch within a tested minor line, deterministic path tie-breaker), and Godot 3.x/runtime-only binaries are never auto-selected — but an explicit user selection is always honored over the ranking.
+
+- **Selection is deterministic and never silently falls back.** Precedence (highest first): `--godot-path`, `--godot-installation`, `SOLARIS_GODOT`, `SOLARIS_GODOT_INSTALLATION`, `godot.activeInstallation`, preferred compatible PATH candidate, no selection. CLI/env path and id are mutually exclusive at the same level. An explicit selection that fails is a failure, never a silent fallback; the recorded rationale is shown by `/godot-installations`.
+
+- **Static project detection is conservative and non-authoritative.** Only the root `project.godot` is read (regular file, symlinks rejected, 4 MiB bound, UTF-8, SHA-256); parents and children are never searched and `--upwards` is never used. The scanner preserves sections/properties/raw values/line numbers and interprets only integers, booleans, quoted strings with escapes, `PackedStringArray(...)`, and `uid://` values; everything else stays raw and reported unknown, and nothing is evaluated. Static results are a fast, safe first view — never a substitute for engine truth, which is why recovery-mode project loading (the engine opening the project) is deferred to the next milestone with an explicit trusted-project decision.
+
+- **Tool scripts, editor plugins, GDExtensions, autoloads, and C# files are inventoried, never loaded.** An executable-content inventory (lexical tool-script scan outside comments/strings, head 32 KiB; `addons/*/plugin.cfg` descriptors with 256 KiB bound and enabled state from `project.godot`; GDExtension descriptors with 1 MiB bound; autoload keys; C# project files) gives the harness early knowledge of what a project would execute or import — crucial for the trusted-project decision — without running anything. Import plugins are recognized heuristically (`extends EditorImportPlugin`). Inventory is read-only evidence, not execution.
+
+- **Compatibility assessment explains itself.** Major mismatch or an engine minor older than declared = error; same minor = compatible (never guaranteed); newer minor = likely-compatible warning; .NET project + standard engine = edition-mismatch; GDScript + .NET engine = likely-compatible warning; custom/prerelease engines = engine-unverified; missing declared version = project-version-unknown. Every assessment carries its reason so no verdict is opaque.
+
+- **Probes run through the sandbox backend with the internal `godot-probe-offline` profile.** Workspace never writable, network denied, minimal allowlisted environment, sandbox-private home/temp, closed stdin, process tree confined, bounded output, cancellable. If the backend is unavailable the probe fails closed. `godot.inspect` is `allow` in every built-in policy and needs no one-time approval: the probes are fixed, project-independent, read-only, and offline, and explicit executable paths are user configuration, not provider input — there is nothing per-probe to approve that a policy decision has not already covered. Provider-visible results use installation ids and executable fingerprints; absolute paths, raw help output, and complete dumps never enter provider context.
+
+- **The engine-profile cache is private and self-invalidating.** `~/.solaris/godot/engine-profiles` stores only bounded normalized data (never credentials, complete dumps, project files, or absolute project paths), is keyed by executable SHA-256, bounded to 32 entries, written atomically, rejects symlinked cache paths, is user-level only, and is invalidated by any executable hash change. No provider tool can delete or modify it.
+
+- **Limits are fixed, documented, and non-negotiable.** Candidate count 16, executable size 512 MiB, version output 64 KiB, help output 2 MiB, API dump 128 MiB, project file 4 MiB, plugin descriptor 256 KiB, GDExtension descriptor 1 MiB, files scanned 50,000, source bytes 64 MiB, version probe 10 s, help probe 15 s, API dump 120 s, static scan 30 s, cache entries 32. Provider input cannot raise them; user config cannot disable them; truncation is explicit and reported.
+
+- **The CLI never runs Godot; providers never run Godot.** Only the Godot probe adapter in `@solaris/adapters` invokes the engine, always through the sandbox backend. Core remains Node-free and process-independent, owning models, classification, selection policy, compatibility, and the inspector/probe-runner ports.
+
+## Consequences
+
+Positive:
+
+- The harness can now find, verify, and profile a Godot engine without ever running a project, which is the prerequisite for every later stage (project probing, knowledge profiles, script intelligence, diagnostics).
+- Discovery, probing, and inspection are bounded, cancellable, offline, and provider-safe: no new one-time-approval burden, no new host-process execution, no project influence on invocation.
+- Static project detection and the content inventory give early signal about a project's engine requirements and executable surface before any engine is opened.
+
+Negative:
+
+- Adversarial parsing and conservative classification mean some real installations are classed `unknown`/untested rather than supported; the harness will sometimes refuse to use an engine it could have run.
+- The API dump probe is expensive (up to 120 s, up to 128 MiB) and runs on every uncached or changed executable; caching mitigates this but does not remove the first-run cost.
+- Capability probes only advertise what help reports; deep operational verification remains future work, so `degradedCapabilities` will be populated conservatively at first.
+- Project execution, import, scene/script runs, and any project-loaded diagnostics remain unavailable until the recovery-mode project probe milestone completes.
+
+## Alternatives rejected
+
+- Broad filesystem/registry/Spotlight/package-database discovery: unbounded candidate space, unknown provenance, slow; rejected in favor of configured-plus-fixed-name discovery with an explicit user-controlled candidate set.
+- Provider-selected executables or provider-supplied probe arguments: unbounded attack surface and untrusted invocation; rejected — the provider only inspects user-configured installations through fixed probes.
+- Auto-selecting Godot 3.x or runtime-only binaries: unverified and unusable for the roadmap; rejected — never auto-selected, though explicit user selection is honored.
+- Treating `.app` bundles as executables launched via `open`/Apple Events: loses exact identity and escapes process-tree control; rejected — bundles resolve to their exact `Contents/MacOS` binary.
+- Loading the complete API dump into model context or persisting it: large, redundant, and polluting; rejected in favor of bounded normalized metadata (counts, API hash, size, SHA-256).
+- Treating filename `mono` as proof of .NET: false positives; rejected — combined-evidence conservative classification.
+- Evaluating `project.godot` or running tool scripts/plugins during inspection: executes untrusted project code during a read-only phase; rejected — static conservative scanning plus a read-only inventory.
+- Running the recovery-mode project probe in this milestone: requires a trusted-project decision and safe-isolation guarantees that have not been designed yet; deferred deliberately rather than rushed.
+- Caching engine profiles per-installation-path or per-version-string: paths and version strings are not identity; rejected — cache key is the executable SHA-256, with atomic writes, symlink rejection, and a 32-entry bound.
+- Lowering or user-configurable probe limits: unbounded output/time surfaces; rejected — limits are fixed and documented, provider input cannot raise them, and user config cannot disable them.

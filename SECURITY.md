@@ -11,7 +11,7 @@ Solaris will eventually run development commands, tests, formatters, package man
 - The **user is trusted** but may misconfigure Solaris; defaults are conservative.
 - The **host machine outside the configured workspace is sensitive** — credentials, SSH keys, browser profiles, and user documents must not be reachable from sandboxed processes.
 
-The current implementation provides provider-accessible read-only inspection, approval-gated workspace mutations, and approval-gated sandboxed command execution; the security boundary described here governs all of them.
+The current implementation provides provider-accessible read-only inspection, approval-gated workspace mutations, approval-gated sandboxed command execution, and project-independent offline Godot engine probes; the security boundary described here governs all of them.
 
 ## Sandbox versus approvals
 
@@ -144,6 +144,23 @@ All terminal output — provider responses, repository filenames, Git output, ch
 - Commands are serialized with the same in-process lock as approved file mutations: a mutation cannot begin while a command runs and vice versa.
 - Git structured status is recorded before and after execution as a verification signal. A detected workspace change marks the result `workspace_violation`, disables further command execution for the session, and instructs the user to inspect the workspace; Solaris never auto-repairs. The OS sandbox remains the security boundary; Git status is a signal, not the boundary.
 - Bounded in-memory session metadata is kept for completed commands (command id, runner, safe summary, digest, start time, duration, exit code, outcome, truncation flags); full output is never persisted, and `/commands` shows the latest five records.
+
+## Godot probe security model
+
+Godot engine probing reuses the existing sandbox boundary through the internal `godot-probe-offline` profile:
+
+- **Fixed arguments only.** The probe adapter invokes exactly `<godot> --version`, `<godot> --help`, and `<godot> --dump-extension-api` — never `--path`/`--upwards`/`--import`/`--scene`/`--script`/`--editor`. There is no project path, no project working directory, and no provider-supplied argument; the provider can never select an executable or pass arguments. The architecture check rejects project-affecting Godot arguments structurally in probe invocation code.
+- **Project independence.** Probes run without a project and are identical for every workspace; nothing project-derived influences the probe command. Project files are untrusted data and can never select an executable.
+- **Private probe directories.** Probes run from a Solaris-private run directory under `~/.solaris/runs` with sandbox-private home/temp. The API dump lands there and is deleted after parsing; symlinked output is rejected; exactly `extension_api.json` is expected and unexpected files are ignored. Cancellation kills the Godot process tree, removes run directories and partial dumps, and caches nothing.
+- **Network denied.** The `godot-probe-offline` profile denies outbound network; probes cannot reach the internet.
+- **Credential absence.** Probe environments carry no provider or project credentials; the child environment comes from the same allowlisted builder as command execution.
+- **Workspace containment.** Probe working directories are Solaris-owned run directories, never the workspace; the workspace is not writable during probing, and executables inside the project workspace are rejected by default.
+- **Fail closed.** If the sandbox backend is unavailable or cannot enforce the profile, the probe does not run — no host-process fallback, no weakened profile, no unrestricted backend.
+- **Untrusted project files.** `project.godot`, plugin descriptors, and scanned sources are parsed statically, bounded, and never evaluated or executed; they can never influence probe invocation.
+- **Provider-visible safe subset.** Provider-visible results use installation ids and executable fingerprints. Absolute paths, raw help output, and complete API dumps never enter provider context; only bounded normalized metadata is kept, and the complete dump is never persisted.
+- **Cache privacy.** The engine-profile cache at `~/.solaris/godot/engine-profiles` stores only bounded normalized data — never credentials, complete dumps, project files, or absolute project paths. Writes are atomic, symlinked cache paths are rejected, entries are keyed by executable SHA-256 and invalidated by any executable change, the cache is bounded to 32 entries, is user-level only, and no provider tool can delete or modify it.
+- **No approval for fixed probes.** `godot.inspect` is `allow` in every built-in policy and requires no one-time approval because probes are fixed, project-independent, read-only, and offline; explicit executable paths are user configuration, not provider input.
+- **The CLI never runs Godot.** Only the Godot probe adapter invokes the engine, always through the sandbox backend; providers never run Godot.
 
 ## Why arbitrary command execution remains deferred
 

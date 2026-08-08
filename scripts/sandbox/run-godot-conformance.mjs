@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtemp, readdir, stat, utimes } from "node:fs/promises";
+import { mkdtemp, readdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -76,7 +76,9 @@ async function main() {
     }
     const validated = await validateExecutable({ path: godotPath, workspaceRoot });
     if (!validated.ok) {
-      console.log(`GODOT CONFORMANCE: FAILED - the test executable did not validate: ${validated.error}`);
+      console.log(
+        `GODOT CONFORMANCE: FAILED - the test executable did not validate: ${validated.error}`,
+      );
       return 1;
     }
     const installation = installationFromIdentity(
@@ -88,15 +90,24 @@ async function main() {
     );
 
     const versionProbe = await runner.probeVersion(installation);
-    record("version", versionProbe.status === "success", `--version: ${versionProbe.status === "success" ? versionProbe.version.raw : versionProbe.message}`);
+    record(
+      "version",
+      versionProbe.status === "success",
+      `--version: ${versionProbe.status === "success" ? versionProbe.version.raw : versionProbe.message}`,
+    );
 
     const helpProbe = await runner.probeHelp(installation);
-    record("help", helpProbe.status === "success" || helpProbe.status === "degraded", `--help: ${helpProbe.status}`);
+    record(
+      "help",
+      helpProbe.status === "success" || helpProbe.status === "degraded",
+      `--help: ${helpProbe.status}`,
+    );
 
     const versionRequests = recorded.filter((request) => request.arguments.includes("--version"));
     record(
       "no-project-args",
-      versionRequests.length > 0 && versionRequests.every((request) => request.arguments.length === 1),
+      versionRequests.length > 0 &&
+        versionRequests.every((request) => request.arguments.length === 1),
       "probes pass exactly one fixed argument and never a project path",
     );
     record(
@@ -105,11 +116,16 @@ async function main() {
       "the sandbox backend spawns with stdin closed (enforced by the backend contract)",
     );
 
-    const apiProbe = helpProbe.status !== "failed" && helpProbe.capabilities.extensionApiDump
-      ? await runner.dumpExtensionApi(installation)
-      : { status: "skipped", message: "--dump-extension-api is not advertised" };
+    const apiProbe =
+      helpProbe.status !== "failed" && helpProbe.capabilities.extensionApiDump
+        ? await runner.dumpExtensionApi(installation)
+        : { status: "skipped", message: "--dump-extension-api is not advertised" };
     if (apiProbe.status === "success") {
-      record("api-dump", true, `extension_api.json parsed (${apiProbe.summary.classCount} classes, hash ${apiProbe.summary.sha256.slice(0, 8)}...)`);
+      record(
+        "api-dump",
+        true,
+        `extension_api.json parsed (${apiProbe.summary.classCount} classes, hash ${apiProbe.summary.sha256.slice(0, 8)}...)`,
+      );
     } else if (apiProbe.status === "skipped") {
       record("api-dump", true, apiProbe.message);
     } else {
@@ -117,14 +133,27 @@ async function main() {
     }
 
     const workspaceEntries = await readdir(workspaceRoot);
-    record("no-workspace-api-dump", !workspaceEntries.includes("extension_api.json"), "extension_api.json does not appear in the workspace");
-    record("no-dot-godot", !workspaceEntries.includes(".godot"), "no .godot/ directory appears in the workspace");
+    record(
+      "no-workspace-api-dump",
+      !workspaceEntries.includes("extension_api.json"),
+      "extension_api.json does not appear in the workspace",
+    );
+    record(
+      "no-dot-godot",
+      !workspaceEntries.includes(".godot"),
+      "no .godot/ directory appears in the workspace",
+    );
 
-    const credentialPattern = /_API_KEY$|_TOKEN$|_SECRET$|_PASSWORD$|^GITHUB_TOKEN$|^NPM_TOKEN$|^NODE_OPTIONS$/i;
+    const credentialPattern =
+      /_API_KEY$|_TOKEN$|_SECRET$|_PASSWORD$|^GITHUB_TOKEN$|^NPM_TOKEN$|^NODE_OPTIONS$/i;
     const credentialsAbsent = recorded.every((request) =>
       Object.keys(request.environment).every((name) => !credentialPattern.test(name)),
     );
-    record("credentials-absent", credentialsAbsent, "provider credentials are absent from probe environments");
+    record(
+      "credentials-absent",
+      credentialsAbsent,
+      "provider credentials are absent from probe environments",
+    );
 
     record(
       "network-denied",
@@ -132,9 +161,10 @@ async function main() {
       `backend reports network restriction: ${status.capabilities.networkRestriction}`,
     );
 
-    const homePrivate = recorded.every(
-      (request) =>
-        (request.environment["HOME"] ?? request.environment["USERPROFILE"] ?? "").startsWith(runsRoot),
+    const homePrivate = recorded.every((request) =>
+      (request.environment["HOME"] ?? request.environment["USERPROFILE"] ?? "").startsWith(
+        runsRoot,
+      ),
     );
     record("private-home", homePrivate, "probe home points into the private run directory");
 
@@ -146,8 +176,14 @@ async function main() {
       environment: parentEnvironment,
       timeoutMs: 250,
     };
-    const timeoutResult = await recordingBackend.execute(timeoutRequest).catch((error) => ({ status: "failed", message: error.message }));
-    record("timeout", timeoutResult.status === "timed-out", `a bounded probe times out and terminates: ${timeoutResult.status}`);
+    const timeoutResult = await recordingBackend
+      .execute(timeoutRequest)
+      .catch((error) => ({ status: "failed", message: error.message }));
+    record(
+      "timeout",
+      timeoutResult.status === "timed-out",
+      `a bounded probe times out and terminates: ${timeoutResult.status}`,
+    );
 
     const controller = new AbortController();
     const cancelledProbe = runner.dumpExtensionApi(installation, controller.signal);
@@ -169,7 +205,11 @@ async function main() {
     record("probe-cleanup", runDirectoriesLeft.length === 0, "probe run directories are cleaned");
 
     const originalTime = validated.identity.modifiedAtMs;
-    await utimes(installation.canonicalPath, new Date(originalTime + 5000), new Date(originalTime + 5000));
+    await utimes(
+      installation.canonicalPath,
+      new Date(originalTime + 5000),
+      new Date(originalTime + 5000),
+    );
     const identityProbe = await runner.probeVersion(installation);
     record(
       "identity-invalidation",
@@ -179,9 +219,7 @@ async function main() {
     await utimes(installation.canonicalPath, new Date(originalTime), new Date(originalTime));
 
     const failed = results.filter((result) => !result.ok).length;
-    console.log(
-      `Result: ${results.length - failed} passed, ${failed} failed, 0 skipped.`,
-    );
+    console.log(`Result: ${results.length - failed} passed, ${failed} failed, 0 skipped.`);
     return failed > 0 ? 1 : 0;
   } finally {
     await backend.close().catch(() => {});
