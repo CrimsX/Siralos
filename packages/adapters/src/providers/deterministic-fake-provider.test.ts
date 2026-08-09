@@ -1191,3 +1191,225 @@ describe("deterministic fake provider godot scenarios", () => {
     expect(textOf(events)).toContain("Godot inspection tools are unavailable");
   });
 });
+
+describe("deterministic fake provider Godot API and diagnostics scenarios", () => {
+  const API_SEARCH_TOOL: ToolDefinition = {
+    name: "godot.api_search",
+    description: "search",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    },
+  };
+  const CHECK_TOOL: ToolDefinition = {
+    name: "godot.check_script",
+    description: "check",
+    inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  };
+
+  it("requests godot.api_search for `search godot api`", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "search godot api" }],
+      tools: [API_SEARCH_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.api_search",
+      input: { query: "Node owner" },
+    });
+  });
+
+  it("passes the query text after `search godot api`", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "search godot api CharacterBody2D move_and_slide" },
+      ],
+      tools: [API_SEARCH_TOOL],
+    });
+    const call = toolCallEvent(events);
+    if (call?.type === "tool_call") {
+      expect(call.input).toEqual({ query: "CharacterBody2D move_and_slide" });
+    } else {
+      expect.fail("expected a tool_call event");
+    }
+  });
+
+  it("summarizes API search results with the exact engine version", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "search godot api" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.api_search",
+          input: { query: "Node owner" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.api_search",
+          result: {
+            status: "success",
+            output: {
+              engineVersion: "4.7.1.stable.official",
+              results: [
+                {
+                  symbol: "class:Node/property:owner",
+                  kind: "property",
+                  name: "owner",
+                  owner: "Node",
+                  summary: "The owner of this node.",
+                  rank: "exact",
+                  apiType: "native",
+                },
+              ],
+              truncated: false,
+            },
+            summary: "1 result",
+          },
+        },
+      ],
+      tools: [API_SEARCH_TOOL],
+    });
+    const text = textOf(events);
+    expect(text).toContain("1 API result");
+    expect(text).toContain("4.7.1.stable.official");
+    expect(text).toContain("Node.owner");
+  });
+
+  it("reports an unavailable API search truthfully", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "search godot api" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.api_search",
+          input: { query: "Node owner" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.api_search",
+          result: {
+            status: "unavailable",
+            message: "No Godot API knowledge is loaded.",
+          },
+        },
+      ],
+      tools: [API_SEARCH_TOOL],
+    });
+    expect(textOf(events)).toContain("cannot search the Godot API");
+  });
+
+  it("requests godot.check_script for `check godot script`", async () => {
+    const { events } = await collect({
+      messages: [{ type: "user_message", content: "check godot script" }],
+      tools: [CHECK_TOOL],
+    });
+    expect(toolCallEvent(events)).toEqual({
+      type: "tool_call",
+      callId: "call-godot",
+      toolName: "godot.check_script",
+      input: { path: "src/player/player.gd" },
+    });
+  });
+
+  it("summarizes a parser-error check result as a diagnostic result, not an infrastructure failure", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "check godot script" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.check_script",
+          input: { path: "src/player/player.gd" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.check_script",
+          result: {
+            status: "success",
+            output: {
+              engineVersion: "4.7.1.stable.official",
+              checked: true,
+              valid: false,
+              scriptsChecked: 1,
+              validCount: 0,
+              invalidCount: 1,
+              diagnostics: [
+                {
+                  source: "godot-check-only",
+                  severity: "error",
+                  path: "src/player/player.gd",
+                  line: 34,
+                  column: 17,
+                  code: "undeclared-identifier",
+                  message: 'Identifier "velocityy" not declared in the current scope.',
+                  rawCategory: "error",
+                },
+              ],
+              truncated: false,
+            },
+            summary: "invalid",
+          },
+        },
+      ],
+      tools: [CHECK_TOOL],
+    });
+    const text = textOf(events);
+    expect(text).toContain("--check-only");
+    expect(text).toContain("1 invalid script");
+    expect(text).toContain("1 normalized diagnostic");
+    expect(text).toContain("No game code was executed.");
+    expect(text).not.toContain("could not run");
+  });
+
+  it("summarizes a denied check without claiming execution", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "check godot script" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.check_script",
+          input: { path: "src/player/player.gd" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.check_script",
+          result: { status: "denied", message: "not approved" },
+        },
+      ],
+      tools: [CHECK_TOOL],
+    });
+    expect(textOf(events)).toContain("was not approved");
+    expect(textOf(events)).not.toContain("checked");
+  });
+
+  it("summarizes an unavailable check truthfully", async () => {
+    const { events } = await collect({
+      messages: [
+        { type: "user_message", content: "check godot script" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-godot",
+          toolName: "godot.check_script",
+          input: { path: "src/player/player.gd" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-godot",
+          toolName: "godot.check_script",
+          result: { status: "unavailable", message: "execution gate refuses" },
+        },
+      ],
+      tools: [CHECK_TOOL],
+    });
+    expect(textOf(events)).toContain("could not run the GDScript check");
+  });
+});

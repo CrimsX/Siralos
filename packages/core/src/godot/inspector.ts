@@ -9,6 +9,8 @@ import type {
 import type { GodotInstallationSource } from "./installations.js";
 import type { GodotProjectProfile } from "./project.js";
 import type { GodotRecoveryProbeSupport } from "./probe.js";
+import type { GodotKnowledgeSupport } from "./knowledge.js";
+import type { GodotDiagnosticsSupport } from "./gdscript.js";
 import type { GodotReleaseChannel, GodotVersion } from "./version.js";
 
 /**
@@ -98,6 +100,19 @@ export interface GodotDoctorReport {
    * the disposable mirror, and the cleanup to the approved bytes.
    */
   readonly recoveryProbe: GodotRecoveryProbeSupport;
+  /**
+   * Truthful exact-engine API knowledge capability: generation is reported
+   * unavailable unless the platform can mechanically bind the engine launch
+   * to the verified executable identity.
+   */
+  readonly knowledge: GodotKnowledgeSupport;
+  /**
+   * Truthful GDScript check-only diagnostic capability: execution is
+   * reported unavailable unless the platform can mechanically bind the
+   * engine launch, the disposable mirror, and the cleanup to the approved
+   * bytes.
+   */
+  readonly diagnostics: GodotDiagnosticsSupport;
   /** Bounded per-probe status lines. */
   readonly probes: readonly {
     readonly installationId: string;

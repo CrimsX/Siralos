@@ -3,7 +3,9 @@ import type {
   CheckpointStore,
   CommandRunnerRegistry,
   GitInspector,
+  GodotDiagnostics,
   GodotInspector,
+  GodotKnowledge,
   GodotProjectProbe,
   GodotProjectProbeStatus,
   RegisteredToolInfo,
@@ -29,6 +31,10 @@ import {
   formatGitStatus,
   formatGodotDoctor,
   formatGodotInstallations,
+  formatGodotDiagnosticPreview,
+  formatGodotDiagnosticsResult,
+  formatGodotKnowledgeStatus,
+  formatGodotApiSearchResult,
   formatGodotProbePreview,
   formatGodotProbeResult,
   formatGodotProbeStatus,
@@ -67,6 +73,8 @@ export interface SessionInfo {
   readonly git: GitInspector;
   readonly godot: GodotInspector;
   readonly godotProbe: GodotProjectProbe;
+  readonly knowledge: GodotKnowledge;
+  readonly diagnostics: GodotDiagnostics;
   readonly reviewer: ApprovalReviewer;
   readonly checkpoints: CheckpointStore;
   readonly undo: UndoService;
@@ -188,6 +196,21 @@ export async function runInteractiveSession(
           case "godot-probe-status":
             io.write(formatGodotProbeStatus(sessionInfo.godotProbe.status()));
             break;
+          case "godot-knowledge":
+            io.write(formatGodotKnowledgeStatus(sessionInfo.knowledge.status()));
+            break;
+          case "godot-knowledge-refresh":
+            await runGodotKnowledgeRefreshCommand(io, sessionInfo, controls);
+            break;
+          case "godot-api":
+            await runGodotApiCommand(io, sessionInfo, parsed.args);
+            break;
+          case "gdscript-check":
+            await runGDScriptCheckCommand(io, sessionInfo, controls, parsed.args);
+            break;
+          case "gdscript-diagnostics":
+            await runGDScriptDiagnosticsCommand(io, sessionInfo, controls);
+            break;
           case "cancel":
             io.write(formatNoActiveCommand());
             break;
@@ -284,7 +307,18 @@ async function buildStatusView(
     godotCompatibility: godotCompatibility?.status ?? null,
     godotWarningCount: godotProject?.warnings.length ?? 0,
     projectProbe: describeProjectProbe(sessionInfo.godotProbe.status()),
+    knowledge: describeKnowledge(sessionInfo.knowledge.status()),
   };
+}
+
+function describeKnowledge(status: {
+  readonly state: string;
+  readonly reason: string | null;
+}): string {
+  if (status.state === "ready") {
+    return "ready (exact engine API docs)";
+  }
+  return "unavailable";
 }
 
 function describeProjectProbe(status: {
@@ -455,6 +489,189 @@ function describeGodotFailure(error: unknown): string {
     return error.message;
   }
   return describeError(error);
+}
+
+async function runGodotKnowledgeRefreshCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+): Promise<void> {
+  const controller = controls.beginPrompt();
+  try {
+    io.write("Checking exact-engine API knowledge capability\u2026\n");
+    const support = await sessionInfo.knowledge.support();
+    if (support.state !== "available") {
+      io.write(
+        formatGodotProbeTerminal(
+          "unavailable",
+          support.reason ??
+            "Exact-engine API knowledge generation is unavailable on this platform.",
+        ),
+      );
+      return;
+    }
+    io.write("Regenerating the exact-engine API knowledge profile\u2026\n");
+    const result = await sessionInfo.knowledge.refresh(controller.signal);
+    if (result.status === "ready") {
+      io.write("Knowledge profile regenerated.\n");
+      io.write(formatGodotKnowledgeStatus(sessionInfo.knowledge.status()));
+      return;
+    }
+    io.write(formatGodotProbeTerminal(result.status, result.message));
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 knowledge refresh cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  } finally {
+    controls.endPrompt();
+  }
+}
+
+async function runGodotApiCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  args: readonly string[],
+): Promise<void> {
+  const query = args.join(" ").trim();
+  if (query.length === 0) {
+    io.write("Usage: /godot-api <query>\n");
+    return;
+  }
+  const result = await sessionInfo.knowledge.search({ query });
+  io.write(formatGodotApiSearchResult(result));
+}
+
+async function runGDScriptCheckCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+  args: readonly string[],
+): Promise<void> {
+  const scriptPath = args.join(" ").trim();
+  if (scriptPath.length === 0) {
+    io.write("Usage: /gdscript-check <relative-path>\n");
+    return;
+  }
+  const controller = controls.beginPrompt();
+  try {
+    io.write("Checking GDScript diagnostic capability\u2026\n");
+    const support = await sessionInfo.diagnostics.support();
+    if (support.state !== "available") {
+      io.write(
+        formatGodotProbeTerminal(
+          "unavailable",
+          support.reason ?? "GDScript diagnostics are unavailable on this platform.",
+        ),
+      );
+      return;
+    }
+    io.write("Preparing the GDScript check\u2026\n");
+    const prepared = await sessionInfo.diagnostics.prepare(
+      { paths: [scriptPath] },
+      controller.signal,
+    );
+    if (prepared.status !== "ready") {
+      io.write(formatGodotProbeTerminal(prepared.status, prepared.message));
+      return;
+    }
+    io.write(formatGodotDiagnosticPreview(prepared.preview));
+    const decision = await sessionInfo.reviewer.review(
+      {
+        id: "gdscript-check",
+        capability: "godot.diagnose",
+        toolName: "godot.check_script",
+        summary: `GDScript check-only diagnostics (${scriptPath})`,
+        preview: prepared.preview,
+        digest: prepared.digest,
+      },
+      controller.signal,
+    );
+    if (decision.type !== "approve_once") {
+      if (decision.type === "cancelled") {
+        io.write("  \u2715 check approval cancelled\n");
+      } else {
+        io.write(`  \u2715 check denied: ${decision.reason ?? "not approved"}\n`);
+      }
+      return;
+    }
+    io.write("  approval approved\n");
+    const result = await sessionInfo.diagnostics.execute(prepared.check, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    io.write(formatGodotDiagnosticsResult(result));
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 check cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  } finally {
+    controls.endPrompt();
+  }
+}
+
+async function runGDScriptDiagnosticsCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+): Promise<void> {
+  const controller = controls.beginPrompt();
+  try {
+    io.write("Checking GDScript diagnostic capability\u2026\n");
+    const support = await sessionInfo.diagnostics.support();
+    if (support.state !== "available") {
+      io.write(
+        formatGodotProbeTerminal(
+          "unavailable",
+          support.reason ?? "GDScript diagnostics are unavailable on this platform.",
+        ),
+      );
+      return;
+    }
+    io.write("Preparing the project-wide GDScript check\u2026\n");
+    const prepared = await sessionInfo.diagnostics.prepare({}, controller.signal);
+    if (prepared.status !== "ready") {
+      io.write(formatGodotProbeTerminal(prepared.status, prepared.message));
+      return;
+    }
+    io.write(formatGodotDiagnosticPreview(prepared.preview));
+    const decision = await sessionInfo.reviewer.review(
+      {
+        id: "gdscript-diagnostics",
+        capability: "godot.diagnose",
+        toolName: "godot.check_project_scripts",
+        summary: `GDScript check-only diagnostics (${prepared.preview.scripts.count} scripts)`,
+        preview: prepared.preview,
+        digest: prepared.digest,
+      },
+      controller.signal,
+    );
+    if (decision.type !== "approve_once") {
+      if (decision.type === "cancelled") {
+        io.write("  \u2715 diagnostics approval cancelled\n");
+      } else {
+        io.write(`  \u2715 diagnostics denied: ${decision.reason ?? "not approved"}\n`);
+      }
+      return;
+    }
+    io.write("  approval approved\n");
+    const result = await sessionInfo.diagnostics.execute(prepared.check, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    io.write(formatGodotDiagnosticsResult(result));
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 diagnostics cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  } finally {
+    controls.endPrompt();
+  }
 }
 
 function describeGitFailure(error: unknown): string {

@@ -146,6 +146,35 @@ export {
 export { createEngineProfileCache } from "./godot/cache/engine-profile-cache.js";
 export { createGodotInspectEngineTool } from "./godot/tools/godot-inspect-engine-tool.js";
 export { createGodotInspectProjectTool } from "./godot/tools/godot-inspect-project-tool.js";
+export { createGodotApiSearchTool } from "./godot/tools/godot-api-search-tool.js";
+export { createGodotApiLookupTool } from "./godot/tools/godot-api-lookup-tool.js";
+export { createGodotCheckScriptTool } from "./godot/tools/godot-check-script-tool.js";
+export { createGodotCheckProjectScriptsTool } from "./godot/tools/godot-check-project-scripts-tool.js";
+export { createGodotKnowledgeCache } from "./godot/knowledge/knowledge-cache.js";
+export { createGodotKnowledgeService } from "./godot/knowledge/godot-knowledge-service.js";
+export { createGodotDiagnosticsService } from "./godot/diagnostics/godot-diagnostics-service.js";
+export {
+  createGodotCheckOnlyRunner,
+  GODOT_CHECK_ONLY_BASE_ARGUMENTS,
+  GODOT_CHECK_ONLY_UNAVAILABLE_MESSAGE,
+  godotCheckOnlyArguments,
+  godotCheckOnlyArgumentTemplate,
+  type GodotCheckOnlyRunRequest,
+  type GodotCheckOnlyRunOutcome,
+} from "./godot/process/godot-check-only-runner.js";
+export {
+  createGodotKnowledgeRunner,
+  GODOT_KNOWLEDGE_BASE_ARGUMENTS,
+  GODOT_KNOWLEDGE_GENERATION_UNAVAILABLE_MESSAGE,
+  godotKnowledgeArguments,
+  type GodotKnowledgeRunRequest,
+  type GodotKnowledgeRunOutcome,
+} from "./godot/process/godot-knowledge-runner.js";
+export {
+  normalizeGodotCheckOutput,
+  type GodotCheckOutputInput,
+  type GodotCheckOutputNormalization,
+} from "./godot/diagnostics/diagnostic-normalizer.js";
 export { readGodotEnvironmentOverrides } from "./environment/godot-overrides.js";
 export {
   resolveGodotSelection,

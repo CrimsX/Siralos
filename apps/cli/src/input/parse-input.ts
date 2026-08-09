@@ -17,6 +17,11 @@ export type SlashCommand =
   | "godot-doctor"
   | "godot-probe"
   | "godot-probe-status"
+  | "godot-knowledge"
+  | "godot-knowledge-refresh"
+  | "godot-api"
+  | "gdscript-check"
+  | "gdscript-diagnostics"
   | "exit";
 
 export type ParsedInput =
@@ -56,6 +61,11 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "godot-doctor",
   "godot-probe",
   "godot-probe-status",
+  "godot-knowledge",
+  "godot-knowledge-refresh",
+  "godot-api",
+  "gdscript-check",
+  "gdscript-diagnostics",
   "exit",
 ];
 

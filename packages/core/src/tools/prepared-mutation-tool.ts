@@ -2,6 +2,7 @@ import type { Capability } from "../security/capability.js";
 import type { ChangePreview } from "../security/change-preview.js";
 import type { PreparedCommandTool } from "../commands/command-tool.js";
 import { isPreparedProbeTool, type PreparedProjectProbeTool } from "./prepared-probe-tool.js";
+import type { PreparedDiagnosticTool } from "./prepared-diagnostic-tool.js";
 import type { Tool, ToolExecutionContext, ToolExecutionResult, ToolDefinition } from "./tool.js";
 
 export type ToolPreparationResult =
@@ -29,7 +30,11 @@ export interface PreparedMutationTool {
 }
 
 export type RegisteredTool =
-  Tool | PreparedMutationTool | PreparedCommandTool | PreparedProjectProbeTool;
+  | Tool
+  | PreparedMutationTool
+  | PreparedCommandTool
+  | PreparedProjectProbeTool
+  | PreparedDiagnosticTool;
 
 const preparedMutationBrand: unique symbol = Symbol("preparedMutationBrand");
 

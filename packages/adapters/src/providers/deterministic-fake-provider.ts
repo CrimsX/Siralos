@@ -83,7 +83,13 @@ function formatGitFinalText(scenario: GitScenario, result: ToolExecutionResult):
   return `Solaris inspected a ${scenario === "diff-working" ? "working" : scenario === "diff-staged" ? "staged" : "HEAD"} diff of ${files.length} file${files.length === 1 ? "" : "s"}.`;
 }
 
-type GodotScenario = "inspect-engine" | "inspect-project" | "probe-project";
+type GodotScenario =
+  | "inspect-engine"
+  | "inspect-project"
+  | "probe-project"
+  | "api-search"
+  | "check-script"
+  | "check-project-scripts";
 
 function findGodotScenario(messages: readonly ConversationItem[]): GodotScenario | null {
   const latestUserPrompt = findLatestUserPrompt(messages);
@@ -102,6 +108,15 @@ function findGodotScenario(messages: readonly ConversationItem[]): GodotScenario
   ) {
     return "probe-project";
   }
+  if (latestUserPrompt.startsWith("search godot api")) {
+    return "api-search";
+  }
+  if (latestUserPrompt === "check godot script") {
+    return "check-script";
+  }
+  if (latestUserPrompt === "check godot project scripts") {
+    return "check-project-scripts";
+  }
   return null;
 }
 
@@ -113,12 +128,41 @@ function godotScenarioTool(scenario: GodotScenario): string {
       return "godot.inspect_project";
     case "probe-project":
       return "godot.probe_project";
+    case "api-search":
+      return "godot.api_search";
+    case "check-script":
+      return "godot.check_script";
+    case "check-project-scripts":
+      return "godot.check_project_scripts";
+  }
+}
+
+function godotScenarioInput(scenario: GodotScenario, prompt: string): unknown {
+  switch (scenario) {
+    case "api-search": {
+      const rest = prompt.slice("search godot api".length).trim();
+      return { query: rest.length > 0 ? rest : "Node owner" };
+    }
+    case "check-script":
+      return { path: "src/player/player.gd" };
+    case "check-project-scripts":
+      return {};
+    case "inspect-engine":
+    case "inspect-project":
+    case "probe-project":
+      return {};
   }
 }
 
 function formatGodotFinalText(scenario: GodotScenario, result: ToolExecutionResult): string {
   if (scenario === "probe-project") {
     return formatProbeFinalText(result);
+  }
+  if (scenario === "check-script" || scenario === "check-project-scripts") {
+    return formatCheckFinalText(result);
+  }
+  if (scenario === "api-search") {
+    return formatApiSearchFinalText(result);
   }
   if (result.status !== "success") {
     return `Solaris could not complete the Godot inspection: ${result.message}`;
@@ -162,7 +206,8 @@ async function* streamGodotScenario(
   const result = findLatestResult(itemsAfterLastUserMessage(request.messages), toolName);
   if (result === undefined) {
     if (isToolAvailable(request.tools, toolName)) {
-      yield { type: "tool_call", callId: "call-godot", toolName, input: {} };
+      const input = godotScenarioInput(scenario, findLatestUserPrompt(request.messages));
+      yield { type: "tool_call", callId: "call-godot", toolName, input };
       await Promise.resolve();
       yield { type: "completed" };
       return;
@@ -181,6 +226,64 @@ async function* streamGodotScenario(
     return;
   }
   yield* streamTextChunks(formatGodotFinalText(scenario, result), signal);
+}
+
+function formatApiSearchFinalText(result: ToolExecutionResult): string {
+  if (result.status !== "success") {
+    if (result.status === "unavailable") {
+      return `Solaris cannot search the Godot API right now: ${result.message}`;
+    }
+    return `Solaris could not search the Godot API: ${result.message}`;
+  }
+  const record = result.output as JsonObject;
+  const results = Array.isArray(record["results"]) ? (record["results"] as readonly unknown[]) : [];
+  const version = typeof record["engineVersion"] === "string" ? record["engineVersion"] : "unknown";
+  const truncated = record["truncated"] === true;
+  const names = results
+    .slice(0, 3)
+    .map((entry) => {
+      const item = entry as JsonObject;
+      const owner = typeof item["owner"] === "string" ? item["owner"] : null;
+      const name = typeof item["name"] === "string" ? item["name"] : "?";
+      return owner === null ? name : `${owner}.${name}`;
+    })
+    .join(", ");
+  const suffix = truncated ? " (results truncated)" : "";
+  return `Solaris found ${results.length} API result${results.length === 1 ? "" : "s"} for the selected Godot ${version}: ${names}.${suffix}`;
+}
+
+function formatCheckFinalText(result: ToolExecutionResult): string {
+  switch (result.status) {
+    case "success": {
+      const record = result.output as JsonObject;
+      const valid = record["valid"] === true;
+      const invalidCount = typeof record["invalidCount"] === "number" ? record["invalidCount"] : 0;
+      const diagnostics = Array.isArray(record["diagnostics"])
+        ? (record["diagnostics"] as readonly unknown[])
+        : [];
+      if (valid) {
+        return "Solaris checked the GDScript with the selected engine's parser (--check-only): it is valid. No game code was executed.";
+      }
+      return `Solaris checked the GDScript with the selected engine's parser (--check-only): it has ${invalidCount} invalid script${invalidCount === 1 ? "" : "s"} and ${diagnostics.length} normalized diagnostic${diagnostics.length === 1 ? "" : "s"}. No game code was executed.`;
+    }
+    case "denied":
+      return `The GDScript check was not approved, so Solaris did not run it.`;
+    case "conflict":
+      return `The project, engine, or script changed after approval, so Solaris did not run the check. Approve the check again.`;
+    case "cancelled":
+      return `The GDScript check was cancelled before completion.`;
+    case "timed_out":
+      return `The GDScript check timed out and the engine process tree was terminated.`;
+    case "unavailable":
+    case "sandbox_denied":
+    case "sandbox_unavailable":
+      return `Solaris could not run the GDScript check: ${result.message}`;
+    case "invalid_input":
+    case "failed":
+    case "workspace_violation":
+    case "output_limit":
+      return `Solaris could not complete the GDScript check: ${result.message}`;
+  }
 }
 
 function formatProbeFinalText(result: ToolExecutionResult): string {

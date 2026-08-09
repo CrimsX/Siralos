@@ -19,10 +19,14 @@ import {
   type GitStatusResult,
   type GitWorkspaceStatus,
   type GodotCompatibilityAssessment,
+  type GodotDiagnostics,
   type GodotDiscoveryResult,
   type GodotDoctorReport,
+  type GodotDiagnosticPreview,
   type GodotInspector,
+  type GodotKnowledge,
   type GodotProbePreview,
+  type PreparedGDScriptCheck,
   type GodotProjectProbe,
   type GodotProjectProfile,
   type GodotSelectedInstallation,
@@ -39,6 +43,7 @@ import {
   type ToolExecutionResult,
   type UndoOutcome,
   type UndoService,
+  type ApprovalReviewer,
 } from "@solaris/core";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
@@ -91,6 +96,8 @@ async function createComposedSession(lines: readonly string[]) {
     git,
     godot,
     godotProbe,
+    knowledge,
+    diagnostics,
     checkpoints,
     undo,
     runners,
@@ -103,6 +110,8 @@ async function createComposedSession(lines: readonly string[]) {
     git,
     godot,
     godotProbe,
+    knowledge,
+    diagnostics,
     reviewer: {
       review(): Promise<{ type: "deny"; reason: string }> {
         return Promise.resolve({ type: "deny", reason: "not configured" });
@@ -188,6 +197,8 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
         return Promise.resolve({ type: "deny", reason: "stub reviewer denies" });
       },
     },
+    knowledge: createStubKnowledge(),
+    diagnostics: createStubDiagnostics(),
     checkpoints: createStubCheckpointStore(),
     undo: createStubUndo(),
     runners: createCommandRunnerRegistry([]),
@@ -205,6 +216,79 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       },
     }),
     ...overrides,
+  };
+}
+
+function createStubKnowledge(): GodotKnowledge {
+  return {
+    support(): Promise<{ state: "unavailable"; reason: string; platform: string }> {
+      return Promise.resolve({
+        state: "unavailable",
+        reason: "stub: API knowledge generation is unavailable",
+        platform: "linux",
+      });
+    },
+    refresh(): Promise<{ status: "unavailable"; message: string }> {
+      return Promise.resolve({
+        status: "unavailable",
+        message: "stub: API knowledge generation is unavailable",
+      });
+    },
+    search(): Promise<{ status: "unavailable"; message: string }> {
+      return Promise.resolve({
+        status: "unavailable",
+        message: "stub: no knowledge base loaded",
+      });
+    },
+    lookup(): Promise<{ status: "not_found"; message: string }> {
+      return Promise.resolve({ status: "not_found", message: "stub: not found" });
+    },
+    status() {
+      return {
+        state: "unavailable" as const,
+        reason: "stub: API knowledge generation is unavailable",
+        platform: "linux",
+        profile: null,
+        cacheEnabled: false as const,
+        schemaVersion: 1,
+        manualChannel: null,
+      };
+    },
+  };
+}
+
+function createStubDiagnostics(): GodotDiagnostics {
+  return {
+    support(): Promise<{ state: "unavailable"; reason: string; platform: string }> {
+      return Promise.resolve({
+        state: "unavailable",
+        reason: "stub: GDScript diagnostics are unavailable",
+        platform: "linux",
+      });
+    },
+    prepare(): Promise<{ status: "unavailable"; message: string }> {
+      return Promise.resolve({
+        status: "unavailable",
+        message: "stub: GDScript diagnostics are unavailable",
+      });
+    },
+    execute(): Promise<{ status: "unavailable"; message: string }> {
+      return Promise.resolve({
+        status: "unavailable",
+        message: "stub: GDScript diagnostics are unavailable",
+      });
+    },
+    status() {
+      return {
+        state: "untrusted" as const,
+        lastResult: null,
+        lastManifestDigest: null,
+        lastEngineVersion: null,
+      };
+    },
+    disposeAll() {
+      // stub: nothing to dispose.
+    },
   };
 }
 
@@ -264,6 +348,16 @@ function createStubGodotInspector(): GodotInspector {
         },
         degradedCapabilities: [],
         recoveryProbe: {
+          state: "unavailable",
+          reason: "stub: no identity-bound launch primitive",
+          platform: "linux",
+        },
+        knowledge: {
+          state: "unavailable",
+          reason: "stub: no identity-bound launch primitive",
+          platform: "linux",
+        },
+        diagnostics: {
           state: "unavailable",
           reason: "stub: no identity-bound launch primitive",
           platform: "linux",
@@ -459,7 +553,7 @@ describe("runInteractiveSession tool activity", () => {
     expect(io.text).toContain("Workspace:");
     // git.status and git.diff are always registered; the adapter gates
     // availability (unavailable backends never execute Git).
-    expect(io.text).toContain("Tools: 12");
+    expect(io.text).toContain("Tools: 16");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
@@ -1310,3 +1404,141 @@ class AbortTriggeringIO extends ScriptedIO {
     return super.ask(prompt);
   }
 }
+
+describe("runInteractiveSession Godot knowledge and diagnostics commands", () => {
+  it("renders /godot-knowledge with a truthful unavailable status", async () => {
+    const io = new ScriptedIO(["/godot-knowledge", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Godot API knowledge");
+    expect(io.text).toContain("Knowledge status: unavailable");
+    expect(io.text).toContain("Manual docs:         not locally synchronized");
+  });
+
+  it("renders /godot-api with an unavailable result when no knowledge base exists", async () => {
+    const io = new ScriptedIO(["/godot-api Node owner", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("API search unavailable");
+  });
+
+  it("requires a query for /godot-api", async () => {
+    const io = new ScriptedIO(["/godot-api", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Usage: /godot-api <query>");
+  });
+
+  it("refuses /godot-knowledge-refresh before any approval when generation is unavailable", async () => {
+    const io = new ScriptedIO(["/godot-knowledge-refresh", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("unavailable");
+    expect(io.text).not.toContain("approval approved");
+    expect(io.text).not.toContain("Knowledge profile regenerated.");
+  });
+
+  it("refuses /gdscript-check before any approval when execution is unavailable", async () => {
+    const io = new ScriptedIO(["/gdscript-check src/player/player.gd", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("unavailable");
+    expect(io.text).not.toContain("approval approved");
+  });
+
+  it("requires a script path for /gdscript-check", async () => {
+    const io = new ScriptedIO(["/gdscript-check", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Usage: /gdscript-check <relative-path>");
+  });
+
+  it("refuses /gdscript-diagnostics before any approval when execution is unavailable", async () => {
+    const io = new ScriptedIO(["/gdscript-diagnostics", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("unavailable");
+    expect(io.text).not.toContain("approval approved");
+  });
+
+  it("reports knowledge readiness in /status", async () => {
+    const io = new ScriptedIO(["/status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Knowledge: unavailable");
+  });
+
+  it("runs the full approved /gdscript-check flow when execution is available", async () => {
+    const io = new ScriptedIO(["/gdscript-check src/player/player.gd", "/exit"]);
+    const readyDiagnostics: GodotDiagnostics = {
+      support(): Promise<{ state: "available"; reason: null; platform: string }> {
+        return Promise.resolve({ state: "available", reason: null, platform: "linux" });
+      },
+      prepare(): Promise<{
+        status: "ready";
+        check: PreparedGDScriptCheck;
+        preview: GodotDiagnosticPreview;
+        digest: string;
+      }> {
+        return Promise.resolve({
+          status: "ready",
+          check: {} as PreparedGDScriptCheck,
+          preview: {
+            projectName: "Fixture",
+            engineVersion: "4.7.1.stable.official",
+            installationId: "test-install",
+            engineEdition: "standard",
+            support: "compatible-untested",
+            compatibility: "compatible",
+            scripts: { count: 1, paths: ["src/player/player.gd"], totalBytes: 64 },
+            operation: "parse-only",
+            isolation: {
+              sourceWorkspace: "not-used-as-project",
+              disposableMirror: true,
+              checkOnly: true,
+              headless: true,
+              sceneExecution: "disabled",
+              gameExecution: "disabled",
+              network: "denied",
+              environment: "minimal",
+              stdin: "closed",
+            },
+            manifestDigest: "a".repeat(64),
+          },
+          digest: "b".repeat(64),
+        });
+      },
+      execute(): Promise<{ status: "unavailable"; message: string }> {
+        return Promise.resolve({
+          status: "unavailable",
+          message: "stub: execution gate refuses",
+        });
+      },
+      status() {
+        return {
+          state: "untrusted" as const,
+          lastResult: null,
+          lastManifestDigest: null,
+          lastEngineVersion: null,
+        };
+      },
+      disposeAll() {
+        // stub
+      },
+    };
+    const reviewer: ApprovalReviewer = {
+      review(): Promise<{ type: "approve_once" }> {
+        return Promise.resolve({ type: "approve_once" });
+      },
+    };
+    const sessionInfo: SessionInfo = buildSessionInfo({
+      diagnostics: readyDiagnostics,
+      reviewer,
+    });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("GDScript diagnostic probe");
+    expect(io.text).toContain("Parse GDScript only (--check-only)");
+    expect(io.text).toContain("approval approved");
+    expect(io.text).toContain("GDScript diagnostics unavailable");
+  });
+});

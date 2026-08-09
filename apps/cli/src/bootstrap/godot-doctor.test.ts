@@ -70,6 +70,16 @@ function report(overrides: Partial<GodotDoctorReport> = {}): GodotDoctorReport {
       reason: "no identity-bound launch primitive",
       platform: "linux",
     },
+    knowledge: {
+      state: "unavailable",
+      reason: "no identity-bound launch primitive",
+      platform: "linux",
+    },
+    diagnostics: {
+      state: "unavailable",
+      reason: "no identity-bound launch primitive",
+      platform: "linux",
+    },
     ...overrides,
   };
 }

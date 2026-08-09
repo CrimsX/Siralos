@@ -9,8 +9,12 @@ import type {
   GitStatusResult,
   GitWorkspaceStatus,
   GodotCompatibilityAssessment,
+  GodotDiagnosticPreview,
   GodotDiscoveryResult,
   GodotDoctorReport,
+  GodotKnowledgeQueryResult,
+  GodotKnowledgeStatus,
+  GodotProjectCheckResult,
   GodotProjectProfile,
   GodotProjectProbeStatus,
   GodotProbePreview,
@@ -63,6 +67,11 @@ export function formatHelp(): string {
   /godot-doctor      Run bounded Godot diagnostics
   /godot-probe       Prepare one recovery-mode Godot project probe (approval required; reports unavailable when the platform cannot bind execution)
   /godot-probe-status  Show the recovery probe capability and last outcome
+  /godot-knowledge   Show the exact-engine API knowledge status
+  /godot-knowledge-refresh  Regenerate the exact-engine API knowledge profile (reports unavailable when the platform cannot bind execution)
+  /godot-api <query>  Search the exact engine's API documentation locally
+  /gdscript-check <relative-path>  Check one .gd script with --check-only (approval required)
+  /gdscript-diagnostics  Check the project's .gd scripts sequentially with --check-only (approval required)
   /exit              Close Solaris
 `;
 }
@@ -89,6 +98,7 @@ export interface StatusView {
   readonly godotCompatibility: string | null;
   readonly godotWarningCount: number;
   readonly projectProbe: string;
+  readonly knowledge: string;
 }
 
 export function formatStatus(view: StatusView): string {
@@ -117,6 +127,7 @@ Command profile: ${view.commandProfile}
 Godot: ${view.godotSelectedInstallation === null ? "no installation selected" : view.godotSelectedInstallation}${view.godotVersion === null ? "" : ` (${view.godotVersion})`}
 Godot project: ${view.godotProjectDetected ? "detected" : "none"}${view.godotCompatibility === null ? "" : `, compatibility: ${view.godotCompatibility}`}${view.godotWarningCount > 0 ? `, warnings: ${view.godotWarningCount}` : ""}
 Recovery probe: ${view.projectProbe}
+Knowledge: ${view.knowledge}
 `;
 }
 
@@ -248,6 +259,9 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   if (request.capability === "godot.probe_project") {
     return formatGodotProbeApprovalPrompt(request);
   }
+  if (request.capability === "godot.diagnose") {
+    return formatGodotDiagnosticApprovalPrompt(request);
+  }
   const file = request.preview.files[0];
   const lines = [
     "Approval required",
@@ -314,6 +328,196 @@ function formatGodotProbeApprovalPrompt(
     "",
     `Approval is one-time and binds to project risk manifest ${request.digest.slice(0, 8)}.`,
   ];
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotDiagnosticPreview(preview: GodotDiagnosticPreview): string {
+  const scripts = preview.scripts;
+  const scope =
+    scripts.paths !== null && scripts.paths.length > 0
+      ? scripts.paths.map((entry) => `  ${sanitizeForDisplay(entry)}`).join("\n")
+      : `  ${scripts.count} project scripts`;
+  const lines = [
+    "GDScript diagnostic probe",
+    "",
+    "Engine:",
+    `  ${preview.engineVersion}`,
+    `  ${preview.engineEdition} edition`,
+    `  Solaris support: ${preview.support}`,
+    `  Static compatibility: ${preview.compatibility}`,
+    "",
+    "Project:",
+    `  ${preview.projectName ?? "(unnamed)"}`,
+    "",
+    "Scripts:",
+    scope,
+    `  ${formatBytes(scripts.totalBytes)} total`,
+    "",
+    "Operation:",
+    "  Parse GDScript only (--check-only)",
+    "",
+    "Project source:",
+    "  Disposable mirror",
+    "",
+    "Game execution:",
+    "  disabled",
+    "",
+    "Scene execution:",
+    "  disabled",
+    "",
+    "Network:",
+    "  denied",
+    "",
+    "Provider credentials:",
+    "  absent",
+    "",
+    "Project modifications:",
+    "  none",
+    "",
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+function formatGodotDiagnosticApprovalPrompt(
+  request: Extract<ApprovalRequest, { capability: "godot.diagnose" }>,
+): string {
+  const preview = request.preview;
+  const scripts = preview.scripts;
+  const scope =
+    scripts.paths !== null && scripts.paths.length > 0
+      ? scripts.paths.map((entry) => `  ${sanitizeForDisplay(entry)}`).join("\n")
+      : `  ${scripts.count} project scripts`;
+  const lines = [
+    "GDScript diagnostic probe requires approval",
+    "",
+    "Engine:",
+    `  ${preview.engineVersion}`,
+    `  ${preview.engineEdition} edition`,
+    `  Solaris support: ${preview.support}`,
+    `  Static compatibility: ${preview.compatibility}`,
+    "",
+    "Project:",
+    `  ${preview.projectName ?? "(unnamed)"}`,
+    "",
+    "Scripts:",
+    scope,
+    `  ${formatBytes(scripts.totalBytes)} total`,
+    "",
+    "Operation:",
+    "  Parse GDScript only (--check-only)",
+    "",
+    "Isolation:",
+    "  Source workspace     not used as project (never writable)",
+    "  Disposable mirror    yes",
+    "  Game execution       disabled",
+    "  Scene execution      disabled",
+    "  Network              denied",
+    "  Provider credentials absent",
+    "  stdin                closed",
+    "  Mirror deleted       after check",
+    "",
+    `Approval is one-time and binds to plan ${request.digest.slice(0, 8)}.`,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotKnowledgeStatus(status: GodotKnowledgeStatus): string {
+  if (status.state !== "ready" || status.profile === null) {
+    return [
+      "Godot API knowledge",
+      "",
+      `Engine: none selected (${status.platform})`,
+      "Knowledge status: unavailable",
+      "",
+      `Reason: ${sanitizeForDisplay(status.reason ?? "unknown")}`,
+      "",
+      "Documentation channels:",
+      "  Engine API:          exact executable-derived (not generated yet)",
+      "  Manual docs:         not locally synchronized",
+    ].join("\n");
+  }
+  const profile = status.profile;
+  return [
+    "Godot API knowledge",
+    "",
+    `Engine: ${profile.engine.godotVersion}`,
+    `Executable profile: ${profile.engine.executableSha256.slice(0, 16)}`,
+    "Knowledge status: ready",
+    "API documentation: exact engine-generated",
+    `Classes: ${profile.api.classCount} (+${profile.api.builtinClassCount} built-in)`,
+    `Methods/utilities: ${profile.api.utilityFunctionCount} utility functions`,
+    `Enums: ${profile.api.globalEnumCount} global`,
+    `Constants: ${profile.api.globalConstantCount} global`,
+    `Symbols indexed: ${profile.index.symbolCount}`,
+    `Generated: ${profile.api.generatedAt}`,
+    `Manual documentation channel: ${status.manualChannel ?? "unverified"} (not synchronized)`,
+    "",
+    "Documentation channels:",
+    "  Engine API:          exact executable-derived",
+    "  Manual docs:         not locally synchronized",
+  ].join("\n");
+}
+
+export function formatGodotApiSearchResult(result: GodotKnowledgeQueryResult): string {
+  if (result.status !== "ready") {
+    return `API search unavailable: ${sanitizeForDisplay(result.message)}`;
+  }
+  const lines = [
+    `Godot API search (${result.engineVersion})`,
+    "",
+    ...result.results.map((entry) => {
+      const location = entry.owner === null ? entry.name : `${entry.owner}.${entry.name}`;
+      const summary = entry.summary.length > 0 ? ` - ${sanitizeForDisplay(entry.summary)}` : "";
+      return `  ${entry.rank.padEnd(8)} ${entry.kind.padEnd(9)} ${location}${summary}`;
+    }),
+  ];
+  if (result.results.length === 0) {
+    lines.push("  (no results)");
+  } else if (result.truncated) {
+    lines.push("  (results truncated)");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotDiagnosticsResult(result: GodotProjectCheckResult): string {
+  if (result.status !== "checked") {
+    return `GDScript diagnostics unavailable: ${sanitizeForDisplay(result.message)}`;
+  }
+  const lines = [
+    "GDScript diagnostics",
+    "",
+    `Scripts checked: ${result.scriptsChecked}`,
+    `Valid: ${result.validCount}`,
+    `Invalid: ${result.invalidCount}`,
+    "",
+  ];
+  let shown = 0;
+  let currentPath: string | null = null;
+  for (const diagnostic of result.diagnostics) {
+    if (shown >= 25) {
+      lines.push(`  ... ${result.diagnostics.length - shown} more diagnostics`);
+      break;
+    }
+    shown += 1;
+    if (diagnostic.path !== currentPath) {
+      currentPath = diagnostic.path;
+      lines.push(sanitizeForDisplay(diagnostic.path ?? "(unknown file)"));
+    }
+    const location =
+      diagnostic.line === null
+        ? ""
+        : diagnostic.column === null
+          ? `${diagnostic.line}`
+          : `${diagnostic.line}:${diagnostic.column}`;
+    lines.push(
+      `  ${diagnostic.severity.toUpperCase().padEnd(7)} ${location.padEnd(9)} ${sanitizeForDisplay(diagnostic.message)}`,
+    );
+  }
+  if (shown === 0) {
+    lines.push("  (no diagnostics)");
+  } else if (result.truncated) {
+    lines.push("  (diagnostics truncated)");
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -866,9 +1070,17 @@ export function formatGodotDoctor(report: GodotDoctorReport): string {
     `  Cached profiles: ${report.cache.cachedProfileCount}`,
     "",
     `Recovery-mode project probe: ${report.recoveryProbe.state} (${report.recoveryProbe.platform})`,
+    `API knowledge: ${report.knowledge.state} (${report.knowledge.platform})`,
+    `GDScript diagnostics: ${report.diagnostics.state} (${report.diagnostics.platform})`,
   ];
   if (report.recoveryProbe.reason !== null) {
     lines.push(`  ${sanitizeForDisplay(report.recoveryProbe.reason)}`);
+  }
+  if (report.knowledge.reason !== null) {
+    lines.push(`  ${sanitizeForDisplay(report.knowledge.reason)}`);
+  }
+  if (report.diagnostics.reason !== null) {
+    lines.push(`  ${sanitizeForDisplay(report.diagnostics.reason)}`);
   }
   lines.push("");
   lines.push(formatGodotInstallations(discovery).trimEnd());

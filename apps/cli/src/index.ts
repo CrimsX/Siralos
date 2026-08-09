@@ -105,6 +105,8 @@ async function main(): Promise<number> {
     git,
     godot,
     godotProbe,
+    knowledge,
+    diagnostics,
     undo,
     runners,
   } = await createCliApplication({
@@ -120,6 +122,8 @@ async function main(): Promise<number> {
     git,
     godot,
     godotProbe,
+    knowledge,
+    diagnostics,
     reviewer,
     checkpoints,
     undo,
@@ -128,6 +132,7 @@ async function main(): Promise<number> {
   };
   const exitCode = await runInteractiveSession(io, application, sessionInfo, controls, inputQueue);
   godotProbe.disposeAll();
+  diagnostics.disposeAll();
   readline.close();
   stdin.destroy();
   await sandbox.close();

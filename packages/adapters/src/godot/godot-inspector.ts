@@ -2,10 +2,12 @@ import {
   assessGodotCompatibility,
   type GodotApplicationEvent,
   type GodotCompatibilityAssessment,
+  type GodotDiagnosticsSupport,
   type GodotDiscoveryResult,
   type GodotDoctorReport,
   type GodotEngineProfile,
   type GodotInspector,
+  type GodotKnowledgeSupport,
   type GodotProjectProfile,
   type GodotRecoveryProbeSupport,
   type GodotSelectedInstallation,
@@ -40,6 +42,20 @@ export interface GodotInspectorDependencies {
    */
   readonly recoveryProbe?: {
     support(): Promise<GodotRecoveryProbeSupport>;
+  };
+  /**
+   * Exact-engine API knowledge capability probe; when unwired the doctor
+   * reports it unavailable.
+   */
+  readonly knowledge?: {
+    support(): Promise<GodotKnowledgeSupport>;
+  };
+  /**
+   * GDScript check-only diagnostic capability probe; when unwired the
+   * doctor reports it unavailable.
+   */
+  readonly diagnostics?: {
+    support(): Promise<GodotDiagnosticsSupport>;
   };
   readonly onEvent?: (event: GodotApplicationEvent) => void;
 }
@@ -144,6 +160,34 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
         platform: dependencies.platform,
       }));
     }
+    let knowledge: GodotKnowledgeSupport;
+    if (dependencies.knowledge === undefined) {
+      knowledge = {
+        state: "unavailable",
+        reason: "The API knowledge capability is not wired in this composition.",
+        platform: dependencies.platform,
+      };
+    } else {
+      knowledge = await dependencies.knowledge.support().catch(() => ({
+        state: "unavailable" as const,
+        reason: "The API knowledge capability could not be inspected.",
+        platform: dependencies.platform,
+      }));
+    }
+    let diagnostics: GodotDiagnosticsSupport;
+    if (dependencies.diagnostics === undefined) {
+      diagnostics = {
+        state: "unavailable",
+        reason: "The GDScript diagnostic capability is not wired in this composition.",
+        platform: dependencies.platform,
+      };
+    } else {
+      diagnostics = await dependencies.diagnostics.support().catch(() => ({
+        state: "unavailable" as const,
+        reason: "The GDScript diagnostic capability could not be inspected.",
+        platform: dependencies.platform,
+      }));
+    }
     const probes: {
       readonly installationId: string;
       readonly probe: string;
@@ -187,6 +231,8 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
       },
       degradedCapabilities: selectedProfile === null ? [] : selectedProfile.degradedCapabilities,
       recoveryProbe,
+      knowledge,
+      diagnostics,
       probes,
     };
   }
