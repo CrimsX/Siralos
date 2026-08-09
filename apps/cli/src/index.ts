@@ -98,6 +98,8 @@ async function main(): Promise<number> {
     application,
     providerId,
     workspaceRoot,
+    tasks,
+    taskSources,
     tools,
     security,
     sandbox,
@@ -119,6 +121,8 @@ async function main(): Promise<number> {
   stdout.write(sanitizer.push(formatHeader(providerId)) + sanitizer.flush());
   const sessionInfo: SessionInfo = {
     workspaceRoot,
+    tasks,
+    taskSources,
     tools,
     security,
     git,

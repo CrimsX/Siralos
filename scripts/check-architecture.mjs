@@ -143,6 +143,41 @@ function isQualityAdapterModule(packageRelativeFile, file) {
   return packageRelativeFile.startsWith(QUALITY_ADAPTER_DIRECTORY + sep);
 }
 
+/**
+ * Stage 3 milestone 1: the task runtime is host-owned (single-owner state
+ * rule). Core task modules stay provider-, sandbox-, and Godot-free; only
+ * the development bridge may map the existing development workflow events
+ * into the runtime, and provider adapters can never see or mutate the
+ * task runtime surface.
+ */
+const TASK_RUNTIME_DIRECTORY = join("src", "tasks");
+
+/** Task runtime identifiers adapters must never import. */
+const TASK_RUNTIME_BANNED_IDENTIFIERS = new Set([
+  "createTaskRuntime",
+  "TaskRuntime",
+  "TaskHandle",
+  "TaskState",
+  "TaskRuntimeSnapshot",
+  "createTaskRuntimeSnapshot",
+  "createTaskContract",
+  "createDevelopmentTaskFlow",
+  "createDevelopmentTaskContract",
+  "TaskActivityEvent",
+]);
+
+function isCoreTaskModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(TASK_RUNTIME_DIRECTORY + sep);
+}
+
+/** The core module that may bridge the development workflow into tasks. */
+function isDevelopmentTaskBridge(packageRelativeFile) {
+  return (
+    packageRelativeFile === join("src", "tasks", "task-development.ts") ||
+    packageRelativeFile === join("src", "tasks", "task-development.test.ts")
+  );
+}
+
 /** Adapter subtrees the quality/reviewer adapter must never import. */
 const QUALITY_FORBIDDEN_IMPORT_ROOTS = [
   { root: join("src", "tools", "workspace", "mutations"), label: "workspace mutation adapters" },
@@ -1050,6 +1085,22 @@ export function runChecks(root) {
           checkGodotCheckOnlyRunner(packageRelativeFile, file, source, location, analysis, errors);
           checkGodotKnowledgeRunner(packageRelativeFile, file, source, location, analysis, errors);
           checkGodotLSPServerRunner(packageRelativeFile, file, source, location, analysis, errors);
+          if (
+            pkg.name === "@solaris/adapters" &&
+            !isTestSupportFile(file) &&
+            isCoreTaskModule(packageRelativeFile) === false
+          ) {
+            for (const binding of analysis.importedNames) {
+              if (
+                binding.module === "@solaris/core" &&
+                TASK_RUNTIME_BANNED_IDENTIFIERS.has(binding.originalName)
+              ) {
+                errors.push(
+                  `${location}: provider adapters must not import the task runtime surface (${binding.originalName}); TaskState has exactly one authoritative owner — the core TaskRuntime`,
+                );
+              }
+            }
+          }
           for (const imported of analysis.destructiveFsImports) {
             if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
               errors.push(
@@ -1159,6 +1210,28 @@ export function runChecks(root) {
               errors.push(`${location}: core must not import Node module ${specifier}`);
             }
           }
+          if (pkg.name === "@solaris/core" && isCoreTaskModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: task runtime modules must not depend on provider ports; the runtime observes typed host facts only`,
+              );
+            }
+            if (specifier.startsWith("../security/sandbox-")) {
+              errors.push(
+                `${location}: task runtime modules must not depend on sandbox implementations; the runtime snapshots profile identifiers only`,
+              );
+            }
+            if (
+              specifier.startsWith("../godot/") &&
+              specifier !== "../godot/digest.js" &&
+              !isDevelopmentTaskBridge(packageRelativeFile)
+            ) {
+              errors.push(
+                `${location}: task runtime modules must not depend on Godot modules; only the development bridge (task-development.ts) maps workflow events (the generic digest utility is allowed)`,
+              );
+            }
+          }
+
           if (pkg.name === "@solaris/adapters" && specifier === "node:net") {
             const socketApproved =
               packageRelativeFile.startsWith(join("src", "godot", "lsp") + sep) ||

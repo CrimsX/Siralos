@@ -37,6 +37,7 @@ import type {
   SandboxProfile,
   SessionStatus,
   SolarisSecurity,
+  TaskState,
   UndoOutcome,
 } from "@solaris/core";
 import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
@@ -74,6 +75,8 @@ export function formatHelp(): string {
   /diff              Show a bounded Git diff (working, staged, or head)
   /checkpoints       List recorded recovery checkpoints
   /undo              Undo the latest Solaris mutation (or /undo <checkpoint-id>)
+  /task <request>    Start a host-owned ad-hoc task (completion requires host verification)
+  /task-status       Show the current task: phase, contract revision, criteria, steps, progress
   /godot             Show the selected Godot installation and project compatibility
   /godot-installations  Show all discovered Godot installations and selection rationale
   /godot-project     Show the static Godot project profile
@@ -1717,4 +1720,93 @@ export function formatChangeReviewResult(result: ChangeReviewResult): string {
     case "failed":
       return `Independent review failed: ${result.message ?? "unknown failure"}`;
   }
+}
+
+/** Task phase display mark. */
+function taskPhaseMark(phase: TaskState["phase"]): string {
+  switch (phase) {
+    case "prepared":
+    case "working":
+    case "validating":
+    case "reviewing":
+      return "\u25CF";
+    case "blocked":
+      return "\u23F3";
+    case "completed":
+      return "\u2713";
+    case "cancelled":
+      return "\u2715";
+    case "failed":
+      return "\u2717";
+  }
+}
+
+function describeTaskProgress(state: TaskState["progress"]): string {
+  return state.state === "healthy"
+    ? "healthy"
+    : state.state === "degraded"
+      ? `degraded (${state.repeatedActions} repeated actions)`
+      : `stalled (${state.repeatedActions} repeated actions)`;
+}
+
+/**
+ * Host task status projection (Stage 3 milestone 1). The CLI is a
+ * read-only client of the authoritative TaskState: it renders a snapshot
+ * and the completion-gate evaluation, and never mutates task state.
+ */
+export function formatTaskStatus(
+  task: TaskState,
+  completion: { readonly allowed: boolean; readonly missing: readonly string[] },
+): string {
+  const activeStep = task.steps.find((step) => step.status === "active");
+  const pendingSteps = task.steps.filter((step) => step.status !== "completed");
+  const criteriaSatisfied = task.acceptance.filter(
+    (criterion) => criterion.status === "satisfied",
+  ).length;
+  const phaseNote =
+    task.phase === "blocked" && task.terminalReason !== null
+      ? ` \u2014 ${task.terminalReason}`
+      : "";
+  const stepLines =
+    task.steps.length === 0
+      ? ["  (no structured steps)"]
+      : task.steps.map((step) => {
+          const mark =
+            step.status === "completed"
+              ? "\u2713"
+              : step.status === "active"
+                ? "\u25B8"
+                : step.status === "failed"
+                  ? "\u2717"
+                  : step.status === "blocked"
+                    ? "\u23F3"
+                    : "\u00B7";
+          return `  ${mark} ${step.id} ${step.status}${step.failedReason !== null ? ` (${step.failedReason})` : ""}`;
+        });
+  const criterionLines = task.acceptance.map((criterion) => {
+    const mark =
+      criterion.status === "satisfied"
+        ? "\u2713"
+        : criterion.status === "failed"
+          ? "\u2717"
+          : "\u00B7";
+    const by = criterion.verifiedBy === null ? "" : ` [${criterion.verifiedBy}]`;
+    return `  ${mark} ${criterion.criterionId} ${criterion.status}${by}`;
+  });
+  const completionLine = completion.allowed
+    ? "Completion: allowed"
+    : `Completion: NOT allowed (${completion.missing.length} reason${completion.missing.length === 1 ? "" : "s"})`;
+  return `Task ${task.taskId} (contract revision ${task.contractRevision})
+${taskPhaseMark(task.phase)} Phase: ${task.phase}${phaseNote}
+Steps: ${task.steps.length - pendingSteps.length}/${task.steps.length} completed${
+    activeStep === undefined ? "" : ` \u2014 active: ${activeStep.id}`
+  }
+${stepLines.join("\n")}
+Acceptance: ${criteriaSatisfied}/${task.acceptance.length} satisfied
+${criterionLines.join("\n")}
+Validation: ${task.validationStatus}
+Review: ${task.reviewStatus}
+Progress: ${describeTaskProgress(task.progress)} (${task.progress.usefulObservations} useful observations)
+${completionLine}
+`;
 }

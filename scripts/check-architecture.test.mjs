@@ -1104,4 +1104,80 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
+
+  it("rejects task runtime modules importing provider ports", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/tasks/task-runtime.ts"] =
+      'import type { ModelProvider } from "../ports/provider.js";\nexport type X = ModelProvider;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("task runtime modules must not depend on provider ports"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects task runtime modules importing sandbox implementations", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/tasks/task-runtime.ts"] =
+      'import type { SandboxProfile } from "../security/sandbox-profile.js";\nexport type X = SandboxProfile;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("task runtime modules must not depend on sandbox implementations"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects non-bridge task modules importing Godot modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/tasks/task-model.ts"] =
+      'import type { DevelopmentPhase } from "../godot/development/development-model.js";\nexport type X = DevelopmentPhase;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("task runtime modules must not depend on Godot")),
+    ).toBe(true);
+  });
+
+  it("accepts the development bridge importing development workflow types", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/tasks/task-development.ts"] =
+      'import type { DevelopmentPhase } from "../godot/development/development-model.js";\nexport type X = DevelopmentPhase;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("accepts task modules importing the generic digest utility", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/tasks/task-contract.ts"] =
+      'import { sha256Hex } from "../godot/digest.js";\nexport const x = sha256Hex;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects provider adapters importing the task runtime surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { createTaskRuntime } from "@solaris/core";\nexport const x = createTaskRuntime;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not import the task runtime surface"))).toBe(
+      true,
+    );
+  });
+
+  it("accepts provider adapters importing unrelated core contracts", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { createToolRegistry } from "@solaris/core";\nexport const x = createToolRegistry;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("accepts test files importing the task runtime surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.test.ts"] =
+      'import { createTaskRuntime } from "@solaris/core";\nexport const x = createTaskRuntime;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
 });

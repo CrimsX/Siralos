@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { parseInput } from "./input/parse-input.js";
 import {
+  TASK_RUNTIME_VERSION,
   createCommandRunnerRegistry,
   createDefaultPolicy,
   createPreparedCommand,
   createSolarisApplication,
   createSolarisSecurity,
+  createTaskRuntime,
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   GitError,
@@ -106,6 +108,8 @@ async function createComposedSession(lines: readonly string[]) {
     diagnostics,
     language,
     development,
+    tasks,
+    taskSources,
     checkpoints,
     undo,
     runners,
@@ -113,6 +117,8 @@ async function createComposedSession(lines: readonly string[]) {
   } = await createCliApplication();
   const sessionInfo: SessionInfo = {
     workspaceRoot,
+    tasks,
+    taskSources,
     tools,
     security,
     git,
@@ -214,6 +220,16 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     undo: createStubUndo(),
     runners: createCommandRunnerRegistry([]),
     development: createStubDevelopmentService(),
+    tasks: createTaskRuntime(),
+    taskSources: {
+      runtimeVersion: TASK_RUNTIME_VERSION,
+      provider: { profileId: "stub", route: null },
+      sandboxProfileId: "develop-offline",
+      capabilityPolicyRevision: "stub-policy",
+      workspaceIdentity: "/workspace",
+      godotEngineFingerprint: null,
+      workflow: null,
+    },
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",
@@ -594,6 +610,27 @@ describe("runInteractiveSession", () => {
     expect(io.text).toContain("Provider: deterministic-fake");
     expect(io.text).toContain("Messages: 0");
     expect(io.text).toContain("Sandbox:");
+  });
+
+  it("starts an ad-hoc task and renders its host-owned status", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "/task Add a health component",
+      "/task-status",
+      "/exit",
+    ]);
+    await runInteractiveSession(io, application, sessionInfo);
+    expect(io.text).toContain("Task task-1 (contract revision 1)");
+    expect(io.text).toContain("Phase: working");
+    expect(io.text).toContain("Acceptance: 0/1 satisfied");
+    expect(io.text).toContain("host-verified pending");
+    expect(io.text).toContain("Completion: NOT allowed");
+    expect(io.text).toContain("Progress: healthy");
+  });
+
+  it("renders an empty task status when no task exists", async () => {
+    const { io, application, sessionInfo } = await createComposedSession(["/task-status", "/exit"]);
+    await runInteractiveSession(io, application, sessionInfo);
+    expect(io.text).toContain("No task is tracked yet.");
   });
 
   it("clears the terminal without clearing conversation history", async () => {

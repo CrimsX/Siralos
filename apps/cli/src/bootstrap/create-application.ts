@@ -58,10 +58,13 @@ import {
   resolveWorkspaceRoot,
 } from "@solaris/adapters";
 import {
+  TASK_RUNTIME_VERSION,
+  capabilityPolicyFingerprint,
   createCommandRunnerRegistry,
   createDefaultPolicy,
   createSolarisApplication,
   createSolarisSecurity,
+  createTaskRuntime,
   createToolRegistry,
   getBuiltInProfile,
   VALIDATION_OFFLINE_PROFILE,
@@ -80,6 +83,8 @@ import {
   type SandboxBackend,
   type SolarisApplication,
   type SolarisSecurity,
+  type TaskRuntime,
+  type TaskRuntimeSnapshotSources,
   type UndoService,
 } from "@solaris/core";
 import { GodotSelectionError } from "@solaris/adapters";
@@ -97,6 +102,8 @@ export interface CliApplication {
   readonly providerId: string;
   readonly application: SolarisApplication;
   readonly workspaceRoot: string;
+  readonly tasks: TaskRuntime;
+  readonly taskSources: TaskRuntimeSnapshotSources;
   readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
   readonly sandbox: SandboxBackend;
@@ -336,6 +343,16 @@ export async function createCliApplication(
   ];
   const registry = createToolRegistry(workspaceTools);
   const provider = createDeterministicFakeProvider();
+  const tasks = createTaskRuntime();
+  const taskSources: TaskRuntimeSnapshotSources = {
+    runtimeVersion: TASK_RUNTIME_VERSION,
+    provider: { profileId: provider.id, route: null },
+    sandboxProfileId: profile.id,
+    capabilityPolicyRevision: capabilityPolicyFingerprint(policy),
+    workspaceIdentity: workspaceRoot,
+    godotEngineFingerprint: null,
+    workflow: null,
+  };
   const application = createSolarisApplication({
     provider,
     tools: registry,
@@ -350,6 +367,8 @@ export async function createCliApplication(
     providerId: provider.id,
     application,
     workspaceRoot,
+    tasks,
+    taskSources,
     tools: registry.definitions(),
     security,
     sandbox,

@@ -2,6 +2,7 @@ import type {
   ApprovalReviewer,
   CheckpointStore,
   CommandRunnerRegistry,
+  DevelopmentTaskFlow,
   GDScriptDevelopmentService,
   GDScriptDevelopmentStatus,
   GDScriptLanguageService,
@@ -16,7 +17,14 @@ import type {
   SandboxBackendStatus,
   SolarisApplication,
   SolarisSecurity,
+  TaskRuntime,
+  TaskRuntimeSnapshotSources,
   UndoService,
+} from "@solaris/core";
+import {
+  createAdHocTaskContract,
+  createDevelopmentTaskFlow,
+  createTaskRuntimeSnapshot,
 } from "@solaris/core";
 import { GitError } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
@@ -58,6 +66,7 @@ import {
   formatPermissions,
   formatProviderFailure,
   formatQualityReport,
+  formatTaskStatus,
   formatQualitySummary,
   formatChangeReviewResult,
   formatSandbox,
@@ -96,7 +105,12 @@ export interface SessionInfo {
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
   readonly sandbox: SandboxBackend;
+  readonly tasks: TaskRuntime;
+  readonly taskSources: TaskRuntimeSnapshotSources;
 }
+
+/** The host-owned task flow of the active /develop run, if any. */
+let activeDevelopmentTaskFlow: DevelopmentTaskFlow | null = null;
 
 const PROMPT = "> ";
 
@@ -155,7 +169,15 @@ export async function runInteractiveSession(
     const parsed = parseInput(input);
     switch (parsed.type) {
       case "prompt":
-        await runPrompt(io, application, parsed.text, controls, inputBuffer, inputQueue);
+        await runPrompt(
+          io,
+          application,
+          parsed.text,
+          controls,
+          inputBuffer,
+          inputQueue,
+          sessionInfo.tasks,
+        );
         break;
       case "command":
         switch (parsed.command) {
@@ -255,6 +277,12 @@ export async function runInteractiveSession(
             break;
           case "development-status":
             io.write(formatDevelopmentStatus(sessionInfo.development.status()));
+            break;
+          case "task":
+            runTaskCommand(io, sessionInfo, parsed.args);
+            break;
+          case "task-status":
+            io.write(runTaskStatusCommand(sessionInfo));
             break;
           case "quality":
             io.write(formatQualityReport(sessionInfo.development.qualityReport()));
@@ -477,6 +505,23 @@ async function runDevelopCommand(
       return;
     }
     io.write(`Development workflow ${started.session.id} started: investigating the request.\n`);
+    activeDevelopmentTaskFlow = createDevelopmentTaskFlow({
+      runtime: sessionInfo.tasks,
+      sources: sessionInfo.taskSources,
+    });
+    sessionInfo.development.onEvent = (event) => {
+      activeDevelopmentTaskFlow?.handleEvent(event);
+    };
+    const task = activeDevelopmentTaskFlow.start(request, prepared.preview, prepared.digest);
+    io.write(
+      formatTaskStatus(
+        task,
+        sessionInfo.tasks.getTask(task.taskId)?.evaluateCompletion() ?? {
+          allowed: false,
+          missing: [],
+        },
+      ),
+    );
   } catch (error: unknown) {
     if (controller.signal.aborted) {
       io.write("  \u2715 development workflow cancelled\n");
@@ -487,12 +532,31 @@ async function runDevelopCommand(
   } finally {
     controls.endPrompt();
   }
-  await runPrompt(io, application, request, controls, inputBuffer, inputQueue);
+  await runPrompt(io, application, request, controls, inputBuffer, inputQueue, sessionInfo.tasks);
   const status = sessionInfo.development.status();
   if (status.session !== null && status.session.state.kind === "terminal") {
     const result = await sessionInfo.development.cancel();
     if (result.status === "cancelled" && result.result !== null) {
       io.write(formatDevelopmentResult(result.result));
+    }
+    if (activeDevelopmentTaskFlow !== null) {
+      const finalTask = activeDevelopmentTaskFlow.finish(
+        status,
+        result.status === "cancelled" ? result.result : null,
+      );
+      if (finalTask !== null) {
+        io.write(
+          formatTaskStatus(
+            finalTask,
+            sessionInfo.tasks.getTask(finalTask.taskId)?.evaluateCompletion() ?? {
+              allowed: false,
+              missing: [],
+            },
+          ),
+        );
+      }
+      activeDevelopmentTaskFlow = null;
+      sessionInfo.development.onEvent = undefined;
     }
   }
 }
@@ -543,9 +607,57 @@ async function runCancelCommand(
     } else {
       io.write("  \u2715 no development workflow was active.\n");
     }
+    if (activeDevelopmentTaskFlow !== null) {
+      const finalTask = activeDevelopmentTaskFlow.finish(
+        sessionInfo.development.status(),
+        outcome.status === "cancelled" ? outcome.result : null,
+      );
+      if (finalTask !== null) {
+        io.write(
+          formatTaskStatus(
+            finalTask,
+            sessionInfo.tasks.getTask(finalTask.taskId)?.evaluateCompletion() ?? {
+              allowed: false,
+              missing: [],
+            },
+          ),
+        );
+      }
+      activeDevelopmentTaskFlow = null;
+      sessionInfo.development.onEvent = undefined;
+    }
   } catch (error: unknown) {
     io.write(formatProviderFailure(describeGodotFailure(error)));
   }
+}
+
+function runTaskCommand(io: SessionIO, sessionInfo: SessionInfo, args: readonly string[]): void {
+  const request = args.join(" ").trim();
+  if (request.length === 0) {
+    io.write("Usage: /task <request>\n");
+    io.write(
+      "Starts a host-owned ad-hoc task. Completion requires host verification of the\n" +
+        "explicit acceptance criterion; use /develop for workflow-integrated tasks.\n",
+    );
+    io.write(runTaskStatusCommand(sessionInfo));
+    return;
+  }
+  const taskId = `task-${sessionInfo.tasks.listTasks().length + 1}`;
+  const handle = sessionInfo.tasks.createTask({
+    contract: createAdHocTaskContract(taskId, request),
+    snapshot: createTaskRuntimeSnapshot(sessionInfo.taskSources),
+    steps: [],
+  });
+  handle.transitionPhase("working");
+  io.write(formatTaskStatus(handle.snapshot(), handle.evaluateCompletion()));
+}
+
+function runTaskStatusCommand(sessionInfo: SessionInfo): string {
+  const handle = sessionInfo.tasks.latestTask();
+  if (handle === null) {
+    return "No task is tracked yet. Start one with /task <request> or /develop <request>.\n";
+  }
+  return formatTaskStatus(handle.snapshot(), handle.evaluateCompletion());
 }
 
 async function runGitStatusCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
@@ -1040,6 +1152,7 @@ async function runPrompt(
   controls: SessionControls,
   inputBuffer: string[],
   inputQueue?: InputQueue,
+  tasks?: TaskRuntime,
 ): Promise<void> {
   const controller = controls.beginPrompt();
   let busy: Promise<void> | undefined;
@@ -1073,11 +1186,19 @@ async function runPrompt(
           if (!isCommandTool(event.toolName)) {
             io.write(formatToolCompleted(sanitizeForDisplay(event.summary)));
           }
+          tasks?.latestTask()?.observe({
+            action: `tool.${event.toolName}`,
+            fingerprint: `${event.toolName}:${sanitizeForDisplay(event.summary)}`,
+          });
           break;
         case "tool_failed":
           if (!isCommandTool(event.toolName)) {
             io.write(formatToolFailed(sanitizeForDisplay(event.message)));
           }
+          tasks?.latestTask()?.observe({
+            action: `tool.${event.toolName}`,
+            fingerprint: `${event.toolName}:${sanitizeForDisplay(event.message)}`,
+          });
           break;
         case "tool_cancelled":
           if (!isCommandTool(event.toolName)) {
