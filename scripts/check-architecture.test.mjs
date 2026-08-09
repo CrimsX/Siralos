@@ -789,4 +789,12 @@ describe("check-architecture", () => {
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("recovery runner may only be used"))).toBe(true);
   });
+
+  it("catches an aliased import of the recovery runner from an unapproved module", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/tools/example-tool.ts"] =
+      'import { createGodotRecoveryRunner as evilRunner } from "../process/godot-recovery-runner.js";\nexport const r = evilRunner();\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("recovery runner may only be used"))).toBe(true);
+  });
 });
