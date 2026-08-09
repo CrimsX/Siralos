@@ -265,7 +265,7 @@ export type {
   GodotApiSearchQuery,
   GodotApiSearchRank,
   GodotApiSearchResult,
-  GodotApiSymbol,
+  GodotApiSearchKind,  GodotApiSymbol,
   GodotApiSymbolDetails,
   GodotApiSymbolKind,
   GodotApiType,

@@ -154,7 +154,7 @@ export type GodotKnowledgeQueryResult =
       readonly truncated: boolean;
     }
   | {
-      readonly status: "unavailable" | "unsupported" | "invalid_input" | "failed";
+      readonly status: "unavailable" | "unsupported" | "invalid_input" | "failed" | "cancelled";
       readonly message: string;
     };
 
@@ -165,7 +165,8 @@ export type GodotKnowledgeLookupResult =
       readonly result: import("./api.js").GodotApiLookupResult;
     }
   | {
-      readonly status: "not_found" | "unavailable" | "unsupported" | "invalid_input" | "failed";
+      readonly status:
+        "not_found" | "unavailable" | "unsupported" | "invalid_input" | "failed" | "cancelled";
       readonly message: string;
     };
 

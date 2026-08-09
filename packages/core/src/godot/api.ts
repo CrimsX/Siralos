@@ -27,22 +27,22 @@ export interface GodotApiParameter {
  */
 export interface GodotApiSymbolDetails {
   /** Method/utility return type (`void`, `int`, `Node`, ...). */
-  readonly returnType?: string;
-  readonly parameters?: readonly GodotApiParameter[];
+  readonly returnType?: string | undefined;
+  readonly parameters?: readonly GodotApiParameter[] | undefined;
   /** Qualifiers such as `static`, `vararg`, or `const`. */
-  readonly qualifiers?: readonly string[];
+  readonly qualifiers?: readonly string[] | undefined;
   /** Engine-provided method hash when available. */
-  readonly hash?: string;
+  readonly hash?: string | undefined;
   /** Property type. */
-  readonly type?: string;
+  readonly type?: string | undefined;
   /** Property setter name (unset means not settable). */
-  readonly setter?: string | null;
+  readonly setter?: string | null | undefined;
   /** Property getter name. */
-  readonly getter?: string | null;
+  readonly getter?: string | null | undefined;
   /** Constant/enum value when representable. */
-  readonly value?: string;
+  readonly value?: string | undefined;
   /** Enum member values. */
-  readonly values?: readonly { readonly name: string; readonly value: string }[];
+  readonly values?: readonly { readonly name: string; readonly value: string }[] | undefined;
 }
 
 /** One bounded indexed API symbol. Engine-native names are preserved exactly. */
