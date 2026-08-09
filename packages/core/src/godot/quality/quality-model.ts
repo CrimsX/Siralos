@@ -250,6 +250,11 @@ export function computeQualityReportStatus(
     if (gate.status === "blocked" || gate.status === "failed") {
       return "failed";
     }
+    // Defensive catch-all: a hard gate that could not run must never fall
+    // through to a pass, regardless of how it got there.
+    if (gate.status === "not_run") {
+      return "validation_incomplete";
+    }
   }
   if (review !== null && review.status === "completed" && review.blockingCount > 0) {
     return "blocking_findings";

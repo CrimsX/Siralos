@@ -331,12 +331,25 @@ async function collectTurn(
 }
 
 /**
- * Defense in depth: the reviewer may only execute plain read-only tools.
- * Prepared tools (mutations, commands, probes, checks, sessions) are never
- * executable by the reviewer, even if one were registered by mistake.
+ * Defense in depth: the reviewer may only execute plain read-only tools
+ * whose capability is in the fixed read-only set. Prepared tools
+ * (mutations, commands, probes, checks, sessions) are never executable by
+ * the reviewer even if one were registered by mistake, and a future plain
+ * tool with side effects would be refused here rather than executed
+ * outside the permission machinery. The composition-root-owned registry
+ * remains the only source of reviewer tools.
  */
+const READ_ONLY_REVIEWER_CAPABILITIES = new Set([
+  "workspace.read",
+  "git.inspect",
+  "godot.inspect",
+  "godot.api",
+  "godot.lsp",
+]);
+
 function isPlainReviewerTool(tool: RegisteredTool): tool is {
   readonly definition: import("@solaris/core").ToolDefinition;
+  readonly capability?: import("@solaris/core").Capability;
   readonly execute: (
     input: unknown,
     context: import("@solaris/core").ToolExecutionContext,
@@ -351,7 +364,10 @@ function isPlainReviewerTool(tool: RegisteredTool): tool is {
   ) {
     return false;
   }
-  return typeof (tool as { execute?: unknown }).execute === "function";
+  if (typeof (tool as { execute?: unknown }).execute !== "function") {
+    return false;
+  }
+  return tool.capability === undefined || READ_ONLY_REVIEWER_CAPABILITIES.has(tool.capability);
 }
 
 function parseReviewOutput(text: string): ChangeReviewResult {

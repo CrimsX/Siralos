@@ -241,6 +241,51 @@ describe("provider change reviewer isolation", () => {
     expect(result.status).toBe("completed");
   });
 
+  it("refuses a plain tool whose capability is outside the read-only set", async () => {
+    const sideEffectTool: Tool = {
+      definition: { name: "workspace.side_effect", description: "would write", inputSchema: {} },
+      capability: "workspace.write",
+      execute: () => Promise.resolve({ status: "success", output: {}, summary: "ran" }),
+    };
+    const observed: ModelRequest[] = [];
+    const reviewer = createProviderChangeReviewer({
+      providerFactory: () =>
+        scriptedProvider({
+          turns: [
+            {
+              events: [
+                {
+                  type: "tool_call",
+                  callId: "call-1",
+                  toolName: "workspace.side_effect",
+                  input: {},
+                },
+                { type: "completed" },
+              ],
+            },
+            jsonTurn('{"findings":[]}'),
+          ],
+          observe: (request) => observed.push(request),
+        }),
+      tools: createToolRegistry([sideEffectTool]),
+      timeoutMs: 1000,
+    });
+    const result = await reviewer.review(reviewRequest());
+    expect(result.status).toBe("completed");
+    // The tool result fed back must be a failure: the tool never ran.
+    const secondMessages = observed[1]?.messages ?? [];
+    const toolResult = secondMessages.find(
+      (item) => item.type === "tool_result" && item.toolName === "workspace.side_effect",
+    );
+    expect(toolResult?.type).toBe("tool_result");
+    if (toolResult?.type === "tool_result" && toolResult.result.status !== "success") {
+      expect(toolResult.result.status).toBe("failed");
+      expect(toolResult.result.message).toContain("read-only reviewer tool");
+    } else {
+      throw new Error("expected a failed tool result for the refused tool");
+    }
+  });
+
   it("treats unknown tools as failed tool results, never as actions", async () => {
     const reviewer = createProviderChangeReviewer({
       providerFactory: () =>

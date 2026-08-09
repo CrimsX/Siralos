@@ -129,9 +129,11 @@ export function analyzeConventions(
         });
       }
       // Multiple statements on one newly introduced line: a statement
-      // separator followed by more code.
+      // separator followed by more code. String literals are stripped so
+      // semicolons inside strings are never counted.
       const trimmed = line.text.trim();
-      if (/;\s*[A-Za-z_]/.test(trimmed)) {
+      const withoutStrings = trimmed.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, "");
+      if (/;\s*[A-Za-z_]/.test(withoutStrings)) {
         findings.push({
           severity: severityFor("multiple-statements"),
           rule: "multiple-statements",
@@ -151,7 +153,7 @@ export function analyzeConventions(
             path: change.path,
             line: line.line,
             message: `The change indents with ${describeIndent(lineIndent)} while the file uses ${describeIndent(fileIndent)}.`,
-            basis: "local-convention",
+            basis: basisFor("indentation-width-mismatch"),
           });
         }
       }
@@ -321,8 +323,15 @@ function dominantStyle(names: readonly string[]): "snake" | "camel" | null {
   return null;
 }
 
+/**
+ * Case classification for GDScript identifiers. A single leading
+ * underscore (the Godot callback modifier, e.g. `_ready`,
+ * `_physics_process`) does not change the case of the name and is
+ * stripped before testing.
+ */
 function isSnakeCase(name: string): boolean {
-  return /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(name);
+  const withoutModifier = name.startsWith("_") ? name.slice(1) : name;
+  return /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(withoutModifier);
 }
 
 /**

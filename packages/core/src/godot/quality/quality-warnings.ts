@@ -115,6 +115,7 @@ export function computeWarningDelta(
     list.sort((left, right) => (left.line ?? 0) - (right.line ?? 0));
   }
 
+  const usedBaselineByKey = new Map<string, Set<number>>();
   for (const [key, afterList] of afterByKey) {
     const baselineList = baselineByKey.get(key) ?? [];
     const used = new Set<number>();
@@ -151,15 +152,22 @@ export function computeWarningDelta(
         classification,
       });
     }
+    usedBaselineByKey.set(key, used);
   }
 
+  // Resolved: baseline entries that no after-entry matched, per identity.
+  // An identity with more baseline instances than after instances has its
+  // unmatched baseline instances reported resolved — never dropped.
   for (const [key, baselineList] of baselineByKey) {
-    const afterList = afterByKey.get(key) ?? [];
-    if (afterList.length > 0) {
-      // The identity survived; it is covered by the after-side entries.
-      continue;
-    }
-    for (const entry of baselineList) {
+    const used = usedBaselineByKey.get(key) ?? new Set<number>();
+    for (let index = 0; index < baselineList.length; index += 1) {
+      if (used.has(index)) {
+        continue;
+      }
+      const entry = baselineList[index];
+      if (entry === undefined) {
+        continue;
+      }
       entries.push({
         path: entry.path ?? "",
         line: entry.line,

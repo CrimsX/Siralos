@@ -214,11 +214,15 @@ export interface ValidationRunOutcome {
 
 /**
  * Validation plan discovery port. The adapter owns reading the bounded
- * project package.json; core owns the selection policy.
+ * project package.json; core owns the selection policy. `unreadable`
+ * distinguishes an absent package.json (no test runner → `not_applicable`)
+ * from one that exists but cannot be read (infrastructure condition →
+ * `validation_incomplete`, never silently treated as "no test runner").
  */
 export interface ValidationPlanDiscovery {
   discover(signal?: AbortSignal): Promise<{
     readonly packageScripts: Readonly<Record<string, string>> | null;
+    readonly unreadable: boolean;
   }>;
 }
 

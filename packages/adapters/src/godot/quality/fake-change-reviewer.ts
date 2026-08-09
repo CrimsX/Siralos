@@ -1,5 +1,4 @@
 import {
-  countReviewFindingsBySeverity,
   deterministicFindingId,
   type ChangeReviewFinding,
   type ChangeReviewRequest,
@@ -23,6 +22,7 @@ export type FakeReviewerScenario =
   | "malformed"
   | "timeout"
   | "duplicate"
+  | "cancelled"
   | "repair-resolved"
   | "new-after-repair";
 
@@ -125,6 +125,8 @@ export function createFakeChangeReviewer(options: FakeChangeReviewerOptions): {
             ],
             message: null,
           };
+        case "cancelled":
+          return { status: "cancelled", findings: [], message: "the review was cancelled" };
         case "repair-resolved":
           // The first review finds a blocker; a later review resolves it
           // when the request's previous finding ids prove the repair ran.
@@ -206,12 +208,4 @@ function makeFinding(
     recommendation: parts.recommendation,
     confidence: parts.confidence,
   };
-}
-
-export function summarizeFakeReviewerResult(result: ChangeReviewResult): string {
-  if (result.status !== "completed") {
-    return `${result.status}: ${result.message ?? "no findings"}`;
-  }
-  const counts = countReviewFindingsBySeverity(result.findings);
-  return `completed: ${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low`;
 }

@@ -39,6 +39,7 @@ import {
 } from "./change-set-executor.js";
 import {
   runQualityStage,
+  buildChangeReviewRequest,
   type QualityStageChangeFile,
   type QualityWarningBaseline,
 } from "../quality/quality-stage-runner.js";
@@ -795,6 +796,7 @@ export function createGDScriptDevelopmentService(
       engineVersion: current.engineVersion,
       changeSetId,
       files: current.lastChangeSetFiles,
+      cumulativeApprovedPaths: [...current.appliedFiles.keys()],
       evidence,
       checkpointIds: current.checkpointIds,
       gitBaseline: current.gitBaseline,
@@ -809,7 +811,19 @@ export function createGDScriptDevelopmentService(
       maxRepairRounds: QUALITY_LIMITS.maxReviewRepairRounds,
       emit,
       now,
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
+    // A cancellation during the stage is terminal truth: the workflow is
+    // never resurrected into an active state afterwards. The state is
+    // re-read through a helper because /cancel may have raced the
+    // in-flight call and terminalized the session.
+    if (developmentStateKind(current) === "terminal") {
+      return {
+        status: "cancelled",
+        message: "The development workflow was cancelled during the quality stage.",
+        result: finalizeResult(current),
+      };
+    }
     current.qualityReport = stageOutput.report;
     current.reviewRoundsUsed += 1;
     current.blockingFindings = stageOutput.blockingFindings;
@@ -955,7 +969,11 @@ export function createGDScriptDevelopmentService(
     // Mid-apply and mid-validation cancellation is driven by the in-flight
     // tool call's abort signal: the running applyChangeSet ends the
     // workflow truthfully (cancelled) and records any partial application.
-    // The CLI's own /cancel signal propagates to that call.
+    // The CLI's own /cancel signal propagates to that call. The quality
+    // stage is cancellable through the same signal (the reviewer and the
+    // validation executor honor it, and the post-stage guard never
+    // resurrects a terminal state); a /cancel after the stage completed
+    // terminates the workflow through the branch below.
     if (
       current.state.phase === "applying" ||
       current.state.phase === "parser_validation" ||
@@ -1055,40 +1073,15 @@ export function createGDScriptDevelopmentService(
       };
     }
     const latest = current.evidence[current.evidence.length - 1] as DevelopmentEvidence;
-    const evidenceSummary: import("@solaris/core").QualityEvidence[] = [
-      {
-        kind: "parser",
-        summary: `${latest.parser.validFiles}/${latest.parser.checkedFiles} changed scripts parsed`,
-      },
-      {
-        kind: "lsp",
-        summary: `${latest.lsp.diagnosticCount} changed-file LSP diagnostics collected`,
-      },
-      {
-        kind: "scope",
-        summary: latest.workspaceIntegrity.verified
-          ? "workspace integrity verified"
-          : `unexpected changes: ${latest.workspaceIntegrity.unexpectedChanges.join(", ")}`,
-      },
-    ];
-    const request: import("@solaris/core").ChangeReviewRequest = {
+    const request = buildChangeReviewRequest({
       developmentId: current.id,
       request: current.request,
       engineVersion: current.engineVersion,
-      changedPaths: current.lastChangeSetFiles.map((file) => file.path),
-      files: current.lastChangeSetFiles.map((file) => ({
-        path: file.path,
-        unifiedDiff:
-          file.operation === "delete"
-            ? `--- a/${file.path}\n+++ /dev/null\n@@ -1,0 +0,0 @@\nFile deleted by the approved change set.`
-            : file.unifiedDiff,
-      })),
-      metrics: reviewMetrics(current.lastChangeSetFiles),
-      evidenceSummary,
-      repositoryGuidance: null,
+      files: current.lastChangeSetFiles,
+      evidence: latest,
       previousFindingIds: [...current.reviewFindingIds],
       reviewRound: current.reviewRoundsUsed + 1,
-    };
+    });
     return dependencies.qualityStage.reviewer.review(request, signal);
   }
 
@@ -1509,39 +1502,11 @@ function qualityStatusToDevelopmentStatus(
   }
 }
 
-function reviewMetrics(
-  files: readonly QualityStageChangeFile[],
-): import("@solaris/core").ChangeDiffMetrics {
-  let linesAdded = 0;
-  let linesRemoved = 0;
-  let filesCreated = 0;
-  let filesDeleted = 0;
-  let functionsTouched = 0;
-  for (const file of files) {
-    if (file.operation === "create") {
-      filesCreated += 1;
-    } else if (file.operation === "delete") {
-      filesDeleted += 1;
-    }
-    for (const line of file.unifiedDiff.split("\n")) {
-      if (line.startsWith("+") && !line.startsWith("+++")) {
-        linesAdded += 1;
-        if (/^\s*func\s+[A-Za-z_]/.test(line.slice(1))) {
-          functionsTouched += 1;
-        }
-      } else if (line.startsWith("-") && !line.startsWith("---")) {
-        linesRemoved += 1;
-      }
-    }
-  }
-  return {
-    filesChanged: files.length,
-    linesAdded,
-    linesRemoved,
-    filesCreated,
-    filesDeleted,
-    functionsTouched,
-  };
+/** Fresh read of the session state kind (defeats stale control-flow narrowing). */
+function developmentStateKind(
+  current: InternalSession,
+): import("@solaris/core").DevelopmentState["kind"] {
+  return current.state.kind;
 }
 
 function buildApplyRequest(

@@ -255,10 +255,11 @@ async function main() {
         : `preparation unexpectedly produced an approvable workflow (${prepared.status}); the workflow must refuse on this stage.`,
     );
 
-    record(
-      "no-reviewer-calls",
-      true,
-      "the independent reviewer is only reachable inside the quality stage, which cannot start while the workflow is fail-closed.",
+    // Structural note (not a probe): the independent reviewer is only
+    // reachable inside the quality stage, which cannot start while the
+    // workflow is fail-closed; nothing can call the reviewer here.
+    console.log(
+      "[NOTE] no-reviewer-calls: the reviewer is only reachable inside the quality stage, which cannot start while the workflow is fail-closed.",
     );
 
     const runs = await readdir(runsRoot).catch(() => []);

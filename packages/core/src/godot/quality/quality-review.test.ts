@@ -334,6 +334,10 @@ describe("blocking policy", () => {
 describe("review chunking", () => {
   it("returns the single request when the diff fits", () => {
     const chunks = chunkChangeReviewRequests(request(), 1024 * 1024);
+    expect(chunks).not.toBe("too_large");
+    if (chunks === "too_large") {
+      return;
+    }
     expect(chunks).toHaveLength(1);
     expect(chunks[0]?.files).toHaveLength(1);
   });
@@ -348,6 +352,10 @@ describe("review chunking", () => {
       ],
     });
     const chunks = chunkChangeReviewRequests(req, 2500);
+    expect(chunks).not.toBe("too_large");
+    if (chunks === "too_large") {
+      return;
+    }
     expect(chunks.length).toBeGreaterThan(1);
     const covered = chunks.flatMap((chunk) => chunk.files.map((file) => file.path)).sort();
     expect(covered).toEqual(["a.gd", "b.gd", "c.gd"]);
@@ -356,6 +364,17 @@ describe("review chunking", () => {
       expect(chunk.request).toBe(req.request);
       expect(chunk.developmentId).toBe(req.developmentId);
     }
+  });
+
+  it("returns too_large when a single file exceeds the bound; the diff is never silently truncated", () => {
+    const huge = "y".repeat(4096);
+    const chunks = chunkChangeReviewRequests(
+      request({
+        files: [{ path: "huge.gd", unifiedDiff: huge }],
+      }),
+      1024,
+    );
+    expect(chunks).toBe("too_large");
   });
 
   it("aggregates chunked results read-only with deduplication", () => {

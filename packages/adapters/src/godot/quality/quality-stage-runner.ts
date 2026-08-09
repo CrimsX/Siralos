@@ -34,7 +34,11 @@ import { aggregateReviewResults } from "@solaris/core";
  * command machinery, runs the independent read-only review (chunked by
  * complete file when the context is large), and produces the bounded
  * quality report. Deterministic gates are authoritative; the review is an
- * additional reasoning signal that can never replace a gate.
+ * additional reasoning signal that can never replace a gate. The stage is
+ * cancellable through the in-flight apply signal: a cancelled review is
+ * `cancelled`, never a pass, and a single changed file exceeding the
+ * review-context bound makes the review `too_large` (validation
+ * incomplete) instead of silently truncating the diff.
  */
 
 export interface QualityStageChangeFile {
@@ -57,6 +61,8 @@ export interface QualityStageInput {
   readonly engineVersion: string | null;
   readonly changeSetId: string;
   readonly files: readonly QualityStageChangeFile[];
+  /** Every path approved and applied so far in the workflow (cumulative). */
+  readonly cumulativeApprovedPaths: readonly string[];
   readonly evidence: DevelopmentEvidence;
   readonly checkpointIds: readonly string[];
   /** Git status at workflow start (best-effort); null when unavailable. */
@@ -77,6 +83,8 @@ export interface QualityStageInput {
   readonly maxRepairRounds: number;
   readonly emit?: (event: QualityEvent) => void;
   readonly now?: () => number;
+  /** Cancellation signal for the in-flight apply (timeout, /cancel). */
+  readonly signal?: AbortSignal;
 }
 
 export interface QualityStageOutput {
@@ -89,8 +97,8 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   const now = input.now ?? (() => Date.now());
   const emit = input.emit ?? (() => undefined);
   const gates: QualityGateResult[] = [];
-  const reviewInput = buildReviewRequest(input);
-  const reviewChunks = chunkChangeReviewRequests(reviewInput);
+  const aborted = (): boolean => input.signal?.aborted === true;
+  const chunksOrTooLarge = chunkChangeReviewRequests(buildChangeReviewRequest(input));
 
   emit({ type: "quality_started", developmentId: input.developmentId });
 
@@ -98,7 +106,9 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   const changedPaths = input.files.map((file) => file.path);
   const changedScripts = changedPaths.filter((path) => path.endsWith(".gd"));
   const integrity = input.evidence.workspaceIntegrity;
-  const approvedPaths = new Set(changedPaths);
+  // The scope check must never flag the workflow's own earlier approved
+  // change sets as unrelated: the approved set is cumulative.
+  const approvedPaths = new Set([...changedPaths, ...input.cumulativeApprovedPaths]);
 
   gates.push(
     createQualityGateResult(
@@ -226,16 +236,30 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   );
 
   // 2. Required validation plan (commands require one-time process approval).
-  const packageScripts = await input.validation.discovery.discover().catch(() => null);
+  const packageScripts = await input.validation.discovery
+    .discover(input.signal)
+    .catch(() => ({ packageScripts: null, unreadable: true }));
   const plan = discoverValidationPlan(packageScripts?.packageScripts ?? null, changedPaths);
   const outcomes: ValidationRunOutcome[] = [];
-  const commandSteps = plan.optional;
-  for (const step of commandSteps) {
-    const outcome = await input.validation.executor.run(step);
-    outcomes.push(outcome);
+  for (const step of plan.optional) {
+    if (aborted()) {
+      break;
+    }
+    outcomes.push(await input.validation.executor.run(step, input.signal));
   }
-  const validationGate = classifyValidationGate(plan, outcomes, parserValid === true);
+  const validationGate = classifyValidationGate(
+    plan,
+    outcomes,
+    parserValid === true && errorDiagnostics.length === 0,
+  );
   const validationEvidence: QualityEvidence[] = [];
+  if (packageScripts?.unreadable === true) {
+    validationEvidence.push({
+      kind: "validation-unavailable",
+      summary:
+        "The project package.json could not be read, so applicable project validation cannot be discovered; validation is incomplete.",
+    });
+  }
   for (const outcome of outcomes) {
     validationEvidence.push({
       kind:
@@ -266,74 +290,55 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   gates.push(
     createQualityGateResult(
       "required-validation",
-      validationGate.status,
+      validationGate.status === "not_applicable" && packageScripts?.unreadable === true
+        ? "not_run"
+        : validationGate.status,
       validationGate.summary,
       validationEvidence,
     ),
   );
 
   // 3. Independent review (chunked by complete file when needed).
-  emit({ type: "review_started", developmentId: input.developmentId });
-  const chunkedResults: ChangeReviewResult[] = [];
-  for (const chunk of reviewChunks) {
-    const chunkResult = await input.reviewer.review(chunk);
-    chunkedResults.push(chunkResult);
-    // A cancelled or failed chunk invalidates the whole review: the
-    // remaining chunks are not silently claimed as reviewed.
-    if (chunkResult.status !== "completed") {
-      break;
+  let reviewResult: ChangeReviewResult;
+  if (chunksOrTooLarge === "too_large") {
+    reviewResult = {
+      status: "too_large",
+      findings: [],
+      message: "a single changed file exceeds the review-context bound",
+    };
+  } else {
+    emit({ type: "review_started", developmentId: input.developmentId });
+    const chunkedResults: ChangeReviewResult[] = [];
+    for (const chunk of chunksOrTooLarge) {
+      if (aborted()) {
+        chunkedResults.push({
+          status: "cancelled",
+          findings: [],
+          message: "The review was cancelled.",
+        });
+        break;
+      }
+      const chunkResult = await input.reviewer.review(chunk, input.signal);
+      chunkedResults.push(chunkResult);
+      // A cancelled or failed chunk invalidates the whole review: the
+      // remaining chunks are not silently claimed as reviewed.
+      if (chunkResult.status !== "completed") {
+        break;
+      }
     }
+    reviewResult = aggregateReviewResults(chunkedResults);
+    const reviewCounts = countReviewFindingsBySeverity(reviewResult.findings);
+    emit({
+      type: "review_completed",
+      developmentId: input.developmentId,
+      critical: reviewCounts.critical,
+      high: reviewCounts.high,
+      medium: reviewCounts.medium,
+      low: reviewCounts.low,
+    });
   }
-  const reviewResult = aggregateReviewResults(chunkedResults);
-  const reviewCounts = countReviewFindingsBySeverity(reviewResult.findings);
-  emit({
-    type: "review_completed",
-    developmentId: input.developmentId,
-    critical: reviewCounts.critical,
-    high: reviewCounts.high,
-    medium: reviewCounts.medium,
-    low: reviewCounts.low,
-  });
   const blockingFindings = reviewResult.findings.filter(classifyReviewFindingBlocking);
-  const reviewGate: QualityGateResult = (() => {
-    switch (reviewResult.status) {
-      case "completed":
-        return createQualityGateResult(
-          "independent-review",
-          blockingFindings.length === 0 ? "passed" : "blocked",
-          blockingFindings.length === 0
-            ? "The independent review found no blocking findings."
-            : `${blockingFindings.length} blocking finding(s) from the independent review.`,
-          reviewResult.findings.map((finding) => ({
-            kind: `review-${finding.severity}`,
-            summary: `[${finding.category}] ${finding.title} (${finding.path ?? "project-wide"})`,
-            detail: finding.id,
-          })),
-        );
-      case "cancelled":
-        return createQualityGateResult(
-          "independent-review",
-          "not_run",
-          "The independent review was cancelled; validation is incomplete.",
-          [{ kind: "review-cancelled", summary: reviewResult.message ?? "cancelled" }],
-        );
-      case "too_large":
-        return createQualityGateResult(
-          "independent-review",
-          "not_run",
-          "The change exceeds the review-context bound and could not be fully reviewed.",
-          [{ kind: "review-too-large", summary: reviewResult.message ?? "too large" }],
-        );
-      case "failed":
-        return createQualityGateResult(
-          "independent-review",
-          "not_run",
-          "The independent review could not run; validation is incomplete.",
-          [{ kind: "review-failed", summary: reviewResult.message ?? "failed" }],
-        );
-    }
-  })();
-  gates.push(reviewGate);
+  gates.push(buildReviewGate(reviewResult, blockingFindings));
 
   // 4. Soft gates: warning delta and conventions.
   const warningDelta = computeWarningDelta(
@@ -354,6 +359,12 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
     warningEvidence.push({
       kind: "warning-introduced",
       summary: `${warningDelta.introducedWarnings} newly introduced warning(s).`,
+    });
+  }
+  if (warningDelta.introducedErrors > 0) {
+    warningEvidence.push({
+      kind: "warning-as-error",
+      summary: `${warningDelta.introducedErrors} newly introduced diagnostic(s) surfaced as errors; they block via the error-severity gate.`,
     });
   }
   if (warningDelta.resolvedWarnings > 0) {
@@ -448,18 +459,12 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
       message: reviewResult.message,
     }),
     gates,
-    review:
-      reviewResult.status === "completed" ||
-      reviewResult.status === "failed" ||
-      reviewResult.status === "cancelled" ||
-      reviewResult.status === "too_large"
-        ? {
-            status: reviewResult.status,
-            findings: reviewResult.findings,
-            blockingCount: blockingFindings.length,
-            message: reviewResult.message,
-          }
-        : null,
+    review: {
+      status: reviewResult.status,
+      findings: reviewResult.findings,
+      blockingCount: blockingFindings.length,
+      message: reviewResult.message,
+    },
     repairRoundsUsed: input.repairRoundsUsed,
     maxRepairRounds: input.maxRepairRounds,
     reviewRoundsUsed: input.reviewRound,
@@ -483,7 +488,58 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   return { report, blockingFindings };
 }
 
-function buildReviewRequest(input: QualityStageInput): ChangeReviewRequest {
+function buildReviewGate(
+  reviewResult: ChangeReviewResult,
+  blockingFindings: readonly ChangeReviewFinding[],
+): QualityGateResult {
+  switch (reviewResult.status) {
+    case "completed":
+      return createQualityGateResult(
+        "independent-review",
+        blockingFindings.length === 0 ? "passed" : "blocked",
+        blockingFindings.length === 0
+          ? "The independent review found no blocking findings."
+          : `${blockingFindings.length} blocking finding(s) from the independent review.`,
+        reviewResult.findings.map((finding) => ({
+          kind: `review-${finding.severity}`,
+          summary: `[${finding.category}] ${finding.title} (${finding.path ?? "project-wide"})`,
+          detail: finding.id,
+        })),
+      );
+    case "cancelled":
+      return createQualityGateResult(
+        "independent-review",
+        "not_run",
+        "The independent review was cancelled; validation is incomplete.",
+        [{ kind: "review-cancelled", summary: reviewResult.message ?? "cancelled" }],
+      );
+    case "too_large":
+      return createQualityGateResult(
+        "independent-review",
+        "not_run",
+        "The change exceeds the review-context bound and could not be fully reviewed.",
+        [{ kind: "review-too-large", summary: reviewResult.message ?? "too large" }],
+      );
+    case "failed":
+      return createQualityGateResult(
+        "independent-review",
+        "not_run",
+        "The independent review could not run; validation is incomplete.",
+        [{ kind: "review-failed", summary: reviewResult.message ?? "failed" }],
+      );
+  }
+}
+
+/** Shared review-request builder (also used by /review-change). */
+export function buildChangeReviewRequest(input: {
+  readonly developmentId: string;
+  readonly request: string;
+  readonly engineVersion: string | null;
+  readonly files: readonly QualityStageChangeFile[];
+  readonly evidence: DevelopmentEvidence;
+  readonly previousFindingIds: readonly string[];
+  readonly reviewRound: number;
+}): ChangeReviewRequest {
   const metrics = computeMetrics(input.files);
   const evidenceSummary: QualityEvidence[] = [
     {
@@ -521,7 +577,8 @@ function buildReviewRequest(input: QualityStageInput): ChangeReviewRequest {
   };
 }
 
-function computeMetrics(files: readonly QualityStageChangeFile[]): ChangeDiffMetrics {
+/** Deterministic bounded change metrics (§18), shared by the stage and /review-change. */
+export function computeMetrics(files: readonly QualityStageChangeFile[]): ChangeDiffMetrics {
   let linesAdded = 0;
   let linesRemoved = 0;
   let filesCreated = 0;

@@ -127,6 +127,21 @@ describe("warning delta", () => {
     expect(delta.introducedWarnings).toBe(0);
   });
 
+  it("reports unmatched baseline instances of a surviving identity as resolved (never dropped)", () => {
+    const baseline = [
+      warning(CHANGED_PATH, 4, "shadowed variable"),
+      warning(CHANGED_PATH, 100, "shadowed variable"),
+    ];
+    const after = [warning(CHANGED_PATH, 5, "shadowed variable")];
+    const delta = computeWarningDelta(baseline, after, CHANGED);
+    expect(delta.unchangedWarnings).toBe(1);
+    expect(delta.resolvedWarnings).toBe(1);
+    const resolved = delta.entries.find(
+      (entry) => entry.classification === "resolved" && entry.line === 100,
+    );
+    expect(resolved).toBeDefined();
+  });
+
   it("binds the delta to the immutable entry bound", () => {
     const baseline = Array.from({ length: 400 }, (_, index) =>
       warning(CHANGED_PATH, index + 1, `w${index}`),

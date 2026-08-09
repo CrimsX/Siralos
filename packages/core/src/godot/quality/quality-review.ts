@@ -88,35 +88,28 @@ export interface ChangeReviewer {
   review(request: ChangeReviewRequest, signal?: AbortSignal): Promise<ChangeReviewResult>;
 }
 
-export function createCleanReviewResult(): ChangeReviewResult {
-  return { status: "completed", findings: [], message: null };
-}
-
-export function estimateReviewContextBytes(request: ChangeReviewRequest): number {
-  const encoder = new TextEncoder();
-  let total = 0;
-  for (const file of request.files) {
-    total += encoder.encode(file.unifiedDiff).length;
-  }
-  return total;
-}
-
 /**
  * Deterministic chunking by complete file (§53). When the full diff
  * exceeds the review-context bound, the files are split into chunks that
  * each fit; every changed file is covered by exactly one chunk and the
  * shared request metadata is repeated per chunk so no chunk loses context.
+ * A single file whose diff alone exceeds the bound makes the review
+ * `too_large` (returned as the string marker) — the diff is never
+ * silently truncated and the change is never claimed as fully reviewed.
  */
 export function chunkChangeReviewRequests(
   request: ChangeReviewRequest,
   maxBytes: number = QUALITY_LIMITS.maxReviewContextDiffBytes,
-): readonly ChangeReviewRequest[] {
+): readonly ChangeReviewRequest[] | "too_large" {
   const chunks: ChangeReviewRequest[] = [];
   const encoder = new TextEncoder();
   let current: ChangeReviewFile[] = [];
   let currentBytes = 0;
   for (const file of request.files) {
     const bytes = encoder.encode(file.unifiedDiff).length;
+    if (bytes > maxBytes) {
+      return "too_large";
+    }
     if (current.length > 0 && currentBytes + bytes > maxBytes) {
       chunks.push(buildChunk(request, current));
       current = [];

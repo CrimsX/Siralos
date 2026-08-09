@@ -109,6 +109,25 @@ describe("convention analysis", () => {
     expect(findings.some((finding) => finding.rule === "multiple-statements")).toBe(false);
   });
 
+  it("does not flag semicolons inside string literals", () => {
+    const findings = analyzeConventions([change("fixture.gd", "a\n", 'a\nprint("a;b")\n')]);
+    expect(findings.some((finding) => finding.rule === "multiple-statements")).toBe(false);
+  });
+
+  it("treats underscore-prefixed Godot callbacks as snake_case, not camelCase", () => {
+    const before = [
+      "func _ready():",
+      "\tpass",
+      "func _physics_process(delta):",
+      "\tpass",
+      "func _process(delta):",
+      "\tpass",
+    ].join("\n");
+    const after = `${before}\nfunc _on_health_changed():\n\tpass\n`;
+    const findings = analyzeConventions([change("fixture.gd", before, after)]);
+    expect(findings.some((finding) => finding.rule === "naming-drift")).toBe(false);
+  });
+
   it("detects naming drift against the file's local snake_case convention", () => {
     const before = [
       "func first_thing():",

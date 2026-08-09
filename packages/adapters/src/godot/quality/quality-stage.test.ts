@@ -56,7 +56,7 @@ function createScriptedValidation(control: ScriptedValidationControl): {
   readonly executor: QualityValidationExecutor;
 } {
   const discovery: ValidationPlanDiscovery = {
-    discover: () => Promise.resolve({ packageScripts: control.packageScripts }),
+    discover: () => Promise.resolve({ packageScripts: control.packageScripts, unreadable: false }),
   };
   const executor: QualityValidationExecutor = {
     run: (step) => {
@@ -199,6 +199,18 @@ describe("development completion through the quality stage", () => {
   afterEach(async () => {
     await harness?.workspace.cleanup();
     await cleanupTempCheckpointDirs();
+  });
+
+  it("never claims completion when the review is cancelled: terminal cancelled, changes remain", async () => {
+    harness = await createLoopHarness({ scenario: "cancelled" });
+    await harness.startWorkflow("develop fixture");
+    await drain(harness, "develop fixture");
+    const status = harness.status().session;
+    expect(status?.state).toEqual({ kind: "terminal", status: "cancelled" });
+    expect(status?.quality?.status).toBe("cancelled");
+    // The approved source change remains on disk; nothing was rolled back.
+    const onDisk = await readFile(`${harness.workspace.root}/${FIXTURE_PATH}`, "utf8");
+    expect(onDisk).toContain("move_and_slide(Vector2.UP)");
   });
 
   it("reports clean development as ready only after all quality gates pass", async () => {
@@ -479,6 +491,7 @@ function buildStageInput(overrides: Partial<QualityStageInput> = {}): QualitySta
         unifiedDiff: "@@ -3,2 +3,2 @@\n-\tmove_and_slide()\n+\tmove_and_slide(Vector2.UP)",
       },
     ],
+    cumulativeApprovedPaths: [FIXTURE_PATH],
     evidence: {
       changeSetId: "cs-1",
       files: [],
@@ -496,7 +509,7 @@ function buildStageInput(overrides: Partial<QualityStageInput> = {}): QualitySta
       review: () => Promise.resolve({ status: "completed", findings: [], message: null }),
     },
     validation: {
-      discovery: { discover: () => Promise.resolve({ packageScripts: null }) },
+      discovery: { discover: () => Promise.resolve({ packageScripts: null, unreadable: false }) },
       executor: {
         run: (step) =>
           Promise.resolve({
@@ -751,6 +764,78 @@ describe("deterministic quality gates (stage runner)", () => {
     );
     expect(output.blockingFindings).toHaveLength(0);
     expect(output.report.status).toBe("passed_with_advisories");
+  });
+
+  it("reports validation incomplete when the discovery cannot read package.json", async () => {
+    const output = await runQualityStage(
+      buildStageInput({
+        validation: {
+          discovery: {
+            discover: () => Promise.resolve({ packageScripts: null, unreadable: true }),
+          },
+          executor: {
+            run: (step) =>
+              Promise.resolve({
+                step,
+                status: "passed",
+                exitCode: 0,
+                summary: "exited with code 0",
+              }),
+          },
+        },
+      }),
+    );
+    expect(output.report.status).toBe("validation_incomplete");
+    const gate = gateOf(output.report.gates, "required-validation");
+    expect(gate?.status).toBe("not_run");
+    expect(gate?.evidence.some((entry) => entry.kind === "validation-unavailable")).toBe(true);
+  });
+
+  it("keeps the scope gate cumulative across change sets (second apply is not unrelated)", async () => {
+    const output = await runQualityStage(
+      buildStageInput({
+        files: [
+          {
+            path: "scripts/player/player.gd",
+            operation: "update",
+            afterContent: FIXTURE_CONTENT.replace(
+              "move_and_slide()",
+              "move_and_slide(Vector2.UP) # review-repair",
+            ),
+            unifiedDiff:
+              "@@ -3,2 +3,2 @@\n-\tmove_and_slide()\n+\tmove_and_slide(Vector2.UP) # review-repair",
+          },
+        ],
+        cumulativeApprovedPaths: ["scripts/player/player.gd"],
+        gitBaseline: ["scripts/player/player.gd"],
+        gitCurrent: ["scripts/player/player.gd"],
+      }),
+    );
+    expect(gateOf(output.report.gates, "scope-verified")?.status).toBe("passed");
+    expect(output.report.status).toBe("passed");
+  });
+
+  it("marks the review too_large (validation incomplete) when a single file exceeds the bound", async () => {
+    const huge = "y".repeat(QUALITY_LIMITS.maxReviewContextDiffBytes + 1);
+    const output = await runQualityStage(
+      buildStageInput({
+        files: [
+          {
+            path: "scripts/player/player.gd",
+            operation: "create",
+            afterContent: huge,
+            unifiedDiff: `@@ -0,0 +1,1 @@\n+${huge}`,
+          },
+        ],
+      }),
+    );
+    expect(output.report.status).toBe("validation_incomplete");
+    expect(gateOf(output.report.gates, "independent-review")?.status).toBe("not_run");
+    expect(
+      gateOf(output.report.gates, "independent-review")?.evidence.some(
+        (entry) => entry.kind === "review-too-large",
+      ),
+    ).toBe(true);
   });
 
   it("emits the bounded quality event sequence", async () => {

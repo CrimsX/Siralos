@@ -104,7 +104,7 @@ async function createLoopHarness(
       reviewer: fakeReviewer.reviewer,
       validation: {
         discovery: {
-          discover: () => Promise.resolve({ packageScripts: null }),
+          discover: () => Promise.resolve({ packageScripts: null, unreadable: false }),
         },
         executor: {
           run: (step) => Promise.resolve({ step, status: "passed", exitCode: 0, summary: "ok" }),
