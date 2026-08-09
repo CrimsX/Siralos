@@ -50,6 +50,8 @@ export interface GDScriptDevelopmentServiceDependencies {
   readonly platform: NodeJS.Platform;
   readonly store: CheckpointStore;
   readonly lock: { acquire(signal?: AbortSignal): Promise<() => void> };
+  /** Session revision registry: read handles, post-edit invalidation. */
+  readonly revisions?: import("@solaris/core").WorkspaceRevisionRegistry;
   readonly language: GDScriptLanguageService;
   readonly diagnostics: GodotDiagnostics;
   /** Read-only Git inspector; null when Git inspection is unavailable. */
@@ -192,6 +194,7 @@ export function createGDScriptDevelopmentService(
     lock: dependencies.lock,
     toolName: "workspace.apply_text_changeset",
     canApplyIdentityBound: dependencies.canApplyIdentityBound,
+    ...(dependencies.revisions === undefined ? {} : { revisions: dependencies.revisions }),
   };
   const applier = createDevelopmentChangeSetApplier(executorDependencies);
   let pendingStart: PendingStart | null = null;
@@ -466,6 +469,7 @@ export function createGDScriptDevelopmentService(
       {
         workspaceRoot: dependencies.workspaceRoot,
         platform: dependencies.platform,
+        ...(dependencies.revisions === undefined ? {} : { revisions: dependencies.revisions }),
       },
       context.signal,
     );
@@ -644,7 +648,14 @@ export function createGDScriptDevelopmentService(
         current.appliedFiles.set(file.path, ABSENT_MARKER);
       }
     }
-    emit({ type: "development_change_applied", id: current.id, files: prepared.files.length });
+    emit({
+      type: "development_change_applied",
+      id: current.id,
+      files: prepared.files.length,
+      ...(outcome.revisions === undefined || outcome.revisions.length === 0
+        ? {}
+        : { revisions: outcome.revisions }),
+    });
     emit({ type: "development_validation_started", id: current.id });
 
     // 3. Post-edit parser gate: --check-only over the changed scripts.

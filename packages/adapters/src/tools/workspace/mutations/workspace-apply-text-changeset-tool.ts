@@ -101,6 +101,11 @@ export function createWorkspaceApplyTextChangesetTool(
           return { status: "cancelled", message: prepared.message };
         case "unavailable":
           return { status: "unavailable", message: prepared.message };
+        case "stale_revision":
+          return {
+            status: "failed",
+            message: prepared.message,
+          };
         case "invalid_input":
         case "conflict":
         case "changeset_too_large":

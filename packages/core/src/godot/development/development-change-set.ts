@@ -20,11 +20,21 @@ export interface ChangeSetReplacement {
   readonly newText: string;
 }
 
+/**
+ * A change against an existing file carries exactly one pre-state
+ * identity: either the raw SHA-256 (legacy path) or an opaque revision
+ * handle issued by Solaris (preferred model-facing path). The handle is
+ * resolved to its SHA-256 by the host and the same revalidation runs.
+ * Handles are ergonomic references, never authority.
+ */
+export const WORKSPACE_REVISION_HANDLE_PATTERN = /^rev_[0-9a-f]{32}$/;
+
 export type ChangeSetOperation =
   | {
       readonly operation: "edit";
       readonly path: string;
-      readonly expectedSha256: string;
+      readonly expectedSha256?: string;
+      readonly expectedRevision?: string;
       readonly replacements: readonly ChangeSetReplacement[];
     }
   | {
@@ -35,8 +45,20 @@ export type ChangeSetOperation =
   | {
       readonly operation: "delete";
       readonly path: string;
-      readonly expectedSha256: string;
+      readonly expectedSha256?: string;
+      readonly expectedRevision?: string;
     };
+
+/** Precise stale-state failure for revision-bound changes. */
+export interface StaleRevisionError {
+  readonly kind: "stale_revision";
+  readonly path: string;
+  readonly expectedRevision: string | null;
+  /** Last known handle for the file's current state; null when unknown. */
+  readonly currentRevision: string | null;
+  /** Expected pre-state SHA-256 (trusted internal identity). */
+  readonly expectedSha256: string;
+}
 
 export interface ChangeSetRequest {
   readonly changes: readonly ChangeSetOperation[];
@@ -145,15 +167,46 @@ export function validateChangeSetRequest(
       parsed.push({ operation, path: normalizedPath, content });
       continue;
     }
-    const expectedSha256 = entry["expectedSha256"];
-    if (typeof expectedSha256 !== "string" || !SHA256_PATTERN.test(expectedSha256)) {
+    const sha256Text: string =
+      typeof entry["expectedSha256"] === "string" ? entry["expectedSha256"] : "";
+    const revisionText: string =
+      typeof entry["expectedRevision"] === "string" ? entry["expectedRevision"] : "";
+    const expectedSha256: unknown = entry["expectedSha256"];
+    const expectedRevision: unknown = entry["expectedRevision"];
+    const sha256Present = typeof expectedSha256 === "string";
+    const revisionPresent = typeof expectedRevision === "string";
+    if (sha256Present && revisionPresent) {
       return {
         ok: false,
-        message: `The ${operation} for "${normalizedPath}" requires the exact 64-hex-digit current SHA-256.`,
+        message: `The ${operation} for "${normalizedPath}" must carry exactly one pre-state identity: either expectedSha256 or expectedRevision, not both.`,
+      };
+    }
+    if (sha256Present) {
+      if (!SHA256_PATTERN.test(sha256Text)) {
+        return {
+          ok: false,
+          message: `The ${operation} for "${normalizedPath}" requires the exact 64-hex-digit current SHA-256.`,
+        };
+      }
+    } else if (revisionPresent) {
+      if (!WORKSPACE_REVISION_HANDLE_PATTERN.test(revisionText)) {
+        return {
+          ok: false,
+          message: `The ${operation} for "${normalizedPath}" requires a valid Solaris revision handle (rev_...).`,
+        };
+      }
+    } else {
+      return {
+        ok: false,
+        message: `The ${operation} for "${normalizedPath}" requires a pre-state identity: the exact current SHA-256 or a Solaris revision handle.`,
       };
     }
     if (operation === "delete") {
-      parsed.push({ operation, path: normalizedPath, expectedSha256 });
+      parsed.push({
+        operation,
+        path: normalizedPath,
+        ...(sha256Present ? { expectedSha256: sha256Text } : { expectedRevision: revisionText }),
+      });
       continue;
     }
     const replacements = entry["replacements"];
@@ -202,7 +255,7 @@ export function validateChangeSetRequest(
     parsed.push({
       operation,
       path: normalizedPath,
-      expectedSha256,
+      ...(sha256Present ? { expectedSha256: sha256Text } : { expectedRevision: revisionText }),
       replacements: parsedReplacements,
     });
   }

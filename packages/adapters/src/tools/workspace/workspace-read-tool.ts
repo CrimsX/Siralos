@@ -1,6 +1,17 @@
 import { stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
+import type {
+  Tool,
+  ToolExecutionContext,
+  ToolExecutionResult,
+  WorkspaceReadMode,
+  WorkspaceRevisionRegistry,
+} from "@solaris/core";
+import {
+  buildWorkspaceSummary,
+  extractGDScriptStructure,
+  isWorkspaceReadMode,
+} from "@solaris/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
 import {
   DEFAULT_EXCLUDED_DIRECTORIES,
@@ -21,6 +32,7 @@ interface ReadInput {
   readonly path: string;
   readonly startLine?: number;
   readonly endLine?: number;
+  readonly mode?: WorkspaceReadMode;
 }
 
 function parseReadInput(input: unknown): ParsedValue<ReadInput> {
@@ -44,19 +56,34 @@ function parseReadInput(input: unknown): ParsedValue<ReadInput> {
   if (parsedEndLine.value !== undefined && parsedEndLine.value < startLine) {
     return { ok: false, message: `"endLine" must not precede "startLine".` };
   }
+  const rawMode = object.value["mode"];
+  if (rawMode !== undefined && !isWorkspaceReadMode(rawMode)) {
+    return { ok: false, message: `"mode" must be "exact", "structural", or "summary".` };
+  }
+  const mode: WorkspaceReadMode = rawMode === undefined ? "exact" : rawMode;
   const value: ReadInput = {
     path: parsedPath.value,
     startLine,
     ...(parsedEndLine.value === undefined ? {} : { endLine: parsedEndLine.value }),
+    ...(mode === "exact" ? {} : { mode }),
   };
   return { ok: true, value };
 }
 
-export function createWorkspaceReadTool(workspaceRoot: string): Tool {
+export interface WorkspaceReadToolOptions {
+  /** Session revision registry for revision-bound reads (opaque handles). */
+  readonly revisions?: WorkspaceRevisionRegistry;
+}
+
+export function createWorkspaceReadTool(
+  workspaceRoot: string,
+  options: WorkspaceReadToolOptions = {},
+): Tool {
   return {
     definition: {
       name: "workspace.read",
-      description: "Read a bounded range from one text file inside the workspace.",
+      description:
+        "Read one text file inside the workspace. Modes: exact (authoritative source for editing, returns a revision handle), structural (deterministic GDScript declarations), summary (bounded advisory overview). Summaries/structural views are never authoritative source.",
       inputSchema: {
         type: "object",
         properties: {
@@ -64,12 +91,17 @@ export function createWorkspaceReadTool(workspaceRoot: string): Tool {
           startLine: {
             type: "integer",
             minimum: 1,
-            description: "One-based start line. Defaults to 1.",
+            description: "One-based start line (exact mode). Defaults to 1.",
           },
           endLine: {
             type: "integer",
             minimum: 1,
-            description: "Inclusive one-based end line. Defaults to the last line.",
+            description: "Inclusive one-based end line (exact mode). Defaults to the last line.",
+          },
+          mode: {
+            type: "string",
+            enum: ["exact", "structural", "summary"],
+            description: "exact (default), structural, or summary.",
           },
         },
         required: ["path"],
@@ -136,6 +168,58 @@ export function createWorkspaceReadTool(workspaceRoot: string): Tool {
       if (text === null) {
         return { status: "failed", message: "File is not valid UTF-8 text." };
       }
+      const mode = parsed.value.mode ?? "exact";
+      const sha256 = createHash("sha256").update(buffer).digest("hex");
+      const revision =
+        options.revisions === undefined
+          ? null
+          : options.revisions.issue(resolved.workspaceRelativePath, sha256);
+      if (revision !== null) {
+        options.revisions?.observeRead(resolved.workspaceRelativePath, revision, mode);
+      }
+      if (mode === "structural" || mode === "summary") {
+        if (!resolved.workspaceRelativePath.toLowerCase().endsWith(".gd")) {
+          return {
+            status: "success",
+            output: {
+              path: resolved.workspaceRelativePath,
+              mode,
+              revision,
+              supported: false,
+              reason: "Structural and summary modes support GDScript (.gd) files only.",
+            },
+            summary: `${mode} read unsupported for this file type`,
+          };
+        }
+        const structure = extractGDScriptStructure(text, resolved.workspaceRelativePath);
+        if (mode === "structural") {
+          return {
+            status: "success",
+            output: {
+              path: resolved.workspaceRelativePath,
+              mode: "structural",
+              revision,
+              structure: structure as unknown as import("@solaris/core").JsonObject,
+            },
+            summary: `structural: ${structure.functions.length} functions, ${structure.properties.length} properties, ${structure.signals.length} signals`,
+          };
+        }
+        const summary = buildWorkspaceSummary(structure, revision, {
+          maxBytes: Math.min(4096, text.length),
+        });
+        return {
+          status: "success",
+          output: {
+            path: resolved.workspaceRelativePath,
+            mode: "summary",
+            revision,
+            summary: summary.text,
+            advisory: true,
+            truncated: summary.truncated,
+          },
+          summary: `summary: ${summary.bytes} bytes${summary.truncated ? " (truncated)" : ""}`,
+        };
+      }
       const lines = splitIntoLines(text);
       const totalLines = lines.length;
       const startLine = parsed.value.startLine ?? 1;
@@ -156,7 +240,8 @@ export function createWorkspaceReadTool(workspaceRoot: string): Tool {
         status: "success",
         output: {
           path: resolved.workspaceRelativePath,
-          sha256: createHash("sha256").update(buffer).digest("hex"),
+          sha256,
+          revision,
           content,
           startLine,
           endLine,

@@ -58,6 +58,8 @@ export type EvidenceSource =
       readonly type: "mutation";
       readonly changeSetId: string;
       readonly checkpointId: string | null;
+      /** Post-edit revision handle of the primary changed file, when known. */
+      readonly revision?: string;
     }
   | { readonly type: "checkpoint"; readonly checkpointId: string }
   | {
@@ -80,7 +82,12 @@ export type EvidenceSource =
     }
   | { readonly type: "review"; readonly status: string; readonly blockingFindings: number }
   | { readonly type: "change_preview"; readonly changeSetId: string }
-  | { readonly type: "workspace_read"; readonly paths: readonly string[] }
+  | {
+      readonly type: "workspace_read";
+      readonly paths: readonly string[];
+      /** Revision handle of the inspected file state, when known. */
+      readonly revision?: string;
+    }
   | { readonly type: "api_lookup"; readonly symbol: string }
   | { readonly type: "lsp_query"; readonly query: string };
 

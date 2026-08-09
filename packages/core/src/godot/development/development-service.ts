@@ -94,6 +94,13 @@ export type DevelopmentChangeSetPreparationResult =
         | "cancelled"
         | "failed";
       readonly message: string;
+    }
+  | {
+      readonly status: "stale_revision";
+      readonly message: string;
+      readonly path: string;
+      readonly expectedRevision: string;
+      readonly currentRevision: string | null;
     };
 
 export type DevelopmentChangeSetApplicationResult =

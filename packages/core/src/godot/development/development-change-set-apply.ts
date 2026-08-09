@@ -47,6 +47,8 @@ export type ChangeSetApplyOutcome =
   | {
       readonly status: "applied";
       readonly checkpointIds: readonly string[];
+      /** Post-edit revision handles for changed files (registry wired). */
+      readonly revisions?: readonly { readonly path: string; readonly revision: string }[];
     }
   | {
       readonly status: "conflict";

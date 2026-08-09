@@ -44,11 +44,82 @@ export type ChangeSetPreparationResult =
   | {
       readonly status: "invalid_input" | "conflict" | "changeset_too_large" | "failed";
       readonly message: string;
+    }
+  | {
+      readonly status: "stale_revision";
+      readonly message: string;
+      readonly path: string;
+      readonly expectedRevision: string;
+      readonly currentRevision: string | null;
     };
 
 export interface ChangeSetPreparationDependencies {
   readonly workspaceRoot: string;
   readonly platform?: NodeJS.Platform;
+  /** Session-scoped revision registry for revision-bound changes. */
+  readonly revisions?: import("@solaris/core").WorkspaceRevisionRegistry;
+}
+
+type PreparationFailure =
+  | {
+      readonly status: "invalid_input" | "conflict" | "changeset_too_large" | "failed";
+      readonly message: string;
+    }
+  | {
+      readonly status: "stale_revision";
+      readonly message: string;
+      readonly path: string;
+      readonly expectedRevision: string;
+      readonly currentRevision: string | null;
+    };
+
+/**
+ * Resolve the pre-state identity of an edit/delete: a revision handle is
+ * resolved through the session registry to its trusted SHA-256, and the
+ * current file bytes are revalidated against it. Unknown/foreign handles
+ * and stale states fail precisely; the raw-SHA path keeps its existing
+ * behavior (compatibility boundary).
+ */
+function resolveExpectedPreState(
+  change: Extract<ChangeSetOperation, { readonly operation: "edit" | "delete" }>,
+  resolvedPath: string,
+  beforeSha256: string,
+  dependencies: ChangeSetPreparationDependencies,
+): { readonly sha256: string } | { readonly failure: PreparationFailure } {
+  if (change.expectedRevision !== undefined) {
+    const registry = dependencies.revisions;
+    const identity = registry?.resolve(change.expectedRevision) ?? null;
+    if (identity === null) {
+      return {
+        failure: {
+          status: "invalid_input",
+          message: `"${change.path}" references an unknown or expired revision handle; read the file again to obtain a current revision.`,
+        },
+      };
+    }
+    if (identity.path !== resolvedPath) {
+      return {
+        failure: {
+          status: "invalid_input",
+          message: `The revision handle supplied for "${change.path}" does not belong to that file.`,
+        },
+      };
+    }
+    if (identity.sha256 !== beforeSha256) {
+      const currentRevision = registry?.revisionForState(change.path, beforeSha256) ?? null;
+      return {
+        failure: {
+          status: "stale_revision",
+          message: "The file changed since the version you read. Read it again before editing.",
+          path: change.path,
+          expectedRevision: change.expectedRevision,
+          currentRevision,
+        },
+      };
+    }
+    return { sha256: identity.sha256 };
+  }
+  return { sha256: change.expectedSha256 ?? "" };
 }
 
 export async function prepareChangeSet(
@@ -118,10 +189,7 @@ type OneFilePreparationResult =
       readonly previewFile: FileChangePreview;
       readonly diffBytes: number;
     }
-  | {
-      readonly status: "invalid_input" | "conflict" | "changeset_too_large" | "failed";
-      readonly message: string;
-    };
+  | PreparationFailure;
 
 async function prepareOneFile(
   change: ChangeSetOperation,
@@ -212,7 +280,16 @@ async function prepareOneFile(
   }
   const beforeSha256 = hashBuffer(bytes);
   if (change.operation === "delete") {
-    if (beforeSha256 !== change.expectedSha256) {
+    const preState = resolveExpectedPreState(
+      change,
+      resolved.workspaceRelativePath,
+      beforeSha256,
+      dependencies,
+    );
+    if ("failure" in preState) {
+      return preState.failure;
+    }
+    if (beforeSha256 !== preState.sha256) {
       return {
         status: "conflict",
         message: `"${change.path}" changed since it was read; reread the workspace before deleting.`,
@@ -221,7 +298,7 @@ async function prepareOneFile(
     const file: PreparedChangeSetFile = {
       path: resolved.workspaceRelativePath,
       operation: "delete",
-      expectedSha256: change.expectedSha256,
+      expectedSha256: preState.sha256,
       content: null,
       beforeSha256,
       afterSha256: null,
@@ -244,7 +321,16 @@ async function prepareOneFile(
       diffBytes: 0,
     };
   }
-  if (beforeSha256 !== change.expectedSha256) {
+  const preState = resolveExpectedPreState(
+    change,
+    resolved.workspaceRelativePath,
+    beforeSha256,
+    dependencies,
+  );
+  if ("failure" in preState) {
+    return preState.failure;
+  }
+  if (beforeSha256 !== preState.sha256) {
     return {
       status: "conflict",
       message: `"${change.path}" changed since it was read; reread the workspace before editing.`,
@@ -272,7 +358,7 @@ async function prepareOneFile(
   const file: PreparedChangeSetFile = {
     path: resolved.workspaceRelativePath,
     operation: "update",
-    expectedSha256: change.expectedSha256,
+    expectedSha256: preState.sha256,
     content: afterText,
     beforeSha256,
     afterSha256,

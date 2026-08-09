@@ -42,6 +42,8 @@ export interface ChangeSetExecutorDependencies {
   readonly toolName: string;
   /** True only when the platform can mechanically bind every write. */
   readonly canApplyIdentityBound: boolean;
+  /** Session revision registry; issues post-edit revisions on success. */
+  readonly revisions?: import("@solaris/core").WorkspaceRevisionRegistry;
 }
 
 export function createDevelopmentChangeSetApplier(
@@ -163,7 +165,26 @@ export async function applyChangeSetProtocol(
         throw new Error(`"${file.path}" does not match the prepared post-state after application.`);
       }
     }
-    return { status: "applied", checkpointIds };
+    // Revision lifecycle: every successful mutation invalidates the
+    // previous current revision and issues the new post-edit state.
+    const revisions: { readonly path: string; readonly revision: string }[] = [];
+    if (dependencies.revisions !== undefined) {
+      for (const file of request.files) {
+        if (file.operation === "delete") {
+          dependencies.revisions.invalidatePath(file.path);
+        } else if (file.afterSha256 !== null) {
+          revisions.push({
+            path: file.path,
+            revision: dependencies.revisions.issue(file.path, file.afterSha256),
+          });
+        }
+      }
+    }
+    return {
+      status: "applied",
+      checkpointIds,
+      ...(revisions.length === 0 ? {} : { revisions }),
+    };
   } catch (error: unknown) {
     if (request.signal?.aborted) {
       return {

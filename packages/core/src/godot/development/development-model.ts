@@ -242,6 +242,9 @@ export type DevelopmentEvent =
       readonly type: "development_change_applied";
       readonly id: string;
       readonly files: number;
+      /** Post-edit revision handles for the changed files (may be absent
+       * when the registry is not wired). */
+      readonly revisions?: readonly { readonly path: string; readonly revision: string }[];
     }
   | {
       readonly type: "development_validation_started";
