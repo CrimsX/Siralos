@@ -27,7 +27,8 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run check:architecture",
     "solaris": "npm run build && node apps/cli/dist/index.js",
     "test:godot-diagnostics": "npm run build && node scripts/sandbox/run-godot-diagnostics-conformance.mjs",
-    "test:godot-lsp": "npm run build && node scripts/sandbox/run-godot-lsp-conformance.mjs"
+    "test:godot-lsp": "npm run build && node scripts/sandbox/run-godot-lsp-conformance.mjs",
+    "test:godot-development": "npm run build && node scripts/sandbox/run-godot-development-conformance.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
