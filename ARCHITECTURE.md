@@ -523,6 +523,62 @@ packages/core/src/projection/
   budget, pressure, tool ABI fingerprint), `/tools` and
   `/development-status` projection lines.
 
+## Workspace revision and structural reads
+
+The workspace revision layer (Stage 3 milestone 3, ADR 0016) gives Solaris a
+stronger model-facing file identity system and cheaper structural
+exploration. Identity logic and GDScript structural extraction live in core
+(`packages/core/src/workspace/`) — provider-neutral, Node-free, and
+mutation-free (architecture-enforced: no provider ports, no task-runtime
+mutation surface, no sandbox implementations, no checkpoint/mutation
+machinery, no Godot modules).
+
+```text
+packages/core/src/workspace/
+  workspace-revision.ts    opaque rev_ handles, session-scoped bounded
+                           registry, invalidation, observed-read tracking
+  workspace-read-mode.ts   exact | structural | summary
+  gdscript-structure.ts    lightweight deterministic GDScript scanner
+                           (declarations, signatures, dependencies)
+  workspace-summary.ts     bounded structure-first advisory summaries
+```
+
+- **Revision handles**: an exact/structural/summary read issues a
+  `rev_<32 hex>` handle bound to `(workspace fingerprint, path,
+whole-file SHA-256)`. The handle is an ergonomic reference, never
+  authority: the host resolves it to the trusted SHA-256 before any
+  mutation, capability policy and containment remain authoritative, and the
+  same relative path in a different workspace never resolves. The registry
+  is session-scoped, in-memory, and bounded; a successful mutation issues
+  the new post-edit revision and invalidates the previous current binding,
+  while old revisions stay resolvable as historical evidence. A
+  session-local observed-reads record (`path, revision, mode`) is
+  groundwork for future multi-agent stale-read detection.
+- **Read modes**: `workspace.read` supports `exact` (authoritative source,
+  revision handle, SHA-256, bounded text/range — the only basis for text
+  mutation), `structural` (deterministic GDScript declarations with
+  string/comment awareness, bounded output, honest `partial` results for
+  invalid syntax), and `summary` (bounded advisory overview that always
+  states its revision and its advisory status; the footer is never
+  truncated away). Non-GDScript files get an explicit unsupported result;
+  binary/special files are never decoded as UTF-8; path containment,
+  excluded directories, and protected paths apply identically to all
+  modes.
+- **Revision-aware mutations**: change-set edits/deletes accept either the
+  legacy raw `expectedSha256` or an opaque `expectedRevision` (resolved by
+  the host to its SHA-256); the existing prepare/apply revalidation is
+  unchanged. A mismatch yields a structured `stale_revision` result
+  (path, expected/current revision) and guidance — no fuzzy merge, no
+  silent retry, and a second edit requires a fresh post-edit revision.
+  Multi-file change sets fail as a whole when any member revision is
+  stale.
+- **Revision-aware evidence**: workspace-derived evidence can carry the
+  revision handle; the development bridge attaches the post-edit revision
+  to mutation evidence so parser/LSP validation is bound to the resulting
+  revision where the architecture naturally supports it; EvidenceProjector
+  model views preserve the revision; the ContextProjector volatile segment
+  shows it.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. TaskState may remain in memory by design for this milestone: the types are serializable, no runtime handles are embedded in domain state, and the persistent-state schema/versioning requirements are documented in ADR 0014 (a future persistence milestone can rely on `runtimeVersion`, the revisioned contract history, and the append-only activity log). A persistence port will be added only when a real requirement demands it.

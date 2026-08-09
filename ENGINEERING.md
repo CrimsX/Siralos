@@ -291,3 +291,36 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
     final-boundary tests**: the actual provider request (tools absent),
     the actual provider invocation (or its absence at hard pressure), and
     the actual task state after projection.
+
+## Workspace revision rules
+
+1. **Every workspace observation that may influence mutation is
+   revision-identifiable.** Exact/structural/summary reads, evidence, and
+   validation results state the `rev_...` handle of the file state they
+   concern.
+2. **Text mutation binds to an exact cryptographic file state.** The
+   change set carries either the raw SHA-256 or a revision handle the host
+   resolves to its SHA-256; both are revalidated against the current file
+   at prepare and apply time.
+3. **Opaque revision handles are convenience identifiers, not authority.**
+   Possession grants no read/write/approval/path access; capability policy
+   and containment stay authoritative.
+4. **Old revisions are never silently promoted to current.** A stale
+   pre-state identity hard-fails with a structured `stale_revision` result
+   and user-facing guidance; no fuzzy merge, no automatic retry.
+5. **Structural and summary reads are advisory exploration
+   representations.** Only exact source plus a valid revision is the basis
+   for a text mutation.
+6. **Summary/structural output states the revision represented**, and the
+   summary advisory footer is never truncated away.
+7. **A successful mutation invalidates the previous current revision and
+   issues the new post-edit state.** A second edit requires a fresh
+   post-edit revision.
+8. **Validation/review evidence records relevant file revisions where
+   practical**, so "parser clean @ rev_B" is distinguishable from "parser
+   clean sometime".
+9. **Stale-state rejection is tested at the final mutation boundary** (the
+   actual file is unchanged, no checkpoint is created) and containment at
+   the actual tool boundary, not only at helper level.
+10. **Cross-workspace revision reuse fails**: the same relative path in a
+    different workspace never resolves the handle.
