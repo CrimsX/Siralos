@@ -107,7 +107,8 @@ function isTestSupportFile(file) {
     file.endsWith(".test.ts") ||
     file.endsWith("workspace-fixtures.ts") ||
     file.endsWith("git-test-support.ts") ||
-    file.endsWith("gdscript-development-testing.ts")
+    file.endsWith("gdscript-development-testing.ts") ||
+    file.endsWith("reference-test-support.ts")
   );
 }
 

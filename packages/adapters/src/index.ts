@@ -275,3 +275,66 @@ export {
   type FakeParserControl,
   type FakeSessionControl,
 } from "./godot/development/gdscript-development-testing.js";
+
+// --- Stage 3 milestone 5: reference adapters (read-only external inspection) ---
+
+export {
+  assertReferenceRoot,
+  isReferenceRootWithin,
+  resolveReferencePath,
+  type ResolveReferencePathResult,
+} from "./reference/reference-path.js";
+export {
+  createFakeRepositoryBackend,
+  createLocalDirectoryResolver,
+  createReferenceResolver,
+  createRepositoryResolver,
+  createUnavailableRepositoryBackend,
+  REPOSITORY_RESOLUTION_UNAVAILABLE_MESSAGE,
+  type FakeRepositoryFixture,
+  type RepositoryRevisionBackend,
+} from "./reference/reference-resolver.js";
+export {
+  createInMemoryCacheStore,
+  createReferenceCacheStore,
+  REFERENCE_CACHE_UNAVAILABLE_MESSAGE,
+  type CacheStatus,
+  type CacheStoreOutcome,
+  type ReferenceCacheMetadata,
+  type ReferenceCacheStore,
+} from "./reference/reference-cache.js";
+export {
+  createReferenceMaterializer,
+  createReferenceRootProvider,
+  REPOSITORY_MATERIALIZATION_UNAVAILABLE_MESSAGE,
+  type ReferenceRoot,
+  type RootProvider,
+} from "./reference/reference-materializer.js";
+export {
+  createFakeRepositoryMaterializer,
+  type CreateFakeRepositoryMaterializerOptions,
+} from "./reference/reference-test-support.js";
+export {
+  createReferenceAccess,
+  REFERENCE_ACCESS_LIMITS,
+  type ReferenceAccessLimits,
+  type ReferenceAccessOptions,
+  type ReferenceInfo,
+  type ReferenceInfoProvider,
+} from "./reference/reference-access.js";
+export {
+  createReferenceListTool,
+  createReferenceTools,
+  mapReferenceFailure,
+  referenceRevisionAnchor,
+  resolveReferenceSelector,
+  type ReferenceTool,
+  type ReferenceToolDependencies,
+} from "./tools/reference/reference-list-tool.js";
+export { createReferenceReadTool } from "./tools/reference/reference-read-tool.js";
+export { createReferenceSearchTool } from "./tools/reference/reference-search-tool.js";
+export {
+  createReferenceServices,
+  type ReferenceServices,
+  type ReferenceServicesOptions,
+} from "./reference/reference-services.js";
