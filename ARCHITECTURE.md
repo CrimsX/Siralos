@@ -300,6 +300,35 @@ apps/cli/                                 /godot-knowledge, /godot-api,
 - **Check-only argument discipline (architecture-enforced)**: `--script` is legitimate only inside the check-only runner structurally paired with `--check-only`, `--headless`, and mirror-only `--path`; scene/editor/import/LSP/DAP/recovery options never appear; the source workspace never becomes the diagnostic `--path`; no literal or concatenated argument construction; no imported argument arrays. The knowledge runner passes exactly `--dump-extension-api-with-docs`.
 - **Approval protocol**: `godot.check_script`/`godot.check_project_scripts` are `prepared_diagnostic` tools sharing the one-time approval flow with the project probe; `godot.diagnose` is `ask` in every user-facing profile (no public `allow`), while `godot.api_search`/`godot.api_lookup` are `allow`. While execution is unavailable, preparation returns typed `unavailable` results before any approval is requested.
 
+## GDScript language session (LSP)
+
+The language-session layer follows the same inward pattern: neutral contracts in core, adapters own sockets/framing/normalization/process concerns, the CLI renders. Core knows no TCP, no port numbers, no mirror paths, no JSON-RPC framing (ADR 0011).
+
+```text
+packages/core/src/godot/
+  lsp.ts                                  session port, models, limits,
+                                          preview + prepared-session digest,
+                                          language events
+packages/adapters/src/godot/
+  lsp/frame-parser.ts                     incremental Content-Length framing
+  lsp/json-rpc.ts                         bounded JSON-RPC client
+  lsp/file-uri.ts                         mirror URI <-> relative path mapping
+  lsp/normalizers.ts                      diagnostics/hover/completion/
+                                          definition normalization
+  lsp/port-allocator.ts                   loopback-only dynamic port allocation
+  lsp/godot-lsp-service.ts                session prepare/start/status/staleness
+  process/godot-lsp-runner.ts             fixed recovery LSP tuple (fail-closed)
+  tools/                                  godot.lsp_session + 4 query tools
+apps/cli/                                 /gdscript-lsp, -stop, -hover,
+                                          -complete, -definition; /status
+```
+
+- **Core owns**: the session port, status/request/result models, session preview and digest contract, capability model, and events. Core never opens sockets and never spawns Godot.
+- **Adapters own**: framing, JSON-RPC correlation, URI mapping, normalization, port allocation, the fixed runner (fail-closed), and session orchestration. Only `src/godot/lsp` and `src/sandbox` may import `node:net` (architecture-enforced).
+- **CLI owns**: command parsing, rendering, and composition.
+- **Approval protocol**: `godot.lsp_session` is a `prepared_lsp_session` tool sharing the one-time approval flow; `godot.lsp` is `ask` in every user-facing profile (no public `allow`); query tools require an active session. While startup is unavailable, preparation returns typed `unavailable` results before any approval is requested.
+- **LSP runner discipline (architecture-enforced)**: `--lsp-port` is legitimate only inside the LSP runner structurally paired with `--headless --editor --recovery-mode --path <mirror>`; DAP/debug/scene/import/quit options never appear; path and port values come from Solaris-owned inputs; `workspace/applyEdit`/`workspace/executeCommand` are never implemented in runtime adapter code.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. A persistence port will be added only when a real requirement demands it.

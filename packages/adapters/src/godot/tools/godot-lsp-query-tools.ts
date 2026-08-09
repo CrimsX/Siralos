@@ -213,9 +213,7 @@ function hoverOutput(
   };
 }
 
-function rangeOutput(
-  range: import("@solaris/core").GDScriptSourceRange | null,
-): {
+function rangeOutput(range: import("@solaris/core").GDScriptSourceRange | null): {
   readonly start: { readonly line: number; readonly column: number };
   readonly end: { readonly line: number; readonly column: number };
 } | null {
