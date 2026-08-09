@@ -229,12 +229,12 @@ describe("milestone 5 projection-service volatile sections", () => {
       tools: [],
       providerToolCalling: true,
     });
-    const ids = projection.contextProjection.volatileSegments.map((segment) => segment.id);
-    expect(ids).toEqual(["current-task-evidence", "reference-evidence", "research-evidence"]);
-    const referenceSegment = projection.contextProjection.volatileSegments.find(
+    const ids = projection.contextProjection.contextualSegments.map((segment) => segment.id);
+    expect(ids).toEqual(["reference-evidence", "research-evidence", "task-contract", "task-state"]);
+    const referenceSegment = projection.contextProjection.contextualSegments.find(
       (segment) => segment.id === "reference-evidence",
     );
-    const researchSegment = projection.contextProjection.volatileSegments.find(
+    const researchSegment = projection.contextProjection.contextualSegments.find(
       (segment) => segment.id === "research-evidence",
     );
     expect(referenceSegment?.content).toContain(
@@ -270,8 +270,10 @@ describe("milestone 5 projection-service volatile sections", () => {
       tools: [],
       providerToolCalling: true,
     });
-    const ids = projection.contextProjection.volatileSegments.map((segment) => segment.id);
-    expect(ids).toEqual(["current-task-evidence"]);
+    const ids = projection.contextProjection.contextualSegments.map((segment) => segment.id);
+    // The reference/research sections are omitted when no observations exist.
+    expect(ids).not.toContain("reference-evidence");
+    expect(ids).not.toContain("research-evidence");
   });
 
   it("bounds the combined volatile sections to 12 KiB with an explicit truncation marker", () => {
@@ -311,13 +313,13 @@ describe("milestone 5 projection-service volatile sections", () => {
       providerToolCalling: true,
     });
     const encoder = new TextEncoder();
-    const total = projection.contextProjection.volatileSegments
+    const total = projection.contextProjection.contextualSegments
       .filter(
         (segment) => segment.id.startsWith("reference-") || segment.id.startsWith("research-"),
       )
       .reduce((sum, segment) => sum + encoder.encode(segment.content).length, 0);
     expect(total).toBeLessThanOrEqual(12 * 1024);
-    const researchSegment = projection.contextProjection.volatileSegments.find(
+    const researchSegment = projection.contextProjection.contextualSegments.find(
       (segment) => segment.id === "research-evidence",
     );
     expect(researchSegment?.content).toContain("[truncated]");
@@ -396,7 +398,7 @@ describe("milestone 5 projection-service volatile sections", () => {
       tools: [],
       providerToolCalling: true,
     });
-    const referenceSegment = projection.contextProjection.volatileSegments.find(
+    const referenceSegment = projection.contextProjection.contextualSegments.find(
       (segment) => segment.id === "reference-evidence",
     );
     expect(referenceSegment?.content).toContain(

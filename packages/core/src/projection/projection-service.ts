@@ -258,13 +258,15 @@ export const MAX_REFERENCE_EVIDENCE_VIEWS = 4;
 export const MAX_RESEARCH_EVIDENCE_VIEWS = 4;
 
 /**
- * Volatile `[Reference evidence]` + `[Research evidence]` sections, always
+ * Contextual `[Reference evidence]` + `[Research evidence]` sections, always
  * composed AFTER `[Latest evidence]` and last in the segment list. Content
  * is bounded (4 most recent views/entries each, combined 12 KiB budget
  * with explicit `… [truncated]`); never includes absolute cache paths, and
- * never enters stable/contextual segments or instruction/knowledge
- * sections. Both sections are volatile, so the stable fingerprint is
- * unaffected by their content.
+ * never enters instruction/knowledge sections. Both sections are
+ * CONTEXTUAL (not stable): they reach the provider's system prefix — the
+ * milestone requires the model to see reference/research evidence under
+ * data/evidence sections — while the stable fingerprint (stable segments
+ * only) is unaffected by their content.
  */
 function referenceResearchSegments(options: {
   readonly references?: {
@@ -314,7 +316,7 @@ function referenceResearchSegments(options: {
   if (referenceContent.length > 0) {
     segments.push({
       id: "reference-evidence",
-      stability: "volatile",
+      stability: "contextual",
       title: "Reference evidence",
       content: referenceContent,
     });
@@ -322,7 +324,7 @@ function referenceResearchSegments(options: {
   if (researchContent.length > 0) {
     segments.push({
       id: "research-evidence",
-      stability: "volatile",
+      stability: "contextual",
       title: "Research evidence",
       content: researchContent,
     });
@@ -514,7 +516,7 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
       ...taskContextSegments(snapshot, request),
       ...volatileTaskSegments(snapshot),
       // Reference/research evidence render AFTER [Latest evidence] and last.
-      // The ContextProjector sorts volatile segments by id, and
+      // The ContextProjector sorts segments by stability then id, and
       // current-task-evidence < reference-evidence < research-evidence
       // holds lexically, so the ordering is deterministic.
       ...referenceResearchSegments(options),
