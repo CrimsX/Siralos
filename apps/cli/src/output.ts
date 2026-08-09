@@ -223,7 +223,12 @@ export function formatTools(
     return "Available tools:\n  (none)\n";
   }
   const lines = tools.map((info) => {
-    const kind = info.capability === "workspace.write" ? "write" : "read-only";
+    const kind =
+      info.capability === "workspace.write"
+        ? "write"
+        : info.capability === "godot.probe_project"
+          ? "reviewable"
+          : "read-only";
     const decision = security.evaluateCapability(info.capability);
     const status =
       decision.decision === "deny"
