@@ -37,6 +37,9 @@ import {
   type ModelRequest,
   type ProjectionService,
   type GDScriptDevelopmentService,
+  type ReferenceAccessPort,
+  type ReferenceEvidenceView,
+  type ResearchService,
   type SolarisApplication,
   type TaskRuntime,
   type TaskRuntimeSnapshotSources,
@@ -53,9 +56,12 @@ import {
   createFilesystemCheckpointStore,
   createGDScriptDevelopmentService,
   createGodotDevelopmentStatusTool,
+  createReferenceTools,
   createWorkspaceApplyTextChangesetTool,
   createWorkspaceFilePrimitives,
   createWorkspaceReadTool,
+  type ReferenceServices,
+  type ReferenceTool,
 } from "@solaris/adapters";
 
 export const FIXTURE_PATH = "scripts/player/player.gd";
@@ -144,6 +150,16 @@ export interface BehaviorLoopHarnessOptions {
   readonly instructions?: import("@solaris/core").ProjectInstructionService;
   /** Wire a KnowledgeCoordinator into the projection (requires `projection: true`). */
   readonly knowledge?: import("@solaris/core").KnowledgeCoordinator;
+  /**
+   * Wire reference services (registry + access + tools) into the harness.
+   * The read-only `reference.*` tools are registered and every successful
+   * access call is recorded as a `ReferenceEvidenceView` (composition-root
+   * style) so the `[Reference evidence]` projection section works with
+   * `projection: true`.
+   */
+  readonly references?: ReferenceServices;
+  /** Wire a research service into the `[Research evidence]` projection section (requires `projection: true`). */
+  readonly research?: ResearchService;
   /** Wrap the application provider in a recording provider for request assertions. */
   readonly recording?: boolean;
   /** Reviewer scenario for the quality stage (fake-change-reviewer). */
@@ -171,6 +187,10 @@ export interface BehaviorLoopHarness {
   readonly revisions: WorkspaceRevisionRegistry;
   /** Recorded provider requests (when `recording: true`). */
   readonly requests: () => readonly ModelRequest[];
+  /** Reference tools registered when `references` was provided (read-only list/read/search). */
+  readonly referenceTools: () => readonly ReferenceTool[];
+  /** Recorded reference observations feeding the `[Reference evidence]` projection section. */
+  readonly referenceObservations: () => readonly ReferenceEvidenceView[];
   /** Prepare + approve + start the workflow and create the task. */
   startWorkflow(request: string): Promise<GDScriptDevelopmentPreview>;
   /** Run the provider loop for a request (drains all tool rounds). */
@@ -264,10 +284,82 @@ export async function createBehaviorLoopHarness(
     settling: { hardTimeoutMs: 1000, pollIntervalMs: 1 },
   });
   const workspaceReadTool = createWorkspaceReadTool(workspace.root, { revisions });
+  // Reference services (Stage 3 milestone 5): register the read-only
+  // reference tools and record every successful access call as a
+  // ReferenceEvidenceView — the composition root's job in production — so
+  // the [Reference evidence] projection section observes real tool traffic.
+  const referenceObservations: ReferenceEvidenceView[] = [];
+  function recordObservation(view: ReferenceEvidenceView): void {
+    referenceObservations.push(view);
+    while (referenceObservations.length > 64) {
+      referenceObservations.shift();
+    }
+  }
+  const referenceAccess: ReferenceAccessPort | null =
+    options.references === undefined
+      ? null
+      : {
+          list: async (request) => {
+            const result = await options.references!.access.list(request);
+            if (result.status === "ok") {
+              recordObservation({
+                referenceId: result.referenceId,
+                alias: result.alias,
+                revision: result.revision,
+                path: result.path,
+                operation: "list",
+                mode: null,
+                sha256: null,
+                evidenceId: null,
+              });
+            }
+            return result;
+          },
+          read: async (request) => {
+            const result = await options.references!.access.read(request);
+            if (result.status === "ok") {
+              recordObservation({
+                referenceId: result.referenceId,
+                alias: result.alias,
+                revision: result.revision,
+                path: result.path,
+                operation: "read",
+                mode: request.mode,
+                sha256: result.sha256,
+                evidenceId: null,
+              });
+            }
+            return result;
+          },
+          search: async (request) => {
+            const result = await options.references!.access.search(request);
+            if (result.status === "ok") {
+              recordObservation({
+                referenceId: result.referenceId,
+                alias: result.alias,
+                revision: result.revision,
+                path: request.path ?? "",
+                operation: "search",
+                mode: null,
+                sha256: null,
+                evidenceId: null,
+              });
+            }
+            return result;
+          },
+        };
+  const referenceTools =
+    referenceAccess === null
+      ? []
+      : createReferenceTools({
+          registry: options.references!.registry,
+          access: referenceAccess,
+        });
   const tools = createToolRegistry([
     workspaceReadTool,
     createWorkspaceApplyTextChangesetTool(development),
     createGodotDevelopmentStatusTool(development),
+    ...referenceTools,
   ]);
   const { runtime, sources, now } = createBehaviorRuntime();
   const recording = options.recording === true ? createRecordingProvider() : null;
@@ -301,6 +393,21 @@ export async function createBehaviorLoopHarness(
                   retrieve: (query) => options.knowledge!.retrieve(query),
                 },
               }),
+          ...(options.references === undefined
+            ? {}
+            : {
+                references: {
+                  list: () => options.references!.registry.list(),
+                  latestEvidence: () => [...referenceObservations],
+                },
+              }),
+          ...(options.research === undefined
+            ? {}
+            : {
+                research: {
+                  latestEvidence: () => options.research!.latestEvidence(),
+                },
+              }),
         })
       : undefined;
   const application = createSolarisApplication({
@@ -330,6 +437,8 @@ export async function createBehaviorLoopHarness(
     development,
     workspaceRead: workspaceReadTool,
     requests: () => (recording === null ? [] : [...recording.requests]),
+    referenceTools: () => [...referenceTools],
+    referenceObservations: () => [...referenceObservations],
     startWorkflow: async (request: string): Promise<GDScriptDevelopmentPreview> => {
       const prepared = await development.prepareStart(request);
       if (prepared.status !== "ready") {
