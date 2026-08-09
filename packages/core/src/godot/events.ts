@@ -11,12 +11,12 @@ export type GodotApplicationEvent =
   | {
       readonly type: "godot_probe_started";
       readonly installationId: string;
-      readonly probe: "version" | "help" | "api";
+      readonly probe: "version" | "help" | "api" | "recovery";
     }
   | {
       readonly type: "godot_probe_completed";
       readonly installationId: string;
-      readonly probe: "version" | "help" | "api";
+      readonly probe: "version" | "help" | "api" | "recovery";
       readonly status: "success" | "degraded" | "failed";
     }
   | {

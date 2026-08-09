@@ -232,6 +232,9 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   if (request.capability === "process.execute") {
     return formatCommandApprovalPrompt(request);
   }
+  if (request.capability === "godot.probe_project") {
+    return formatGodotProbeApprovalPrompt(request);
+  }
   const file = request.preview.files[0];
   const lines = [
     "Approval required",
@@ -254,6 +257,55 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   lines.push("");
   lines.push(`Approval applies once to plan ${request.digest.slice(0, 8)}.`);
   return `${lines.join("\n")}\n`;
+}
+
+function formatGodotProbeApprovalPrompt(
+  request: Extract<ApprovalRequest, { capability: "godot.probe_project" }>,
+): string {
+  const preview = request.preview;
+  const risks = preview.risks;
+  const mirror = preview.mirror;
+  const lines = [
+    "Godot project probe requires approval",
+    "",
+    `Project: ${preview.projectName ?? "(unnamed)"}`,
+    "",
+    "Engine:",
+    `  ${preview.engineVersion}`,
+    `  ${preview.engineEdition} edition`,
+    `  Solaris support: ${preview.support}`,
+    `  Static compatibility: ${preview.compatibility}`,
+    "",
+    "Static risk inventory:",
+    `  @tool scripts        ${risks.toolScripts}`,
+    `  enabled plugins      ${risks.enabledEditorPlugins}`,
+    `  GDExtensions         ${risks.gdextensions}`,
+    `  autoloads            ${risks.autoloads}`,
+    `  .NET projects        ${risks.dotnetProjects}`,
+    "",
+    "Probe isolation:",
+    `  Source workspace     not used as project (never writable)`,
+    `  Disposable mirror    yes (~${formatFileCount(mirror.estimatedFileCount)}, ${formatBytes(mirror.estimatedBytes)})`,
+    `  Recovery mode        required`,
+    `  Headless editor      yes`,
+    `  Network              denied`,
+    `  Provider secrets     removed`,
+    `  Runtime game         disabled`,
+    `  Project scripts      recovery-mode restricted`,
+    `  Mirror deleted       after probe`,
+    "",
+    "The probe may cause Godot to import resources inside the disposable mirror.",
+    "Recovery mode reduces editor-side execution risk but does not make arbitrary",
+    "project data inherently safe; the probe also relies on a disposable mirror",
+    "and the OS sandbox.",
+    "",
+    `Approval is one-time and binds to project risk manifest ${request.digest.slice(0, 8)}.`,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+function formatFileCount(count: number): string {
+  return count.toLocaleString("en-US");
 }
 
 function formatCommandApprovalPrompt(
