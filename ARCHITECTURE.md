@@ -579,6 +579,106 @@ whole-file SHA-256)`. The handle is an ergonomic reference, never
   model views preserve the revision; the ContextProjector volatile segment
   shows it.
 
+## Project instructions and knowledge
+
+The instruction/knowledge layer (Stage 3 milestone 4, ADR 0017) is the
+host-owned foundation that keeps behavioral guidance, durable project
+facts, and historical evidence strictly separate before References,
+planning, or scene/resource intelligence exist. The authority order is:
+
+```text
+Security Policy  >  Instructions  >  TaskContract  >  Knowledge  >  History/Evidence
+```
+
+Security policy is outside the instruction resolver entirely; project
+instructions can never broaden it; knowledge can never grant capability or
+override policy; history is never promoted to knowledge without the
+coordinator. All three are distinct sections in the projected provider
+context, never concatenated into one authority class.
+
+```text
+packages/core/src/instructions/   structured model, single resolver,
+                                   precedence, conflicts, revision identity
+packages/core/src/knowledge/      fact model, KnowledgeCoordinator (single
+                                   writer), bounded retrieval + traces,
+                                   conservative Godot seeding, rendering
+packages/core/src/security/
+  behavioral-config.ts            shared protected-behavioral-config classifier
+packages/adapters/src/instructions/
+  instruction-discovery.ts        bounded AGENTS.md discovery (containment-
+                                   enforced, revision-bound)
+```
+
+- **Instructions**: `ProjectInstruction` carries source
+  (`project_root`/`project_directory`; `managed`/`user`/`task` slots
+  reserved), scope (workspace-relative), deterministic precedence
+  (smaller = more authoritative: host > TaskContract > managed > user >
+  project root > directory scope), and a revision bound to the exact
+  `AGENTS.md` file revision. One pure resolver owns resolution semantics:
+  `resolveForPath`, multi-path union preserving scope, deterministic
+  ordering (root → nested directories), and structural conflict detection
+  that surfaces same-layer same-scope contradictions (both sides
+  preserved, never silently dropped). The adapter service discovers
+  `AGENTS.md` files with the same containment as workspace reads (canonical
+  root, symbolic links never traversed, bounded depth/files/bytes,
+  `node_modules`/`.git`/`.solaris` excluded); URLs in instruction content
+  are plain text — no remote instructions are ever fetched. The resolver
+  is architecture-enforced to stay provider-neutral and mutation-free.
+- **Protected behavioral configuration**: `AGENTS.md` (any depth) and
+  `.solaris/**` are classified by one core predicate shared by the pure
+  change-set validator and the adapter write-path guards. Ordinary
+  `workspace.write` never covers them: a change set touching a protected
+  path is rejected before any write, approval, or checkpoint with a typed
+  message, and the standalone create/edit/delete write targets include the
+  same classifier. The dedicated protected-configuration authorization
+  path (the `/evolve`-style surface) is future work and not offered.
+- **Knowledge facts**: subject-keyed (`project.godot.version`, ...), one
+  active immutable revision per project scope + subject, history retained
+  (restoring an old value creates a new revision), provenance as evidence
+  or exact workspace-file references, `low|medium|high` confidence,
+  `volatile|normal|stable|evergreen` volatility with simple host freshness
+  rules, optional expiry (expired facts drop out of automatic retrieval,
+  never deleted), and `pinned|retrieved` activation. Candidates are
+  validated before acceptance: subject-key shape, existing provenance,
+  content/history bounds, known secrets, and conservative rejection of
+  policy-shaped claims.
+- **KnowledgeCoordinator**: the single application-owned writer. Providers
+  and the CLI never write fact structures directly; they propose
+  candidates. Exact normalized equality produces no revision churn;
+  retirement removes the current pointer and retains revisions. In-memory
+  and serializable with documented schema version `knowledge-1`; future
+  persistence must define quotas, history retention, pruning, and archive
+  behavior.
+- **Pinned and retrieved knowledge**: a small bounded pinned set (fact and
+  byte budgets) enters stable/contextual context automatically; everything
+  else is retrieved on demand by a deterministic explainable scorer
+  (exact/prefix subject match, keyword overlap, provenance path
+  relevance, confidence + freshness weights; documented constants) with
+  count/byte budgets, deterministic tie-breaking, and omissions recorded
+  in the retrieval trace. The trace is for debugging, tests, user
+  inspection, and future `/evolve` — never model authority.
+- **ContextProjector integration**: the projected context carries distinct
+  titled sections — `[Solaris instructions]`, `[Project instructions]`,
+  `[Project knowledge]` (pinned), `[Task-relevant knowledge]` (retrieved,
+  task-stable basis), `[Task contract]`, `[Task state]`, `[Latest
+evidence]` — with knowledge framed as factual context that never grants
+  permissions, changes policy, or overrides the task contract. Only small
+  explicitly pinned knowledge enters the stable/contextual prefix;
+  retrieval is keyed to the task request and the paths the task actually
+  read, so incidental facts never churn the cacheable prefix.
+- **Deterministic seeding**: the CLI seeds a few high-confidence facts
+  from the static project profile (engine version, language profile,
+  has-dotnet, project name) with exact `project.godot` provenance.
+  Architectural ownership is never inferred from weak evidence.
+- **Task provenance**: task runtime snapshots record the instruction
+  inventory revision and knowledge-state revision at task start
+  (`instructionSetRevision`, `knowledgeStateRevision`), so historical task
+  provenance identifies the guidance and knowledge that influenced it.
+- **CLI surface**: `/instructions` lists discovered instruction files with
+  their revisions; `/knowledge` lists current facts (revision, confidence,
+  volatility, pinned status, retired subjects); `/knowledge why` shows the
+  latest retrieval trace. Both are read-only.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. TaskState may remain in memory by design for this milestone: the types are serializable, no runtime handles are embedded in domain state, and the persistent-state schema/versioning requirements are documented in ADR 0014 (a future persistence milestone can rely on `runtimeVersion`, the revisioned contract history, and the append-only activity log). A persistence port will be added only when a real requirement demands it.

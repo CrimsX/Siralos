@@ -82,6 +82,16 @@ The Sandbox Runtime manager is shared; Solaris never lets a later request execut
 
 The `develop-offline` profile denies writes to `.git/`, `.solaris/`, `.env`, `.env.*`, `*.pem`, and `*.key` inside the workspace even though the workspace is writable. Protected-path matching folds case on Windows and macOS (macOS volumes are treated conservatively as case-insensitive), so `.GIT`, `.Git`, `.ENV` and equivalent variants cannot address protected paths; the fold applies during preparation and again immediately before mutation, including for new files whose final component does not yet exist. Windows junctions and reparse points cannot alias protected directories because mutation targets must resolve canonically inside the workspace. Environment filtering remains mandatory regardless; filename protection is defense in depth, not the primary safeguard. Where a backend cannot protect creation of a previously nonexistent matching file (a documented Windows glob-expansion limitation), that platform difference is documented and the backend's own behaviour governs.
 
+## Instructions, knowledge, and security authority (ADR 0017)
+
+Instructions, knowledge, history/evidence, and security policy are distinct authority classes and are never interchangeable:
+
+- **Security policy** is host-owned and outside every instruction and knowledge structure. Neither project instructions nor knowledge facts can enable a tool, grant a permission, override sandbox policy, approve a mutation, or override a TaskContract.
+- **Behavioral configuration** (`AGENTS.md` at any workspace depth, `.solaris/**`) is protected by the shared classifier: ordinary `workspace.write` never covers it, and every mutation surface (the pure change-set validator and the standalone create/edit/delete write targets) rejects a behavioral-configuration change before any write, approval, or checkpoint. The dedicated protected-configuration authorization path is future work and is never offered at this stage.
+- **Project instructions** are scoped guidance bound to exact file revisions. A project `AGENTS.md` claiming unrestricted network access, sandbox disabling, or bypassed approvals is surfaced as guidance only; the host deny remains authoritative (final-boundary behavior fixtures 7, 23, 49).
+- **Project knowledge** is untrusted factual context with provenance, confidence, freshness, and expiry. Policy-shaped candidates (e.g. "Shell access is allowed.") are conservatively rejected at the single-writer KnowledgeCoordinator; known secrets are never stored as knowledge or exposed in projections (fixture 24). Knowledge is framed as factual context in the provider request and never appears in the same authority class as instructions (fixture 21, 50).
+- **History/evidence** records what happened; it is never promoted to knowledge without the coordinator, and knowledge is never promoted to instruction.
+
 ## Environment filtering
 
 See "Credential isolation" above. The allowlist keeps only variables required to run ordinary development tools (`PATH`, `SystemRoot`, `WINDIR`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP`, `TMPDIR`, `LANG`, `LC_ALL`, `TERM`), with sandbox-controlled home and temp values.

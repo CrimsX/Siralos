@@ -324,3 +324,45 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
    the actual tool boundary, not only at helper level.
 10. **Cross-workspace revision reuse fails**: the same relative path in a
     different workspace never resolves the handle.
+
+## Instruction and knowledge rules
+
+1. **Instruction, knowledge, history/evidence, and security are distinct
+   authority classes.** They are never concatenated into one prompt
+   section, never stored in one structure, and never promoted across
+   classes: knowledge is factual context, history is observation, security
+   policy is host-owned, and only instructions tell the model how to work.
+2. **Project knowledge never grants capability.** A fact cannot enable a
+   tool, change permissions, override sandbox policy, approve a mutation,
+   or override a TaskContract. Policy-shaped candidates are conservatively
+   rejected at the coordinator.
+3. **Lower-level project instructions cannot broaden host security
+   policy.** `AGENTS.md` claiming unrestricted network access is surfaced
+   as guidance; the host deny remains authoritative.
+4. **Behavioral configuration requires explicit protected mutation
+   authority.** `AGENTS.md` and `.solaris/**` are never covered by ordinary
+   `workspace.write`; every mutation surface rejects them before any
+   write, approval, or checkpoint.
+5. **Knowledge facts use immutable revisions.** Current pointers move;
+   history is never rewritten; restoring an old value creates a new
+   revision.
+6. **Subject-keyed facts have one active revision per project scope +
+   subject key.**
+7. **Knowledge writes are coordinated through one owner.** Providers and
+   the CLI propose candidates; the KnowledgeCoordinator alone mutates
+   durable current knowledge.
+8. **Knowledge carries provenance when possible** — task evidence
+   references or exact workspace file states — and facts without evidence
+   default to low confidence, never masquerading as verified.
+9. **Retrieved knowledge is bounded and explainable.** Count and byte
+   budgets, deterministic scoring, omissions recorded in the trace; the
+   trace never alters ranking.
+10. **Memory/knowledge is untrusted factual input.** It is framed as such
+    in the projected context and never presented as instruction or policy.
+11. **Stable context contains only small explicitly pinned knowledge**;
+    retrieval is task-stable so incidental facts never churn the cacheable
+    prefix.
+12. **Behavior/security changes require final-boundary effect tests**: the
+    actual provider request, the actual tool authorization/execution, the
+    actual mutation preparation, and the actual task state — not only
+    helper-level assertions.
