@@ -12,6 +12,12 @@ export {
   type UserSandboxProfileId,
 } from "./config/user-config.js";
 export {
+  INSTRUCTION_DISCOVERY_LIMITS,
+  createProjectInstructionService,
+  discoverProjectInstructions,
+  type ProjectInstructionDiscoveryOptions,
+} from "./instructions/instruction-discovery.js";
+export {
   createAnthropicSandboxRuntimeBackend,
   ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID,
   ANTHROPIC_SANDBOX_RUNTIME_VERSION,
