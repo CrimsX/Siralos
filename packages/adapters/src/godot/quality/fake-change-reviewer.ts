@@ -38,9 +38,10 @@ export interface FakeReviewerControl {
   readonly reviews: readonly ChangeReviewRequest[];
 }
 
-export function createFakeChangeReviewer(
-  options: FakeChangeReviewerOptions,
-): { readonly reviewer: ChangeReviewer; readonly control: FakeReviewerControl } {
+export function createFakeChangeReviewer(options: FakeChangeReviewerOptions): {
+  readonly reviewer: ChangeReviewer;
+  readonly control: FakeReviewerControl;
+} {
   const reviews: ChangeReviewRequest[] = [];
   let round = 0;
   const reviewer: ChangeReviewer = {
@@ -50,7 +51,8 @@ export function createFakeChangeReviewer(
       }
       reviews.push(request);
       round += 1;
-      const resolving = options.resolveAfterRounds !== undefined && round > options.resolveAfterRounds;
+      const resolving =
+        options.resolveAfterRounds !== undefined && round > options.resolveAfterRounds;
       const activeScenario = resolving ? "clean" : options.scenario;
       switch (activeScenario) {
         case "clean":
@@ -58,33 +60,42 @@ export function createFakeChangeReviewer(
         case "medium":
           return {
             status: "completed",
-            findings: [makeFinding(request, {
-              severity: "medium",
-              category: "maintainability",
-              title: "helper function used only once",
-              confidence: "medium",
-              evidence: "the helper is called from a single site",
-              impact: "minor maintainability concern",
-              recommendation: "inline the helper or keep it if the project prefers small functions",
-            })],
+            findings: [
+              makeFinding(request, {
+                severity: "medium",
+                category: "maintainability",
+                title: "helper function used only once",
+                confidence: "medium",
+                evidence: "the helper is called from a single site",
+                impact: "minor maintainability concern",
+                recommendation:
+                  "inline the helper or keep it if the project prefers small functions",
+              }),
+            ],
             message: null,
           };
         case "high":
           return {
             status: "completed",
-            findings: [makeFinding(request, {
-              severity: "high",
-              category: "correctness",
-              title: "health can exceed max_health",
-              confidence: "high",
-              evidence: "heal() adds the amount without clamping the result to max_health",
-              impact: "the player can heal beyond the intended maximum",
-              recommendation: "clamp the result to max_health",
-            })],
+            findings: [
+              makeFinding(request, {
+                severity: "high",
+                category: "correctness",
+                title: "health can exceed max_health",
+                confidence: "high",
+                evidence: "heal() adds the amount without clamping the result to max_health",
+                impact: "the player can heal beyond the intended maximum",
+                recommendation: "clamp the result to max_health",
+              }),
+            ],
             message: null,
           };
         case "malformed":
-          return { status: "failed", findings: [], message: "the reviewer returned malformed output" };
+          return {
+            status: "failed",
+            findings: [],
+            message: "the reviewer returned malformed output",
+          };
         case "timeout": {
           await options.tick?.();
           return { status: "failed", findings: [], message: "the review timed out" };
@@ -121,15 +132,17 @@ export function createFakeChangeReviewer(
             status: "completed",
             findings:
               request.previousFindingIds.length === 0
-                ? [makeFinding(request, {
-                    severity: "high",
-                    category: "correctness",
-                    title: "repair required",
-                    confidence: "high",
-                    evidence: "the fixture repair scenario requires one blocking round",
-                    impact: "clean completion must not be claimed",
-                    recommendation: "apply the approved repair and revalidate",
-                  })]
+                ? [
+                    makeFinding(request, {
+                      severity: "high",
+                      category: "correctness",
+                      title: "repair required",
+                      confidence: "high",
+                      evidence: "the fixture repair scenario requires one blocking round",
+                      impact: "clean completion must not be claimed",
+                      recommendation: "apply the approved repair and revalidate",
+                    }),
+                  ]
                 : [],
             message: null,
           };
@@ -138,24 +151,28 @@ export function createFakeChangeReviewer(
             status: "completed",
             findings:
               request.previousFindingIds.length === 0
-                ? [makeFinding(request, {
-                    severity: "high",
-                    category: "correctness",
-                    title: "first blocker",
-                    confidence: "high",
-                    evidence: "the fixture repair scenario requires one blocking round",
-                    impact: "clean completion must not be claimed",
-                    recommendation: "apply the approved repair and revalidate",
-                  })]
-                : [makeFinding(request, {
-                    severity: "high",
-                    category: "correctness",
-                    title: "second blocker after repair",
-                    confidence: "high",
-                    evidence: "a fresh holistic review found a new issue",
-                    impact: "the repaired change still has a blocking issue",
-                    recommendation: "apply a focused repair",
-                  })],
+                ? [
+                    makeFinding(request, {
+                      severity: "high",
+                      category: "correctness",
+                      title: "first blocker",
+                      confidence: "high",
+                      evidence: "the fixture repair scenario requires one blocking round",
+                      impact: "clean completion must not be claimed",
+                      recommendation: "apply the approved repair and revalidate",
+                    }),
+                  ]
+                : [
+                    makeFinding(request, {
+                      severity: "high",
+                      category: "correctness",
+                      title: "second blocker after repair",
+                      confidence: "high",
+                      evidence: "a fresh holistic review found a new issue",
+                      impact: "the repaired change still has a blocking issue",
+                      recommendation: "apply a focused repair",
+                    }),
+                  ],
             message: null,
           };
       }

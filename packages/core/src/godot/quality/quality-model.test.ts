@@ -9,7 +9,17 @@ import {
   type QualityStatus,
 } from "./quality-model.js";
 
-function gate(id: "scope-verified" | "parser" | "lsp-errors" | "required-validation" | "independent-review" | "warnings" | "conventions", status: QualityGateResult["status"]): QualityGateResult {
+function gate(
+  id:
+    | "scope-verified"
+    | "parser"
+    | "lsp-errors"
+    | "required-validation"
+    | "independent-review"
+    | "warnings"
+    | "conventions",
+  status: QualityGateResult["status"],
+): QualityGateResult {
   return createQualityGateResult(id, status, `gate ${id}`);
 }
 
@@ -91,12 +101,9 @@ describe("deterministic report status", () => {
   });
 
   it("never reports passed when a required gate could not run", () => {
-    const notRunGate = createQualityGateResult(
-      "required-validation",
-      "not_run",
-      "not run",
-      [{ kind: "validation-not-run", summary: "not run" }],
-    );
+    const notRunGate = createQualityGateResult("required-validation", "not_run", "not run", [
+      { kind: "validation-not-run", summary: "not run" },
+    ]);
     expect(computeQualityReportStatus([notRunGate], cleanReview(0))).toBe("validation_incomplete");
   });
 
@@ -109,12 +116,9 @@ describe("deterministic report status", () => {
   });
 
   it("reports failed when a required test exits nonzero", () => {
-    const failedGate = createQualityGateResult(
-      "required-validation",
-      "blocked",
-      "exit 1",
-      [{ kind: "validation-failed", summary: "exit 1" }],
-    );
+    const failedGate = createQualityGateResult("required-validation", "blocked", "exit 1", [
+      { kind: "validation-failed", summary: "exit 1" },
+    ]);
     expect(computeQualityReportStatus([failedGate], cleanReview(0))).toBe("failed");
   });
 
@@ -149,10 +153,12 @@ describe("deterministic report status", () => {
   });
 
   it("reports cancelled when the review was cancelled", () => {
-    const status = computeQualityReportStatus(
-      [gate("independent-review", "not_run")],
-      { status: "cancelled", findings: [], blockingCount: 0, message: "cancelled" },
-    );
+    const status = computeQualityReportStatus([gate("independent-review", "not_run")], {
+      status: "cancelled",
+      findings: [],
+      blockingCount: 0,
+      message: "cancelled",
+    });
     expect(status).toBe("cancelled");
   });
 

@@ -1015,3 +1015,93 @@ describe("check-architecture development workflow boundaries", () => {
     ).toBe(true);
   });
 });
+
+describe("quality and reviewer boundaries (ADR 0013)", () => {
+  it("rejects the reviewer adapter importing workspace mutation adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/reviewer-tools.ts"] =
+      'import { createWorkspaceEditFileTool } from "../../tools/workspace/mutations/workspace-edit-file-tool.js";\nexport const x = createWorkspaceEditFileTool;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("quality/reviewer adapter must not import workspace mutation adapters"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects the reviewer adapter importing process adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/provider-change-reviewer.ts"] =
+      'import { createProcessRunTool } from "../../process/process-run-tool.js";\nexport const x = createProcessRunTool;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("quality/reviewer adapter must not import process adapters"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects the reviewer adapter importing checkpoint adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/quality-stage-runner.ts"] =
+      'import { createFilesystemCheckpointStore } from "../../checkpoints/filesystem/checkpoint-store.js";\nexport const x = createFilesystemCheckpointStore;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("quality/reviewer adapter must not import checkpoint adapters"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects the quality adapter importing sandbox adapters (cannot alter sandbox rules)", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/quality-validation-executor.ts"] =
+      'import { createAnthropicSandboxRuntimeBackend } from "../../sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.js";\nexport const x = createAnthropicSandboxRuntimeBackend;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("quality/reviewer adapter must not import sandbox adapters"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects the quality adapter importing child-environment adapters (cannot alter provider credentials)", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/quality-stage-runner.ts"] =
+      'import { buildChildEnvironment } from "../../environment/child-environment.js";\nexport const x = buildChildEnvironment;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("quality/reviewer adapter must not import child-environment adapters"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects deterministic quality gates importing a reviewer implementation", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/quality-stage-runner.ts"] =
+      'import { createProviderChangeReviewer } from "./provider-change-reviewer.js";\nexport const x = createProviderChangeReviewer;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("deterministic quality gates must not import reviewer implementations"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts the quality adapter importing read-only workspace tools", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/reviewer-tools.ts"] =
+      'import { createWorkspaceListTool } from "../../tools/workspace/workspace-list-tool.js";\nexport const x = createWorkspaceListTool;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("accepts the reviewer implementation itself importing the read-only registry builder", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/quality/provider-change-reviewer.ts"] =
+      'import { createToolRegistry } from "@solaris/core";\nexport const x = createToolRegistry;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+});

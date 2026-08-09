@@ -557,8 +557,7 @@ export function createGDScriptDevelopmentService(
       path: file.path,
       operation: file.operation,
       afterContent: file.content,
-      unifiedDiff:
-        file.operation === "delete" ? "" : file.unifiedDiff,
+      unifiedDiff: file.operation === "delete" ? "" : file.unifiedDiff,
     }));
     current.warningBaseline = await captureWarningBaseline(dependencies, current);
     // 1. Suspend the language session (closing_for_edit). The edit never
@@ -1024,11 +1023,13 @@ export function createGDScriptDevelopmentService(
     return session?.qualityReport ?? null;
   }
 
-  async function runIndependentReview(
-    signal?: AbortSignal,
-  ): Promise<ChangeReviewResult> {
+  async function runIndependentReview(signal?: AbortSignal): Promise<ChangeReviewResult> {
     const current = session;
-    if (current === null || current.evidence.length === 0 || current.lastChangeSetFiles.length === 0) {
+    if (
+      current === null ||
+      current.evidence.length === 0 ||
+      current.lastChangeSetFiles.length === 0
+    ) {
       return {
         status: "failed",
         findings: [],
@@ -1407,7 +1408,10 @@ export function createGDScriptDevelopmentService(
     } else if (current.validation === "warnings") {
       status = "completed_with_warnings";
     } else if (current.validation === "errors") {
-      status = current.blockingFindings.length > 0 ? "completed_with_blocking_findings" : "completed_with_errors";
+      status =
+        current.blockingFindings.length > 0
+          ? "completed_with_blocking_findings"
+          : "completed_with_errors";
     } else if (current.validation === "infrastructure_failure") {
       status = "validation_failed";
     } else {
@@ -1598,7 +1602,9 @@ async function collectGitPaths(
   }
   try {
     const status = await dependencies.git.getStatus({});
-    return [...new Set([...status.changes.map((change) => change.path), ...status.untracked])].sort();
+    return [
+      ...new Set([...status.changes.map((change) => change.path), ...status.untracked]),
+    ].sort();
   } catch {
     return null;
   }

@@ -3,6 +3,7 @@ import type {
   CheckpointStore,
   CommandRunnerRegistry,
   GDScriptDevelopmentService,
+  GDScriptDevelopmentStatus,
   GDScriptLanguageService,
   GitInspector,
   GodotDiagnostics,
@@ -56,6 +57,9 @@ import {
   formatNoActiveCommand,
   formatPermissions,
   formatProviderFailure,
+  formatQualityReport,
+  formatQualitySummary,
+  formatChangeReviewResult,
   formatSandbox,
   formatSandboxViolation,
   formatStatus,
@@ -252,6 +256,12 @@ export async function runInteractiveSession(
           case "development-status":
             io.write(formatDevelopmentStatus(sessionInfo.development.status()));
             break;
+          case "quality":
+            io.write(formatQualityReport(sessionInfo.development.qualityReport()));
+            break;
+          case "review-change":
+            await runReviewChangeCommand(io, sessionInfo, controls);
+            break;
           case "cancel":
             await runCancelCommand(io, sessionInfo, controls);
             break;
@@ -350,7 +360,19 @@ async function buildStatusView(
     projectProbe: describeProjectProbe(sessionInfo.godotProbe.status()),
     knowledge: describeKnowledge(sessionInfo.knowledge.status()),
     languageSession: describeLanguageSession(sessionInfo.language.status()),
+    developmentQuality: describeDevelopmentQuality(sessionInfo.development.status()),
   };
+}
+
+function describeDevelopmentQuality(status: GDScriptDevelopmentStatus): string | null {
+  if (status.session === null) {
+    return null;
+  }
+  const quality = status.session.quality;
+  if (quality.report === null && quality.status === null) {
+    return "Quality: not run";
+  }
+  return formatQualitySummary(quality.report, quality.blockingFindings, quality.advisories);
 }
 
 function describeLanguageSession(status: {
@@ -472,6 +494,27 @@ async function runDevelopCommand(
     if (result.status === "cancelled" && result.result !== null) {
       io.write(formatDevelopmentResult(result.result));
     }
+  }
+}
+
+async function runReviewChangeCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+): Promise<void> {
+  const controller = controls.beginPrompt();
+  try {
+    io.write("Running a fresh independent review of the current development change\u2026\n");
+    const result = await sessionInfo.development.runIndependentReview(controller.signal);
+    io.write(formatChangeReviewResult(result));
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 review cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  } finally {
+    controls.endPrompt();
   }
 }
 

@@ -31,9 +31,22 @@ export interface UserGodotConfig {
   readonly discoverOnPath: boolean;
 }
 
+/**
+ * Trusted user-level quality configuration (ADR 0013 §26). `reviewProvider`
+ * optionally references an existing configured provider profile used for
+ * the independent change reviewer; when absent the active development
+ * provider profile is used. There is no new credential system: the
+ * referenced profile must already be configured, and a missing profile
+ * fails clearly instead of silently choosing an unrelated provider.
+ */
+export interface UserQualityConfig {
+  readonly reviewProvider: string | null;
+}
+
 export interface UserConfig {
   readonly sandbox: UserSandboxConfig;
   readonly godot: UserGodotConfig;
+  readonly quality: UserQualityConfig;
 }
 
 export const DEFAULT_USER_CONFIG: UserConfig = {
@@ -45,6 +58,9 @@ export const DEFAULT_USER_CONFIG: UserConfig = {
     activeInstallation: null,
     installations: {},
     discoverOnPath: true,
+  },
+  quality: {
+    reviewProvider: null,
   },
 };
 
@@ -100,13 +116,19 @@ export function parseUserConfig(data: unknown): UserConfig {
     throw new Error("Solaris configuration must be a JSON object.");
   }
   const record = data as Record<string, unknown>;
-  const unknownKeys = Object.keys(record).filter((key) => key !== "sandbox" && key !== "godot");
+  const unknownKeys = Object.keys(record).filter(
+    (key) => key !== "sandbox" && key !== "godot" && key !== "quality",
+  );
   if (unknownKeys.length > 0) {
     throw new Error(`Unknown Solaris configuration section: ${unknownKeys[0]}.`);
   }
   const sandboxValue = record["sandbox"];
   if (sandboxValue === undefined) {
-    return { ...DEFAULT_USER_CONFIG, godot: parseGodotSection(record["godot"]) };
+    return {
+      ...DEFAULT_USER_CONFIG,
+      godot: parseGodotSection(record["godot"]),
+      quality: parseQualitySection(record["quality"]),
+    };
   }
   if (typeof sandboxValue !== "object" || sandboxValue === null || Array.isArray(sandboxValue)) {
     throw new Error('Solaris configuration section "sandbox" must be a JSON object.');
@@ -136,7 +158,41 @@ export function parseUserConfig(data: unknown): UserConfig {
       backend: backend as UserSandboxBackendId,
     },
     godot: parseGodotSection(record["godot"]),
+    quality: parseQualitySection(record["quality"]),
   };
+}
+
+function parseQualitySection(value: unknown): UserQualityConfig {
+  if (value === undefined) {
+    return DEFAULT_USER_CONFIG.quality;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error('Solaris configuration section "quality" must be a JSON object.');
+  }
+  const quality = value as Record<string, unknown>;
+  const qualityKeys = Object.keys(quality).filter((key) => key !== "reviewProvider");
+  if (qualityKeys.length > 0) {
+    throw new Error(`Unknown Solaris quality configuration key: ${qualityKeys[0]}.`);
+  }
+  const reviewProvider = parseReviewProvider(quality["reviewProvider"]);
+  return { reviewProvider };
+}
+
+function parseReviewProvider(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 128 ||
+    !/^[A-Za-z0-9._-]+$/.test(value)
+  ) {
+    throw new Error(
+      "quality.reviewProvider must be a non-empty identifier (letters, digits, dot, dash, underscore) of at most 128 characters.",
+    );
+  }
+  return value;
 }
 
 function parseGodotSection(value: unknown): UserGodotConfig {

@@ -54,9 +54,7 @@ describe("extractAddedLines", () => {
   });
 
   it("advances line numbers across context lines", () => {
-    const added = extractAddedLines(
-      ["@@ -1,3 +1,3 @@", " a", " b", "+c", " d", "+e"].join("\n"),
-    );
+    const added = extractAddedLines(["@@ -1,3 +1,3 @@", " a", " b", "+c", " d", "+e"].join("\n"));
     expect(added.map((entry) => entry.line)).toEqual([3, 5]);
   });
 
@@ -71,9 +69,7 @@ describe("extractAddedLines", () => {
 
 describe("convention analysis", () => {
   it("detects trailing whitespace on a changed line", () => {
-    const findings = analyzeConventions([
-      change("fixture.gd", "a\n", "a \n"),
-    ]);
+    const findings = analyzeConventions([change("fixture.gd", "a\n", "a \n")]);
     expect(findings.some((finding) => finding.rule === "trailing-whitespace")).toBe(true);
     expect(findings.find((finding) => finding.rule === "trailing-whitespace")?.severity).toBe(
       "advisory",
@@ -104,14 +100,12 @@ describe("convention analysis", () => {
   });
 
   it("flags multiple statements on one newly introduced line", () => {
-    const findings = analyzeConventions([
-      change("fixture.gd", "a\n", "a\nvar x = 1; var y = 2\n"),
-    ]);
+    const findings = analyzeConventions([change("fixture.gd", "a\n", "a\nvar x = 1; var y = 2\n")]);
     expect(findings.some((finding) => finding.rule === "multiple-statements")).toBe(true);
   });
 
   it("does not flag a semicolon ending a statement", () => {
-    const findings = analyzeConventions([change("fixture.gd", "a\n", "a\nprint(\"x\");\n")]);
+    const findings = analyzeConventions([change("fixture.gd", "a\n", 'a\nprint("x");\n')]);
     expect(findings.some((finding) => finding.rule === "multiple-statements")).toBe(false);
   });
 
@@ -161,10 +155,9 @@ describe("convention analysis", () => {
   });
 
   it("promotes a deterministically enforced mandatory repository rule to warning", () => {
-    const findings = analyzeConventions(
-      [change("fixture.gd", "a\n", "a \n")],
-      { mandatoryRules: ["trailing-whitespace"] },
-    );
+    const findings = analyzeConventions([change("fixture.gd", "a\n", "a \n")], {
+      mandatoryRules: ["trailing-whitespace"],
+    });
     const trailing = findings.find((finding) => finding.rule === "trailing-whitespace");
     expect(trailing?.severity).toBe("warning");
     expect(trailing?.basis).toBe("repository-guidance");

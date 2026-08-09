@@ -27,11 +27,17 @@ export function createQualityValidationExecutor(options: {
   readonly reviewer: ApprovalReviewer;
   readonly idFactory?: () => string;
 }): QualityValidationExecutor {
-  const idFactory = options.idFactory ?? (() => `validation-${Math.random().toString(36).slice(2, 10)}`);
+  const idFactory =
+    options.idFactory ?? (() => `validation-${Math.random().toString(36).slice(2, 10)}`);
   return {
     async run(step: ValidationStep, signal?: AbortSignal): Promise<ValidationRunOutcome> {
       if (signal?.aborted) {
-        return { step, status: "unavailable", exitCode: null, summary: "cancelled before execution" };
+        return {
+          step,
+          status: "unavailable",
+          exitCode: null,
+          summary: "cancelled before execution",
+        };
       }
       if (step.command === undefined) {
         return { step, status: "not_applicable", exitCode: null, summary: "intrinsic gate" };
@@ -97,7 +103,7 @@ export function createQualityValidationExecutor(options: {
           summary:
             decision.type === "cancelled"
               ? "the validation command approval was cancelled"
-              : decision.reason ?? "the validation command was denied",
+              : (decision.reason ?? "the validation command was denied"),
         };
       }
       let result: ToolExecutionResult;
@@ -119,7 +125,10 @@ export function createQualityValidationExecutor(options: {
   };
 }
 
-function mapExecutionOutcome(step: ValidationStep, result: ToolExecutionResult): ValidationRunOutcome {
+function mapExecutionOutcome(
+  step: ValidationStep,
+  result: ToolExecutionResult,
+): ValidationRunOutcome {
   switch (result.status) {
     case "success": {
       const exitCode = readExitCode(result.output);
@@ -128,15 +137,18 @@ function mapExecutionOutcome(step: ValidationStep, result: ToolExecutionResult):
         status: exitCode === 0 ? "passed" : "failed",
         exitCode,
         summary:
-          exitCode === 0
-            ? `exited with code 0`
-            : `exited with code ${exitCode ?? "unknown"}`,
+          exitCode === 0 ? `exited with code 0` : `exited with code ${exitCode ?? "unknown"}`,
       };
     }
     case "denied":
       return { step, status: "denied", exitCode: null, summary: result.message };
     case "cancelled":
-      return { step, status: "denied", exitCode: null, summary: "the validation command was cancelled" };
+      return {
+        step,
+        status: "denied",
+        exitCode: null,
+        summary: "the validation command was cancelled",
+      };
     case "conflict":
     case "timed_out":
     case "output_limit":

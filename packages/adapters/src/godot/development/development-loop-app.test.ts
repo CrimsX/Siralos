@@ -22,6 +22,7 @@ import { createWorkspaceApplyTextChangesetTool } from "../../tools/workspace/mut
 import { createGodotDevelopmentStatusTool } from "../tools/godot-development-status-tool.js";
 import { createDeterministicFakeProvider } from "../../providers/deterministic-fake-provider.js";
 import { createGDScriptDevelopmentService } from "./gdscript-development-service.js";
+import { createFakeChangeReviewer } from "../quality/fake-change-reviewer.js";
 import {
   createFakeDiagnosticsService,
   createFakeGitInspector,
@@ -88,6 +89,7 @@ async function createLoopHarness(
     },
   };
   const gitFake = createFakeGitInspector();
+  const fakeReviewer = createFakeChangeReviewer({ scenario: "clean" });
   const development = createGDScriptDevelopmentService({
     workspaceRoot: workspace.root,
     platform: "linux",
@@ -98,6 +100,17 @@ async function createLoopHarness(
     git: gitFake.git,
     canApplyIdentityBound: true,
     primitives: createWorkspaceFilePrimitives(workspace.root),
+    qualityStage: {
+      reviewer: fakeReviewer.reviewer,
+      validation: {
+        discovery: {
+          discover: () => Promise.resolve({ packageScripts: null }),
+        },
+        executor: {
+          run: (step) => Promise.resolve({ step, status: "passed", exitCode: 0, summary: "ok" }),
+        },
+      },
+    },
     idFactory: () => `wf-${Math.random().toString(36).slice(2, 8)}`,
     settling: { hardTimeoutMs: 1000, pollIntervalMs: 1 },
   });

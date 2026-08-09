@@ -931,12 +931,14 @@ function countArrayField(output: JsonValue, key: string): number | null {
   return Array.isArray(value) ? value.length : null;
 }
 
-type DevelopScenario = "fixture" | "fixture-repair";
+type DevelopScenario = "fixture" | "fixture-repair" | "fixture-review" | "fixture-review-exhaust";
 
 const DEV_FIXTURE_PATH = "scripts/player/player.gd";
 const DEV_FIXTURE_OLD = "move_and_slide()";
 const DEV_FIXTURE_NEW = "move_and_slide(Vector2.UP)";
 const DEV_FIXTURE_BROKEN = "move_and_slide())";
+const DEV_FIXTURE_REVIEW_REPAIR_1 = "move_and_slide(Vector2.UP) # review-repair";
+const DEV_FIXTURE_REVIEW_REPAIR_2 = "move_and_slide(Vector2.UP) # review-repair-2";
 
 function findDevelopScenario(messages: readonly ConversationItem[]): DevelopScenario | null {
   const latestUserPrompt = findLatestUserPrompt(messages);
@@ -945,6 +947,12 @@ function findDevelopScenario(messages: readonly ConversationItem[]): DevelopScen
   }
   if (latestUserPrompt === "develop fixture with repair") {
     return "fixture-repair";
+  }
+  if (latestUserPrompt === "develop fixture with review repair") {
+    return "fixture-review";
+  }
+  if (latestUserPrompt === "develop fixture with review repair exhaust") {
+    return "fixture-review-exhaust";
   }
   return null;
 }
@@ -958,6 +966,7 @@ async function* streamDevelopScenario(
   const changesetTool = "workspace.apply_text_changeset";
   const firstResult = findLatestResult(stepItems, changesetTool);
   const repairResult = findResultForCall(request.messages, "call-dev-repair");
+  const secondRepairResult = findResultForCall(request.messages, "call-dev-repair-2");
   const readResult = findLatestResult(stepItems, "workspace.read");
   if (!isToolAvailable(request.tools, changesetTool)) {
     yield* streamTextChunks(
@@ -1009,40 +1018,68 @@ async function* streamDevelopScenario(
     yield* streamTextChunks(formatDevelopmentFinalText(firstResult), signal);
     return;
   }
-  // scenario === "fixture-repair": the first edit is deliberately broken;
-  // the repair fixes it after the parser diagnostic arrives.
-  if (repairResult === undefined) {
-    if (firstResult === undefined) {
-      if (readResult === undefined) {
+  if (scenario === "fixture-repair") {
+    // the first edit is deliberately broken; the repair fixes it after
+    // the parser diagnostic arrives.
+    if (repairResult === undefined) {
+      if (firstResult === undefined) {
+        if (readResult === undefined) {
+          yield {
+            type: "tool_call",
+            callId: "call-dev-read",
+            toolName: "workspace.read",
+            input: { path: DEV_FIXTURE_PATH },
+          };
+          await Promise.resolve();
+          yield { type: "completed" };
+          return;
+        }
+        const hash = readResultSha256(readResult);
+        if (hash === null) {
+          yield* streamTextChunks(
+            `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+            signal,
+          );
+          return;
+        }
         yield {
           type: "tool_call",
-          callId: "call-dev-read",
-          toolName: "workspace.read",
-          input: { path: DEV_FIXTURE_PATH },
+          callId: "call-dev-change",
+          toolName: changesetTool,
+          input: {
+            changes: [
+              {
+                operation: "edit",
+                path: DEV_FIXTURE_PATH,
+                expectedSha256: hash,
+                replacements: [{ oldText: DEV_FIXTURE_OLD, newText: DEV_FIXTURE_BROKEN }],
+              },
+            ],
+          },
         };
         await Promise.resolve();
         yield { type: "completed" };
         return;
       }
-      const hash = readResultSha256(readResult);
-      if (hash === null) {
+      const currentHash = firstResultSha256(firstResult);
+      if (currentHash === null) {
         yield* streamTextChunks(
-          `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+          "Solaris could not determine the applied fixture content for the repair, so it did not propose one.",
           signal,
         );
         return;
       }
       yield {
         type: "tool_call",
-        callId: "call-dev-change",
+        callId: "call-dev-repair",
         toolName: changesetTool,
         input: {
           changes: [
             {
               operation: "edit",
               path: DEV_FIXTURE_PATH,
-              expectedSha256: hash,
-              replacements: [{ oldText: DEV_FIXTURE_OLD, newText: DEV_FIXTURE_BROKEN }],
+              expectedSha256: currentHash,
+              replacements: [{ oldText: DEV_FIXTURE_BROKEN, newText: DEV_FIXTURE_NEW }],
             },
           ],
         },
@@ -1051,10 +1088,77 @@ async function* streamDevelopScenario(
       yield { type: "completed" };
       return;
     }
+    yield* streamTextChunks(formatDevelopmentFinalText(repairResult), signal);
+    return;
+  }
+  // Review-repair scenarios: the first apply triggers blocking review
+  // findings; the provider proposes a focused repair, and the workflow
+  // revalidates and re-reviews after it.
+  const reviewBlocking = (result: ToolExecutionResult): boolean => {
+    if (result.status !== "success") {
+      return false;
+    }
+    if (
+      typeof result.output !== "object" ||
+      result.output === null ||
+      Array.isArray(result.output)
+    ) {
+      return false;
+    }
+    const quality = (result.output as JsonObject)["quality"];
+    if (typeof quality !== "object" || quality === null || Array.isArray(quality)) {
+      return false;
+    }
+    return (quality as JsonObject)["status"] === "blocking_findings";
+  };
+  if (firstResult === undefined) {
+    if (readResult === undefined) {
+      yield {
+        type: "tool_call",
+        callId: "call-dev-read",
+        toolName: "workspace.read",
+        input: { path: DEV_FIXTURE_PATH },
+      };
+      await Promise.resolve();
+      yield { type: "completed" };
+      return;
+    }
+    const hash = readResultSha256(readResult);
+    if (hash === null) {
+      yield* streamTextChunks(
+        `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+        signal,
+      );
+      return;
+    }
+    yield {
+      type: "tool_call",
+      callId: "call-dev-change",
+      toolName: changesetTool,
+      input: {
+        changes: [
+          {
+            operation: "edit",
+            path: DEV_FIXTURE_PATH,
+            expectedSha256: hash,
+            replacements: [{ oldText: DEV_FIXTURE_OLD, newText: DEV_FIXTURE_NEW }],
+          },
+        ],
+      },
+    };
+    await Promise.resolve();
+    yield { type: "completed" };
+    return;
+  }
+  if (repairResult === undefined) {
+    if (!reviewBlocking(firstResult)) {
+      yield* streamTextChunks(formatDevelopmentFinalText(firstResult), signal);
+      return;
+    }
     const currentHash = firstResultSha256(firstResult);
     if (currentHash === null) {
       yield* streamTextChunks(
-        "Solaris could not determine the applied fixture content for the repair, so it did not propose one.",
+        "Solaris could not determine the applied fixture content for the review repair, so it did not propose one.",
         signal,
       );
       return;
@@ -1069,7 +1173,7 @@ async function* streamDevelopScenario(
             operation: "edit",
             path: DEV_FIXTURE_PATH,
             expectedSha256: currentHash,
-            replacements: [{ oldText: DEV_FIXTURE_BROKEN, newText: DEV_FIXTURE_NEW }],
+            replacements: [{ oldText: DEV_FIXTURE_NEW, newText: DEV_FIXTURE_REVIEW_REPAIR_1 }],
           },
         ],
       },
@@ -1078,7 +1182,41 @@ async function* streamDevelopScenario(
     yield { type: "completed" };
     return;
   }
-  yield* streamTextChunks(formatDevelopmentFinalText(repairResult), signal);
+  if (scenario === "fixture-review-exhaust" && secondRepairResult === undefined) {
+    if (!reviewBlocking(repairResult)) {
+      yield* streamTextChunks(formatDevelopmentFinalText(repairResult), signal);
+      return;
+    }
+    const currentHash = firstResultSha256(repairResult);
+    if (currentHash === null) {
+      yield* streamTextChunks(
+        "Solaris could not determine the repaired fixture content for the second review repair, so it did not propose one.",
+        signal,
+      );
+      return;
+    }
+    yield {
+      type: "tool_call",
+      callId: "call-dev-repair-2",
+      toolName: changesetTool,
+      input: {
+        changes: [
+          {
+            operation: "edit",
+            path: DEV_FIXTURE_PATH,
+            expectedSha256: currentHash,
+            replacements: [
+              { oldText: DEV_FIXTURE_REVIEW_REPAIR_1, newText: DEV_FIXTURE_REVIEW_REPAIR_2 },
+            ],
+          },
+        ],
+      },
+    };
+    await Promise.resolve();
+    yield { type: "completed" };
+    return;
+  }
+  yield* streamTextChunks(formatDevelopmentFinalText(secondRepairResult ?? repairResult), signal);
 }
 
 function firstResultSha256(result: ToolExecutionResult): string | null {
@@ -1090,10 +1228,12 @@ function firstResultSha256(result: ToolExecutionResult): string | null {
   }
   const record = result.output as JsonObject;
   const changedFiles = record["changedFiles"];
-  if (!Array.isArray(changedFiles) || changedFiles.length !== 1) {
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) {
     return null;
   }
-  const file = changedFiles[0] as JsonObject;
+  // The change records are cumulative across the workflow; the latest
+  // record describes the most recent change-set application.
+  const file = changedFiles[changedFiles.length - 1] as JsonObject;
   const sha = file["afterSha256"];
   return typeof sha === "string" && sha.length === 64 ? sha : null;
 }
@@ -1118,7 +1258,16 @@ function formatDevelopmentFinalText(result: ToolExecutionResult): string {
           : null;
       const parser = validation?.["parser"] === true;
       const lsp = validation?.["lsp"] === true;
-      return `Solaris applied the approved change set to ${files}: parser ${parser ? "passed" : "failed"}, fresh language session ${lsp ? "started" : "failed"}, ${errors} error(s), ${warnings} warning(s).`;
+      const quality =
+        typeof record["quality"] === "object" && record["quality"] !== null
+          ? (record["quality"] as JsonObject)
+          : null;
+      const qualityStatus = typeof quality?.["status"] === "string" ? quality["status"] : null;
+      const qualityPart =
+        qualityStatus === null
+          ? ""
+          : ` Quality: ${qualityStatus}${qualityStatus === "blocking_findings" ? " (blocking findings remain; a focused repair may be proposed)" : qualityStatus === "validation_incomplete" ? " (validation incomplete; approved changes remain)" : ""}.`;
+      return `Solaris applied the approved change set to ${files}: parser ${parser ? "passed" : "failed"}, fresh language session ${lsp ? "started" : "failed"}, ${errors} error(s), ${warnings} warning(s).${qualityPart}`;
     }
     case "denied":
       return "The source change was not approved, so Solaris did not apply it.";

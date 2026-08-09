@@ -34,9 +34,13 @@ import {
   createNpmScriptRunner,
   createNodeScriptRunner,
   createProcessRunTool,
+  createProviderChangeReviewer,
+  createQualityValidationExecutor,
+  createReviewerToolRegistry,
   createRunDirectoryProvider,
   createSha256CommandDigestService,
   createUndoService,
+  createValidationPlanDiscovery,
   createWorkspaceApplyTextChangesetTool,
   createWorkspaceCreateFileTool,
   createWorkspaceDeleteFileTool,
@@ -71,6 +75,7 @@ import {
   type GDScriptLanguageService,
   type GodotKnowledge,
   type GodotDiagnostics,
+  type ModelProvider,
   type RegisteredToolInfo,
   type SandboxBackend,
   type SolarisApplication,
@@ -78,6 +83,7 @@ import {
   type UndoService,
 } from "@solaris/core";
 import { GodotSelectionError } from "@solaris/adapters";
+import { resolveReviewProviderId } from "./review-provider.js";
 
 export interface CreateCliApplicationOptions {
   readonly reviewer?: ApprovalReviewer;
@@ -265,6 +271,22 @@ export async function createCliApplication(
     checkpointRoot: DEFAULT_CHECKPOINT_ROOT,
     parentEnvironment,
   });
+  const developmentHolder: { current: GDScriptDevelopmentService | null } = { current: null };
+  const qualityStage = buildQualityStage({
+    workspaceRoot,
+    git,
+    godot,
+    knowledge,
+    language,
+    reviewer,
+    processTool,
+    reviewProviderId: config.quality.reviewProvider,
+    // Late-bound: the reviewer's read-only LSP query tools consult the
+    // workflow's language-query gate, which exists only after the
+    // development service is created (no composition cycle).
+    languageQueryGate: () =>
+      developmentHolder.current?.languageQueryGate() ?? { blocked: false, message: null },
+  });
   const development = createGDScriptDevelopmentService({
     workspaceRoot,
     platform: process.platform,
@@ -275,7 +297,9 @@ export async function createCliApplication(
     git,
     canApplyIdentityBound: false,
     primitives: createFailClosedChangeSetFilePrimitives(),
+    qualityStage,
   });
+  developmentHolder.current = development;
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
     createWorkspaceReadTool(workspaceRoot),
@@ -339,5 +363,65 @@ export async function createCliApplication(
     development,
     undo,
     runners,
+  };
+}
+
+/** Registered provider profiles available for the independent reviewer. */
+const REVIEW_PROVIDER_FACTORIES: Readonly<Record<string, () => ModelProvider>> = {
+  "deterministic-fake": () => createDeterministicFakeProvider(),
+};
+
+const DEFAULT_REVIEW_PROVIDER_ID = "deterministic-fake";
+
+/**
+ * Composition of the quality stage (ADR 0013 §26–§27): the validation
+ * plan discovery and executor (project commands still require their own
+ * one-time process approval through the interactive reviewer) and the
+ * independent reviewer over a FRESH provider context with a strictly
+ * read-only tool registry. The review provider defaults to the active
+ * development provider profile; an explicitly configured profile that
+ * does not exist fails clearly and never silently falls back to an
+ * unrelated provider. No new credential system is introduced.
+ */
+function buildQualityStage(options: {
+  readonly workspaceRoot: string;
+  readonly git: GitInspector;
+  readonly godot: GodotInspector;
+  readonly knowledge: GodotKnowledge;
+  readonly language: GDScriptLanguageService;
+  readonly reviewer: ApprovalReviewer;
+  readonly processTool: import("@solaris/core").PreparedCommandTool;
+  readonly reviewProviderId: string | null;
+  readonly languageQueryGate: () => { readonly blocked: boolean; readonly message: string | null };
+}): NonNullable<Parameters<typeof createGDScriptDevelopmentService>[0]["qualityStage"]> {
+  const resolved = resolveReviewProviderId({
+    configured: options.reviewProviderId,
+    registered: new Set(Object.keys(REVIEW_PROVIDER_FACTORIES)),
+    defaultId: DEFAULT_REVIEW_PROVIDER_ID,
+  });
+  if (!resolved.ok) {
+    throw new Error(resolved.message);
+  }
+  const providerFactory = REVIEW_PROVIDER_FACTORIES[resolved.providerId] as () => ModelProvider;
+  const reviewer = createProviderChangeReviewer({
+    providerFactory,
+    tools: createReviewerToolRegistry({
+      workspaceRoot: options.workspaceRoot,
+      git: options.git,
+      godot: options.godot,
+      knowledge: options.knowledge,
+      language: options.language,
+      languageQueryGate: options.languageQueryGate,
+    }),
+  });
+  return {
+    reviewer,
+    validation: {
+      discovery: createValidationPlanDiscovery({ workspaceRoot: options.workspaceRoot }),
+      executor: createQualityValidationExecutor({
+        processTool: options.processTool,
+        reviewer: options.reviewer,
+      }),
+    },
   };
 }

@@ -14,11 +14,7 @@
  */
 
 export type ValidationStepKind =
-  | "gdscript-check"
-  | "lsp-diagnostics"
-  | "npm-script"
-  | "node-script"
-  | "manual-unavailable";
+  "gdscript-check" | "lsp-diagnostics" | "npm-script" | "node-script" | "manual-unavailable";
 
 export interface ValidationStep {
   readonly id: string;
@@ -157,7 +153,8 @@ export function classifyValidationGate(
   if (requiredCommands.length === 0) {
     return {
       status: "not_applicable",
-      summary: "No supported project test runner was discovered; the project defines no applicable check/test script.",
+      summary:
+        "No supported project test runner was discovered; the project defines no applicable check/test script.",
       evidenceKinds: ["no-project-test-runner"],
     };
   }

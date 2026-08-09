@@ -31,6 +31,7 @@ describe("parseUserConfig", () => {
     ).toEqual({
       sandbox: { profile: "develop-offline", backend: "anthropic-runtime" },
       godot: DEFAULT_USER_CONFIG.godot,
+      quality: DEFAULT_USER_CONFIG.quality,
     });
   });
 
@@ -38,6 +39,7 @@ describe("parseUserConfig", () => {
     expect(parseUserConfig({ sandbox: { profile: "develop-offline" } })).toEqual({
       sandbox: { profile: "develop-offline", backend: "auto" },
       godot: DEFAULT_USER_CONFIG.godot,
+      quality: DEFAULT_USER_CONFIG.quality,
     });
     expect(parseUserConfig({ sandbox: {} })).toEqual(DEFAULT_USER_CONFIG);
   });
@@ -45,6 +47,36 @@ describe("parseUserConfig", () => {
   it("rejects unknown profiles", () => {
     expect(() => parseUserConfig({ sandbox: { profile: "full-access" } })).toThrow(
       "Unknown sandbox profile",
+    );
+  });
+
+  it("accepts a configured quality.reviewProvider profile reference", () => {
+    expect(parseUserConfig({ quality: { reviewProvider: "reviewer" } })).toEqual({
+      sandbox: DEFAULT_USER_CONFIG.sandbox,
+      godot: DEFAULT_USER_CONFIG.godot,
+      quality: { reviewProvider: "reviewer" },
+    });
+  });
+
+  it("defaults quality.reviewProvider to null", () => {
+    expect(parseUserConfig({}).quality.reviewProvider).toBeNull();
+    expect(parseUserConfig({ quality: {} }).quality.reviewProvider).toBeNull();
+  });
+
+  it("rejects malformed quality.reviewProvider values", () => {
+    for (const value of ["", "bad provider", "spaces are bad", "a".repeat(200), 42, {}]) {
+      expect(() => parseUserConfig({ quality: { reviewProvider: value } })).toThrow(
+        "quality.reviewProvider",
+      );
+    }
+  });
+
+  it("rejects unknown quality keys", () => {
+    expect(() => parseUserConfig({ quality: { reviewProviders: ["x"] } })).toThrow(
+      "Unknown Solaris quality configuration key",
+    );
+    expect(() => parseUserConfig({ quality: "reviewer" })).toThrow(
+      'Solaris configuration section "quality" must be a JSON object',
     );
   });
 

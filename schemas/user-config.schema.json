@@ -59,6 +59,20 @@
           "description": "Whether fixed-name PATH discovery is enabled. Defaults to true."
         }
       }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Trusted user-level development-quality configuration. An untrusted repository cannot alter these settings.",
+      "properties": {
+        "reviewProvider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "description": "Optional provider profile used for the independent change reviewer. Must reference an existing configured provider; a missing profile fails clearly and never silently falls back to an unrelated provider. Defaults to the active development provider profile."
+        }
+      }
     }
   }
 }

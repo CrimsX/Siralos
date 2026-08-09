@@ -109,7 +109,12 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
       input.files.length > 0
         ? `The approved change set (${input.changeSetId}) was applied exactly.`
         : "No approved change set was applied.",
-      [{ kind: "change-set", summary: `change set ${input.changeSetId}, ${input.files.length} file(s)` }],
+      [
+        {
+          kind: "change-set",
+          summary: `change set ${input.changeSetId}, ${input.files.length} file(s)`,
+        },
+      ],
     ),
   );
 
@@ -150,7 +155,9 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   }
   if (scopeStatus === "passed" && input.gitCurrent !== null && input.gitBaseline !== null) {
     const baseline = new Set(input.gitBaseline);
-    const unrelated = input.gitCurrent.filter((path) => !baseline.has(path) && !approvedPaths.has(path));
+    const unrelated = input.gitCurrent.filter(
+      (path) => !baseline.has(path) && !approvedPaths.has(path),
+    );
     if (unrelated.length > 0) {
       scopeStatus = "blocked";
       scopeEvidence.push({
@@ -180,11 +187,7 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   gates.push(
     createQualityGateResult(
       "parser",
-      parserValid === null
-        ? "not_applicable"
-        : parserValid
-          ? "passed"
-          : "blocked",
+      parserValid === null ? "not_applicable" : parserValid ? "passed" : "blocked",
       parserValid === null
         ? "No GDScript files changed; the parser gate is not applicable."
         : parserValid
@@ -256,7 +259,8 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
   if (validationGate.status === "not_applicable") {
     validationEvidence.push({
       kind: "no-project-test-runner",
-      summary: "No supported project test runner was discovered; this is not an infrastructure failure.",
+      summary:
+        "No supported project test runner was discovered; this is not an infrastructure failure.",
     });
   }
   gates.push(
@@ -400,15 +404,13 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
       unifiedDiff: file.unifiedDiff,
     })),
   );
-  const mandatoryConventionBlock = conventionFindings.some((finding) => finding.severity === "warning");
+  const mandatoryConventionBlock = conventionFindings.some(
+    (finding) => finding.severity === "warning",
+  );
   gates.push(
     createQualityGateResult(
       "conventions",
-      mandatoryConventionBlock
-        ? "blocked"
-        : conventionFindings.length > 0
-          ? "advisory"
-          : "passed",
+      mandatoryConventionBlock ? "blocked" : conventionFindings.length > 0 ? "advisory" : "passed",
       mandatoryConventionBlock
         ? "A repository-mandatory convention rule was violated."
         : conventionFindings.length > 0
@@ -447,7 +449,10 @@ export async function runQualityStage(input: QualityStageInput): Promise<Quality
     }),
     gates,
     review:
-      reviewResult.status === "completed" || reviewResult.status === "failed" || reviewResult.status === "cancelled" || reviewResult.status === "too_large"
+      reviewResult.status === "completed" ||
+      reviewResult.status === "failed" ||
+      reviewResult.status === "cancelled" ||
+      reviewResult.status === "too_large"
         ? {
             status: reviewResult.status,
             findings: reviewResult.findings,

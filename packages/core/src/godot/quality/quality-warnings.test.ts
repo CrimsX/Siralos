@@ -42,7 +42,9 @@ const CHANGED = [CHANGED_PATH];
 
 describe("warning identity", () => {
   it("normalizes embedded integers so identities do not depend on line numbers", () => {
-    expect(normalizeDiagnosticMessage("value at line 42 is unused")).toBe("value at line # is unused");
+    expect(normalizeDiagnosticMessage("value at line 42 is unused")).toBe(
+      "value at line # is unused",
+    );
     expect(diagnosticIdentityKey({ path: "a.gd", code: null, message: "x at line 5" })).toBe(
       diagnosticIdentityKey({ path: "a.gd", code: null, message: "x at line 9" }),
     );
@@ -112,15 +114,23 @@ describe("warning delta", () => {
   });
 
   it("matches multiple same-identity diagnostics deterministically by nearest line", () => {
-    const baseline = [warning(CHANGED_PATH, 4, "shadowed variable"), warning(CHANGED_PATH, 20, "shadowed variable")];
-    const after = [warning(CHANGED_PATH, 5, "shadowed variable"), warning(CHANGED_PATH, 22, "shadowed variable")];
+    const baseline = [
+      warning(CHANGED_PATH, 4, "shadowed variable"),
+      warning(CHANGED_PATH, 20, "shadowed variable"),
+    ];
+    const after = [
+      warning(CHANGED_PATH, 5, "shadowed variable"),
+      warning(CHANGED_PATH, 22, "shadowed variable"),
+    ];
     const delta = computeWarningDelta(baseline, after, CHANGED);
     expect(delta.unchangedWarnings).toBe(2);
     expect(delta.introducedWarnings).toBe(0);
   });
 
   it("binds the delta to the immutable entry bound", () => {
-    const baseline = Array.from({ length: 400 }, (_, index) => warning(CHANGED_PATH, index + 1, `w${index}`));
+    const baseline = Array.from({ length: 400 }, (_, index) =>
+      warning(CHANGED_PATH, index + 1, `w${index}`),
+    );
     const after: GodotGDScriptDiagnostic[] = [];
     const delta = computeWarningDelta(baseline, after, CHANGED);
     expect(delta.entries.length).toBeLessThanOrEqual(200);

@@ -126,6 +126,32 @@ function isDevelopmentWorkflowOrchestrator(packageRelativeFile) {
   );
 }
 
+/**
+ * The quality/reviewer adapter directory (ADR 0013 §71). Deterministic
+ * quality gates and the independent reviewer are strictly read-only and
+ * isolated from mutation, process, checkpoint, sandbox, and environment
+ * machinery: the reviewer can never edit, execute, approve, checkpoint,
+ * or alter sandbox rules or provider credentials. These boundaries are
+ * enforced structurally in addition to the runtime read-only registry.
+ */
+const QUALITY_ADAPTER_DIRECTORY = join("src", "godot", "quality");
+
+function isQualityAdapterModule(packageRelativeFile, file) {
+  if (isTestSupportFile(file)) {
+    return false;
+  }
+  return packageRelativeFile.startsWith(QUALITY_ADAPTER_DIRECTORY + sep);
+}
+
+/** Adapter subtrees the quality/reviewer adapter must never import. */
+const QUALITY_FORBIDDEN_IMPORT_ROOTS = [
+  { root: join("src", "tools", "workspace", "mutations"), label: "workspace mutation adapters" },
+  { root: join("src", "process"), label: "process adapters" },
+  { root: join("src", "checkpoints"), label: "checkpoint adapters" },
+  { root: join("src", "sandbox"), label: "sandbox adapters" },
+  { root: join("src", "environment"), label: "child-environment adapters" },
+];
+
 const CHILD_PROCESS_MODULE = "child_process";
 
 /** Destructive filesystem APIs tracked structurally. */
@@ -1175,6 +1201,34 @@ export function runChecks(root) {
             }
             if (inSandbox && isUnder(target, join(pkg.path, "src", "providers"))) {
               errors.push(`${location}: sandbox adapters must not import provider adapters`);
+            }
+            if (isQualityAdapterModule(packageRelativeFile, file)) {
+              for (const forbidden of QUALITY_FORBIDDEN_IMPORT_ROOTS) {
+                if (isUnder(target, join(pkg.path, forbidden.root))) {
+                  errors.push(
+                    `${location}: the quality/reviewer adapter must not import ${forbidden.label}; the reviewer is strictly read-only and cannot mutate, execute, approve, checkpoint, or alter sandbox rules or provider credentials`,
+                  );
+                }
+              }
+              // Deterministic gates stay separate from model-based review:
+              // the stage runner and validation plumbing consume only core
+              // contracts, never a reviewer implementation.
+              const targetFile = relative(pkg.path, target);
+              const reviewerImplementationFiles = [
+                join("src", "godot", "quality", "provider-change-reviewer.ts"),
+                join("src", "godot", "quality", "fake-change-reviewer.ts"),
+              ];
+              const targetsAReviewerImplementation = reviewerImplementationFiles.some(
+                (file) => targetFile === file || targetFile === file.replace(/\.ts$/, ".js"),
+              );
+              const isReviewerImplementationItself = reviewerImplementationFiles.some(
+                (file) => packageRelativeFile === file,
+              );
+              if (targetsAReviewerImplementation && !isReviewerImplementationItself) {
+                errors.push(
+                  `${location}: deterministic quality gates must not import reviewer implementations; the reviewer is an isolated reasoning signal`,
+                );
+              }
             }
 
             if (!isTestSupportFile(file)) {

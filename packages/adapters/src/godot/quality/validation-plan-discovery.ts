@@ -1,7 +1,5 @@
 import { join } from "node:path";
-import {
-  type ValidationPlanDiscovery,
-} from "@solaris/core";
+import { type ValidationPlanDiscovery } from "@solaris/core";
 import { readFileBounded } from "../../fs/file-read.js";
 
 /** Maximum root package.json size read for validation-plan discovery. */
@@ -43,7 +41,11 @@ export function createValidationPlanDiscovery(options: {
       }
       const record = parsed as Record<string, unknown>;
       const scriptsValue = record["scripts"];
-      if (typeof scriptsValue !== "object" || scriptsValue === null || Array.isArray(scriptsValue)) {
+      if (
+        typeof scriptsValue !== "object" ||
+        scriptsValue === null ||
+        Array.isArray(scriptsValue)
+      ) {
         return { packageScripts: null };
       }
       const scripts: Record<string, string> = {};

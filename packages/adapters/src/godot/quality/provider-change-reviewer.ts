@@ -79,14 +79,24 @@ export function createProviderChangeReviewer(
       const provider = options.providerFactory();
       const tools = options.tools.definitions().map((info) => info.definition);
       for (let round = 0; round < maxToolRounds; round += 1) {
-        const turn = await collectTurn(provider, messages, tools, controller.signal, maxOutputBytes);
+        // A stalled provider stream must never block the review: the turn
+        // is raced against the abort signal (timeout or caller abort).
+        const turn = await raceAbort(
+          collectTurn(provider, messages, tools, controller.signal, maxOutputBytes),
+          controller.signal,
+        );
+        if (turn === "aborted") {
+          return {
+            status: timedOut ? "failed" : "cancelled",
+            findings: [],
+            message: timedOut ? "The review timed out." : "The review was cancelled.",
+          };
+        }
         if (turn.kind === "aborted") {
           return {
             status: timedOut ? "failed" : "cancelled",
             findings: [],
-            message: timedOut
-              ? "The review timed out."
-              : "The review was cancelled.",
+            message: timedOut ? "The review timed out." : "The review was cancelled.",
           };
         }
         if (turn.kind === "failed") {
@@ -211,6 +221,39 @@ type TurnOutcome =
   | { readonly kind: "aborted" }
   | { readonly kind: "failed"; readonly message: string };
 
+/**
+ * Races the turn collection against the abort signal so a provider that
+ * never yields (or ignores the signal) still terminates the review within
+ * the timeout. The abandoned generator is never awaited again.
+ */
+async function raceAbort(
+  pending: Promise<TurnOutcome>,
+  signal: AbortSignal,
+): Promise<TurnOutcome | "aborted"> {
+  if (signal.aborted) {
+    return "aborted";
+  }
+  return new Promise<TurnOutcome | "aborted">((resolve) => {
+    const onAbort = (): void => {
+      resolve("aborted");
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      (outcome) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(outcome);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve({
+          kind: "failed",
+          message: `The reviewer provider failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        });
+      },
+    );
+  });
+}
+
 async function collectTurn(
   provider: ModelProvider,
   messages: readonly ConversationItem[],
@@ -234,7 +277,10 @@ async function collectTurn(
         return { kind: "aborted" };
       }
       if (completionSeen) {
-        return { kind: "failed", message: "The reviewer stream emitted an event after completion." };
+        return {
+          kind: "failed",
+          message: "The reviewer stream emitted an event after completion.",
+        };
       }
       if (event.type === "completed") {
         completionSeen = true;
@@ -249,10 +295,16 @@ async function collectTurn(
         continue;
       }
       if (event.callId.length === 0 || event.toolName.length === 0) {
-        return { kind: "failed", message: "The reviewer emitted a tool call with an empty id or name." };
+        return {
+          kind: "failed",
+          message: "The reviewer emitted a tool call with an empty id or name.",
+        };
       }
       if (seenCallIds.has(event.callId)) {
-        return { kind: "failed", message: `The reviewer emitted duplicate tool call id ${event.callId}.` };
+        return {
+          kind: "failed",
+          message: `The reviewer emitted duplicate tool call id ${event.callId}.`,
+        };
       }
       if (toolCalls.length >= MAX_TOOL_CALLS_PER_TURN) {
         return { kind: "failed", message: "The reviewer exceeded the per-turn tool-call limit." };

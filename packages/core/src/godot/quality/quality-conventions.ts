@@ -24,10 +24,7 @@ export type ConventionRule =
   | "typed-signature-drift";
 
 export type ConventionBasis =
-  | "repository-guidance"
-  | "local-convention"
-  | "project-convention"
-  | "godot-fallback";
+  "repository-guidance" | "local-convention" | "project-convention" | "godot-fallback";
 
 export interface ConventionFinding {
   readonly severity: "advisory" | "warning";

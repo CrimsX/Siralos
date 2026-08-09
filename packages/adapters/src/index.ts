@@ -211,6 +211,29 @@ export {
   type GDScriptDevelopmentServiceDependencies,
 } from "./godot/development/gdscript-development-service.js";
 export {
+  runQualityStage,
+  type QualityStageChangeFile,
+  type QualityStageInput,
+  type QualityStageOutput,
+  type QualityWarningBaseline,
+} from "./godot/quality/quality-stage-runner.js";
+export { createValidationPlanDiscovery } from "./godot/quality/validation-plan-discovery.js";
+export { createQualityValidationExecutor } from "./godot/quality/quality-validation-executor.js";
+export {
+  createFakeChangeReviewer,
+  type FakeChangeReviewerOptions,
+  type FakeReviewerControl,
+  type FakeReviewerScenario,
+} from "./godot/quality/fake-change-reviewer.js";
+export {
+  createProviderChangeReviewer,
+  type ProviderChangeReviewerOptions,
+} from "./godot/quality/provider-change-reviewer.js";
+export {
+  createReviewerToolRegistry,
+  type ReviewerToolDependencies,
+} from "./godot/quality/reviewer-tools.js";
+export {
   createDevelopmentChangeSetApplier,
   createFailClosedChangeSetFilePrimitives,
   CHANGE_SET_EXECUTION_UNAVAILABLE_MESSAGE,

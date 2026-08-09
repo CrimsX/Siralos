@@ -32,12 +32,7 @@ export type QualityGateId =
 export type QualityGateClassification = "hard" | "soft" | "informational";
 
 export type QualityGateStatus =
-  | "passed"
-  | "advisory"
-  | "blocked"
-  | "not_applicable"
-  | "not_run"
-  | "failed";
+  "passed" | "advisory" | "blocked" | "not_applicable" | "not_run" | "failed";
 
 /** Bounded evidence entry of one gate; never contains hidden model reasoning. */
 export interface QualityEvidence {
@@ -180,13 +175,19 @@ export interface DevelopmentQualityReport {
 /** Deterministic gate classification (§8). */
 export function gateClassification(id: QualityGateId): QualityGateClassification {
   switch (id) {
+    case "approved-change-applied":
+    case "checkpoint-recorded":
+    case "scope-verified":
+    case "parser":
+    case "lsp-errors":
+    case "required-validation":
+    case "independent-review":
+      return "hard";
     case "warnings":
     case "conventions":
       return "soft";
     case "diff-metrics":
       return "informational";
-    default:
-      return "hard";
   }
 }
 
@@ -252,6 +253,13 @@ export function computeQualityReportStatus(
   }
   if (review !== null && review.status === "completed" && review.blockingCount > 0) {
     return "blocking_findings";
+  }
+  if (
+    review !== null &&
+    review.status === "completed" &&
+    review.findings.length > review.blockingCount
+  ) {
+    return "passed_with_advisories";
   }
   for (const gate of gates) {
     if (gate.status === "advisory") {

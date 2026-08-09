@@ -144,6 +144,7 @@ export function createWorkspaceApplyTextChangesetTool(
               diagnostics: record.diagnostics,
               validation: record.validation,
               checkpointIds: record.checkpointIds,
+              quality: record.quality as import("@solaris/core").JsonValue | null,
             },
             summary: `change set applied: ${record.changes.length} file(s), ${record.diagnostics.errors} errors, ${record.diagnostics.warnings} warnings`,
           };

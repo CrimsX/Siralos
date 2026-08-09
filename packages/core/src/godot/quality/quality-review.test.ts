@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  QUALITY_LIMITS,
-  type ChangeDiffMetrics,
-} from "./quality-model.js";
+import { QUALITY_LIMITS, type ChangeDiffMetrics } from "./quality-model.js";
 import {
   aggregateReviewResults,
   chunkChangeReviewRequests,
@@ -124,8 +121,16 @@ describe("review finding normalization", () => {
       { findings: "nope" },
       { findings: [{}] },
       { findings: [{ severity: "critical" }] },
-      { findings: [{ severity: "critical", category: "unknown-category", title: "t", confidence: "high" }] },
-      { findings: [{ severity: "critical", category: "correctness", title: 42, confidence: "high" }] },
+      {
+        findings: [
+          { severity: "critical", category: "unknown-category", title: "t", confidence: "high" },
+        ],
+      },
+      {
+        findings: [
+          { severity: "critical", category: "correctness", title: 42, confidence: "high" },
+        ],
+      },
       { findings: [null] },
       "not an object",
     ]) {
@@ -283,20 +288,36 @@ describe("review finding normalization", () => {
 
 describe("blocking policy", () => {
   it("blocks Critical and High findings with sufficient confidence", () => {
-    expect(classifyReviewFindingBlocking(finding({ severity: "critical", confidence: "high" }))).toBe(true);
-    expect(classifyReviewFindingBlocking(finding({ severity: "critical", confidence: "medium" }))).toBe(true);
-    expect(classifyReviewFindingBlocking(finding({ severity: "high", confidence: "high" }))).toBe(true);
-    expect(classifyReviewFindingBlocking(finding({ severity: "high", confidence: "medium" }))).toBe(true);
+    expect(
+      classifyReviewFindingBlocking(finding({ severity: "critical", confidence: "high" })),
+    ).toBe(true);
+    expect(
+      classifyReviewFindingBlocking(finding({ severity: "critical", confidence: "medium" })),
+    ).toBe(true);
+    expect(classifyReviewFindingBlocking(finding({ severity: "high", confidence: "high" }))).toBe(
+      true,
+    );
+    expect(classifyReviewFindingBlocking(finding({ severity: "high", confidence: "medium" }))).toBe(
+      true,
+    );
   });
 
   it("never silently blocks a low-confidence Critical/High finding", () => {
-    expect(classifyReviewFindingBlocking(finding({ severity: "critical", confidence: "low" }))).toBe(false);
-    expect(classifyReviewFindingBlocking(finding({ severity: "high", confidence: "low" }))).toBe(false);
+    expect(
+      classifyReviewFindingBlocking(finding({ severity: "critical", confidence: "low" })),
+    ).toBe(false);
+    expect(classifyReviewFindingBlocking(finding({ severity: "high", confidence: "low" }))).toBe(
+      false,
+    );
   });
 
   it("keeps Medium and Low findings advisory", () => {
-    expect(classifyReviewFindingBlocking(finding({ severity: "medium", confidence: "high" }))).toBe(false);
-    expect(classifyReviewFindingBlocking(finding({ severity: "low", confidence: "high" }))).toBe(false);
+    expect(classifyReviewFindingBlocking(finding({ severity: "medium", confidence: "high" }))).toBe(
+      false,
+    );
+    expect(classifyReviewFindingBlocking(finding({ severity: "low", confidence: "high" }))).toBe(
+      false,
+    );
   });
 
   it("counts only evidence-backed blockers", () => {
@@ -340,7 +361,11 @@ describe("review chunking", () => {
   it("aggregates chunked results read-only with deduplication", () => {
     const shared = finding({ title: "shared issue" });
     const results = [
-      { status: "completed" as const, findings: [shared, finding({ title: "first" })], message: null },
+      {
+        status: "completed" as const,
+        findings: [shared, finding({ title: "first" })],
+        message: null,
+      },
       { status: "completed" as const, findings: [finding({ title: "second" })], message: null },
     ];
     const aggregated = aggregateReviewResults(results);

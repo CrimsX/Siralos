@@ -1,6 +1,5 @@
 import {
   createToolRegistry,
-  type GDScriptDevelopmentService,
   type GDScriptLanguageService,
   type GitInspector,
   type GodotInspector,
@@ -40,12 +39,11 @@ export interface ReviewerToolDependencies {
   readonly godot: GodotInspector;
   readonly knowledge: GodotKnowledge;
   readonly language: GDScriptLanguageService;
-  readonly development: GDScriptDevelopmentService;
+  /** Live workflow language-query gate (injected to avoid a composition cycle). */
+  readonly languageQueryGate: () => { readonly blocked: boolean; readonly message: string | null };
 }
 
-export function createReviewerToolRegistry(
-  dependencies: ReviewerToolDependencies,
-): ToolRegistry {
+export function createReviewerToolRegistry(dependencies: ReviewerToolDependencies): ToolRegistry {
   const tools: readonly Tool[] = [
     createWorkspaceListTool(dependencies.workspaceRoot),
     createWorkspaceReadTool(dependencies.workspaceRoot),
@@ -55,13 +53,9 @@ export function createReviewerToolRegistry(
     createGodotInspectProjectTool(dependencies.godot),
     createGodotApiSearchTool(dependencies.knowledge),
     createGodotApiLookupTool(dependencies.knowledge),
-    createGodotHoverTool(dependencies.language, () => dependencies.development.languageQueryGate()),
-    createGodotDefinitionTool(dependencies.language, () =>
-      dependencies.development.languageQueryGate(),
-    ),
-    createGodotLSPDiagnosticsTool(dependencies.language, () =>
-      dependencies.development.languageQueryGate(),
-    ),
+    createGodotHoverTool(dependencies.language, dependencies.languageQueryGate),
+    createGodotDefinitionTool(dependencies.language, dependencies.languageQueryGate),
+    createGodotLSPDiagnosticsTool(dependencies.language, dependencies.languageQueryGate),
   ];
   // `godot.complete` is intentionally excluded: completion candidates
   // include insertText that is never applied, and a reviewer never needs

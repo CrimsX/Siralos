@@ -2,8 +2,10 @@ import type {
   ApprovalRequest,
   Capability,
   CapabilityPolicy,
+  ChangeReviewResult,
   CommandAuditRecord,
   CommandRunnerDefinition,
+  DevelopmentQualityReport,
   FileCheckpoint,
   GDScriptDevelopmentPreview,
   GDScriptDevelopmentStatus,
@@ -29,6 +31,7 @@ import type {
   GodotProbePreview,
   GodotRecoveryProbeResult,
   GodotSelectedInstallation,
+  QualityStatus,
   RegisteredToolInfo,
   SandboxBackendStatus,
   SandboxProfile,
@@ -89,6 +92,8 @@ export function formatHelp(): string {
   /gdscript-definition <path> <line> <column>  Definition locations from the language session
   /develop <request>  Start one GDScript development workflow (one-time approval; each source change is approved separately)
   /development-status  Show the active development workflow's bounded status
+  /quality           Show the current or final development quality report
+  /review-change     Run a fresh read-only independent review of the current development change (no approval, no modifications)
   /exit              Close Solaris
 `;
 }
@@ -117,6 +122,8 @@ export interface StatusView {
   readonly projectProbe: string;
   readonly knowledge: string;
   readonly languageSession: string;
+  /** Compact quality summary when a development workflow exists. */
+  readonly developmentQuality: string | null;
 }
 
 export function formatStatus(view: StatusView): string {
@@ -147,7 +154,7 @@ Godot project: ${view.godotProjectDetected ? "detected" : "none"}${view.godotCom
 Recovery probe: ${view.projectProbe}
 Knowledge: ${view.knowledge}
 Godot LSP: ${view.languageSession}
-`;
+${view.developmentQuality === null ? "" : `${view.developmentQuality}\n`}`;
 }
 
 export function formatPermissions(policy: CapabilityPolicy, profileId: string): string {
@@ -1473,20 +1480,22 @@ export function formatDevelopmentStartPreview(preview: GDScriptDevelopmentPrevie
     "  Godot API lookup                     covered",
     "  workspace inspection                 covered",
     "  Git inspection                       covered",
+    "  project validation commands          each command approved separately",
+    "  independent review                   read-only; fresh provider context",
     "  source writes                        each change set approved separately",
     "  network                              denied",
     "  game execution                       disabled",
     "",
     `Project fingerprint: ${preview.projectFingerprint.slice(0, 12)}…`,
     `Engine: ${preview.engineVersion ?? "no selected engine"}`,
-    `Iteration limit: ${preview.limits.maxIterations} (${preview.limits.maxRepairProposals} repairs)`,
+    `Iteration limit: ${preview.limits.maxIterations} (${preview.limits.maxRepairProposals} repairs, ${preview.limits.maxReviewRounds} review rounds)`,
     "",
     "Approve this development workflow once? [y/N]",
   ];
   return lines.join("\n");
 }
 
-/** Bounded workflow status for /development-status (§38). */
+/** Bounded workflow status for /development-status (§38, §47). */
 export function formatDevelopmentStatus(status: GDScriptDevelopmentStatus): string {
   if (status.session === null) {
     return status.support.available
@@ -1507,13 +1516,33 @@ export function formatDevelopmentStatus(status: GDScriptDevelopmentStatus): stri
             : session.validation === "infrastructure_failure"
               ? "infrastructure failure"
               : "cancelled";
+  const quality = session.quality;
+  const qualityLines =
+    quality.status === null && quality.report === null
+      ? ["Quality: not run"]
+      : [
+          `Quality: ${quality.status === null ? "pending" : describeQualityStatus(quality.status)}`,
+          `  Review rounds: ${quality.reviewRoundsUsed}/${quality.maxReviewRounds}`,
+          `  Repair rounds: ${quality.repairRoundsUsed}/${quality.maxRepairRounds}`,
+          `  Blocking findings: ${quality.blockingFindings}`,
+          `  Advisories: ${quality.advisories}`,
+          ...(quality.report === null
+            ? []
+            : [
+                "  Gates:",
+                ...quality.report.gates.map(
+                  (gate) => `    ${qualityGateMark(gate.status)} ${gate.id}`,
+                ),
+              ]),
+        ];
   return `State: ${state}
 Request: ${session.request}
 Iteration: ${session.iteration} / ${session.maxIterations}
 Applied change sets: ${session.appliedChangeSets}
 Validation: ${validation}
 Diagnostics: ${session.errors} error(s), ${session.warnings} warning(s)
-Repair proposals remaining: ${session.repairProposalsRemaining}`;
+Repair proposals remaining: ${session.repairProposalsRemaining}
+${qualityLines.join("\n")}`;
 }
 
 /** Final development result summary for the CLI (§35, §38). */
@@ -1529,6 +1558,9 @@ export function formatDevelopmentResult(result: GDScriptDevelopmentResult): stri
     `Diagnostics: ${result.diagnostics.errors} error(s), ${result.diagnostics.warnings} warning(s)`,
     `Validation: parser ${result.validation.parser ? "passed" : "failed"}, LSP ${result.validation.lsp ? "started" : "failed"}, workspace integrity ${result.validation.workspaceIntegrity ? "verified" : "not verified"}`,
     `Checkpoints: ${result.checkpointIds.length > 0 ? result.checkpointIds.map((id) => id.slice(0, 8)).join(", ") : "(none)"}`,
+    ...(result.quality === null
+      ? []
+      : [`Quality: ${describeQualityStatus(result.quality.status)}`]),
   ];
   return lines.join("\n");
 }
@@ -1541,6 +1573,10 @@ function describeDevelopmentStatus(status: string): string {
       return "complete (with warnings)";
     case "completed_with_errors":
       return "complete (with validation errors)";
+    case "completed_with_blocking_findings":
+      return "complete (with unresolved blocking review findings)";
+    case "quality_gate_failed":
+      return "stopped on a quality-gate failure; approved source changes remain";
     case "denied":
       return "denied; no source change was applied";
     case "conflict":
@@ -1555,5 +1591,130 @@ function describeDevelopmentStatus(status: string): string {
       return "unavailable on this platform; nothing was changed";
     default:
       return status;
+  }
+}
+
+function describeQualityStatus(status: QualityStatus): string {
+  switch (status) {
+    case "passed":
+      return "READY";
+    case "passed_with_advisories":
+      return "READY WITH ADVISORIES";
+    case "blocking_findings":
+      return "BLOCKING FINDINGS";
+    case "validation_incomplete":
+      return "VALIDATION INCOMPLETE";
+    case "failed":
+      return "QUALITY GATE FAILED";
+    case "cancelled":
+      return "CANCELLED";
+  }
+}
+
+function qualityGateMark(status: string): string {
+  switch (status) {
+    case "passed":
+      return "\u2713";
+    case "advisory":
+      return "!";
+    case "blocked":
+      return "\u2715";
+    case "not_applicable":
+      return "-";
+    case "not_run":
+      return "?";
+    case "failed":
+      return "\u2715";
+    default:
+      return "?";
+  }
+}
+
+/** Full quality report for /quality (§45). */
+export function formatQualityReport(report: DevelopmentQualityReport | null): string {
+  if (report === null) {
+    return "No quality report exists yet; apply an approved change set in a /develop workflow first.";
+  }
+  const lines: string[] = ["Development quality"];
+  const gateLines: string[] = [];
+  const advisories: string[] = [];
+  for (const gate of report.gates) {
+    const mark = qualityGateMark(gate.status);
+    gateLines.push(`  ${mark} ${gate.id} (${gate.classification})`);
+    if (gate.status === "advisory") {
+      advisories.push(`  ${gate.summary}`);
+    }
+  }
+  lines.push("", "Gates:", ...gateLines);
+  if (advisories.length > 0) {
+    lines.push("", "Advisories:", ...advisories);
+  }
+  const review = report.review;
+  if (review !== null && review.findings.length > 0) {
+    lines.push("", "Independent review findings:");
+    for (const finding of review.findings.slice(0, 20)) {
+      const location =
+        finding.path === null
+          ? "project-wide"
+          : `${finding.path}${finding.line === null ? "" : `:${finding.line}`}`;
+      lines.push(
+        `  [${finding.severity}/${finding.confidence}] ${finding.title} (${location})`,
+        `    ${finding.evidence}`,
+      );
+    }
+    if (review.findings.length > 20) {
+      lines.push(`  ... and ${review.findings.length - 20} more (bounded)`);
+    }
+  }
+  lines.push(
+    "",
+    `Result: ${describeQualityStatus(report.status)}`,
+    `Review rounds: ${report.reviewRoundsUsed}/${report.maxReviewRounds} | Repair rounds: ${report.repairRoundsUsed}/${report.maxRepairRounds}`,
+  );
+  return lines.join("\n");
+}
+
+/** Compact quality summary for /status and /development-status (§47). */
+export function formatQualitySummary(
+  report: DevelopmentQualityReport | null,
+  blockingFindings: number,
+  advisories: number,
+): string {
+  if (report === null) {
+    return "Quality: not run";
+  }
+  const counts =
+    report.review === null
+      ? ""
+      : ` (${report.review.findings.length} finding(s), ${blockingFindings} blocking)`;
+  return `Quality: ${describeQualityStatus(report.status)}${counts}${advisories > 0 ? `, ${advisories} advisory(ies)` : ""}`;
+}
+
+/** Read-only review result for /review-change (§45). */
+export function formatChangeReviewResult(result: ChangeReviewResult): string {
+  switch (result.status) {
+    case "completed":
+      if (result.findings.length === 0) {
+        return "Independent review: no findings. The reviewer is one reasoning signal; deterministic gates still govern completion.";
+      }
+      return [
+        `Independent review: ${result.findings.length} finding(s)`,
+        ...result.findings.map((finding) => {
+          const location =
+            finding.path === null
+              ? "project-wide"
+              : `${finding.path}${finding.line === null ? "" : `:${finding.line}`}`;
+          return `  [${finding.severity}/${finding.confidence}] ${finding.title} (${location})
+    evidence: ${finding.evidence}
+    impact: ${finding.impact}
+    recommendation: ${finding.recommendation}`;
+        }),
+      ].join("\n");
+    case "cancelled":
+      return "Independent review cancelled; validation is incomplete.";
+    case "too_large":
+      return `Independent review could not cover the change: ${result.message ?? "the change exceeds the review-context bound"}.`;
+    case "failed":
+      return `Independent review failed: ${result.message ?? "unknown failure"}`;
   }
 }

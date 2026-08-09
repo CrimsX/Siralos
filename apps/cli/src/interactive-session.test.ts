@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseInput } from "./input/parse-input.js";
 import {
   createCommandRunnerRegistry,
   createDefaultPolicy,
@@ -13,6 +14,7 @@ import {
   type CheckpointStore,
   type CommandRunner,
   type CommandToolPreparationResult,
+  type DevelopmentQualityReport,
   type FileCheckpoint,
   type GitDiffResult,
   type GitInspector,
@@ -1882,5 +1884,287 @@ describe("runInteractiveSession development workflow commands", () => {
     await runInteractiveSession(io, createTestApplication(), sessionInfo);
     expect(io.text).toContain("cancelled");
     expect(io.text).toContain("Iterations: 0");
+  });
+});
+
+describe("runInteractiveSession quality commands", () => {
+  function qualityReport(status: DevelopmentQualityReport["status"]): DevelopmentQualityReport {
+    return {
+      developmentId: "wf-1",
+      status,
+      gates: [
+        {
+          id: "scope-verified",
+          classification: "hard",
+          status: status === "failed" ? "blocked" : "passed",
+          summary: "scope summary",
+          evidence: [{ kind: "scope", summary: "verified" }],
+        },
+        {
+          id: "warnings",
+          classification: "soft",
+          status: status === "passed_with_advisories" ? "advisory" : "passed",
+          summary: "warnings summary",
+          evidence: [],
+        },
+        {
+          id: "independent-review",
+          classification: "hard",
+          status: status === "blocking_findings" ? "blocked" : "passed",
+          summary: "review summary",
+          evidence: [],
+        },
+      ],
+      review:
+        status === "blocking_findings"
+          ? {
+              status: "completed",
+              findings: [
+                {
+                  id: "abc123",
+                  severity: "high",
+                  category: "correctness",
+                  title: "health can exceed max_health",
+                  path: "scripts/player/player.gd",
+                  line: 12,
+                  evidence: "heal() adds without clamping",
+                  impact: "health exceeds the maximum",
+                  recommendation: "clamp the result",
+                  confidence: "high",
+                },
+              ],
+              blockingCount: 1,
+              message: null,
+            }
+          : status === "passed_with_advisories"
+            ? {
+                status: "completed",
+                findings: [
+                  {
+                    id: "def456",
+                    severity: "medium",
+                    category: "maintainability",
+                    title: "helper used once",
+                    path: null,
+                    line: null,
+                    evidence: "single call site",
+                    impact: "minor",
+                    recommendation: "inline it",
+                    confidence: "high",
+                  },
+                ],
+                blockingCount: 0,
+                message: null,
+              }
+            : { status: "completed", findings: [], blockingCount: 0, message: null },
+      repairRoundsUsed: 0,
+      maxRepairRounds: 2,
+      reviewRoundsUsed: 1,
+      maxReviewRounds: 3,
+      previousFindingIds: [],
+      completedAtMs: 1,
+    };
+  }
+
+  it("renders /quality with no report", async () => {
+    const io = new ScriptedIO(["/quality", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo());
+    expect(io.text).toContain("No quality report exists yet");
+  });
+
+  it("renders /quality with a clean report", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      qualityReport: () => qualityReport("passed"),
+    };
+    const io = new ScriptedIO(["/quality", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(io.text).toContain("Development quality");
+    expect(io.text).toContain("Gates:");
+    expect(io.text).toContain("scope-verified (hard)");
+    expect(io.text).toContain("Result: READY");
+  });
+
+  it("renders ready-with-advisories distinctly from clean", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      qualityReport: () => qualityReport("passed_with_advisories"),
+    };
+    const io = new ScriptedIO(["/quality", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(io.text).toContain("Result: READY WITH ADVISORIES");
+    expect(io.text).toContain("Advisories:");
+  });
+
+  it("renders blocking findings by severity with evidence", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      qualityReport: () => qualityReport("blocking_findings"),
+    };
+    const io = new ScriptedIO(["/quality", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(io.text).toContain("Result: BLOCKING FINDINGS");
+    expect(io.text).toContain("[high/high] health can exceed max_health");
+    expect(io.text).toContain("heal() adds without clamping");
+  });
+
+  it("renders validation-incomplete status honestly", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      qualityReport: () => qualityReport("validation_incomplete"),
+    };
+    const io = new ScriptedIO(["/quality", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(io.text).toContain("Result: VALIDATION INCOMPLETE");
+  });
+
+  it("reports clearly when /review-change has no eligible change", async () => {
+    const io = new ScriptedIO(["/review-change", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo());
+    expect(io.text).toContain("no eligible development change exists");
+  });
+
+  it("runs a fresh read-only review through /review-change without requesting approval", async () => {
+    let reviewed = false;
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      runIndependentReview: () => {
+        reviewed = true;
+        return Promise.resolve({
+          status: "completed",
+          findings: [
+            {
+              id: "f1",
+              severity: "low",
+              category: "style",
+              title: "minor style note",
+              path: "scripts/player/player.gd",
+              line: 3,
+              evidence: "trailing whitespace",
+              impact: "none",
+              recommendation: "trim",
+              confidence: "high",
+            },
+          ],
+          message: null,
+        });
+      },
+    };
+    const io = new ScriptedIO(["/review-change", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(reviewed).toBe(true);
+    expect(io.text).toContain("Independent review: 1 finding(s)");
+    expect(io.text).toContain("minor style note");
+    expect(io.text).not.toContain("approval approved");
+  });
+
+  it("surfaces reviewer failure without crashing the CLI", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      runIndependentReview: () =>
+        Promise.resolve({
+          status: "failed",
+          findings: [],
+          message: "the reviewer provider timed out",
+        }),
+    };
+    const io = new ScriptedIO(["/review-change", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(io.text).toContain("Independent review failed");
+    expect(io.text).toContain("timed out");
+  });
+
+  it("returns to the prompt after a cancelled review", async () => {
+    const controller = new AbortController();
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      runIndependentReview: (signal) => {
+        signal?.addEventListener("abort", () => undefined);
+        controller.abort();
+        return Promise.resolve({ status: "cancelled", findings: [], message: "cancelled" });
+      },
+    };
+    const io = new ScriptedIO(["/review-change", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(io.text).toContain("Independent review cancelled");
+  });
+
+  it("shows the quality gate state in /development-status", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      status: () => ({
+        support: { available: true, reason: null, platform: "linux" },
+        session: {
+          id: "wf-1",
+          request: "fix the player parser",
+          state: { kind: "terminal", status: "completed_with_warnings" },
+          iteration: 1,
+          maxIterations: 4,
+          repairProposalsRemaining: 3,
+          validation: "clean",
+          appliedChangeSets: 1,
+          errors: 0,
+          warnings: 1,
+          quality: {
+            status: "passed_with_advisories",
+            report: qualityReport("passed_with_advisories"),
+            blockingFindings: 0,
+            advisories: 1,
+            reviewRoundsUsed: 1,
+            maxReviewRounds: 3,
+            repairRoundsUsed: 0,
+            maxRepairRounds: 2,
+          },
+        },
+      }),
+    };
+    const io = new ScriptedIO(["/development-status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo({ development });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Quality: READY WITH ADVISORIES");
+    expect(io.text).toContain("Blocking findings: 0");
+  });
+
+  it("shows a compact quality summary in /status when a workflow exists", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      status: () => ({
+        support: { available: true, reason: null, platform: "linux" },
+        session: {
+          id: "wf-1",
+          request: "fix the player parser",
+          state: { kind: "terminal", status: "completed" },
+          iteration: 1,
+          maxIterations: 4,
+          repairProposalsRemaining: 3,
+          validation: "clean",
+          appliedChangeSets: 1,
+          errors: 0,
+          warnings: 0,
+          quality: {
+            status: "passed",
+            report: qualityReport("passed"),
+            blockingFindings: 0,
+            advisories: 0,
+            reviewRoundsUsed: 1,
+            maxReviewRounds: 3,
+            repairRoundsUsed: 0,
+            maxRepairRounds: 2,
+          },
+        },
+      }),
+    };
+    const io = new ScriptedIO(["/status", "/exit"]);
+    await runInteractiveSession(io, createTestApplication(), buildSessionInfo({ development }));
+    expect(io.text).toContain("Quality: READY");
+  });
+
+  it("parses the /quality and /review-change commands", () => {
+    expect(parseInput("/quality")).toEqual({ type: "command", command: "quality", args: [] });
+    expect(parseInput("/review-change")).toEqual({
+      type: "command",
+      command: "review-change",
+      args: [],
+    });
   });
 });

@@ -145,12 +145,7 @@ function buildChunk(
   };
 }
 
-const SEVERITIES: readonly ChangeReviewFindingSeverity[] = [
-  "critical",
-  "high",
-  "medium",
-  "low",
-];
+const SEVERITIES: readonly ChangeReviewFindingSeverity[] = ["critical", "high", "medium", "low"];
 const CATEGORIES: readonly ChangeReviewFindingCategory[] = [
   "correctness",
   "regression",
@@ -185,7 +180,11 @@ export function deterministicFindingId(input: {
 }
 
 export function normalizeFindingTitle(title: string): string {
-  return title.replace(/\s+/g, " ").trim().toLowerCase().slice(0, QUALITY_LIMITS.maxFindingTitleChars);
+  return title
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .slice(0, QUALITY_LIMITS.maxFindingTitleChars);
 }
 
 /**
@@ -199,10 +198,12 @@ export function normalizeFindingTitle(title: string): string {
 export function normalizeReviewFindings(
   value: unknown,
   options: { readonly maxFindings?: number } = {},
-): { readonly ok: true; readonly findings: readonly ChangeReviewFinding[] } | {
-  readonly ok: false;
-  readonly message: string;
-} {
+):
+  | { readonly ok: true; readonly findings: readonly ChangeReviewFinding[] }
+  | {
+      readonly ok: false;
+      readonly message: string;
+    } {
   const maxFindings = options.maxFindings ?? QUALITY_LIMITS.maxReviewFindings;
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { ok: false, message: "The review output must be a JSON object." };
@@ -229,12 +230,12 @@ export function normalizeReviewFindings(
   return { ok: true, findings: deduplicateReviewFindings(findings) };
 }
 
-function parseFinding(
-  value: unknown,
-): { readonly ok: true; readonly finding: ChangeReviewFinding } | {
-  readonly ok: false;
-  readonly message: string;
-} {
+function parseFinding(value: unknown):
+  | { readonly ok: true; readonly finding: ChangeReviewFinding }
+  | {
+      readonly ok: false;
+      readonly message: string;
+    } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { ok: false, message: "Every review finding must be an object." };
   }
@@ -325,7 +326,8 @@ function readBoundedString(
   key: string,
   maxChars: number,
   required: boolean,
-): { readonly ok: true; readonly value: string } | { readonly ok: false; readonly message: string } {
+):
+  { readonly ok: true; readonly value: string } | { readonly ok: false; readonly message: string } {
   const value = record[key];
   if (value === undefined) {
     if (required) {
@@ -352,12 +354,12 @@ function readBoundedString(
  * bytes. Absolute private paths are rejected (never silently sanitized
  * into a different path).
  */
-function readSafePath(
-  record: Record<string, unknown>,
-): { readonly ok: true; readonly value: string | null } | {
-  readonly ok: false;
-  readonly message: string;
-} {
+function readSafePath(record: Record<string, unknown>):
+  | { readonly ok: true; readonly value: string | null }
+  | {
+      readonly ok: false;
+      readonly message: string;
+    } {
   const value = record["path"];
   if (value === undefined || value === null) {
     return { ok: true, value: null };
@@ -375,7 +377,8 @@ function readSafePath(
   if (trimmed.includes("\u0000") || trimmed.includes("\\") || trimmed.includes(":")) {
     return {
       ok: false,
-      message: "Finding paths must be workspace-relative with forward slashes; absolute and drive-qualified paths are rejected.",
+      message:
+        "Finding paths must be workspace-relative with forward slashes; absolute and drive-qualified paths are rejected.",
     };
   }
   if (trimmed.startsWith("/") || /^[A-Za-z]:/.test(trimmed)) {
@@ -395,12 +398,12 @@ function readSafePath(
   return { ok: true, value: trimmed };
 }
 
-function readLine(
-  record: Record<string, unknown>,
-): { readonly ok: true; readonly value: number | null } | {
-  readonly ok: false;
-  readonly message: string;
-} {
+function readLine(record: Record<string, unknown>):
+  | { readonly ok: true; readonly value: number | null }
+  | {
+      readonly ok: false;
+      readonly message: string;
+    } {
   const value = record["line"];
   if (value === undefined || value === null) {
     return { ok: true, value: null };
@@ -448,9 +451,12 @@ export function countBlockingFindings(findings: readonly ChangeReviewFinding[]):
   return findings.filter(classifyReviewFindingBlocking).length;
 }
 
-export function countReviewFindingsBySeverity(
-  findings: readonly ChangeReviewFinding[],
-): { readonly critical: number; readonly high: number; readonly medium: number; readonly low: number } {
+export function countReviewFindingsBySeverity(findings: readonly ChangeReviewFinding[]): {
+  readonly critical: number;
+  readonly high: number;
+  readonly medium: number;
+  readonly low: number;
+} {
   return {
     critical: findings.filter((finding) => finding.severity === "critical").length,
     high: findings.filter((finding) => finding.severity === "high").length,
@@ -460,18 +466,21 @@ export function countReviewFindingsBySeverity(
 }
 
 /**
- * Read-only aggregation of chunked review results (§53): results are
- * merged, deduplicated by deterministic identity, and bounded to the
- * immutable maximum. The aggregator never re-reviews and never executes.
+ * Read-only aggregation of chunked review results (§53): completed chunk
+ * results are merged, deduplicated by deterministic identity, and bounded
+ * to the immutable maximum; a cancelled/failed/too-large chunk is never
+ * silently converted into a completed review. The aggregator never
+ * re-reviews and never executes.
  */
-export function aggregateReviewResults(
-  results: readonly ChangeReviewResult[],
-): ChangeReviewResult {
+export function aggregateReviewResults(results: readonly ChangeReviewResult[]): ChangeReviewResult {
+  for (const result of results) {
+    if (result.status !== "completed") {
+      return result;
+    }
+  }
   const merged: ChangeReviewFinding[] = [];
   for (const result of results) {
-    if (result.status === "completed") {
-      merged.push(...result.findings);
-    }
+    merged.push(...result.findings);
   }
   const deduplicated = deduplicateReviewFindings(merged);
   const bounded = deduplicated.slice(0, QUALITY_LIMITS.maxReviewFindings);

@@ -13,6 +13,8 @@ export type SlashCommand =
   | "cancel"
   | "develop"
   | "development-status"
+  | "quality"
+  | "review-change"
   | "godot"
   | "godot-installations"
   | "godot-project"
@@ -64,6 +66,8 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "cancel",
   "develop",
   "development-status",
+  "quality",
+  "review-change",
   "godot",
   "godot-installations",
   "godot-project",

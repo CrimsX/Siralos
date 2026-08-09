@@ -27,7 +27,13 @@ describe("validation-plan discovery", () => {
 
   it("never selects npm install, npm ci, npx, or npm exec", () => {
     const plan = discoverValidationPlan(
-      { install: "npm ci", ci: "npm ci", npx: "npx tsc", exec: "npm exec tsc", check: "npm run lint" },
+      {
+        install: "npm ci",
+        ci: "npm ci",
+        npx: "npx tsc",
+        exec: "npm exec tsc",
+        check: "npm run lint",
+      },
       ["a.gd"],
     );
     expect(plan.optional.map((step) => step.id)).toEqual(["npm-check"]);
@@ -42,7 +48,10 @@ describe("validation-plan discovery", () => {
   });
 
   it("prefers check over lint and typecheck", () => {
-    const plan = discoverValidationPlan({ lint: "eslint", check: "npm run lint", typecheck: "tsc" }, ["a.gd"]);
+    const plan = discoverValidationPlan(
+      { lint: "eslint", check: "npm run lint", typecheck: "tsc" },
+      ["a.gd"],
+    );
     expect(plan.optional.map((step) => step.id)).toEqual(["npm-check"]);
   });
 
@@ -73,7 +82,12 @@ describe("validation-gate classification", () => {
   it("passes when the project check command exits zero", () => {
     const plan = discoverValidationPlan({ check: "npm run lint" }, ["a.gd"]);
     const outcomes: readonly ValidationRunOutcome[] = [
-      { step: plan.optional[0] as NonNullable<typeof plan.optional>[0], status: "passed", exitCode: 0, summary: "exit 0" },
+      {
+        step: plan.optional[0] as NonNullable<typeof plan.optional>[0],
+        status: "passed",
+        exitCode: 0,
+        summary: "exit 0",
+      },
     ];
     const classification = classifyValidationGate(plan, outcomes, true);
     expect(classification.status).toBe("passed");
@@ -82,7 +96,12 @@ describe("validation-gate classification", () => {
   it("blocks when a required test exits nonzero", () => {
     const plan = discoverValidationPlan({ test: "vitest run" }, ["a.gd"]);
     const outcomes: readonly ValidationRunOutcome[] = [
-      { step: plan.optional[0] as NonNullable<typeof plan.optional>[0], status: "failed", exitCode: 1, summary: "exit 1" },
+      {
+        step: plan.optional[0] as NonNullable<typeof plan.optional>[0],
+        status: "failed",
+        exitCode: 1,
+        summary: "exit 1",
+      },
     ];
     const classification = classifyValidationGate(plan, outcomes, true);
     expect(classification.status).toBe("blocked");
@@ -91,7 +110,12 @@ describe("validation-gate classification", () => {
   it("reports not_run when a required command was denied", () => {
     const plan = discoverValidationPlan({ check: "npm run lint" }, ["a.gd"]);
     const outcomes: readonly ValidationRunOutcome[] = [
-      { step: plan.optional[0] as NonNullable<typeof plan.optional>[0], status: "denied", exitCode: null, summary: "denied" },
+      {
+        step: plan.optional[0] as NonNullable<typeof plan.optional>[0],
+        status: "denied",
+        exitCode: null,
+        summary: "denied",
+      },
     ];
     const classification = classifyValidationGate(plan, outcomes, true);
     expect(classification.status).toBe("not_run");
@@ -100,7 +124,12 @@ describe("validation-gate classification", () => {
   it("reports not_run when a required command is infrastructure-unavailable", () => {
     const plan = discoverValidationPlan({ check: "npm run lint" }, ["a.gd"]);
     const outcomes: readonly ValidationRunOutcome[] = [
-      { step: plan.optional[0] as NonNullable<typeof plan.optional>[0], status: "unavailable", exitCode: null, summary: "runner unavailable" },
+      {
+        step: plan.optional[0] as NonNullable<typeof plan.optional>[0],
+        status: "unavailable",
+        exitCode: null,
+        summary: "runner unavailable",
+      },
     ];
     const classification = classifyValidationGate(plan, outcomes, true);
     expect(classification.status).toBe("not_run");
