@@ -338,3 +338,49 @@ export {
   type ReferenceServices,
   type ReferenceServicesOptions,
 } from "./reference/reference-services.js";
+// --- Stage 3 milestone 5: research source adapters (bounded retrieval) ---
+export {
+  TRUNCATION_MARKER,
+  boundedErrorMessage,
+  buildResearchDocument,
+  classifyContentType,
+  normalizeHtmlToSections,
+  normalizeJsonToSections,
+  normalizeMarkdownToSections,
+  researchDocumentOutcome,
+  transportErrorToResearchOutcome,
+  type BuildResearchDocumentOptions,
+  type HtmlNormalizationResult,
+  type NormalizationResult,
+  type ResearchDocumentOutcomeOptions,
+} from "./research/normalization.js";
+export {
+  createFakeTransport,
+  createNodeHttpsTransport,
+  type FakeTransportRoute,
+  type FakeTransportRoutes,
+} from "./research/http-transport.js";
+export {
+  createGitHubResearchSource,
+  validateResearchPath,
+  type GitHubResearchSourceOptions,
+} from "./research/github-source.js";
+export {
+  buildDocsUrl,
+  createGodotDocsResearchSource,
+  resolveDocsVersion,
+  type DocsVersionResolution,
+  type GodotDocsResearchSourceOptions,
+} from "./research/godot-docs-source.js";
+export {
+  createFakeGodotDocsSource,
+  createFakeRepositorySource,
+  type FakeGodotDocsSourceOptions,
+  type FakeRepositoryFileFixture,
+  type FakeRepositoryReleaseFixture,
+  type FakeRepositoryResearchFixture,
+  type FakeRepositorySourceOptions,
+  type GodotDocsFallback,
+  type GodotDocsFixture,
+  type GodotDocsPageFixture,
+} from "./research/fake-sources.js";
