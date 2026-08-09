@@ -309,7 +309,7 @@ function boundMessage(message: string, mirrorProjectPath: string | null): string
   return truncateUtf8Bytes(sanitized, MAX_MESSAGE_BYTES);
 }
 
-function sanitizeControlCharacters(text: string): string {
+export function sanitizeControlCharacters(text: string): string {
   // Regex literals and escape strings cannot carry control-character
   // sequences under the lint guard, so the patterns are assembled from
   // explicit code points (C0, DEL, and C1 0x80-0x9F).

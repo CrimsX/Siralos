@@ -110,7 +110,9 @@ describe("JSONRPCClient", () => {
     const reply = new Promise((resolve) => {
       client.onServerRequest((method) => {
         resolve(method);
-        return Promise.reject(new ServerRequestRejectedError(`Unsupported server request: ${method}`));
+        return Promise.reject(
+          new ServerRequestRejectedError(`Unsupported server request: ${method}`),
+        );
       });
     });
     server.sendServerRequest("workspace/executeCommand", { command: "evil" });
