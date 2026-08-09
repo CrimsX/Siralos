@@ -856,7 +856,9 @@ describe("check-architecture Godot check-only diagnostics", () => {
     fixture["packages/adapters/src/godot/process/godot-knowledge-runner.ts"] =
       'export const BASE = ["--dump-extension-api-with-docs"];\nexport function args() {\n  return [...BASE];\n}\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs"))).toBe(false);
+    expect(
+      errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs")),
+    ).toBe(false);
   });
 
   it("rejects extra options in the API documentation runner", () => {
@@ -864,7 +866,9 @@ describe("check-architecture Godot check-only diagnostics", () => {
     fixture["packages/adapters/src/godot/process/godot-knowledge-runner.ts"] =
       'export const ARGS = ["--dump-extension-api-with-docs", "--path", "/x"];\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs"))).toBe(true);
+    expect(
+      errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs")),
+    ).toBe(true);
   });
 
   it("rejects an ordinary --dump-extension-api substitution in the API documentation runner", () => {
@@ -872,7 +876,9 @@ describe("check-architecture Godot check-only diagnostics", () => {
     fixture["packages/adapters/src/godot/process/godot-knowledge-runner.ts"] =
       'export const ARGS = ["--dump-extension-api"];\n';
     const errors = runChecks(writeFixture(fixture));
-    expect(errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs"))).toBe(true);
+    expect(
+      errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs")),
+    ).toBe(true);
   });
 
   it("restricts the check-only runner to the approved diagnostics adapter", () => {

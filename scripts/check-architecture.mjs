@@ -407,19 +407,9 @@ function checkGodotProbeTupleDiscipline(
  */
 const GODOT_RECOVERY_RUNNER_FILE = join("src", "godot", "process", "godot-recovery-runner.ts");
 
-const GODOT_CHECK_ONLY_RUNNER_FILE = join(
-  "src",
-  "godot",
-  "process",
-  "godot-check-only-runner.ts",
-);
+const GODOT_CHECK_ONLY_RUNNER_FILE = join("src", "godot", "process", "godot-check-only-runner.ts");
 
-const GODOT_KNOWLEDGE_RUNNER_FILE = join(
-  "src",
-  "godot",
-  "process",
-  "godot-knowledge-runner.ts",
-);
+const GODOT_KNOWLEDGE_RUNNER_FILE = join("src", "godot", "process", "godot-knowledge-runner.ts");
 
 const FORBIDDEN_GODOT_RECOVERY_ARGUMENTS = [
   "--script",
@@ -730,7 +720,6 @@ function checkGodotKnowledgeRunner(packageRelativeFile, file, source, location, 
     }
   }
 }
-
 
 /**
  * Structural scan of one source file. Returns import bindings (named,
@@ -1046,7 +1035,10 @@ export function runChecks(root) {
                   "process",
                   "godot-knowledge-runner.ts",
                 );
-                if (!checkOnlyUser && (target === checkOnlyRunner || target === checkOnlyRunner.replace(/\.ts$/, ".js"))) {
+                if (
+                  !checkOnlyUser &&
+                  (target === checkOnlyRunner || target === checkOnlyRunner.replace(/\.ts$/, ".js"))
+                ) {
                   errors.push(
                     `${location}: the Godot check-only runner may only be used by the approved diagnostics adapter`,
                   );

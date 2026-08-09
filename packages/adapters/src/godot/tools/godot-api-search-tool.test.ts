@@ -53,10 +53,7 @@ function unavailableKnowledge(): GodotKnowledge {
 describe("createGodotApiSearchTool", () => {
   it("returns bounded exact-version search results", async () => {
     const tool = createGodotApiSearchTool(readyKnowledge());
-    const result = await tool.execute(
-      { query: "Node owner", kinds: ["property"], limit: 10 },
-      {},
-    );
+    const result = await tool.execute({ query: "Node owner", kinds: ["property"], limit: 10 }, {});
     expect(result.status).toBe("success");
     if (result.status !== "success") {
       return;
@@ -92,9 +89,7 @@ describe("createGodotApiSearchTool", () => {
     const tool = createGodotApiSearchTool(readyKnowledge());
     expect((await tool.execute("query", {})).status).toBe("invalid_input");
     expect((await tool.execute({ query: 42 }, {})).status).toBe("invalid_input");
-    expect((await tool.execute({ query: "x", kinds: "class" }, {})).status).toBe(
-      "invalid_input",
-    );
+    expect((await tool.execute({ query: "x", kinds: "class" }, {})).status).toBe("invalid_input");
     expect((await tool.execute({ query: "x", limit: 0 }, {})).status).toBe("invalid_input");
   });
 

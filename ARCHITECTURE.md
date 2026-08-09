@@ -257,6 +257,49 @@ apps/cli/                                Godot commands (/godot, /godot-installa
 
 **Probe argument discipline.** Probe invocation uses exactly three fixed tuples constructed by the single `fixedProbeArguments` constructor private to the Godot probe adapter: `--version`, `--help`, and `--dump-extension-api`. Project-affecting arguments (`--path`, `--upwards`, `--import`, `--scene`, `--script`) and `--editor` are never passed; there is no project path and no project working directory. The architecture check mirrors the runtime boundary in probe invocation code: non-fixed `--` tokens, concatenated construction, imported argument arrays, and construction outside the fixed runner are rejected (a developer guardrail using structural parsing plus regex/text checks; the runtime boundary is the private constructor). At this stage engine probing fails closed as `unavailable`, so no probe is ever invoked and nothing spawns Godot.
 
+## Godot API knowledge and GDScript diagnostics
+
+The knowledge and diagnostic layers follow the same inward pattern: neutral contracts in core, adapters own every process/filesystem/parse concern, the CLI renders. Providers and the CLI never spawn Godot; only the fixed runners in `@solaris/adapters` could, and at this stage they fail closed (ADR 0010).
+
+```text
+packages/core/src/godot/
+  knowledge.ts                            knowledge-profile model, cache
+                                          validation policy, manual-channel
+                                          classification, knowledge port
+  api.ts                                  API symbol model, deterministic
+                                          symbol identities, query and
+                                          result models
+  gdscript.ts                             GDScript diagnostic model, severity,
+                                          aggregation policy, check results,
+                                          diagnostics port, prepared-check
+                                          digest contract
+packages/adapters/src/godot/
+  knowledge/                              with-docs dump parser, bounded index
+                                          builder, search/lookup, no-op cache,
+                                          knowledge service
+  diagnostics/                            script enumeration and validation,
+                                          check preparation, output
+                                          normalization, diagnostics service,
+                                          prepared-check store
+  process/godot-knowledge-runner.ts       fixed --dump-extension-api-with-docs
+                                          runner (fail-closed)
+  process/godot-check-only-runner.ts      fixed --headless --path <mirror>
+                                          --script <mirror-script> --check-only
+                                          runner (fail-closed)
+  tools/                                  godot.api_search, godot.api_lookup,
+                                          godot.check_script,
+                                          godot.check_project_scripts
+apps/cli/                                 /godot-knowledge, /godot-api,
+                                          /godot-knowledge-refresh,
+                                          /gdscript-check, /gdscript-diagnostics
+```
+
+- **Core owns**: the knowledge-profile model, API symbol model, query/search/lookup result models, deterministic symbol identities, the GDScript diagnostic model, severity and aggregation policy, the knowledge and diagnostics ports, and the provider-neutral prepared-diagnostic tool contract. Core never spawns Godot and never reads API cache files.
+- **Adapters own**: the fixed runners, dump parsing, index building/storage/querying, script enumeration and hashing, output normalization, and both services (fail-closed orchestration).
+- **CLI owns**: command parsing, rendering, and composition.
+- **Check-only argument discipline (architecture-enforced)**: `--script` is legitimate only inside the check-only runner structurally paired with `--check-only`, `--headless`, and mirror-only `--path`; scene/editor/import/LSP/DAP/recovery options never appear; the source workspace never becomes the diagnostic `--path`; no literal or concatenated argument construction; no imported argument arrays. The knowledge runner passes exactly `--dump-extension-api-with-docs`.
+- **Approval protocol**: `godot.check_script`/`godot.check_project_scripts` are `prepared_diagnostic` tools sharing the one-time approval flow with the project probe; `godot.diagnose` is `ask` in every user-facing profile (no public `allow`), while `godot.api_search`/`godot.api_lookup` are `allow`. While execution is unavailable, preparation returns typed `unavailable` results before any approval is requested.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. A persistence port will be added only when a real requirement demands it.
