@@ -1,6 +1,7 @@
 import { lstat, realpath, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { isProtectedBehavioralConfigPath } from "@solaris/core";
 import { foldPathComponent } from "../../../fs-case.js";
 import { isWithinPathIdentity, samePathIdentity } from "../../../fs-path-identity.js";
 import { describeFsError } from "../workspace-path.js";
@@ -396,6 +397,9 @@ export function isProtectedWriteTarget(
     return true;
   }
   const foldedBasename = fold(basename);
+  if (isProtectedBehavioralConfigPath(workspaceRelativePath)) {
+    return true;
+  }
   return (
     foldedBasename === ".env" ||
     foldedBasename.startsWith(".env.") ||

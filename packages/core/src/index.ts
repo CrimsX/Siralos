@@ -668,6 +668,13 @@ export {
   type ProjectInstructionService,
 } from "./instructions/instruction-service.js";
 export {
+  BEHAVIORAL_CONFIG_DIRECTORY,
+  BEHAVIORAL_INSTRUCTION_FILE,
+  classifyBehavioralConfigPaths,
+  isProtectedBehavioralConfigPath,
+} from "./security/behavioral-config.js";
+
+export {
   KNOWLEDGE_LIMITS,
   KNOWLEDGE_RETRIEVAL_SCORING,
   KNOWLEDGE_STATE_VERSION,

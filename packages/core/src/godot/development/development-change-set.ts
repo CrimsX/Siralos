@@ -1,5 +1,6 @@
 import { canonicalizeJson, sha256Hex } from "../digest.js";
 import { DEVELOPMENT_LIMITS } from "./development-model.js";
+import { isProtectedBehavioralConfigPath } from "../../security/behavioral-config.js";
 
 /**
  * Provider-neutral exact text change-set model (§17–§20).
@@ -156,6 +157,12 @@ export function validateChangeSetRequest(
       };
     }
     seenPaths.add(normalizedPath);
+    if (isProtectedBehavioralConfigPath(normalizedPath)) {
+      return {
+        ok: false,
+        message: `"${normalizedPath}" is protected behavioral configuration (instructions or Solaris configuration); modifying it requires a dedicated host authorization path that is not available at this stage, so this change set is rejected before any write, approval, or checkpoint.`,
+      };
+    }
     if (operation === "create") {
       const content = entry["content"];
       if (typeof content !== "string") {

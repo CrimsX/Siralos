@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyReplacements, prepareChangeSet, hashText } from "./change-set-preparation.js";
@@ -179,6 +180,38 @@ describe("prepareChangeSet", () => {
     expect(result.status).toBe("invalid_input");
     if (result.status === "invalid_input") {
       expect(result.message).toContain("protected");
+    }
+  });
+
+  it("rejects protected behavioral configuration for the whole set", async () => {
+    await writeFixtureFiles(workspace.root, {
+      "AGENTS.md": "Root guidance.\n",
+      "src/player/player.gd": "extends Node\n",
+    });
+    for (const path of ["AGENTS.md", "src/AGENTS.md", ".solaris/config.json"]) {
+      const result = await prepareChangeSet(
+        {
+          changes: [
+            { operation: "create", path, content: "new content" },
+            {
+              operation: "edit",
+              path: "src/player/player.gd",
+              expectedSha256: sha256Of("extends Node\n"),
+              replacements: [{ oldText: "Node", newText: "Node2D" }],
+            },
+          ],
+        },
+        deps(),
+      );
+      expect(result.status).toBe("invalid_input");
+      if (result.status === "invalid_input") {
+        expect(result.message).toContain("protected behavioral configuration");
+        expect(result.message).toContain("before any write, approval, or checkpoint");
+      }
+      // The file was never touched: preparation is read-only and rejected.
+      expect(await readFile(join(workspace.root, "src/player/player.gd"), "utf8")).toBe(
+        "extends Node\n",
+      );
     }
   });
 
