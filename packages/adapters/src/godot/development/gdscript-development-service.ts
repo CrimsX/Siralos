@@ -915,8 +915,18 @@ export function createGDScriptDevelopmentService(
       // A provider turn can only end in proposal_ready when its last
       // change-set approval was not granted: the approval is requested
       // and resolved inside the tool call, so a final turn here means the
-      // proposal was denied or abandoned. Nothing was applied.
-      status = "denied";
+      // proposal was denied or abandoned. When the denied proposal was a
+      // review repair, the approved change and its blocking findings
+      // stand: the terminal is completed_with_blocking_findings, never a
+      // bare "denied" that would hide the applied change.
+      status =
+        current.blockingFindings.length > 0
+          ? "completed_with_blocking_findings"
+          : current.iteration > 0
+            ? current.qualityReport !== null
+              ? qualityStatusToDevelopmentStatus(current.qualityReport.status)
+              : "completed_with_errors"
+            : "denied";
     }
     if (status === null) {
       return;

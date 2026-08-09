@@ -98,6 +98,8 @@ async function createLoopHarness(options: {
   readonly scenario: FakeReviewerScenario;
   readonly validation?: ScriptedValidationControl;
   readonly request?: string;
+  /** Deny the approval with this 1-based index and every later approval. */
+  readonly denyApprovalFrom?: number;
 }): Promise<LoopHarness> {
   const workspace = await createTempWorkspace();
   await writeFixtureFiles(workspace.root, {
@@ -123,8 +125,11 @@ async function createLoopHarness(options: {
   );
   let approvals = 0;
   const reviewer: ApprovalReviewer = {
-    review(): Promise<{ type: "approve_once" }> {
+    review(): Promise<import("@solaris/core").ApprovalDecision> {
       approvals += 1;
+      if (options.denyApprovalFrom !== undefined && approvals >= options.denyApprovalFrom) {
+        return Promise.resolve({ type: "deny", reason: "the user denied the repair" });
+      }
       return Promise.resolve({ type: "approve_once" });
     },
   };
@@ -278,6 +283,30 @@ describe("development completion through the quality stage", () => {
     // The final report is the fresh post-repair review: clean.
     expect(status?.quality?.status).toBe("passed");
     expect(status?.quality?.reviewRoundsUsed).toBe(2);
+  });
+
+  it("preserves the existing approved change when a review repair is denied", async () => {
+    harness = await createLoopHarness({
+      scenario: "high",
+      request: "develop fixture with review repair",
+      denyApprovalFrom: 2,
+    });
+    await harness.startWorkflow("develop fixture with review repair");
+    await drain(harness, "develop fixture with review repair");
+    const status = harness.status().session;
+    // The initial change was approved and applied; the repair was denied.
+    expect(status?.state).toEqual({
+      kind: "terminal",
+      status: "completed_with_blocking_findings",
+    });
+    expect(harness.approvals()).toBe(2);
+    expect(status?.quality?.blockingFindings).toBeGreaterThan(0);
+    // The approved source change stays intact on disk.
+    const onDisk = await readFile(`${harness.workspace.root}/${FIXTURE_PATH}`, "utf8");
+    expect(onDisk).toContain("move_and_slide(Vector2.UP)");
+    expect(onDisk).not.toContain("review-repair");
+    const checkpoints = await harness.store.list();
+    expect(checkpoints).toHaveLength(1);
   });
 
   it("exhausts the review-repair budget and reports completed_with_blocking_findings", async () => {
