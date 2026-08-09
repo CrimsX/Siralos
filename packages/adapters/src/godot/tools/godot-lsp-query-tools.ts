@@ -39,7 +39,36 @@ function parsePositionInput(
   return { ok: true, request: { path: path.trim(), line, column } };
 }
 
-export function createGodotHoverTool(service: GDScriptLanguageService): Tool {
+/**
+ * Optional development-workflow coordination gate consulted by LSP query
+ * tools while the workflow suspends the language session for an approved
+ * edit. When blocked, queries return a typed `session_stale`-style failed
+ * result instead of racing the closing session.
+ */
+export interface LanguageQueryGate {
+  (): { readonly blocked: boolean; readonly message: string | null };
+}
+
+function rejectWhenBlocked(
+  gate: LanguageQueryGate | undefined,
+  operation: string,
+): ToolExecutionResult | null {
+  const outcome = gate?.() ?? { blocked: false, message: null };
+  if (!outcome.blocked) {
+    return null;
+  }
+  return {
+    status: "failed",
+    message:
+      outcome.message ??
+      `The language session is closing for an approved edit; ${operation} is rejected until the fresh session starts.`,
+  };
+}
+
+export function createGodotHoverTool(
+  service: GDScriptLanguageService,
+  gate?: LanguageQueryGate,
+): Tool {
   return {
     definition: {
       name: "godot.hover",
@@ -58,6 +87,10 @@ export function createGodotHoverTool(service: GDScriptLanguageService): Tool {
     },
     capability: "godot.lsp",
     async execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+      const blocked = rejectWhenBlocked(gate, "hover");
+      if (blocked !== null) {
+        return blocked;
+      }
       const parsed = parsePositionInput(input, "hover");
       if (!parsed.ok) {
         return { status: "invalid_input", message: parsed.message };
@@ -79,7 +112,10 @@ export function createGodotHoverTool(service: GDScriptLanguageService): Tool {
   };
 }
 
-export function createGodotCompleteTool(service: GDScriptLanguageService): Tool {
+export function createGodotCompleteTool(
+  service: GDScriptLanguageService,
+  gate?: LanguageQueryGate,
+): Tool {
   return {
     definition: {
       name: "godot.complete",
@@ -98,6 +134,10 @@ export function createGodotCompleteTool(service: GDScriptLanguageService): Tool 
     },
     capability: "godot.lsp",
     async execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+      const blocked = rejectWhenBlocked(gate, "completion");
+      if (blocked !== null) {
+        return blocked;
+      }
       const parsed = parsePositionInput(input, "completion");
       if (!parsed.ok) {
         return { status: "invalid_input", message: parsed.message };
@@ -119,7 +159,10 @@ export function createGodotCompleteTool(service: GDScriptLanguageService): Tool 
   };
 }
 
-export function createGodotDefinitionTool(service: GDScriptLanguageService): Tool {
+export function createGodotDefinitionTool(
+  service: GDScriptLanguageService,
+  gate?: LanguageQueryGate,
+): Tool {
   return {
     definition: {
       name: "godot.definition",
@@ -138,6 +181,10 @@ export function createGodotDefinitionTool(service: GDScriptLanguageService): Too
     },
     capability: "godot.lsp",
     async execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+      const blocked = rejectWhenBlocked(gate, "definition");
+      if (blocked !== null) {
+        return blocked;
+      }
       const parsed = parsePositionInput(input, "definition");
       if (!parsed.ok) {
         return { status: "invalid_input", message: parsed.message };
@@ -159,7 +206,10 @@ export function createGodotDefinitionTool(service: GDScriptLanguageService): Too
   };
 }
 
-export function createGodotLSPDiagnosticsTool(service: GDScriptLanguageService): Tool {
+export function createGodotLSPDiagnosticsTool(
+  service: GDScriptLanguageService,
+  gate?: LanguageQueryGate,
+): Tool {
   return {
     definition: {
       name: "godot.lsp_diagnostics",
@@ -176,6 +226,10 @@ export function createGodotLSPDiagnosticsTool(service: GDScriptLanguageService):
     },
     capability: "godot.lsp",
     async execute(input: unknown, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+      const blocked = rejectWhenBlocked(gate, "diagnostics");
+      if (blocked !== null) {
+        return blocked;
+      }
       if (typeof input !== "object" || input === null || Array.isArray(input)) {
         return {
           status: "invalid_input",

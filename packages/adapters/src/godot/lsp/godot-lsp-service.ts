@@ -283,6 +283,20 @@ export function createGDScriptLanguageService(
     return null;
   }
 
+  async function selectedEngine(
+    signal?: AbortSignal,
+  ): Promise<import("@solaris/core").GodotSelectedEngine | null> {
+    const selection = await profiler.selectedProfile(signal);
+    if (selection === null || selection.installation.status !== "valid") {
+      return null;
+    }
+    return {
+      installationId: selection.installation.id,
+      sha256: selection.installation.sha256,
+      version: selection.profile.version.raw,
+    };
+  }
+
   function status(): GDScriptSessionStatus {
     return {
       state: invalidated ? "stale" : "unavailable",
@@ -303,7 +317,7 @@ export function createGDScriptLanguageService(
     return Promise.resolve();
   }
 
-  return { support, activeSession, prepare, start, status, closeAll };
+  return { support, activeSession, selectedEngine, prepare, start, status, closeAll };
 }
 
 function requireLSPSessionCapabilities(profile: GodotEngineProfile):

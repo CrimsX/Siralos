@@ -69,6 +69,7 @@ export { createWorkspaceSearchTool } from "./tools/workspace/workspace-search-to
 export { createWorkspaceCreateFileTool } from "./tools/workspace/mutations/workspace-create-file-tool.js";
 export { createWorkspaceEditFileTool } from "./tools/workspace/mutations/workspace-edit-file-tool.js";
 export { createWorkspaceDeleteFileTool } from "./tools/workspace/mutations/workspace-delete-file-tool.js";
+export { createWorkspaceApplyTextChangesetTool } from "./tools/workspace/mutations/workspace-apply-text-changeset-tool.js";
 export { createMutationLock } from "./tools/workspace/mutations/mutation-lock.js";
 export {
   CheckpointStorageLimitError,
@@ -204,6 +205,22 @@ export {
   type GodotLSPServerStartOutcome,
 } from "./godot/process/godot-lsp-runner.js";
 export { createGodotLSPSessionTool } from "./godot/tools/godot-lsp-session-tool.js";
+export { createGodotDevelopmentStatusTool } from "./godot/tools/godot-development-status-tool.js";
+export {
+  createGDScriptDevelopmentService,
+  type GDScriptDevelopmentServiceDependencies,
+} from "./godot/development/gdscript-development-service.js";
+export {
+  createDevelopmentChangeSetApplier,
+  createFailClosedChangeSetFilePrimitives,
+  CHANGE_SET_EXECUTION_UNAVAILABLE_MESSAGE,
+  type ChangeSetExecutorDependencies,
+} from "./godot/development/change-set-executor.js";
+export {
+  prepareChangeSet,
+  type ChangeSetPreparationResult,
+  type ChangeSetPreparationDependencies,
+} from "./godot/development/change-set-preparation.js";
 export {
   createGodotCompleteTool,
   createGodotDefinitionTool,

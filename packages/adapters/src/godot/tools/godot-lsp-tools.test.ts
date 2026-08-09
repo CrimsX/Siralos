@@ -13,6 +13,7 @@ function unavailableService(): GDScriptLanguageService {
     support: () =>
       Promise.resolve({ state: "unavailable", reason: "unavailable", platform: "linux" }),
     activeSession: () => null,
+    selectedEngine: () => Promise.resolve(null),
     prepare: () => Promise.resolve({ status: "unavailable", message: "unavailable" }),
     start: () => Promise.resolve({ status: "unavailable", message: "unavailable" }),
     status: () => ({

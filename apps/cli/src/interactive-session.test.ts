@@ -237,6 +237,9 @@ function createStubLanguageService(): GDScriptLanguageService {
     activeSession() {
       return null;
     },
+    selectedEngine() {
+      return Promise.resolve(null);
+    },
     prepare(): Promise<{ status: "unavailable"; message: string }> {
       return Promise.resolve({
         status: "unavailable",
@@ -1644,6 +1647,9 @@ describe("runInteractiveSession GDScript language commands", () => {
       },
       activeSession() {
         return null;
+      },
+      selectedEngine() {
+        return Promise.resolve(null);
       },
       prepare(): Promise<{
         status: "ready";
