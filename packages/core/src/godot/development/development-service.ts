@@ -1,5 +1,7 @@
 import type { ChangePreview } from "../../security/change-preview.js";
 import type { ToolExecutionContext } from "../../tools/tool.js";
+import type { DevelopmentQualityReport } from "../quality/quality-model.js";
+import type { ChangeReviewResult } from "../quality/quality-review.js";
 import type {
   DevelopmentEvent,
   DevelopmentValidationStatus,
@@ -171,6 +173,19 @@ export interface GDScriptDevelopmentService {
 
   /** Most recent validation outcome; null before the first validation. */
   validationStatus(): DevelopmentValidationStatus | null;
+
+  /** Most recent quality report; null before the quality stage ran. */
+  qualityReport(): DevelopmentQualityReport | null;
+
+  /**
+   * Run a fresh independent review of the current tracked development
+   * change (the `/review-change` command). Read-only: requires no write
+   * approval, modifies nothing, and never starts a repair automatically.
+   * Returns `validation_incomplete`-style outcomes through the result
+   * statuses (`failed`/`cancelled`/`too_large`) when the review cannot
+   * complete; a clean result never claims deterministic gates passed.
+   */
+  runIndependentReview(signal?: AbortSignal): Promise<ChangeReviewResult>;
 
   /** Application hook: a provider turn completed without tool calls. */
   completeFromProviderTurn(): void;

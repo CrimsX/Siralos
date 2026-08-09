@@ -1,7 +1,9 @@
 import {
   DEVELOPMENT_LIMITS,
+  QUALITY_LIMITS,
   computeGDScriptDevelopmentDigest,
   type ChangePreview,
+  type ChangeReviewer,
   type ChangeSetFilePrimitives,
   type CheckpointStore,
   type DevelopmentChangeSetApplicationResult,
@@ -9,6 +11,7 @@ import {
   type DevelopmentChangeSetExecutionContext,
   type DevelopmentEvent,
   type DevelopmentEvidence,
+  type DevelopmentQualityReport,
   type DevelopmentStartPreparationResult,
   type DevelopmentStartResult,
   type DevelopmentValidationStatus,
@@ -21,7 +24,9 @@ import {
   type GitInspector,
   type GodotDiagnostics,
   type GodotGDScriptDiagnostic,
+  type QualityValidationExecutor,
   type ToolExecutionContext,
+  type ValidationPlanDiscovery,
 } from "@solaris/core";
 import { randomUUID } from "node:crypto";
 import { createAbortError } from "../probe/risk-manifest.js";
@@ -32,6 +37,12 @@ import {
   createDevelopmentChangeSetApplier,
   type ChangeSetExecutorDependencies,
 } from "./change-set-executor.js";
+import {
+  runQualityStage,
+  type QualityStageChangeFile,
+  type QualityWarningBaseline,
+} from "../quality/quality-stage-runner.js";
+import type { ChangeReviewResult } from "@solaris/core";
 
 export interface GDScriptDevelopmentServiceDependencies {
   readonly workspaceRoot: string;
@@ -53,6 +64,20 @@ export interface GDScriptDevelopmentServiceDependencies {
    * an in-memory implementation to exercise the apply protocol.
    */
   readonly primitives: ChangeSetFilePrimitives;
+  /**
+   * Quality stage (ADR 0013): deterministic gates, the validation plan,
+   * and the independent read-only reviewer. Optional so workflow tests
+   * that exercise only the loop mechanics stay independent; the
+   * composition root always provides it, so `/develop` automatically
+   * enters the quality stage before completion.
+   */
+  readonly qualityStage?: {
+    readonly reviewer: ChangeReviewer;
+    readonly validation: {
+      readonly discovery: ValidationPlanDiscovery;
+      readonly executor: QualityValidationExecutor;
+    };
+  };
   readonly onEvent?: (event: DevelopmentEvent) => void;
   readonly now?: () => number;
   readonly idFactory?: () => string;
@@ -63,7 +88,7 @@ export interface GDScriptDevelopmentServiceDependencies {
   };
 }
 
-const AUTHENTICATION_POLICY_VERSION = 1;
+const AUTHENTICATION_POLICY_VERSION = 2;
 const MAX_REQUEST_CHARS = 4096;
 /** Marker for an approved-deleted file in the applied-files map. */
 const ABSENT_MARKER = "absent";
@@ -96,9 +121,12 @@ interface InternalSession {
   readonly engineFingerprint: string | null;
   readonly engineVersion: string | null;
   readonly startedAtMs: number;
+  /** Git changed/untracked paths at workflow start; null when unavailable. */
+  gitBaseline: readonly string[] | null;
   state: import("@solaris/core").DevelopmentState;
   iteration: number;
   repairProposalsUsed: number;
+  reviewRepairRoundsUsed: number;
   validation: DevelopmentValidationStatus | null;
   evidence: DevelopmentEvidence[];
   errorCount: number;
@@ -108,6 +136,18 @@ interface InternalSession {
   prepared: Map<string, PreparedChangeSetRecord>;
   /** Files applied by previous change sets (path -> afterSha256). */
   appliedFiles: Map<string, string>;
+  /** Most recent quality report; null before the quality stage ran. */
+  qualityReport: DevelopmentQualityReport | null;
+  /** Unresolved blocking review findings of the latest quality round. */
+  blockingFindings: readonly import("@solaris/core").ChangeReviewFinding[];
+  /** All review finding ids seen so far, for re-review traceability. */
+  reviewFindingIds: string[];
+  /** Number of quality-stage review rounds run so far. */
+  reviewRoundsUsed: number;
+  /** Pre-edit warning baseline for the most recent change set. */
+  warningBaseline: QualityWarningBaseline;
+  /** Review context files of the most recent change set. */
+  lastChangeSetFiles: readonly QualityStageChangeFile[];
 }
 
 /**
@@ -209,6 +249,7 @@ export function createGDScriptDevelopmentService(
         maxIterations: DEVELOPMENT_LIMITS.maxTotalIterations,
         maxRepairProposals: DEVELOPMENT_LIMITS.maxRepairProposals,
         maxFilesPerChangeSet: DEVELOPMENT_LIMITS.maxFilesPerChangeSet,
+        maxReviewRounds: QUALITY_LIMITS.maxReviewRounds,
       },
       authorization: {
         sourceWrites: "each change set approved separately",
@@ -217,6 +258,8 @@ export function createGDScriptDevelopmentService(
         apiLookup: "covered",
         workspaceInspection: "covered",
         gitInspection: "covered",
+        projectValidationCommands: "each command approved separately",
+        independentReview: "read-only; fresh provider context",
         network: "denied",
         gameExecution: "disabled",
       },
@@ -296,9 +339,11 @@ export function createGDScriptDevelopmentService(
       engineFingerprint: pendingStart.engineFingerprint,
       engineVersion: pendingStart.engineVersion,
       startedAtMs: now(),
+      gitBaseline: await collectGitPaths(dependencies),
       state: { kind: "active", phase: "investigating" },
       iteration: 0,
       repairProposalsUsed: 0,
+      reviewRepairRoundsUsed: 0,
       validation: null,
       evidence: [],
       errorCount: 0,
@@ -307,6 +352,12 @@ export function createGDScriptDevelopmentService(
       changes: [],
       prepared: new Map(),
       appliedFiles: new Map(),
+      qualityReport: null,
+      blockingFindings: [],
+      reviewFindingIds: [],
+      reviewRoundsUsed: 0,
+      warningBaseline: { available: false, diagnostics: [] },
+      lastChangeSetFiles: [],
     };
     pendingStart = null;
     session = created;
@@ -356,7 +407,17 @@ export function createGDScriptDevelopmentService(
         message: "The total development workflow budget was exceeded; start a new workflow.",
       };
     }
-    const isRepair = current.validation === "errors" && current.evidence.length > 0;
+    const isParserRepair = current.validation === "errors" && current.evidence.length > 0;
+    const isReviewRepair = current.blockingFindings.length > 0;
+    if (isReviewRepair) {
+      if (current.reviewRepairRoundsUsed >= QUALITY_LIMITS.maxReviewRepairRounds) {
+        return {
+          status: "repair_budget_exhausted",
+          message: `The maximum of ${QUALITY_LIMITS.maxReviewRepairRounds} review-repair rounds has been reached; the remaining blocking findings stand.`,
+        };
+      }
+    }
+    const isRepair = isParserRepair || isReviewRepair;
     if (isRepair) {
       if (current.repairProposalsUsed >= DEVELOPMENT_LIMITS.maxRepairProposals) {
         return {
@@ -405,8 +466,11 @@ export function createGDScriptDevelopmentService(
     }
     // A repair proposal counts only once it was actually prepared
     // successfully (a failed preparation burns nothing).
-    if (isRepair) {
+    if (isParserRepair) {
       current.repairProposalsUsed += 1;
+    }
+    if (isReviewRepair) {
+      current.reviewRepairRoundsUsed += 1;
     }
     const changeSetId = idFactory();
     current.prepared.set(changeSetId, {
@@ -485,6 +549,18 @@ export function createGDScriptDevelopmentService(
     current.prepared.delete(changeSetId);
     emit({ type: "development_change_approved", id: current.id, changeSetId });
     current.state = { kind: "active", phase: "applying" };
+    // 0. Record the review context of this change set and capture the
+    //    pre-edit warning baseline for the changed files (best-effort:
+    //    LSP diagnostics from the pre-edit session; an unavailable
+    //    baseline is reported truthfully, never fabricated).
+    current.lastChangeSetFiles = prepared.files.map((file) => ({
+      path: file.path,
+      operation: file.operation,
+      afterContent: file.content,
+      unifiedDiff:
+        file.operation === "delete" ? "" : file.unifiedDiff,
+    }));
+    current.warningBaseline = await captureWarningBaseline(dependencies, current);
     // 1. Suspend the language session (closing_for_edit). The edit never
     // proceeds when the old session cannot be stopped safely.
     const suspended = await suspendLanguageSession(current);
@@ -696,7 +772,70 @@ export function createGDScriptDevelopmentService(
     });
     if (validation === "errors") {
       emit({ type: "development_repair_requested", id: current.id, iteration: current.iteration });
+      return {
+        status: "applied",
+        result: finalizeResult(current),
+      };
     }
+
+    // 8. Quality stage (ADR 0013): deterministic gates, the applicable
+    //    validation plan, and the independent read-only review. A cleanly
+    //    validated change is not complete until the quality report says
+    //    so. Blocking review findings return the workflow to the provider
+    //    for a focused, separately approved repair.
+    if (dependencies.qualityStage === undefined) {
+      return {
+        status: "applied",
+        result: finalizeResult(current),
+      };
+    }
+    current.state = { kind: "active", phase: "quality_review" };
+    const stageOutput = await runQualityStage({
+      developmentId: current.id,
+      request: current.request,
+      engineVersion: current.engineVersion,
+      changeSetId,
+      files: current.lastChangeSetFiles,
+      evidence,
+      checkpointIds: current.checkpointIds,
+      gitBaseline: current.gitBaseline,
+      gitCurrent: await collectGitPaths(dependencies),
+      warningBaseline: current.warningBaseline,
+      lspDiagnostics: evidence.lsp.diagnostics,
+      reviewer: dependencies.qualityStage.reviewer,
+      validation: dependencies.qualityStage.validation,
+      previousFindingIds: [...current.reviewFindingIds],
+      reviewRound: current.reviewRoundsUsed + 1,
+      repairRoundsUsed: current.reviewRepairRoundsUsed,
+      maxRepairRounds: QUALITY_LIMITS.maxReviewRepairRounds,
+      emit,
+      now,
+    });
+    current.qualityReport = stageOutput.report;
+    current.reviewRoundsUsed += 1;
+    current.blockingFindings = stageOutput.blockingFindings;
+    for (const finding of stageOutput.report.review?.findings ?? []) {
+      current.reviewFindingIds.push(finding.id);
+    }
+    if (stageOutput.report.status === "cancelled") {
+      current.state = { kind: "terminal", status: "cancelled" };
+      emit({ type: "development_completed", id: current.id, status: "cancelled" });
+      await dependencies.language.closeAll();
+      return {
+        status: "cancelled",
+        message: "The independent review was cancelled; approved changes remain.",
+        result: finalizeResult(current),
+      };
+    }
+    if (stageOutput.blockingFindings.length > 0) {
+      current.state = { kind: "active", phase: "reviewing" };
+      emit({ type: "development_repair_requested", id: current.id, iteration: current.iteration });
+      return {
+        status: "applied",
+        result: finalizeResult(current),
+      };
+    }
+    current.state = { kind: "active", phase: "quality_review" };
     return {
       status: "applied",
       result: finalizeResult(current),
@@ -733,14 +872,44 @@ export function createGDScriptDevelopmentService(
     }
     let status: import("@solaris/core").DevelopmentStatus | null = null;
     if (current.state.phase === "reviewing") {
-      status =
-        current.validation === "clean"
-          ? "completed"
-          : current.validation === "warnings"
-            ? "completed_with_warnings"
-            : current.validation === "errors"
-              ? "completed_with_errors"
-              : "validation_failed";
+      if (current.blockingFindings.length > 0) {
+        status = "completed_with_blocking_findings";
+      } else {
+        status =
+          current.validation === "clean"
+            ? "completed"
+            : current.validation === "warnings"
+              ? "completed_with_warnings"
+              : current.validation === "errors"
+                ? "completed_with_errors"
+                : "validation_failed";
+      }
+    } else if (current.state.phase === "quality_review") {
+      const report = current.qualityReport;
+      if (report === null) {
+        status = "validation_failed";
+      } else {
+        switch (report.status) {
+          case "passed":
+            status = "completed";
+            break;
+          case "passed_with_advisories":
+            status = "completed_with_warnings";
+            break;
+          case "blocking_findings":
+            status = "completed_with_blocking_findings";
+            break;
+          case "validation_incomplete":
+            status = "validation_failed";
+            break;
+          case "failed":
+            status = "quality_gate_failed";
+            break;
+          case "cancelled":
+            status = "cancelled";
+            break;
+        }
+      }
     } else if (current.state.phase === "investigating") {
       status = "cancelled";
     } else if (current.state.phase === "proposal_ready") {
@@ -813,6 +982,7 @@ export function createGDScriptDevelopmentService(
       0,
       DEVELOPMENT_LIMITS.maxRepairProposals - current.repairProposalsUsed,
     );
+    const report = current.qualityReport;
     return {
       support: supportState,
       session: {
@@ -826,8 +996,89 @@ export function createGDScriptDevelopmentService(
         appliedChangeSets: current.iteration,
         errors: current.errorCount,
         warnings: current.warningCount,
+        quality: {
+          status: report === null ? null : report.status,
+          report,
+          blockingFindings:
+            report === null
+              ? current.blockingFindings.length
+              : report.review === null
+                ? current.blockingFindings.length
+                : report.review.blockingCount,
+          advisories:
+            report === null
+              ? 0
+              : report.review === null
+                ? 0
+                : report.review.findings.length - report.review.blockingCount,
+          reviewRoundsUsed: current.reviewRoundsUsed,
+          maxReviewRounds: QUALITY_LIMITS.maxReviewRounds,
+          repairRoundsUsed: current.reviewRepairRoundsUsed,
+          maxRepairRounds: QUALITY_LIMITS.maxReviewRepairRounds,
+        },
       },
     };
+  }
+
+  function qualityReport(): DevelopmentQualityReport | null {
+    return session?.qualityReport ?? null;
+  }
+
+  async function runIndependentReview(
+    signal?: AbortSignal,
+  ): Promise<ChangeReviewResult> {
+    const current = session;
+    if (current === null || current.evidence.length === 0 || current.lastChangeSetFiles.length === 0) {
+      return {
+        status: "failed",
+        findings: [],
+        message:
+          "No eligible development change exists; start a /develop workflow and apply an approved change set first.",
+      };
+    }
+    if (dependencies.qualityStage === undefined) {
+      return {
+        status: "failed",
+        findings: [],
+        message: "The independent reviewer is not configured in this session.",
+      };
+    }
+    const latest = current.evidence[current.evidence.length - 1] as DevelopmentEvidence;
+    const evidenceSummary: import("@solaris/core").QualityEvidence[] = [
+      {
+        kind: "parser",
+        summary: `${latest.parser.validFiles}/${latest.parser.checkedFiles} changed scripts parsed`,
+      },
+      {
+        kind: "lsp",
+        summary: `${latest.lsp.diagnosticCount} changed-file LSP diagnostics collected`,
+      },
+      {
+        kind: "scope",
+        summary: latest.workspaceIntegrity.verified
+          ? "workspace integrity verified"
+          : `unexpected changes: ${latest.workspaceIntegrity.unexpectedChanges.join(", ")}`,
+      },
+    ];
+    const request: import("@solaris/core").ChangeReviewRequest = {
+      developmentId: current.id,
+      request: current.request,
+      engineVersion: current.engineVersion,
+      changedPaths: current.lastChangeSetFiles.map((file) => file.path),
+      files: current.lastChangeSetFiles.map((file) => ({
+        path: file.path,
+        unifiedDiff:
+          file.operation === "delete"
+            ? `--- a/${file.path}\n+++ /dev/null\n@@ -1,0 +0,0 @@\nFile deleted by the approved change set.`
+            : file.unifiedDiff,
+      })),
+      metrics: reviewMetrics(current.lastChangeSetFiles),
+      evidenceSummary,
+      repositoryGuidance: null,
+      previousFindingIds: [...current.reviewFindingIds],
+      reviewRound: current.reviewRoundsUsed + 1,
+    };
+    return dependencies.qualityStage.reviewer.review(request, signal);
   }
 
   function supportSync(): {
@@ -1149,12 +1400,14 @@ export function createGDScriptDevelopmentService(
     let status: import("@solaris/core").DevelopmentStatus;
     if (current.state.kind === "terminal") {
       status = current.state.status;
+    } else if (current.qualityReport !== null) {
+      status = qualityStatusToDevelopmentStatus(current.qualityReport.status);
     } else if (current.validation === "clean") {
       status = "completed";
     } else if (current.validation === "warnings") {
       status = "completed_with_warnings";
     } else if (current.validation === "errors") {
-      status = "completed_with_errors";
+      status = current.blockingFindings.length > 0 ? "completed_with_blocking_findings" : "completed_with_errors";
     } else if (current.validation === "infrastructure_failure") {
       status = "validation_failed";
     } else {
@@ -1187,6 +1440,7 @@ export function createGDScriptDevelopmentService(
           hasEvidence && current.evidence.every((evidence) => evidence.workspaceIntegrity.verified),
       },
       checkpointIds: [...current.checkpointIds],
+      quality: current.qualityReport,
     };
   }
 
@@ -1200,6 +1454,7 @@ export function createGDScriptDevelopmentService(
       iteration: current.iteration,
       repairProposalsUsed: current.repairProposalsUsed,
       evidence: current.evidence,
+      qualityReport: current.qualityReport,
     };
   }
 
@@ -1212,9 +1467,66 @@ export function createGDScriptDevelopmentService(
     applyChangeSet,
     languageQueryGate,
     validationStatus,
+    qualityReport,
+    runIndependentReview,
     completeFromProviderTurn,
     cancel,
     close,
+  };
+}
+
+/** Deterministic mapping of a quality status into the workflow vocabulary. */
+function qualityStatusToDevelopmentStatus(
+  status: import("@solaris/core").QualityStatus,
+): import("@solaris/core").DevelopmentStatus {
+  switch (status) {
+    case "passed":
+      return "completed";
+    case "passed_with_advisories":
+      return "completed_with_warnings";
+    case "blocking_findings":
+      return "completed_with_blocking_findings";
+    case "validation_incomplete":
+      return "validation_failed";
+    case "failed":
+      return "quality_gate_failed";
+    case "cancelled":
+      return "cancelled";
+  }
+}
+
+function reviewMetrics(
+  files: readonly QualityStageChangeFile[],
+): import("@solaris/core").ChangeDiffMetrics {
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  let filesCreated = 0;
+  let filesDeleted = 0;
+  let functionsTouched = 0;
+  for (const file of files) {
+    if (file.operation === "create") {
+      filesCreated += 1;
+    } else if (file.operation === "delete") {
+      filesDeleted += 1;
+    }
+    for (const line of file.unifiedDiff.split("\n")) {
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        linesAdded += 1;
+        if (/^\s*func\s+[A-Za-z_]/.test(line.slice(1))) {
+          functionsTouched += 1;
+        }
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        linesRemoved += 1;
+      }
+    }
+  }
+  return {
+    filesChanged: files.length,
+    linesAdded,
+    linesRemoved,
+    filesCreated,
+    filesDeleted,
+    functionsTouched,
   };
 }
 
@@ -1242,6 +1554,54 @@ function changedScripts(
   files: readonly import("@solaris/core").PreparedChangeSetFile[],
 ): readonly string[] {
   return files.filter((file) => file.path.endsWith(".gd")).map((file) => file.path);
+}
+
+/**
+ * Best-effort pre-edit warning baseline (§11): LSP diagnostics for the
+ * changed scripts from the pre-edit language session. When no session is
+ * active or a query fails, the baseline is reported unavailable — the
+ * delta is then labelled uncertain rather than falsely attributed.
+ */
+async function captureWarningBaseline(
+  dependencies: GDScriptDevelopmentServiceDependencies,
+  current: InternalSession,
+): Promise<QualityWarningBaseline> {
+  const sessionHandle = dependencies.language.activeSession();
+  if (sessionHandle === null) {
+    return { available: false, diagnostics: [] };
+  }
+  const diagnostics: GodotGDScriptDiagnostic[] = [];
+  const scripts = current.lastChangeSetFiles
+    .filter((file) => file.path.endsWith(".gd"))
+    .map((file) => file.path);
+  for (const path of scripts) {
+    try {
+      const result = await sessionHandle.diagnostics({ path });
+      if (result.status === "ready") {
+        diagnostics.push(...result.result.diagnostics);
+      } else {
+        return { available: false, diagnostics };
+      }
+    } catch {
+      return { available: false, diagnostics };
+    }
+  }
+  return { available: true, diagnostics };
+}
+
+/** Best-effort changed/untracked Git paths; null when Git inspection fails. */
+async function collectGitPaths(
+  dependencies: GDScriptDevelopmentServiceDependencies,
+): Promise<readonly string[] | null> {
+  if (dependencies.git === null) {
+    return null;
+  }
+  try {
+    const status = await dependencies.git.getStatus({});
+    return [...new Set([...status.changes.map((change) => change.path), ...status.untracked])].sort();
+  } catch {
+    return null;
+  }
 }
 
 function countSeverity(evidence: DevelopmentEvidence, severity: "error" | "warning"): number {

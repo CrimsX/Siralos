@@ -248,6 +248,13 @@ function createStubDevelopmentService(): GDScriptDevelopmentService {
       Promise.resolve({ status: "unavailable", message: "stub unavailable", result: null }),
     languageQueryGate: () => ({ blocked: false, message: null }),
     validationStatus: () => null,
+    qualityReport: () => null,
+    runIndependentReview: () =>
+      Promise.resolve({
+        status: "failed",
+        findings: [],
+        message: "no eligible development change exists",
+      }),
     completeFromProviderTurn: () => undefined,
     cancel: () => Promise.resolve({ status: "inactive", message: "no active workflow" }),
     close: () => Promise.resolve(),
@@ -1806,6 +1813,16 @@ describe("runInteractiveSession development workflow commands", () => {
           appliedChangeSets: 1,
           errors: 0,
           warnings: 1,
+          quality: {
+            status: null,
+            report: null,
+            blockingFindings: 0,
+            advisories: 0,
+            reviewRoundsUsed: 0,
+            maxReviewRounds: 3,
+            repairRoundsUsed: 0,
+            maxRepairRounds: 2,
+          },
         },
       }),
     };
@@ -1834,6 +1851,16 @@ describe("runInteractiveSession development workflow commands", () => {
           appliedChangeSets: 0,
           errors: 0,
           warnings: 0,
+          quality: {
+            status: null,
+            report: null,
+            blockingFindings: 0,
+            advisories: 0,
+            reviewRoundsUsed: 0,
+            maxReviewRounds: 3,
+            repairRoundsUsed: 0,
+            maxRepairRounds: 2,
+          },
         },
       }),
       cancel: () =>
@@ -1846,6 +1873,7 @@ describe("runInteractiveSession development workflow commands", () => {
             diagnostics: { errors: 0, warnings: 0 },
             validation: { parser: true, lsp: true, workspaceIntegrity: true },
             checkpointIds: [],
+            quality: null,
           },
         }),
     };

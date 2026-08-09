@@ -1,5 +1,10 @@
 import { canonicalizeJson, sha256Hex } from "../digest.js";
 import type { GodotGDScriptDiagnostic } from "../gdscript.js";
+import type {
+  DevelopmentQualityReport,
+  QualityEvent,
+  QualityStatus,
+} from "../quality/quality-model.js";
 
 /**
  * Provider-neutral GDScript development workflow model.
@@ -21,13 +26,16 @@ export type DevelopmentPhase =
   | "applying"
   | "parser_validation"
   | "language_validation"
-  | "reviewing";
+  | "reviewing"
+  | "quality_review";
 
 /** Terminal workflow statuses (§35, §48). */
 export type DevelopmentStatus =
   | "completed"
   | "completed_with_warnings"
   | "completed_with_errors"
+  | "completed_with_blocking_findings"
+  | "quality_gate_failed"
   | "denied"
   | "conflict"
   | "cancelled"
@@ -102,6 +110,21 @@ export interface GDScriptDevelopmentSession {
   readonly iteration: number;
   readonly repairProposalsUsed: number;
   readonly evidence: readonly DevelopmentEvidence[];
+  /** Most recent quality report; null before the quality stage ran. */
+  readonly qualityReport: DevelopmentQualityReport | null;
+}
+
+/** Provider- and CLI-visible bounded quality state of a workflow. */
+export interface DevelopmentQualityView {
+  /** Latest quality-report status; null before the quality stage ran. */
+  readonly status: QualityStatus | null;
+  readonly report: DevelopmentQualityReport | null;
+  readonly blockingFindings: number;
+  readonly advisories: number;
+  readonly reviewRoundsUsed: number;
+  readonly maxReviewRounds: number;
+  readonly repairRoundsUsed: number;
+  readonly maxRepairRounds: number;
 }
 
 /** Provider- and CLI-visible bounded status; no mirror paths, no raw LSP data. */
@@ -124,6 +147,7 @@ export interface GDScriptDevelopmentStatus {
     readonly appliedChangeSets: number;
     readonly errors: number;
     readonly warnings: number;
+    readonly quality: DevelopmentQualityView;
   } | null;
 }
 
@@ -145,6 +169,8 @@ export interface GDScriptDevelopmentResult {
     readonly workspaceIntegrity: boolean;
   };
   readonly checkpointIds: readonly string[];
+  /** Final quality report; null when the quality stage did not run. */
+  readonly quality: DevelopmentQualityReport | null;
 }
 
 /**
@@ -246,7 +272,8 @@ export type DevelopmentEvent =
       readonly type: "development_completed";
       readonly id: string;
       readonly status: DevelopmentStatus;
-    };
+    }
+  | QualityEvent;
 
 /** Immutable prepared workflow start, shown before the one-time approval. */
 export interface GDScriptDevelopmentPreview {
@@ -259,6 +286,7 @@ export interface GDScriptDevelopmentPreview {
     readonly maxIterations: number;
     readonly maxRepairProposals: number;
     readonly maxFilesPerChangeSet: number;
+    readonly maxReviewRounds: number;
   };
   readonly authorization: {
     readonly sourceWrites: "each change set approved separately";
@@ -267,6 +295,8 @@ export interface GDScriptDevelopmentPreview {
     readonly apiLookup: "covered";
     readonly workspaceInspection: "covered";
     readonly gitInspection: "covered";
+    readonly projectValidationCommands: "each command approved separately";
+    readonly independentReview: "read-only; fresh provider context";
     readonly network: "denied";
     readonly gameExecution: "disabled";
   };
@@ -281,6 +311,7 @@ export interface GDScriptDevelopmentDigestParts {
     readonly maxIterations: number;
     readonly maxRepairProposals: number;
     readonly maxFilesPerChangeSet: number;
+    readonly maxReviewRounds: number;
   };
   readonly authorizationPolicyVersion: number;
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { QUALITY_LIMITS } from "../quality/quality-model.js";
 import { computeGDScriptDevelopmentDigest, DEVELOPMENT_LIMITS } from "./development-model.js";
 
 describe("DEVELOPMENT_LIMITS", () => {
@@ -25,8 +26,9 @@ describe("computeGDScriptDevelopmentDigest", () => {
       maxIterations: DEVELOPMENT_LIMITS.maxTotalIterations,
       maxRepairProposals: DEVELOPMENT_LIMITS.maxRepairProposals,
       maxFilesPerChangeSet: DEVELOPMENT_LIMITS.maxFilesPerChangeSet,
+      maxReviewRounds: QUALITY_LIMITS.maxReviewRounds,
     },
-    authorizationPolicyVersion: 1,
+    authorizationPolicyVersion: 2,
   };
 
   it("is deterministic for equal structures", () => {
