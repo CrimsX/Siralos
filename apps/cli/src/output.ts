@@ -33,7 +33,14 @@ import type {
   GodotSelectedInstallation,
   ProjectionService,
   QualityStatus,
+  Reference,
+  ReferenceMaterializerPort,
+  ReferenceRegistry,
+  ReferenceRevision,
+  ReferenceSource,
   RegisteredToolInfo,
+  ResearchService,
+  ResearchSourcePort,
   SandboxBackendStatus,
   SandboxProfile,
   SessionStatus,
@@ -42,7 +49,7 @@ import type {
   UndoOutcome,
 } from "@solaris/core";
 import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
-import { COMMAND_LIMITS, describeInstructionScope } from "@solaris/core";
+import { COMMAND_LIMITS, describeInstructionScope, formatReferenceAlias } from "@solaris/core";
 
 const CAPABILITIES: readonly Capability[] = [
   "workspace.read",
@@ -75,6 +82,9 @@ export function formatHelp(): string {
   /context           Show the projected context (stable/contextual/volatile, pressure)
   /instructions      Show discovered project instruction files with revisions
   /knowledge         Show current project knowledge facts (/knowledge why: last retrieval trace)
+  /references        Show configured external references and their status
+  /reference <alias> Show one reference's identity and availability
+  /research-status   Show research capability, sources, and recent evidence
   /git-status        Show Git availability and repository status
   /diff              Show a bounded Git diff (working, staged, or head)
   /checkpoints       List recorded recovery checkpoints
@@ -131,6 +141,8 @@ export interface StatusView {
   readonly languageSession: string;
   /** Compact quality summary when a development workflow exists. */
   readonly developmentQuality: string | null;
+  /** Research capability state and configured source count. */
+  readonly research: string;
 }
 
 export function formatStatus(view: StatusView): string {
@@ -161,6 +173,7 @@ Godot project: ${view.godotProjectDetected ? "detected" : "none"}${view.godotCom
 Recovery probe: ${view.projectProbe}
 Knowledge: ${view.knowledge}
 Godot LSP: ${view.languageSession}
+Research: ${view.research}
 ${view.developmentQuality === null ? "" : `${view.developmentQuality}\n`}`;
 }
 
@@ -1932,6 +1945,132 @@ export function formatKnowledgeTrace(
     );
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** Render the declared references table (read-only projection). */
+export function formatReferences(
+  registry: ReferenceRegistry,
+  materializer: ReferenceMaterializerPort,
+  configError: string | null,
+): string {
+  const references = registry.list();
+  const lines: string[] = [];
+  if (configError !== null) {
+    lines.push(`References configuration error: ${sanitizeForDisplay(configError)}`);
+    lines.push("");
+  }
+  if (references.length === 0) {
+    lines.push(
+      configError === null ? "No references are configured." : "No references are available.",
+    );
+    return `${lines.join("\n")}\n`;
+  }
+  lines.push(`References (${references.length})`);
+  for (const reference of references) {
+    lines.push(
+      `  ${formatReferenceAlias(reference.alias).padEnd(26)}${reference.kind.padEnd(17)}${materializer.status(reference.id).padEnd(16)}${reference.trust.padEnd(15)}${describeReferenceStatus(reference)}`,
+    );
+    lines.push(`    source: ${describeReferenceSource(reference.source)}`);
+    lines.push(`    revision: ${describeReferenceRevision(registry, reference.id)}`);
+    if (reference.description !== null) {
+      lines.push(`    description: ${sanitizeForDisplay(reference.description)}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatReferenceDetail(
+  registry: ReferenceRegistry,
+  materializer: ReferenceMaterializerPort,
+  selector: string,
+): string {
+  const alias = selector.startsWith("@reference/")
+    ? selector.slice("@reference/".length)
+    : selector;
+  const reference = registry.get(alias as Parameters<ReferenceRegistry["get"]>[0]);
+  if (reference === undefined) {
+    return `Unknown reference: ${sanitizeForDisplay(selector)}. List configured references with /references.\n`;
+  }
+  const revision = registry.revision(reference.id);
+  const lines = [
+    `Reference: ${formatReferenceAlias(reference.alias)}`,
+    `Kind: ${reference.kind}`,
+    `Description: ${reference.description === null ? "none" : sanitizeForDisplay(reference.description)}`,
+    `Source: ${describeReferenceSource(reference.source)}`,
+    `Identity: ${describeReferenceIdentity(revision)}`,
+    `Materialization: ${materializer.status(reference.id)}`,
+    `Trust: ${reference.trust}`,
+    `Availability: ${describeReferenceStatus(reference)}`,
+    `Resolved revision: ${describeReferenceRevision(registry, reference.id)}`,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatResearchStatus(
+  service: ResearchService,
+  security: SolarisSecurity,
+  sources: readonly ResearchSourcePort[],
+): string {
+  const decision = security.evaluateCapability("research.fetch");
+  const state = decision.decision === "allow" ? "enabled" : "disabled";
+  const lines = [`Research: ${state}`];
+  if (decision.decision !== "allow") {
+    lines.push(`Policy: ${sanitizeForDisplay(decision.reason)}`);
+  }
+  if (sources.length === 0) {
+    lines.push("Sources: none configured");
+  } else {
+    lines.push(
+      `Sources (${sources.length}): ${sources
+        .map((source) => `${source.kind} (${sanitizeForDisplay(source.label)})`)
+        .join(", ")}`,
+    );
+  }
+  lines.push(`Active requests: ${service.activeRequestCount()}`);
+  lines.push(`Recent evidence: ${service.latestEvidence().length}`);
+  return `${lines.join("\n")}\n`;
+}
+
+function describeReferenceSource(source: ReferenceSource): string {
+  if (source.kind === "local-directory") {
+    // The path as the user configured it — managed/cache paths are never
+    // shown.
+    return sanitizeForDisplay(source.path);
+  }
+  const pin =
+    source.ref.kind === "commit"
+      ? `commit ${source.ref.commit}`
+      : source.ref.kind === "tag"
+        ? `tag ${source.ref.tag}`
+        : `branch ${source.ref.branch}`;
+  return `${sanitizeForDisplay(source.repository)} (${pin})`;
+}
+
+function describeReferenceRevision(registry: ReferenceRegistry, id: string): string {
+  const revision = registry.revision(id as Parameters<ReferenceRegistry["revision"]>[0]);
+  if (revision === null) {
+    return "unresolved";
+  }
+  return revision.identity.kind === "repository"
+    ? `commit ${revision.identity.commit}`
+    : `fingerprint ${revision.identity.fingerprint}`;
+}
+
+function describeReferenceIdentity(revision: ReferenceRevision | null): string {
+  if (revision === null) {
+    return "unresolved";
+  }
+  if (revision.identity.kind === "repository") {
+    return `${sanitizeForDisplay(revision.identity.origin)} @ commit ${revision.identity.commit}`;
+  }
+  return `${sanitizeForDisplay(revision.identity.canonicalPath)} (fingerprint ${revision.identity.fingerprint})`;
+}
+
+function describeReferenceStatus(reference: Reference): string {
+  if (reference.status === "ready") {
+    return "ready";
+  }
+  return `${reference.status}${reference.failureReason === null ? "" : `: ${sanitizeForDisplay(reference.failureReason)}`}`;
 }
 
 /** Render a structural read tool result (read-only projection). */

@@ -94,6 +94,11 @@ async function main(): Promise<number> {
   const reviewer = createInteractiveApprovalReviewer(inputQueue);
   const godotPath = optionValue(args, "--godot-path");
   const godotInstallation = optionValue(args, "--godot-installation");
+  const cliApp = await createCliApplication({
+    reviewer,
+    ...(godotPath === undefined ? {} : { godotPath }),
+    ...(godotInstallation === undefined ? {} : { godotInstallation }),
+  });
   const {
     application,
     providerId,
@@ -118,11 +123,12 @@ async function main(): Promise<number> {
     runners,
     instructions,
     projectKnowledge,
-  } = await createCliApplication({
-    reviewer,
-    ...(godotPath === undefined ? {} : { godotPath }),
-    ...(godotInstallation === undefined ? {} : { godotInstallation }),
-  });
+    references,
+    referenceMaterializer,
+    referenceConfigError,
+    research,
+    researchSources,
+  } = cliApp;
   stdout.write(sanitizer.push(formatHeader(providerId)) + sanitizer.flush());
   const sessionInfo: SessionInfo = {
     workspaceRoot,
@@ -133,6 +139,11 @@ async function main(): Promise<number> {
     workspaceRead,
     instructions,
     projectKnowledge,
+    references,
+    referenceMaterializer,
+    referenceConfigError,
+    research,
+    researchSources,
     tools,
     security,
     git,
@@ -149,6 +160,7 @@ async function main(): Promise<number> {
     sandbox,
   };
   const exitCode = await runInteractiveSession(io, application, sessionInfo, controls, inputQueue);
+  cliApp.close();
   godotProbe.disposeAll();
   diagnostics.disposeAll();
   await language.closeAll();

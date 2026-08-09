@@ -73,6 +73,73 @@
           "description": "Optional provider profile used for the independent change reviewer. Must reference an existing configured provider; a missing profile fails clearly and never silently falls back to an unrelated provider. Defaults to the active development provider profile."
         }
       }
+    },
+    "references": {
+      "type": "object",
+      "description": "Declared external read-only references, alias to declaration. Aliases match ^[a-z][a-z0-9._-]{1,63}$; at most 16 references. Unknown keys are rejected at every level so credential fields cannot hide. Semantic validation (absolute paths, repository normalization, ref bounds) is enforced by the application.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9._-]{1,63}$"
+      },
+      "maxProperties": 16,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "One reference declaration. Exactly one of path (local-directory) or repository (repository) applies per kind.",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["local-directory", "repository"],
+            "description": "local-directory references point at an absolute path outside the workspace; repository references pin a remote GitHub repository."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absolute path to the local-directory reference. Relative paths are rejected by the application."
+          },
+          "repository": {
+            "type": "string",
+            "minLength": 1,
+            "description": "GitHub repository origin (owner/repo or https://github.com/owner/repo)."
+          },
+          "ref": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional repository pin; exactly one of commit/tag/branch. Absent refs default to the mutable branch main and are refused without an explicit pin.",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["commit", "tag", "branch"]
+              },
+              "commit": {
+                "type": "string",
+                "minLength": 7,
+                "maxLength": 64,
+                "pattern": "^[0-9a-fA-F]{7,64}$",
+                "description": "Commit pin: 7-64 hexadecimal characters."
+              },
+              "tag": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._/-]+$"
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._/-]+$"
+              }
+            },
+            "required": ["kind"]
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Optional human-readable description of the reference (bounded to 512 bytes by the application)."
+          }
+        },
+        "required": ["kind"]
+      }
     }
   }
 }

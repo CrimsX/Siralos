@@ -32,6 +32,7 @@ describe("parseUserConfig", () => {
       sandbox: { profile: "develop-offline", backend: "anthropic-runtime" },
       godot: DEFAULT_USER_CONFIG.godot,
       quality: DEFAULT_USER_CONFIG.quality,
+      references: DEFAULT_USER_CONFIG.references,
     });
   });
 
@@ -40,6 +41,7 @@ describe("parseUserConfig", () => {
       sandbox: { profile: "develop-offline", backend: "auto" },
       godot: DEFAULT_USER_CONFIG.godot,
       quality: DEFAULT_USER_CONFIG.quality,
+      references: DEFAULT_USER_CONFIG.references,
     });
     expect(parseUserConfig({ sandbox: {} })).toEqual(DEFAULT_USER_CONFIG);
   });
@@ -55,6 +57,7 @@ describe("parseUserConfig", () => {
       sandbox: DEFAULT_USER_CONFIG.sandbox,
       godot: DEFAULT_USER_CONFIG.godot,
       quality: { reviewProvider: "reviewer" },
+      references: DEFAULT_USER_CONFIG.references,
     });
   });
 
@@ -107,6 +110,153 @@ describe("parseUserConfig", () => {
     expect(() => parseUserConfig({ sandbox: { apiKey: "secret" } })).toThrow(
       "Unknown Solaris sandbox configuration key",
     );
+  });
+});
+
+describe("parseUserConfig references section", () => {
+  it("defaults the references section to an empty map", () => {
+    expect(parseUserConfig({}).references).toEqual({});
+    expect(DEFAULT_USER_CONFIG.references).toEqual({});
+  });
+
+  it("loads a valid local-directory reference as raw unknown values", () => {
+    const config = parseUserConfig({
+      references: {
+        "godot-src": {
+          kind: "local-directory",
+          path: "C:\\External\\godot",
+          description: "The Godot engine source",
+        },
+      },
+    });
+    expect(config.references["godot-src"]).toEqual({
+      kind: "local-directory",
+      path: "C:\\External\\godot",
+      description: "The Godot engine source",
+    });
+  });
+
+  it("loads a valid repository reference with a commit ref", () => {
+    const config = parseUserConfig({
+      references: {
+        "godot-engine": {
+          kind: "repository",
+          repository: "godotengine/godot",
+          ref: { kind: "commit", commit: "0123456789abcdef0123456789abcdef01234567" },
+        },
+      },
+    });
+    expect(config.references["godot-engine"]).toEqual({
+      kind: "repository",
+      repository: "godotengine/godot",
+      ref: { kind: "commit", commit: "0123456789abcdef0123456789abcdef01234567" },
+    });
+  });
+
+  it("accepts a repository reference without a ref (defaults to main; core refuses it without a pin)", () => {
+    const config = parseUserConfig({
+      references: { "godot-engine": { kind: "repository", repository: "godotengine/godot" } },
+    });
+    expect(config.references["godot-engine"]).toEqual({
+      kind: "repository",
+      repository: "godotengine/godot",
+    });
+  });
+
+  it("rejects unknown declaration keys (a credential field cannot hide)", () => {
+    expect(() =>
+      parseUserConfig({
+        references: { "godot-src": { kind: "local-directory", path: "C:\\x", apiKey: "secret" } },
+      }),
+    ).toThrow('Unknown Solaris reference key: apiKey (reference "godot-src").');
+  });
+
+  it("rejects unknown ref keys", () => {
+    expect(() =>
+      parseUserConfig({
+        references: {
+          "godot-engine": {
+            kind: "repository",
+            repository: "godotengine/godot",
+            ref: { kind: "commit", commit: "abc1234", token: "secret" },
+          },
+        },
+      }),
+    ).toThrow('Unknown Solaris reference ref key: token (reference "godot-engine").');
+  });
+
+  it("rejects a ref that pins more than one of commit/tag/branch", () => {
+    expect(() =>
+      parseUserConfig({
+        references: {
+          "godot-engine": {
+            kind: "repository",
+            repository: "godotengine/godot",
+            ref: { kind: "commit", commit: "abc1234", tag: "4.3" },
+          },
+        },
+      }),
+    ).toThrow("a ref pins exactly one of commit/tag/branch");
+  });
+
+  it("rejects malformed alias keys", () => {
+    for (const alias of ["", "Uppercase", "has space", "a".repeat(65), "9starts-with-digit"]) {
+      expect(() =>
+        parseUserConfig({ references: { [alias]: { kind: "local-directory", path: "C:\\x" } } }),
+      ).toThrow("Reference alias");
+    }
+  });
+
+  it("rejects more than 16 references", () => {
+    const references: Record<string, unknown> = {};
+    for (let index = 0; index < 17; index += 1) {
+      references[`ref-${index}`] = { kind: "local-directory", path: "C:\\x" };
+    }
+    expect(() => parseUserConfig({ references })).toThrow("the limit is 16");
+  });
+
+  it("rejects unknown kinds and missing per-kind required fields", () => {
+    expect(() => parseUserConfig({ references: { xx: { kind: "git" } } })).toThrow(
+      '"kind" of "local-directory" or "repository"',
+    );
+    expect(() => parseUserConfig({ references: { xx: { kind: "local-directory" } } })).toThrow(
+      'requires a non-empty "path"',
+    );
+    expect(() => parseUserConfig({ references: { xx: { kind: "repository" } } })).toThrow(
+      'requires a non-empty "repository"',
+    );
+    expect(() =>
+      parseUserConfig({
+        references: { xx: { kind: "repository", repository: "a/b", ref: { kind: "tag" } } },
+      }),
+    ).toThrow("ref requires a non-empty tag string");
+  });
+
+  it("rejects a local-directory declaration that also carries repository fields", () => {
+    expect(() =>
+      parseUserConfig({
+        references: {
+          xx: { kind: "local-directory", path: "C:\\x", repository: "a/b" },
+        },
+      }),
+    ).toThrow('must not declare "repository" or "ref"');
+  });
+
+  it("rejects a non-object references section", () => {
+    expect(() => parseUserConfig({ references: "none" })).toThrow(
+      'Solaris configuration section "references" must be a JSON object',
+    );
+    expect(() => parseUserConfig({ references: [] })).toThrow(
+      'Solaris configuration section "references" must be a JSON object',
+    );
+  });
+
+  it("rejects a non-string description", () => {
+    expect(() =>
+      parseUserConfig({
+        references: { xx: { kind: "local-directory", path: "C:\\x", description: 5 } },
+      }),
+    ).toThrow("description must be a string");
   });
 });
 

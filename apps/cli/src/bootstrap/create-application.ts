@@ -30,12 +30,16 @@ import {
   createGodotProbeProjectTool,
   createGodotProbeRunner,
   createGodotProjectProbeService,
+  createGitHubResearchSource,
+  createGodotDocsResearchSource,
   createMutationLock,
+  createNodeHttpsTransport,
   createNpmScriptRunner,
   createNodeScriptRunner,
   createProcessRunTool,
   createProviderChangeReviewer,
   createQualityValidationExecutor,
+  createReferenceServices,
   createReviewerToolRegistry,
   createRunDirectoryProvider,
   createSha256CommandDigestService,
@@ -76,7 +80,9 @@ import {
   createTaskRuntime,
   createToolProjector,
   createToolRegistry,
+  createResearchService,
   getBuiltInProfile,
+  parseReferenceDeclarationsSection,
   VALIDATION_OFFLINE_PROFILE,
   type ApprovalReviewer,
   type CheckpointStore,
@@ -91,7 +97,11 @@ import {
   type KnowledgeCoordinator,
   type ModelProvider,
   type ProjectInstructionService,
+  type ReferenceMaterializerPort,
+  type ReferenceRegistry,
   type RegisteredToolInfo,
+  type ResearchService,
+  type ResearchSourcePort,
   type SandboxBackend,
   type ProjectionService,
   type SolarisApplication,
@@ -104,6 +114,11 @@ import {
 } from "@solaris/core";
 import { GodotSelectionError } from "@solaris/adapters";
 import { resolveReviewProviderId } from "./review-provider.js";
+import {
+  createReferenceEvidenceRing,
+  createResearchTools,
+  observeReferenceTools,
+} from "./reference-research.js";
 
 export interface CreateCliApplicationOptions {
   readonly reviewer?: ApprovalReviewer;
@@ -111,6 +126,11 @@ export interface CreateCliApplicationOptions {
   readonly godotPath?: string;
   /** `--godot-installation` override. */
   readonly godotInstallation?: string;
+  /**
+   * User config path override (tests/smoke). Defaults to
+   * `getDefaultUserConfigPath()`.
+   */
+  readonly configPath?: string;
 }
 
 export interface CliApplication {
@@ -137,18 +157,68 @@ export interface CliApplication {
   readonly runners: CommandRunnerRegistry;
   readonly instructions: ProjectInstructionService;
   readonly projectKnowledge: KnowledgeCoordinator;
+  readonly references: ReferenceRegistry;
+  readonly referenceMaterializer: ReferenceMaterializerPort;
+  /** Precise reason the references config failed semantic parse; null when clean. */
+  readonly referenceConfigError: string | null;
+  readonly research: ResearchService;
+  /** The configured research source ports (kind/id/label, in registration order). */
+  readonly researchSources: readonly ResearchSourcePort[];
+  /** Releases the reference services (currently a no-op; kept for interface stability). */
+  close(): void;
 }
 
 export async function createCliApplication(
   options: CreateCliApplicationOptions = {},
 ): Promise<CliApplication> {
-  const config = await loadUserConfig(getDefaultUserConfigPath());
+  const config = await loadUserConfig(options.configPath ?? getDefaultUserConfigPath());
   const profile = getBuiltInProfile(config.sandbox.profile);
   const policy = createDefaultPolicy(config.sandbox.profile);
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const runsRoot = join(homedir(), ".solaris", "runs");
   const sandbox = createAnthropicSandboxRuntimeBackend({ workspaceRoot });
   const security = createSolarisSecurity({ backend: sandbox, policy, profile });
+  // References (Stage 3 milestone 5): a config parse failure NEVER crashes
+  // startup — the precise reason is surfaced by /references while the
+  // registry stays empty (fail closed, nothing half-configured).
+  const parsedReferences = parseReferenceDeclarationsSection(
+    transformReferencesSection(config.references),
+  );
+  const referenceConfigError = parsedReferences.ok ? null : parsedReferences.reason;
+  const referenceServices = await createReferenceServices({
+    declarations: parsedReferences.ok ? parsedReferences.declarations : [],
+    workspaceRoot,
+    trustFor: () => "explicit-user",
+  });
+  // Consult the materializer once per ready reference so its status() is
+  // truthful from startup (local-directory → "not-required"; repository →
+  // "unavailable" at this stage). Zero filesystem operations occur.
+  for (const reference of referenceServices.registry.list()) {
+    if (reference.status !== "ready") {
+      continue;
+    }
+    const revision = referenceServices.registry.revision(reference.id);
+    if (revision !== null) {
+      await referenceServices.materializer.materialize(reference.id, revision.identity);
+    }
+  }
+  // Research (Stage 3 milestone 5): the two real sources over the real
+  // node:https transport. The research service gates every fetch on the
+  // `research.fetch` capability (denied by every built-in profile), so the
+  // source ports are never invoked under the default policy.
+  const researchTransport = createNodeHttpsTransport();
+  const researchSources: readonly ResearchSourcePort[] = [
+    createGitHubResearchSource({ transport: researchTransport }),
+    createGodotDocsResearchSource({ transport: researchTransport }),
+  ];
+  const research = createResearchService({ policy, profile, sources: researchSources });
+  const referenceEvidenceRing = createReferenceEvidenceRing();
+  const referenceTools = observeReferenceTools(
+    referenceServices.tools,
+    referenceServices.registry,
+    referenceEvidenceRing,
+  );
+  const researchTools = createResearchTools(research);
   const mutationLock = createMutationLock();
   const checkpoints = await createFilesystemCheckpointStore({ workspaceRoot });
   await reconcileWorkspaceCheckpoints({ workspaceRoot, store: checkpoints });
@@ -390,7 +460,16 @@ export async function createCliApplication(
     createGitDiffTool(git),
     processTool,
   ];
-  const registry = createToolRegistry(workspaceTools);
+  // Reference tools register ONLY when at least one reference is declared
+  // (no empty tool surface); research tools register always — the
+  // ToolProjector hides them under the default deny policy for
+  // `research.fetch`.
+  const registeredTools = [
+    ...workspaceTools,
+    ...(referenceServices.registry.list().length > 0 ? referenceTools : []),
+    ...researchTools,
+  ];
+  const registry = createToolRegistry(registeredTools);
   const provider = createDeterministicFakeProvider();
   const tasks = createTaskRuntime();
   const taskSources: TaskRuntimeSnapshotSources = {
@@ -421,6 +500,13 @@ export async function createCliApplication(
     knowledge: {
       pinned: () => projectKnowledge.pinnedFacts(),
       retrieve: (query) => projectKnowledge.retrieve(query),
+    },
+    references: {
+      list: () => referenceServices.registry.list(),
+      latestEvidence: () => referenceEvidenceRing.list(),
+    },
+    research: {
+      latestEvidence: () => research.latestEvidence(),
     },
   });
   const application = createSolarisApplication({
@@ -458,7 +544,59 @@ export async function createCliApplication(
     runners,
     instructions,
     projectKnowledge,
+    references: referenceServices.registry,
+    referenceMaterializer: referenceServices.materializer,
+    referenceConfigError,
+    research,
+    researchSources,
+    close(): void {
+      referenceServices.close();
+    },
   };
+}
+
+/**
+ * Derive the canonical declaration-form section (alias-keyed, with the
+ * alias repeated inside each declaration and the source object nested, as
+ * core's `parseReferenceDeclarationsSection` expects) from the raw
+ * user-config `references` section (kind + path/repository/ref flattened).
+ * The config layer already validated the structural shape defensively; this
+ * mapping only re-arranges fields, so it cannot fail. Semantic validation
+ * (absolute paths, repository normalization, ref shapes, bounds) is core's
+ * job — see packages/adapters/src/config/user-config.ts.
+ */
+function transformReferencesSection(
+  references: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const section: Record<string, unknown> = {};
+  for (const [alias, declaration] of Object.entries(references)) {
+    if (typeof declaration !== "object" || declaration === null || Array.isArray(declaration)) {
+      continue;
+    }
+    const record = declaration as Record<string, unknown>;
+    const description =
+      typeof record["description"] === "string" ? { description: record["description"] } : {};
+    if (record["kind"] === "local-directory") {
+      section[alias] = {
+        alias,
+        kind: "local-directory",
+        source: { kind: "local-directory", path: record["path"] },
+        ...description,
+      };
+    } else {
+      section[alias] = {
+        alias,
+        kind: "repository",
+        source: {
+          kind: "repository",
+          repository: record["repository"],
+          ...(record["ref"] === undefined ? {} : { ref: record["ref"] }),
+        },
+        ...description,
+      };
+    }
+  }
+  return section;
 }
 
 /**

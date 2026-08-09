@@ -57,6 +57,9 @@ import {
   type UndoService,
   type ApprovalReviewer,
   type ProjectInstructionService,
+  type ReferenceMaterializerPort,
+  type ReferenceRegistry,
+  type ResearchService,
 } from "@solaris/core";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
@@ -124,6 +127,11 @@ async function createComposedSession(lines: readonly string[]) {
     undo,
     runners,
     sandbox,
+    references,
+    referenceMaterializer,
+    referenceConfigError,
+    research,
+    researchSources,
   } = await createCliApplication();
   const sessionInfo: SessionInfo = {
     workspaceRoot,
@@ -152,6 +160,11 @@ async function createComposedSession(lines: readonly string[]) {
     undo,
     runners,
     sandbox,
+    references,
+    referenceMaterializer,
+    referenceConfigError,
+    research,
+    researchSources,
   };
   return { io, application, sessionInfo };
 }
@@ -286,6 +299,11 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     workspaceRead: createStubWorkspaceRead(),
     instructions: createStubInstructionService(),
     projectKnowledge: createKnowledgeCoordinator(),
+    references: createStubReferenceRegistry(),
+    referenceMaterializer: createStubReferenceMaterializer(),
+    referenceConfigError: null,
+    research: createStubResearchService(),
+    researchSources: [],
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",
@@ -300,6 +318,37 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       },
     }),
     ...overrides,
+  };
+}
+
+function createStubReferenceRegistry(): ReferenceRegistry {
+  return {
+    list: () => [],
+    get: () => undefined,
+    revision: () => null,
+    bindTask: () => ({ taskId: "stub", revisions: new Map(), boundAtMs: 0 }),
+    boundRevision: () => null,
+    refresh: () => Promise.resolve({ status: "failed", reason: "stub registry" }),
+    declineReason: () => null,
+    size: 0,
+  };
+}
+
+function createStubReferenceMaterializer(): ReferenceMaterializerPort {
+  return {
+    materialize: () => Promise.resolve({ status: "unavailable", reason: "stub materializer" }),
+    status: () => "unavailable",
+  };
+}
+
+function createStubResearchService(): ResearchService {
+  return {
+    fetch: () => Promise.resolve({ status: "refused", reason: "stub research service" }),
+    bind: () => ({ key: "stub", revision: 0, value: { requestId: null } }),
+    isCurrent: () => false,
+    latestEvidence: () => [],
+    activeRequestCount: () => 0,
+    sourceKinds: () => [],
   };
 }
 
@@ -739,7 +788,7 @@ describe("runInteractiveSession tool activity", () => {
     // availability (unavailable backends never execute Git). The
     // development workflow adds workspace.apply_text_changeset and
     // godot.development_status to the registered tool count.
-    expect(io.text).toContain("Tools: 23");
+    expect(io.text).toContain("Tools: 25");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");

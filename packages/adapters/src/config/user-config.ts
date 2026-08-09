@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS, REFERENCE_LIMITS, validateReferenceAlias } from "@solaris/core";
 import { readFileBounded } from "../fs/file-read.js";
 
 export type UserSandboxProfileId = "inspect" | "develop-offline";
@@ -47,6 +47,16 @@ export interface UserConfig {
   readonly sandbox: UserSandboxConfig;
   readonly godot: UserGodotConfig;
   readonly quality: UserQualityConfig;
+  /**
+   * Declared external references, alias -> raw declaration. The shape is
+   * validated defensively here (object keys, alias pattern, count bound,
+   * per-kind required fields, unknown keys rejected at every level — a
+   * credential field cannot hide); SEMANTIC validation (absolute paths,
+   * repository normalization, ref shapes, bounds) is delegated to core's
+   * `parseReferenceDeclarationsSection`, which the CLI feeds with the
+   * canonical declaration form derived from this raw section.
+   */
+  readonly references: Readonly<Record<string, unknown>>;
 }
 
 export const DEFAULT_USER_CONFIG: UserConfig = {
@@ -62,6 +72,7 @@ export const DEFAULT_USER_CONFIG: UserConfig = {
   quality: {
     reviewProvider: null,
   },
+  references: {},
 };
 
 const SUPPORTED_PROFILES: readonly string[] = ["inspect", "develop-offline"];
@@ -117,7 +128,7 @@ export function parseUserConfig(data: unknown): UserConfig {
   }
   const record = data as Record<string, unknown>;
   const unknownKeys = Object.keys(record).filter(
-    (key) => key !== "sandbox" && key !== "godot" && key !== "quality",
+    (key) => key !== "sandbox" && key !== "godot" && key !== "quality" && key !== "references",
   );
   if (unknownKeys.length > 0) {
     throw new Error(`Unknown Solaris configuration section: ${unknownKeys[0]}.`);
@@ -128,6 +139,7 @@ export function parseUserConfig(data: unknown): UserConfig {
       ...DEFAULT_USER_CONFIG,
       godot: parseGodotSection(record["godot"]),
       quality: parseQualitySection(record["quality"]),
+      references: parseReferencesSection(record["references"]),
     };
   }
   if (typeof sandboxValue !== "object" || sandboxValue === null || Array.isArray(sandboxValue)) {
@@ -159,6 +171,7 @@ export function parseUserConfig(data: unknown): UserConfig {
     },
     godot: parseGodotSection(record["godot"]),
     quality: parseQualitySection(record["quality"]),
+    references: parseReferencesSection(record["references"]),
   };
 }
 
@@ -294,6 +307,109 @@ function parseInstallations(value: unknown): Readonly<Record<string, UserGodotIn
     };
   }
   return installations;
+}
+
+const REFERENCE_DECLARATION_KEYS = new Set(["kind", "path", "repository", "ref", "description"]);
+const REFERENCE_REF_KEYS = new Set(["kind", "commit", "tag", "branch"]);
+
+/**
+ * Defensive structural parse of the `references` config section: a plain
+ * object mapping validated alias -> declaration, bounded at
+ * `REFERENCE_LIMITS.maxReferences` (16). Unknown keys are rejected at every
+ * level (a credential field cannot hide). The parsed values are kept RAW
+ * (unknown-typed) because SEMANTIC validation (absolute paths, repository
+ * normalization, ref shape/bounds, description bytes) belongs to core's
+ * `parseReferenceDeclarationsSection`; the CLI derives the canonical
+ * declaration form from this section before calling it.
+ */
+function parseReferencesSection(value: unknown): Readonly<Record<string, unknown>> {
+  if (value === undefined) {
+    return {};
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error('Solaris configuration section "references" must be a JSON object.');
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > REFERENCE_LIMITS.maxReferences) {
+    throw new Error(
+      `The "references" section declares ${entries.length} references; the limit is ${REFERENCE_LIMITS.maxReferences}.`,
+    );
+  }
+  const references: Record<string, unknown> = {};
+  for (const [alias, declaration] of entries) {
+    if (validateReferenceAlias(alias) === null) {
+      throw new Error(
+        `Reference alias "${alias}" is malformed; aliases match ^[a-z][a-z0-9._-]{1,63}$.`,
+      );
+    }
+    if (typeof declaration !== "object" || declaration === null || Array.isArray(declaration)) {
+      throw new Error(`Reference "${alias}" must be a JSON object.`);
+    }
+    const record = declaration as Record<string, unknown>;
+    const unknownKeys = Object.keys(record).filter((key) => !REFERENCE_DECLARATION_KEYS.has(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(`Unknown Solaris reference key: ${unknownKeys[0]} (reference "${alias}").`);
+    }
+    const kind = record["kind"];
+    if (kind !== "local-directory" && kind !== "repository") {
+      throw new Error(`Reference "${alias}" requires "kind" of "local-directory" or "repository".`);
+    }
+    if (kind === "local-directory") {
+      const path = record["path"];
+      if (typeof path !== "string" || path.length === 0) {
+        throw new Error(`Local-directory reference "${alias}" requires a non-empty "path".`);
+      }
+      if (record["repository"] !== undefined || record["ref"] !== undefined) {
+        throw new Error(
+          `Local-directory reference "${alias}" must not declare "repository" or "ref".`,
+        );
+      }
+    } else {
+      const repository = record["repository"];
+      if (typeof repository !== "string" || repository.length === 0) {
+        throw new Error(`Repository reference "${alias}" requires a non-empty "repository".`);
+      }
+      if (record["path"] !== undefined) {
+        throw new Error(`Repository reference "${alias}" must not declare "path".`);
+      }
+      if (record["ref"] !== undefined) {
+        record["ref"] = parseReferenceRef(record["ref"], alias);
+      }
+    }
+    const description = record["description"];
+    if (description !== undefined && typeof description !== "string") {
+      throw new Error(`Reference "${alias}" description must be a string.`);
+    }
+    references[alias] = { ...record };
+  }
+  return references;
+}
+
+function parseReferenceRef(value: unknown, alias: string): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Reference "${alias}" ref must be a JSON object.`);
+  }
+  const record = value as Record<string, unknown>;
+  const unknownKeys = Object.keys(record).filter((key) => !REFERENCE_REF_KEYS.has(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`Unknown Solaris reference ref key: ${unknownKeys[0]} (reference "${alias}").`);
+  }
+  const kind = record["kind"];
+  if (kind !== "commit" && kind !== "tag" && kind !== "branch") {
+    throw new Error(`Reference "${alias}" ref requires "kind" of "commit", "tag", or "branch".`);
+  }
+  const pin = record[kind];
+  if (typeof pin !== "string" || pin.length === 0) {
+    throw new Error(`Reference "${alias}" ${kind} ref requires a non-empty ${kind} string.`);
+  }
+  for (const other of REFERENCE_REF_KEYS) {
+    if (other !== "kind" && other !== kind && record[other] !== undefined) {
+      throw new Error(
+        `Reference "${alias}" ${kind} ref must not declare "${other}"; a ref pins exactly one of commit/tag/branch.`,
+      );
+    }
+  }
+  return { ...record };
 }
 
 function isNotFoundError(error: unknown): boolean {

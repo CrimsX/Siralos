@@ -37,6 +37,9 @@ export type SlashCommand =
   | "gdscript-hover"
   | "gdscript-complete"
   | "gdscript-definition"
+  | "references"
+  | "reference"
+  | "research-status"
   | "exit";
 
 export type ParsedInput =
@@ -96,6 +99,9 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "gdscript-hover",
   "gdscript-complete",
   "gdscript-definition",
+  "references",
+  "reference",
+  "research-status",
   "exit",
 ];
 

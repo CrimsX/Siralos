@@ -14,6 +14,10 @@ import type {
   GodotProjectProbeStatus,
   KnowledgeCoordinator,
   RegisteredToolInfo,
+  ReferenceMaterializerPort,
+  ReferenceRegistry,
+  ResearchService,
+  ResearchSourcePort,
   SandboxBackend,
   SandboxBackendStatus,
   SolarisApplication,
@@ -48,6 +52,9 @@ import {
   formatInstructions,
   formatKnowledge,
   formatKnowledgeTrace,
+  formatReferences,
+  formatReferenceDetail,
+  formatResearchStatus,
   formatDevelopmentResult,
   formatDevelopmentStartPreview,
   formatDevelopmentStatus,
@@ -124,6 +131,13 @@ export interface SessionInfo {
   readonly workspaceRead: Tool;
   readonly instructions: ProjectInstructionService;
   readonly projectKnowledge: KnowledgeCoordinator;
+  readonly references: ReferenceRegistry;
+  readonly referenceMaterializer: ReferenceMaterializerPort;
+  /** Precise reason the references config failed semantic parse; null when clean. */
+  readonly referenceConfigError: string | null;
+  readonly research: ResearchService;
+  /** The configured research source ports (kind/id/label, in registration order). */
+  readonly researchSources: readonly ResearchSourcePort[];
 }
 
 /** The host-owned task flow of the active /develop run, if any. */
@@ -314,6 +328,27 @@ export async function runInteractiveSession(
               ),
             );
             break;
+          case "references":
+            io.write(
+              formatReferences(
+                sessionInfo.references,
+                sessionInfo.referenceMaterializer,
+                sessionInfo.referenceConfigError,
+              ),
+            );
+            break;
+          case "reference":
+            runReferenceCommand(io, sessionInfo, parsed.args);
+            break;
+          case "research-status":
+            io.write(
+              formatResearchStatus(
+                sessionInfo.research,
+                sessionInfo.security,
+                sessionInfo.researchSources,
+              ),
+            );
+            break;
           case "knowledge":
             if (parsed.args[0] === "why") {
               io.write(formatKnowledgeTrace(sessionInfo.projectKnowledge.lastRetrievalTrace()));
@@ -383,6 +418,7 @@ async function buildStatusView(
   const checkpoints = await sessionInfo.checkpoints.list().catch(() => []);
   const latestApplied = checkpoints.find((checkpoint) => checkpoint.state === "applied");
   const processDecision = sessionInfo.security.evaluateCapability("process.execute");
+  const researchDecision = sessionInfo.security.evaluateCapability("research.fetch");
   const godotSelected = await sessionInfo.godot.selected().catch(() => null);
   const godotProject = await sessionInfo.godot.projectProfile().catch(() => null);
   const godotCompatibility = await sessionInfo.godot.compatibility().catch(() => null);
@@ -429,7 +465,17 @@ async function buildStatusView(
     knowledge: describeKnowledge(sessionInfo.knowledge.status()),
     languageSession: describeLanguageSession(sessionInfo.language.status()),
     developmentQuality: describeDevelopmentQuality(sessionInfo.development.status()),
+    research: describeResearch(sessionInfo.research, researchDecision),
   };
+}
+
+function describeResearch(
+  service: ResearchService,
+  decision: ReturnType<SolarisSecurity["evaluateCapability"]>,
+): string {
+  const state = decision.decision === "allow" ? "enabled" : "disabled";
+  const count = service.sourceKinds().length;
+  return `${state} (${count} source${count === 1 ? "" : "s"})`;
 }
 
 function describeDevelopmentQuality(status: GDScriptDevelopmentStatus): string | null {
@@ -798,6 +844,21 @@ async function runGodotProjectCommand(io: SessionIO, sessionInfo: SessionInfo): 
   } catch (error: unknown) {
     io.write(formatProviderFailure(describeGodotFailure(error)));
   }
+}
+
+function runReferenceCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  args: readonly string[],
+): void {
+  const selector = args.join(" ").trim();
+  if (selector.length === 0) {
+    io.write("Usage: /reference <alias>\n");
+    return;
+  }
+  io.write(
+    formatReferenceDetail(sessionInfo.references, sessionInfo.referenceMaterializer, selector),
+  );
 }
 
 async function runGodotDoctorCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
