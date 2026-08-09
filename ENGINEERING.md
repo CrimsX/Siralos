@@ -212,3 +212,42 @@ Architecture changes are recorded in `docs/adr/` and reflected in `ARCHITECTURE.
 ## `/evolve` must never silently weaken gates
 
 A future `/evolve` workflow may not weaken engineering, architecture, validation, or security gates without explicit human review. This rule stands even if a later stage implements self-improvement tooling.
+
+## Task runtime rules
+
+1. **Every authoritative mutable domain has one owner.** TaskState is owned
+   exclusively by the core `TaskRuntime`; CLI, providers, adapters, and UI
+   receive immutable snapshots, projections, or events. Provider adapters
+   cannot import the task runtime surface (architecture-enforced).
+2. **Model assertions are not authoritative evidence.** "Done" in provider
+   text is never a transition; steps complete only on host-validated
+   evidence references, and a model-issued `complete` disposition still
+   passes the host completion gate.
+3. **Task completion is host verified.** `completeTask` refuses unless the
+   gate passes: steps completed, acceptance criteria satisfied, validation
+   and review clean, no unresolved critical/high findings. Stage 2 quality
+   gates remain authoritative; infrastructure failures stay
+   `validation_incomplete`, never criterion failure and never success.
+4. **Behavior-changing agent-runtime modifications require behavior
+   evidence.** Changes to the task runtime, completion gate, progress
+   semantics, or the `/develop`-task integration must extend the
+   `tests/behavior/` fixtures (behaviors 1–15) rather than relying on unit
+   tests alone.
+5. **Final-boundary effects are tested.** Behavior/security-sensitive
+   changes are verified at the final observable boundary (task phase,
+   activity log, workspace contents, checkpoint list), not only through an
+   intermediate helper's return value.
+6. **Task configuration is snapshotted at task start.** The immutable
+   `TaskRuntimeSnapshot` captures the reproducibility-relevant identities
+   (runtime version, provider profile, sandbox profile, capability-policy
+   fingerprint, workspace identity, engine fingerprint, workflow
+   identity/digest); ordinary global config changes affect future tasks
+   only.
+7. **Activity logs are append-only records, not competing state.** The typed
+   `TaskActivityEvent` log is for auditability, debugging, persistence, UI
+   projection, and tests — never a second authoritative TaskState, and never
+   a generic event bus.
+8. **Security policy cannot be broadened by task state.** TaskContract,
+   TaskState, and dispositions are descriptive/control-flow state; they
+   grant no capabilities. Approvals, sandboxing, capability policy, path
+   containment, and checkpoint integrity stay authoritative elsewhere.

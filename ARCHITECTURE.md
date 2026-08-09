@@ -407,9 +407,42 @@ apps/cli/
 - **CLI owns**: `/quality` (current/final report), `/review-change` (fresh read-only review of the tracked change — no approval, no modification, no automatic repair), the quality sections of `/development-status` and `/status`, and review-provider resolution. Reviewer construction happens only in the composition root; the reviewer's read-only tool registry is composition-root owned.
 - **Integration**: `/develop` automatically enters the quality stage after a cleanly validated change set; blocking review findings return the workflow to the provider for a focused, separately approved repair (at most 2 review-repair rounds) that is fully revalidated and re-reviewed. The workflow itself is fail-closed at this stage (change-set applier unavailable), so the quality stage, review, and validation commands never run in the shipped product; the opt-in `npm run test:godot-quality` conformance verifies that truthfully and always reports the live quality-stage isolation probe as skipped, never passed.
 
+## Task runtime
+
+The task runtime (Stage 3 milestone 1, ADR 0014) is the host-owned structured task foundation that later context projection, planning, multi-agent orchestration, persistence, and `/evolve` build upon. It lives in core (`packages/core/src/tasks/`) and is provider-neutral, sandbox-neutral, and Node-free: it observes typed host facts and never imports provider or sandbox ports (architecture-enforced).
+
+```text
+packages/core/src/tasks/
+  task-contract.ts      revisioned TaskContract (request, constraints,
+                        acceptance criteria, pause policy), digest
+  task-model.ts         TaskState, phases, steps, evidence records/references,
+                        findings, validation/review status, progress,
+                        WorkflowDisposition
+  task-events.ts        typed append-only TaskActivityEvent union + allowlists
+  task-snapshot.ts      immutable TaskRuntimeSnapshot captured at task start
+  task-runtime.ts       host-owned TaskRuntime + TaskHandle (single mutation
+                        path: closure-private state, snapshots on read)
+  task-development.ts   development bridge: /develop request -> contract,
+                        steps, snapshot, event mapping, host completion gate
+  task-contract.test.ts unit tests for the contract model
+tests/behavior/         deterministic behavior fixtures (behaviors 1-15)
+```
+
+- **Single-owner state rule**: every authoritative mutable Solaris domain has exactly one runtime owner. `TaskState` is owned exclusively by the `TaskRuntime` created in the CLI composition root; CLI, providers, adapters, and the UI receive immutable snapshots, projections, or events. The runtime's mutable state is closure-private; `snapshot()` returns detached copies; `activityLog()` returns copies of copies; `TaskRuntimeSnapshot` is frozen. Provider adapters cannot import the task runtime surface at all (architecture-enforced); the CLI is a read-only renderer of snapshots plus the completion-gate evaluation.
+- **TaskContract** distinguishes what the user requested, constraints, individually addressable acceptance criteria (`deterministic` / `review` / `user`), and the pause policy. Contracts are immutable and revisioned: a material change produces revision N+1, never a mutation of revision N. Later milestones bind plan/mutation approvals and workflow continuation to contract revisions.
+- **TaskState** is a materialized, serializable object: phase (`prepared | working | validating | reviewing | blocked | completed | cancelled | failed`), bounded steps with evidence references, acceptance states, evidence-backed findings, validation/review status, iteration, host-observed progress, and terminal timestamps. It never stores private chain-of-thought, provider continuation internals, secrets, or raw adapter output — evidence references point at already-owned artifacts (change-set ids, checkpoint ids, counts, digests) with a 4 KiB source bound.
+- **Evidence-backed completion**: a step completes only through `completeStep(stepId, evidenceRefs)` with refs that exist, belong to the task, and match the step's declared evidence kinds (`research` steps accept read/lookup evidence; review steps accept reviewer results; no hard-coded "every step needs a mutation"). `WorkflowDisposition` is a structured _request_: a model-issued `complete` is a completion request that still passes the host completion gate (steps completed, criteria satisfied, validation/review clean, no unresolved critical/high findings). A model asserting "done" in text never reaches the runtime.
+- **Progress**: the host feeds typed observations (`action` + canonical result fingerprint); identical repeated actions with identical results do not repeatedly count as progress. The bounded window surfaces `healthy / degraded / stalled` deterministically; the runtime never swaps models, spawns advisors, or hands off — those are future milestones.
+- **TaskRuntimeSnapshot** is captured once at task start (runtime version, provider profile id, sandbox profile id, capability-policy fingerprint, workspace identity, Godot engine fingerprint, workflow identity + prepared-operation digest). Ordinary global configuration changes affect future tasks, never a running task's snapshot; a security revocation terminates/restricts existing work only where existing Solaris policy already requires it.
+- **Activity log**: typed append-only `TaskActivityEvent` records (deterministic per-task sequence, host timestamps) for auditability/debugging/future persistence/UI projection — not event sourcing, not a competing state, and never a generic event bus. Events carry no provider-private continuation state (allowlisted field types).
+- **/develop integration**: the CLI's `/develop` handler creates the task through the development bridge (`createDevelopmentTaskFlow`): request → revisioned `TaskContract` (user approval, applied mutation, workspace scope, parser, fresh-LSP, independent review criteria) → `TaskState` → the existing Stage 2 development workflow → the existing validation/review gates → the host completion gate. The Stage 2 quality gates remain authoritative; the task gate references the same deterministic results instead of duplicating them, and infrastructure failures stay `validation_incomplete` (never criterion failure, never success).
+- **CLI**: `/task <request>` starts a host-owned ad-hoc task (completion honestly requires host verification — with no integrated workflow the gate refuses completion), `/task-status` renders task id, phase, contract revision, criteria status, active step, progress state, and whether completion is currently allowed; `/develop` prints the task status at start and after the workflow terminalizes, and `/cancel` finalizes the task as cancelled. The CLI feeds host-observed tool outcomes into progress.
+
+The milestone does not implement planning, ContextProjector/ToolProjector/EvidenceProjector, knowledge retrieval, scenes/resources, multi-agent TaskGraph, persistent background jobs, an ACP/runtime server, plugins, or `/evolve`.
+
 ## Deferred: persistence
 
-Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. A persistence port will be added only when a real requirement demands it.
+Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. TaskState may remain in memory by design for this milestone: the types are serializable, no runtime handles are embedded in domain state, and the persistent-state schema/versioning requirements are documented in ADR 0014 (a future persistence milestone can rely on `runtimeVersion`, the revisioned contract history, and the append-only activity log). A persistence port will be added only when a real requirement demands it.
 
 ## Deferred: multi-agent functionality
 
