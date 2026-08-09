@@ -1234,4 +1234,48 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
+
+  it("rejects workspace revision modules importing mutation/checkpoint machinery", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/workspace/workspace-summary.ts"] =
+      'import type { CheckpointStore } from "../checkpoints/checkpoint-model.js";\nexport type X = CheckpointStore;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("workspace revision modules must not import mutation/checkpoint machinery"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects workspace revision modules importing the task runtime mutation surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/workspace/workspace-revision.ts"] =
+      'import { createTaskRuntime } from "../tasks/task-runtime.js";\nexport const x = createTaskRuntime;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes(
+          "workspace revision modules must not import the task runtime mutation surface",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects projection modules owning workspace revisions", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/projection-service.ts"] =
+      'import { createWorkspaceRevisionRegistry } from "../workspace/workspace-revision.js";\nexport const x = createWorkspaceRevisionRegistry;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("projection modules must not own workspace revisions")),
+    ).toBe(true);
+  });
+
+  it("accepts workspace revision modules importing the digest utility and workspace internals", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/workspace/workspace-summary.ts"] =
+      'import { sha256Hex } from "../godot/digest.js";\nimport type { GDScriptStructure } from "./gdscript-structure.js";\nexport const y = sha256Hex;\nexport type S = GDScriptStructure;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
 });

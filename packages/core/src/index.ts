@@ -72,6 +72,7 @@ export {
   toolCall,
   type ScriptedProvider,
 } from "./application/test-support.js";
+export { canonicalizeJson, sha256Hex } from "./godot/digest.js";
 export type { Capability, CapabilityPolicy, PermissionRule } from "./security/capability.js";
 export { createDefaultPolicy } from "./security/default-policy.js";
 export type {
@@ -459,6 +460,10 @@ export {
   type ChangeReviewer,
 } from "./godot/quality/quality-review.js";
 export {
+  WORKSPACE_REVISION_HANDLE_PATTERN,
+  type StaleRevisionError,
+} from "./godot/development/development-change-set.js";
+export {
   createAdHocTaskContract,
   createTaskContract,
   reviseTaskContract,
@@ -618,3 +623,40 @@ export {
   type ProjectionService,
   type ProjectionServiceOptions,
 } from "./projection/projection-service.js";
+
+export {
+  DEFAULT_REVISION_REGISTRY_LIMIT,
+  WORKSPACE_REVISION_HANDLE_PREFIX,
+  computeWorkspaceRevisionHandle,
+  createWorkspaceRevisionRegistry,
+  type ObservedWorkspaceRead,
+  type WorkspaceRevisionHandle,
+  type WorkspaceRevisionIdentity,
+  type WorkspaceRevisionRegistry,
+  type WorkspaceRevisionRegistryOptions,
+} from "./workspace/workspace-revision.js";
+export {
+  WORKSPACE_READ_MODES,
+  isWorkspaceReadMode,
+  type WorkspaceReadMode,
+} from "./workspace/workspace-read-mode.js";
+export {
+  GDSCRIPT_STRUCTURE_LIMITS,
+  extractGDScriptStructure,
+  type GDScriptAnnotationInfo,
+  type GDScriptConstantInfo,
+  type GDScriptEnumInfo,
+  type GDScriptFunctionInfo,
+  type GDScriptParameter,
+  type GDScriptParserError,
+  type GDScriptPropertyInfo,
+  type GDScriptSignalInfo,
+  type GDScriptStructure,
+} from "./workspace/gdscript-structure.js";
+export {
+  DEFAULT_SUMMARY_MAX_BYTES,
+  DEFAULT_SUMMARY_NOTABLE_METHODS,
+  buildWorkspaceSummary,
+  type WorkspaceSummaryOptions,
+  type WorkspaceSummaryResult,
+} from "./workspace/workspace-summary.js";

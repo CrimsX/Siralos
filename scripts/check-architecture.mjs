@@ -182,6 +182,20 @@ function isCoreProjectionModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(PROJECTION_DIRECTORY + sep);
 }
 
+/**
+ * Stage 3 milestone 3: workspace revision identity (handles, registry) and
+ * GDScript structural extraction live in core below the CLI and provider
+ * adapters. The workspace layer is pure identity/parsing: no provider
+ * ports, no task-runtime mutation surface, no sandbox implementations, no
+ * checkpoint/mutation machinery (a summary can never mutate), and no Godot
+ * modules (the generic digest utility is allowed).
+ */
+const WORKSPACE_DIRECTORY = join("src", "workspace");
+
+function isCoreWorkspaceModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(WORKSPACE_DIRECTORY + sep);
+}
+
 /** The core module that may bridge the development workflow into tasks. */
 function isDevelopmentTaskBridge(packageRelativeFile) {
   return (
@@ -1222,7 +1236,43 @@ export function runChecks(root) {
               errors.push(`${location}: core must not import Node module ${specifier}`);
             }
           }
+          if (pkg.name === "@solaris/core" && isCoreWorkspaceModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: workspace revision modules must not depend on provider ports; revision identity is provider-neutral`,
+              );
+            }
+            if (specifier.startsWith("../tasks/task-runtime")) {
+              errors.push(
+                `${location}: workspace revision modules must not import the task runtime mutation surface; revisions are identity, not authority`,
+              );
+            }
+            if (specifier.startsWith("../security/sandbox-")) {
+              errors.push(
+                `${location}: workspace revision modules must not depend on sandbox implementations`,
+              );
+            }
+            if (
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../godot/development/") ||
+              specifier.startsWith("../tools/")
+            ) {
+              errors.push(
+                `${location}: workspace revision modules must not import mutation/checkpoint machinery; summary and structural views can never mutate files`,
+              );
+            }
+            if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
+              errors.push(
+                `${location}: workspace revision modules must not depend on Godot modules (the generic digest utility is allowed)`,
+              );
+            }
+          }
           if (pkg.name === "@solaris/core" && isCoreProjectionModule(packageRelativeFile)) {
+            if (specifier.startsWith("../workspace/workspace-revision")) {
+              errors.push(
+                `${location}: projection modules must not own workspace revisions; they consume revision handles as data only`,
+              );
+            }
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: projection modules must not depend on provider ports; projectors build provider-neutral inputs only`,
