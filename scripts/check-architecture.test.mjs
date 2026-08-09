@@ -665,4 +665,128 @@ describe("check-architecture", () => {
     ).toBe(false);
     expect(errors.some((error) => error.includes("string concatenation"))).toBe(false);
   });
+
+  it("allows --path only in the recovery runner and requires the recovery pairing", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'export const BASE = ["--headless", "--editor", "--recovery-mode"];\nexport function args(mirrorPath) {\n  return [...BASE, "--path", mirrorPath, "--quit-after", "120"];\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(false);
+    expect(errors.some((error) => error.includes("must pair the project path"))).toBe(false);
+    expect(errors.some((error) => error.includes("must pass --path"))).toBe(false);
+    expect(errors.some((error) => error.includes("literal path"))).toBe(false);
+    expect(errors.some((error) => error.includes("source workspace root"))).toBe(false);
+  });
+
+  it("rejects a literal project path in the recovery runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'export const ARGS = ["--headless", "--editor", "--recovery-mode", "--path", "/abs/path", "--quit-after", "120"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("literal path"))).toBe(true);
+  });
+
+  it("rejects the source workspace as the recovery project path", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'export function args(workspaceRoot) {\n  return ["--headless", "--editor", "--recovery-mode", "--path", workspaceRoot, "--quit-after", "120"];\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("source workspace root"))).toBe(true);
+  });
+
+  it("rejects missing recovery-mode pairing in the recovery runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'export const ARGS = ["--headless", "--editor", "--path", mirrorPath, "--quit-after", "120"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must pair the project path with --recovery-mode")),
+    ).toBe(true);
+  });
+
+  it("rejects script, scene, import, export, and debug options in the recovery runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'export const ARGS = ["--headless", "--editor", "--recovery-mode", "--path", mirrorPath, "--scene", "main.tscn", "--quit-after", "120"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("recovery runner must not pass"))).toBe(true);
+  });
+
+  it("catches a forbidden option built by string concatenation", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'const scene = "--" + "scene";\nexport const ARGS = ["--headless", "--editor", "--recovery-mode", "--path", mirrorPath, scene, "--quit-after", "120"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("recovery runner must not pass --scene"))).toBe(
+      true,
+    );
+    expect(
+      errors.some((error) => error.includes("must not be constructed by string concatenation")),
+    ).toBe(true);
+  });
+
+  it("rejects argument arrays imported from another module", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'import { RECOVERY_ARGS } from "./args.js";\nexport function args(mirrorPath) {\n  return [...RECOVERY_ARGS, "--path", mirrorPath, "--quit-after", "120"];\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not be imported (RECOVERY_ARGS"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects composing the tuple from an imported constant via spread", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'import { fixedHeadless } from "./args.js";\nexport function args(mirrorPath) {\n  return [...fixedHeadless, "--path", mirrorPath, "--quit-after", "120"];\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must not be composed from imported constants")),
+    ).toBe(true);
+  });
+
+  it("accepts a computed (non-literal) mirror path value", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-recovery-runner.ts"] =
+      'function mirrorOf(request) {\n  return request.mirrorProjectPath;\n}\nexport const ARGS = ["--headless", "--editor", "--recovery-mode", "--path", mirrorOf(request), "--quit-after", "120"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("literal path"))).toBe(false);
+    expect(errors.some((error) => error.includes("source workspace root"))).toBe(false);
+  });
+
+  it("keeps --path prohibited in the fixed probe runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-probe-runner.ts"] =
+      'export const ARGS = ["--headless", "--path", "/abs/path"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("project-affecting Godot arguments"))).toBe(true);
+  });
+
+  it("restricts the disposable mirror to the approved probe adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/tools/example-tool.ts"] =
+      'import { createProjectMirror } from "../mirror/project-mirror.js";\nexport const m = createProjectMirror();\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("disposable project mirror may only be used")),
+    ).toBe(true);
+  });
+
+  it("allows the probe service to use the disposable mirror", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/probe/service.ts"] =
+      'import { createProjectMirror } from "../mirror/project-mirror.js";\nexport const m = createProjectMirror();\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("disposable project mirror may only be used")),
+    ).toBe(false);
+  });
+
+  it("restricts the recovery runner to the approved probe adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/tools/example-tool.ts"] =
+      'import { createGodotRecoveryRunner } from "../process/godot-recovery-runner.js";\nexport const r = createGodotRecoveryRunner();\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("recovery runner may only be used"))).toBe(true);
+  });
 });

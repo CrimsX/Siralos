@@ -96,6 +96,40 @@ export { createGitDiffTool } from "./git/tools/git-diff-tool.js";
 export { createGodotInspector, type GodotInspectorDependencies } from "./godot/godot-inspector.js";
 export { createGodotProbeRunner } from "./godot/process/godot-probe-runner.js";
 export {
+  createGodotProjectProbeService,
+  GODOT_MIRROR_COPY_POLICY_VERSION,
+  GODOT_RECOVERY_EXECUTION_UNAVAILABLE_MESSAGE,
+  type GodotProjectProbeServiceDependencies,
+} from "./godot/probe/godot-project-probe-service.js";
+export {
+  scanAuthoredFiles,
+  computeAuthoredFileDigest,
+  type AuthoredFileEntry,
+  type AuthoredFileManifest,
+  type ScanAuthoredFilesOptions,
+} from "./godot/probe/authored-files.js";
+export {
+  classifyRecoveryDiagnostics,
+  classifyDiagnosticLine,
+  sanitizeDiagnosticText,
+  emptyRecoveryDiagnosticSummary,
+  type RecoveryDiagnosticLimits,
+  type RecoveryDiagnosticSummary,
+} from "./godot/probe/recovery-diagnostics.js";
+export {
+  canonicalizeGitStatus,
+  compareWorkspaceIntegrity,
+  snapshotWorkspaceIntegrity,
+  type WorkspaceIntegrityComparison,
+  type WorkspaceIntegritySnapshot,
+} from "./godot/probe/workspace-integrity.js";
+export {
+  createPreparedProbeStore,
+  type PreparedProbePlan,
+  type PreparedProbeStoreConfig,
+} from "./godot/probe/prepared-probe-store.js";
+export { createGodotProbeProjectTool } from "./godot/tools/godot-probe-project-tool.js";
+export {
   validateExecutable,
   revalidateExecutableIdentity,
   hashFile,

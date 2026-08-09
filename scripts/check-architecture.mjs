@@ -307,6 +307,11 @@ function isGodotProbeInvocationModule(packageRelativeFile, file) {
   if (isTestSupportFile(file)) {
     return false;
   }
+  // The recovery runner is the one legitimate operational user of the
+  // project path option and is governed by its own pairing rules below.
+  if (packageRelativeFile === GODOT_RECOVERY_RUNNER_FILE) {
+    return false;
+  }
   if (!packageRelativeFile.startsWith(join("src", "godot", "process") + sep)) {
     return false;
   }
@@ -381,6 +386,175 @@ function checkGodotProbeTupleDiscipline(
     );
   }
 }
+
+/**
+ * The recovery-mode editor probe is the one legitimate operational user of
+ * `--path`, scoped to a single module. The recovery module must pair the
+ * project path with `--editor`, `--headless`, and `--recovery-mode`, must
+ * never carry script/scene/import/export/LSP/DAP/debug options, must take
+ * the path value from the prepared mirror (never a literal string and never
+ * the workspace root), and must never construct argument arrays by string
+ * concatenation or import them from another module. These rules are
+ * enforced structurally over the module's array literals and string
+ * literal concatenation chains, so imported constants, concatenated
+ * strings, and spread arrays are caught, not just lexical spellings.
+ */
+const GODOT_RECOVERY_RUNNER_FILE = join("src", "godot", "process", "godot-recovery-runner.ts");
+
+const FORBIDDEN_GODOT_RECOVERY_ARGUMENTS = [
+  "--script",
+  "--scene",
+  "--import",
+  "--upwards",
+  "--export",
+  "--build-solutions",
+  "--lsp",
+  "--dap",
+  "--debug-server",
+  "--write-movie",
+  "--benchmark",
+  "--doctool",
+  "--main-pack",
+];
+
+const REQUIRED_GODOT_RECOVERY_ARGUMENTS = ["--editor", "--headless", "--recovery-mode"];
+
+/**
+ * Option tokens present in one source file: every string literal starting
+ * with `--` plus every adjacent string-literal concatenation chain starting
+ * with `--` (so `"--scr" + "ipt"` still surfaces as `--script`).
+ */
+function collectOptionTokens(file) {
+  const tokens = new Set();
+  const visit = (node) => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      if (node.text.startsWith("--")) {
+        tokens.add(node.text);
+      }
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      ts.isStringLiteral(node.left)
+    ) {
+      const chain = [];
+      let current = node;
+      while (
+        ts.isBinaryExpression(current) &&
+        current.operatorToken.kind === ts.SyntaxKind.PlusToken
+      ) {
+        const right = current.right;
+        if (ts.isStringLiteral(right) || ts.isNoSubstitutionTemplateLiteral(right)) {
+          chain.push(right.text);
+        } else {
+          chain.length = 0;
+          break;
+        }
+        current = current.left;
+      }
+      if (chain.length > 0) {
+        const head =
+          ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)
+            ? current.text
+            : "";
+        const joined = `${head}${[...chain].reverse().join("")}`;
+        if (joined.startsWith("--")) {
+          tokens.add(joined);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return tokens;
+}
+
+function checkGodotRecoveryRunner(packageRelativeFile, file, source, location, analysis, errors) {
+  if (packageRelativeFile !== GODOT_RECOVERY_RUNNER_FILE) {
+    return;
+  }
+  const parsed = parseSource(source);
+  const tokens = collectOptionTokens(parsed);
+  for (const token of REQUIRED_GODOT_RECOVERY_ARGUMENTS) {
+    if (!tokens.has(token)) {
+      errors.push(
+        `${location}: the Godot recovery runner must pair the project path with ${token}`,
+      );
+    }
+  }
+  for (const token of FORBIDDEN_GODOT_RECOVERY_ARGUMENTS) {
+    if (tokens.has(token)) {
+      errors.push(
+        `${location}: the Godot recovery runner must not pass ${token}; recovery-mode probing is the only allowed editor invocation`,
+      );
+    }
+  }
+  if (!tokens.has("--path")) {
+    errors.push(`${location}: the Godot recovery runner must pass --path to the disposable mirror`);
+  }
+  if (/["'`][^"'`\n]*["'`]\s*\+/.test(source) || /\+\s*["'`]/.test(source)) {
+    errors.push(
+      `${location}: the Godot recovery arguments must not be constructed by string concatenation`,
+    );
+  }
+  for (const imported of analysis.importedNames) {
+    if (/Arguments$|_ARGS$/i.test(imported.originalName)) {
+      errors.push(
+        `${location}: probe argument arrays must not be imported (${imported.originalName} from ${imported.module}); the fixed recovery tuple must be built in the recovery runner module`,
+      );
+    }
+  }
+  const visit = (node) => {
+    if (ts.isArrayLiteralExpression(node)) {
+      const strings = new Set();
+      const spreads = [];
+      let pathValue = null;
+      const elements = node.elements;
+      for (let index = 0; index < elements.length; index += 1) {
+        const element = elements[index];
+        if (ts.isStringLiteral(element) || ts.isNoSubstitutionTemplateLiteral(element)) {
+          strings.add(element.text);
+          if (element.text === "--path") {
+            pathValue = elements[index + 1];
+          }
+        } else if (ts.isSpreadElement(element)) {
+          spreads.push(element.expression.getText(parsed));
+        }
+      }
+      if (strings.has("--path")) {
+        for (const spread of spreads) {
+          if (analysis.importedNames.some((entry) => entry.local === spread)) {
+            errors.push(
+              `${location}: recovery argument arrays must not be composed from imported constants (${spread}); the fixed tuple must be built in the recovery runner module`,
+            );
+          }
+        }
+        if (pathValue !== null) {
+          if (ts.isStringLiteral(pathValue) || ts.isNoSubstitutionTemplateLiteral(pathValue)) {
+            errors.push(
+              `${location}: the Godot project path must come from the prepared disposable mirror, never from a literal path`,
+            );
+          } else {
+            const valueText = pathValue.getText(parsed);
+            if (/\bworkspaceRoot\b/.test(valueText)) {
+              errors.push(
+                `${location}: the Godot project path must never be the source workspace root`,
+              );
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+}
+
+/** Modules that may use the disposable mirror or the recovery runner. */
+const GODOT_RECOVERY_APPROVED_USERS = [
+  join("src", "godot", "probe"),
+  join("src", "godot", "mirror"),
+  join("src", "godot", "process"),
+];
 
 /**
  * Structural scan of one source file. Returns import bindings (named,
@@ -548,6 +722,7 @@ export function runChecks(root) {
             analysis,
             errors,
           );
+          checkGodotRecoveryRunner(packageRelativeFile, file, source, location, analysis, errors);
           for (const imported of analysis.destructiveFsImports) {
             if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
               errors.push(
@@ -658,6 +833,34 @@ export function runChecks(root) {
             }
             if (inSandbox && isUnder(target, join(pkg.path, "src", "providers"))) {
               errors.push(`${location}: sandbox adapters must not import provider adapters`);
+            }
+            if (!isTestSupportFile(file)) {
+              const mirrorRoot = join(pkg.path, "src", "godot", "mirror");
+              const recoveryRunner = join(
+                pkg.path,
+                "src",
+                "godot",
+                "process",
+                "godot-recovery-runner.ts",
+              );
+              const isRecoveryUser = GODOT_RECOVERY_APPROVED_USERS.some((directory) =>
+                packageRelativeFile.startsWith(directory + sep),
+              );
+              if (!isRecoveryUser) {
+                if (isUnder(target, mirrorRoot)) {
+                  errors.push(
+                    `${location}: the disposable project mirror may only be used by the approved Godot probe adapter`,
+                  );
+                }
+                if (
+                  target === recoveryRunner ||
+                  target === recoveryRunner.replace(/\.ts$/, ".js")
+                ) {
+                  errors.push(
+                    `${location}: the Godot recovery runner may only be used by the approved Godot probe adapter`,
+                  );
+                }
+              }
             }
           }
           if (pkg.name === "@solaris/cli" && specifier.startsWith("@solaris/adapters")) {

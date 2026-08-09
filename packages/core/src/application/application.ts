@@ -629,7 +629,10 @@ export function createSolarisApplication(
         toolName,
         message: prepared.message,
       };
-      return { status: prepared.status, message: prepared.message };
+      return {
+        status: prepared.status === "unsupported" ? "failed" : prepared.status,
+        message: prepared.message,
+      };
     }
     const { probe, preview, digest } = prepared;
     if (permission.decision === "ask") {

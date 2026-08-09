@@ -17,7 +17,7 @@ export type GodotProbeToolPreparationResult =
       readonly digest: string;
     }
   | {
-      readonly status: "unavailable" | "cancelled" | "invalid_input" | "failed";
+      readonly status: "unavailable" | "unsupported" | "cancelled" | "invalid_input" | "failed";
       readonly message: string;
     };
 
