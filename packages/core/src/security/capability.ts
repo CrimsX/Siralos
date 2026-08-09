@@ -9,7 +9,15 @@ export type Capability =
   | "godot.lsp"
   | "godot.development"
   | "process.execute"
-  | "network.outbound";
+  | "network.outbound"
+  // Read-only external reference inspection (Stage 3 milestone 5).
+  // Bounded external research retrieval (Stage 3 milestone 5): a separate
+  // capability so research is independently projectable/gated. Built-in
+  // profiles deny it (research stays hidden unless a higher policy
+  // explicitly permits it); unlike network.outbound there is no profile
+  // constraint — the policy rule is the gate.
+  | "reference.inspect"
+  | "research.fetch";
 
 export type PermissionRule = "allow" | "ask" | "deny";
 

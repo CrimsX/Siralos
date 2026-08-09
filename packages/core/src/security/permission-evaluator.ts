@@ -48,6 +48,12 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       return null;
     case "network.outbound":
       return "No built-in sandbox profile enables outbound network access.";
+    case "research.fetch":
+      // Bounded research retrieval is an application-level capability: the
+      // policy rule is the gate (denied by every built-in profile). No
+      // profile constraint applies — the research service itself enforces
+      // bounds, cancellation, and provenance.
+      return null;
     case "workspace.write":
       if (profile.filesystem.workspaceAccess === "read-only") {
         return `Profile ${profile.id} provides read-only workspace access.`;
@@ -98,6 +104,13 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // development workflow itself is approved by the CLI's one-time
       // reviewer and every source mutation stays gated by
       // workspace.write. No additional profile constraint applies.
+      return null;
+    case "reference.inspect":
+      // External reference inspection is read-only (list/read/search over
+      // materialized references) and never mutates, executes, or reaches
+      // the network; research fetches are gated separately by
+      // network.outbound (denied by every built-in profile). No profile
+      // constraint applies beyond the policy rule.
       return null;
   }
 }
