@@ -106,7 +106,23 @@ function isTestSupportFile(file) {
   return (
     file.endsWith(".test.ts") ||
     file.endsWith("workspace-fixtures.ts") ||
-    file.endsWith("git-test-support.ts")
+    file.endsWith("git-test-support.ts") ||
+    file.endsWith("gdscript-development-testing.ts")
+  );
+}
+
+/**
+ * The GDScript development workflow orchestrator (and the change-set
+ * executor) must stay Node-infrastructure-free: filesystem reads belong
+ * to the change-set preparation module, identity-bound application
+ * belongs to the applier's primitives seam, and sockets/processes belong
+ * to the LSP and sandbox adapters. The orchestrator only composes ports.
+ */
+function isDevelopmentWorkflowOrchestrator(packageRelativeFile) {
+  return (
+    packageRelativeFile ===
+      join("src", "godot", "development", "gdscript-development-service.ts") ||
+    packageRelativeFile === join("src", "godot", "development", "change-set-executor.ts")
   );
 }
 
@@ -1024,6 +1040,21 @@ export function runChecks(root) {
             errors.push(
               `${location}: LSP mutation methods must never be implemented; applyEdit/executeCommand are rejected at the server-request boundary and never referenced in runtime adapter code`,
             );
+          }
+          if (isDevelopmentWorkflowOrchestrator(packageRelativeFile)) {
+            for (const specifier of analysis.imports) {
+              if (
+                specifier === "node:fs" ||
+                specifier === "node:fs/promises" ||
+                specifier === "node:net" ||
+                specifier === "node:child_process" ||
+                specifier === "node:path"
+              ) {
+                errors.push(
+                  `${location}: the GDScript development workflow orchestrator must not import ${specifier}; filesystem, socket, and process concerns stay in the approved change-set preparation and applier modules`,
+                );
+              }
+            }
           }
           if (containsForbiddenGitMutationToken(source)) {
             errors.push(

@@ -947,3 +947,69 @@ describe("check-architecture Godot LSP boundaries", () => {
     ).toBe(true);
   });
 });
+
+describe("check-architecture development workflow boundaries", () => {
+  it("accepts a clean development workflow orchestrator", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/development/gdscript-development-service.ts"] =
+      'import type { GDScriptDevelopmentService } from "@solaris/core";\nexport const create = (): GDScriptDevelopmentService => ({}) as never;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects filesystem imports in the workflow orchestrator", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/development/gdscript-development-service.ts"] =
+      'import { readFileSync } from "node:fs";\nexport const x = readFileSync;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("GDScript development workflow orchestrator must not import node:fs"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects path imports in the change-set executor", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/development/change-set-executor.ts"] =
+      'import { join } from "node:path";\nexport const x = join;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("GDScript development workflow orchestrator must not import node:path"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects socket imports in the workflow orchestrator", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/development/gdscript-development-service.ts"] =
+      'import { createServer } from "node:net";\nexport const x = createServer;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("GDScript development workflow orchestrator must not import node:net"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects core importing the development workflow Node-free contract violation", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/godot/development/development-model.ts"] =
+      'import { readFileSync } from "node:fs";\nexport const x = readFileSync;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("core must not import Node module"))).toBe(true);
+  });
+
+  it("still rejects raw process execution in the workflow orchestrator", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/development/gdscript-development-service.ts"] =
+      'import { spawnSync } from "node:child_process";\nexport const x = spawnSync;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("GDScript development workflow orchestrator must not import node:child_process"),
+      ),
+    ).toBe(true);
+  });
+});
