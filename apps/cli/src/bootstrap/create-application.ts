@@ -62,9 +62,12 @@ import {
   capabilityPolicyFingerprint,
   createCommandRunnerRegistry,
   createDefaultPolicy,
+  createProjectionService,
+  createRouteContextCapacity,
   createSolarisApplication,
   createSolarisSecurity,
   createTaskRuntime,
+  createToolProjector,
   createToolRegistry,
   getBuiltInProfile,
   VALIDATION_OFFLINE_PROFILE,
@@ -81,6 +84,7 @@ import {
   type ModelProvider,
   type RegisteredToolInfo,
   type SandboxBackend,
+  type ProjectionService,
   type SolarisApplication,
   type SolarisSecurity,
   type TaskRuntime,
@@ -104,6 +108,7 @@ export interface CliApplication {
   readonly workspaceRoot: string;
   readonly tasks: TaskRuntime;
   readonly taskSources: TaskRuntimeSnapshotSources;
+  readonly projection: ProjectionService;
   readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
   readonly sandbox: SandboxBackend;
@@ -288,6 +293,7 @@ export async function createCliApplication(
     reviewer,
     processTool,
     reviewProviderId: config.quality.reviewProvider,
+    toolProjector: createToolProjector({ policy, profile }),
     // Late-bound: the reviewer's read-only LSP query tools consult the
     // workflow's language-query gate, which exists only after the
     // development service is created (no composition cycle).
@@ -353,11 +359,19 @@ export async function createCliApplication(
     godotEngineFingerprint: null,
     workflow: null,
   };
+  const projection = createProjectionService({
+    policy,
+    profile,
+    capacity: createRouteContextCapacity("develop-offline"),
+    getTaskSnapshot: () => tasks.latestTask()?.snapshot() ?? null,
+    getTaskRequest: () => tasks.latestTask()?.contract().request ?? null,
+  });
   const application = createSolarisApplication({
     provider,
     tools: registry,
     policy,
     profile,
+    projection,
     ...(options.reviewer === undefined ? {} : { reviewer: options.reviewer }),
     onProviderTurnCompleted: () => {
       development.completeFromProviderTurn();
@@ -369,6 +383,7 @@ export async function createCliApplication(
     workspaceRoot,
     tasks,
     taskSources,
+    projection,
     tools: registry.definitions(),
     security,
     sandbox,
@@ -411,6 +426,7 @@ function buildQualityStage(options: {
   readonly reviewer: ApprovalReviewer;
   readonly processTool: import("@solaris/core").PreparedCommandTool;
   readonly reviewProviderId: string | null;
+  readonly toolProjector: import("@solaris/core").ToolProjector;
   readonly languageQueryGate: () => { readonly blocked: boolean; readonly message: string | null };
 }): NonNullable<Parameters<typeof createGDScriptDevelopmentService>[0]["qualityStage"]> {
   const resolved = resolveReviewProviderId({
@@ -432,6 +448,7 @@ function buildQualityStage(options: {
       language: options.language,
       languageQueryGate: options.languageQueryGate,
     }),
+    toolProjector: options.toolProjector,
   });
   return {
     reviewer,

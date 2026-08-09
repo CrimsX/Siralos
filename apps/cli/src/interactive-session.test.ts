@@ -3,6 +3,8 @@ import { parseInput } from "./input/parse-input.js";
 import {
   TASK_RUNTIME_VERSION,
   createCommandRunnerRegistry,
+  createProjectionService,
+  createRouteContextCapacity,
   createDefaultPolicy,
   createPreparedCommand,
   createSolarisApplication,
@@ -110,6 +112,7 @@ async function createComposedSession(lines: readonly string[]) {
     development,
     tasks,
     taskSources,
+    projection,
     checkpoints,
     undo,
     runners,
@@ -119,6 +122,7 @@ async function createComposedSession(lines: readonly string[]) {
     workspaceRoot,
     tasks,
     taskSources,
+    projection,
     tools,
     security,
     git,
@@ -230,6 +234,11 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       godotEngineFingerprint: null,
       workflow: null,
     },
+    projection: createProjectionService({
+      policy: createDefaultPolicy("develop-offline"),
+      profile: DEVELOP_OFFLINE_PROFILE,
+      capacity: createRouteContextCapacity("develop-offline"),
+    }),
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",

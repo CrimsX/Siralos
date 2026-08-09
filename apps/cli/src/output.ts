@@ -31,6 +31,7 @@ import type {
   GodotProbePreview,
   GodotRecoveryProbeResult,
   GodotSelectedInstallation,
+  ProjectionService,
   QualityStatus,
   RegisteredToolInfo,
   SandboxBackendStatus,
@@ -1809,4 +1810,41 @@ Review: ${task.reviewStatus}
 Progress: ${describeTaskProgress(task.progress)} (${task.progress.usefulObservations} useful observations)
 ${completionLine}
 `;
+}
+
+/** Read-only projection observability: sizes, pressure, tool ABI. */
+export function formatContextStatus(projection: ProjectionService): string {
+  const last = projection.lastProjection();
+  if (last === null) {
+    return "Context projection: not yet computed (send a prompt first)\n";
+  }
+  const context = last.contextProjection;
+  const stableBytes = context.stableSegments.reduce((sum, segment) => sum + segment.bytes, 0);
+  const contextualBytes = context.contextualSegments.reduce(
+    (sum, segment) => sum + segment.bytes,
+    0,
+  );
+  const volatileBytes = context.volatileSegments.reduce((sum, segment) => sum + segment.bytes, 0);
+  const pressure = last.pressure;
+  const tool = last.toolProjection;
+  return [
+    `Context projection (mode ${last.mode})`,
+    `  Stable: ${stableBytes} B (fingerprint ${context.stableFingerprint.slice(0, 8)})`,
+    `  Contextual: ${contextualBytes} B`,
+    `  Volatile: ${volatileBytes} B`,
+    `  Estimated: ${last.estimatedTokens} tokens / ${pressure.workingMaximum} working`,
+    `  Pressure: ${pressure.state} (${Math.round(pressure.ratio * 100)}%)`,
+    `  Tool ABI: ${tool.fingerprint.slice(0, 8)} (${tool.counts.available} available, ${tool.counts.gated} gated, ${tool.counts.hidden} hidden)`,
+    "",
+  ].join("\n");
+}
+
+/** Compact tool projection summary for /tools. */
+export function formatToolProjection(projection: ProjectionService): string {
+  const last = projection.lastProjection();
+  if (last === null) {
+    return "Tool projection: not yet computed\n";
+  }
+  const tool = last.toolProjection;
+  return `Tool projection: ${tool.counts.available} available, ${tool.counts.gated} gated, ${tool.counts.hidden} hidden (ABI ${tool.fingerprint.slice(0, 8)})\n`;
 }

@@ -17,6 +17,8 @@ import type {
   SandboxBackendStatus,
   SolarisApplication,
   SolarisSecurity,
+  ProjectionMode,
+  ProjectionService,
   TaskRuntime,
   TaskRuntimeSnapshotSources,
   UndoService,
@@ -38,6 +40,7 @@ import {
   formatCommandStarted,
   formatCommandTerminal,
   formatCommands,
+  formatContextStatus,
   formatDevelopmentResult,
   formatDevelopmentStartPreview,
   formatDevelopmentStatus,
@@ -74,6 +77,7 @@ import {
   formatStatus,
   formatToolCancelled,
   formatToolCompleted,
+  formatToolProjection,
   formatToolFailed,
   formatTools,
   formatToolStarted,
@@ -107,6 +111,7 @@ export interface SessionInfo {
   readonly sandbox: SandboxBackend;
   readonly tasks: TaskRuntime;
   readonly taskSources: TaskRuntimeSnapshotSources;
+  readonly projection: ProjectionService;
 }
 
 /** The host-owned task flow of the active /develop run, if any. */
@@ -192,6 +197,7 @@ export async function runInteractiveSession(
             break;
           case "tools":
             io.write(formatTools(sessionInfo.tools, sessionInfo.security));
+            io.write(formatToolProjection(sessionInfo.projection));
             break;
           case "sandbox":
             await runSandboxCheck(io, sessionInfo.security);
@@ -277,12 +283,16 @@ export async function runInteractiveSession(
             break;
           case "development-status":
             io.write(formatDevelopmentStatus(sessionInfo.development.status()));
+            io.write(formatContextStatus(sessionInfo.projection));
             break;
           case "task":
             runTaskCommand(io, sessionInfo, parsed.args);
             break;
           case "task-status":
             io.write(runTaskStatusCommand(sessionInfo));
+            break;
+          case "context":
+            io.write(formatContextStatus(sessionInfo.projection));
             break;
           case "quality":
             io.write(formatQualityReport(sessionInfo.development.qualityReport()));
@@ -532,7 +542,9 @@ async function runDevelopCommand(
   } finally {
     controls.endPrompt();
   }
-  await runPrompt(io, application, request, controls, inputBuffer, inputQueue, sessionInfo.tasks);
+  await runPrompt(io, application, request, controls, inputBuffer, inputQueue, sessionInfo.tasks, {
+    mode: "development",
+  });
   const status = sessionInfo.development.status();
   if (status.session !== null && status.session.state.kind === "terminal") {
     const result = await sessionInfo.development.cancel();
@@ -1153,6 +1165,7 @@ async function runPrompt(
   inputBuffer: string[],
   inputQueue?: InputQueue,
   tasks?: TaskRuntime,
+  options?: { readonly mode?: ProjectionMode },
 ): Promise<void> {
   const controller = controls.beginPrompt();
   let busy: Promise<void> | undefined;
@@ -1160,7 +1173,7 @@ async function runPrompt(
   let promptFinished = false;
   let commandRenderer: CommandOutputRenderer | undefined;
   try {
-    for await (const event of application.sendPrompt(text, controller.signal)) {
+    for await (const event of application.sendPrompt(text, controller.signal, options)) {
       switch (event.type) {
         case "response_started":
           io.write("\n");
@@ -1224,6 +1237,13 @@ async function runPrompt(
           io.write(
             `\u25CF Checkpoint ${event.checkpointId} recorded (${sanitizePathForDisplay(event.path)})\n`,
           );
+          break;
+        case "context_pressure":
+          if (event.state !== "normal") {
+            io.write(
+              `  \u26A0 context pressure ${event.state}: ${event.estimatedTokens} est. tokens / ${event.workingMaximum} working\n`,
+            );
+          }
           break;
         case "command_prepared":
           break;

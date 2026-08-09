@@ -6,6 +6,7 @@ import type {
   ModelProvider,
   RegisteredTool,
   ToolExecutionResult,
+  ToolProjector,
   ToolRegistry,
 } from "@solaris/core";
 import {
@@ -42,6 +43,13 @@ export interface ProviderChangeReviewerOptions {
   readonly providerFactory: () => ModelProvider;
   /** Read-only tool registry for the reviewer (composition-root owned). */
   readonly tools: ToolRegistry;
+  /**
+   * Host-owned tool projection (review mode). When provided, the reviewer
+   * request is projected through it — mutation and process tools are
+   * hidden by the mode allowlist even if they were ever registered; the
+   * adapter never makes its own visibility decisions.
+   */
+  readonly toolProjector?: ToolProjector;
   readonly timeoutMs?: number;
   readonly maxToolRounds?: number;
   /** Bounded collected assistant text per review. */
@@ -77,7 +85,13 @@ export function createProviderChangeReviewer(
       const prompt = buildReviewPrompt(request);
       const messages: ConversationItem[] = [{ type: "user_message", content: prompt }];
       const provider = options.providerFactory();
-      const tools = options.tools.definitions().map((info) => info.definition);
+      const tools =
+        options.toolProjector === undefined
+          ? options.tools.definitions().map((info) => info.definition)
+          : options.toolProjector.project({
+              mode: "review",
+              registeredTools: options.tools.definitions(),
+            }).requestTools;
       for (let round = 0; round < maxToolRounds; round += 1) {
         // A stalled provider stream must never block the review: the turn
         // is raced against the abort signal (timeout or caller abort).
