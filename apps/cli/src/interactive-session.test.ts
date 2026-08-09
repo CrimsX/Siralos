@@ -19,6 +19,7 @@ import {
   type GitStatusResult,
   type GitWorkspaceStatus,
   type GodotCompatibilityAssessment,
+  type GDScriptDevelopmentService,
   type GDScriptLanguageService,
   type GDScriptLSPSessionPreview,
   type GodotDiagnostics,
@@ -102,6 +103,7 @@ async function createComposedSession(lines: readonly string[]) {
     knowledge,
     diagnostics,
     language,
+    development,
     checkpoints,
     undo,
     runners,
@@ -117,6 +119,7 @@ async function createComposedSession(lines: readonly string[]) {
     knowledge,
     diagnostics,
     language,
+    development,
     reviewer: {
       review(): Promise<{ type: "deny"; reason: string }> {
         return Promise.resolve({ type: "deny", reason: "not configured" });
@@ -208,6 +211,7 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     checkpoints: createStubCheckpointStore(),
     undo: createStubUndo(),
     runners: createCommandRunnerRegistry([]),
+    development: createStubDevelopmentService(),
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",
@@ -222,6 +226,26 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       },
     }),
     ...overrides,
+  };
+}
+
+function createStubDevelopmentService(): GDScriptDevelopmentService {
+  return {
+    support: () =>
+      Promise.resolve({ state: "unavailable", reason: "stub: development unavailable", platform: "linux" }),
+    prepareStart: () => Promise.resolve({ status: "unavailable", message: "stub unavailable" }),
+    start: () => Promise.resolve({ status: "unavailable", message: "stub unavailable" }),
+    status: () => ({
+      support: { available: false, reason: "stub: development unavailable", platform: "linux" },
+      session: null,
+    }),
+    prepareChangeSet: () => Promise.resolve({ status: "unavailable", message: "stub unavailable" }),
+    applyChangeSet: () => Promise.resolve({ status: "unavailable", message: "stub unavailable", result: null }),
+    languageQueryGate: () => ({ blocked: false, message: null }),
+    validationStatus: () => null,
+    completeFromProviderTurn: () => undefined,
+    cancel: () => Promise.resolve({ status: "inactive", message: "no active workflow" }),
+    close: () => Promise.resolve(),
   };
 }
 
@@ -605,8 +629,10 @@ describe("runInteractiveSession tool activity", () => {
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Workspace:");
     // git.status and git.diff are always registered; the adapter gates
-    // availability (unavailable backends never execute Git).
-    expect(io.text).toContain("Tools: 21");
+    // availability (unavailable backends never execute Git). The
+    // development workflow adds workspace.apply_text_changeset and
+    // godot.development_status to the registered tool count.
+    expect(io.text).toContain("Tools: 23");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
@@ -1726,5 +1752,102 @@ describe("runInteractiveSession GDScript language commands", () => {
     expect(io.text).toContain("LSP mutations        disabled");
     expect(io.text).toContain("approval approved");
     expect(io.text).toContain("GDScript language session stopped.");
+  });
+});
+
+describe("runInteractiveSession development workflow commands", () => {
+  it("rejects an empty /develop request with usage", async () => {
+    const io = new ScriptedIO(["/develop", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Usage: /develop <request>");
+  });
+
+  it("refuses /develop before any approval when the workflow is unavailable", async () => {
+    const io = new ScriptedIO(["/develop fix the parser", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("unavailable");
+    expect(io.text).not.toContain("approval approved");
+  });
+
+  it("shows /development-status with no active workflow", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      status: () => ({
+        support: { available: true, reason: null, platform: "linux" },
+        session: null,
+      }),
+    };
+    const io = new ScriptedIO(["/development-status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo({ development });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("No development workflow is active");
+  });
+
+  it("shows /development-status with a bounded active workflow view", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      status: () => ({
+        support: { available: true, reason: null, platform: "linux" },
+        session: {
+          id: "wf-1",
+          request: "fix the player parser",
+          state: { kind: "active", phase: "reviewing" },
+          iteration: 1,
+          maxIterations: 4,
+          repairProposalsRemaining: 3,
+          validation: "clean",
+          appliedChangeSets: 1,
+          errors: 0,
+          warnings: 1,
+        },
+      }),
+    };
+    const io = new ScriptedIO(["/development-status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo({ development });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("State: reviewing");
+    expect(io.text).toContain("Iteration: 1 / 4");
+    expect(io.text).toContain("Validation: clean");
+    expect(io.text).toContain("Repair proposals remaining: 3");
+  });
+
+  it("cancels an active development workflow and reports the truthful result", async () => {
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      status: () => ({
+        support: { available: true, reason: null, platform: "linux" },
+        session: {
+          id: "wf-1",
+          request: "fix the player parser",
+          state: { kind: "active", phase: "investigating" },
+          iteration: 0,
+          maxIterations: 4,
+          repairProposalsRemaining: 3,
+          validation: null,
+          appliedChangeSets: 0,
+          errors: 0,
+          warnings: 0,
+        },
+      }),
+      cancel: () =>
+        Promise.resolve({
+          status: "cancelled",
+          result: {
+            status: "cancelled",
+            iterations: 0,
+            changes: [],
+            diagnostics: { errors: 0, warnings: 0 },
+            validation: { parser: true, lsp: true, workspaceIntegrity: true },
+            checkpointIds: [],
+          },
+        }),
+    };
+    const io = new ScriptedIO(["/cancel", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo({ development });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("cancelled");
+    expect(io.text).toContain("Iterations: 0");
   });
 });

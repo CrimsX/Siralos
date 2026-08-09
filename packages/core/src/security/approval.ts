@@ -3,6 +3,7 @@ import type { CommandPreview } from "../commands/command-runners.js";
 import type { GodotProbePreview } from "../godot/probe.js";
 import type { GodotDiagnosticPreview } from "../godot/gdscript.js";
 import type { GDScriptLSPSessionPreview } from "../godot/lsp.js";
+import type { GDScriptDevelopmentPreview } from "../godot/development/development-model.js";
 
 export interface WorkspaceWriteApprovalRequest {
   readonly id: string;
@@ -79,12 +80,31 @@ export interface GodotLSPSessionApprovalRequest {
   readonly digest: string;
 }
 
+export interface GDScriptDevelopmentApprovalRequest {
+  readonly id: string;
+  readonly capability: "godot.development";
+  readonly toolName: string;
+  readonly summary: string;
+  /**
+   * The immutable development-workflow preview: the request text, the
+   * project and engine fingerprints, and the immutable iteration limits.
+   * This one-time approval covers the read-only validation context (LSP
+   * recreation after approved edits, check-only parsing, API lookup,
+   * workspace and Git inspection); every source change set still requires
+   * its own exact one-time approval.
+   */
+  readonly preview: GDScriptDevelopmentPreview;
+  /** SHA-256 over the immutable workflow start; approval binds to it. */
+  readonly digest: string;
+}
+
 export type ApprovalRequest =
   | WorkspaceWriteApprovalRequest
   | ProcessExecutionApprovalRequest
   | GodotProjectProbeApprovalRequest
   | GodotDiagnosticApprovalRequest
-  | GodotLSPSessionApprovalRequest;
+  | GodotLSPSessionApprovalRequest
+  | GDScriptDevelopmentApprovalRequest;
 
 export type ApprovalDecision =
   | {

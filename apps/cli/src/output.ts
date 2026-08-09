@@ -5,6 +5,9 @@ import type {
   CommandAuditRecord,
   CommandRunnerDefinition,
   FileCheckpoint,
+  GDScriptDevelopmentPreview,
+  GDScriptDevelopmentStatus,
+  GDScriptDevelopmentResult,
   GitDiffResult,
   GitStatusResult,
   GitWorkspaceStatus,
@@ -42,6 +45,7 @@ const CAPABILITIES: readonly Capability[] = [
   "git.inspect",
   "godot.inspect",
   "godot.probe_project",
+  "godot.development",
   "process.execute",
   "network.outbound",
 ];
@@ -83,6 +87,8 @@ export function formatHelp(): string {
   /gdscript-hover <path> <line> <column>  Hover information from the language session
   /gdscript-complete <path> <line> <column>  Completion candidates from the language session
   /gdscript-definition <path> <line> <column>  Definition locations from the language session
+  /develop <request>  Start one GDScript development workflow (one-time approval; each source change is approved separately)
+  /development-status  Show the active development workflow's bounded status
   /exit              Close Solaris
 `;
 }
@@ -277,6 +283,9 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   }
   if (request.capability === "godot.lsp") {
     return formatGodotLSPSessionApprovalPrompt(request);
+  }
+  if (request.capability === "godot.development") {
+    return formatDevelopmentStartPreview(request.preview);
   }
   const file = request.preview.files[0];
   const lines = [
@@ -1439,3 +1448,107 @@ export function describeError(error: unknown): string {
   }
   return "An unexpected error occurred.";
 }
+
+/** Workflow-start approval preview (§21 shape). */
+export function formatDevelopmentStartPreview(preview: GDScriptDevelopmentPreview): string {
+  const lines = [
+    "Development workflow approval",
+    "",
+    `Request: ${preview.request}`,
+    "",
+    "Files: (no source changes yet; each proposed change set is approved separately)",
+    "",
+    "Authorization (read-only validation context):",
+    "  LSP recreation after approved edits  covered",
+    "  --check-only parser validation      covered",
+    "  Godot API lookup                     covered",
+    "  workspace inspection                 covered",
+    "  Git inspection                       covered",
+    "  source writes                        each change set approved separately",
+    "  network                              denied",
+    "  game execution                       disabled",
+    "",
+    `Project fingerprint: ${preview.projectFingerprint.slice(0, 12)}…`,
+    `Engine: ${preview.engineVersion ?? "no selected engine"}`,
+    `Iteration limit: ${preview.limits.maxIterations} (${preview.limits.maxRepairProposals} repairs)`,
+    "",
+    "Approve this development workflow once? [y/N]",
+  ];
+  return lines.join("\n");
+}
+
+/** Bounded workflow status for /development-status (§38). */
+export function formatDevelopmentStatus(status: GDScriptDevelopmentStatus): string {
+  if (status.session === null) {
+    return status.support.available
+      ? "No development workflow is active. Start one with /develop <request>."
+      : `The GDScript development workflow is unavailable: ${status.support.reason ?? "unknown reason"}`;
+  }
+  const session = status.session;
+  const state =
+    session.state.kind === "active" ? session.state.phase : session.state.status;
+  const validation =
+    session.validation === null
+      ? "not yet run"
+      : session.validation === "clean"
+        ? "clean"
+        : session.validation === "warnings"
+          ? "warnings"
+          : session.validation === "errors"
+            ? "errors"
+            : session.validation === "infrastructure_failure"
+              ? "infrastructure failure"
+              : "cancelled";
+  return `State: ${state}
+Request: ${session.request}
+Iteration: ${session.iteration} / ${session.maxIterations}
+Applied change sets: ${session.appliedChangeSets}
+Validation: ${validation}
+Diagnostics: ${session.errors} error(s), ${session.warnings} warning(s)
+Repair proposals remaining: ${session.repairProposalsRemaining}`;
+}
+
+/** Final development result summary for the CLI (§35, §38). */
+export function formatDevelopmentResult(result: GDScriptDevelopmentResult): string {
+  const changed = result.changes.map((change) => `  ${operationMark(change.operation)} ${change.path}`).join("\n");
+  const lines = [
+    `Development workflow ${describeDevelopmentStatus(result.status)}`,
+    `Iterations: ${result.iterations}`,
+    `Changed:`,
+    changed.length > 0 ? changed : "  (no source changes)",
+    `Diagnostics: ${result.diagnostics.errors} error(s), ${result.diagnostics.warnings} warning(s)`,
+    `Validation: parser ${result.validation.parser ? "passed" : "failed"}, LSP ${result.validation.lsp ? "started" : "failed"}, workspace integrity ${result.validation.workspaceIntegrity ? "verified" : "not verified"}`,
+    `Checkpoints: ${result.checkpointIds.length > 0 ? result.checkpointIds.map((id) => id.slice(0, 8)).join(", ") : "(none)"}`,
+  ];
+  return lines.join("\n");
+}
+
+function operationMark(operation: "create" | "update" | "delete"): string {
+  return operation === "create" ? "A" : operation === "update" ? "M" : "D";
+}
+
+function describeDevelopmentStatus(status: string): string {
+  switch (status) {
+    case "completed":
+      return "complete";
+    case "completed_with_warnings":
+      return "complete (with warnings)";
+    case "completed_with_errors":
+      return "complete (with validation errors)";
+    case "denied":
+      return "denied; no source change was applied";
+    case "conflict":
+      return "stopped on a conflict; nothing stale was applied";
+    case "cancelled":
+      return "cancelled; approved changes (if any) remain";
+    case "apply_failed":
+      return "failed to apply a change set";
+    case "validation_failed":
+      return "validation infrastructure failed; approved source changes remain";
+    case "unavailable":
+      return "unavailable on this platform; nothing was changed";
+    default:
+      return status;
+  }
+}
+

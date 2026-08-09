@@ -2,6 +2,7 @@ import type {
   ApprovalReviewer,
   CheckpointStore,
   CommandRunnerRegistry,
+  GDScriptDevelopmentService,
   GDScriptLanguageService,
   GitInspector,
   GodotDiagnostics,
@@ -28,6 +29,9 @@ import {
   formatCommandStarted,
   formatCommandTerminal,
   formatCommands,
+  formatDevelopmentResult,
+  formatDevelopmentStartPreview,
+  formatDevelopmentStatus,
   formatGitDiff,
   formatGitStatus,
   formatGodotDoctor,
@@ -82,6 +86,7 @@ export interface SessionInfo {
   readonly knowledge: GodotKnowledge;
   readonly diagnostics: GodotDiagnostics;
   readonly language: GDScriptLanguageService;
+  readonly development: GDScriptDevelopmentService;
   readonly reviewer: ApprovalReviewer;
   readonly checkpoints: CheckpointStore;
   readonly undo: UndoService;
@@ -233,8 +238,14 @@ export async function runInteractiveSession(
           case "gdscript-definition":
             await runGDScriptPositionCommand(io, sessionInfo, "definition", parsed.args);
             break;
+          case "develop":
+            await runDevelopCommand(io, application, sessionInfo, controls, parsed.args, inputBuffer, inputQueue);
+            break;
+          case "development-status":
+            io.write(formatDevelopmentStatus(sessionInfo.development.status()));
+            break;
           case "cancel":
-            io.write(formatNoActiveCommand());
+            await runCancelCommand(io, sessionInfo, controls);
             break;
           case "exit":
             return 0;
@@ -370,6 +381,120 @@ function describeProjectProbe(status: {
 
 function shortenId(id: string): string {
   return id.length > 12 ? id.slice(0, 12) : id;
+}
+
+async function runDevelopCommand(
+  io: SessionIO,
+  application: SolarisApplication,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+  args: readonly string[],
+  inputBuffer: string[],
+  inputQueue?: InputQueue,
+): Promise<void> {
+  const request = args.join(" ").trim();
+  if (request.length === 0) {
+    io.write("Usage: /develop <request>\n");
+    io.write("Example: /develop Add a health component to the player script\n");
+    return;
+  }
+  const controller = controls.beginPrompt();
+  try {
+    io.write("Checking the development-workflow capability\u2026\n");
+    const support = await sessionInfo.development.support();
+    if (support.state !== "available") {
+      io.write(
+        formatGodotProbeTerminal(
+          "unavailable",
+          support.reason ?? "The GDScript development workflow is unavailable on this platform.",
+        ),
+      );
+      return;
+    }
+    io.write("Preparing the development workflow\u2026\n");
+    const prepared = await sessionInfo.development.prepareStart(request, controller.signal);
+    if (prepared.status !== "ready") {
+      io.write(formatGodotProbeTerminal(prepared.status, prepared.message));
+      return;
+    }
+    io.write(formatDevelopmentStartPreview(prepared.preview));
+    const decision = await sessionInfo.reviewer.review(
+      {
+        id: "development",
+        capability: "godot.development",
+        toolName: "/develop",
+        summary: `GDScript development workflow (${request})`,
+        preview: prepared.preview,
+        digest: prepared.digest,
+      },
+      controller.signal,
+    );
+    if (decision.type !== "approve_once") {
+      if (decision.type === "cancelled") {
+        io.write("  \u2715 development workflow approval cancelled\n");
+      } else {
+        io.write(`  \u2715 development workflow denied: ${decision.reason ?? "not approved"}\n`);
+      }
+      return;
+    }
+    io.write("  approval approved\n");
+    const started = await sessionInfo.development.start(prepared.workflowId, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    if (started.status !== "ready") {
+      io.write(formatGodotProbeTerminal(started.status, started.message));
+      return;
+    }
+    io.write(`Development workflow ${started.session.id} started: investigating the request.\n`);
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 development workflow cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+    return;
+  } finally {
+    controls.endPrompt();
+  }
+  await runPrompt(io, application, request, controls, inputBuffer, inputQueue);
+  const status = sessionInfo.development.status();
+  if (status.session !== null && status.session.state.kind === "terminal") {
+    const result = await sessionInfo.development.cancel();
+    if (result.status === "cancelled" && result.result !== null) {
+      io.write(formatDevelopmentResult(result.result));
+    }
+  }
+}
+
+async function runCancelCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+): Promise<void> {
+  const status = sessionInfo.development.status();
+  if (status.session === null || status.session.state.kind === "terminal") {
+    if (controls.cancelActivePrompt()) {
+      io.write(formatCancelReport());
+    } else {
+      io.write(formatNoActiveCommand());
+    }
+    return;
+  }
+  // An active development workflow: cancel it (approved changes remain).
+  if (controls.cancelActivePrompt()) {
+    io.write(formatCancelReport());
+  }
+  try {
+    const outcome = await sessionInfo.development.cancel();
+    if (outcome.status === "cancelled" && outcome.result !== null) {
+      io.write(formatDevelopmentResult(outcome.result));
+    } else {
+      io.write("  \u2715 no development workflow was active.\n");
+    }
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  }
 }
 
 async function runGitStatusCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {

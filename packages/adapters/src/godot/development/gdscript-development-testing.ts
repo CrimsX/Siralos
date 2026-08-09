@@ -217,6 +217,8 @@ function createFakeSession(
 export interface FakeParserControl {
   /** path -> outcome for the next execute; absent = clean. */
   resultsByPath: Map<string, { readonly valid: boolean; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }>;
+  /** FIFO queue of scripted outcomes consumed per execute; falls back to resultsByPath. */
+  queuedResults: { readonly path: string; readonly valid: boolean; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }[];
   /** Fail the next prepare with this message (infrastructure failure). */
   nextPrepareFailure: string | null;
   /** Fail the next execute with this message. */
@@ -232,6 +234,7 @@ export function createFakeDiagnosticsService(): {
 } {
   const control: FakeParserControl = {
     resultsByPath: new Map(),
+    queuedResults: [],
     nextPrepareFailure: null,
     nextExecuteFailure: null,
     log: [],
@@ -291,12 +294,12 @@ export function createFakeDiagnosticsService(): {
       let validCount = 0;
       const diagnostics: GodotGDScriptDiagnostic[] = [];
       for (const path of control.lastPaths) {
-        const outcome = control.resultsByPath.get(path);
-        if (outcome === undefined || outcome.valid) {
+        const scripted = control.queuedResults.shift() ?? control.resultsByPath.get(path);
+        if (scripted === undefined || scripted.valid) {
           validCount += 1;
         }
-        if (outcome !== undefined) {
-          diagnostics.push(...outcome.diagnostics);
+        if (scripted !== undefined) {
+          diagnostics.push(...scripted.diagnostics);
         }
       }
       const result: GodotProjectCheckResult = {

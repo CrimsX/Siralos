@@ -11,6 +11,8 @@ export type SlashCommand =
   | "undo"
   | "commands"
   | "cancel"
+  | "develop"
+  | "development-status"
   | "godot"
   | "godot-installations"
   | "godot-project"
@@ -60,6 +62,8 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "undo",
   "commands",
   "cancel",
+  "develop",
+  "development-status",
   "godot",
   "godot-installations",
   "godot-project",

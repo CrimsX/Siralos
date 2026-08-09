@@ -108,6 +108,7 @@ async function main(): Promise<number> {
     knowledge,
     diagnostics,
     language,
+    development,
     undo,
     runners,
   } = await createCliApplication({
@@ -126,6 +127,7 @@ async function main(): Promise<number> {
     knowledge,
     diagnostics,
     language,
+    development,
     reviewer,
     checkpoints,
     undo,
@@ -136,6 +138,7 @@ async function main(): Promise<number> {
   godotProbe.disposeAll();
   diagnostics.disposeAll();
   await language.closeAll();
+  await development.close();
   readline.close();
   stdin.destroy();
   await sandbox.close();

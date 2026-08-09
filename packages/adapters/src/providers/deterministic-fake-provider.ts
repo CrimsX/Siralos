@@ -447,6 +447,11 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   if (signal?.aborted) {
     throw createAbortError();
   }
+  const developScenario = findDevelopScenario(request.messages);
+  if (developScenario !== null) {
+    yield* streamDevelopScenario(developScenario, request, signal);
+    return;
+  }
   const godotScenario = findGodotScenario(request.messages);
   if (godotScenario !== null) {
     yield* streamGodotScenario(godotScenario, request, signal);
@@ -924,6 +929,198 @@ function countArrayField(output: JsonValue, key: string): number | null {
   const record = output as JsonObject;
   const value = record[key];
   return Array.isArray(value) ? value.length : null;
+}
+
+type DevelopScenario = "fixture" | "fixture-repair";
+
+const DEV_FIXTURE_PATH = "scripts/player/player.gd";
+const DEV_FIXTURE_OLD = "move_and_slide()";
+const DEV_FIXTURE_NEW = "move_and_slide(Vector2.UP)";
+const DEV_FIXTURE_BROKEN = "move_and_slide())";
+
+function findDevelopScenario(messages: readonly ConversationItem[]): DevelopScenario | null {
+  const latestUserPrompt = findLatestUserPrompt(messages);
+  if (latestUserPrompt === "develop fixture") {
+    return "fixture";
+  }
+  if (latestUserPrompt === "develop fixture with repair") {
+    return "fixture-repair";
+  }
+  return null;
+}
+
+async function* streamDevelopScenario(
+  scenario: DevelopScenario,
+  request: ModelRequest,
+  signal: AbortSignal | undefined,
+): AsyncIterable<ModelEvent> {
+  const stepItems = itemsAfterLastUserMessage(request.messages);
+  const changesetTool = "workspace.apply_text_changeset";
+  const firstResult = findLatestResult(stepItems, changesetTool);
+  const repairResult = findResultForCall(request.messages, "call-dev-repair");
+  const readResult = findLatestResult(stepItems, "workspace.read");
+  if (!isToolAvailable(request.tools, changesetTool)) {
+    yield* streamTextChunks(
+      "Solaris cannot propose source changes in this profile (workspace.apply_text_changeset is unavailable).",
+      signal,
+    );
+    return;
+  }
+  if (scenario === "fixture") {
+    if (firstResult === undefined) {
+      if (readResult === undefined) {
+        yield { type: "tool_call", callId: "call-dev-read", toolName: "workspace.read", input: { path: DEV_FIXTURE_PATH } };
+        await Promise.resolve();
+        yield { type: "completed" };
+        return;
+      }
+      const hash = readResultSha256(readResult);
+      if (hash === null) {
+        yield* streamTextChunks(`Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`, signal);
+        return;
+      }
+      yield {
+        type: "tool_call",
+        callId: "call-dev-change",
+        toolName: changesetTool,
+        input: {
+          changes: [
+            {
+              operation: "edit",
+              path: DEV_FIXTURE_PATH,
+              expectedSha256: hash,
+              replacements: [{ oldText: DEV_FIXTURE_OLD, newText: DEV_FIXTURE_NEW }],
+            },
+          ],
+        },
+      };
+      await Promise.resolve();
+      yield { type: "completed" };
+      return;
+    }
+    yield* streamTextChunks(formatDevelopmentFinalText(firstResult), signal);
+    return;
+  }
+  // scenario === "fixture-repair": the first edit is deliberately broken;
+  // the repair fixes it after the parser diagnostic arrives.
+  if (repairResult === undefined) {
+    if (firstResult === undefined) {
+      if (readResult === undefined) {
+        yield { type: "tool_call", callId: "call-dev-read", toolName: "workspace.read", input: { path: DEV_FIXTURE_PATH } };
+        await Promise.resolve();
+        yield { type: "completed" };
+        return;
+      }
+      const hash = readResultSha256(readResult);
+      if (hash === null) {
+        yield* streamTextChunks(`Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`, signal);
+        return;
+      }
+      yield {
+        type: "tool_call",
+        callId: "call-dev-change",
+        toolName: changesetTool,
+        input: {
+          changes: [
+            {
+              operation: "edit",
+              path: DEV_FIXTURE_PATH,
+              expectedSha256: hash,
+              replacements: [{ oldText: DEV_FIXTURE_OLD, newText: DEV_FIXTURE_BROKEN }],
+            },
+          ],
+        },
+      };
+      await Promise.resolve();
+      yield { type: "completed" };
+      return;
+    }
+    const currentHash = firstResultSha256(firstResult);
+    if (currentHash === null) {
+      yield* streamTextChunks(
+        "Solaris could not determine the applied fixture content for the repair, so it did not propose one.",
+        signal,
+      );
+      return;
+    }
+    yield {
+      type: "tool_call",
+      callId: "call-dev-repair",
+      toolName: changesetTool,
+      input: {
+        changes: [
+          {
+            operation: "edit",
+            path: DEV_FIXTURE_PATH,
+            expectedSha256: currentHash,
+            replacements: [{ oldText: DEV_FIXTURE_BROKEN, newText: DEV_FIXTURE_NEW }],
+          },
+        ],
+      },
+    };
+    await Promise.resolve();
+    yield { type: "completed" };
+    return;
+  }
+  yield* streamTextChunks(formatDevelopmentFinalText(repairResult), signal);
+}
+
+function firstResultSha256(result: ToolExecutionResult): string | null {
+  if (result.status !== "success") {
+    return null;
+  }
+  if (typeof result.output !== "object" || result.output === null || Array.isArray(result.output)) {
+    return null;
+  }
+  const record = result.output as JsonObject;
+  const changedFiles = record["changedFiles"];
+  if (!Array.isArray(changedFiles) || changedFiles.length !== 1) {
+    return null;
+  }
+  const file = changedFiles[0] as JsonObject;
+  const sha = file["afterSha256"];
+  return typeof sha === "string" && sha.length === 64 ? sha : null;
+}
+
+function formatDevelopmentFinalText(result: ToolExecutionResult): string {
+  switch (result.status) {
+    case "success": {
+      const record = result.output as JsonObject;
+      const changed = Array.isArray(record["changedFiles"]) ? (record["changedFiles"] as readonly unknown[]) : [];
+      const diagnostics =
+        typeof record["diagnostics"] === "object" && record["diagnostics"] !== null
+          ? (record["diagnostics"] as JsonObject)
+          : null;
+      const errors = typeof diagnostics?.["errors"] === "number" ? diagnostics["errors"] : 0;
+      const warnings =
+        typeof diagnostics?.["warnings"] === "number" ? diagnostics["warnings"] : 0;
+      const files = changed.map((entry) => (entry as JsonObject)["path"] as string).join(", ");
+      const validation =
+        typeof record["validation"] === "object" && record["validation"] !== null
+          ? (record["validation"] as JsonObject)
+          : null;
+      const parser = validation?.["parser"] === true;
+      const lsp = validation?.["lsp"] === true;
+      return `Solaris applied the approved change set to ${files}: parser ${parser ? "passed" : "failed"}, fresh language session ${lsp ? "started" : "failed"}, ${errors} error(s), ${warnings} warning(s).`;
+    }
+    case "denied":
+      return "The source change was not approved, so Solaris did not apply it.";
+    case "conflict":
+      return "The workspace changed, so Solaris did not apply the change set. Reread the files to continue.";
+    case "cancelled":
+      return "The development workflow was cancelled; approved changes (if any) remain.";
+    case "unavailable":
+      return `Solaris cannot apply source changes yet: ${result.message}`;
+    case "invalid_input":
+    case "failed":
+      return `Solaris could not apply the change set: ${result.message}`;
+    case "timed_out":
+    case "output_limit":
+    case "sandbox_denied":
+    case "sandbox_unavailable":
+    case "workspace_violation":
+      return `Solaris could not complete the development change: ${result.message}`;
+  }
 }
 
 function formatResponse(messages: readonly ConversationItem[]): string {

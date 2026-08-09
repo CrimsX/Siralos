@@ -4,7 +4,9 @@ import {
   createAnthropicSandboxRuntimeBackend,
   createDeterministicFakeProvider,
   createEngineProfileCache,
+  createFailClosedChangeSetFilePrimitives,
   createFilesystemCheckpointStore,
+  createGDScriptDevelopmentService,
   createGitCliAdapter,
   createGitDiffTool,
   createGitStatusTool,
@@ -14,6 +16,7 @@ import {
   createGodotCheckScriptTool,
   createGodotCompleteTool,
   createGodotDefinitionTool,
+  createGodotDevelopmentStatusTool,
   createGodotDiagnosticsService,
   createGDScriptLanguageService,
   createGodotHoverTool,
@@ -34,6 +37,7 @@ import {
   createRunDirectoryProvider,
   createSha256CommandDigestService,
   createUndoService,
+  createWorkspaceApplyTextChangesetTool,
   createWorkspaceCreateFileTool,
   createWorkspaceDeleteFileTool,
   createWorkspaceEditFileTool,
@@ -60,6 +64,7 @@ import {
   type ApprovalReviewer,
   type CheckpointStore,
   type CommandRunnerRegistry,
+  type GDScriptDevelopmentService,
   type GitInspector,
   type GodotInspector,
   type GodotProjectProbe,
@@ -96,6 +101,7 @@ export interface CliApplication {
   readonly knowledge: GodotKnowledge;
   readonly diagnostics: GodotDiagnostics;
   readonly language: GDScriptLanguageService;
+  readonly development: GDScriptDevelopmentService;
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
 }
@@ -259,6 +265,17 @@ export async function createCliApplication(
     checkpointRoot: DEFAULT_CHECKPOINT_ROOT,
     parentEnvironment,
   });
+  const development = createGDScriptDevelopmentService({
+    workspaceRoot,
+    platform: process.platform,
+    store: checkpoints,
+    lock: mutationLock,
+    language,
+    diagnostics,
+    git,
+    canApplyIdentityBound: false,
+    primitives: createFailClosedChangeSetFilePrimitives(),
+  });
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
     createWorkspaceReadTool(workspaceRoot),
@@ -266,6 +283,7 @@ export async function createCliApplication(
     createWorkspaceCreateFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceEditFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceDeleteFileTool(workspaceRoot, mutationLock, checkpoints),
+    createWorkspaceApplyTextChangesetTool(development),
     createGodotInspectEngineTool(godot),
     createGodotInspectProjectTool(godot),
     createGodotProbeProjectTool(godotProbe),
@@ -274,10 +292,11 @@ export async function createCliApplication(
     createGodotCheckScriptTool(diagnostics),
     createGodotCheckProjectScriptsTool(diagnostics),
     createGodotLSPSessionTool(language),
-    createGodotLSPDiagnosticsTool(language),
-    createGodotHoverTool(language),
-    createGodotCompleteTool(language),
-    createGodotDefinitionTool(language),
+    createGodotLSPDiagnosticsTool(language, () => development.languageQueryGate()),
+    createGodotHoverTool(language, () => development.languageQueryGate()),
+    createGodotCompleteTool(language, () => development.languageQueryGate()),
+    createGodotDefinitionTool(language, () => development.languageQueryGate()),
+    createGodotDevelopmentStatusTool(development),
     createGitStatusTool(git),
     createGitDiffTool(git),
     processTool,
@@ -290,6 +309,9 @@ export async function createCliApplication(
     policy,
     profile,
     ...(options.reviewer === undefined ? {} : { reviewer: options.reviewer }),
+    onProviderTurnCompleted: () => {
+      development.completeFromProviderTurn();
+    },
   });
   return {
     providerId: provider.id,
@@ -305,6 +327,7 @@ export async function createCliApplication(
     knowledge,
     diagnostics,
     language,
+    development,
     undo,
     runners,
   };

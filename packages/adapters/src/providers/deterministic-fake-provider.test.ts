@@ -730,6 +730,240 @@ describe("deterministic fake provider git scenarios", () => {
   });
 });
 
+describe("deterministic fake provider development scenarios", () => {
+  const READ_TOOL: ToolDefinition = {
+    name: "workspace.read",
+    description: "Read one text file inside the workspace.",
+    inputSchema: {},
+  };
+  const CHANGESET_TOOL: ToolDefinition = {
+    name: "workspace.apply_text_changeset",
+    description: "Propose one exact text change set inside the development workflow.",
+    inputSchema: {},
+  };
+  const FIXTURE_HASH = "a".repeat(64);
+
+  function applySuccessOutput(): import("@solaris/core").JsonValue {
+    return {
+      status: "completed",
+      iterations: 1,
+      changedFiles: [
+        {
+          path: "scripts/player/player.gd",
+          operation: "update",
+          beforeSha256: FIXTURE_HASH,
+          afterSha256: "b".repeat(64),
+        },
+      ],
+      diagnostics: { errors: 0, warnings: 0 },
+      validation: { parser: true, lsp: true, workspaceIntegrity: true },
+      checkpointIds: ["cp_test"],
+    };
+  }
+
+  it("reads the fixture, proposes an exact edit, and summarizes the applied change", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "develop fixture" }],
+      tools: [READ_TOOL, CHANGESET_TOOL],
+    };
+    const first = await collect(request);
+    expect(toolCallEvent(first.events)).toMatchObject({
+      type: "tool_call",
+      callId: "call-dev-read",
+      toolName: "workspace.read",
+      input: { path: "scripts/player/player.gd" },
+    });
+    const second = await collect({
+      messages: [
+        { type: "user_message", content: "develop fixture" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-dev-read",
+          toolName: "workspace.read",
+          input: { path: "scripts/player/player.gd" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-dev-read",
+          toolName: "workspace.read",
+          result: {
+            status: "success",
+            output: {
+              path: "scripts/player/player.gd",
+              sha256: FIXTURE_HASH,
+              content: "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n",
+              startLine: 1,
+              endLine: 4,
+              totalLines: 4,
+              truncated: false,
+            },
+            summary: "4 lines",
+          },
+        },
+      ],
+      tools: [READ_TOOL, CHANGESET_TOOL],
+    });
+    expect(toolCallEvent(second.events)).toMatchObject({
+      type: "tool_call",
+      callId: "call-dev-change",
+      toolName: "workspace.apply_text_changeset",
+      input: {
+        changes: [
+          {
+            operation: "edit",
+            path: "scripts/player/player.gd",
+            expectedSha256: FIXTURE_HASH,
+            replacements: [{ oldText: "move_and_slide()", newText: "move_and_slide(Vector2.UP)" }],
+          },
+        ],
+      },
+    });
+    const third = await collect({
+      messages: [
+        { type: "user_message", content: "develop fixture" },
+        {
+          type: "assistant_tool_call",
+          callId: "call-dev-read",
+          toolName: "workspace.read",
+          input: { path: "scripts/player/player.gd" },
+        },
+        {
+          type: "tool_result",
+          callId: "call-dev-read",
+          toolName: "workspace.read",
+          result: {
+            status: "success",
+            output: { path: "scripts/player/player.gd", sha256: FIXTURE_HASH, content: "", startLine: 1, endLine: 1, totalLines: 1, truncated: false },
+            summary: "1 lines",
+          },
+        },
+        {
+          type: "assistant_tool_call",
+          callId: "call-dev-change",
+          toolName: "workspace.apply_text_changeset",
+          input: { changes: [] },
+        },
+        {
+          type: "tool_result",
+          callId: "call-dev-change",
+          toolName: "workspace.apply_text_changeset",
+          result: { status: "success", output: applySuccessOutput(), summary: "change set applied" },
+        },
+      ],
+      tools: [READ_TOOL, CHANGESET_TOOL],
+    });
+    expect(textOf(third.events)).toContain("Solaris applied the approved change set");
+    expect(textOf(third.events)).toContain("parser passed");
+  });
+
+  it("proposes a broken first edit, then a repair, in the with-repair scenario", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "develop fixture with repair" }],
+      tools: [READ_TOOL, CHANGESET_TOOL],
+    };
+    const first = await collect(request);
+    expect(toolCallEvent(first.events)).toMatchObject({
+      type: "tool_call",
+      callId: "call-dev-read",
+      toolName: "workspace.read",
+    });
+    const readItems: ConversationItem[] = [
+      {
+        type: "tool_result",
+        callId: "call-dev-read",
+        toolName: "workspace.read",
+        result: {
+          status: "success",
+          output: {
+            path: "scripts/player/player.gd",
+            sha256: FIXTURE_HASH,
+            content: "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n",
+            startLine: 1,
+            endLine: 4,
+            totalLines: 4,
+            truncated: false,
+          },
+          summary: "4 lines",
+        },
+      },
+    ];
+    const second = await collect({
+      messages: [
+        { type: "user_message", content: "develop fixture with repair" },
+        ...readItems,
+      ],
+      tools: [READ_TOOL, CHANGESET_TOOL],
+    });
+    const firstChange = toolCallEvent(second.events);
+    expect(firstChange).toMatchObject({
+      type: "tool_call",
+      callId: "call-dev-change",
+      toolName: "workspace.apply_text_changeset",
+    });
+    expect(firstChange).not.toBeNull();
+    const firstInput = (firstChange as { input: unknown }).input as {
+      changes: readonly { replacements: readonly { newText: string }[] }[];
+    };
+    expect(firstInput.changes[0]?.replacements[0]?.newText).toBe("move_and_slide())");
+    // After the first apply (with parser errors), a repair is proposed.
+    const third = await collect({
+      messages: [
+        { type: "user_message", content: "develop fixture with repair" },
+        ...readItems,
+        {
+          type: "assistant_tool_call",
+          callId: "call-dev-change",
+          toolName: "workspace.apply_text_changeset",
+          input: { changes: [] },
+        },
+        {
+          type: "tool_result",
+          callId: "call-dev-change",
+          toolName: "workspace.apply_text_changeset",
+          result: {
+            status: "success",
+            output: {
+              ...(applySuccessOutput() as Record<string, unknown>),
+              diagnostics: { errors: 1, warnings: 0 },
+              changedFiles: [
+                {
+                  path: "scripts/player/player.gd",
+                  operation: "update",
+                  beforeSha256: FIXTURE_HASH,
+                  afterSha256: "c".repeat(64),
+                },
+              ],
+            },
+            summary: "change set applied with errors",
+          },
+        },
+      ],
+      tools: [READ_TOOL, CHANGESET_TOOL],
+    });
+    const repair = toolCallEvent(third.events);
+    expect(repair).toMatchObject({
+      type: "tool_call",
+      callId: "call-dev-repair",
+      toolName: "workspace.apply_text_changeset",
+    });
+    expect(repair).not.toBeNull();
+    const repairInput = (repair as { input: unknown }).input as {
+      changes: readonly { replacements: readonly { oldText: string; newText: string }[] }[];
+    };
+    expect(repairInput.changes[0]?.replacements[0]?.oldText).toBe("move_and_slide())");
+    expect(repairInput.changes[0]?.replacements[0]?.newText).toBe("move_and_slide(Vector2.UP)");
+  });
+
+  it("reports the truthful unavailable outcome when the change-set tool is missing", async () => {
+    const request: ModelRequest = {
+      messages: [{ type: "user_message", content: "develop fixture" }],
+      tools: [READ_TOOL],
+    };
+    const { events } = await collect(request);
+    expect(textOf(events)).toContain("cannot propose source changes");
+  });
+});
+
 describe("deterministic fake provider command scenarios", () => {
   const PROCESS_TOOL: ToolDefinition = {
     name: "process.run",
