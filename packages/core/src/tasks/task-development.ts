@@ -299,10 +299,12 @@ export function createDevelopmentTaskFlow(
         }
         case "development_change_applied": {
           transitionTo("working");
+          const firstRevision = event.revisions?.[0];
           const mutationId = attach("mutation_receipt", {
             type: "mutation",
             changeSetId: lastApprovedChangeSetId ?? "<applied>",
             checkpointId: null,
+            ...(firstRevision === undefined ? {} : { revision: firstRevision.revision }),
           });
           if (mutationId !== null) {
             previewEvidenceIds.mutation = mutationId;

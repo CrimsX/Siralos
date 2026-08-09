@@ -59,8 +59,11 @@ import {
 } from "@solaris/adapters";
 import {
   TASK_RUNTIME_VERSION,
+  canonicalizeJson,
   capabilityPolicyFingerprint,
   createCommandRunnerRegistry,
+  createWorkspaceRevisionRegistry,
+  sha256Hex,
   createDefaultPolicy,
   createProjectionService,
   createRouteContextCapacity,
@@ -89,7 +92,9 @@ import {
   type SolarisSecurity,
   type TaskRuntime,
   type TaskRuntimeSnapshotSources,
+  type Tool,
   type UndoService,
+  type WorkspaceRevisionRegistry,
 } from "@solaris/core";
 import { GodotSelectionError } from "@solaris/adapters";
 import { resolveReviewProviderId } from "./review-provider.js";
@@ -109,6 +114,8 @@ export interface CliApplication {
   readonly tasks: TaskRuntime;
   readonly taskSources: TaskRuntimeSnapshotSources;
   readonly projection: ProjectionService;
+  readonly revisions: WorkspaceRevisionRegistry;
+  readonly workspaceRead: Tool;
   readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
   readonly sandbox: SandboxBackend;
@@ -300,6 +307,9 @@ export async function createCliApplication(
     languageQueryGate: () =>
       developmentHolder.current?.languageQueryGate() ?? { blocked: false, message: null },
   });
+  const revisions = createWorkspaceRevisionRegistry({
+    workspaceFingerprint: sha256Hex(canonicalizeJson({ workspaceRoot })),
+  });
   const development = createGDScriptDevelopmentService({
     workspaceRoot,
     platform: process.platform,
@@ -308,14 +318,16 @@ export async function createCliApplication(
     language,
     diagnostics,
     git,
+    revisions,
     canApplyIdentityBound: false,
     primitives: createFailClosedChangeSetFilePrimitives(),
     qualityStage,
   });
   developmentHolder.current = development;
+  const workspaceReadTool = createWorkspaceReadTool(workspaceRoot, { revisions });
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
-    createWorkspaceReadTool(workspaceRoot),
+    workspaceReadTool,
     createWorkspaceSearchTool(workspaceRoot),
     createWorkspaceCreateFileTool(workspaceRoot, mutationLock, checkpoints),
     createWorkspaceEditFileTool(workspaceRoot, mutationLock, checkpoints),
@@ -384,6 +396,8 @@ export async function createCliApplication(
     tasks,
     taskSources,
     projection,
+    revisions,
+    workspaceRead: workspaceReadTool,
     tools: registry.definitions(),
     security,
     sandbox,

@@ -184,12 +184,16 @@ function volatileTaskSegments(snapshot: TaskState | null): Array<{
   if (latest === undefined) {
     return [];
   }
+  const revision =
+    latest.source.type === "workspace_read" || latest.source.type === "mutation"
+      ? latest.source.revision
+      : undefined;
   return [
     {
       id: "current-task-evidence",
       stability: "volatile",
       title: "Latest evidence",
-      content: `evidence ${latest.id} (${latest.kind}) attached`,
+      content: `evidence ${latest.id} (${latest.kind}) attached${revision === undefined ? "" : ` @ ${revision}`}`,
     },
   ];
 }
@@ -232,6 +236,17 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
       cacheBoundRevision = contractRevision;
       cacheGuard.advance();
     }
+    // Workspace-derived results (reads/structural/summary) carry an opaque
+    // revision handle in their output; the model view preserves it so
+    // revision-aware evidence stays distinguishable.
+    const revision =
+      input.result.status === "success" &&
+      typeof input.result.output === "object" &&
+      input.result.output !== null &&
+      !Array.isArray(input.result.output) &&
+      typeof (input.result.output as Record<string, unknown>)["revision"] === "string"
+        ? ((input.result.output as Record<string, string>)["revision"] as string)
+        : undefined;
     const result = input.result;
     if (result.status === "success") {
       const key = `${input.toolName}:${sha256Hex(canonicalizeJson(result))}`;
@@ -240,6 +255,7 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
         cached ??
         evidenceProjector.projectForModel({
           ...(input.evidenceId === undefined ? {} : { evidenceId: input.evidenceId }),
+          ...(revision === undefined ? {} : { revision }),
           rawText: result.summary,
         });
       evidenceCache.set(key, view);

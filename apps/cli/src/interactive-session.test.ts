@@ -5,6 +5,7 @@ import {
   createCommandRunnerRegistry,
   createProjectionService,
   createRouteContextCapacity,
+  createWorkspaceRevisionRegistry,
   createDefaultPolicy,
   createPreparedCommand,
   createSolarisApplication,
@@ -20,6 +21,8 @@ import {
   type CommandToolPreparationResult,
   type DevelopmentQualityReport,
   type FileCheckpoint,
+  type Tool,
+  type ToolExecutionResult,
   type GitDiffResult,
   type GitInspector,
   type GitStatusResult,
@@ -49,8 +52,6 @@ import {
   type SandboxBackendStatus,
   type SolarisApplication,
   type SolarisSecurity,
-  type Tool,
-  type ToolExecutionResult,
   type UndoOutcome,
   type UndoService,
   type ApprovalReviewer,
@@ -113,6 +114,8 @@ async function createComposedSession(lines: readonly string[]) {
     tasks,
     taskSources,
     projection,
+    revisions,
+    workspaceRead,
     checkpoints,
     undo,
     runners,
@@ -123,6 +126,8 @@ async function createComposedSession(lines: readonly string[]) {
     tasks,
     taskSources,
     projection,
+    revisions,
+    workspaceRead,
     tools,
     security,
     git,
@@ -161,6 +166,19 @@ function createStubGit(): GitInspector {
     },
     getDiff(): Promise<GitDiffResult> {
       return Promise.reject(new GitError("git_unavailable", "Git is not available."));
+    },
+  };
+}
+
+function createStubWorkspaceRead(): Tool {
+  return {
+    definition: {
+      name: "workspace.read",
+      description: "stub",
+      inputSchema: { type: "object" },
+    },
+    execute(): Promise<ToolExecutionResult> {
+      return Promise.resolve({ status: "failed", message: "stub workspace read" });
     },
   };
 }
@@ -239,6 +257,8 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       profile: DEVELOP_OFFLINE_PROFILE,
       capacity: createRouteContextCapacity("develop-offline"),
     }),
+    revisions: createWorkspaceRevisionRegistry({ workspaceFingerprint: "test-workspace" }),
+    workspaceRead: createStubWorkspaceRead(),
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",

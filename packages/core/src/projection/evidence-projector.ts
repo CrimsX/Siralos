@@ -25,6 +25,8 @@ export interface EvidenceProjectionOptions {
 export interface ModelEvidenceView {
   /** Opaque reference to the raw evidence (never a private host path). */
   readonly evidenceId: string | null;
+  /** Workspace revision handle the evidence concerned, when known. */
+  readonly revision: string | null;
   readonly text: string;
   readonly truncated: boolean;
   readonly shownBytes: number;
@@ -36,6 +38,8 @@ export interface ModelEvidenceView {
 export interface EvidenceProjector {
   projectForModel(input: {
     readonly evidenceId?: string;
+    /** Workspace revision the raw evidence concerned, when known. */
+    readonly revision?: string;
     readonly rawText: string;
   }): ModelEvidenceView;
 }
@@ -199,6 +203,7 @@ export function createEvidenceProjector(
   return {
     projectForModel(input: {
       readonly evidenceId?: string;
+      readonly revision?: string;
       readonly rawText: string;
     }): ModelEvidenceView {
       const originalBytes = new TextEncoder().encode(input.rawText).length;
@@ -243,6 +248,7 @@ export function createEvidenceProjector(
       }
       return {
         evidenceId: input.evidenceId ?? null,
+        revision: input.revision ?? null,
         text,
         truncated: truncated.truncated,
         shownBytes: new TextEncoder().encode(text).length,

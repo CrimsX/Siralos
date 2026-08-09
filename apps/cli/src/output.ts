@@ -1848,3 +1848,54 @@ export function formatToolProjection(projection: ProjectionService): string {
   const tool = last.toolProjection;
   return `Tool projection: ${tool.counts.available} available, ${tool.counts.gated} gated, ${tool.counts.hidden} hidden (ABI ${tool.fingerprint.slice(0, 8)})\n`;
 }
+
+/** Render a structural read tool result (read-only projection). */
+export function formatStructuralRead(result: import("@solaris/core").ToolExecutionResult): string {
+  if (result.status !== "success") {
+    return "";
+  }
+  const output = result.output;
+  if (typeof output !== "object" || output === null || Array.isArray(output)) {
+    return "(no structural data)\n";
+  }
+  const record = output as Record<string, unknown>;
+  const revision = typeof record["revision"] === "string" ? record["revision"] : "none";
+  if (record["supported"] === false) {
+    return `${record["path"] as string} @ ${revision}: unsupported (${String(record["reason"])})\n`;
+  }
+  const structure = record["structure"];
+  if (typeof structure !== "object" || structure === null) {
+    return "(no structure)\n";
+  }
+  const s = structure as Record<string, unknown>;
+  const functions = Array.isArray(s["functions"])
+    ? (s["functions"] as Array<Record<string, unknown>>)
+    : [];
+  const properties = Array.isArray(s["properties"])
+    ? (s["properties"] as Array<Record<string, unknown>>)
+    : [];
+  const signals = Array.isArray(s["signals"])
+    ? (s["signals"] as Array<Record<string, unknown>>)
+    : [];
+  const status = s["status"] === "partial" ? " (partial)" : "";
+  const errors = Array.isArray(s["parserErrors"])
+    ? (s["parserErrors"] as Array<Record<string, unknown>>)
+    : [];
+  const lines = [
+    `${String(record["path"])} @ ${revision}${status}`,
+    `  extends: ${typeof s["extendsType"] === "string" ? s["extendsType"] : "-"}`,
+    `  class_name: ${typeof s["className"] === "string" ? s["className"] : "-"}`,
+    `  ${signals.length} signals, ${properties.length} properties, ${functions.length} functions`,
+    ...(functions.length === 0
+      ? []
+      : [`  functions: ${functions.map((fn) => String(fn["name"])).join(", ")}`]),
+    ...(errors.length === 0
+      ? []
+      : [
+          `  parser errors: ${errors.map((error) => `${String(error["line"])}:${String(error["message"])}`).join(" | ")}`,
+        ]),
+    ...(s["truncated"] === true ? ["  (declaration cap reached; output truncated)"] : []),
+    "",
+  ];
+  return lines.join("\n");
+}

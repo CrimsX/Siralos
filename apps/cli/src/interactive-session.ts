@@ -21,7 +21,9 @@ import type {
   ProjectionService,
   TaskRuntime,
   TaskRuntimeSnapshotSources,
+  Tool,
   UndoService,
+  WorkspaceRevisionRegistry,
 } from "@solaris/core";
 import {
   createAdHocTaskContract,
@@ -69,6 +71,7 @@ import {
   formatPermissions,
   formatProviderFailure,
   formatQualityReport,
+  formatStructuralRead,
   formatTaskStatus,
   formatQualitySummary,
   formatChangeReviewResult,
@@ -112,6 +115,8 @@ export interface SessionInfo {
   readonly tasks: TaskRuntime;
   readonly taskSources: TaskRuntimeSnapshotSources;
   readonly projection: ProjectionService;
+  readonly revisions: WorkspaceRevisionRegistry;
+  readonly workspaceRead: Tool;
 }
 
 /** The host-owned task flow of the active /develop run, if any. */
@@ -293,6 +298,9 @@ export async function runInteractiveSession(
             break;
           case "context":
             io.write(formatContextStatus(sessionInfo.projection));
+            break;
+          case "read-structure":
+            await runReadStructureCommand(io, sessionInfo, parsed.args);
             break;
           case "quality":
             io.write(formatQualityReport(sessionInfo.development.qualityReport()));
@@ -662,6 +670,24 @@ function runTaskCommand(io: SessionIO, sessionInfo: SessionInfo, args: readonly 
   });
   handle.transitionPhase("working");
   io.write(formatTaskStatus(handle.snapshot(), handle.evaluateCompletion()));
+}
+
+async function runReadStructureCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  args: readonly string[],
+): Promise<void> {
+  const path = args.join(" ").trim();
+  if (path.length === 0) {
+    io.write("Usage: /read-structure <path>\n");
+    return;
+  }
+  const result = await sessionInfo.workspaceRead.execute({ path, mode: "structural" }, {});
+  if (result.status !== "success") {
+    io.write(formatProviderFailure(result.message));
+    return;
+  }
+  io.write(formatStructuralRead(result));
 }
 
 function runTaskStatusCommand(sessionInfo: SessionInfo): string {
