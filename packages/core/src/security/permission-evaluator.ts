@@ -93,5 +93,11 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // profile) is the approval gate; no additional profile constraint
       // applies.
       return null;
+    case "godot.development":
+      // godot.development_status is read-only bounded status; the
+      // development workflow itself is approved by the CLI's one-time
+      // reviewer and every source mutation stays gated by
+      // workspace.write. No additional profile constraint applies.
+      return null;
   }
 }

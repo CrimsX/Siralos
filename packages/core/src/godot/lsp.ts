@@ -280,11 +280,19 @@ export interface GDScriptLanguageSession {
   close(): Promise<void>;
 }
 
+/** Truthful platform-level support state for the language session surface. */
 export interface GDScriptLanguageSupport {
   readonly state: "available" | "unavailable";
   /** Exact reason when unavailable; null when available. */
   readonly reason: string | null;
   readonly platform: string;
+}
+
+/** Read-only view of the selected engine (bounded; no paths). */
+export interface GodotSelectedEngine {
+  readonly installationId: string;
+  readonly sha256: string;
+  readonly version: string;
 }
 
 /**
@@ -302,6 +310,9 @@ export interface GDScriptLanguageService {
 
   /** The active session, or null when none is running. */
   activeSession(): GDScriptLanguageSession | null;
+
+  /** The selected engine's bounded identity, or null when none is selected. */
+  selectedEngine(signal?: AbortSignal): Promise<GodotSelectedEngine | null>;
 
   prepare(signal?: AbortSignal): Promise<GDScriptSessionPreparationResult>;
 

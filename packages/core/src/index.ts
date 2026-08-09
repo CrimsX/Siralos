@@ -343,6 +343,51 @@ export {
   type GDScriptSessionState,
   type GDScriptSessionStatus,
   type GDScriptSourceRange,
+  type GodotSelectedEngine,
   type LanguageSessionEvent,
   type PreparedGDScriptSession,
 } from "./godot/lsp.js";
+export {
+  DEVELOPMENT_LIMITS,
+  computeGDScriptDevelopmentDigest,
+  type DevelopmentChangeRecord,
+  type DevelopmentEvent,
+  type DevelopmentEvidence,
+  type DevelopmentPhase,
+  type DevelopmentState,
+  type DevelopmentStatus,
+  type DevelopmentValidationStatus,
+  type GDScriptDevelopmentDigestParts,
+  type GDScriptDevelopmentPreview,
+  type GDScriptDevelopmentResult,
+  type GDScriptDevelopmentSession,
+  type GDScriptDevelopmentStatus,
+} from "./godot/development/development-model.js";
+export {
+  computeChangeSetDigest,
+  countChangeSetResultBytes,
+  validateChangeSetRequest,
+  type ChangeSetOperation,
+  type ChangeSetReplacement,
+  type ChangeSetRequest,
+  type PreparedChangeSetDigestParts,
+  type PreparedChangeSetFile,
+} from "./godot/development/development-change-set.js";
+export {
+  preparedFilesToApplyRequest,
+  type ChangeSetApplyFileRequest,
+  type ChangeSetApplyOutcome,
+  type ChangeSetApplyRequest,
+  type ChangeSetFilePrimitives,
+  type DevelopmentChangeSetApplier,
+} from "./godot/development/development-change-set-apply.js";
+export {
+  type DevelopmentCancelResult,
+  type DevelopmentChangeSetApplicationResult,
+  type DevelopmentChangeSetExecutionContext,
+  type DevelopmentChangeSetPreparationResult,
+  type DevelopmentStartPreparationResult,
+  type DevelopmentStartResult,
+  type DevelopmentSupport,
+  type GDScriptDevelopmentService,
+} from "./godot/development/development-service.js";

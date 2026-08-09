@@ -154,6 +154,13 @@ export interface SolarisApplicationDependencies {
   readonly profile?: SandboxProfile;
   readonly reviewer?: ApprovalReviewer;
   readonly maxToolRounds?: number;
+  /**
+   * Optional application hook fired when a provider turn completes
+   * without tool calls (a final assistant response). The development
+   * workflow uses it to terminate deterministically when the provider has
+   * finished reviewing validation evidence.
+   */
+  readonly onProviderTurnCompleted?: () => void;
 }
 
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
@@ -272,6 +279,7 @@ export function createSolarisApplication(
           if (turn.assistantText.length > 0) {
             history.push({ type: "assistant_message", content: turn.assistantText });
           }
+          dependencies.onProviderTurnCompleted?.();
           yield { type: "response_completed" };
           return;
         }

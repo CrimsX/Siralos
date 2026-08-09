@@ -20,6 +20,11 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           // mirror over loopback; it is one-time approved per session and
           // never unconditionally allowed by public configuration.
           "godot.lsp": "ask",
+          // godot.development_status is a read-only bounded workflow-status
+          // tool; the development workflow itself is started through the
+          // CLI's one-time approval (never through the tool loop), and its
+          // source mutations stay gated by workspace.write.
+          "godot.development": "allow",
           "workspace.write": "deny",
           "process.execute": "deny",
           "network.outbound": "deny",
@@ -35,6 +40,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.api": "allow",
           "godot.diagnose": "ask",
           "godot.lsp": "ask",
+          "godot.development": "allow",
           "workspace.write": "ask",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -53,6 +59,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.api": "deny",
           "godot.diagnose": "deny",
           "godot.lsp": "deny",
+          "godot.development": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -71,6 +78,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.api": "deny",
           "godot.diagnose": "deny",
           "godot.lsp": "deny",
+          "godot.development": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -89,6 +97,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.api": "deny",
           "godot.diagnose": "deny",
           "godot.lsp": "deny",
+          "godot.development": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -107,6 +116,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.api": "deny",
           "godot.diagnose": "deny",
           "godot.lsp": "deny",
+          "godot.development": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -125,6 +135,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.api": "deny",
           "godot.diagnose": "deny",
           "godot.lsp": "deny",
+          "godot.development": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
