@@ -28,7 +28,8 @@
     "solaris": "npm run build && node apps/cli/dist/index.js",
     "test:godot-diagnostics": "npm run build && node scripts/sandbox/run-godot-diagnostics-conformance.mjs",
     "test:godot-lsp": "npm run build && node scripts/sandbox/run-godot-lsp-conformance.mjs",
-    "test:godot-development": "npm run build && node scripts/sandbox/run-godot-development-conformance.mjs"
+    "test:godot-development": "npm run build && node scripts/sandbox/run-godot-development-conformance.mjs",
+    "test:godot-quality": "npm run build && node scripts/sandbox/run-godot-quality-conformance.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

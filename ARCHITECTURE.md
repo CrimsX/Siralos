@@ -367,6 +367,46 @@ apps/cli/                                 /develop, /development-status,
 - **Approval protocol**: the workflow start is one one-time approval (`godot.development` capability, CLI-mediated) binding the request, project fingerprint, engine fingerprint, and limits, covering only the read-only validation context; every change set and repair still goes through the existing prepared-mutation one-time approval flow (`workspace.write` is `ask` under `develop-offline`). While the change-set applier is unavailable, preparation returns typed `unavailable` results before any approval is requested.
 - **Architecture enforcement**: the workflow orchestrator and change-set executor may not import Node infrastructure modules; core stays Node-free; the LSP/parser/runner disciplines of ADRs 0010 and 0011 remain structurally enforced; no runtime/game or DAP invocation exists.
 
+## Development quality gates and independent review
+
+The quality layer (ADR 0013) follows the same inward pattern: contracts and the deterministic gate policy in core, orchestration and reviewer implementations in adapters, rendering and entry points in the CLI. Deterministic gates and model-based review are separate layers: gates are authoritative for measurable conditions; the reviewer is an additional reasoning signal that can never replace a gate.
+
+```text
+packages/core/src/godot/quality/
+  quality-model.ts                     gate vocabulary, report, status mapping,
+                                       immutable limits, quality events
+  quality-warnings.ts                  warning baseline/delta with stable
+                                       normalized identities
+  quality-conventions.ts               read-only convention analyzer over
+                                       changed lines (advisory by default)
+  quality-validation.ts                validation-plan discovery policy,
+                                       ValidationPlanDiscovery +
+                                       QualityValidationExecutor ports
+  quality-review.ts                    reviewer contracts, finding
+                                       normalization, blocking policy,
+                                       deterministic finding ids, chunking
+packages/adapters/src/godot/quality/
+  validation-plan-discovery.ts         bounded root package.json reading
+  quality-validation-executor.ts       drives the existing process.run tool
+                                       through one-time process approval
+  quality-stage-runner.ts              quality-stage orchestration (gates,
+                                       plan, review, report)
+  provider-change-reviewer.ts          fresh-context provider reviewer with a
+                                       strict JSON output contract
+  fake-change-reviewer.ts              deterministic fake reviewer scenarios
+  reviewer-tools.ts                    read-only reviewer tool registry
+apps/cli/
+  /quality, /review-change, quality rendering in /development-status
+  bootstrap/review-provider.ts         review-provider resolution (default
+                                       active provider; explicit configured
+                                       profile fails clearly when missing)
+```
+
+- **Core owns**: the gate vocabulary and classification, the report model and deterministic status mapping, the warning-delta policy, the convention-analysis rules, the validation-plan selection policy, the reviewer contracts and finding normalization (bounds, safe paths, deduplication, blocking policy), and the immutable limits. Core stays Node-free.
+- **Adapters own**: package.json discovery, the validation executor over the existing prepared-command approval flow (each project-defined command still requires its own exact one-time process approval and runs sandboxed with a read-only workspace, denied network, and closed stdin), the quality-stage orchestration, and the reviewer implementations. The quality/reviewer adapter must not import workspace-mutation, process, checkpoint, sandbox, or child-environment adapters (architecture-enforced): the reviewer is strictly read-only, cannot approve, execute, mutate, checkpoint, or alter sandbox rules or provider credentials; deterministic quality gates must not import reviewer implementations.
+- **CLI owns**: `/quality` (current/final report), `/review-change` (fresh read-only review of the tracked change — no approval, no modification, no automatic repair), the quality sections of `/development-status` and `/status`, and review-provider resolution. Reviewer construction happens only in the composition root; the reviewer's read-only tool registry is composition-root owned.
+- **Integration**: `/develop` automatically enters the quality stage after a cleanly validated change set; blocking review findings return the workflow to the provider for a focused, separately approved repair (at most 2 review-repair rounds) that is fully revalidated and re-reviewed. The workflow itself is fail-closed at this stage (change-set applier unavailable), so the quality stage, review, and validation commands never run in the shipped product; the opt-in `npm run test:godot-quality` conformance verifies that truthfully and always reports the live quality-stage isolation probe as skipped, never passed.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. A persistence port will be added only when a real requirement demands it.
