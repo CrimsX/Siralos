@@ -1,0 +1,3 @@
+Godot Engine v4.7.1.stable.official
+ERROR: Parse Error: Indentation error.
+   at: GDScript::reload (godot/modules/gdscript/gdscript.cpp:1210)

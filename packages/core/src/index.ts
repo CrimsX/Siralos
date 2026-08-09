@@ -265,7 +265,8 @@ export type {
   GodotApiSearchQuery,
   GodotApiSearchRank,
   GodotApiSearchResult,
-  GodotApiSearchKind,  GodotApiSymbol,
+  GodotApiSearchKind,
+  GodotApiSymbol,
   GodotApiSymbolDetails,
   GodotApiSymbolKind,
   GodotApiType,
@@ -289,9 +290,11 @@ export {
 } from "./godot/knowledge.js";
 export {
   aggregateGDScriptDiagnostics,
+  computeGodotCheckOnlyCommandDigest,
   computeGodotPreparedCheckDigest,
   createPreparedGDScriptCheck,
   type GDScriptCheckResult,
+  type GodotCheckOnlyCommandDigestParts,
   type GodotCheckPreparationResult,
   type GodotDiagnostics,
   type GodotDiagnosticsExecutionContext,

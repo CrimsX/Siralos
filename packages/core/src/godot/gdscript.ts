@@ -75,6 +75,26 @@ export interface GodotDiagnosticPreview {
  * check limits are Solaris-fixed constants. Provider input cannot influence
  * any of them.
  */
+export interface GodotCheckOnlyCommandDigestParts {
+  readonly executableSha256: string;
+  readonly argumentTemplate: readonly string[];
+  readonly workingDirectoryPolicy: "disposable-mirror";
+  readonly profileId: string;
+  readonly environmentPolicy: "minimal";
+  readonly stdinPolicy: "closed";
+  readonly networkPolicy: "denied";
+  readonly timeoutMs: number;
+  readonly stdoutLimitBytes: number;
+  readonly stderrLimitBytes: number;
+}
+
+/** Deterministic digest over the fixed check-only command shape. */
+export function computeGodotCheckOnlyCommandDigest(
+  parts: GodotCheckOnlyCommandDigestParts,
+): string {
+  return sha256Hex(canonicalizeJson(parts));
+}
+
 export interface GodotPreparedCheckDigestParts {
   /** Sorted script targets (path + content hash). */
   readonly scriptTargets: readonly GodotScriptCheckTarget[];
@@ -142,6 +162,7 @@ export type GDScriptCheckResult =
         | "cancelled"
         | "timed_out"
         | "unsupported"
+        | "unavailable"
         | "sandbox_failed"
         | "failed";
       readonly message: string;
@@ -165,6 +186,7 @@ export type GodotProjectCheckResult =
         | "cancelled"
         | "timed_out"
         | "unsupported"
+        | "unavailable"
         | "sandbox_failed"
         | "failed";
       readonly message: string;

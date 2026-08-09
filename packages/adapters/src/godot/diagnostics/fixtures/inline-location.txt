@@ -1,0 +1,3 @@
+Godot Engine v4.7.1.stable.official
+res://src/player/player.gd:34:17 - Identifier "velocityy" not declared in the current scope.
+res://src/player/player.gd:81:9 - Error: Expected "end of file" after class body.

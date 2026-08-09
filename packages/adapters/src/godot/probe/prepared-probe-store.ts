@@ -1,4 +1,5 @@
 import { GODOT_LIMITS, createPreparedGodotProbe, type PreparedGodotProbe } from "@solaris/core";
+import { createPreparedPlanStore, type PreparedPlanStore } from "./prepared-plan-store.js";
 
 export interface PreparedProbePlan {
   readonly preview: import("@solaris/core").GodotProbePreview;
@@ -12,12 +13,12 @@ export interface PreparedProbePlan {
   };
 }
 
-interface StoredPlan extends PreparedProbePlan {
+export type StoredProbePlan = PreparedProbePlan & {
   readonly createdAt: number;
   readonly stateBytes: number;
-}
+};
 
-export interface PreparedProbeStoreConfig {
+export type PreparedProbeStoreConfig = {
   /** Maximum simultaneously prepared probes. */
   readonly maxProbes?: number;
   /** Maximum aggregate serialized plan bytes. */
@@ -26,7 +27,7 @@ export interface PreparedProbeStoreConfig {
   readonly ttlMs?: number;
   /** Test seam; defaults to `Date.now`. */
   readonly now?: () => number;
-}
+};
 
 export type PreparedProbePutResult =
   | {
@@ -41,95 +42,47 @@ export type PreparedProbePutResult =
     };
 
 /**
- * Bounded, expiring, single-use prepared-probe registry.
- *
- * Prepared probes are opaque handles into an in-memory registry with a
- * count limit, an aggregate serialized-byte limit, and a TTL. Every handle
- * can be consumed exactly once (the plan is removed on consume), denied or
- * abandoned plans are explicitly disposed, and `disposeAll()` clears the
- * registry on session shutdown so prepared probes can never leak
- * indefinitely. The serialized byte estimate counts UTF-8 bytes of the
- * canonical plan JSON, never JavaScript string length.
+ * Prepared-probe registry over the shared bounded, expiring, single-use
+ * plan store. The serialized byte estimate counts the same canonical JSON
+ * subset as before (digest, manifest digest, preview, engine selection).
  */
 export function createPreparedProbeStore(config: PreparedProbeStoreConfig = {}): {
   put(plan: PreparedProbePlan): PreparedProbePutResult;
-  consume(probe: PreparedGodotProbe): StoredPlan | null;
+  consume(probe: PreparedGodotProbe): StoredProbePlan | null;
   dispose(probe: PreparedGodotProbe): boolean;
   expireNow(): number;
   size(): number;
   stateBytes(): number;
   disposeAll(): void;
 } {
-  const maxProbes = config.maxProbes ?? GODOT_LIMITS.maxPreparedProbes;
-  const maxStateBytes = config.maxStateBytes ?? GODOT_LIMITS.maxPreparedProbeStateBytes;
-  const ttlMs = config.ttlMs ?? GODOT_LIMITS.preparedProbeTtlMs;
-  const now = config.now ?? ((): number => Date.now());
-  const plans = new Map<PreparedGodotProbe, StoredPlan>();
-
-  function put(plan: PreparedProbePlan): PreparedProbePutResult {
-    expireNow();
-    const stateBytes = utf8ByteLength(planJson(plan));
-    if (plans.size >= maxProbes) {
-      return {
-        ok: false,
-        reason: "count-limit",
-        message: `The prepared-probe limit of ${maxProbes} was reached; prepare the probe again later.`,
-      };
-    }
-    const currentBytes = [...plans.values()].reduce((total, entry) => total + entry.stateBytes, 0);
-    if (currentBytes + stateBytes > maxStateBytes) {
-      return {
-        ok: false,
-        reason: "byte-limit",
-        message:
-          "The prepared-probe state byte limit was reached; the probe could not be prepared.",
-      };
-    }
-    const probe = createPreparedGodotProbe();
-    plans.set(probe, { ...plan, createdAt: now(), stateBytes });
-    return { ok: true, probe, stateBytes };
-  }
-
-  function consume(probe: PreparedGodotProbe): StoredPlan | null {
-    const plan = plans.get(probe);
-    if (plan === undefined) {
-      return null;
-    }
-    plans.delete(probe);
-    if (now() - plan.createdAt > ttlMs) {
-      return null;
-    }
-    return plan;
-  }
-
-  function dispose(probe: PreparedGodotProbe): boolean {
-    return plans.delete(probe);
-  }
-
-  function expireNow(): number {
-    let removed = 0;
-    for (const [probe, plan] of plans) {
-      if (now() - plan.createdAt > ttlMs) {
-        plans.delete(probe);
-        removed += 1;
-      }
-    }
-    return removed;
-  }
-
-  function size(): number {
-    return plans.size;
-  }
-
-  function stateBytes(): number {
-    return [...plans.values()].reduce((total, entry) => total + entry.stateBytes, 0);
-  }
-
-  function disposeAll(): void {
-    plans.clear();
-  }
-
-  return { put, consume, dispose, expireNow, size, stateBytes, disposeAll };
+  const store: PreparedPlanStore<PreparedGodotProbe, PreparedProbePlan> = createPreparedPlanStore<
+    PreparedGodotProbe,
+    PreparedProbePlan
+  >(
+    {
+      ...config,
+      label: "prepared-probe",
+      maxPlans: config.maxProbes ?? GODOT_LIMITS.maxPreparedProbes,
+      maxStateBytes: config.maxStateBytes ?? GODOT_LIMITS.maxPreparedProbeStateBytes,
+      ttlMs: config.ttlMs ?? GODOT_LIMITS.preparedProbeTtlMs,
+    },
+    () => createPreparedGodotProbe(),
+    (plan) => planJson(plan),
+  );
+  return {
+    put: (plan) => {
+      const stored = store.put(plan);
+      return stored.ok
+        ? { ok: true, probe: stored.handle, stateBytes: stored.stateBytes }
+        : { ok: false, reason: stored.reason, message: stored.message };
+    },
+    consume: (probe) => store.consume(probe),
+    dispose: (probe) => store.dispose(probe),
+    expireNow: () => store.expireNow(),
+    size: () => store.size(),
+    stateBytes: () => store.stateBytes(),
+    disposeAll: () => store.disposeAll(),
+  };
 }
 
 function planJson(plan: PreparedProbePlan): string {
@@ -143,8 +96,4 @@ function planJson(plan: PreparedProbePlan): string {
       version: plan.selection.profile.version.raw,
     },
   });
-}
-
-function utf8ByteLength(text: string): number {
-  return new TextEncoder().encode(text).length;
 }
