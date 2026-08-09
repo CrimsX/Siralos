@@ -636,6 +636,38 @@ export {
   type WorkspaceRevisionRegistryOptions,
 } from "./workspace/workspace-revision.js";
 export {
+  INSTRUCTION_ID_PREFIX,
+  INSTRUCTION_PRECEDENCE,
+  MAX_INSTRUCTION_CONTENT_BYTES,
+  computeInstructionId,
+  computeResolvedInstructionSetRevision,
+  createProjectInstruction,
+  describeInstructionScope,
+  instructionAppliesTo,
+  instructionPriority,
+  normalizeInstructionContent,
+  renderResolvedInstructions,
+  type InstructionConflict,
+  type InstructionScope,
+  type InstructionSource,
+  type InstructionSourceKind,
+  type ProjectInstruction,
+  type ResolvedInstructionSet,
+} from "./instructions/instruction-model.js";
+export {
+  buildInstruction,
+  compareInstructions,
+  computeInstructionInventoryRevision,
+  detectConflicts,
+  resolveInstructionSet,
+  resolveInstructionsForPath,
+  type ResolveInstructionsInput,
+} from "./instructions/instruction-resolver.js";
+export {
+  type InstructionDiscoveryOutcome,
+  type ProjectInstructionService,
+} from "./instructions/instruction-service.js";
+export {
   WORKSPACE_READ_MODES,
   isWorkspaceReadMode,
   type WorkspaceReadMode,
