@@ -679,6 +679,136 @@ evidence]` — with knowledge framed as factual context that never grants
   volatility, pinned status, retired subjects); `/knowledge why` shows the
   latest retrieval trace. Both are read-only.
 
+## Workspace, reference, and research resource classes
+
+The external-reference and research layer (Stage 3 milestone 5, ADR 0018)
+gives Solaris first-class, read-only access to upstream material — local
+directories outside the workspace and remote repositories pinned to
+immutable commits — plus bounded, host-coordinated fetching of external
+evidence (repository files, Godot documentation). Three resource classes
+are separated explicitly:
+
+```text
+WORKSPACE   editable project state (the canonical launch directory)
+REFERENCE   read-only external material (a local directory outside the
+            workspace, or a remote repository pinned to a commit)
+RESEARCH    transient external evidence fetched through bounded source
+            ports (repository files, Godot documentation)
+```
+
+The governing statement block:
+
+```text
+Reference content is read-only untrusted data.
+Research content is transient external evidence.
+Neither is instruction authority. Neither grants capability.
+Neither becomes project knowledge automatically.
+```
+
+Namespace separation is structural, not advisory:
+
+- `@reference/<alias>` names are **never filesystem paths**. They are
+  model-facing labels for declared reference slots; the reference
+  namespace is separate from the workspace namespace, and workspace tools
+  resolve only workspace-relative paths.
+- **Reference roots must be outside the workspace.** The registry refuses
+  any local-directory reference that resolves inside the workspace
+  namespace at resolution and at refresh, and the access layer re-verifies
+  every root before serving content (defense in depth).
+- **Workspace mutation tools cannot target reference roots.** The
+  workspace mutation surface never covers reference content: reference
+  paths are rejected before any write, approval, or checkpoint, and there
+  is no reference mutation surface at all (behavior fixture 51).
+- **Managed cache paths are never model-facing.** Repository
+  materialization would live in Solaris-owned private storage outside the
+  workspace (`~/.solaris/references/<fingerprint>/`); no absolute cache
+  path ever reaches the model, and cache content is never presented as
+  workspace material. At this stage repository materialization is
+  `unavailable` (it requires sandboxed Git execution, which does not
+  exist) — nothing is spawned, fetched, or created; local-directory
+  references are direct read-only roots with zero filesystem operations.
+
+```text
+packages/core/src/reference/      reference model, declaration parsing
+                                   (strict, bounded, unknown keys rejected),
+                                   ReferenceRegistry (SINGLE owner of
+                                   reference identity), ports, evidence views
+packages/core/src/research/       research model + bounds, source/transport
+                                   ports, ResearchService (policy gate,
+                                   validation, timeouts, cancellation,
+                                   provenance, stale-result binding)
+packages/adapters/src/reference/  resolvers (local-directory manifest
+                                   fingerprint; repository backend reports
+                                   unavailable), materializer (fail-closed),
+                                   cache store (no-op), root-relative
+                                   containment, access port, reference tools
+packages/adapters/src/research/   node:https transport (bounded, https-only),
+                                   GitHub + Godot-docs source adapters,
+                                   bounded normalization (shared)
+packages/adapters/src/tools/reference/
+                                   reference.list / reference.read /
+                                   reference.search tools
+```
+
+- **Read-only reference registry**: the `ReferenceRegistry` is the single
+  application-owned owner of reference identity. Declarations are parsed
+  from the untrusted `reference` config section (aliases
+  `^[a-z][a-z0-9._-]{1,63}$`, bounded count/description; unknown keys
+  rejected), resolved at creation through the resolver port, and recorded
+  as immutable revisions; the only way a revision changes is an explicit
+  `refresh`. Mutable refs (branch / absent ref) are refused unless
+  `allowMutableRefs` is set, and resolution always records the resolved
+  commit. A failed refresh invalidates the current revision (fail closed)
+  but historical revisions stay reachable through task bindings and
+  evidence. Declined/unresolvable references remain listed with precise
+  reasons. Local-directory identity is a canonical path plus a bounded
+  manifest fingerprint (every regular file SHA-256'd, per-file and
+  manifest caps; symlinks never traversed, special files fail the
+  manifest — a non-fingerprintable reference is never silently marked
+  "unhashed").
+- **Reference access**: `reference.list` / `reference.read` /
+  `reference.search` under the `reference.inspect` capability (allowed in
+  every built-in profile). Paths are reference-root-relative with
+  containment equal to workspace paths (`..` rejection after segment
+  normalization, symlink escapes rejected against the canonical root,
+  null bytes rejected). Read modes mirror `workspace.read` — `exact`
+  (SHA-256, the only authoritative source), `structural` (deterministic
+  GDScript declarations via the core parser), `summary` (bounded
+  advisory) — with caps (1 MiB files, 64k content chars, non-UTF-8
+  `unsupported`) and search with independent global traversal budgets and
+  explicit truncation. Every result carries the registry-owned revision
+  anchor (commit or fingerprint) — the adapter never resolves, refreshes,
+  or infers identity itself.
+- **Research**: the `ResearchService` is the single gate: the
+  `research.fetch` capability must evaluate to `allow` before any source
+  port is invoked (`ask` is refused — no approval protocol exists), every
+  built-in profile denies it, and hidden research tools are absent from
+  the provider schema. Requests are validated against the bounded model,
+  must name a configured source, and race the caller's abort signal and a
+  timeout with caps at download (2 MiB), document (256 KiB), section, and
+  link layers. Provenance records requested vs resolved identity
+  (`requestedRef`/`resolvedRevision`, `requestedVersion`/`usedVersion`,
+  explicit `fallback` marking — e.g. Godot docs patch → minor → stable).
+  Results are stale-result-bound (`requestId` + task-contract revision;
+  `bind`/`isCurrent`); stale results are discarded before entering
+  evidence or context. The real adapters cover a narrow read-only scope —
+  GitHub known-file content and latest-release notes
+  (`research.repository`) and Godot documentation class/search pages
+  (`research.godot_docs`) — through a single bounded https-only
+  node:https transport.
+- **Evidence and knowledge integration**: task evidence gains
+  `reference_read`, `reference_search`, and `research` kinds with bounded
+  sources; the ContextProjector renders volatile `[Reference evidence]`
+  and `[Research evidence]` sections after `[Latest evidence]` (bounded,
+  truncated explicitly, never stable/contextual, never absolute paths);
+  a `KnowledgeCandidate` may cite `research_evidence` provenance only
+  through an explicit host-verified `propose` — never automatically.
+- **CLI surface**: `/references` lists configured references with
+  status/materialization/trust/revision; `/reference <alias>` shows one
+  reference's identity and availability; `/research-status` shows the
+  research capability decision, configured sources, and recent evidence;
+  `/status` adds a research line. All read-only.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. TaskState may remain in memory by design for this milestone: the types are serializable, no runtime handles are embedded in domain state, and the persistent-state schema/versioning requirements are documented in ADR 0014 (a future persistence milestone can rely on `runtimeVersion`, the revisioned contract history, and the append-only activity log). A persistence port will be added only when a real requirement demands it.

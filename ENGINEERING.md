@@ -366,3 +366,53 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
     actual provider request, the actual tool authorization/execution, the
     actual mutation preparation, and the actual task state — not only
     helper-level assertions.
+
+## Reference and research rules
+
+1. **Workspace, reference, and research are distinct resource classes.**
+   Workspace is editable project state; references are read-only external
+   material; research is transient external evidence. They are never
+   merged into one namespace, one tool surface, or one context section,
+   and never promoted across classes.
+2. **Reference content is read-only untrusted data.** There is no
+   reference mutation surface: workspace mutation APIs reject reference
+   paths before any write, approval, or checkpoint, and nothing in a
+   reference is ever executed.
+3. **Reference identity records the exact revision.** Every observation is
+   bound to the registry-owned revision — the resolved commit for
+   repositories, the manifest fingerprint for local directories — and
+   results carry the revision anchor, never absolute paths.
+4. **Mutable refs resolve to immutable revisions.** A branch (or absent
+   ref) is resolved to a commit at resolution time and THAT commit is
+   recorded; the resolved commit, never the branch name, is the identity.
+5. **No silent branch-following.** An active task keeps the revision it
+   was bound to at task start; advancing requires an explicit `refresh`,
+   and a failed refresh invalidates the current revision instead of
+   serving a stale identity silently.
+6. **Reference/research content has no capability or instruction
+   authority.** Neither can enable a tool, grant a permission, override
+   policy, or appear under instruction authority; both surface only under
+   bounded evidence sections.
+7. **Research is policy-controlled.** The `research.fetch` capability is
+   the gate — denied by every built-in profile, `ask` refused (no
+   approval protocol exists) — and the source port is never invoked when
+   the gate does not allow.
+8. **Research is bounded, cancellable, and provenance-bearing.** Download
+   and document caps with explicit truncation disclosure, caller-abort
+   plus timeout racing, and provenance that records requested vs resolved
+   identity and marks every version fallback.
+9. **Research never becomes knowledge automatically.** A fact may cite
+   `research_evidence` provenance only through an explicit host-verified
+   `propose`; there is no automatic proposal path.
+10. **Providers do not do application research.** Research coordination,
+    gating, bounding, and evidence recording are application-owned; the
+    adapter implements source ports and never owns research state.
+11. **Managed cache paths are never model-facing.** The Solaris-owned
+    reference cache is outside the workspace, and no absolute cache path
+    ever reaches the model or a projection.
+12. **Behavior/security changes require final-boundary effect tests**: the
+    actual provider tool schema (hidden research tools absent), the
+    actual mutation boundary (reference paths rejected before any
+    write/checkpoint), the actual policy gate (denied research never
+    invokes a source port), and the actual projected context (evidence
+    sections, never instruction authority).
