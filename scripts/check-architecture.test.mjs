@@ -1235,6 +1235,136 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
     expect(errors).toEqual([]);
   });
 
+  it("rejects instruction modules importing provider ports", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/instructions/instruction-resolver.ts"] =
+      'import type { ModelProvider } from "../ports/provider.js";\nexport type X = ModelProvider;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("instruction modules must not depend on provider ports"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects instruction modules importing mutation/checkpoint machinery", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/instructions/instruction-model.ts"] =
+      'import type { PreparedChangeSetFile } from "../godot/development/development-change-set.js";\nexport type X = PreparedChangeSetFile;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("instruction modules must not import mutation/checkpoint machinery"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects knowledge modules importing provider ports", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/knowledge/knowledge-coordinator.ts"] =
+      'import type { ModelRequest } from "../ports/provider.js";\nexport type X = ModelRequest;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("knowledge modules must not depend on provider ports")),
+    ).toBe(true);
+  });
+
+  it("rejects the KnowledgeCoordinator importing workspace mutation machinery", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/knowledge/knowledge-coordinator.ts"] =
+      'import type { PreparedChangeSetFile } from "../godot/development/development-change-set.js";\nexport type X = PreparedChangeSetFile;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("knowledge modules must not import mutation/checkpoint machinery"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects knowledge modules importing the projection layer", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/knowledge/knowledge-model.ts"] =
+      'import type { ContextProjection } from "../projection/context-projector.js";\nexport type X = ContextProjection;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("knowledge modules must not depend on the projection layer"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects knowledge modules importing sandbox implementations", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/knowledge/knowledge-coordinator.ts"] =
+      'import type { SandboxBackend } from "../security/sandbox-backend.js";\nexport type X = SandboxBackend;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("knowledge modules must not depend on sandbox implementations"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts knowledge modules importing the generic digest and task type model", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/knowledge/knowledge-coordinator.ts"] =
+      'import { sha256Hex } from "../godot/digest.js";\nimport type { EvidenceKind } from "../tasks/task-model.js";\nexport const x = sha256Hex;\nexport type Y = EvidenceKind;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects ToolProjector consuming knowledge as policy", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/tool-projector.ts"] =
+      'import type { ProjectKnowledgeFact } from "../knowledge/knowledge-model.js";\nexport type X = ProjectKnowledgeFact;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("only projection-service consumes instruction/knowledge models"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects projection modules importing the concrete KnowledgeCoordinator", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/projection-service.ts"] =
+      'import { createKnowledgeCoordinator } from "../knowledge/knowledge-coordinator.js";\nexport const x = createKnowledgeCoordinator;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("never the concrete KnowledgeCoordinator persistence")),
+    ).toBe(true);
+  });
+
+  it("accepts projection-service importing knowledge/instruction model types", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/projection-service.ts"] =
+      'import type { ProjectKnowledgeFact } from "../knowledge/knowledge-model.js";\nimport type { ResolvedInstructionSet } from "../instructions/instruction-model.js";\nexport type X = ProjectKnowledgeFact;\nexport type Y = ResolvedInstructionSet;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects provider adapters discovering project instructions themselves", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { createProjectInstructionService } from "../instructions/instruction-discovery.js";\nexport const x = createProjectInstructionService;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("provider adapters must not discover or resolve project instructions"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts the adapter instruction-discovery module and its tests", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/instructions/instruction-discovery.ts"] =
+      'import { createProjectInstructionService } from "@solaris/core";\nexport const x = createProjectInstructionService;\n';
+    fixture["packages/adapters/src/instructions/instruction-discovery.test.ts"] =
+      'import { createProjectInstructionService } from "@solaris/core";\nexport const x = createProjectInstructionService;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
   it("rejects workspace revision modules importing mutation/checkpoint machinery", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/core/src/workspace/workspace-summary.ts"] =

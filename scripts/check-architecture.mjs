@@ -204,6 +204,32 @@ function isDevelopmentTaskBridge(packageRelativeFile) {
   );
 }
 
+/**
+ * Stage 3 milestone 4: instruction modules own instruction model +
+ * resolution semantics and stay provider-neutral: no provider ports, no
+ * sandbox implementations, no mutation/checkpoint machinery, and no Godot
+ * modules beyond the generic digest utility.
+ */
+const INSTRUCTIONS_DIRECTORY = join("src", "instructions");
+
+function isCoreInstructionModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(INSTRUCTIONS_DIRECTORY + sep);
+}
+
+/**
+ * Stage 3 milestone 4: knowledge modules are the single-writer knowledge
+ * store (model + coordinator + seeding + projection rendering). They never
+ * depend on provider ports, sandbox implementations, mutation/checkpoint
+ * machinery, workspace mutation surfaces, the projection layer (projection
+ * consumes knowledge, never the reverse), or future semantic/vector
+ * services. The KnowledgeCoordinator can never invoke workspace mutation.
+ */
+const KNOWLEDGE_DIRECTORY = join("src", "knowledge");
+
+function isCoreKnowledgeModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(KNOWLEDGE_DIRECTORY + sep);
+}
+
 /** Adapter subtrees the quality/reviewer adapter must never import. */
 const QUALITY_FORBIDDEN_IMPORT_ROOTS = [
   { root: join("src", "tools", "workspace", "mutations"), label: "workspace mutation adapters" },
@@ -1312,6 +1338,93 @@ export function runChecks(root) {
             ) {
               errors.push(
                 `${location}: task runtime modules must not depend on Godot modules; only the development bridge (task-development.ts) maps workflow events (the generic digest utility is allowed)`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/core" && isCoreInstructionModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: instruction modules must not depend on provider ports; instruction resolution is provider-neutral`,
+              );
+            }
+            if (specifier.startsWith("../security/sandbox-")) {
+              errors.push(
+                `${location}: instruction modules must not depend on sandbox implementations; security policy stays outside the instruction resolver`,
+              );
+            }
+            if (
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../godot/development/") ||
+              specifier.startsWith("../tools/")
+            ) {
+              errors.push(
+                `${location}: instruction modules must not import mutation/checkpoint machinery; resolving guidance can never mutate files`,
+              );
+            }
+            if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
+              errors.push(
+                `${location}: instruction modules must not depend on Godot modules (the generic digest utility is allowed)`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/core" && isCoreKnowledgeModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: knowledge modules must not depend on provider ports; knowledge is provider-neutral factual context`,
+              );
+            }
+            if (specifier.startsWith("../security/sandbox-")) {
+              errors.push(
+                `${location}: knowledge modules must not depend on sandbox implementations; knowledge can never grant capability`,
+              );
+            }
+            if (
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../godot/development/") ||
+              specifier.startsWith("../tools/") ||
+              specifier.startsWith("../workspace/")
+            ) {
+              errors.push(
+                `${location}: knowledge modules must not import mutation/checkpoint machinery; the KnowledgeCoordinator can never invoke workspace mutation directly`,
+              );
+            }
+            if (specifier.startsWith("../projection/")) {
+              errors.push(
+                `${location}: knowledge modules must not depend on the projection layer; ContextProjector consumes knowledge, never the reverse`,
+              );
+            }
+            if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
+              errors.push(
+                `${location}: knowledge modules must not depend on Godot modules (the generic digest utility is allowed); project knowledge does not depend on engine or future semantic services`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/core" && isCoreProjectionModule(packageRelativeFile)) {
+            if (
+              packageRelativeFile !== join(PROJECTION_DIRECTORY, "projection-service.ts") &&
+              packageRelativeFile !== join(PROJECTION_DIRECTORY, "projection-service.test.ts") &&
+              (specifier.startsWith("../instructions/") || specifier.startsWith("../knowledge/"))
+            ) {
+              errors.push(
+                `${location}: only projection-service consumes instruction/knowledge models; ToolProjector and EvidenceProjector never treat knowledge as policy or authority`,
+              );
+            }
+            if (
+              specifier === "../knowledge/knowledge-coordinator.js" ||
+              specifier === "../knowledge/knowledge-coordinator.test.js"
+            ) {
+              errors.push(
+                `${location}: projection modules consume knowledge through injected projections (structured models), never the concrete KnowledgeCoordinator persistence`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/adapters" && isTestSupportFile(file) === false) {
+            if (
+              specifier.startsWith("../instructions/") &&
+              packageRelativeFile.startsWith(INSTRUCTIONS_DIRECTORY + sep) === false
+            ) {
+              errors.push(
+                `${location}: provider adapters must not discover or resolve project instructions themselves; the instruction service under src/instructions is the only adapter-owned discovery surface`,
               );
             }
           }
