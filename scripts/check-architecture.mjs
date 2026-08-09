@@ -170,6 +170,18 @@ function isCoreTaskModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(TASK_RUNTIME_DIRECTORY + sep);
 }
 
+/**
+ * Stage 3 milestone 2: projection modules are provider-neutral pure
+ * transformations. They never import provider ports (wire types), the task
+ * runtime mutation surface (projectors receive snapshots through injected
+ * getters and can never mutate TaskState), or sandbox implementations.
+ */
+const PROJECTION_DIRECTORY = join("src", "projection");
+
+function isCoreProjectionModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(PROJECTION_DIRECTORY + sep);
+}
+
 /** The core module that may bridge the development workflow into tasks. */
 function isDevelopmentTaskBridge(packageRelativeFile) {
   return (
@@ -1208,6 +1220,28 @@ export function runChecks(root) {
             }
             if (specifier.startsWith("node:")) {
               errors.push(`${location}: core must not import Node module ${specifier}`);
+            }
+          }
+          if (pkg.name === "@solaris/core" && isCoreProjectionModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: projection modules must not depend on provider ports; projectors build provider-neutral inputs only`,
+              );
+            }
+            if (specifier.startsWith("../tasks/task-runtime")) {
+              errors.push(
+                `${location}: projection modules must not import the task runtime mutation surface; projectors receive task snapshots through injected getters and can never mutate TaskState`,
+              );
+            }
+            if (specifier.startsWith("../security/sandbox-")) {
+              errors.push(
+                `${location}: projection modules must not depend on sandbox implementations; projectors classify tool visibility from the capability policy and profile identifiers only`,
+              );
+            }
+            if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
+              errors.push(
+                `${location}: projection modules must not depend on Godot modules (the generic digest utility is allowed)`,
+              );
             }
           }
           if (pkg.name === "@solaris/core" && isCoreTaskModule(packageRelativeFile)) {

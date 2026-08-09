@@ -1180,4 +1180,58 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
+
+  it("rejects projection modules importing provider ports", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/context-projector.ts"] =
+      'import type { ModelRequest } from "../ports/provider.js";\nexport type X = ModelRequest;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("projection modules must not depend on provider ports"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects projection modules importing the task runtime mutation surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/projection-service.ts"] =
+      'import { createTaskRuntime } from "../tasks/task-runtime.js";\nexport const x = createTaskRuntime;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("projection modules must not import the task runtime mutation surface"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects projection modules importing sandbox implementations", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/tool-projector.ts"] =
+      'import type { SandboxBackend } from "../security/sandbox-backend.js";\nexport type X = SandboxBackend;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("projection modules must not depend on sandbox implementations"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects projection modules importing Godot modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/context-projector.ts"] =
+      'import type { GDScriptDevelopmentStatus } from "../godot/development/development-model.js";\nexport type X = GDScriptDevelopmentStatus;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("projection modules must not depend on Godot")),
+    ).toBe(true);
+  });
+
+  it("accepts projection modules importing task snapshot types and the digest utility", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/projection-service.ts"] =
+      'import type { TaskState } from "../tasks/task-model.js";\nimport { sha256Hex } from "../godot/digest.js";\nexport type X = TaskState;\nexport const y = sha256Hex;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
 });

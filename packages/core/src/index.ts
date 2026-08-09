@@ -541,3 +541,80 @@ export {
   type DevelopmentTaskFlow,
   type DevelopmentTaskFlowOptions,
 } from "./tasks/task-development.js";
+export {
+  DEFAULT_CONTEXT_MAX_OUTPUT_TOKENS,
+  DEFAULT_CONTEXT_WORKING_MAXIMUM,
+  createRouteContextCapacity,
+  type ContextCapacity,
+} from "./projection/context-capacity.js";
+export {
+  DEFAULT_CONTEXT_PRESSURE_LIMITS,
+  classifyPressure,
+  type ContextPressure,
+  type ContextPressureLimits,
+  type ContextPressureState,
+} from "./projection/context-pressure.js";
+export {
+  estimateConversationItemTokens,
+  estimateJsonTokens,
+  estimateTokens,
+  type TokenEstimate,
+} from "./projection/context-estimator.js";
+export {
+  SOLARIS_SYSTEM_INSTRUCTIONS,
+  createContextProjector,
+  serializeContextPrefix,
+  serializeSegments,
+  type ContextProjection,
+  type ContextProjectionInput,
+  type ContextProjector,
+  type ContextSegment,
+  type ContextSegmentInput,
+  type ContextStability,
+} from "./projection/context-projector.js";
+export {
+  createToolProjector,
+  type ProjectedTool,
+  type ProjectionMode,
+  type ToolProjection,
+  type ToolProjectionInput,
+  type ToolProjector,
+  type ToolProjectorOptions,
+  type ToolVisibility,
+} from "./projection/tool-projector.js";
+export {
+  DEFAULT_EVIDENCE_MAX_LINE_BYTES,
+  DEFAULT_EVIDENCE_MAX_TOTAL_BYTES,
+  boundLineLength,
+  collapseRepeatedLines,
+  createEvidenceProjector,
+  redactSecrets,
+  stripAnsiAndControl,
+  truncateText,
+  type EvidenceProjectionOptions,
+  type EvidenceProjector,
+  type ModelEvidenceView,
+} from "./projection/evidence-projector.js";
+export {
+  createWatermarkCache,
+  type WatermarkCache,
+  type WatermarkCacheEntry,
+  type WatermarkCacheOptions,
+} from "./projection/watermark-cache.js";
+export {
+  createRevisionGuard,
+  awaitCurrent,
+  type RevisionBound,
+  type RevisionGuard,
+} from "./projection/stale-result.js";
+export {
+  estimateConversationTokens,
+  trimConversationPreservingPairs,
+  type ConversationTrimResult,
+} from "./projection/conversation-trim.js";
+export {
+  createProjectionService,
+  type ProjectedRequest,
+  type ProjectionService,
+  type ProjectionServiceOptions,
+} from "./projection/projection-service.js";
