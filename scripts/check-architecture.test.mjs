@@ -798,3 +798,90 @@ describe("check-architecture", () => {
     expect(errors.some((error) => error.includes("recovery runner may only be used"))).toBe(true);
   });
 });
+
+describe("check-architecture Godot check-only diagnostics", () => {
+  it("requires the fixed check-only pairing in the check-only runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-check-only-runner.ts"] =
+      'export const BASE = ["--headless", "--path", mirrorPath, "--script", mirrorScript, "--check-only"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must pass --headless"))).toBe(false);
+    expect(errors.some((error) => error.includes("must pass --path"))).toBe(false);
+    expect(errors.some((error) => error.includes("must pass --script"))).toBe(false);
+    expect(errors.some((error) => error.includes("must pass --check-only"))).toBe(false);
+  });
+
+  it("rejects missing --check-only in the check-only runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-check-only-runner.ts"] =
+      'export const ARGS = ["--headless", "--path", mirrorPath, "--script", mirrorScript];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must pass --check-only"))).toBe(true);
+  });
+
+  it("rejects scene, editor, import, LSP, DAP, and recovery options in the check-only runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-check-only-runner.ts"] =
+      'export const ARGS = ["--headless", "--path", mirrorPath, "--script", mirrorScript, "--check-only", "--scene"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not pass --scene"))).toBe(true);
+  });
+
+  it("rejects literal mirror paths and the source workspace in the check-only runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-check-only-runner.ts"] =
+      'export const ARGS = ["--headless", "--path", "/abs/mirror", "--script", "/abs/mirror/a.gd", "--check-only"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("never from literal paths"))).toBe(true);
+  });
+
+  it("rejects the source workspace root as the check-only --path", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-check-only-runner.ts"] =
+      'export function args(workspaceRoot, scriptPath) {\n  return ["--headless", "--path", workspaceRoot, "--script", scriptPath, "--check-only"];\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("never be the source workspace"))).toBe(true);
+  });
+
+  it("rejects concatenated check-only argument construction", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-check-only-runner.ts"] =
+      'export const ARGS = ["--headless", "--path", mirrorPath, "--scr" + "ipt", mirrorScript, "--check-only"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("string concatenation"))).toBe(true);
+  });
+
+  it("allows the API documentation runner only with the exact with-docs tuple", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-knowledge-runner.ts"] =
+      'export const BASE = ["--dump-extension-api-with-docs"];\nexport function args() {\n  return [...BASE];\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs"))).toBe(false);
+  });
+
+  it("rejects extra options in the API documentation runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-knowledge-runner.ts"] =
+      'export const ARGS = ["--dump-extension-api-with-docs", "--path", "/x"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs"))).toBe(true);
+  });
+
+  it("rejects an ordinary --dump-extension-api substitution in the API documentation runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-knowledge-runner.ts"] =
+      'export const ARGS = ["--dump-extension-api"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must pass exactly --dump-extension-api-with-docs"))).toBe(true);
+  });
+
+  it("restricts the check-only runner to the approved diagnostics adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-check-only-runner.ts"] =
+      'export const ARGS = ["--headless", "--path", mirrorPath, "--script", mirrorScript, "--check-only"];\n';
+    fixture["packages/adapters/src/godot/process/evil.ts"] =
+      'import { createGodotCheckOnlyRunner } from "./godot-check-only-runner.js";\nexport const x = createGodotCheckOnlyRunner;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("check-only runner may only be used"))).toBe(true);
+  });
+});

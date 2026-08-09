@@ -308,8 +308,14 @@ function isGodotProbeInvocationModule(packageRelativeFile, file) {
     return false;
   }
   // The recovery runner is the one legitimate operational user of the
-  // project path option and is governed by its own pairing rules below.
-  if (packageRelativeFile === GODOT_RECOVERY_RUNNER_FILE) {
+  // project path option and is governed by its own pairing rules below;
+  // the check-only runner and the API documentation runner are governed by
+  // their own pairing rules as well.
+  if (
+    packageRelativeFile === GODOT_RECOVERY_RUNNER_FILE ||
+    packageRelativeFile === GODOT_CHECK_ONLY_RUNNER_FILE ||
+    packageRelativeFile === GODOT_KNOWLEDGE_RUNNER_FILE
+  ) {
     return false;
   }
   if (!packageRelativeFile.startsWith(join("src", "godot", "process") + sep)) {
@@ -400,6 +406,20 @@ function checkGodotProbeTupleDiscipline(
  * strings, and spread arrays are caught, not just lexical spellings.
  */
 const GODOT_RECOVERY_RUNNER_FILE = join("src", "godot", "process", "godot-recovery-runner.ts");
+
+const GODOT_CHECK_ONLY_RUNNER_FILE = join(
+  "src",
+  "godot",
+  "process",
+  "godot-check-only-runner.ts",
+);
+
+const GODOT_KNOWLEDGE_RUNNER_FILE = join(
+  "src",
+  "godot",
+  "process",
+  "godot-knowledge-runner.ts",
+);
 
 const FORBIDDEN_GODOT_RECOVERY_ARGUMENTS = [
   "--script",
@@ -554,7 +574,163 @@ const GODOT_RECOVERY_APPROVED_USERS = [
   join("src", "godot", "probe"),
   join("src", "godot", "mirror"),
   join("src", "godot", "process"),
+  join("src", "godot", "diagnostics"),
 ];
+
+/**
+ * The GDScript check-only runner is the ONLY legitimate `--script`
+ * invocation in Solaris. The module must pair `--script` with
+ * `--check-only` (the security-relevant invariant), `--path` (only to the
+ * disposable mirror), and `--headless`; must never carry scene, editor,
+ * import, LSP/DAP, recovery, export, or quit options; must take the path
+ * and script values from the prepared mirror (never literals and never the
+ * source workspace root); and must never construct argument arrays by
+ * string concatenation or import them from another module.
+ */
+const REQUIRED_GODOT_CHECK_ONLY_ARGUMENTS = ["--headless", "--path", "--script", "--check-only"];
+
+const FORBIDDEN_GODOT_CHECK_ONLY_ARGUMENTS = [
+  "--scene",
+  "--editor",
+  "--import",
+  "--upwards",
+  "--export",
+  "--build-solutions",
+  "--lsp",
+  "--dap",
+  "--debug-server",
+  "--recovery-mode",
+  "--write-movie",
+  "--benchmark",
+  "--doctool",
+  "--main-pack",
+  "--quit",
+  "--quit-after",
+];
+
+function checkGodotCheckOnlyRunner(packageRelativeFile, file, source, location, analysis, errors) {
+  if (packageRelativeFile !== GODOT_CHECK_ONLY_RUNNER_FILE) {
+    return;
+  }
+  const parsed = parseSource(source);
+  const tokens = collectOptionTokens(parsed);
+  for (const token of REQUIRED_GODOT_CHECK_ONLY_ARGUMENTS) {
+    if (!tokens.has(token)) {
+      errors.push(`${location}: the GDScript check-only runner must pass ${token}`);
+    }
+  }
+  for (const token of FORBIDDEN_GODOT_CHECK_ONLY_ARGUMENTS) {
+    if (tokens.has(token)) {
+      errors.push(
+        `${location}: the GDScript check-only runner must not pass ${token}; --check-only parsing is the only allowed diagnostic invocation`,
+      );
+    }
+  }
+  if (/["'`][^"'`\n]*["'`]\s*\+/.test(source) || /\+\s*["'`]/.test(source)) {
+    errors.push(
+      `${location}: the GDScript check-only arguments must not be constructed by string concatenation`,
+    );
+  }
+  for (const imported of analysis.importedNames) {
+    if (/Arguments$|_ARGS$/i.test(imported.originalName)) {
+      errors.push(
+        `${location}: check-only argument arrays must not be imported (${imported.originalName} from ${imported.module}); the fixed tuple must be built in the check-only runner module`,
+      );
+    }
+  }
+  const visit = (node) => {
+    if (ts.isArrayLiteralExpression(node)) {
+      const spreads = [];
+      let pathValue = null;
+      let scriptValue = null;
+      const elements = node.elements;
+      for (let index = 0; index < elements.length; index += 1) {
+        const element = elements[index];
+        if (ts.isStringLiteral(element) || ts.isNoSubstitutionTemplateLiteral(element)) {
+          if (element.text === "--path") {
+            pathValue = elements[index + 1];
+          }
+          if (element.text === "--script") {
+            scriptValue = elements[index + 1];
+          }
+        } else if (ts.isSpreadElement(element)) {
+          spreads.push(element.expression.getText(parsed));
+        }
+      }
+      for (const spread of spreads) {
+        if (analysis.importedNames.some((entry) => entry.local === spread)) {
+          errors.push(
+            `${location}: check-only argument arrays must not be composed from imported constants (${spread}); the fixed tuple must be built in the check-only runner module`,
+          );
+        }
+      }
+      for (const value of [pathValue, scriptValue]) {
+        if (value !== null) {
+          if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+            errors.push(
+              `${location}: the GDScript check-only --path and --script values must come from the prepared disposable mirror, never from literal paths`,
+            );
+          } else {
+            const valueText = value.getText(parsed);
+            if (/\bworkspaceRoot\b/.test(valueText)) {
+              errors.push(
+                `${location}: the GDScript check-only --path and --script values must never be the source workspace`,
+              );
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+}
+
+/**
+ * The API documentation runner passes exactly one fixed option,
+ * `--dump-extension-api-with-docs`, and never anything project-affecting.
+ * An ordinary `--dump-extension-api` result is never substituted for the
+ * with-docs profile.
+ */
+function checkGodotKnowledgeRunner(packageRelativeFile, file, source, location, analysis, errors) {
+  if (packageRelativeFile !== GODOT_KNOWLEDGE_RUNNER_FILE) {
+    return;
+  }
+  const parsed = parseSource(source);
+  const tokens = collectOptionTokens(parsed);
+  if (!tokens.has("--dump-extension-api-with-docs")) {
+    errors.push(
+      `${location}: the API documentation runner must pass exactly --dump-extension-api-with-docs`,
+    );
+  }
+  for (const token of tokens) {
+    if (token !== "--dump-extension-api-with-docs") {
+      errors.push(
+        `${location}: the API documentation runner must pass exactly --dump-extension-api-with-docs (found ${token})`,
+      );
+    }
+  }
+  for (const token of FORBIDDEN_GODOT_PROJECT_ARGUMENTS) {
+    if (tokens.has(token)) {
+      errors.push(
+        `${location}: the API documentation runner must not pass ${token}; API generation is project-independent`,
+      );
+    }
+  }
+  if (/["'`][^"'`\n]*["'`]\s*\+/.test(source) || /\+\s*["'`]/.test(source)) {
+    errors.push(
+      `${location}: the API documentation arguments must not be constructed by string concatenation`,
+    );
+  }
+  for (const imported of analysis.importedNames) {
+    if (/Arguments$|_ARGS$/i.test(imported.originalName)) {
+      errors.push(
+        `${location}: API documentation argument arrays must not be imported (${imported.originalName} from ${imported.module}); the fixed tuple must be built in the knowledge runner module`,
+      );
+    }
+  }
+}
+
 
 /**
  * Structural scan of one source file. Returns import bindings (named,
@@ -723,6 +899,8 @@ export function runChecks(root) {
             errors,
           );
           checkGodotRecoveryRunner(packageRelativeFile, file, source, location, analysis, errors);
+          checkGodotCheckOnlyRunner(packageRelativeFile, file, source, location, analysis, errors);
+          checkGodotKnowledgeRunner(packageRelativeFile, file, source, location, analysis, errors);
           for (const imported of analysis.destructiveFsImports) {
             if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
               errors.push(
@@ -846,7 +1024,43 @@ export function runChecks(root) {
               const isRecoveryUser = GODOT_RECOVERY_APPROVED_USERS.some((directory) =>
                 packageRelativeFile.startsWith(directory + sep),
               );
-              if (!isRecoveryUser) {
+              const isPackageBarrel = packageRelativeFile === join("src", "index.ts");
+              if (!isPackageBarrel) {
+                const checkOnlyUser = packageRelativeFile.startsWith(
+                  join("src", "godot", "diagnostics") + sep,
+                );
+                const knowledgeUser = packageRelativeFile.startsWith(
+                  join("src", "godot", "knowledge") + sep,
+                );
+                const checkOnlyRunner = join(
+                  pkg.path,
+                  "src",
+                  "godot",
+                  "process",
+                  "godot-check-only-runner.ts",
+                );
+                const knowledgeRunner = join(
+                  pkg.path,
+                  "src",
+                  "godot",
+                  "process",
+                  "godot-knowledge-runner.ts",
+                );
+                if (!checkOnlyUser && (target === checkOnlyRunner || target === checkOnlyRunner.replace(/\.ts$/, ".js"))) {
+                  errors.push(
+                    `${location}: the Godot check-only runner may only be used by the approved diagnostics adapter`,
+                  );
+                }
+                if (
+                  !knowledgeUser &&
+                  (target === knowledgeRunner || target === knowledgeRunner.replace(/\.ts$/, ".js"))
+                ) {
+                  errors.push(
+                    `${location}: the Godot API documentation runner may only be used by the approved knowledge adapter`,
+                  );
+                }
+              }
+              if (!isRecoveryUser && !isPackageBarrel) {
                 if (isUnder(target, mirrorRoot)) {
                   errors.push(
                     `${location}: the disposable project mirror may only be used by the approved Godot probe adapter`,
