@@ -51,6 +51,18 @@ describe("createGodotLSPSessionTool", () => {
     const prepared = await tool.prepare({ anything: true }, {});
     expect(prepared.status).toBe("invalid_input");
   });
+
+  it("defers to an active development workflow's session ownership", async () => {
+    const tool = createGodotLSPSessionTool(unavailableService(), () => ({
+      blocked: true,
+      message: "the development workflow manages the language session lifecycle",
+    }));
+    const prepared = await tool.prepare({}, {});
+    expect(prepared.status).toBe("failed");
+    if (prepared.status === "failed") {
+      expect(prepared.message).toContain("development workflow manages");
+    }
+  });
 });
 
 describe("GDScript language query tools", () => {

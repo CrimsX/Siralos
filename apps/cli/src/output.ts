@@ -287,13 +287,13 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   if (request.capability === "godot.development") {
     return formatDevelopmentStartPreview(request.preview);
   }
-  const file = request.preview.files[0];
+  const files = request.preview.files;
   const lines = [
     "Approval required",
     "",
     `Tool: ${request.toolName}`,
     `Capability: ${request.capability}`,
-    `File: ${file === undefined ? "(none)" : sanitizePathForDisplay(file.path)}`,
+    `Files: ${files.length === 0 ? "(none)" : files.map((file) => `${operationMark(file.operation)} ${sanitizePathForDisplay(file.path)}`).join(", ")}`,
     `Change: +${request.preview.totalAddedLines} -${request.preview.totalRemovedLines}`,
     "",
   ];
@@ -303,12 +303,21 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
     lines.push("Any later file change will cause a conflict.");
     lines.push("");
   }
-  if (file !== undefined) {
-    lines.push(sanitizeForDisplay(file.unifiedDiff));
+  for (const file of files) {
+    lines.push(`--- ${operationMark(file.operation)} ${sanitizePathForDisplay(file.path)} ---`);
+    if (file.unifiedDiff.length > 0) {
+      lines.push(sanitizeForDisplay(file.unifiedDiff));
+    } else if (file.operation === "delete") {
+      lines.push(`(delete: ${file.removedLines} line(s) removed)`);
+    }
   }
   lines.push("");
   lines.push(`Approval applies once to plan ${request.digest.slice(0, 8)}.`);
   return `${lines.join("\n")}\n`;
+}
+
+function operationMark(operation: "create" | "update" | "delete"): string {
+  return operation === "create" ? "A" : operation === "update" ? "M" : "D";
 }
 
 function formatGodotProbeApprovalPrompt(
@@ -1522,10 +1531,6 @@ export function formatDevelopmentResult(result: GDScriptDevelopmentResult): stri
     `Checkpoints: ${result.checkpointIds.length > 0 ? result.checkpointIds.map((id) => id.slice(0, 8)).join(", ") : "(none)"}`,
   ];
   return lines.join("\n");
-}
-
-function operationMark(operation: "create" | "update" | "delete"): string {
-  return operation === "create" ? "A" : operation === "update" ? "M" : "D";
 }
 
 function describeDevelopmentStatus(status: string): string {

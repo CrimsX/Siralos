@@ -52,6 +52,8 @@ export interface FakeLanguageControl {
   closeAllError: Error | null;
   /** Diagnostics to seed into the NEXT started session, by path. */
   nextSessionDiagnostics: Map<string, readonly GodotGDScriptDiagnostic[]>;
+  /** When true, every session's diagnostics query returns session_required. */
+  failDiagnostics: boolean;
   log: string[];
 }
 
@@ -80,6 +82,7 @@ export function createFakeLanguageService(options: FakeLanguageOptions = {}): {
     nextStartFailure: null,
     closeAllError: null,
     nextSessionDiagnostics: new Map(),
+    failDiagnostics: false,
     log: [],
   };
   const service: GDScriptLanguageService = {
@@ -211,7 +214,7 @@ function createFakeSession(id: string, control: FakeLanguageControl): GDScriptLa
       }),
     diagnostics: (request): Promise<GDScriptQueryOutcome<GDScriptDiagnosticResult>> => {
       const sessionControl = control.active;
-      if (sessionControl === null || sessionControl.closed) {
+      if (sessionControl === null || sessionControl.closed || control.failDiagnostics) {
         return Promise.resolve({ status: "session_required", message: "no session" });
       }
       const diagnostics = sessionControl.diagnosticsByPath.get(request.path) ?? [];

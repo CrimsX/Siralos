@@ -61,6 +61,32 @@ describe("validateChangeSetRequest", () => {
     expect(result.ok || result.message).toContain("16");
   });
 
+  it("rejects colon-qualified paths (alternate data streams, drive qualifiers)", () => {
+    const result = validateChangeSetRequest({
+      changes: [{ operation: "create", path: "evil.gd:stream", content: "x" }],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain("colon");
+    }
+  });
+
+  it("rejects scene and resource files outside the milestone scope", () => {
+    for (const path of ["scenes/main.tscn", "scenes/theme.tres"]) {
+      const result = validateChangeSetRequest({
+        changes: [
+          {
+            operation: "edit",
+            path,
+            expectedSha256: "a".repeat(64),
+            replacements: [{ oldText: "x", newText: "y" }],
+          },
+        ],
+      });
+      expect(result.ok).toBe(false);
+    }
+  });
+
   it("rejects duplicate paths within one change set", () => {
     const result = validateChangeSetRequest({ changes: [GOOD_EDIT, GOOD_EDIT] });
     expect(result.ok).toBe(false);

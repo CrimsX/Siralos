@@ -172,18 +172,14 @@ export const DEVELOPMENT_LIMITS = {
   maxRepairProposals: 3,
   /** Maximum total development iterations (§32). */
   maxTotalIterations: 4,
-  /** Per-script `--check-only` parser timeout (§60). */
-  parserTimeoutMs: 30_000,
-  /** Fresh LSP session startup timeout (§60). */
-  lspStartupTimeoutMs: 30_000,
   /** Validation budget per iteration (§60). */
   validationBudgetMs: 2 * 60 * 1000,
   /** Total development workflow budget (§60). */
   totalWorkflowBudgetMs: 15 * 60 * 1000,
   /** Maximum retained diagnostics in one evidence record. */
   maxEvidenceDiagnostics: 500,
-  /** Maximum changed GDScript files checked per iteration. */
-  maxChangedScriptsChecked: 16,
+  /** Maximum simultaneously prepared change sets in one workflow. */
+  maxPreparedChangeSets: 4,
   /** Maximum lifetime of a prepared change set before it expires. */
   preparedChangeSetTtlMs: 10 * 60 * 1000,
 } as const;

@@ -10,10 +10,9 @@ describe("DEVELOPMENT_LIMITS", () => {
     expect(DEVELOPMENT_LIMITS.maxReplacementsPerFile).toBe(32);
     expect(DEVELOPMENT_LIMITS.maxRepairProposals).toBe(3);
     expect(DEVELOPMENT_LIMITS.maxTotalIterations).toBe(4);
-    expect(DEVELOPMENT_LIMITS.parserTimeoutMs).toBe(30_000);
-    expect(DEVELOPMENT_LIMITS.lspStartupTimeoutMs).toBe(30_000);
     expect(DEVELOPMENT_LIMITS.validationBudgetMs).toBe(2 * 60 * 1000);
     expect(DEVELOPMENT_LIMITS.totalWorkflowBudgetMs).toBe(15 * 60 * 1000);
+    expect(DEVELOPMENT_LIMITS.maxPreparedChangeSets).toBe(4);
   });
 });
 

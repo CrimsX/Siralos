@@ -263,6 +263,154 @@ describe("development workflow core", () => {
     expect(proposal.status).toBe("failed");
   });
 
+  it("completes a change set containing an approved delete", async () => {
+    await writeFixtureFiles(harness.workspace.root, {
+      "src/player/old.gd": "extends Node\n# to be removed\n",
+    });
+    await startWorkflow(harness);
+    const oldHash = sha256Of("extends Node\n# to be removed\n");
+    const prepared = await harness.service.prepareChangeSet(
+      {
+        changes: [
+          {
+            operation: "delete",
+            path: "src/player/old.gd",
+            expectedSha256: oldHash,
+          },
+        ],
+      },
+      {},
+    );
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    const outcome = await harness.service.applyChangeSet(prepared.changeSetId, {
+      approvedDigest: prepared.digest,
+    });
+    expect(outcome.status).toBe("applied");
+    if (outcome.status === "applied" && outcome.result !== null) {
+      expect(outcome.result.changes[0]?.operation).toBe("delete");
+      expect(outcome.result.validation.workspaceIntegrity).toBe(true);
+    }
+    expect(harness.service.status().session?.validation).toBe("clean");
+    harness.service.completeFromProviderTurn();
+    expect(harness.service.status().session?.state).toEqual({
+      kind: "terminal",
+      status: "completed",
+    });
+  });
+
+  it("applies nothing from a prepared change set after the workflow finished", async () => {
+    await startWorkflow(harness);
+    const prepared = await harness.service.prepareChangeSet(
+      editChangeSet(sha256Of(PLAYER_VALID)),
+      {},
+    );
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    harness.service.completeFromProviderTurn();
+    const outcome = await harness.service.applyChangeSet(prepared.changeSetId, {
+      approvedDigest: prepared.digest,
+    });
+    expect(outcome.status).toBe("failed");
+    expect(await readWorkspaceFile(harness, "src/player/player.gd")).toBe(PLAYER_VALID);
+  });
+
+  it("ends as denied when the provider finishes while a change set is unapproved", async () => {
+    await startWorkflow(harness);
+    const prepared = await harness.service.prepareChangeSet(
+      editChangeSet(sha256Of(PLAYER_VALID)),
+      {},
+    );
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") {
+      return;
+    }
+    // The approval was denied: the provider's next turn completes with the
+    // denial in hand, and the workflow ends truthfully with nothing applied.
+    harness.service.completeFromProviderTurn();
+    expect(harness.service.status().session?.state).toEqual({
+      kind: "terminal",
+      status: "denied",
+    });
+    expect(await readWorkspaceFile(harness, "src/player/player.gd")).toBe(PLAYER_VALID);
+  });
+
+  it("allows a new workflow after a terminal one", async () => {
+    await startWorkflow(harness);
+    harness.service.completeFromProviderTurn();
+    expect(harness.service.status().session?.state).toEqual({
+      kind: "terminal",
+      status: "cancelled",
+    });
+    const next = await harness.service.prepareStart("a second request");
+    expect(next.status).toBe("ready");
+  });
+
+  it("does not report vacuous validation success for a workflow that never validated", async () => {
+    await startWorkflow(harness);
+    harness.service.completeFromProviderTurn();
+    const result = await harness.service.cancel();
+    if (result.status === "cancelled" && result.result !== null) {
+      expect(result.result.validation.parser).toBe(false);
+      expect(result.result.validation.lsp).toBe(false);
+      expect(result.result.validation.workspaceIntegrity).toBe(false);
+    }
+  });
+
+  it("does not burn the repair budget on a failed repair preparation", async () => {
+    await startWorkflow(harness);
+    harness.parser.resultsByPath.set("src/player/player.gd", {
+      valid: false,
+      diagnostics: [errorDiagnostic("src/player/player.gd", 4, "invalid call")],
+    });
+    const first = await proposeAndApply(harness, editChangeSet(sha256Of(PLAYER_VALID)));
+    expect(first.status).toBe("applied");
+    expect(harness.service.status().session?.validation).toBe("errors");
+    // A repair with a stale hash fails preparation and burns nothing.
+    const failed = await harness.service.prepareChangeSet(editChangeSet("f".repeat(64)), {});
+    expect(failed.status).toBe("conflict");
+    expect(harness.service.status().session?.repairProposalsRemaining).toBe(3);
+  });
+
+  it("reports an infrastructure failure when the fresh LSP session never answers", async () => {
+    await startWorkflow(harness);
+    // The post-edit session never answers diagnostics, so the settling
+    // loop never receives a snapshot: that is an infrastructure failure,
+    // never a clean result.
+    harness.language.failDiagnostics = true;
+    const outcome = await proposeAndApply(harness, editChangeSet(sha256Of(PLAYER_VALID)));
+    expect(outcome.status).toBe("validation_failed");
+    if (outcome.status === "validation_failed") {
+      expect(outcome.message).toContain("language session");
+    }
+  });
+
+  it("enforces the prepared-change-set cap", async () => {
+    await startWorkflow(harness);
+    for (let index = 0; index < 4; index += 1) {
+      const prepared = await harness.service.prepareChangeSet(
+        editChangeSet(sha256Of(PLAYER_VALID)),
+        {},
+      );
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") {
+        return;
+      }
+    }
+    const blocked = await harness.service.prepareChangeSet(
+      editChangeSet(sha256Of(PLAYER_VALID)),
+      {},
+    );
+    expect(blocked.status).toBe("failed");
+    if (blocked.status === "failed") {
+      expect(blocked.message).toContain("Too many change sets are prepared");
+    }
+  });
+
   it("ends as cancelled when the provider finishes without proposing anything", async () => {
     await startWorkflow(harness);
     harness.service.completeFromProviderTurn();
@@ -429,14 +577,15 @@ describe("LSP/edit coordination", () => {
     await proposeAndApply(harness, editChangeSet(sha256Of(PLAYER_VALID)));
     const appliedIndex = harness.events.indexOf("development_change_applied");
     const parseIndex = harness.events.indexOf("development_parser_completed");
-    const restartIndexes = harness.events
-      .map((type, index) => (type === "development_language_restarted" ? index : -1))
-      .filter((index) => index >= 0);
+    const restartIndex = harness.events.indexOf("development_language_restarted");
     expect(appliedIndex).toBeGreaterThanOrEqual(0);
     expect(parseIndex).toBeGreaterThan(appliedIndex);
-    // One restart at workflow start and one fresh restart after the edit.
-    expect(restartIndexes).toHaveLength(2);
-    expect(restartIndexes[1]!).toBeGreaterThan(parseIndex);
+    // Exactly one language-restart event: the fresh session after the
+    // edit (the initial workflow-start session is not a restart).
+    expect(harness.events.filter((type) => type === "development_language_restarted")).toHaveLength(
+      1,
+    );
+    expect(restartIndex).toBeGreaterThan(parseIndex);
   });
 
   it("engine change invalidates the workflow at the language restart", async () => {

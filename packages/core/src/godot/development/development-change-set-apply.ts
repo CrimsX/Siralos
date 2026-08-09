@@ -1,5 +1,3 @@
-import type { PreparedChangeSetFile } from "./development-change-set.js";
-
 /**
  * Change-set application contract (§22–§24).
  *
@@ -71,7 +69,14 @@ export type ChangeSetApplyOutcome =
       readonly checkpointIds: readonly string[];
     }
   | {
-      readonly status: "unavailable" | "cancelled" | "failed";
+      readonly status: "cancelled";
+      readonly message: string;
+      readonly checkpointIds: readonly string[];
+      /** Files already applied before the cancellation (truthful partial state). */
+      readonly appliedFiles: readonly string[];
+    }
+  | {
+      readonly status: "unavailable" | "failed";
       readonly message: string;
       readonly checkpointIds: readonly string[];
     };
@@ -115,25 +120,4 @@ export interface DevelopmentChangeSetApplier {
     request: ChangeSetApplyRequest,
     primitives: ChangeSetFilePrimitives,
   ): Promise<ChangeSetApplyOutcome>;
-}
-
-export function preparedFilesToApplyRequest(
-  changeSetId: string,
-  files: readonly PreparedChangeSetFile[],
-  toolName: string,
-): ChangeSetApplyRequest {
-  return {
-    changeSetId,
-    toolName,
-    files: files.map((file) => ({
-      path: file.path,
-      operation: file.operation,
-      expectedSha256: file.expectedSha256,
-      content: file.content,
-      beforeSha256: file.beforeSha256,
-      afterSha256: file.afterSha256,
-      addedLines: 0,
-      removedLines: 0,
-    })),
-  };
 }

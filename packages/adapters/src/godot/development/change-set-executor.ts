@@ -51,16 +51,16 @@ export function createDevelopmentChangeSetApplier(
     isAvailable(): Promise<boolean> {
       return Promise.resolve(dependencies.canApplyIdentityBound);
     },
-    async apply(
+    apply(
       request: ChangeSetApplyRequest,
       primitives: ChangeSetFilePrimitives,
     ): Promise<ChangeSetApplyOutcome> {
       if (!dependencies.canApplyIdentityBound) {
-        return {
+        return Promise.resolve({
           status: "unavailable",
           message: CHANGE_SET_EXECUTION_UNAVAILABLE_MESSAGE,
           checkpointIds: [],
-        };
+        });
       }
       return applyChangeSetProtocol(request, primitives, dependencies);
     },
@@ -82,6 +82,7 @@ export async function applyChangeSetProtocol(
       status: "cancelled",
       message: "The change-set application was cancelled.",
       checkpointIds: [],
+      appliedFiles: [],
     };
   }
   const release = await dependencies.lock.acquire(request.signal);
@@ -148,6 +149,7 @@ export async function applyChangeSetProtocol(
           status: "cancelled",
           message: "The change-set application was cancelled.",
           checkpointIds,
+          appliedFiles: [...applied],
         };
       }
       if (file.operation === "delete") {
@@ -168,6 +170,7 @@ export async function applyChangeSetProtocol(
         status: "cancelled",
         message: "The change-set application was cancelled.",
         checkpointIds,
+        appliedFiles: [...applied],
       };
     }
     if (applied.length === 0) {
@@ -213,9 +216,11 @@ async function recoverPartialApplication(
     }
     try {
       const current = await primitives.readFile(filePath);
-      const partiallyAppliedSha = file.operation === "delete" ? null : file.afterSha256;
+      // "Partially applied" means the delete already removed the file (it
+      // must then be restored from the preimage) or an update/create wrote
+      // its post-state. Anything else is an external change: preserved.
       const partiallyApplied =
-        file.operation === "delete" ? current.exists : current.sha256 === partiallyAppliedSha;
+        file.operation === "delete" ? !current.exists : current.sha256 === file.afterSha256;
       if (!partiallyApplied) {
         conflicted.push(filePath);
         continue;

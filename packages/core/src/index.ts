@@ -374,7 +374,6 @@ export {
   type PreparedChangeSetFile,
 } from "./godot/development/development-change-set.js";
 export {
-  preparedFilesToApplyRequest,
   type ChangeSetApplyFileRequest,
   type ChangeSetApplyOutcome,
   type ChangeSetApplyRequest,

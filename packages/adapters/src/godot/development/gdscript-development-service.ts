@@ -65,8 +65,11 @@ export interface GDScriptDevelopmentServiceDependencies {
 
 const AUTHENTICATION_POLICY_VERSION = 1;
 const MAX_REQUEST_CHARS = 4096;
+/** Marker for an approved-deleted file in the applied-files map. */
+const ABSENT_MARKER = "absent";
 
 interface PendingStart {
+  readonly id: string;
   readonly request: string;
   readonly digest: string;
   readonly projectFingerprint: string;
@@ -178,7 +181,7 @@ export function createGDScriptDevelopmentService(
         message: `The development request exceeds ${MAX_REQUEST_CHARS} characters.`,
       };
     }
-    if (session !== null) {
+    if (session !== null && session.state.kind === "active") {
       return {
         status: "conflict",
         message: "A development workflow is already active; finish or cancel it first.",
@@ -227,6 +230,7 @@ export function createGDScriptDevelopmentService(
     });
     const workflowId = idFactory();
     pendingStart = {
+      id: workflowId,
       request: trimmed,
       digest,
       projectFingerprint: manifest.digest,
@@ -247,7 +251,13 @@ export function createGDScriptDevelopmentService(
     if (pendingStart === null) {
       return { status: "failed", message: "No development workflow is prepared for start." };
     }
-    if (workflowId !== session?.id && session !== null) {
+    if (workflowId !== pendingStart.id) {
+      return {
+        status: "failed",
+        message: "The workflow id does not match the prepared workflow; prepare it again.",
+      };
+    }
+    if (session !== null && session.state.kind === "active") {
       return { status: "conflict", message: "A development workflow is already active." };
     }
     if (context.approvedDigest !== pendingStart.digest) {
@@ -302,18 +312,10 @@ export function createGDScriptDevelopmentService(
     session = created;
     emit({ type: "development_started", id: created.id });
     emit({ type: "development_investigating", id: created.id });
-    const languageResult = await startLanguageSession(created, new Map(), context.signal);
-    if (languageResult.status === "conflict") {
-      session.state = { kind: "terminal", status: "conflict" };
-      emit({ type: "development_completed", id: created.id, status: "conflict" });
-      return {
-        status: "conflict",
-        message: languageResult.message,
-      };
-    }
-    if (languageResult.status === "ready") {
-      emit({ type: "development_language_restarted", id: created.id });
-    }
+    // The initial language session is best-effort intelligence: when it
+    // cannot start, the workflow still runs (queries report
+    // session_required) and nothing claims a session exists.
+    await startLanguageSession(created, new Map(), context.signal);
     return { status: "ready", session: toPublicSession(created) };
   }
 
@@ -362,12 +364,25 @@ export function createGDScriptDevelopmentService(
           message: `The maximum of ${DEVELOPMENT_LIMITS.maxRepairProposals} repair proposals has been reached; start a new development workflow.`,
         };
       }
-      current.repairProposalsUsed += 1;
     }
     if (current.iteration >= DEVELOPMENT_LIMITS.maxTotalIterations) {
       return {
         status: "iteration_budget_exhausted",
         message: `The maximum of ${DEVELOPMENT_LIMITS.maxTotalIterations} development iterations has been reached; start a new development workflow.`,
+      };
+    }
+    // Expired prepared change sets are reaped so a long investigation
+    // cannot accumulate stale state; the pending count is bounded.
+    const nowMs = now();
+    for (const [id, record] of current.prepared) {
+      if (nowMs > record.expiresAtMs) {
+        current.prepared.delete(id);
+      }
+    }
+    if (current.prepared.size >= DEVELOPMENT_LIMITS.maxPreparedChangeSets) {
+      return {
+        status: "failed",
+        message: `Too many change sets are prepared for approval (${DEVELOPMENT_LIMITS.maxPreparedChangeSets} maximum); apply or abandon the pending ones first.`,
       };
     }
     const available = await applier.isAvailable();
@@ -388,6 +403,11 @@ export function createGDScriptDevelopmentService(
     if (prepared.status !== "ready") {
       return prepared;
     }
+    // A repair proposal counts only once it was actually prepared
+    // successfully (a failed preparation burns nothing).
+    if (isRepair) {
+      current.repairProposalsUsed += 1;
+    }
     const changeSetId = idFactory();
     current.prepared.set(changeSetId, {
       id: changeSetId,
@@ -395,7 +415,7 @@ export function createGDScriptDevelopmentService(
       preview: prepared.preview,
       digest: prepared.digest,
       repair: isRepair,
-      expiresAtMs: now() + DEVELOPMENT_LIMITS.preparedChangeSetTtlMs,
+      expiresAtMs: nowMs + DEVELOPMENT_LIMITS.preparedChangeSetTtlMs,
     });
     current.state = { kind: "active", phase: "proposal_ready" };
     emit({ type: "development_change_prepared", id: current.id, files: prepared.files.length });
@@ -420,6 +440,21 @@ export function createGDScriptDevelopmentService(
         result: null,
       };
     }
+    if (current.state.kind !== "active" || current.state.phase !== "proposal_ready") {
+      return {
+        status: "failed",
+        message:
+          "The prepared change set can only be applied from the proposal state of the active workflow.",
+        result: null,
+      };
+    }
+    if (context.signal?.aborted) {
+      return {
+        status: "cancelled",
+        message: "The change-set application was cancelled.",
+        result: null,
+      };
+    }
     const prepared = current.prepared.get(changeSetId);
     if (prepared === undefined) {
       return {
@@ -428,8 +463,10 @@ export function createGDScriptDevelopmentService(
         result: null,
       };
     }
+    current.state = { kind: "active", phase: "awaiting_approval" };
     if (context.approvedDigest !== prepared.digest) {
       current.prepared.delete(changeSetId);
+      current.state = { kind: "active", phase: "proposal_ready" };
       return {
         status: "conflict",
         message: "The approval does not match the prepared change set; a new approval is required.",
@@ -438,6 +475,7 @@ export function createGDScriptDevelopmentService(
     }
     if (now() > prepared.expiresAtMs) {
       current.prepared.delete(changeSetId);
+      current.state = { kind: "active", phase: "proposal_ready" };
       return {
         status: "failed",
         message: "The prepared change set expired; prepare it again.",
@@ -445,18 +483,7 @@ export function createGDScriptDevelopmentService(
       };
     }
     current.prepared.delete(changeSetId);
-    current.state = { kind: "active", phase: "awaiting_approval" };
     emit({ type: "development_change_approved", id: current.id, changeSetId });
-    const available = await applier.isAvailable();
-    if (!available) {
-      current.state = { kind: "terminal", status: "unavailable" };
-      emit({ type: "development_completed", id: current.id, status: "unavailable" });
-      return {
-        status: "unavailable",
-        message: CHANGE_SET_EXECUTION_UNAVAILABLE_MESSAGE,
-        result: finalizeResult(current),
-      };
-    }
     current.state = { kind: "active", phase: "applying" };
     // 1. Suspend the language session (closing_for_edit). The edit never
     // proceeds when the old session cannot be stopped safely.
@@ -485,6 +512,11 @@ export function createGDScriptDevelopmentService(
       };
     }
     if (outcome.status === "cancelled") {
+      // A cancellation mid-apply is a truthful partial state: the files
+      // already applied stay (they were user-approved), are recorded, and
+      // the workflow ends cancelled without pretending validation ran.
+      current.checkpointIds.push(...outcome.checkpointIds);
+      recordAppliedFiles(current, prepared, outcome.appliedFiles);
       current.state = { kind: "terminal", status: "cancelled" };
       emit({ type: "development_completed", id: current.id, status: "cancelled" });
       return {
@@ -524,7 +556,9 @@ export function createGDScriptDevelopmentService(
       if (file.afterSha256 !== null) {
         current.appliedFiles.set(file.path, file.afterSha256);
       } else {
-        current.appliedFiles.delete(file.path);
+        // Deleted files are recorded as absent so the workspace-integrity
+        // delta can verify the approved deletion (see unexpectedChanges).
+        current.appliedFiles.set(file.path, ABSENT_MARKER);
       }
     }
     emit({ type: "development_change_applied", id: current.id, files: prepared.files.length });
@@ -596,10 +630,23 @@ export function createGDScriptDevelopmentService(
         result: finalizeResult(current),
       };
     }
+    if (lspDiagnostics.status === "infrastructure_failure") {
+      current.state = { kind: "terminal", status: "validation_failed" };
+      emit({ type: "development_completed", id: current.id, status: "validation_failed" });
+      return {
+        status: "validation_failed",
+        message: lspDiagnostics.message,
+        result: finalizeResult(current),
+      };
+    }
 
     // 6. Workspace integrity: the delta against the workflow baseline must
     //    equal exactly the approved change sets.
     const integrity = await verifyWorkspaceIntegrity(current, expectedAfter);
+    const boundedDiagnostics = aggregateEvidenceDiagnostics([
+      ...parser.diagnostics,
+      ...lspDiagnostics.diagnostics,
+    ]);
     const evidence: DevelopmentEvidence = {
       changeSetId,
       files: prepared.files.map((file) => ({
@@ -611,27 +658,30 @@ export function createGDScriptDevelopmentService(
       parser: {
         checkedFiles: parser.checkedFiles,
         validFiles: parser.validFiles,
-        diagnostics: parser.diagnostics,
+        diagnostics: boundedDiagnostics.filter((entry) => entry.source === "godot-check-only"),
       },
       lsp: {
         started: language.status === "ready",
         diagnosticCount: lspDiagnostics.diagnostics.length,
-        diagnostics: lspDiagnostics.diagnostics,
+        diagnostics: boundedDiagnostics.filter((entry) => entry.source === "godot-lsp"),
       },
       git: await collectGitEvidence(),
       workspaceIntegrity: integrity,
     };
     current.evidence.push(evidence);
-    current.errorCount = countSeverity(evidence, "error");
-    current.warningCount = countSeverity(evidence, "warning");
+    current.errorCount = cumulativeCount(current, "error");
+    current.warningCount = cumulativeCount(current, "warning");
 
-    // 7. Normalize the validation status (§30).
+    // 7. Normalize the validation status (§30): the iteration outcome is
+    //    the latest evidence; the status view keeps cumulative counts.
+    const iterationErrors = countSeverity(evidence, "error");
+    const iterationWarnings = countSeverity(evidence, "warning");
     let validation: DevelopmentValidationStatus;
     if (integrity.unexpectedChanges.length > 0) {
       validation = "errors";
-    } else if (current.errorCount > 0) {
+    } else if (iterationErrors > 0) {
       validation = "errors";
-    } else if (current.warningCount > 0) {
+    } else if (iterationWarnings > 0) {
       validation = "warnings";
     } else {
       validation = "clean";
@@ -693,10 +743,17 @@ export function createGDScriptDevelopmentService(
               : "validation_failed";
     } else if (current.state.phase === "investigating") {
       status = "cancelled";
+    } else if (current.state.phase === "proposal_ready") {
+      // A provider turn can only end in proposal_ready when its last
+      // change-set approval was not granted: the approval is requested
+      // and resolved inside the tool call, so a final turn here means the
+      // proposal was denied or abandoned. Nothing was applied.
+      status = "denied";
     }
     if (status === null) {
       return;
     }
+    current.prepared.clear();
     current.state = { kind: "terminal", status };
     emit({ type: "development_completed", id: current.id, status });
     if (status !== "completed" && status !== "completed_with_warnings") {
@@ -717,6 +774,22 @@ export function createGDScriptDevelopmentService(
     if (current.state.kind === "terminal") {
       return { status: "cancelled", result: finalizeResult(current) };
     }
+    // Mid-apply and mid-validation cancellation is driven by the in-flight
+    // tool call's abort signal: the running applyChangeSet ends the
+    // workflow truthfully (cancelled) and records any partial application.
+    // The CLI's own /cancel signal propagates to that call.
+    if (
+      current.state.phase === "applying" ||
+      current.state.phase === "parser_validation" ||
+      current.state.phase === "language_validation" ||
+      current.state.phase === "awaiting_approval"
+    ) {
+      return {
+        status: "cancelled",
+        result: null,
+      };
+    }
+    current.prepared.clear();
     current.state = { kind: "terminal", status: "cancelled" };
     current.validation = current.validation ?? "cancelled";
     emit({ type: "development_completed", id: current.id, status: "cancelled" });
@@ -849,7 +922,7 @@ export function createGDScriptDevelopmentService(
     signal?: AbortSignal,
   ): Promise<
     | { readonly ok: true; readonly changed: Map<string, string> }
-    | { readonly ok: false; readonly message: string }
+    | { readonly ok: false; readonly message: string; readonly path: string }
   > {
     const manifest = await scanAuthoredFiles({
       workspaceRoot: dependencies.workspaceRoot,
@@ -879,6 +952,7 @@ export function createGDScriptDevelopmentService(
       if (currentSha === undefined || currentSha !== appliedSha) {
         return {
           ok: false,
+          path,
           message: `"${path}" no longer matches the approved change-set result.`,
         };
       }
@@ -892,7 +966,7 @@ export function createGDScriptDevelopmentService(
   ): Promise<{ readonly verified: boolean; readonly unexpectedChanges: readonly string[] }> {
     const delta = await workspaceDelta(current);
     if (!delta.ok) {
-      return { verified: false, unexpectedChanges: [delta.message] };
+      return { verified: false, unexpectedChanges: [delta.path] };
     }
     const unexpected = unexpectedChanges(delta.changed, expectedAfter);
     return {
@@ -991,6 +1065,7 @@ export function createGDScriptDevelopmentService(
   ): Promise<
     | { readonly status: "ready"; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }
     | { readonly status: "cancelled"; readonly message: string }
+    | { readonly status: "infrastructure_failure"; readonly message: string }
   > {
     const sessionHandle = dependencies.language.activeSession();
     if (sessionHandle === null) {
@@ -1002,6 +1077,12 @@ export function createGDScriptDevelopmentService(
       const opened = await sessionHandle.openDocument({ path: script }, signal);
       if (opened.status === "cancelled") {
         return { status: "cancelled", message: "The language validation was cancelled." };
+      }
+      if (opened.status !== "ready") {
+        return {
+          status: "infrastructure_failure",
+          message: `The language session could not open "${script}" for validation: ${opened.message}`,
+        };
       }
     }
     const startedAt = now();
@@ -1033,6 +1114,15 @@ export function createGDScriptDevelopmentService(
         previous = signature;
       }
       if (now() - startedAt >= hardTimeoutMs) {
+        // The hard timeout is only a valid settle when at least one
+        // successful snapshot was received; a session that never answered
+        // is an infrastructure failure, never a clean result.
+        if (polls === 0) {
+          return {
+            status: "infrastructure_failure",
+            message: "The language session produced no diagnostics within the validation window.",
+          };
+        }
         return { status: "ready", diagnostics: collected };
       }
       await sleep(pollIntervalMs, signal);
@@ -1074,6 +1164,7 @@ export function createGDScriptDevelopmentService(
       ...evidence.parser.diagnostics,
       ...evidence.lsp.diagnostics,
     ]);
+    const hasEvidence = current.evidence.length > 0;
     return {
       status,
       iterations: current.iteration,
@@ -1083,13 +1174,17 @@ export function createGDScriptDevelopmentService(
         warnings: diagnostics.filter((entry) => entry.severity === "warning").length,
       },
       validation: {
-        parser: current.evidence.every(
-          (evidence) => evidence.parser.validFiles === evidence.parser.checkedFiles,
-        ),
-        lsp: current.evidence.every((evidence) => evidence.lsp.started),
-        workspaceIntegrity: current.evidence.every(
-          (evidence) => evidence.workspaceIntegrity.verified,
-        ),
+        // Empty evidence means a gate never ran (denied, cancelled,
+        // failed, or unavailable before validation); that is never
+        // reported as passed.
+        parser:
+          hasEvidence &&
+          current.evidence.every(
+            (evidence) => evidence.parser.validFiles === evidence.parser.checkedFiles,
+          ),
+        lsp: hasEvidence && current.evidence.every((evidence) => evidence.lsp.started),
+        workspaceIntegrity:
+          hasEvidence && current.evidence.every((evidence) => evidence.workspaceIntegrity.verified),
       },
       checkpointIds: [...current.checkpointIds],
     };
@@ -1164,11 +1259,97 @@ function countSeverity(evidence: DevelopmentEvidence, severity: "error" | "warni
   return count;
 }
 
+/** Cumulative diagnostic counts across every recorded iteration. */
+function cumulativeCount(current: InternalSession, severity: "error" | "warning"): number {
+  let count = 0;
+  for (const evidence of current.evidence) {
+    count += countSeverity(evidence, severity);
+  }
+  return count;
+}
+
+/**
+ * Bounded deterministic evidence diagnostics: deduplicated, sorted, and
+ * truncated to the immutable per-evidence bound so provider-visible
+ * evidence never grows without limit.
+ */
+function aggregateEvidenceDiagnostics(
+  diagnostics: readonly GodotGDScriptDiagnostic[],
+): readonly GodotGDScriptDiagnostic[] {
+  const seen = new Set<string>();
+  const unique: GodotGDScriptDiagnostic[] = [];
+  for (const diagnostic of diagnostics) {
+    const key = [
+      diagnostic.source,
+      diagnostic.path ?? "",
+      diagnostic.line ?? -1,
+      diagnostic.column ?? -1,
+      diagnostic.code ?? "",
+      diagnostic.message,
+    ].join("\u0000");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(diagnostic);
+  }
+  unique.sort((left, right) => {
+    const leftSource = left.source;
+    const rightSource = right.source;
+    if (leftSource !== rightSource) {
+      return leftSource < rightSource ? -1 : 1;
+    }
+    const leftPath = left.path ?? "";
+    const rightPath = right.path ?? "";
+    if (leftPath !== rightPath) {
+      return leftPath < rightPath ? -1 : 1;
+    }
+    const leftLine = left.line ?? -1;
+    const rightLine = right.line ?? -1;
+    if (leftLine !== rightLine) {
+      return leftLine - rightLine;
+    }
+    const leftMessage = left.message;
+    const rightMessage = right.message;
+    if (leftMessage !== rightMessage) {
+      return leftMessage < rightMessage ? -1 : 1;
+    }
+    return 0;
+  });
+  return unique.slice(0, DEVELOPMENT_LIMITS.maxEvidenceDiagnostics);
+}
+
+/** Records the files that were actually applied before a cancellation. */
+function recordAppliedFiles(
+  current: InternalSession,
+  prepared: PreparedChangeSetRecord,
+  appliedPaths: readonly string[],
+): void {
+  const byPath = new Map(prepared.files.map((file) => [file.path, file]));
+  for (const path of appliedPaths) {
+    const file = byPath.get(path);
+    if (file === undefined) {
+      continue;
+    }
+    current.changes.push({
+      path: file.path,
+      operation: file.operation,
+      beforeSha256: file.beforeSha256,
+      afterSha256: file.afterSha256,
+    });
+    if (file.afterSha256 !== null) {
+      current.appliedFiles.set(file.path, file.afterSha256);
+    } else {
+      current.appliedFiles.set(file.path, ABSENT_MARKER);
+    }
+  }
+}
+
 /**
  * Paths whose current state differs from the approved change-set results:
- * changed paths not covered by `expectedAfter`, covered paths whose hash
- * differs, and covered paths that no longer exist. Deleted files carry the
- * `"absent"` marker and are expected to be absent from `expectedAfter`.
+ * changed paths not covered by `expectedAfter` (approved deletes carry the
+ * `"absent"` marker in `expectedAfter`), covered paths whose hash differs,
+ * and covered paths that no longer exist.
  */
 function unexpectedChanges(
   changed: Map<string, string>,

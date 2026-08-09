@@ -374,6 +374,47 @@ describe("applyChangeSetProtocol", () => {
     }
   });
 
+  it("recovery restores a partially applied delete from its checkpoint", async () => {
+    const primitives = new InMemoryPrimitives({ "a.gd": A_BEFORE, "b.gd": B_BEFORE });
+    const originalDelete = primitives.deleteFile.bind(primitives);
+    primitives.deleteFile = async (path: string): Promise<void> => {
+      if (path === "b.gd") {
+        throw new Error("injected delete failure for b.gd");
+      }
+      await originalDelete(path);
+    };
+    const outcome = await applyChangeSetProtocol(
+      applyRequest([
+        {
+          path: "a.gd",
+          operation: "delete",
+          expectedSha256: sha256Of(A_BEFORE),
+          content: null,
+          beforeSha256: sha256Of(A_BEFORE),
+          afterSha256: null,
+          addedLines: 0,
+          removedLines: 1,
+        },
+        {
+          path: "b.gd",
+          operation: "delete",
+          expectedSha256: sha256Of(B_BEFORE),
+          content: null,
+          beforeSha256: sha256Of(B_BEFORE),
+          afterSha256: null,
+          addedLines: 0,
+          removedLines: 1,
+        },
+      ]),
+      primitives,
+      deps(),
+    );
+    expect(outcome.status).toBe("apply_failed_recovered");
+    // "a.gd" was deleted before the failure and must be restored from its
+    // checkpoint preimage.
+    expect(primitives.files.get("a.gd")).toBe(A_BEFORE);
+  });
+
   it("holds the mutation lock across the whole apply", async () => {
     const primitives = new InMemoryPrimitives({ "a.gd": A_BEFORE });
     let held = false;

@@ -115,6 +115,18 @@ export function validateChangeSetRequest(
       return { ok: false, message: "Every change requires a non-empty workspace-relative path." };
     }
     const normalizedPath = path.trim();
+    if (normalizedPath.includes(":")) {
+      return {
+        ok: false,
+        message: `The path "${normalizedPath}" contains a colon; alternate-data-stream and drive-qualified paths are rejected.`,
+      };
+    }
+    if (normalizedPath.endsWith(".tscn") || normalizedPath.endsWith(".tres")) {
+      return {
+        ok: false,
+        message: `Scene and resource files (${normalizedPath}) are outside this milestone's change-set scope; only text source files can be changed.`,
+      };
+    }
     if (seenPaths.has(normalizedPath)) {
       return {
         ok: false,

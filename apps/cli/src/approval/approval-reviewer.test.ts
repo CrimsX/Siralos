@@ -133,7 +133,7 @@ describe("createInteractiveApprovalReviewer", () => {
     expect(text).toContain("Approval required");
     expect(text).toContain("Tool: workspace.edit_file");
     expect(text).toContain("Capability: workspace.write");
-    expect(text).toContain("File: README.md");
+    expect(text).toContain("M README.md");
     expect(text).toContain("Change: +1 -1");
     expect(text).toContain("-old");
     expect(text).toContain("+new");
