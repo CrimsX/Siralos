@@ -27,6 +27,7 @@ import {
   createTaskRuntime,
   createTaskRuntimeSnapshot,
   createToolRegistry,
+  resolveInstructionSet,
   type ApprovalReviewer,
   type CheckpointStore,
   type GDScriptDevelopmentPreview,
@@ -130,6 +131,21 @@ export function createRecordingProvider(
 export interface BehaviorLoopHarnessOptions {
   /** Wire the projection service (development mode) into the application. */
   readonly projection?: boolean;
+  /**
+   * Run the harness project in this pre-existing workspace root instead of
+   * a fresh temp directory (caller owns its cleanup). Instruction files
+   * placed there are visible to both discovery and the provider loop.
+   */
+  readonly workspaceRoot?: string;
+  /**
+   * Wire a project-instruction service into the projection (requires
+   * `projection: true`).
+   */
+  readonly instructions?: import("@solaris/core").ProjectInstructionService;
+  /** Wire a KnowledgeCoordinator into the projection (requires `projection: true`). */
+  readonly knowledge?: import("@solaris/core").KnowledgeCoordinator;
+  /** Wrap the application provider in a recording provider for request assertions. */
+  readonly recording?: boolean;
   /** Reviewer scenario for the quality stage (fake-change-reviewer). */
   readonly reviewerScenario?: "clean" | "high";
   /**
@@ -153,6 +169,8 @@ export interface BehaviorLoopHarness {
   readonly languageControl: ReturnType<typeof createFakeLanguageService>["control"];
   /** Session revision registry (workspace-scoped, opaque handles). */
   readonly revisions: WorkspaceRevisionRegistry;
+  /** Recorded provider requests (when `recording: true`). */
+  readonly requests: () => readonly ModelRequest[];
   /** Prepare + approve + start the workflow and create the task. */
   startWorkflow(request: string): Promise<GDScriptDevelopmentPreview>;
   /** Run the provider loop for a request (drains all tool rounds). */
@@ -184,7 +202,13 @@ export async function cleanupTempCheckpointDirs(): Promise<void> {
 export async function createBehaviorLoopHarness(
   options: BehaviorLoopHarnessOptions = {},
 ): Promise<BehaviorLoopHarness> {
-  const workspace = await createTempWorkspace();
+  const workspace =
+    options.workspaceRoot === undefined
+      ? await createTempWorkspace()
+      : {
+          root: options.workspaceRoot,
+          cleanup: (): Promise<void> => Promise.resolve(),
+        };
   await writeFile(
     join(workspace.root, "project.godot"),
     '[application]\nconfig/name="behavior-fixture"\n',
@@ -246,6 +270,7 @@ export async function createBehaviorLoopHarness(
     createGodotDevelopmentStatusTool(development),
   ]);
   const { runtime, sources, now } = createBehaviorRuntime();
+  const recording = options.recording === true ? createRecordingProvider() : null;
   const projection: ProjectionService | undefined =
     options.projection === true
       ? createProjectionService({
@@ -254,10 +279,32 @@ export async function createBehaviorLoopHarness(
           capacity: createRouteContextCapacity("develop-offline"),
           getTaskSnapshot: () => runtime.latestTask()?.snapshot() ?? null,
           getTaskRequest: () => runtime.latestTask()?.contract().request ?? null,
+          ...(options.instructions === undefined
+            ? {}
+            : {
+                instructions: {
+                  resolve: (focusPaths) => {
+                    const safe = focusPaths.filter(isSafeRelativeFocusPath);
+                    const set = resolveInstructionSet({
+                      instructions: options.instructions!.instructions(),
+                      paths: safe.length === 0 ? ["."] : safe,
+                    });
+                    return set.instructions.length === 0 ? null : set;
+                  },
+                },
+              }),
+          ...(options.knowledge === undefined
+            ? {}
+            : {
+                knowledge: {
+                  pinned: () => options.knowledge!.pinnedFacts(),
+                  retrieve: (query) => options.knowledge!.retrieve(query),
+                },
+              }),
         })
       : undefined;
   const application = createSolarisApplication({
-    provider: createDeterministicFakeProvider(),
+    provider: recording?.provider ?? createDeterministicFakeProvider(),
     tools,
     policy: createDefaultPolicy("develop-offline"),
     profile: DEVELOP_OFFLINE_PROFILE,
@@ -282,6 +329,7 @@ export async function createBehaviorLoopHarness(
     revisions,
     development,
     workspaceRead: workspaceReadTool,
+    requests: () => (recording === null ? [] : [...recording.requests]),
     startWorkflow: async (request: string): Promise<GDScriptDevelopmentPreview> => {
       const prepared = await development.prepareStart(request);
       if (prepared.status !== "ready") {
@@ -336,4 +384,17 @@ export async function createBehaviorLoopHarness(
 
 export async function readWorkspaceFile(workspaceRoot: string, path: string): Promise<string> {
   return readFile(join(workspaceRoot, path), "utf8");
+}
+
+/** Focus paths must be safe workspace-relative paths (see ADR 0017). */
+export function isSafeRelativeFocusPath(path: string): boolean {
+  return (
+    path.length > 0 &&
+    !path.includes("\0") &&
+    !path.includes("\\") &&
+    !path.startsWith("/") &&
+    !/^[A-Za-z]:/.test(path) &&
+    !path.split("/").includes("..") &&
+    !path.split("/").includes(".")
+  );
 }
