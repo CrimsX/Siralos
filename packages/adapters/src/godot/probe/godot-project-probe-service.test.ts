@@ -1,5 +1,17 @@
 ﻿import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, readdir, readFile, stat, utimes } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  rm,
+  writeFile,
+  readdir,
+  readFile,
+  stat,
+  utimes,
+  link,
+  symlink,
+} from "node:fs/promises";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
@@ -27,6 +39,27 @@ async function withTempRoot(): Promise<string> {
   tempRoots.push(root);
   return root;
 }
+
+function probeSymlinkSupport(): boolean {
+  let supported = false;
+  let probeDir: string | undefined;
+  try {
+    probeDir = mkdtempSync(path.join(tmpdir(), "solaris-probe-symlink-"));
+    const target = path.join(probeDir, "target.txt");
+    writeFileSync(target, "x");
+    symlinkSync(target, path.join(probeDir, "link.txt"));
+    supported = true;
+  } catch {
+    supported = false;
+  } finally {
+    if (probeDir !== undefined) {
+      rmSync(probeDir, { recursive: true, force: true });
+    }
+  }
+  return supported;
+}
+
+const SYMLINKS_SUPPORTED = probeSymlinkSupport();
 
 async function writeFiles(root: string, files: Readonly<Record<string, string>>): Promise<void> {
   for (const [relativePath, content] of Object.entries(files)) {
@@ -508,6 +541,66 @@ describe("approval binding and conflict detection", () => {
     await rm(executable);
     const result = await service.execute(probe, { approvedDigest: digest });
     expect(result.status).toBe("conflict");
+  });
+
+  it("detects a hard-link substitution after approval", async () => {
+    const { service, workspaceRoot } = await createHarness();
+    const { probe, digest } = await prepareReady(service);
+    const target = path.join(workspaceRoot, "src", "main.gd");
+    const substitute = path.join(workspaceRoot, "src", "other.gd");
+    await writeFile(substitute, "extends Node\nfunc _ready():\n    pass\n# hard-linked\n");
+    await rm(target);
+    await link(substitute, target);
+    const result = await service.execute(probe, { approvedDigest: digest });
+    expect(result.status).toBe("conflict");
+  });
+
+  it("detects a symlinked leaf planted after approval", { skip: !SYMLINKS_SUPPORTED }, async () => {
+    const { service, workspaceRoot } = await createHarness();
+    const { probe, digest } = await prepareReady(service);
+    const outside = await withTempRoot();
+    await writeFile(path.join(outside, "secret.gd"), "extends Node # secret\n");
+    await rm(path.join(workspaceRoot, "src", "main.gd"));
+    await symlink(path.join(outside, "secret.gd"), path.join(workspaceRoot, "src", "main.gd"));
+    const result = await service.execute(probe, { approvedDigest: digest });
+    expect(result.status).toBe("conflict");
+  });
+
+  it(
+    "detects a symlinked intermediate parent planted after approval",
+    { skip: !SYMLINKS_SUPPORTED },
+    async () => {
+      const { service, workspaceRoot } = await createHarness();
+      const { probe, digest } = await prepareReady(service);
+      const outside = await withTempRoot();
+      await writeFile(path.join(outside, "main.gd"), "extends Node # outside\n");
+      await rm(path.join(workspaceRoot, "src"), { recursive: true });
+      await symlink(outside, path.join(workspaceRoot, "src"));
+      const result = await service.execute(probe, { approvedDigest: digest });
+      expect(result.status).toBe("conflict");
+    },
+  );
+
+  it("never reads outside content for an escaping plugin script", async () => {
+    const { service } = await createHarness({
+      workspaceFiles: {
+        "addons/evil/plugin.cfg": [
+          "[plugin]",
+          'name="Evil"',
+          'description="Escapes"',
+          'author="x"',
+          'version="1.0"',
+          'script="../../../../../outside.gd"',
+          "",
+        ].join("\n"),
+        "addons/evil/plugin.gd": "@tool\nextends EditorPlugin\n",
+      },
+    });
+    const prepared = await service.prepare();
+    expect(prepared.status).toBe("ready");
+    if (prepared.status === "ready") {
+      expect(prepared.preview.risks.enabledEditorPlugins).toBe(0);
+    }
   });
 
   it("expires prepared probes after the TTL", async () => {
