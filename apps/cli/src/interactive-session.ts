@@ -12,6 +12,7 @@ import type {
   GodotKnowledge,
   GodotProjectProbe,
   GodotProjectProbeStatus,
+  KnowledgeCoordinator,
   RegisteredToolInfo,
   SandboxBackend,
   SandboxBackendStatus,
@@ -25,6 +26,7 @@ import type {
   UndoService,
   WorkspaceRevisionRegistry,
 } from "@solaris/core";
+import type { ProjectInstructionService } from "@solaris/core";
 import {
   createAdHocTaskContract,
   createDevelopmentTaskFlow,
@@ -43,6 +45,9 @@ import {
   formatCommandTerminal,
   formatCommands,
   formatContextStatus,
+  formatInstructions,
+  formatKnowledge,
+  formatKnowledgeTrace,
   formatDevelopmentResult,
   formatDevelopmentStartPreview,
   formatDevelopmentStatus,
@@ -117,6 +122,8 @@ export interface SessionInfo {
   readonly projection: ProjectionService;
   readonly revisions: WorkspaceRevisionRegistry;
   readonly workspaceRead: Tool;
+  readonly instructions: ProjectInstructionService;
+  readonly projectKnowledge: KnowledgeCoordinator;
 }
 
 /** The host-owned task flow of the active /develop run, if any. */
@@ -298,6 +305,21 @@ export async function runInteractiveSession(
             break;
           case "context":
             io.write(formatContextStatus(sessionInfo.projection));
+            break;
+          case "instructions":
+            io.write(
+              formatInstructions(
+                sessionInfo.instructions.instructions(),
+                sessionInfo.instructions.revision(),
+              ),
+            );
+            break;
+          case "knowledge":
+            if (parsed.args[0] === "why") {
+              io.write(formatKnowledgeTrace(sessionInfo.projectKnowledge.lastRetrievalTrace()));
+            } else {
+              io.write(formatKnowledge(sessionInfo.projectKnowledge));
+            }
             break;
           case "read-structure":
             await runReadStructureCommand(io, sessionInfo, parsed.args);
@@ -525,7 +547,11 @@ async function runDevelopCommand(
     io.write(`Development workflow ${started.session.id} started: investigating the request.\n`);
     activeDevelopmentTaskFlow = createDevelopmentTaskFlow({
       runtime: sessionInfo.tasks,
-      sources: sessionInfo.taskSources,
+      sources: {
+        ...sessionInfo.taskSources,
+        instructionSetRevision: sessionInfo.instructions.revision(),
+        knowledgeStateRevision: sessionInfo.projectKnowledge.revision(),
+      },
     });
     sessionInfo.development.onEvent = (event) => {
       activeDevelopmentTaskFlow?.handleEvent(event);

@@ -3,6 +3,7 @@ import { parseInput } from "./input/parse-input.js";
 import {
   TASK_RUNTIME_VERSION,
   createCommandRunnerRegistry,
+  createKnowledgeCoordinator,
   createProjectionService,
   createRouteContextCapacity,
   createWorkspaceRevisionRegistry,
@@ -55,6 +56,7 @@ import {
   type UndoOutcome,
   type UndoService,
   type ApprovalReviewer,
+  type ProjectInstructionService,
 } from "@solaris/core";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
@@ -116,6 +118,8 @@ async function createComposedSession(lines: readonly string[]) {
     projection,
     revisions,
     workspaceRead,
+    instructions,
+    projectKnowledge,
     checkpoints,
     undo,
     runners,
@@ -128,6 +132,8 @@ async function createComposedSession(lines: readonly string[]) {
     projection,
     revisions,
     workspaceRead,
+    instructions,
+    projectKnowledge,
     tools,
     security,
     git,
@@ -167,6 +173,25 @@ function createStubGit(): GitInspector {
     getDiff(): Promise<GitDiffResult> {
       return Promise.reject(new GitError("git_unavailable", "Git is not available."));
     },
+  };
+}
+
+function createStubInstructionService(): ProjectInstructionService {
+  const empty = {
+    instructions: [],
+    truncated: false,
+    scannedDirectories: 0,
+    scannedFiles: 0,
+  };
+  return {
+    load: () => Promise.resolve(empty),
+    refresh: () => Promise.resolve(empty),
+    instructions: () => [],
+    resolveForPath: () =>
+      Promise.resolve({ instructions: [], conflicts: [], revision: "stub-instructions" }),
+    resolveForPaths: () =>
+      Promise.resolve({ instructions: [], conflicts: [], revision: "stub-instructions" }),
+    revision: () => null,
   };
 }
 
@@ -259,6 +284,8 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     }),
     revisions: createWorkspaceRevisionRegistry({ workspaceFingerprint: "test-workspace" }),
     workspaceRead: createStubWorkspaceRead(),
+    instructions: createStubInstructionService(),
+    projectKnowledge: createKnowledgeCoordinator(),
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",

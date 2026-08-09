@@ -116,6 +116,8 @@ async function main(): Promise<number> {
     development,
     undo,
     runners,
+    instructions,
+    projectKnowledge,
   } = await createCliApplication({
     reviewer,
     ...(godotPath === undefined ? {} : { godotPath }),
@@ -129,6 +131,8 @@ async function main(): Promise<number> {
     projection,
     revisions,
     workspaceRead,
+    instructions,
+    projectKnowledge,
     tools,
     security,
     git,

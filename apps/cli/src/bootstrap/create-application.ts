@@ -48,6 +48,7 @@ import {
   createWorkspaceListTool,
   createWorkspaceReadTool,
   createWorkspaceSearchTool,
+  createProjectInstructionService,
   DEFAULT_CHECKPOINT_ROOT,
   getDefaultUserConfigPath,
   loadUserConfig,
@@ -59,10 +60,13 @@ import {
 } from "@solaris/adapters";
 import {
   TASK_RUNTIME_VERSION,
+  buildGodotProjectKnowledgeCandidates,
   canonicalizeJson,
   capabilityPolicyFingerprint,
   createCommandRunnerRegistry,
+  createKnowledgeCoordinator,
   createWorkspaceRevisionRegistry,
+  resolveInstructionSet,
   sha256Hex,
   createDefaultPolicy,
   createProjectionService,
@@ -84,7 +88,9 @@ import {
   type GDScriptLanguageService,
   type GodotKnowledge,
   type GodotDiagnostics,
+  type KnowledgeCoordinator,
   type ModelProvider,
+  type ProjectInstructionService,
   type RegisteredToolInfo,
   type SandboxBackend,
   type ProjectionService,
@@ -129,6 +135,8 @@ export interface CliApplication {
   readonly development: GDScriptDevelopmentService;
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
+  readonly instructions: ProjectInstructionService;
+  readonly projectKnowledge: KnowledgeCoordinator;
 }
 
 export async function createCliApplication(
@@ -310,6 +318,29 @@ export async function createCliApplication(
   const revisions = createWorkspaceRevisionRegistry({
     workspaceFingerprint: sha256Hex(canonicalizeJson({ workspaceRoot })),
   });
+  const instructions = createProjectInstructionService({ workspaceRoot, revisions });
+  await instructions.load();
+  const projectKnowledge = createKnowledgeCoordinator();
+  // Conservative deterministic seeding (ADR 0017 §42): only facts the
+  // static project profile proves. Architectural ownership is never
+  // inferred from weak evidence. Every candidate flows through the
+  // single-writer coordinator.
+  try {
+    const profile = await godot.projectProfile();
+    for (const candidate of buildGodotProjectKnowledgeCandidates({
+      projectFileSha256: profile.projectFileSha256,
+      declaredEngineVersionRaw:
+        profile.declaredEngineVersion === null ? null : profile.declaredEngineVersion.raw,
+      languageProfile: profile.languageProfile === "unknown" ? null : profile.languageProfile,
+      hasDotnet: profile.executableContent.dotnetProjectFiles.length > 0,
+      projectName: profile.name,
+    })) {
+      projectKnowledge.propose(candidate);
+    }
+  } catch {
+    // Seeding is best-effort and read-only; a failed static scan never
+    // blocks startup and never fabricates facts.
+  }
   const development = createGDScriptDevelopmentService({
     workspaceRoot,
     platform: process.platform,
@@ -377,6 +408,20 @@ export async function createCliApplication(
     capacity: createRouteContextCapacity("develop-offline"),
     getTaskSnapshot: () => tasks.latestTask()?.snapshot() ?? null,
     getTaskRequest: () => tasks.latestTask()?.contract().request ?? null,
+    instructions: {
+      resolve: (focusPaths) => {
+        const safe = focusPaths.filter(isSafeRelativeFocusPath);
+        const set = resolveInstructionSet({
+          instructions: instructions.instructions(),
+          paths: safe.length === 0 ? ["."] : safe,
+        });
+        return set.instructions.length === 0 ? null : set;
+      },
+    },
+    knowledge: {
+      pinned: () => projectKnowledge.pinnedFacts(),
+      retrieve: (query) => projectKnowledge.retrieve(query),
+    },
   });
   const application = createSolarisApplication({
     provider,
@@ -411,7 +456,27 @@ export async function createCliApplication(
     development,
     undo,
     runners,
+    instructions,
+    projectKnowledge,
   };
+}
+
+/**
+ * Focus paths come from session revision evidence (already canonical
+ * workspace-relative paths); the projection wrapper still rejects anything
+ * that could not be a safe relative path. The authoritative containment
+ * check lives in discovery and the adapter service.
+ */
+function isSafeRelativeFocusPath(path: string): boolean {
+  return (
+    path.length > 0 &&
+    !path.includes("\0") &&
+    !path.includes("\\") &&
+    !path.startsWith("/") &&
+    !/^[A-Za-z]:/.test(path) &&
+    !path.split("/").includes("..") &&
+    !path.split("/").includes(".")
+  );
 }
 
 /** Registered provider profiles available for the independent reviewer. */

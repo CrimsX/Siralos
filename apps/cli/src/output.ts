@@ -42,7 +42,7 @@ import type {
   UndoOutcome,
 } from "@solaris/core";
 import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
-import { COMMAND_LIMITS } from "@solaris/core";
+import { COMMAND_LIMITS, describeInstructionScope } from "@solaris/core";
 
 const CAPABILITIES: readonly Capability[] = [
   "workspace.read",
@@ -72,6 +72,9 @@ export function formatHelp(): string {
   /permissions       Show capability rules
   /commands          Show command runners and command status
   /cancel            Cancel the running command
+  /context           Show the projected context (stable/contextual/volatile, pressure)
+  /instructions      Show discovered project instruction files with revisions
+  /knowledge         Show current project knowledge facts (/knowledge why: last retrieval trace)
   /git-status        Show Git availability and repository status
   /diff              Show a bounded Git diff (working, staged, or head)
   /checkpoints       List recorded recovery checkpoints
@@ -1847,6 +1850,88 @@ export function formatToolProjection(projection: ProjectionService): string {
   }
   const tool = last.toolProjection;
   return `Tool projection: ${tool.counts.available} available, ${tool.counts.gated} gated, ${tool.counts.hidden} hidden (ABI ${tool.fingerprint.slice(0, 8)})\n`;
+}
+
+/** Read-only /instructions listing (never exposes absolute host paths). */
+export function formatInstructions(
+  instructions: readonly import("@solaris/core").ProjectInstruction[],
+  revision: string | null,
+): string {
+  if (instructions.length === 0) {
+    return "Project instructions: none discovered (no AGENTS.md files inside the workspace)\n";
+  }
+  const lines = [
+    `Project instructions (inventory revision ${revision === null ? "none" : revision.slice(0, 12)}):`,
+  ];
+  for (const instruction of instructions) {
+    const scope = describeInstructionScope(instruction);
+    const fileRevision =
+      instruction.sourceRevision === null ? "" : ` @ ${instruction.sourceRevision}`;
+    const firstLine = instruction.content.split("\n")[0] ?? "";
+    lines.push(`- ${scope}${fileRevision}: ${firstLine.slice(0, 60)}`);
+  }
+  lines.push(
+    "",
+    "Instructions shape how work is performed; they never grant capabilities or override security policy.",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+/** Read-only /knowledge listing of current facts (ADR 0017 §36). */
+export function formatKnowledge(coordinator: import("@solaris/core").KnowledgeCoordinator): string {
+  const facts = coordinator.activeFacts();
+  const retired = coordinator.retiredSubjects();
+  if (facts.length === 0 && retired.length === 0) {
+    return "Project knowledge: none recorded\n";
+  }
+  const lines = ["Project knowledge:"];
+  for (const fact of facts) {
+    const subject = fact.subjectKey ?? fact.id;
+    const pinned = fact.activation === "pinned" ? ", pinned" : "";
+    const expiry =
+      fact.expiresAtMs === null ? "" : `, expires ${new Date(fact.expiresAtMs).toISOString()}`;
+    lines.push(
+      `- ${subject}`,
+      `    ${fact.content}`,
+      `    revision ${fact.revision}, ${fact.confidence} confidence, ${fact.volatility} volatility${pinned}${expiry}`,
+    );
+  }
+  for (const subject of retired) {
+    lines.push(`- ${subject} (retired; revisions retained)`);
+  }
+  lines.push(
+    "",
+    "Knowledge is factual context only: it never grants permissions, changes policy, or overrides the task contract.",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+/** Read-only /knowledge why rendering of the latest retrieval trace. */
+export function formatKnowledgeTrace(
+  trace: import("@solaris/core").KnowledgeRetrievalTrace | null,
+): string {
+  if (trace === null) {
+    return "Knowledge retrieval: no retrieval has run yet (send a prompt first)\n";
+  }
+  const query = [
+    trace.query.subjectKey === null ? null : `subject=${trace.query.subjectKey}`,
+    trace.query.text === null ? null : `text="${trace.query.text.slice(0, 60)}"`,
+    trace.query.paths.length === 0 ? null : `paths=${trace.query.paths.join(",")}`,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
+  const lines = [
+    `Knowledge retrieval trace (${new Date(trace.atMs).toISOString()})`,
+    `  Query: ${query.length === 0 ? "(none)" : query}`,
+    `  Considered ${trace.consideredCount} active fact(s); selected ${trace.selected.length}; omitted ${trace.omittedCount}`,
+    `  Budget: ${trace.budget.limit} facts / ${trace.budget.maxBytes} bytes (used ${trace.budget.usedBytes})`,
+  ];
+  for (const selection of trace.selected) {
+    lines.push(
+      `  - ${selection.subjectKey ?? selection.factId} rev ${selection.revision} (score ${selection.score}, ${selection.confidence}): ${selection.matchReasons.join(", ")}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /** Render a structural read tool result (read-only projection). */

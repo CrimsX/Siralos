@@ -16,6 +16,8 @@ export type SlashCommand =
   | "task"
   | "task-status"
   | "context"
+  | "instructions"
+  | "knowledge"
   | "read-structure"
   | "quality"
   | "review-change"
@@ -73,6 +75,8 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "task",
   "task-status",
   "context",
+  "instructions",
+  "knowledge",
   "read-structure",
   "quality",
   "review-change",
