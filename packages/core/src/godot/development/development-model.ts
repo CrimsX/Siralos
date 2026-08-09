@@ -53,11 +53,7 @@ export type DevelopmentState =
  * workflow stopped before validation completed.
  */
 export type DevelopmentValidationStatus =
-  | "clean"
-  | "warnings"
-  | "errors"
-  | "infrastructure_failure"
-  | "cancelled";
+  "clean" | "warnings" | "errors" | "infrastructure_failure" | "cancelled";
 
 /** One file of one approved change set (§26). */
 export interface DevelopmentChangeRecord {

@@ -76,7 +76,9 @@ export function computeChangeSetDigest(parts: PreparedChangeSetDigestParts): str
 
 export function validateChangeSetRequest(
   request: unknown,
-): { readonly ok: true; readonly request: ChangeSetRequest } | { readonly ok: false; readonly message: string } {
+):
+  | { readonly ok: true; readonly request: ChangeSetRequest }
+  | { readonly ok: false; readonly message: string } {
   if (typeof request !== "object" || request === null || Array.isArray(request)) {
     return { ok: false, message: "The change-set input must be an object with a changes array." };
   }
@@ -123,7 +125,10 @@ export function validateChangeSetRequest(
     if (operation === "create") {
       const content = entry["content"];
       if (typeof content !== "string") {
-        return { ok: false, message: `The create for "${normalizedPath}" requires string content.` };
+        return {
+          ok: false,
+          message: `The create for "${normalizedPath}" requires string content.`,
+        };
       }
       parsed.push({ operation, path: normalizedPath, content });
       continue;
@@ -182,7 +187,12 @@ export function validateChangeSetRequest(
       }
       parsedReplacements.push({ oldText, newText });
     }
-    parsed.push({ operation, path: normalizedPath, expectedSha256, replacements: parsedReplacements });
+    parsed.push({
+      operation,
+      path: normalizedPath,
+      expectedSha256,
+      replacements: parsedReplacements,
+    });
   }
   return { ok: true, request: { changes: parsed } };
 }

@@ -85,9 +85,7 @@ describe("validateChangeSetRequest", () => {
 
   it("rejects empty replacement oldText", () => {
     const result = validateChangeSetRequest({
-      changes: [
-        { ...GOOD_EDIT, replacements: [{ oldText: "", newText: "x" }] },
-      ],
+      changes: [{ ...GOOD_EDIT, replacements: [{ oldText: "", newText: "x" }] }],
     });
     expect(result.ok).toBe(false);
   });
@@ -121,7 +119,12 @@ describe("validateChangeSetRequest", () => {
 describe("computeChangeSetDigest", () => {
   const parts: PreparedChangeSetDigestParts = {
     changes: [
-      { operation: "update", path: "a.gd", beforeSha256: "a".repeat(64), afterSha256: "b".repeat(64) },
+      {
+        operation: "update",
+        path: "a.gd",
+        beforeSha256: "a".repeat(64),
+        afterSha256: "b".repeat(64),
+      },
       { operation: "create", path: "b.gd", beforeSha256: null, afterSha256: "c".repeat(64) },
     ],
   };

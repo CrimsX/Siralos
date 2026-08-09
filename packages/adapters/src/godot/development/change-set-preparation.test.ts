@@ -1,11 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  applyReplacements,
-  prepareChangeSet,
-  hashText,
-} from "./change-set-preparation.js";
+import { applyReplacements, prepareChangeSet, hashText } from "./change-set-preparation.js";
 import {
   createTempWorkspace,
   SYMLINKS_SUPPORTED,

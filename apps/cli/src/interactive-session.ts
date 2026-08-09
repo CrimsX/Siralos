@@ -239,7 +239,15 @@ export async function runInteractiveSession(
             await runGDScriptPositionCommand(io, sessionInfo, "definition", parsed.args);
             break;
           case "develop":
-            await runDevelopCommand(io, application, sessionInfo, controls, parsed.args, inputBuffer, inputQueue);
+            await runDevelopCommand(
+              io,
+              application,
+              sessionInfo,
+              controls,
+              parsed.args,
+              inputBuffer,
+              inputQueue,
+            );
             break;
           case "development-status":
             io.write(formatDevelopmentStatus(sessionInfo.development.status()));
@@ -650,6 +658,13 @@ async function runGDScriptLSPCommand(
 ): Promise<void> {
   const controller = controls.beginPrompt();
   try {
+    const workflowStatus = sessionInfo.development.status();
+    if (workflowStatus.session !== null && workflowStatus.session.state.kind === "active") {
+      io.write(
+        "The active development workflow owns the language session lifecycle; its approval covers LSP recreation after approved edits.\n",
+      );
+      return;
+    }
     const status = sessionInfo.language.status();
     if (status.state === "ready") {
       io.write(formatGodotLSPSessionStatus(status));

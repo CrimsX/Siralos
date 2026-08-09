@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type {
-  ChangePreview,
-  FileChangePreview,
-  PreparedChangeSetFile,
-} from "@solaris/core";
+import type { ChangePreview, FileChangePreview, PreparedChangeSetFile } from "@solaris/core";
 import {
   countChangeSetResultBytes,
   DEVELOPMENT_LIMITS,
@@ -190,7 +186,10 @@ async function prepareOneFile(
   try {
     bytes = await readFile(resolved.absolutePath);
   } catch (error: unknown) {
-    return { status: "failed", message: `"${change.path}" could not be read: ${describeFsError(error)}` };
+    return {
+      status: "failed",
+      message: `"${change.path}" could not be read: ${describeFsError(error)}`,
+    };
   }
   if (bytes.byteLength > DEVELOPMENT_LIMITS.maxTextFileBytes) {
     return {

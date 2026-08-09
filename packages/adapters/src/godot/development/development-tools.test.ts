@@ -169,7 +169,10 @@ describe("godot.development_status tool", () => {
       await startWorkflow(service);
       const during = await tool.execute({}, {});
       if (during.status === "success") {
-        const session = (during.output as Record<string, unknown>)["session"] as Record<string, unknown>;
+        const session = (during.output as Record<string, unknown>)["session"] as Record<
+          string,
+          unknown
+        >;
         expect(session["state"]).toEqual({ kind: "active", phase: "investigating" });
       }
     });

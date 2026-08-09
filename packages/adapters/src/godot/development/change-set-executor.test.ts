@@ -195,7 +195,11 @@ describe("applyChangeSetProtocol", () => {
     expect(primitives.files.get("a.gd")).toBe(A_AFTER);
     expect(primitives.files.has("b.gd")).toBe(false);
     const checkpoints = await store.list();
-    expect(checkpoints.map((entry) => entry.operation).sort()).toEqual(["create", "delete", "update"]);
+    expect(checkpoints.map((entry) => entry.operation).sort()).toEqual([
+      "create",
+      "delete",
+      "update",
+    ]);
   });
 
   it("conflicts before any write when a stale pre-state is detected", async () => {
@@ -245,8 +249,7 @@ describe("applyChangeSetProtocol", () => {
   it("applies nothing when a checkpoint fails", async () => {
     const primitives = new InMemoryPrimitives({ "a.gd": A_BEFORE });
     const failingStore = {
-      prepare: () =>
-        Promise.reject(new Error("checkpoint capacity refused")),
+      prepare: () => Promise.reject(new Error("checkpoint capacity refused")),
     } as unknown as CheckpointStore;
     const outcome = await applyChangeSetProtocol(
       applyRequest([

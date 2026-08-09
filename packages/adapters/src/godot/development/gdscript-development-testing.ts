@@ -37,7 +37,11 @@ export interface FakeSessionControl {
 }
 
 export interface FakeLanguageControl {
-  engine: { readonly sha256: string; readonly version: string; readonly installationId: string } | null;
+  engine: {
+    readonly sha256: string;
+    readonly version: string;
+    readonly installationId: string;
+  } | null;
   active: FakeSessionControl | null;
   prepareCount: number;
   startCount: number;
@@ -52,12 +56,17 @@ export interface FakeLanguageControl {
 }
 
 export interface FakeLanguageOptions {
-  readonly engine?: { readonly sha256: string; readonly version: string; readonly installationId: string };
+  readonly engine?: {
+    readonly sha256: string;
+    readonly version: string;
+    readonly installationId: string;
+  };
 }
 
-export function createFakeLanguageService(
-  options: FakeLanguageOptions = {},
-): { readonly service: GDScriptLanguageService; readonly control: FakeLanguageControl } {
+export function createFakeLanguageService(options: FakeLanguageOptions = {}): {
+  readonly service: GDScriptLanguageService;
+  readonly control: FakeLanguageControl;
+} {
   const control: FakeLanguageControl = {
     engine: options.engine ?? {
       sha256: "e".repeat(64),
@@ -108,7 +117,12 @@ export function createFakeLanguageService(
         capabilities: { diagnostics: true, hover: true, completion: true, definition: true },
         manifestDigest: "m".repeat(64),
       };
-      return Promise.resolve({ status: "ready", session: createPreparedGDScriptSession(), preview, digest });
+      return Promise.resolve({
+        status: "ready",
+        session: createPreparedGDScriptSession(),
+        preview,
+        digest,
+      });
     },
     start: (_session: PreparedGDScriptSession, context) => {
       control.startCount += 1;
@@ -161,10 +175,7 @@ export function createFakeLanguageService(
   return { service, control };
 }
 
-function createFakeSession(
-  id: string,
-  control: FakeLanguageControl,
-): GDScriptLanguageSession {
+function createFakeSession(id: string, control: FakeLanguageControl): GDScriptLanguageSession {
   return {
     id,
     engineVersion: control.engine?.version ?? "unknown",
@@ -189,9 +200,15 @@ function createFakeSession(
       return Promise.resolve({ status: "ready", result: undefined });
     },
     closeDocument: () => Promise.resolve({ status: "ready", result: undefined }),
-    hover: () => Promise.resolve({ status: "ready", result: { path: "x.gd", range: null, contents: [] } }),
-    completion: () => Promise.resolve({ status: "ready", result: { path: "x.gd", items: [], truncated: false } }),
-    definition: () => Promise.resolve({ status: "ready", result: { path: "x.gd", locations: [], truncated: false } }),
+    hover: () =>
+      Promise.resolve({ status: "ready", result: { path: "x.gd", range: null, contents: [] } }),
+    completion: () =>
+      Promise.resolve({ status: "ready", result: { path: "x.gd", items: [], truncated: false } }),
+    definition: () =>
+      Promise.resolve({
+        status: "ready",
+        result: { path: "x.gd", locations: [], truncated: false },
+      }),
     diagnostics: (request): Promise<GDScriptQueryOutcome<GDScriptDiagnosticResult>> => {
       const sessionControl = control.active;
       if (sessionControl === null || sessionControl.closed) {
@@ -216,9 +233,16 @@ function createFakeSession(
 
 export interface FakeParserControl {
   /** path -> outcome for the next execute; absent = clean. */
-  resultsByPath: Map<string, { readonly valid: boolean; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }>;
+  resultsByPath: Map<
+    string,
+    { readonly valid: boolean; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }
+  >;
   /** FIFO queue of scripted outcomes consumed per execute; falls back to resultsByPath. */
-  queuedResults: { readonly path: string; readonly valid: boolean; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }[];
+  queuedResults: {
+    readonly path: string;
+    readonly valid: boolean;
+    readonly diagnostics: readonly GodotGDScriptDiagnostic[];
+  }[];
   /** Fail the next prepare with this message (infrastructure failure). */
   nextPrepareFailure: string | null;
   /** Fail the next execute with this message. */
@@ -263,7 +287,11 @@ export function createFakeDiagnosticsService(): {
           engineEdition: "standard",
           support: "verified",
           compatibility: "compatible",
-          scripts: { count: request.paths?.length ?? 0, paths: request.paths ?? null, totalBytes: 0 },
+          scripts: {
+            count: request.paths?.length ?? 0,
+            paths: request.paths ?? null,
+            totalBytes: 0,
+          },
           operation: "parse-only",
           isolation: {
             sourceWorkspace: "not-used-as-project",
@@ -314,7 +342,12 @@ export function createFakeDiagnosticsService(): {
       void check;
       return Promise.resolve(result);
     },
-    status: () => ({ state: "untrusted", lastResult: null, lastManifestDigest: null, lastEngineVersion: null }),
+    status: () => ({
+      state: "untrusted",
+      lastResult: null,
+      lastManifestDigest: null,
+      lastEngineVersion: null,
+    }),
     disposeAll: () => undefined,
   };
   return { service, control };
@@ -323,7 +356,9 @@ export function createFakeDiagnosticsService(): {
 /** Real-filesystem change-set primitives for the workflow tests. */
 export function createWorkspaceFilePrimitives(workspaceRoot: string) {
   return {
-    async readFile(path: string): Promise<{ readonly exists: boolean; readonly sha256: string | null }> {
+    async readFile(
+      path: string,
+    ): Promise<{ readonly exists: boolean; readonly sha256: string | null }> {
       const absolute = join(workspaceRoot, path);
       try {
         const stats = await lstat(absolute);
@@ -412,7 +447,13 @@ export function createFakeGitInspector(): {
     },
     getDiff: (): Promise<GitDiffResult> => {
       log.push("getDiff");
-      return Promise.resolve({ scope: "working", files: [], patch: "", truncated: false, untrackedExcluded: true });
+      return Promise.resolve({
+        scope: "working",
+        files: [],
+        patch: "",
+        truncated: false,
+        untrackedExcluded: true,
+      });
     },
   };
   return { git, statusResult, log };

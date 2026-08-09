@@ -78,7 +78,11 @@ export async function applyChangeSetProtocol(
   dependencies: ChangeSetExecutorDependencies,
 ): Promise<ChangeSetApplyOutcome> {
   if (request.signal?.aborted) {
-    return { status: "cancelled", message: "The change-set application was cancelled.", checkpointIds: [] };
+    return {
+      status: "cancelled",
+      message: "The change-set application was cancelled.",
+      checkpointIds: [],
+    };
   }
   const release = await dependencies.lock.acquire(request.signal);
   const checkpointIds: string[] = [];
@@ -110,7 +114,7 @@ export async function applyChangeSetProtocol(
     // and an absence state for every create) before anything is applied.
     for (const file of request.files) {
       const preimage = file.operation === "create" ? null : await primitives.readContent(file.path);
-      const before = file.operation === "create" ? null : preimage?.content ?? null;
+      const before = file.operation === "create" ? null : (preimage?.content ?? null);
       const checkpoint = await dependencies.store.prepare(
         {
           relativePath: file.path,
@@ -167,8 +171,7 @@ export async function applyChangeSetProtocol(
       };
     }
     if (applied.length === 0) {
-      const message =
-        error instanceof Error ? error.message : "The change-set application failed.";
+      const message = error instanceof Error ? error.message : "The change-set application failed.";
       return { status: "failed", message, checkpointIds };
     }
     const message = error instanceof Error ? error.message : "The change-set application failed.";

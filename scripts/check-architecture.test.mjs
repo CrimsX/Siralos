@@ -1008,7 +1008,9 @@ describe("check-architecture development workflow boundaries", () => {
     const errors = runChecks(writeFixture(fixture));
     expect(
       errors.some((error) =>
-        error.includes("GDScript development workflow orchestrator must not import node:child_process"),
+        error.includes(
+          "GDScript development workflow orchestrator must not import node:child_process",
+        ),
       ),
     ).toBe(true);
   });

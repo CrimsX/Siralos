@@ -6,6 +6,7 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
 } from "@solaris/core";
+import type { LanguageQueryGate } from "./godot-lsp-query-tools.js";
 
 /**
  * `godot.lsp_session` reviewable provider tool: one-time-approved startup
@@ -14,10 +15,14 @@ import type {
  * request workspace edits; the session runs a recovery-mode editor against
  * the disposable mirror over a Solaris-allocated loopback port. When
  * session startup is unavailable on this platform, preparation returns a
- * typed `unavailable` result before any approval is requested.
+ * typed `unavailable` result before any approval is requested. While an
+ * active development workflow owns the session lifecycle (its approval
+ * covers LSP recreation after approved edits), the tool defers to the
+ * workflow and refuses instead of starting a second session.
  */
 export function createGodotLSPSessionTool(
   service: GDScriptLanguageService,
+  workflowGate?: LanguageQueryGate,
 ): PreparedLSPSessionTool {
   return {
     kind: "prepared_lsp_session",
@@ -32,6 +37,15 @@ export function createGodotLSPSessionTool(
       input: unknown,
       context: ToolExecutionContext,
     ): Promise<GDScriptLSPSessionToolPreparationResult> {
+      const workflow = workflowGate?.() ?? { blocked: false, message: null };
+      if (workflow.blocked) {
+        return {
+          status: "failed",
+          message:
+            workflow.message ??
+            "The development workflow manages the language session lifecycle; its one-time approval covers LSP recreation after approved edits.",
+        };
+      }
       if (input !== undefined && !isEmptyObject(input)) {
         return {
           status: "invalid_input",

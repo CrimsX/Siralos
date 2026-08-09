@@ -44,7 +44,8 @@ const DEV_FIXTURE_FILES = {
     'config/features=PackedStringArray("4.7")',
     "",
   ].join("\n"),
-  "src/player/player.gd": 'extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n',
+  "src/player/player.gd":
+    "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n",
 };
 
 async function writeFixtureFiles(root) {

@@ -969,14 +969,22 @@ async function* streamDevelopScenario(
   if (scenario === "fixture") {
     if (firstResult === undefined) {
       if (readResult === undefined) {
-        yield { type: "tool_call", callId: "call-dev-read", toolName: "workspace.read", input: { path: DEV_FIXTURE_PATH } };
+        yield {
+          type: "tool_call",
+          callId: "call-dev-read",
+          toolName: "workspace.read",
+          input: { path: DEV_FIXTURE_PATH },
+        };
         await Promise.resolve();
         yield { type: "completed" };
         return;
       }
       const hash = readResultSha256(readResult);
       if (hash === null) {
-        yield* streamTextChunks(`Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`, signal);
+        yield* streamTextChunks(
+          `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+          signal,
+        );
         return;
       }
       yield {
@@ -1006,14 +1014,22 @@ async function* streamDevelopScenario(
   if (repairResult === undefined) {
     if (firstResult === undefined) {
       if (readResult === undefined) {
-        yield { type: "tool_call", callId: "call-dev-read", toolName: "workspace.read", input: { path: DEV_FIXTURE_PATH } };
+        yield {
+          type: "tool_call",
+          callId: "call-dev-read",
+          toolName: "workspace.read",
+          input: { path: DEV_FIXTURE_PATH },
+        };
         await Promise.resolve();
         yield { type: "completed" };
         return;
       }
       const hash = readResultSha256(readResult);
       if (hash === null) {
-        yield* streamTextChunks(`Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`, signal);
+        yield* streamTextChunks(
+          `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+          signal,
+        );
         return;
       }
       yield {
@@ -1086,14 +1102,15 @@ function formatDevelopmentFinalText(result: ToolExecutionResult): string {
   switch (result.status) {
     case "success": {
       const record = result.output as JsonObject;
-      const changed = Array.isArray(record["changedFiles"]) ? (record["changedFiles"] as readonly unknown[]) : [];
+      const changed = Array.isArray(record["changedFiles"])
+        ? (record["changedFiles"] as readonly unknown[])
+        : [];
       const diagnostics =
         typeof record["diagnostics"] === "object" && record["diagnostics"] !== null
           ? (record["diagnostics"] as JsonObject)
           : null;
       const errors = typeof diagnostics?.["errors"] === "number" ? diagnostics["errors"] : 0;
-      const warnings =
-        typeof diagnostics?.["warnings"] === "number" ? diagnostics["warnings"] : 0;
+      const warnings = typeof diagnostics?.["warnings"] === "number" ? diagnostics["warnings"] : 0;
       const files = changed.map((entry) => (entry as JsonObject)["path"] as string).join(", ");
       const validation =
         typeof record["validation"] === "object" && record["validation"] !== null

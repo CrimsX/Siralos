@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  computeGDScriptDevelopmentDigest,
-  DEVELOPMENT_LIMITS,
-} from "./development-model.js";
+import { computeGDScriptDevelopmentDigest, DEVELOPMENT_LIMITS } from "./development-model.js";
 
 describe("DEVELOPMENT_LIMITS", () => {
   it("keeps the immutable workflow limits at their documented values", () => {
@@ -40,9 +37,9 @@ describe("computeGDScriptDevelopmentDigest", () => {
   });
 
   it("binds the request text", () => {
-    expect(
-      computeGDScriptDevelopmentDigest({ ...parts, request: "different request" }),
-    ).not.toBe(computeGDScriptDevelopmentDigest(parts));
+    expect(computeGDScriptDevelopmentDigest({ ...parts, request: "different request" })).not.toBe(
+      computeGDScriptDevelopmentDigest(parts),
+    );
   });
 
   it("binds the project fingerprint", () => {

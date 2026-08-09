@@ -291,7 +291,15 @@ export async function createCliApplication(
     createGodotApiLookupTool(knowledge),
     createGodotCheckScriptTool(diagnostics),
     createGodotCheckProjectScriptsTool(diagnostics),
-    createGodotLSPSessionTool(language),
+    createGodotLSPSessionTool(language, () =>
+      development.status().session === null
+        ? { blocked: false, message: null }
+        : {
+            blocked: true,
+            message:
+              "The development workflow manages the language session lifecycle; its one-time approval covers LSP recreation after approved edits.",
+          },
+    ),
     createGodotLSPDiagnosticsTool(language, () => development.languageQueryGate()),
     createGodotHoverTool(language, () => development.languageQueryGate()),
     createGodotCompleteTool(language, () => development.languageQueryGate()),

@@ -146,7 +146,11 @@ export function createGDScriptDevelopmentService(
   let pendingStart: PendingStart | null = null;
   let session: InternalSession | null = null;
 
-  async function support(): Promise<{ readonly state: "available" | "unavailable"; readonly reason: string | null; readonly platform: string }> {
+  async function support(): Promise<{
+    readonly state: "available" | "unavailable";
+    readonly reason: string | null;
+    readonly platform: string;
+  }> {
     const available = await applier.isAvailable();
     return {
       state: available ? "available" : "unavailable",
@@ -249,7 +253,8 @@ export function createGDScriptDevelopmentService(
     if (context.approvedDigest !== pendingStart.digest) {
       return {
         status: "conflict",
-        message: "The approval does not match the prepared development workflow; a new approval is required.",
+        message:
+          "The approval does not match the prepared development workflow; a new approval is required.",
       };
     }
     const manifest = await scanAuthoredFiles({
@@ -260,7 +265,8 @@ export function createGDScriptDevelopmentService(
       pendingStart = null;
       return {
         status: "conflict",
-        message: "The project changed while the workflow approval was pending; approve the workflow again.",
+        message:
+          "The project changed while the workflow approval was pending; approve the workflow again.",
       };
     }
     const engine = await dependencies.language.selectedEngine(context.signal);
@@ -268,16 +274,15 @@ export function createGDScriptDevelopmentService(
       pendingStart = null;
       return {
         status: "conflict",
-        message: "The selected Godot engine changed while the workflow approval was pending; approve the workflow again.",
+        message:
+          "The selected Godot engine changed while the workflow approval was pending; approve the workflow again.",
       };
     }
     const created: InternalSession = {
       id: workflowId,
       request: pendingStart.request,
       projectFingerprint: pendingStart.projectFingerprint,
-      baselineEntries: new Map(
-        manifest.entries.map((entry) => [entry.relativePath, entry.sha256]),
-      ),
+      baselineEntries: new Map(manifest.entries.map((entry) => [entry.relativePath, entry.sha256])),
       engineFingerprint: pendingStart.engineFingerprint,
       engineVersion: pendingStart.engineVersion,
       startedAtMs: now(),
@@ -372,10 +377,14 @@ export function createGDScriptDevelopmentService(
         message: CHANGE_SET_EXECUTION_UNAVAILABLE_MESSAGE,
       };
     }
-    const prepared = await prepareChangeSetExact(input, {
-      workspaceRoot: dependencies.workspaceRoot,
-      platform: dependencies.platform,
-    }, context.signal);
+    const prepared = await prepareChangeSetExact(
+      input,
+      {
+        workspaceRoot: dependencies.workspaceRoot,
+        platform: dependencies.platform,
+      },
+      context.signal,
+    );
     if (prepared.status !== "ready") {
       return prepared;
     }
@@ -574,7 +583,10 @@ export function createGDScriptDevelopmentService(
     emit({ type: "development_language_restarted", id: current.id });
 
     // 5. LSP diagnostics for the changed scripts with deterministic settling.
-    const lspDiagnostics = await collectSettledDiagnostics(changedScripts(prepared.files), context.signal);
+    const lspDiagnostics = await collectSettledDiagnostics(
+      changedScripts(prepared.files),
+      context.signal,
+    );
     if (lspDiagnostics.status === "cancelled") {
       current.state = { kind: "terminal", status: "cancelled" };
       emit({ type: "development_completed", id: current.id, status: "cancelled" });
@@ -745,7 +757,11 @@ export function createGDScriptDevelopmentService(
     };
   }
 
-  function supportSync(): { readonly available: boolean; readonly reason: string | null; readonly platform: string } {
+  function supportSync(): {
+    readonly available: boolean;
+    readonly reason: string | null;
+    readonly platform: string;
+  } {
     return {
       available: dependencies.canApplyIdentityBound,
       reason: dependencies.canApplyIdentityBound
@@ -890,8 +906,19 @@ export function createGDScriptDevelopmentService(
     scripts: readonly string[],
     signal: AbortSignal | undefined,
   ): Promise<
-    | { readonly status: "ok"; readonly checkedFiles: number; readonly validFiles: number; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }
-    | { readonly status: "infrastructure_failure" | "cancelled"; readonly message: string; readonly checkedFiles: number; readonly validFiles: number; readonly diagnostics: readonly GodotGDScriptDiagnostic[] }
+    | {
+        readonly status: "ok";
+        readonly checkedFiles: number;
+        readonly validFiles: number;
+        readonly diagnostics: readonly GodotGDScriptDiagnostic[];
+      }
+    | {
+        readonly status: "infrastructure_failure" | "cancelled";
+        readonly message: string;
+        readonly checkedFiles: number;
+        readonly validFiles: number;
+        readonly diagnostics: readonly GodotGDScriptDiagnostic[];
+      }
   > {
     const diagnostics: GodotGDScriptDiagnostic[] = [];
     let checkedFiles = 0;
@@ -916,10 +943,7 @@ export function createGDScriptDevelopmentService(
           diagnostics,
         };
       }
-      const prepared = await dependencies.diagnostics.prepare(
-        { paths: [script] },
-        signal,
-      );
+      const prepared = await dependencies.diagnostics.prepare({ paths: [script] }, signal);
       if (prepared.status !== "ready") {
         return {
           status: "infrastructure_failure",
@@ -1122,9 +1146,7 @@ function buildApplyRequest(
 function changedScripts(
   files: readonly import("@solaris/core").PreparedChangeSetFile[],
 ): readonly string[] {
-  return files
-    .filter((file) => file.path.endsWith(".gd"))
-    .map((file) => file.path);
+  return files.filter((file) => file.path.endsWith(".gd")).map((file) => file.path);
 }
 
 function countSeverity(evidence: DevelopmentEvidence, severity: "error" | "warning"): number {

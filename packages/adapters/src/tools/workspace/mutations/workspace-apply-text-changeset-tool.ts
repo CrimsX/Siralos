@@ -84,10 +84,7 @@ export function createWorkspaceApplyTextChangesetTool(
       },
     },
     capability: "workspace.write",
-    async prepare(
-      input: unknown,
-      context: ToolExecutionContext,
-    ): Promise<ToolPreparationResult> {
+    async prepare(input: unknown, context: ToolExecutionContext): Promise<ToolPreparationResult> {
       const prepared = await development.prepareChangeSet(input, context);
       switch (prepared.status) {
         case "ready": {

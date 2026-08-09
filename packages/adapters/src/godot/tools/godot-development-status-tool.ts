@@ -13,9 +13,7 @@ import type {
  * workflow's own progress comes from tool results and events, never from
  * chain-of-thought.
  */
-export function createGodotDevelopmentStatusTool(
-  development: GDScriptDevelopmentService,
-): Tool {
+export function createGodotDevelopmentStatusTool(development: GDScriptDevelopmentService): Tool {
   return {
     definition: {
       name: "godot.development_status",
@@ -24,10 +22,7 @@ export function createGodotDevelopmentStatusTool(
       inputSchema: { type: "object", additionalProperties: false },
     },
     capability: "godot.development",
-    execute(
-      input: unknown,
-      _context: ToolExecutionContext,
-    ): Promise<ToolExecutionResult> {
+    execute(input: unknown, _context: ToolExecutionContext): Promise<ToolExecutionResult> {
       if (input !== undefined && !isEmptyObject(input)) {
         return Promise.resolve({
           status: "invalid_input",

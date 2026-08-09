@@ -1485,8 +1485,7 @@ export function formatDevelopmentStatus(status: GDScriptDevelopmentStatus): stri
       : `The GDScript development workflow is unavailable: ${status.support.reason ?? "unknown reason"}`;
   }
   const session = status.session;
-  const state =
-    session.state.kind === "active" ? session.state.phase : session.state.status;
+  const state = session.state.kind === "active" ? session.state.phase : session.state.status;
   const validation =
     session.validation === null
       ? "not yet run"
@@ -1510,7 +1509,9 @@ Repair proposals remaining: ${session.repairProposalsRemaining}`;
 
 /** Final development result summary for the CLI (§35, §38). */
 export function formatDevelopmentResult(result: GDScriptDevelopmentResult): string {
-  const changed = result.changes.map((change) => `  ${operationMark(change.operation)} ${change.path}`).join("\n");
+  const changed = result.changes
+    .map((change) => `  ${operationMark(change.operation)} ${change.path}`)
+    .join("\n");
   const lines = [
     `Development workflow ${describeDevelopmentStatus(result.status)}`,
     `Iterations: ${result.iterations}`,
@@ -1551,4 +1552,3 @@ function describeDevelopmentStatus(status: string): string {
       return status;
   }
 }
-

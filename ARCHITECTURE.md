@@ -329,6 +329,44 @@ apps/cli/                                 /gdscript-lsp, -stop, -hover,
 - **Approval protocol**: `godot.lsp_session` is a `prepared_lsp_session` tool sharing the one-time approval flow; `godot.lsp` is `ask` in every user-facing profile (no public `allow`); query tools require an active session. While startup is unavailable, preparation returns typed `unavailable` results before any approval is requested.
 - **LSP runner discipline (architecture-enforced)**: `--lsp-port` is legitimate only inside the LSP runner structurally paired with `--headless --editor --recovery-mode --path <mirror>`; DAP/debug/scene/import/quit options never appear; path and port values come from Solaris-owned inputs; `workspace/applyEdit`/`workspace/executeCommand` are never implemented in runtime adapter code.
 
+## GDScript development workflow
+
+The development-workflow layer follows the same inward pattern: contracts in core, orchestration and change-set machinery in adapters, rendering and entry points in the CLI. The workflow composes existing primitives (read-only inspection, API knowledge, LSP intelligence, prepared-mutation approval, checkpoints, `--check-only` diagnostics, Git inspection) and never bypasses them (ADR 0012).
+
+```text
+packages/core/src/godot/development/
+  development-model.ts                    phases, statuses, session, evidence,
+                                          result, immutable limits, events,
+                                          workflow-start preview + digest
+  development-change-set.ts               exact text change-set contract,
+                                          limits, canonical digest
+  development-change-set-apply.ts         checkpoint-then-apply protocol,
+                                          partial-failure recovery outcomes,
+                                          file-primitives seam
+  development-service.ts                  GDScriptDevelopmentService port
+packages/adapters/src/godot/development/
+  change-set-preparation.ts               read-only preparation: paths,
+                                          protected paths, hashes, resulting
+                                          content, diffs, after-hashes, digest
+  change-set-executor.ts                  apply protocol with fail-closed
+                                          platform gate + in-memory-primitives
+                                          tested recovery
+  gdscript-development-service.ts         workflow orchestration (LSP
+                                          suspension, checkpointing, parser
+                                          gate, fresh LSP, settling, evidence,
+                                          repair budget)
+  tools/                                  workspace.apply_text_changeset,
+                                          godot.development_status
+apps/cli/                                 /develop, /development-status,
+                                          workflow-aware /cancel
+```
+
+- **Core owns**: the vocabulary (phases, terminal statuses, validation normalization), the session/evidence/result models, immutable limits, the change-set contract and digest, the apply protocol with recovery outcomes, and the service port. Core remains Node-free.
+- **Adapters own**: read-only change-set preparation (filesystem reads only), the change-set executor whose platform gate fails closed as unavailable (the checkpoint/apply/recovery protocol is tested internal code exercised through injected in-memory file primitives), and the workflow orchestration. The orchestrator and the executor import no `node:fs`, `node:net`, `node:child_process`, or `node:path` (architecture-enforced); the workflow never spawns Godot and never opens sockets.
+- **CLI owns**: `/develop` (workflow start through the one-time approval protocol, then the conversational provider loop), `/development-status`, and workflow-aware `/cancel`; `/gdscript-lsp` and `godot.lsp_session` defer to the workflow's session ownership while a workflow is active.
+- **Approval protocol**: the workflow start is one one-time approval (`godot.development` capability, CLI-mediated) binding the request, project fingerprint, engine fingerprint, and limits, covering only the read-only validation context; every change set and repair still goes through the existing prepared-mutation one-time approval flow (`workspace.write` is `ask` under `develop-offline`). While the change-set applier is unavailable, preparation returns typed `unavailable` results before any approval is requested.
+- **Architecture enforcement**: the workflow orchestrator and change-set executor may not import Node infrastructure modules; core stays Node-free; the LSP/parser/runner disciplines of ADRs 0010 and 0011 remain structurally enforced; no runtime/game or DAP invocation exists.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. A persistence port will be added only when a real requirement demands it.

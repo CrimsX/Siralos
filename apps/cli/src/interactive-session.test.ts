@@ -232,7 +232,11 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
 function createStubDevelopmentService(): GDScriptDevelopmentService {
   return {
     support: () =>
-      Promise.resolve({ state: "unavailable", reason: "stub: development unavailable", platform: "linux" }),
+      Promise.resolve({
+        state: "unavailable",
+        reason: "stub: development unavailable",
+        platform: "linux",
+      }),
     prepareStart: () => Promise.resolve({ status: "unavailable", message: "stub unavailable" }),
     start: () => Promise.resolve({ status: "unavailable", message: "stub unavailable" }),
     status: () => ({
@@ -240,7 +244,8 @@ function createStubDevelopmentService(): GDScriptDevelopmentService {
       session: null,
     }),
     prepareChangeSet: () => Promise.resolve({ status: "unavailable", message: "stub unavailable" }),
-    applyChangeSet: () => Promise.resolve({ status: "unavailable", message: "stub unavailable", result: null }),
+    applyChangeSet: () =>
+      Promise.resolve({ status: "unavailable", message: "stub unavailable", result: null }),
     languageQueryGate: () => ({ blocked: false, message: null }),
     validationStatus: () => null,
     completeFromProviderTurn: () => undefined,

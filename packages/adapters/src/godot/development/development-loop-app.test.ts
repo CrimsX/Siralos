@@ -51,7 +51,9 @@ interface LoopHarness {
   readonly startWorkflow: (request: string) => Promise<void>;
 }
 
-async function createLoopHarness(options: { readonly repair?: boolean } = {}): Promise<LoopHarness> {
+async function createLoopHarness(
+  options: { readonly repair?: boolean } = {},
+): Promise<LoopHarness> {
   const workspace = await createTempWorkspace();
   await writeFixtureFiles(workspace.root, {
     "project.godot": '[application]\nconfig/name="fixture"\n',

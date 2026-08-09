@@ -22,7 +22,8 @@ import {
   type FakeParserControl,
 } from "./gdscript-development-testing.js";
 
-const PLAYER_VALID = "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n";
+const PLAYER_VALID =
+  "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n";
 
 function errorDiagnostic(path: string, line: number, message: string): GodotGDScriptDiagnostic {
   return {
@@ -60,11 +61,13 @@ interface Harness {
   readonly events: string[];
 }
 
-async function createHarness(options: {
-  readonly engineSha?: string;
-  readonly files?: Readonly<Record<string, string>>;
-  readonly git?: boolean;
-} = {}): Promise<Harness> {
+async function createHarness(
+  options: {
+    readonly engineSha?: string;
+    readonly files?: Readonly<Record<string, string>>;
+    readonly git?: boolean;
+  } = {},
+): Promise<Harness> {
   const workspace = await createTempWorkspace();
   await writeFixtureFiles(workspace.root, {
     "project.godot": '[application]\nconfig/name="fixture"\n',
@@ -73,7 +76,9 @@ async function createHarness(options: {
   });
   const store = await createTempCheckpointStore(workspace.root);
   const languageFake = createFakeLanguageService(
-    options.engineSha === undefined ? {} : { engine: { sha256: options.engineSha, version: "4.7.1-stable", installationId: "test" } },
+    options.engineSha === undefined
+      ? {}
+      : { engine: { sha256: options.engineSha, version: "4.7.1-stable", installationId: "test" } },
   );
   const parserFake = createFakeDiagnosticsService();
   const gitFake = options.git === false ? null : createFakeGitInspector();
@@ -106,7 +111,10 @@ async function createHarness(options: {
   };
 }
 
-async function startWorkflow(harness: Harness, request = "Add a heal method to the player"): Promise<string> {
+async function startWorkflow(
+  harness: Harness,
+  request = "Add a heal method to the player",
+): Promise<string> {
   const prepared = await harness.service.prepareStart(request);
   expect(prepared.status).toBe("ready");
   if (prepared.status !== "ready") {
@@ -248,7 +256,10 @@ describe("development workflow core", () => {
     await startWorkflow(harness);
     await proposeAndApply(harness, editChangeSet(sha256Of(PLAYER_VALID)));
     harness.service.completeFromProviderTurn();
-    const proposal = await harness.service.prepareChangeSet(editChangeSet(sha256Of(PLAYER_VALID)), {});
+    const proposal = await harness.service.prepareChangeSet(
+      editChangeSet(sha256Of(PLAYER_VALID)),
+      {},
+    );
     expect(proposal.status).toBe("failed");
   });
 
@@ -277,7 +288,10 @@ describe("development workflow core", () => {
 
   it("rejects a change-set approval that does not match the digest", async () => {
     await startWorkflow(harness);
-    const prepared = await harness.service.prepareChangeSet(editChangeSet(sha256Of(PLAYER_VALID)), {});
+    const prepared = await harness.service.prepareChangeSet(
+      editChangeSet(sha256Of(PLAYER_VALID)),
+      {},
+    );
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
       return;
@@ -290,7 +304,10 @@ describe("development workflow core", () => {
 
   it("does not reuse an approval: a consumed change set cannot be applied twice", async () => {
     await startWorkflow(harness);
-    const prepared = await harness.service.prepareChangeSet(editChangeSet(sha256Of(PLAYER_VALID)), {});
+    const prepared = await harness.service.prepareChangeSet(
+      editChangeSet(sha256Of(PLAYER_VALID)),
+      {},
+    );
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
       return;
@@ -371,7 +388,10 @@ describe("LSP/edit coordination", () => {
 
   it("rejects new LSP queries while the session is closing for an edit", async () => {
     await startWorkflow(harness);
-    const prepared = await harness.service.prepareChangeSet(editChangeSet(sha256Of(PLAYER_VALID)), {});
+    const prepared = await harness.service.prepareChangeSet(
+      editChangeSet(sha256Of(PLAYER_VALID)),
+      {},
+    );
     expect(prepared.status).toBe("ready");
     if (prepared.status !== "ready") {
       return;
@@ -428,7 +448,11 @@ describe("LSP/edit coordination", () => {
       return;
     }
     // The engine changes before the approved change set is applied.
-    harness.language.engine = { sha256: "d".repeat(64), version: "4.8.0-stable", installationId: "other" };
+    harness.language.engine = {
+      sha256: "d".repeat(64),
+      version: "4.8.0-stable",
+      installationId: "other",
+    };
     const outcome = await harness.service.applyChangeSet(prepared.changeSetId, {
       approvedDigest: prepared.digest,
     });
@@ -629,8 +653,12 @@ describe("repair loop", () => {
     harness: Harness,
   ): Promise<Awaited<ReturnType<GDScriptDevelopmentService["applyChangeSet"]>>> {
     const content = await readWorkspaceFile(harness, "src/player/player.gd");
-    const oldText = content.includes("Vector2.UP") ? "move_and_slide(Vector2.UP)" : "move_and_slide(Vector2.DOWN)";
-    const newText = content.includes("Vector2.UP") ? "move_and_slide(Vector2.DOWN)" : "move_and_slide(Vector2.UP)";
+    const oldText = content.includes("Vector2.UP")
+      ? "move_and_slide(Vector2.UP)"
+      : "move_and_slide(Vector2.DOWN)";
+    const newText = content.includes("Vector2.UP")
+      ? "move_and_slide(Vector2.DOWN)"
+      : "move_and_slide(Vector2.UP)";
     const prepared = await harness.service.prepareChangeSet(
       {
         changes: [
@@ -691,7 +719,9 @@ describe("repair loop", () => {
             operation: "edit",
             path: "src/player/player.gd",
             expectedSha256: sha256Of(await readWorkspaceFile(harness, "src/player/player.gd")),
-            replacements: [{ oldText: "move_and_slide(Vector2.DOWN)", newText: "move_and_slide(Vector2.UP)" }],
+            replacements: [
+              { oldText: "move_and_slide(Vector2.DOWN)", newText: "move_and_slide(Vector2.UP)" },
+            ],
           },
         ],
       },
@@ -717,13 +747,18 @@ describe("repair loop", () => {
             operation: "edit",
             path: "src/player/player.gd",
             expectedSha256: sha256Of(await readWorkspaceFile(harness, "src/player/player.gd")),
-            replacements: [{ oldText: "move_and_slide(Vector2.DOWN)", newText: "move_and_slide(Vector2.UP)" }],
+            replacements: [
+              { oldText: "move_and_slide(Vector2.DOWN)", newText: "move_and_slide(Vector2.UP)" },
+            ],
           },
         ],
       },
       {},
     );
-    expect(exhausted.status === "repair_budget_exhausted" || exhausted.status === "iteration_budget_exhausted").toBe(true);
+    expect(
+      exhausted.status === "repair_budget_exhausted" ||
+        exhausted.status === "iteration_budget_exhausted",
+    ).toBe(true);
   });
 
   it("denial during repair leaves the first approved edit intact", async () => {

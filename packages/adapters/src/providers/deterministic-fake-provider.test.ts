@@ -791,7 +791,8 @@ describe("deterministic fake provider development scenarios", () => {
             output: {
               path: "scripts/player/player.gd",
               sha256: FIXTURE_HASH,
-              content: "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n",
+              content:
+                "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n",
               startLine: 1,
               endLine: 4,
               totalLines: 4,
@@ -833,7 +834,15 @@ describe("deterministic fake provider development scenarios", () => {
           toolName: "workspace.read",
           result: {
             status: "success",
-            output: { path: "scripts/player/player.gd", sha256: FIXTURE_HASH, content: "", startLine: 1, endLine: 1, totalLines: 1, truncated: false },
+            output: {
+              path: "scripts/player/player.gd",
+              sha256: FIXTURE_HASH,
+              content: "",
+              startLine: 1,
+              endLine: 1,
+              totalLines: 1,
+              truncated: false,
+            },
             summary: "1 lines",
           },
         },
@@ -847,7 +856,11 @@ describe("deterministic fake provider development scenarios", () => {
           type: "tool_result",
           callId: "call-dev-change",
           toolName: "workspace.apply_text_changeset",
-          result: { status: "success", output: applySuccessOutput(), summary: "change set applied" },
+          result: {
+            status: "success",
+            output: applySuccessOutput(),
+            summary: "change set applied",
+          },
         },
       ],
       tools: [READ_TOOL, CHANGESET_TOOL],
@@ -877,7 +890,8 @@ describe("deterministic fake provider development scenarios", () => {
           output: {
             path: "scripts/player/player.gd",
             sha256: FIXTURE_HASH,
-            content: "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n",
+            content:
+              "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n",
             startLine: 1,
             endLine: 4,
             totalLines: 4,
@@ -888,10 +902,7 @@ describe("deterministic fake provider development scenarios", () => {
       },
     ];
     const second = await collect({
-      messages: [
-        { type: "user_message", content: "develop fixture with repair" },
-        ...readItems,
-      ],
+      messages: [{ type: "user_message", content: "develop fixture with repair" }, ...readItems],
       tools: [READ_TOOL, CHANGESET_TOOL],
     });
     const firstChange = toolCallEvent(second.events);
