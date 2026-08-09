@@ -140,6 +140,30 @@ describe("normalizeGodotCheckOutput (engine-version fixtures)", () => {
     expect(message).toContain("Control character");
   });
 
+  it("scrubs mirror roots embedded inside message bodies", () => {
+    const mirrorOutput = `Godot Engine v4.7.1.stable.official
+ERROR: Parse Error: cannot load ${MIRROR}/src/player/player.gd
+`;
+    const result = normalizeGodotCheckOutput({
+      stdout: mirrorOutput,
+      stderr: "",
+      mirrorProjectPath: MIRROR,
+    });
+    expect(JSON.stringify(result.diagnostics)).not.toContain(MIRROR);
+    expect(result.diagnostics[0]?.message).toContain("<mirror>");
+  });
+
+  it("sanitizes C1 control characters", () => {
+    const c1 = String.fromCharCode(0x80, 0x9f);
+    const result = normalizeGodotCheckOutput({
+      stdout: `ERROR: Parse Error: bad ${c1} byte
+`,
+      stderr: "",
+    });
+    expect(result.diagnostics[0]?.message).not.toContain(String.fromCharCode(0x80));
+    expect(result.diagnostics[0]?.message).toContain("�");
+  });
+
   it("never leaks mirror-absolute paths", () => {
     const mirrorOutput = `Godot Engine v4.7.1.stable.official\nERROR: Parse Error: boom.\n   at: ${MIRROR}/src/player/player.gd:34:17\n`;
     const result = normalizeGodotCheckOutput({

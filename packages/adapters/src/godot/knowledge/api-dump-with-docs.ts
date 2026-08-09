@@ -98,6 +98,13 @@ const MAX_DESCRIPTION_BYTES = GODOT_LIMITS.maxApiDescriptionBytes;
  * over the exact raw bytes.
  */
 export function parseGodotApiDumpWithDocs(content: Buffer): GodotApiDumpParseResult {
+  // Bound before parsing so an oversized dump is never materialized.
+  if (content.length > GODOT_LIMITS.maxApiDumpWithDocsBytes) {
+    return {
+      ok: false,
+      message: `The API documentation dump is ${content.length} bytes, exceeding the ${GODOT_LIMITS.maxApiDumpWithDocsBytes}-byte bound.`,
+    };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(content.toString("utf8"));

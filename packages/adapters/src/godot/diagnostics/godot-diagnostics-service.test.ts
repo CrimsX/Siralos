@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { GODOT_LIMITS } from "@solaris/core";
 import type {
   GitInspector,
   GodotDiagnostics,
@@ -210,6 +211,19 @@ describe("createGodotDiagnosticsService", () => {
       return;
     }
     expect(prepared.preview.scripts).toMatchObject({ count: 1, paths: ["src/ui/menu.gd"] });
+  });
+
+  it("bounds the explicit paths subset to the immutable limits", async () => {
+    const { service } = await createHarness();
+    const many = Array.from(
+      { length: GODOT_LIMITS.maxGDScriptFilesPerProject + 1 },
+      (_, index) => `src/f${index}.gd`,
+    );
+    const prepared = await service.prepare({ paths: many });
+    expect(prepared.status).toBe("failed");
+    if (prepared.status === "failed") {
+      expect(prepared.message).toContain("bound");
+    }
   });
 
   it("rejects invalid, absolute, traversing, non-gd, and missing script paths", async () => {

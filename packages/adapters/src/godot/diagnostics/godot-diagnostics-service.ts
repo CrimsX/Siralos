@@ -247,12 +247,6 @@ export function createGodotDiagnosticsService(
     // be able to enforce their invariants before anything runs. On this
     // stage every component is fail-closed, so this refusal happens before
     // a mirror is created or an engine is launched, with zero side effects.
-    if (!(await executionAvailable())) {
-      return {
-        status: "unavailable",
-        message: GODOT_CHECK_EXECUTION_UNAVAILABLE_MESSAGE,
-      };
-    }
     return {
       status: "unavailable",
       message: GODOT_CHECK_EXECUTION_UNAVAILABLE_MESSAGE,
@@ -319,7 +313,15 @@ export function createGodotDiagnosticsService(
     | { readonly ok: false; readonly reason: "invalid-input" | "failed"; readonly message: string }
   > {
     if (paths !== undefined) {
+      if (paths.length > GODOT_LIMITS.maxGDScriptFilesPerProject) {
+        return {
+          ok: false,
+          reason: "failed",
+          message: `The paths filter exceeds the ${GODOT_LIMITS.maxGDScriptFilesPerProject}-script bound.`,
+        };
+      }
       const targets: GodotScriptCheckTarget[] = [];
+      let totalBytes = 0;
       for (const path of paths) {
         if (typeof path !== "string") {
           return {
@@ -336,6 +338,14 @@ export function createGodotDiagnosticsService(
         if (!validated.ok) {
           return { ok: false, reason: "invalid-input", message: validated.message };
         }
+        if (totalBytes + validated.bytes > GODOT_LIMITS.maxGDScriptTotalBytes) {
+          return {
+            ok: false,
+            reason: "failed",
+            message: `The paths filter exceeds the ${GODOT_LIMITS.maxGDScriptTotalBytes}-byte GDScript bound.`,
+          };
+        }
+        totalBytes += validated.bytes;
         targets.push({
           path: path.split(/[\\/]/).join("/"),
           sha256: validated.sha256,
@@ -373,14 +383,6 @@ export function createGodotDiagnosticsService(
       targets.push(hashed);
     }
     return { ok: true, targets };
-  }
-
-  async function executionAvailable(): Promise<boolean> {
-    return (
-      (await mirrorAdapter.isAvailable()) &&
-      (await checkRunner.isAvailable()) &&
-      (await sandboxEnforced())
-    );
   }
 
   async function sandboxEnforced(): Promise<boolean> {

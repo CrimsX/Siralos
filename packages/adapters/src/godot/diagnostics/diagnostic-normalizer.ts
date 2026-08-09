@@ -71,7 +71,7 @@ export function normalizeGodotCheckOutput(
     if (pending === null) {
       return;
     }
-    diagnostics.push(toDiagnostic(pending));
+    diagnostics.push(toDiagnostic(pending, input.mirrorProjectPath ?? null));
     pending = null;
   }
 
@@ -135,7 +135,10 @@ export function normalizeGodotCheckOutput(
   };
 }
 
-function toDiagnostic(pending: PendingDiagnostic): GodotGDScriptDiagnostic {
+function toDiagnostic(
+  pending: PendingDiagnostic,
+  mirrorProjectPath: string | null,
+): GodotGDScriptDiagnostic {
   return {
     source: "godot-check-only",
     severity: pending.severity,
@@ -143,7 +146,7 @@ function toDiagnostic(pending: PendingDiagnostic): GodotGDScriptDiagnostic {
     line: pending.location?.line ?? null,
     column: pending.location?.column ?? null,
     code: extractCode(pending.message),
-    message: boundMessage(pending.message),
+    message: boundMessage(pending.message, mirrorProjectPath),
     rawCategory: pending.rawCategory,
   };
 }
@@ -295,18 +298,24 @@ function extractCode(message: string): string | null {
   return null;
 }
 
-function boundMessage(message: string): string {
-  const sanitized = sanitizeControlCharacters(message).trim();
+function boundMessage(message: string, mirrorProjectPath: string | null): string {
+  let text = message;
+  // Absolute mirror roots must never leak inside message bodies, not only
+  // in location fields.
+  if (mirrorProjectPath !== null && mirrorProjectPath.length > 0) {
+    text = text.split(mirrorProjectPath).join("<mirror>");
+  }
+  const sanitized = sanitizeControlCharacters(text).trim();
   return truncateUtf8Bytes(sanitized, MAX_MESSAGE_BYTES);
 }
 
 function sanitizeControlCharacters(text: string): string {
   // Regex literals and escape strings cannot carry control-character
   // sequences under the lint guard, so the patterns are assembled from
-  // explicit code points.
+  // explicit code points (C0, DEL, and C1 0x80-0x9F).
   const csi = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, "g");
   const controls = new RegExp(
-    `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}]`,
+    `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}-${String.fromCharCode(159)}]`,
     "g",
   );
   let result = text.replace(csi, "");
