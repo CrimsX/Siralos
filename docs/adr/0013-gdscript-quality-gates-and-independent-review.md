@@ -208,6 +208,19 @@ raise any of them.
   warning-as-error policy passes, required validation commands completed,
   scope verification passes, and an independent review with no blocking
   findings.
+- Cancellation is truthful end to end: the quality stage is cancellable
+  through the in-flight apply signal (the reviewer and the validation
+  executor honor it), a cancelled review yields `cancelled`, and a
+  terminal state is never resurrected by a racing stage.
+- Scope verification is cumulative: a later change set (including review
+  repairs) is never flagged as unrelated because of the workflow's own
+  earlier approved change sets.
+- Repository-guidance discovery is deferred: there is no instruction
+  mechanism in Solaris yet, so `repositoryGuidance` is always null and
+  no convention rule is repository-mandatory by default. The plumbing
+  (the reviewer prompt injection and the analyzer's mandatory-rule
+  promotion) is real and tested; wiring a bounded instruction mechanism
+  is future work and is never presented as shipped.
 - This is not the general multi-agent framework: exactly one reviewer,
   no voting, no consensus, no debate agents, no provider-to-provider
   conversations, no autonomous approval, no persistent review history.
