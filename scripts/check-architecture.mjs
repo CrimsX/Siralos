@@ -167,6 +167,80 @@ const TASK_RUNTIME_BANNED_IDENTIFIERS = new Set([
   "TaskActivityEvent",
 ]);
 
+/**
+ * Stage 3 milestone 5 (Part Q #56): reference adapters (src/reference and
+ * src/tools/reference) must never grant capabilities. Reference tools may
+ * carry only the fixed "reference.inspect" capability string on their Tool
+ * definitions; permission evaluation and default-policy construction stay
+ * in the core security layer.
+ */
+const REFERENCE_CAPABILITY_BANNED_IDENTIFIERS = new Set([
+  "evaluatePermission",
+  "PermissionEvaluation",
+  "createDefaultPolicy",
+]);
+
+/**
+ * Stage 3 milestone 5 (Part Q #56): research adapters implement the
+ * ResearchSource/transport ports and must never write project knowledge
+ * directly; every fact mutation flows through the single-writer
+ * KnowledgeCoordinator, which research adapters never reach.
+ */
+const KNOWLEDGE_SURFACE_IDENTIFIERS = new Set([
+  "KNOWLEDGE_LIMITS",
+  "KNOWLEDGE_RETRIEVAL_SCORING",
+  "KNOWLEDGE_STATE_VERSION",
+  "SUBJECT_KEY_PATTERN",
+  "computeKnowledgeFactId",
+  "computeKnowledgeStateRevision",
+  "freshnessScore",
+  "isValidSubjectKey",
+  "normalizeFactContent",
+  "rejectPolicyShapedContent",
+  "tokenizeFactText",
+  "KnowledgeActivation",
+  "KnowledgeCandidate",
+  "KnowledgeConfidence",
+  "KnowledgeFactId",
+  "KnowledgeFactType",
+  "KnowledgeProvenanceRef",
+  "KnowledgeRetrievalQuery",
+  "KnowledgeRetrievalResult",
+  "KnowledgeRetrievalSelection",
+  "KnowledgeRetrievalTrace",
+  "KnowledgeScope",
+  "KnowledgeVolatility",
+  "ProjectKnowledgeFact",
+  "createKnowledgeCoordinator",
+  "KnowledgeCoordinator",
+  "KnowledgeCoordinatorOptions",
+  "KnowledgeProposalResult",
+  "buildGodotProjectKnowledgeCandidates",
+  "GodotProjectKnowledgeSeed",
+  "KNOWLEDGE_FRAMING_LINE",
+  "renderPinnedKnowledge",
+  "renderRetrievedKnowledge",
+]);
+
+/**
+ * Stage 3 milestone 5 (Part Q #56): provider adapters never fetch research
+ * directly; the research service surface is consumed only by the tool layer
+ * and the composition root.
+ */
+const RESEARCH_SERVICE_IDENTIFIERS = new Set([
+  "createResearchService",
+  "ResearchService",
+  "ResearchServiceOptions",
+  "ResearchEvidence",
+  "ResearchFetchResult",
+  "ResearchRevisionBound",
+  "DEFAULT_RESEARCH_VIEW_MAX_BYTES",
+  "formatResearchEvidenceView",
+]);
+
+/** Node modules that perform raw network I/O (HTTP client/server, TCP, fetch). */
+const NETWORK_IO_MODULES = new Set(["https", "http", "net", "fetch"]);
+
 function isCoreTaskModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(TASK_RUNTIME_DIRECTORY + sep);
 }
@@ -229,6 +303,37 @@ const KNOWLEDGE_DIRECTORY = join("src", "knowledge");
 
 function isCoreKnowledgeModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(KNOWLEDGE_DIRECTORY + sep);
+}
+
+/**
+ * Stage 3 milestone 5 (Part Q #56): first-class external read-only
+ * References and the ResearchSource abstraction. Reference and research
+ * core modules are pure domain models (identity, trust, provenance,
+ * bounded evidence); network retrieval happens only inside adapter-owned
+ * transports, never in core.
+ */
+const REFERENCE_DIRECTORY = join("src", "reference");
+const RESEARCH_DIRECTORY = join("src", "research");
+
+function isCoreReferenceModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(REFERENCE_DIRECTORY + sep);
+}
+
+function isCoreResearchModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(RESEARCH_DIRECTORY + sep);
+}
+
+/** Adapter modules that implement or surface the reference surface. */
+function isReferenceAdapterModule(packageRelativeFile) {
+  return (
+    packageRelativeFile.startsWith(REFERENCE_DIRECTORY + sep) ||
+    packageRelativeFile.startsWith(join("src", "tools", "reference") + sep)
+  );
+}
+
+/** Adapter modules that implement research sources and transports. */
+function isResearchAdapterModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(RESEARCH_DIRECTORY + sep);
 }
 
 /** Adapter subtrees the quality/reviewer adapter must never import. */
@@ -1154,6 +1259,54 @@ export function runChecks(root) {
               }
             }
           }
+          if (
+            pkg.name === "@solaris/adapters" &&
+            !isTestSupportFile(file) &&
+            isReferenceAdapterModule(packageRelativeFile)
+          ) {
+            for (const binding of analysis.importedNames) {
+              if (
+                binding.module === "@solaris/core" &&
+                REFERENCE_CAPABILITY_BANNED_IDENTIFIERS.has(binding.originalName)
+              ) {
+                errors.push(
+                  `${location}: reference adapters must not import capability-granting policy (${binding.originalName}); reference tools may carry only the fixed reference.inspect capability string on their Tool definitions`,
+                );
+              }
+            }
+          }
+          if (
+            pkg.name === "@solaris/adapters" &&
+            !isTestSupportFile(file) &&
+            isResearchAdapterModule(packageRelativeFile)
+          ) {
+            for (const binding of analysis.importedNames) {
+              if (
+                binding.module === "@solaris/core" &&
+                KNOWLEDGE_SURFACE_IDENTIFIERS.has(binding.originalName)
+              ) {
+                errors.push(
+                  `${location}: research adapters must not import the project knowledge surface (${binding.originalName}); research adapters never write project knowledge directly`,
+                );
+              }
+            }
+          }
+          if (
+            pkg.name === "@solaris/adapters" &&
+            !isTestSupportFile(file) &&
+            packageRelativeFile.startsWith(join("src", "providers") + sep)
+          ) {
+            for (const binding of analysis.importedNames) {
+              if (
+                binding.module === "@solaris/core" &&
+                RESEARCH_SERVICE_IDENTIFIERS.has(binding.originalName)
+              ) {
+                errors.push(
+                  `${location}: provider adapters must not import the research service surface (${binding.originalName}); providers never fetch research directly`,
+                );
+              }
+            }
+          }
           for (const imported of analysis.destructiveFsImports) {
             if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
               errors.push(
@@ -1169,6 +1322,16 @@ export function runChecks(root) {
           ) {
             errors.push(
               `${location}: LSP mutation methods must never be implemented; applyEdit/executeCommand are rejected at the server-request boundary and never referenced in runtime adapter code`,
+            );
+          }
+          if (
+            pkg.name === "@solaris/core" &&
+            isCoreProjectionModule(packageRelativeFile) &&
+            !isTestSupportFile(file) &&
+            /\bfetch\s*\(/.test(source)
+          ) {
+            errors.push(
+              `${location}: projection modules must not perform network calls; fetch( is prohibited — ContextProjector builds pure deterministic model context with no network I/O`,
             );
           }
           if (isDevelopmentWorkflowOrchestrator(packageRelativeFile)) {
@@ -1262,6 +1425,15 @@ export function runChecks(root) {
             if (specifier.startsWith("node:")) {
               errors.push(`${location}: core must not import Node module ${specifier}`);
             }
+            if (
+              (isCoreReferenceModule(packageRelativeFile) ||
+                isCoreResearchModule(packageRelativeFile)) &&
+              NETWORK_IO_MODULES.has(normalized)
+            ) {
+              errors.push(
+                `${location}: reference and research core modules must not import network modules (${specifier}); fetching belongs to the adapter-owned research transports, never core domain models`,
+              );
+            }
           }
           if (pkg.name === "@solaris/core" && isCoreWorkspaceModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
@@ -1295,6 +1467,11 @@ export function runChecks(root) {
             }
           }
           if (pkg.name === "@solaris/core" && isCoreProjectionModule(packageRelativeFile)) {
+            if (NETWORK_IO_MODULES.has(normalized)) {
+              errors.push(
+                `${location}: projection modules must not import network modules (${specifier}); ContextProjector performs no network calls`,
+              );
+            }
             if (specifier.startsWith("../workspace/workspace-revision")) {
               errors.push(
                 `${location}: projection modules must not own workspace revisions; they consume revision handles as data only`,
@@ -1469,6 +1646,21 @@ export function runChecks(root) {
                   `${location}: providers must not import sandbox, environment, checkpoint, git, or process adapters`,
                 );
               }
+              if (isUnder(target, join(pkg.path, "src", "research"))) {
+                errors.push(
+                  `${location}: providers must not import research adapters; providers never fetch research directly`,
+                );
+              }
+            }
+            if (
+              packageRelativeFile.startsWith(
+                join("src", "tools", "workspace", "mutations") + sep,
+              ) &&
+              isUnder(target, join(pkg.path, "src", "reference"))
+            ) {
+              errors.push(
+                `${location}: workspace mutation modules must not import reference adapters; reference roots are read-only and never mutation targets`,
+              );
             }
             if (inSandbox && isUnder(target, join(pkg.path, "src", "providers"))) {
               errors.push(`${location}: sandbox adapters must not import provider adapters`);

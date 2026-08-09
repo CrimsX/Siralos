@@ -1409,3 +1409,169 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
     expect(errors).toEqual([]);
   });
 });
+
+describe("check-architecture reference and research boundaries (Part Q #56)", () => {
+  // Rules 1 and 5: the package-boundary rule (core must never import
+  // @solaris/* packages) is specifier-based and therefore global — it
+  // already covers core reference/research and projection modules without
+  // a per-directory rule; these fixtures pin that coverage.
+  it("rejects reference and research core modules importing adapter packages", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/reference/reference-model.ts"] = 'import "@solaris/adapters";\n';
+    fixture["packages/core/src/research/research-model.ts"] = 'import "@solaris/adapters";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("core must not import workspace package"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects projection modules importing adapter packages (reference caches stay adapter-owned)", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/evidence-projector.ts"] = 'import "@solaris/adapters";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("core must not import workspace package"))).toBe(
+      true,
+    );
+  });
+
+  // Rule 2: reference and research core modules are pure domain models —
+  // no HTTP client, server, TCP, or fetch imports.
+  it("rejects research and reference core modules importing the HTTP networking stack", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/research/research-model.ts"] =
+      'import { request } from "node:https";\nexport const x = request;\n';
+    fixture["packages/core/src/reference/reference-model.ts"] =
+      'import { createServer } from "node:net";\nexport const x = createServer;\n';
+    const errors = runChecks(writeFixture(fixture));
+    const networkErrors = errors.filter((error) =>
+      error.includes("must not import network modules"),
+    );
+    expect(networkErrors).toHaveLength(2);
+  });
+
+  it("catches bare (non-node:-prefixed) network module specifiers in core research", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/research/research-model.ts"] =
+      'import { request } from "https";\nexport const x = request;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not import network modules (https)"))).toBe(
+      true,
+    );
+  });
+
+  // Rule 3: provider adapters never fetch research directly — neither the
+  // adapter research sources nor the core research service surface.
+  it("rejects provider adapters importing research adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/deterministic-fake-provider.ts"] =
+      'import { createGithubResearchSource } from "../research/github-source.js";\nexport const x = createGithubResearchSource;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("providers must not import research adapters")),
+    ).toBe(true);
+  });
+
+  it("rejects provider adapters importing the research service surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/deterministic-fake-provider.ts"] =
+      'import { createResearchService } from "@solaris/core";\nexport const x = createResearchService;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must not import the research service surface")),
+    ).toBe(true);
+  });
+
+  it("accepts provider adapters importing research model types (contracts only)", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/deterministic-fake-provider.ts"] =
+      'import type { ResearchSourceKind } from "@solaris/core";\nexport type X = ResearchSourceKind;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  // Rule 4: ContextProjector performs no network calls — no network module
+  // imports and no fetch( call text.
+  it("rejects projection modules importing network modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/context-projector.ts"] =
+      'import { request } from "node:https";\nexport const x = request;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("projection modules must not import network modules")),
+    ).toBe(true);
+  });
+
+  it("rejects projection modules performing fetch calls", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/context-projector.ts"] =
+      'const response = await fetch("https://example.com");\nexport const x = response;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not perform network calls"))).toBe(true);
+  });
+
+  it("allows fetch references in projection test files", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/context-projector.test.ts"] =
+      'const response = await fetch("https://example.com");\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not perform network calls"))).toBe(false);
+  });
+
+  // Rule 6: workspace mutation modules can never target reference roots.
+  it("rejects workspace mutation modules importing reference adapters", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/workspace/mutations/workspace-create-file-tool.ts"] =
+      'import { createReferenceAccess } from "../../../reference/reference-access.js";\nexport const x = createReferenceAccess;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not import reference adapters"))).toBe(true);
+  });
+
+  it("accepts workspace mutation modules importing workspace tool internals", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/workspace/mutations/workspace-create-file-tool.ts"] =
+      'import { WORKSPACE_LIMITS } from "../limits.js";\nexport const x = WORKSPACE_LIMITS;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  // Rule 7: reference adapters never grant capabilities; reference tools
+  // carry only the fixed reference.inspect capability string.
+  it("rejects reference adapters importing capability-granting policy", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/reference/reference-access.ts"] =
+      'import { evaluatePermission } from "@solaris/core";\nexport const x = evaluatePermission;\n';
+    fixture["packages/adapters/src/tools/reference/reference-list-tool.ts"] =
+      'import { createDefaultPolicy } from "@solaris/core";\nexport const x = createDefaultPolicy;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must not import capability-granting policy")),
+    ).toBe(true);
+  });
+
+  it("accepts reference adapters importing reference contracts", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/reference/reference-access.ts"] =
+      'import type { ReferenceAlias } from "@solaris/core";\nexport type X = ReferenceAlias;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  // Rule 8: research adapters never write project knowledge directly.
+  it("rejects research adapters importing the project knowledge surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/research/github-source.ts"] =
+      'import { createKnowledgeCoordinator } from "@solaris/core";\nexport const x = createKnowledgeCoordinator;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must not import the project knowledge surface")),
+    ).toBe(true);
+  });
+
+  it("accepts research adapters importing research contracts", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/research/github-source.ts"] =
+      'import type { ResearchSourcePort } from "@solaris/core";\nexport type X = ResearchSourcePort;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+});
