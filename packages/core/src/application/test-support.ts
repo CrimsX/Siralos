@@ -1,9 +1,8 @@
 import type { ApplicationEvent, ModelEvent, ModelProvider, ModelRequest } from "../index.js";
 
-export function createScriptedProvider(turns: readonly (readonly ModelEvent[])[]): {
-  provider: ModelProvider;
-  requests: ModelRequest[];
-} {
+export function createScriptedProvider(
+  turns: readonly (readonly ModelEvent[])[],
+): ScriptedProvider {
   const requests: ModelRequest[] = [];
   let index = 0;
   const provider: ModelProvider = {
@@ -19,6 +18,11 @@ export function createScriptedProvider(turns: readonly (readonly ModelEvent[])[]
     },
   };
   return { provider, requests };
+}
+
+export interface ScriptedProvider {
+  readonly provider: ModelProvider;
+  readonly requests: ModelRequest[];
 }
 
 export function toolCall(callId: string, toolName: string, input: unknown): ModelEvent {

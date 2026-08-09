@@ -67,6 +67,11 @@ export {
   type SolarisApplication,
   type SolarisApplicationDependencies,
 } from "./application/application.js";
+export {
+  createScriptedProvider,
+  toolCall,
+  type ScriptedProvider,
+} from "./application/test-support.js";
 export type { Capability, CapabilityPolicy, PermissionRule } from "./security/capability.js";
 export { createDefaultPolicy } from "./security/default-policy.js";
 export type {
@@ -453,3 +458,86 @@ export {
   type ChangeReviewResultStatus,
   type ChangeReviewer,
 } from "./godot/quality/quality-review.js";
+export {
+  createAdHocTaskContract,
+  createTaskContract,
+  reviseTaskContract,
+  computeTaskContractDigest,
+  type AcceptanceCriterion,
+  type AcceptanceCriterionId,
+  type CreateTaskContractInput,
+  type PausePolicy,
+  type ReviseTaskContractInput,
+  type TaskConstraint,
+  type TaskConstraintId,
+  type TaskConstraintKind,
+  type TaskContract,
+  type TaskContractId,
+  type VerificationKind,
+} from "./tasks/task-contract.js";
+export {
+  isTerminalPhase,
+  type AcceptanceState,
+  type AcceptanceStatus,
+  type EvidenceKind,
+  type EvidenceRecord,
+  type EvidenceRef,
+  type EvidenceSource,
+  type FindingRef,
+  type FindingSeverity,
+  type ProgressState,
+  type ProgressStateValue,
+  type TaskId,
+  type TaskPhase,
+  type TaskReviewStatus,
+  type TaskState,
+  type TaskStepId,
+  type TaskStepKind,
+  type TaskStepSpec,
+  type TaskStepState,
+  type TaskStepStatus,
+  type TaskValidationStatus,
+  type WorkflowDisposition,
+} from "./tasks/task-model.js";
+export {
+  TASK_ACTIVITY_EVENT_KEYS,
+  TASK_ACTIVITY_EVENT_TYPES,
+  type TaskActivityEvent,
+} from "./tasks/task-events.js";
+export {
+  TASK_RUNTIME_VERSION,
+  capabilityPolicyFingerprint,
+  createTaskRuntimeSnapshot,
+  type TaskRuntimeSnapshot,
+  type TaskRuntimeSnapshotProviderIdentity,
+  type TaskRuntimeSnapshotSources,
+  type TaskRuntimeSnapshotWorkflowIdentity,
+} from "./tasks/task-snapshot.js";
+export {
+  MAX_EVIDENCE_SOURCE_BYTES,
+  PROGRESS_DEGRADED_REPETITIONS,
+  PROGRESS_STALLED_REPETITIONS,
+  PROGRESS_WINDOW_SIZE,
+  createTaskRuntime,
+  type CompletionEvaluation,
+  type CompletionResult,
+  type CreateTaskInput,
+  type CriterionResult,
+  type DispositionResult,
+  type EvidenceAttachResult,
+  type HostObservation,
+  type StepOpResult,
+  type TaskHandle,
+  type TaskRuntime,
+  type TaskRuntimeOptions,
+} from "./tasks/task-runtime.js";
+export {
+  DEVELOPMENT_WORKFLOW_ID,
+  DEVELOPMENT_WORKFLOW_VERSION,
+  createDevelopmentAcceptanceCriteria,
+  createDevelopmentTaskContract,
+  createDevelopmentTaskFlow,
+  createDevelopmentTaskSteps,
+  type DevelopmentTaskFlow,
+  type DevelopmentTaskFlowOptions,
+} from "./tasks/task-development.js";

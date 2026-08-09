@@ -1,0 +1,762 @@
+import type {
+  AcceptanceCriterionId,
+  TaskContract,
+  ReviseTaskContractInput,
+} from "./task-contract.js";
+import { reviseTaskContract } from "./task-contract.js";
+import type {
+  AcceptanceState,
+  EvidenceKind,
+  EvidenceRecord,
+  EvidenceRef,
+  EvidenceSource,
+  FindingRef,
+  ProgressState,
+  ProgressStateValue,
+  TaskId,
+  TaskPhase,
+  TaskReviewStatus,
+  TaskState,
+  TaskStepId,
+  TaskStepSpec,
+  TaskValidationStatus,
+  WorkflowDisposition,
+} from "./task-model.js";
+import { isTerminalPhase } from "./task-model.js";
+import type { TaskActivityEvent } from "./task-events.js";
+import type { TaskRuntimeSnapshot } from "./task-snapshot.js";
+
+/**
+ * Host-owned structured task runtime (Stage 3 milestone 1).
+ *
+ * The runtime is the single authoritative owner of every mutable TaskState:
+ * state is created, transitioned, and finalized only through this module's
+ * handle API. Providers, adapters, the CLI, and the UI receive immutable
+ * snapshots, projections, or events. Model input arrives only as typed
+ * *requests* (dispositions, tool calls) — never as direct state mutation —
+ * and `"complete"` is a completion request that still passes the host
+ * completion gate. Task state is descriptive/control-flow state: it can
+ * never grant capabilities, and security policy remains authoritative
+ * elsewhere.
+ *
+ * The runtime is provider-neutral and sandbox-neutral: it observes typed
+ * host observations for progress and never imports provider or sandbox
+ * ports.
+ */
+
+/** Evidence sources are bounded references; never embed raw adapter output. */
+export const MAX_EVIDENCE_SOURCE_BYTES = 4096;
+
+/** Bounded recent-observation window for stuck-pattern detection. */
+export const PROGRESS_WINDOW_SIZE = 8;
+export const PROGRESS_DEGRADED_REPETITIONS = 3;
+export const PROGRESS_STALLED_REPETITIONS = 5;
+
+export interface TaskRuntimeOptions {
+  readonly now?: () => number;
+}
+
+/** One host-observed execution fact fed to the progress tracker. */
+export interface HostObservation {
+  /** Canonical action identity, e.g. `tool.workspace.read`. */
+  readonly action: string;
+  /** Canonical result fingerprint: equal results produce equal values. */
+  readonly fingerprint: string;
+  /** Host asserts this observation represents genuinely new useful state. */
+  readonly progress?: boolean;
+}
+
+export interface CreateTaskInput {
+  readonly contract: TaskContract;
+  /** Immutable configuration snapshot captured when the task starts. */
+  readonly snapshot: TaskRuntimeSnapshot;
+  readonly steps?: readonly TaskStepSpec[];
+  readonly iteration?: number;
+}
+
+export type StepOpResult =
+  { readonly status: "ok" } | { readonly status: "rejected"; readonly reason: string };
+
+export interface EvidenceAttachResult {
+  readonly status: "attached" | "rejected";
+  readonly reason: string | null;
+}
+
+export interface CompletionEvaluation {
+  readonly allowed: boolean;
+  readonly missing: readonly string[];
+}
+
+export type CompletionResult =
+  | { readonly status: "completed" }
+  | { readonly status: "rejected"; readonly reasons: readonly string[] };
+
+export interface DispositionResult {
+  readonly accepted: boolean;
+  readonly disposition: WorkflowDisposition;
+  /** Completion-gate evaluation when the disposition was a completion request. */
+  readonly evaluation: CompletionEvaluation | null;
+  readonly reason: string | null;
+}
+
+export interface CriterionResult {
+  readonly status: "verified" | "failed" | "rejected";
+  readonly reason: string | null;
+}
+
+export interface TaskHandle {
+  readonly taskId: TaskId;
+
+  /** Immutable snapshot of the authoritative state (fresh copy). */
+  snapshot(): TaskState;
+  contract(): TaskContract;
+  /** All contract revisions, oldest first (immutable history). */
+  contractRevisions(): readonly TaskContract[];
+  /** Produce the next immutable contract revision; the current revision is never mutated. */
+  reviseContract(changes: ReviseTaskContractInput): TaskContract;
+  runtimeSnapshot(): TaskRuntimeSnapshot;
+  /** Append-only activity records (fresh copies). */
+  activityLog(): readonly TaskActivityEvent[];
+
+  /** Host-controlled phase transition; validated against the transition table. */
+  transitionPhase(phase: TaskPhase): StepOpResult;
+  beginStep(stepId: TaskStepId): StepOpResult;
+  /** Evidence-backed completion: refs must exist, be task-scoped, and be accepted by the step. */
+  completeStep(stepId: TaskStepId, evidenceRefs: readonly EvidenceRef[]): StepOpResult;
+  failStep(stepId: TaskStepId, reason: string): StepOpResult;
+  attachEvidence(input: {
+    readonly id: string;
+    readonly kind: EvidenceKind;
+    readonly source: EvidenceSource;
+  }): EvidenceAttachResult;
+  verifyCriterion(
+    criterionId: AcceptanceCriterionId,
+    verifiedBy: string | null,
+    note?: string,
+  ): CriterionResult;
+  markCriterionFailed(criterionId: AcceptanceCriterionId, note?: string): CriterionResult;
+  /** Replace the task's evidence-backed findings list (host-observed). */
+  setFindings(findings: readonly FindingRef[]): void;
+  setValidationStatus(status: TaskValidationStatus): void;
+  setReviewStatus(status: TaskReviewStatus): void;
+  setIteration(iteration: number): void;
+
+  /** Structured workflow disposition: a request that the host runtime evaluates. */
+  submitDisposition(disposition: WorkflowDisposition, source?: "host" | "model"): DispositionResult;
+  /** Host completion gate: completion requires steps, criteria, validation, review, findings. */
+  evaluateCompletion(): CompletionEvaluation;
+  /** Host finalize: completes only when the completion gate allows it. */
+  completeTask(): CompletionResult;
+  cancel(reason: string): void;
+  fail(reason: string): void;
+  markBlocked(reason: string): void;
+
+  /** Feed one host-observed execution fact into the progress tracker. */
+  observe(observation: HostObservation): ProgressState;
+  progress(): ProgressState;
+}
+
+export interface TaskRuntime {
+  createTask(input: CreateTaskInput): TaskHandle;
+  getTask(taskId: TaskId): TaskHandle | null;
+  listTasks(): readonly TaskHandle[];
+  /** Most recently created task. */
+  latestTask(): TaskHandle | null;
+}
+
+type Mutable<T> = {
+  -readonly [K in keyof T]: T[K] extends readonly (infer U)[] ? Mutable<U>[] : T[K];
+};
+
+type MutableTaskState = Mutable<TaskState>;
+
+type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
+
+interface InternalProgress {
+  usefulObservations: number;
+  repeatedActions: number;
+  state: ProgressStateValue;
+  lastProgressAtMs: number | null;
+  stalledAtMs: number | null;
+  window: Array<{ readonly key: string; readonly useful: boolean }>;
+}
+
+interface TaskRecord {
+  readonly id: TaskId;
+  readonly specs: ReadonlyMap<string, TaskStepSpec>;
+  contract: TaskContract;
+  readonly contractRevisions: TaskContract[];
+  readonly snapshot: TaskRuntimeSnapshot;
+  state: MutableTaskState;
+  readonly activity: TaskActivityEvent[];
+  sequence: number;
+  readonly progress: InternalProgress;
+}
+
+const textEncoder = new TextEncoder();
+
+const ALLOWED_TRANSITIONS: Readonly<Record<TaskPhase, readonly TaskPhase[]>> = {
+  prepared: ["working", "cancelled", "failed"],
+  working: ["validating", "reviewing", "blocked", "cancelled", "failed"],
+  validating: ["working", "reviewing", "blocked", "cancelled", "failed"],
+  reviewing: ["working", "validating", "blocked", "cancelled", "failed"],
+  blocked: ["working", "cancelled", "failed"],
+  completed: [],
+  cancelled: [],
+  failed: [],
+};
+
+export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime {
+  const now = options.now ?? Date.now;
+  const records = new Map<TaskId, TaskRecord>();
+
+  function appendActivity(
+    record: TaskRecord,
+    event: DistributiveOmit<TaskActivityEvent, "sequence" | "taskId" | "atMs">,
+  ): void {
+    record.sequence += 1;
+    record.activity.push({
+      ...(event as TaskActivityEvent),
+      sequence: record.sequence,
+      taskId: record.id,
+      atMs: now(),
+    });
+  }
+
+  function observeProgress(record: TaskRecord, observation: HostObservation): ProgressState {
+    const progress = record.progress;
+    const key = `${observation.action}:${observation.fingerprint}`;
+    const alreadyInWindow = progress.window.some((entry) => entry.key === key);
+    const fresh = observation.progress === true || !alreadyInWindow;
+    if (fresh) {
+      progress.usefulObservations += 1;
+      progress.lastProgressAtMs = now();
+    }
+    progress.window.push({ key, useful: fresh });
+    if (progress.window.length > PROGRESS_WINDOW_SIZE) {
+      progress.window.shift();
+    }
+    // Count occurrences of the newest key inside the bounded window, and
+    // whether the window contains any genuinely new useful observation.
+    // A single repeated action, an alternating loop, and a run with no new
+    // state across the whole window all surface deterministically, while a
+    // genuinely new observation restores the healthy state.
+    const occurrences = progress.window.filter((entry) => entry.key === key).length;
+    const usefulInWindow = progress.window.filter((entry) => entry.useful).length;
+    progress.repeatedActions = occurrences;
+    if (occurrences >= PROGRESS_STALLED_REPETITIONS || usefulInWindow === 0) {
+      progress.state = "stalled";
+      if (progress.stalledAtMs === null) {
+        progress.stalledAtMs = now();
+      }
+    } else if (occurrences >= PROGRESS_DEGRADED_REPETITIONS) {
+      progress.state = "degraded";
+      progress.stalledAtMs = null;
+    } else {
+      progress.state = "healthy";
+      progress.stalledAtMs = null;
+    }
+    return progressSnapshot(progress);
+  }
+
+  function progressSnapshot(progress: InternalProgress): ProgressState {
+    return {
+      state: progress.state,
+      usefulObservations: progress.usefulObservations,
+      repeatedActions: progress.repeatedActions,
+      lastProgressAtMs: progress.lastProgressAtMs,
+      stalledAtMs: progress.stalledAtMs,
+    };
+  }
+
+  function buildInitialState(record: TaskRecord, input: CreateTaskInput): MutableTaskState {
+    const steps = (input.steps ?? []).map((spec) => ({
+      id: spec.id,
+      description: spec.description,
+      kind: spec.kind,
+      status: "pending" as const,
+      evidenceRefs: [],
+      failedReason: null,
+      blockedReason: null,
+    }));
+    const acceptance: Mutable<AcceptanceState>[] = input.contract.acceptanceCriteria.map(
+      (criterion) => ({
+        criterionId: criterion.id,
+        description: criterion.description,
+        verificationKind: criterion.verificationKind,
+        status: "pending",
+        verifiedBy: null,
+        note: null,
+      }),
+    );
+    return {
+      taskId: record.id,
+      contractRevision: input.contract.revision,
+      phase: "prepared",
+      steps,
+      acceptance,
+      currentFindings: [],
+      evidence: [],
+      validationStatus: "not_run",
+      reviewStatus: "not_run",
+      iteration: input.iteration ?? 0,
+      progress: progressSnapshot(record.progress),
+      startedAtMs: now(),
+      completedAtMs: null,
+      terminalReason: null,
+    };
+  }
+
+  function buildRecord(input: CreateTaskInput): TaskRecord {
+    const specs = new Map<string, TaskStepSpec>();
+    for (const spec of input.steps ?? []) {
+      if (specs.has(spec.id)) {
+        throw new Error(`Duplicate task step id: ${spec.id}`);
+      }
+      if (spec.accepts.length === 0) {
+        throw new Error(`Task step ${spec.id} accepts no evidence kinds.`);
+      }
+      specs.set(spec.id, spec);
+    }
+    const record: TaskRecord = {
+      id: input.contract.id,
+      specs,
+      contract: input.contract,
+      contractRevisions: [input.contract],
+      snapshot: input.snapshot,
+      state: undefined as unknown as MutableTaskState,
+      activity: [],
+      sequence: 0,
+      progress: {
+        usefulObservations: 0,
+        repeatedActions: 0,
+        state: "healthy",
+        lastProgressAtMs: null,
+        stalledAtMs: null,
+        window: [],
+      },
+    };
+    record.state = buildInitialState(record, input);
+    appendActivity(record, {
+      type: "task_started",
+      contractRevision: input.contract.revision,
+    });
+    observeProgress(record, {
+      action: "task.started",
+      fingerprint: input.contract.revision.toString(),
+    });
+    return record;
+  }
+
+  function findStep(record: TaskRecord, stepId: TaskStepId) {
+    return record.state.steps.find((step) => step.id === stepId) ?? null;
+  }
+
+  function transitionPhaseLocked(record: TaskRecord, phase: TaskPhase): StepOpResult {
+    if (record.state.phase === phase) {
+      return { status: "rejected", reason: `The task is already ${phase}.` };
+    }
+    if (!ALLOWED_TRANSITIONS[record.state.phase].includes(phase)) {
+      return {
+        status: "rejected",
+        reason: `Phase transition ${record.state.phase} -> ${phase} is not allowed.`,
+      };
+    }
+    record.state.phase = phase;
+    if (isTerminalPhase(phase)) {
+      record.state.completedAtMs = now();
+    }
+    appendActivity(record, { type: "task_phase_changed", phase });
+    return { status: "ok" };
+  }
+
+  function completeStepLocked(
+    record: TaskRecord,
+    stepId: TaskStepId,
+    refs: readonly EvidenceRef[],
+  ): StepOpResult {
+    const step = findStep(record, stepId);
+    if (step === null) {
+      return { status: "rejected", reason: `Unknown step: ${stepId}` };
+    }
+    const spec = record.specs.get(stepId);
+    if (spec === undefined) {
+      return { status: "rejected", reason: `Unknown step: ${stepId}` };
+    }
+    if (step.status !== "active") {
+      return {
+        status: "rejected",
+        reason: `Step ${stepId} is not active (status: ${step.status}).`,
+      };
+    }
+    if (refs.length === 0) {
+      return {
+        status: "rejected",
+        reason: `Step ${stepId} requires at least one evidence reference.`,
+      };
+    }
+    const seen = new Set<string>();
+    for (const ref of refs) {
+      if (seen.has(ref.evidenceId)) {
+        return { status: "rejected", reason: `Duplicate evidence reference: ${ref.evidenceId}` };
+      }
+      seen.add(ref.evidenceId);
+      if (!spec.accepts.includes(ref.kind)) {
+        return {
+          status: "rejected",
+          reason: `Step ${stepId} (${spec.kind}) does not accept evidence kind ${ref.kind}.`,
+        };
+      }
+      const evidence = record.state.evidence.find((entry) => entry.id === ref.evidenceId);
+      if (evidence === undefined || evidence.taskId !== record.id) {
+        return {
+          status: "rejected",
+          reason: `Unknown evidence reference for this task: ${ref.evidenceId}`,
+        };
+      }
+      if (evidence.kind !== ref.kind) {
+        return {
+          status: "rejected",
+          reason: `Evidence ${ref.evidenceId} is kind ${evidence.kind}, not ${ref.kind}.`,
+        };
+      }
+    }
+    step.status = "completed";
+    step.failedReason = null;
+    step.blockedReason = null;
+    step.evidenceRefs = refs.map((ref) => ({ ...ref }));
+    appendActivity(record, {
+      type: "step_completed",
+      stepId,
+      evidenceRefs: refs.map((ref) => ({ evidenceId: ref.evidenceId, kind: ref.kind })),
+    });
+    observeProgress(record, { action: "step.completed", fingerprint: stepId, progress: true });
+    return { status: "ok" };
+  }
+
+  function attachEvidenceLocked(
+    record: TaskRecord,
+    input: { readonly id: string; readonly kind: EvidenceKind; readonly source: EvidenceSource },
+  ): EvidenceAttachResult {
+    if (input.id.trim().length === 0) {
+      return { status: "rejected", reason: "Evidence requires a non-empty id." };
+    }
+    if (record.state.evidence.some((entry) => entry.id === input.id)) {
+      return { status: "rejected", reason: `Evidence id already attached: ${input.id}` };
+    }
+    const bytes = textEncoder.encode(JSON.stringify(input.source)).length;
+    if (bytes > MAX_EVIDENCE_SOURCE_BYTES) {
+      return {
+        status: "rejected",
+        reason: `Evidence source exceeds the ${MAX_EVIDENCE_SOURCE_BYTES}-byte bound; attach a reference, not raw output.`,
+      };
+    }
+    const entry: Mutable<EvidenceRecord> = {
+      id: input.id,
+      kind: input.kind,
+      taskId: record.id,
+      source: { ...input.source },
+      attachedAtMs: now(),
+    };
+    record.state.evidence.push(entry);
+    appendActivity(record, { type: "evidence_attached", evidenceId: input.id, kind: input.kind });
+    observeProgress(record, {
+      action: "evidence.attached",
+      fingerprint: input.kind,
+      progress: true,
+    });
+    return { status: "attached", reason: null };
+  }
+
+  function verifyCriterionLocked(
+    record: TaskRecord,
+    criterionId: AcceptanceCriterionId,
+    verifiedBy: string | null,
+    note: string | undefined,
+  ): CriterionResult {
+    const criterion = record.state.acceptance.find((entry) => entry.criterionId === criterionId);
+    if (criterion === undefined) {
+      return { status: "rejected", reason: `Unknown acceptance criterion: ${criterionId}` };
+    }
+    if (verifiedBy !== null && !record.state.evidence.some((entry) => entry.id === verifiedBy)) {
+      return { status: "rejected", reason: `Unknown evidence reference: ${verifiedBy}` };
+    }
+    criterion.status = "satisfied";
+    criterion.verifiedBy = verifiedBy;
+    criterion.note = note ?? null;
+    appendActivity(record, { type: "criterion_verified", criterionId, verifiedBy });
+    observeProgress(record, {
+      action: "criterion.verified",
+      fingerprint: criterionId,
+      progress: true,
+    });
+    return { status: "verified", reason: null };
+  }
+
+  function evaluateCompletionLocked(record: TaskRecord): CompletionEvaluation {
+    const missing: string[] = [];
+    for (const step of record.state.steps) {
+      if (step.status !== "completed") {
+        missing.push(`step not completed: ${step.id}`);
+      }
+    }
+    for (const criterion of record.state.acceptance) {
+      if (criterion.status !== "satisfied") {
+        missing.push(`acceptance criterion not satisfied: ${criterion.criterionId}`);
+      }
+    }
+    if (record.state.validationStatus !== "clean" && record.state.validationStatus !== "warnings") {
+      missing.push(`validation is ${record.state.validationStatus} (clean required)`);
+    }
+    if (record.state.reviewStatus !== "clean") {
+      missing.push(`review is ${record.state.reviewStatus} (clean required)`);
+    }
+    const blocking = record.state.currentFindings.filter(
+      (finding) => finding.severity === "critical" || finding.severity === "high",
+    );
+    if (blocking.length > 0) {
+      missing.push(`${blocking.length} blocking finding(s) unresolved`);
+    }
+    return { allowed: missing.length === 0, missing };
+  }
+
+  function finalizeCompleteLocked(record: TaskRecord): CompletionResult {
+    const evaluation = evaluateCompletionLocked(record);
+    if (!evaluation.allowed) {
+      return { status: "rejected", reasons: [...evaluation.missing] };
+    }
+    record.state.phase = "completed";
+    record.state.completedAtMs = now();
+    record.state.terminalReason = null;
+    appendActivity(record, { type: "task_completed" });
+    observeProgress(record, { action: "task.completed", fingerprint: record.id, progress: true });
+    return { status: "completed" };
+  }
+
+  function createHandle(record: TaskRecord): TaskHandle {
+    return {
+      taskId: record.id,
+
+      snapshot(): TaskState {
+        return structuredClone(record.state);
+      },
+      contract(): TaskContract {
+        return record.contract;
+      },
+      contractRevisions(): readonly TaskContract[] {
+        return record.contractRevisions.map((revision) => structuredClone(revision));
+      },
+      reviseContract(changes: ReviseTaskContractInput): TaskContract {
+        const revision = reviseTaskContract(record.contract, changes);
+        record.contractRevisions.push(revision);
+        record.contract = revision;
+        record.state.contractRevision = revision.revision;
+        appendActivity(record, {
+          type: "task_contract_revised",
+          revision: revision.revision,
+        });
+        return revision;
+      },
+      runtimeSnapshot(): TaskRuntimeSnapshot {
+        return record.snapshot;
+      },
+      activityLog(): readonly TaskActivityEvent[] {
+        return record.activity.map((event) => structuredClone(event));
+      },
+
+      transitionPhase(phase: TaskPhase): StepOpResult {
+        return transitionPhaseLocked(record, phase);
+      },
+      beginStep(stepId: TaskStepId): StepOpResult {
+        const step = findStep(record, stepId);
+        if (step === null) {
+          return { status: "rejected", reason: `Unknown step: ${stepId}` };
+        }
+        if (step.status === "active") {
+          return { status: "rejected", reason: `Step ${stepId} is already active.` };
+        }
+        if (step.status === "completed") {
+          return { status: "rejected", reason: `Step ${stepId} is already completed.` };
+        }
+        step.status = "active";
+        step.failedReason = null;
+        step.blockedReason = null;
+        appendActivity(record, { type: "step_started", stepId });
+        return { status: "ok" };
+      },
+      completeStep(stepId: TaskStepId, evidenceRefs: readonly EvidenceRef[]): StepOpResult {
+        return completeStepLocked(record, stepId, evidenceRefs);
+      },
+      failStep(stepId: TaskStepId, reason: string): StepOpResult {
+        const step = findStep(record, stepId);
+        if (step === null) {
+          return { status: "rejected", reason: `Unknown step: ${stepId}` };
+        }
+        if (step.status === "completed") {
+          return { status: "rejected", reason: `Step ${stepId} is already completed.` };
+        }
+        step.status = "failed";
+        step.failedReason = reason;
+        appendActivity(record, { type: "step_failed", stepId, reason });
+        return { status: "ok" };
+      },
+      attachEvidence(input: {
+        readonly id: string;
+        readonly kind: EvidenceKind;
+        readonly source: EvidenceSource;
+      }): EvidenceAttachResult {
+        return attachEvidenceLocked(record, input);
+      },
+      verifyCriterion(
+        criterionId: AcceptanceCriterionId,
+        verifiedBy: string | null,
+        note?: string,
+      ): CriterionResult {
+        return verifyCriterionLocked(record, criterionId, verifiedBy, note);
+      },
+      markCriterionFailed(criterionId: AcceptanceCriterionId, note?: string): CriterionResult {
+        const criterion = record.state.acceptance.find(
+          (entry) => entry.criterionId === criterionId,
+        );
+        if (criterion === undefined) {
+          return { status: "rejected", reason: `Unknown acceptance criterion: ${criterionId}` };
+        }
+        criterion.status = "failed";
+        criterion.verifiedBy = null;
+        criterion.note = note ?? null;
+        return { status: "failed", reason: null };
+      },
+      setFindings(findings: readonly FindingRef[]): void {
+        record.state.currentFindings = findings.map((finding) => ({ ...finding }));
+      },
+      setValidationStatus(status: TaskValidationStatus): void {
+        record.state.validationStatus = status;
+      },
+      setReviewStatus(status: TaskReviewStatus): void {
+        record.state.reviewStatus = status;
+      },
+      setIteration(iteration: number): void {
+        record.state.iteration = Math.max(0, iteration);
+      },
+
+      submitDisposition(
+        disposition: WorkflowDisposition,
+        source: "host" | "model" = "host",
+      ): DispositionResult {
+        if (disposition.type === "complete") {
+          const evaluation = evaluateCompletionLocked(record);
+          if (evaluation.allowed) {
+            const completed = finalizeCompleteLocked(record);
+            if (completed.status === "completed") {
+              appendActivity(record, {
+                type: "disposition_submitted",
+                disposition,
+                source,
+                accepted: true,
+                note: "completion gate passed",
+              });
+              return { accepted: true, disposition, evaluation, reason: null };
+            }
+          }
+          const reason = evaluation.missing[0] ?? "completion gate not satisfied";
+          appendActivity(record, {
+            type: "disposition_submitted",
+            disposition,
+            source,
+            accepted: false,
+            note: reason,
+          });
+          return { accepted: false, disposition, evaluation, reason };
+        }
+        if (disposition.type === "blocked") {
+          const transition = transitionPhaseLocked(record, "blocked");
+          if (transition.status === "rejected") {
+            appendActivity(record, {
+              type: "disposition_submitted",
+              disposition,
+              source,
+              accepted: false,
+              note: transition.reason,
+            });
+            return { accepted: false, disposition, evaluation: null, reason: transition.reason };
+          }
+          record.state.terminalReason = disposition.reason;
+          appendActivity(record, { type: "task_blocked", reason: disposition.reason });
+          appendActivity(record, {
+            type: "disposition_submitted",
+            disposition,
+            source,
+            accepted: true,
+            note: null,
+          });
+          return { accepted: true, disposition, evaluation: null, reason: null };
+        }
+        appendActivity(record, {
+          type: "disposition_submitted",
+          disposition,
+          source,
+          accepted: true,
+          note: disposition.nextAction ?? null,
+        });
+        return { accepted: true, disposition, evaluation: null, reason: null };
+      },
+      evaluateCompletion(): CompletionEvaluation {
+        return evaluateCompletionLocked(record);
+      },
+      completeTask(): CompletionResult {
+        return finalizeCompleteLocked(record);
+      },
+      cancel(reason: string): void {
+        if (isTerminalPhase(record.state.phase)) {
+          return;
+        }
+        record.state.phase = "cancelled";
+        record.state.completedAtMs = now();
+        record.state.terminalReason = reason;
+        appendActivity(record, { type: "task_cancelled", reason });
+      },
+      fail(reason: string): void {
+        if (isTerminalPhase(record.state.phase)) {
+          return;
+        }
+        record.state.phase = "failed";
+        record.state.completedAtMs = now();
+        record.state.terminalReason = reason;
+        appendActivity(record, { type: "task_failed", reason });
+      },
+      markBlocked(reason: string): void {
+        const transition = transitionPhaseLocked(record, "blocked");
+        if (transition.status === "ok") {
+          record.state.terminalReason = reason;
+          appendActivity(record, { type: "task_blocked", reason });
+        }
+      },
+
+      observe(observation: HostObservation): ProgressState {
+        return observeProgress(record, observation);
+      },
+      progress(): ProgressState {
+        return progressSnapshot(record.progress);
+      },
+    };
+  }
+
+  return {
+    createTask(input: CreateTaskInput): TaskHandle {
+      const record = buildRecord(input);
+      records.set(record.id, record);
+      return createHandle(record);
+    },
+    getTask(taskId: TaskId): TaskHandle | null {
+      const record = records.get(taskId);
+      return record === undefined ? null : createHandle(record);
+    },
+    listTasks(): readonly TaskHandle[] {
+      return [...records.values()].map((record) => createHandle(record));
+    },
+    latestTask(): TaskHandle | null {
+      const record = [...records.values()].pop();
+      return record === undefined ? null : createHandle(record);
+    },
+  };
+}
