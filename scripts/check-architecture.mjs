@@ -314,7 +314,8 @@ function isGodotProbeInvocationModule(packageRelativeFile, file) {
   if (
     packageRelativeFile === GODOT_RECOVERY_RUNNER_FILE ||
     packageRelativeFile === GODOT_CHECK_ONLY_RUNNER_FILE ||
-    packageRelativeFile === GODOT_KNOWLEDGE_RUNNER_FILE
+    packageRelativeFile === GODOT_KNOWLEDGE_RUNNER_FILE ||
+    packageRelativeFile === GODOT_LSP_RUNNER_FILE
   ) {
     return false;
   }
@@ -410,6 +411,8 @@ const GODOT_RECOVERY_RUNNER_FILE = join("src", "godot", "process", "godot-recove
 const GODOT_CHECK_ONLY_RUNNER_FILE = join("src", "godot", "process", "godot-check-only-runner.ts");
 
 const GODOT_KNOWLEDGE_RUNNER_FILE = join("src", "godot", "process", "godot-knowledge-runner.ts");
+
+const GODOT_LSP_RUNNER_FILE = join("src", "godot", "process", "godot-lsp-runner.ts");
 
 const FORBIDDEN_GODOT_RECOVERY_ARGUMENTS = [
   "--script",
@@ -565,6 +568,7 @@ const GODOT_RECOVERY_APPROVED_USERS = [
   join("src", "godot", "mirror"),
   join("src", "godot", "process"),
   join("src", "godot", "diagnostics"),
+  join("src", "godot", "lsp"),
 ];
 
 /**
@@ -665,6 +669,119 @@ function checkGodotCheckOnlyRunner(packageRelativeFile, file, source, location, 
             if (/\bworkspaceRoot\b/.test(valueText)) {
               errors.push(
                 `${location}: the GDScript check-only --path and --script values must never be the source workspace`,
+              );
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+}
+
+/**
+ * The Godot LSP session runner is the only runtime module that may pair
+ * `--lsp-port` with `--recovery-mode`. The module must pass the full fixed
+ * headless recovery editor tuple with the mirror project path and the
+ * Solaris-allocated loopback port; must never carry scene, script, import,
+ * DAP/debug-server, export, or quit options; must take the path and port
+ * values from Solaris-owned inputs (never literals and never the source
+ * workspace root); and must never construct argument arrays by string
+ * concatenation or import them from another module.
+ */
+const REQUIRED_GODOT_LSP_ARGUMENTS = [
+  "--headless",
+  "--editor",
+  "--recovery-mode",
+  "--path",
+  "--lsp-port",
+];
+
+const FORBIDDEN_GODOT_LSP_ARGUMENTS = [
+  "--scene",
+  "--script",
+  "--import",
+  "--upwards",
+  "--export",
+  "--build-solutions",
+  "--dap-port",
+  "--debug-server",
+  "--write-movie",
+  "--benchmark",
+  "--doctool",
+  "--main-pack",
+  "--quit",
+  "--quit-after",
+];
+
+function checkGodotLSPServerRunner(packageRelativeFile, file, source, location, analysis, errors) {
+  if (packageRelativeFile !== GODOT_LSP_RUNNER_FILE) {
+    return;
+  }
+  const parsed = parseSource(source);
+  const tokens = collectOptionTokens(parsed);
+  for (const token of REQUIRED_GODOT_LSP_ARGUMENTS) {
+    if (!tokens.has(token)) {
+      errors.push(`${location}: the Godot LSP runner must pass ${token}`);
+    }
+  }
+  for (const token of FORBIDDEN_GODOT_LSP_ARGUMENTS) {
+    if (tokens.has(token)) {
+      errors.push(
+        `${location}: the Godot LSP runner must not pass ${token}; the session is a headless recovery editor over loopback-only LSP`,
+      );
+    }
+  }
+  if (/["'`][^"'`\n]*["'`]\s*\+/.test(source) || /\+\s*["'`]/.test(source)) {
+    errors.push(
+      `${location}: the Godot LSP arguments must not be constructed by string concatenation`,
+    );
+  }
+  for (const imported of analysis.importedNames) {
+    if (/Arguments$|_ARGS$/i.test(imported.originalName)) {
+      errors.push(
+        `${location}: LSP argument arrays must not be imported (${imported.originalName} from ${imported.module}); the fixed tuple must be built in the LSP runner module`,
+      );
+    }
+  }
+  const visit = (node) => {
+    if (ts.isArrayLiteralExpression(node)) {
+      const spreads = [];
+      let pathValue = null;
+      let portValue = null;
+      const elements = node.elements;
+      for (let index = 0; index < elements.length; index += 1) {
+        const element = elements[index];
+        if (ts.isStringLiteral(element) || ts.isNoSubstitutionTemplateLiteral(element)) {
+          if (element.text === "--path") {
+            pathValue = elements[index + 1];
+          }
+          if (element.text === "--lsp-port") {
+            portValue = elements[index + 1];
+          }
+        } else if (ts.isSpreadElement(element)) {
+          spreads.push(element.expression.getText(parsed));
+        }
+      }
+      for (const spread of spreads) {
+        if (analysis.importedNames.some((entry) => entry.local === spread)) {
+          errors.push(
+            `${location}: LSP argument arrays must not be composed from imported constants (${spread}); the fixed tuple must be built in the LSP runner module`,
+          );
+        }
+      }
+      for (const value of [pathValue, portValue]) {
+        if (value !== null) {
+          if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
+            errors.push(
+              `${location}: the Godot LSP --path and --lsp-port values must come from the disposable mirror and the Solaris allocator, never from literal values`,
+            );
+          } else {
+            const valueText = value.getText(parsed);
+            if (/\bworkspaceRoot\b/.test(valueText)) {
+              errors.push(
+                `${location}: the Godot LSP project path must never be the source workspace`,
               );
             }
           }
@@ -890,12 +1007,23 @@ export function runChecks(root) {
           checkGodotRecoveryRunner(packageRelativeFile, file, source, location, analysis, errors);
           checkGodotCheckOnlyRunner(packageRelativeFile, file, source, location, analysis, errors);
           checkGodotKnowledgeRunner(packageRelativeFile, file, source, location, analysis, errors);
+          checkGodotLSPServerRunner(packageRelativeFile, file, source, location, analysis, errors);
           for (const imported of analysis.destructiveFsImports) {
             if (!isApprovedWriteApiLocation(packageRelativeFile, file)) {
               errors.push(
                 `${location}: direct file write APIs are prohibited: ${imported.api} imported from ${imported.module} outside approved workspace mutation modules and tests`,
               );
             }
+          }
+          if (
+            pkg.name === "@solaris/adapters" &&
+            !isTestSupportFile(file) &&
+            packageRelativeFile.startsWith(join("src", "godot", "lsp") + sep) &&
+            (source.includes("workspace/applyEdit") || source.includes("workspace/executeCommand"))
+          ) {
+            errors.push(
+              `${location}: LSP mutation methods must never be implemented; applyEdit/executeCommand are rejected at the server-request boundary and never referenced in runtime adapter code`,
+            );
           }
           if (containsForbiddenGitMutationToken(source)) {
             errors.push(
@@ -974,6 +1102,22 @@ export function runChecks(root) {
               errors.push(`${location}: core must not import Node module ${specifier}`);
             }
           }
+          if (pkg.name === "@solaris/adapters" && specifier === "node:net") {
+            const socketApproved =
+              packageRelativeFile.startsWith(join("src", "godot", "lsp") + sep) ||
+              packageRelativeFile.startsWith(join("src", "sandbox") + sep) ||
+              isTestSupportFile(file);
+            if (!socketApproved) {
+              errors.push(
+                `${location}: raw TCP socket usage is allowed only inside the approved Godot LSP adapter (src/godot/lsp) and the sandbox adapter (src/sandbox)`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/cli" && specifier === "node:net") {
+            errors.push(
+              `${location}: the CLI must not open sockets; only the LSP adapter owns TCP`,
+            );
+          }
           if (pkg.name === "@solaris/adapters" && specifier.startsWith("@solaris/cli")) {
             errors.push(`${location}: adapters must not import CLI code`);
           }
@@ -1001,6 +1145,7 @@ export function runChecks(root) {
             if (inSandbox && isUnder(target, join(pkg.path, "src", "providers"))) {
               errors.push(`${location}: sandbox adapters must not import provider adapters`);
             }
+
             if (!isTestSupportFile(file)) {
               const mirrorRoot = join(pkg.path, "src", "godot", "mirror");
               const recoveryRunner = join(
@@ -1049,6 +1194,16 @@ export function runChecks(root) {
                 ) {
                   errors.push(
                     `${location}: the Godot API documentation runner may only be used by the approved knowledge adapter`,
+                  );
+                }
+                const lspRunner = join(pkg.path, "src", "godot", "process", "godot-lsp-runner.ts");
+                const lspUser = packageRelativeFile.startsWith(join("src", "godot", "lsp") + sep);
+                if (
+                  !lspUser &&
+                  (target === lspRunner || target === lspRunner.replace(/\.ts$/, ".js"))
+                ) {
+                  errors.push(
+                    `${location}: the Godot LSP runner may only be used by the approved LSP adapter`,
                   );
                 }
               }

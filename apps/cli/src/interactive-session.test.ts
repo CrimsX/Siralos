@@ -19,6 +19,8 @@ import {
   type GitStatusResult,
   type GitWorkspaceStatus,
   type GodotCompatibilityAssessment,
+  type GDScriptLanguageService,
+  type GDScriptLSPSessionPreview,
   type GodotDiagnostics,
   type GodotDiscoveryResult,
   type GodotDoctorReport,
@@ -27,6 +29,7 @@ import {
   type GodotKnowledge,
   type GodotProbePreview,
   type PreparedGDScriptCheck,
+  type PreparedGDScriptSession,
   type GodotProjectProbe,
   type GodotProjectProfile,
   type GodotSelectedInstallation,
@@ -98,6 +101,7 @@ async function createComposedSession(lines: readonly string[]) {
     godotProbe,
     knowledge,
     diagnostics,
+    language,
     checkpoints,
     undo,
     runners,
@@ -112,6 +116,7 @@ async function createComposedSession(lines: readonly string[]) {
     godotProbe,
     knowledge,
     diagnostics,
+    language,
     reviewer: {
       review(): Promise<{ type: "deny"; reason: string }> {
         return Promise.resolve({ type: "deny", reason: "not configured" });
@@ -199,6 +204,7 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     },
     knowledge: createStubKnowledge(),
     diagnostics: createStubDiagnostics(),
+    language: createStubLanguageService(),
     checkpoints: createStubCheckpointStore(),
     undo: createStubUndo(),
     runners: createCommandRunnerRegistry([]),
@@ -216,6 +222,50 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
       },
     }),
     ...overrides,
+  };
+}
+
+function createStubLanguageService(): GDScriptLanguageService {
+  return {
+    support(): Promise<{ state: "unavailable"; reason: string; platform: string }> {
+      return Promise.resolve({
+        state: "unavailable",
+        reason: "stub: the language session is unavailable",
+        platform: "linux",
+      });
+    },
+    activeSession() {
+      return null;
+    },
+    prepare(): Promise<{ status: "unavailable"; message: string }> {
+      return Promise.resolve({
+        status: "unavailable",
+        message: "stub: the language session is unavailable",
+      });
+    },
+    start(): Promise<{ status: "unavailable"; message: string }> {
+      return Promise.resolve({
+        status: "unavailable",
+        message: "stub: the language session is unavailable",
+      });
+    },
+    status() {
+      return {
+        state: "unavailable" as const,
+        sessionId: null,
+        engineVersion: null,
+        projectName: null,
+        startedAtMs: null,
+        idleMs: null,
+        capabilities: { diagnostics: false, hover: false, completion: false, definition: false },
+        openDocumentCount: 0,
+        diagnosticCount: 0,
+        networkIsolation: "unavailable" as const,
+      };
+    },
+    closeAll(): Promise<void> {
+      return Promise.resolve();
+    },
   };
 }
 
@@ -553,7 +603,7 @@ describe("runInteractiveSession tool activity", () => {
     expect(io.text).toContain("Workspace:");
     // git.status and git.diff are always registered; the adapter gates
     // availability (unavailable backends never execute Git).
-    expect(io.text).toContain("Tools: 16");
+    expect(io.text).toContain("Tools: 21");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
@@ -1540,5 +1590,135 @@ describe("runInteractiveSession Godot knowledge and diagnostics commands", () =>
     expect(io.text).toContain("Parse GDScript only (--check-only)");
     expect(io.text).toContain("approval approved");
     expect(io.text).toContain("GDScript diagnostics unavailable");
+  });
+});
+
+describe("runInteractiveSession GDScript language commands", () => {
+  it("refuses /gdscript-lsp before any approval when the session is unavailable", async () => {
+    const io = new ScriptedIO(["/gdscript-lsp", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("unavailable");
+    expect(io.text).not.toContain("approval approved");
+  });
+
+  it("stops /gdscript-lsp-stop without requiring approval", async () => {
+    const io = new ScriptedIO(["/gdscript-lsp-stop", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("session stopped");
+  });
+
+  it("requires an active session for hover, completion, and definition commands", async () => {
+    for (const command of [
+      "/gdscript-hover src/player/player.gd 10 5",
+      "/gdscript-complete src/player/player.gd 10 5",
+      "/gdscript-definition src/player/player.gd 10 5",
+    ]) {
+      const io = new ScriptedIO([command, "/exit"]);
+      const sessionInfo: SessionInfo = buildSessionInfo();
+      await runInteractiveSession(io, createTestApplication(), sessionInfo);
+      expect(io.text).toContain("No Godot language session is active");
+    }
+  });
+
+  it("validates position arguments", async () => {
+    const io = new ScriptedIO(["/gdscript-hover src/player/player.gd", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Usage: /gdscript-hover <relative-path> <line> <column>");
+  });
+
+  it("reports the language session in /status", async () => {
+    const io = new ScriptedIO(["/status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Godot LSP: inactive");
+  });
+
+  it("runs the full approved /gdscript-lsp flow when the session becomes available", async () => {
+    const io = new ScriptedIO(["/gdscript-lsp", "/gdscript-lsp-stop", "/exit"]);
+    const readyLanguage: GDScriptLanguageService = {
+      support(): Promise<{ state: "available"; reason: null; platform: string }> {
+        return Promise.resolve({ state: "available", reason: null, platform: "linux" });
+      },
+      activeSession() {
+        return null;
+      },
+      prepare(): Promise<{
+        status: "ready";
+        session: PreparedGDScriptSession;
+        preview: GDScriptLSPSessionPreview;
+        digest: string;
+      }> {
+        return Promise.resolve({
+          status: "ready",
+          session: {} as PreparedGDScriptSession,
+          preview: {
+            projectName: "Fixture",
+            engineVersion: "4.7.1.stable.official",
+            installationId: "test-install",
+            engineEdition: "standard",
+            support: "compatible-untested",
+            compatibility: "compatible",
+            projectIntelligence: {
+              gdscriptFiles: 2,
+              toolScripts: 0,
+              editorPlugins: 0,
+              gdextensions: 0,
+            },
+            session: {
+              sourceProject: "disposable mirror",
+              godotMode: "headless recovery editor",
+              lspNetwork: "loopback only",
+              externalNetwork: "denied",
+              sourceWrites: "denied",
+              providerSecrets: "removed",
+              lspMutations: "disabled",
+            },
+            capabilities: { diagnostics: true, hover: true, completion: true, definition: true },
+            manifestDigest: "a".repeat(64),
+          },
+          digest: "b".repeat(64),
+        });
+      },
+      start(): Promise<{ status: "unavailable"; message: string }> {
+        return Promise.resolve({
+          status: "unavailable",
+          message: "stub: the execution gate refuses",
+        });
+      },
+      status() {
+        return {
+          state: "unavailable" as const,
+          sessionId: null,
+          engineVersion: null,
+          projectName: null,
+          startedAtMs: null,
+          idleMs: null,
+          capabilities: { diagnostics: false, hover: false, completion: false, definition: false },
+          openDocumentCount: 0,
+          diagnosticCount: 0,
+          networkIsolation: "unavailable" as const,
+        };
+      },
+      closeAll(): Promise<void> {
+        return Promise.resolve();
+      },
+    };
+    const reviewer: ApprovalReviewer = {
+      review(): Promise<{ type: "approve_once" }> {
+        return Promise.resolve({ type: "approve_once" });
+      },
+    };
+    const sessionInfo: SessionInfo = buildSessionInfo({
+      language: readyLanguage,
+      reviewer,
+    });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Godot GDScript language-server session requires approval");
+    expect(io.text).toContain("LSP mutations        disabled");
+    expect(io.text).toContain("approval approved");
+    expect(io.text).toContain("GDScript language session stopped.");
   });
 });

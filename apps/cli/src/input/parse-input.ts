@@ -22,6 +22,11 @@ export type SlashCommand =
   | "godot-api"
   | "gdscript-check"
   | "gdscript-diagnostics"
+  | "gdscript-lsp"
+  | "gdscript-lsp-stop"
+  | "gdscript-hover"
+  | "gdscript-complete"
+  | "gdscript-definition"
   | "exit";
 
 export type ParsedInput =
@@ -66,6 +71,11 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   "godot-api",
   "gdscript-check",
   "gdscript-diagnostics",
+  "gdscript-lsp",
+  "gdscript-lsp-stop",
+  "gdscript-hover",
+  "gdscript-complete",
+  "gdscript-definition",
   "exit",
 ];
 

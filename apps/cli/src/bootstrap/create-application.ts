@@ -12,7 +12,13 @@ import {
   createGodotApiSearchTool,
   createGodotCheckProjectScriptsTool,
   createGodotCheckScriptTool,
+  createGodotCompleteTool,
+  createGodotDefinitionTool,
   createGodotDiagnosticsService,
+  createGDScriptLanguageService,
+  createGodotHoverTool,
+  createGodotLSPDiagnosticsTool,
+  createGodotLSPSessionTool,
   createGodotInspectEngineTool,
   createGodotInspectProjectTool,
   createGodotInspector,
@@ -57,6 +63,7 @@ import {
   type GitInspector,
   type GodotInspector,
   type GodotProjectProbe,
+  type GDScriptLanguageService,
   type GodotKnowledge,
   type GodotDiagnostics,
   type RegisteredToolInfo,
@@ -88,6 +95,7 @@ export interface CliApplication {
   readonly godotProbe: GodotProjectProbe;
   readonly knowledge: GodotKnowledge;
   readonly diagnostics: GodotDiagnostics;
+  readonly language: GDScriptLanguageService;
   readonly undo: UndoService;
   readonly runners: CommandRunnerRegistry;
 }
@@ -232,6 +240,25 @@ export async function createCliApplication(
     checkpointRoot: DEFAULT_CHECKPOINT_ROOT,
     parentEnvironment,
   });
+  const language = createGDScriptLanguageService({
+    workspaceRoot,
+    config: config.godot,
+    preference: resolvedSelection.preference,
+    overrideSource,
+    backend: sandbox,
+    probeRunner: createGodotProbeRunner({
+      backend: sandbox,
+      runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
+      parentEnvironment,
+    }),
+    cache: createEngineProfileCache({}),
+    hostPath: parentEnvironment["PATH"] ?? null,
+    hostPathExt: parentEnvironment["PATHEXT"] ?? null,
+    platform: process.platform,
+    runDirectories: createRunDirectoryProvider({ workspaceRoot, runsRoot }),
+    checkpointRoot: DEFAULT_CHECKPOINT_ROOT,
+    parentEnvironment,
+  });
   const workspaceTools = [
     createWorkspaceListTool(workspaceRoot),
     createWorkspaceReadTool(workspaceRoot),
@@ -246,6 +273,11 @@ export async function createCliApplication(
     createGodotApiLookupTool(knowledge),
     createGodotCheckScriptTool(diagnostics),
     createGodotCheckProjectScriptsTool(diagnostics),
+    createGodotLSPSessionTool(language),
+    createGodotLSPDiagnosticsTool(language),
+    createGodotHoverTool(language),
+    createGodotCompleteTool(language),
+    createGodotDefinitionTool(language),
     createGitStatusTool(git),
     createGitDiffTool(git),
     processTool,
@@ -272,6 +304,7 @@ export async function createCliApplication(
     godotProbe,
     knowledge,
     diagnostics,
+    language,
     undo,
     runners,
   };

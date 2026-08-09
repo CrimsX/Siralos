@@ -89,7 +89,12 @@ type GodotScenario =
   | "probe-project"
   | "api-search"
   | "check-script"
-  | "check-project-scripts";
+  | "check-project-scripts"
+  | "lsp-session"
+  | "lsp-hover"
+  | "lsp-complete"
+  | "lsp-definition"
+  | "lsp-diagnostics";
 
 function findGodotScenario(messages: readonly ConversationItem[]): GodotScenario | null {
   const latestUserPrompt = findLatestUserPrompt(messages);
@@ -117,6 +122,21 @@ function findGodotScenario(messages: readonly ConversationItem[]): GodotScenario
   if (latestUserPrompt === "check godot project scripts") {
     return "check-project-scripts";
   }
+  if (latestUserPrompt === "start godot language session") {
+    return "lsp-session";
+  }
+  if (latestUserPrompt === "hover godot script") {
+    return "lsp-hover";
+  }
+  if (latestUserPrompt === "complete godot script") {
+    return "lsp-complete";
+  }
+  if (latestUserPrompt === "definition godot script") {
+    return "lsp-definition";
+  }
+  if (latestUserPrompt === "diagnose godot script via lsp") {
+    return "lsp-diagnostics";
+  }
   return null;
 }
 
@@ -134,6 +154,16 @@ function godotScenarioTool(scenario: GodotScenario): string {
       return "godot.check_script";
     case "check-project-scripts":
       return "godot.check_project_scripts";
+    case "lsp-session":
+      return "godot.lsp_session";
+    case "lsp-hover":
+      return "godot.hover";
+    case "lsp-complete":
+      return "godot.complete";
+    case "lsp-definition":
+      return "godot.definition";
+    case "lsp-diagnostics":
+      return "godot.lsp_diagnostics";
   }
 }
 
@@ -147,6 +177,14 @@ function godotScenarioInput(scenario: GodotScenario, prompt: string): unknown {
       return { path: "src/player/player.gd" };
     case "check-project-scripts":
       return {};
+    case "lsp-session":
+      return {};
+    case "lsp-hover":
+    case "lsp-complete":
+    case "lsp-definition":
+      return { path: "src/player/player.gd", line: 10, column: 5 };
+    case "lsp-diagnostics":
+      return { path: "src/player/player.gd" };
     case "inspect-engine":
     case "inspect-project":
     case "probe-project":
@@ -157,6 +195,17 @@ function godotScenarioInput(scenario: GodotScenario, prompt: string): unknown {
 function formatGodotFinalText(scenario: GodotScenario, result: ToolExecutionResult): string {
   if (scenario === "probe-project") {
     return formatProbeFinalText(result);
+  }
+  if (scenario === "lsp-session") {
+    return formatLSPSessionFinalText(result);
+  }
+  if (
+    scenario === "lsp-hover" ||
+    scenario === "lsp-complete" ||
+    scenario === "lsp-definition" ||
+    scenario === "lsp-diagnostics"
+  ) {
+    return formatLSPQueryFinalText(result);
   }
   if (scenario === "check-script" || scenario === "check-project-scripts") {
     return formatCheckFinalText(result);
@@ -226,6 +275,57 @@ async function* streamGodotScenario(
     return;
   }
   yield* streamTextChunks(formatGodotFinalText(scenario, result), signal);
+}
+
+function formatLSPSessionFinalText(result: ToolExecutionResult): string {
+  switch (result.status) {
+    case "success": {
+      const record = result.output as JsonObject;
+      const sessionId = typeof record["sessionId"] === "string" ? record["sessionId"] : "unknown";
+      return `Solaris started a bounded Godot GDScript language session (${sessionId}): a headless recovery editor serves the disposable mirror over loopback-only LSP. Source writes and LSP mutations are disabled; the session expires automatically.`;
+    }
+    case "denied":
+      return `The Godot language session was not approved, so Solaris did not start it.`;
+    case "conflict":
+      return `The project or engine changed after approval, so Solaris did not start the language session. Approve the session again.`;
+    case "unavailable":
+    case "failed":
+    case "cancelled":
+    case "timed_out":
+    case "invalid_input":
+    case "output_limit":
+    case "sandbox_denied":
+    case "sandbox_unavailable":
+    case "workspace_violation":
+      return `Solaris could not start the Godot language session: ${result.message}`;
+  }
+}
+
+function formatLSPQueryFinalText(result: ToolExecutionResult): string {
+  if (result.status !== "success") {
+    if (
+      result.status === "failed" &&
+      typeof result.message === "string" &&
+      result.message.includes("No Godot language session is active")
+    ) {
+      return `No Godot language session is active; start and approve one with godot.lsp_session first.`;
+    }
+    return `Solaris could not complete the language query: ${result.message}`;
+  }
+  const record = result.output as JsonObject;
+  if (Array.isArray(record["diagnostics"])) {
+    return `Solaris received ${(record["diagnostics"] as readonly unknown[]).length} normalized diagnostics from the language session.`;
+  }
+  if (Array.isArray(record["items"])) {
+    return `Solaris received ${(record["items"] as readonly unknown[]).length} bounded completion candidates (never applied).`;
+  }
+  if (Array.isArray(record["locations"])) {
+    return `Solaris resolved ${(record["locations"] as readonly unknown[]).length} definition location(s).`;
+  }
+  if (typeof record["contents"] === "object" && record["contents"] !== null) {
+    return `Solaris returned bounded hover information from the language session.`;
+  }
+  return `Solaris completed the language query.`;
 }
 
 function formatApiSearchFinalText(result: ToolExecutionResult): string {

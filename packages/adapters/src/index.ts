@@ -175,6 +175,41 @@ export {
   type GodotCheckOutputInput,
   type GodotCheckOutputNormalization,
 } from "./godot/diagnostics/diagnostic-normalizer.js";
+export { createGDScriptLanguageService } from "./godot/lsp/godot-lsp-service.js";
+export {
+  createLSPPortAllocator,
+  type AllocatedLSPPort,
+  type LSPPortAllocator,
+} from "./godot/lsp/port-allocator.js";
+export {
+  LSPFrameParser,
+  frameMessage,
+  type LSPFrameParserOptions,
+} from "./godot/lsp/frame-parser.js";
+export { JSONRPCClient, ServerRequestRejectedError, JSONRPC_CODES } from "./godot/lsp/json-rpc.js";
+export {
+  normalizeCompletion,
+  normalizeDefinition,
+  normalizeHover,
+  normalizePublishDiagnostics,
+  type LSPNormalizationContext,
+} from "./godot/lsp/normalizers.js";
+export {
+  createGodotLSPServerRunner,
+  GODOT_LSP_BASE_ARGUMENTS,
+  GODOT_LSP_UNAVAILABLE_MESSAGE,
+  godotLSPArguments,
+  godotLSPArgumentTemplate,
+  type GodotLSPServerStartRequest,
+  type GodotLSPServerStartOutcome,
+} from "./godot/process/godot-lsp-runner.js";
+export { createGodotLSPSessionTool } from "./godot/tools/godot-lsp-session-tool.js";
+export {
+  createGodotCompleteTool,
+  createGodotDefinitionTool,
+  createGodotHoverTool,
+  createGodotLSPDiagnosticsTool,
+} from "./godot/tools/godot-lsp-query-tools.js";
 export { readGodotEnvironmentOverrides } from "./environment/godot-overrides.js";
 export {
   resolveGodotSelection,

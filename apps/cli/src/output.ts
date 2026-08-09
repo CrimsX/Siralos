@@ -9,6 +9,12 @@ import type {
   GitStatusResult,
   GitWorkspaceStatus,
   GodotCompatibilityAssessment,
+  GDScriptCompletionResult,
+  GDScriptDefinitionResult,
+  GDScriptHoverResult,
+  GDScriptLSPSessionPreview,
+  GDScriptQueryOutcome,
+  GDScriptSessionStatus,
   GodotDiagnosticPreview,
   GodotDiscoveryResult,
   GodotDoctorReport,
@@ -72,6 +78,11 @@ export function formatHelp(): string {
   /godot-api <query>  Search the exact engine's API documentation locally
   /gdscript-check <relative-path>  Check one .gd script with --check-only (approval required)
   /gdscript-diagnostics  Check the project's .gd scripts sequentially with --check-only (approval required)
+  /gdscript-lsp      Start (approval required) or show the Godot GDScript language session
+  /gdscript-lsp-stop  Gracefully stop the language session (no approval needed)
+  /gdscript-hover <path> <line> <column>  Hover information from the language session
+  /gdscript-complete <path> <line> <column>  Completion candidates from the language session
+  /gdscript-definition <path> <line> <column>  Definition locations from the language session
   /exit              Close Solaris
 `;
 }
@@ -99,6 +110,7 @@ export interface StatusView {
   readonly godotWarningCount: number;
   readonly projectProbe: string;
   readonly knowledge: string;
+  readonly languageSession: string;
 }
 
 export function formatStatus(view: StatusView): string {
@@ -128,6 +140,7 @@ Godot: ${view.godotSelectedInstallation === null ? "no installation selected" : 
 Godot project: ${view.godotProjectDetected ? "detected" : "none"}${view.godotCompatibility === null ? "" : `, compatibility: ${view.godotCompatibility}`}${view.godotWarningCount > 0 ? `, warnings: ${view.godotWarningCount}` : ""}
 Recovery probe: ${view.projectProbe}
 Knowledge: ${view.knowledge}
+Godot LSP: ${view.languageSession}
 `;
 }
 
@@ -262,6 +275,9 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   if (request.capability === "godot.diagnose") {
     return formatGodotDiagnosticApprovalPrompt(request);
   }
+  if (request.capability === "godot.lsp") {
+    return formatGodotLSPSessionApprovalPrompt(request);
+  }
   const file = request.preview.files[0];
   const lines = [
     "Approval required",
@@ -327,6 +343,50 @@ function formatGodotProbeApprovalPrompt(
     "and the OS sandbox.",
     "",
     `Approval is one-time and binds to project risk manifest ${request.digest.slice(0, 8)}.`,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+function formatGodotLSPSessionApprovalPrompt(
+  request: Extract<ApprovalRequest, { capability: "godot.lsp" }>,
+): string {
+  const preview = request.preview;
+  const project = preview.projectIntelligence;
+  const lines = [
+    "Godot GDScript language-server session requires approval",
+    "",
+    "Project:",
+    `  ${preview.projectName ?? "(unnamed)"}`,
+    "",
+    "Engine:",
+    `  ${preview.engineVersion}`,
+    `  ${preview.engineEdition} edition`,
+    `  Solaris support: ${preview.support}`,
+    `  Static compatibility: ${preview.compatibility}`,
+    "",
+    "Project intelligence:",
+    `  GDScript files       ${project.gdscriptFiles}`,
+    `  @tool scripts        ${project.toolScripts}`,
+    `  editor plugins       ${project.editorPlugins}`,
+    `  GDExtensions         ${project.gdextensions}`,
+    "",
+    "Session:",
+    "  Source project       disposable mirror",
+    "  Godot mode           headless recovery editor",
+    "  LSP network          loopback only",
+    "  External network     denied",
+    "  Source writes        denied",
+    "  Provider secrets     removed",
+    "  LSP mutations        disabled",
+    "",
+    "Capabilities requested:",
+    "  diagnostics",
+    "  hover",
+    "  completion",
+    "  definition",
+    "",
+    "Approval applies only to this session and binds to plan",
+    `  ${request.digest.slice(0, 8)}.`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -517,6 +577,135 @@ export function formatGodotDiagnosticsResult(result: GodotProjectCheckResult): s
     lines.push("  (no diagnostics)");
   } else if (result.truncated) {
     lines.push("  (diagnostics truncated)");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotLSPSessionStatus(status: GDScriptSessionStatus): string {
+  if (status.state !== "ready") {
+    return (
+      [
+        "Godot GDScript language session",
+        "",
+        "Status: inactive",
+        `Network isolation: ${status.networkIsolation}`,
+      ].join("\n") + "\n"
+    );
+  }
+  const ageMs = status.startedAtMs === null ? null : Date.now() - status.startedAtMs;
+  return (
+    [
+      "Godot GDScript language session",
+      "",
+      "Status: active",
+      `Engine: ${status.engineVersion ?? "unknown"}`,
+      `Project: ${status.projectName ?? "(unnamed)"}`,
+      `Session age: ${ageMs === null ? "unknown" : `${Math.floor(ageMs / 1000)}s`}`,
+      `Idle time: ${status.idleMs === null ? "unknown" : `${Math.floor(status.idleMs / 1000)}s`}`,
+      "Capabilities:",
+      `  diagnostics  ${yesNo(status.capabilities.diagnostics)}`,
+      `  hover        ${yesNo(status.capabilities.hover)}`,
+      `  completion   ${yesNo(status.capabilities.completion)}`,
+      `  definition   ${yesNo(status.capabilities.definition)}`,
+      `Open documents: ${status.openDocumentCount}`,
+      `Diagnostics: ${status.diagnosticCount}`,
+      `Network isolation: ${status.networkIsolation}`,
+    ].join("\n") + "\n"
+  );
+}
+
+export function formatGodotLSPSessionPreview(preview: GDScriptLSPSessionPreview): string {
+  const project = preview.projectIntelligence;
+  const lines = [
+    "Godot GDScript language-server session requires approval",
+    "",
+    "Project:",
+    `  ${preview.projectName ?? "(unnamed)"}`,
+    "",
+    "Engine:",
+    `  ${preview.engineVersion}`,
+    `  ${preview.engineEdition} edition`,
+    `  Solaris support: ${preview.support}`,
+    `  Static compatibility: ${preview.compatibility}`,
+    "",
+    "Project intelligence:",
+    `  GDScript files       ${project.gdscriptFiles}`,
+    `  @tool scripts        ${project.toolScripts}`,
+    `  editor plugins       ${project.editorPlugins}`,
+    `  GDExtensions         ${project.gdextensions}`,
+    "",
+    "Session:",
+    "  Source project       disposable mirror",
+    "  Godot mode           headless recovery editor",
+    "  LSP network          loopback only",
+    "  External network     denied",
+    "  Source writes        denied",
+    "  Provider secrets     removed",
+    "  LSP mutations        disabled",
+    "",
+    "Capabilities requested:",
+    "  diagnostics",
+    "  hover",
+    "  completion",
+    "  definition",
+    "",
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotHoverResult(result: GDScriptQueryOutcome<GDScriptHoverResult>): string {
+  if (result.status !== "ready") {
+    return `Hover unavailable: ${sanitizeForDisplay(result.message)}`;
+  }
+  const range = result.result.range;
+  const lines = [
+    `Hover: ${sanitizeForDisplay(result.result.path)}`,
+    ...(range === null
+      ? []
+      : [`Range: ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`]),
+    ...result.result.contents.map((section) => sanitizeForDisplay(section.text)),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotCompletionResult(
+  result: GDScriptQueryOutcome<GDScriptCompletionResult>,
+): string {
+  if (result.status !== "ready") {
+    return `Completion unavailable: ${sanitizeForDisplay(result.message)}`;
+  }
+  const lines = [
+    `Completion: ${sanitizeForDisplay(result.result.path)}`,
+    ...result.result.items.slice(0, 50).map((item) => {
+      const detail = item.detail === null ? "" : ` - ${sanitizeForDisplay(item.detail)}`;
+      return `  ${sanitizeForDisplay(item.label)}${detail}`;
+    }),
+  ];
+  if (result.result.items.length === 0) {
+    lines.push("  (no results)");
+  } else if (result.result.truncated) {
+    lines.push("  (results truncated)");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotDefinitionResult(
+  result: GDScriptQueryOutcome<GDScriptDefinitionResult>,
+): string {
+  if (result.status !== "ready") {
+    return `Definition unavailable: ${sanitizeForDisplay(result.message)}`;
+  }
+  const lines = [
+    `Definition: ${sanitizeForDisplay(result.result.path)}`,
+    ...result.result.locations.slice(0, 25).map((location) => {
+      const marker = location.external ? " (external)" : "";
+      return `  ${sanitizeForDisplay(location.path)}:${location.range.start.line}:${location.range.start.column}${marker}`;
+    }),
+  ];
+  if (result.result.locations.length === 0) {
+    lines.push("  (no locations)");
+  } else if (result.result.truncated) {
+    lines.push("  (results truncated)");
   }
   return `${lines.join("\n")}\n`;
 }

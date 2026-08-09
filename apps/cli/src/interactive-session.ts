@@ -2,6 +2,7 @@ import type {
   ApprovalReviewer,
   CheckpointStore,
   CommandRunnerRegistry,
+  GDScriptLanguageService,
   GitInspector,
   GodotDiagnostics,
   GodotInspector,
@@ -31,9 +32,14 @@ import {
   formatGitStatus,
   formatGodotDoctor,
   formatGodotInstallations,
+  formatGodotCompletionResult,
+  formatGodotDefinitionResult,
   formatGodotDiagnosticPreview,
   formatGodotDiagnosticsResult,
+  formatGodotHoverResult,
   formatGodotKnowledgeStatus,
+  formatGodotLSPSessionPreview,
+  formatGodotLSPSessionStatus,
   formatGodotApiSearchResult,
   formatGodotProbePreview,
   formatGodotProbeResult,
@@ -75,6 +81,7 @@ export interface SessionInfo {
   readonly godotProbe: GodotProjectProbe;
   readonly knowledge: GodotKnowledge;
   readonly diagnostics: GodotDiagnostics;
+  readonly language: GDScriptLanguageService;
   readonly reviewer: ApprovalReviewer;
   readonly checkpoints: CheckpointStore;
   readonly undo: UndoService;
@@ -211,6 +218,21 @@ export async function runInteractiveSession(
           case "gdscript-diagnostics":
             await runGDScriptDiagnosticsCommand(io, sessionInfo, controls);
             break;
+          case "gdscript-lsp":
+            await runGDScriptLSPCommand(io, sessionInfo, controls);
+            break;
+          case "gdscript-lsp-stop":
+            await runGDScriptLSPStopCommand(io, sessionInfo);
+            break;
+          case "gdscript-hover":
+            await runGDScriptPositionCommand(io, sessionInfo, "hover", parsed.args);
+            break;
+          case "gdscript-complete":
+            await runGDScriptPositionCommand(io, sessionInfo, "complete", parsed.args);
+            break;
+          case "gdscript-definition":
+            await runGDScriptPositionCommand(io, sessionInfo, "definition", parsed.args);
+            break;
           case "cancel":
             io.write(formatNoActiveCommand());
             break;
@@ -308,7 +330,19 @@ async function buildStatusView(
     godotWarningCount: godotProject?.warnings.length ?? 0,
     projectProbe: describeProjectProbe(sessionInfo.godotProbe.status()),
     knowledge: describeKnowledge(sessionInfo.knowledge.status()),
+    languageSession: describeLanguageSession(sessionInfo.language.status()),
   };
+}
+
+function describeLanguageSession(status: {
+  readonly state: string;
+  readonly engineVersion: string | null;
+  readonly networkIsolation: string;
+}): string {
+  if (status.state === "ready") {
+    return `active (${status.engineVersion ?? "?"}, ${status.networkIsolation})`;
+  }
+  return "inactive";
 }
 
 function describeKnowledge(status: {
@@ -481,6 +515,125 @@ async function runGodotProbeCommand(
     io.write(formatProviderFailure(describeGodotFailure(error)));
   } finally {
     controls.endPrompt();
+  }
+}
+
+async function runGDScriptLSPCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+): Promise<void> {
+  const controller = controls.beginPrompt();
+  try {
+    const status = sessionInfo.language.status();
+    if (status.state === "ready") {
+      io.write(formatGodotLSPSessionStatus(status));
+      return;
+    }
+    io.write("Checking GDScript language-session capability\u2026\n");
+    const support = await sessionInfo.language.support();
+    if (support.state !== "available") {
+      io.write(
+        formatGodotProbeTerminal(
+          "unavailable",
+          support.reason ?? "The Godot language session is unavailable on this platform.",
+        ),
+      );
+      return;
+    }
+    io.write("Preparing the GDScript language session\u2026\n");
+    const prepared = await sessionInfo.language.prepare(controller.signal);
+    if (prepared.status !== "ready") {
+      io.write(formatGodotProbeTerminal(prepared.status, prepared.message));
+      return;
+    }
+    io.write(formatGodotLSPSessionPreview(prepared.preview));
+    const decision = await sessionInfo.reviewer.review(
+      {
+        id: "gdscript-lsp",
+        capability: "godot.lsp",
+        toolName: "godot.lsp_session",
+        summary: `Godot GDScript language session (${prepared.preview.projectIntelligence.gdscriptFiles} scripts)`,
+        preview: prepared.preview,
+        digest: prepared.digest,
+      },
+      controller.signal,
+    );
+    if (decision.type !== "approve_once") {
+      if (decision.type === "cancelled") {
+        io.write("  \u2715 session approval cancelled\n");
+      } else {
+        io.write(`  \u2715 session denied: ${decision.reason ?? "not approved"}\n`);
+      }
+      return;
+    }
+    io.write("  approval approved\n");
+    const result = await sessionInfo.language.start(prepared.session, {
+      approvedDigest: prepared.digest,
+      signal: controller.signal,
+    });
+    if (result.status === "ready") {
+      io.write(formatGodotLSPSessionStatus(result.session.getStatus()));
+      return;
+    }
+    io.write(formatGodotProbeTerminal(result.status, result.message));
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 session cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  } finally {
+    controls.endPrompt();
+  }
+}
+
+async function runGDScriptLSPStopCommand(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
+  try {
+    await sessionInfo.language.closeAll();
+    io.write("GDScript language session stopped.\n");
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  }
+}
+
+async function runGDScriptPositionCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  operation: "hover" | "complete" | "definition",
+  args: readonly string[],
+): Promise<void> {
+  if (args.length < 3) {
+    io.write(`Usage: /gdscript-${operation} <relative-path> <line> <column>\n`);
+    return;
+  }
+  const path = args[0] ?? "";
+  const line = Number.parseInt(args[1] ?? "", 10);
+  const column = Number.parseInt(args[2] ?? "", 10);
+  if (!Number.isInteger(line) || line < 1 || !Number.isInteger(column) || column < 1) {
+    io.write("Line and column must be 1-based positive integers.\n");
+    return;
+  }
+  const session = sessionInfo.language.activeSession();
+  if (session === null) {
+    io.write(
+      "No Godot language session is active; start and approve one with /gdscript-lsp first.\n",
+    );
+    return;
+  }
+  try {
+    if (operation === "hover") {
+      const result = await session.hover({ path, line, column });
+      io.write(formatGodotHoverResult(result));
+    } else if (operation === "complete") {
+      const result = await session.completion({ path, line, column });
+      io.write(formatGodotCompletionResult(result));
+    } else {
+      const result = await session.definition({ path, line, column });
+      io.write(formatGodotDefinitionResult(result));
+    }
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeGodotFailure(error)));
   }
 }
 

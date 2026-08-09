@@ -891,3 +891,59 @@ describe("check-architecture Godot check-only diagnostics", () => {
     expect(errors.some((error) => error.includes("check-only runner may only be used"))).toBe(true);
   });
 });
+
+describe("check-architecture Godot LSP boundaries", () => {
+  it("requires the fixed recovery LSP pairing in the LSP runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-lsp-runner.ts"] =
+      'export const BASE = ["--headless", "--editor", "--recovery-mode", "--path", mirrorPath, "--lsp-port", String(port)];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must pass --lsp-port"))).toBe(false);
+    expect(errors.some((error) => error.includes("must pass --recovery-mode"))).toBe(false);
+    expect(errors.some((error) => error.includes("must pass --path"))).toBe(false);
+  });
+
+  it("rejects missing --recovery-mode in the LSP runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-lsp-runner.ts"] =
+      'export const ARGS = ["--headless", "--editor", "--path", mirrorPath, "--lsp-port", "6005"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must pass --recovery-mode"))).toBe(true);
+  });
+
+  it("rejects DAP, scene, script, and import options in the LSP runner", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-lsp-runner.ts"] =
+      'export const ARGS = ["--headless", "--editor", "--recovery-mode", "--path", mirrorPath, "--lsp-port", "6005", "--dap-port", "6006"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not pass --dap-port"))).toBe(true);
+  });
+
+  it("rejects literal LSP port and mirror path values", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/godot-lsp-runner.ts"] =
+      'export const ARGS = ["--headless", "--editor", "--recovery-mode", "--path", "/abs/mirror", "--lsp-port", "6005"];\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("never from literal values"))).toBe(true);
+  });
+
+  it("restricts node:net to the approved LSP adapter", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/process/evil.ts"] =
+      'import { createServer } from "node:net";\nexport const x = createServer;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("allowed only inside the approved Godot LSP adapter")),
+    ).toBe(true);
+  });
+
+  it("forbids LSP mutation method references in runtime adapter code", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/godot/lsp/evil.ts"] =
+      'export const method = "workspace/applyEdit";\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("LSP mutation methods must never be implemented")),
+    ).toBe(true);
+  });
+});

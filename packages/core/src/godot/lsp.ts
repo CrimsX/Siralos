@@ -300,6 +300,9 @@ export interface GDScriptLanguageSupport {
 export interface GDScriptLanguageService {
   support(): Promise<GDScriptLanguageSupport>;
 
+  /** The active session, or null when none is running. */
+  activeSession(): GDScriptLanguageSession | null;
+
   prepare(signal?: AbortSignal): Promise<GDScriptSessionPreparationResult>;
 
   start(

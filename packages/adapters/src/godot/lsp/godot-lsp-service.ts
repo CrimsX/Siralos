@@ -279,6 +279,10 @@ export function createGDScriptLanguageService(
     );
   }
 
+  function activeSession(): import("@solaris/core").GDScriptLanguageSession | null {
+    return null;
+  }
+
   function status(): GDScriptSessionStatus {
     return {
       state: invalidated ? "stale" : "unavailable",
@@ -299,7 +303,7 @@ export function createGDScriptLanguageService(
     return Promise.resolve();
   }
 
-  return { support, prepare, start, status, closeAll };
+  return { support, activeSession, prepare, start, status, closeAll };
 }
 
 function requireLSPSessionCapabilities(profile: GodotEngineProfile):
