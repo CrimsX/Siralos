@@ -668,6 +668,48 @@ export {
   type ProjectInstructionService,
 } from "./instructions/instruction-service.js";
 export {
+  KNOWLEDGE_LIMITS,
+  KNOWLEDGE_RETRIEVAL_SCORING,
+  KNOWLEDGE_STATE_VERSION,
+  SUBJECT_KEY_PATTERN,
+  computeKnowledgeFactId,
+  computeKnowledgeStateRevision,
+  freshnessScore,
+  isValidSubjectKey,
+  normalizeFactContent,
+  rejectPolicyShapedContent,
+  tokenizeFactText,
+  type KnowledgeActivation,
+  type KnowledgeCandidate,
+  type KnowledgeConfidence,
+  type KnowledgeFactId,
+  type KnowledgeFactType,
+  type KnowledgeProvenanceRef,
+  type KnowledgeRetrievalQuery,
+  type KnowledgeRetrievalResult,
+  type KnowledgeRetrievalSelection,
+  type KnowledgeRetrievalTrace,
+  type KnowledgeScope,
+  type KnowledgeVolatility,
+  type ProjectKnowledgeFact,
+} from "./knowledge/knowledge-model.js";
+export {
+  createKnowledgeCoordinator,
+  type KnowledgeCoordinator,
+  type KnowledgeCoordinatorOptions,
+  type KnowledgeProposalResult,
+} from "./knowledge/knowledge-coordinator.js";
+export {
+  buildGodotProjectKnowledgeCandidates,
+  type GodotProjectKnowledgeSeed,
+} from "./knowledge/knowledge-seeding.js";
+export {
+  KNOWLEDGE_FRAMING_LINE,
+  renderPinnedKnowledge,
+  renderRetrievedKnowledge,
+} from "./knowledge/knowledge-projection.js";
+
+export {
   WORKSPACE_READ_MODES,
   isWorkspaceReadMode,
   type WorkspaceReadMode,
