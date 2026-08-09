@@ -10,6 +10,12 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "git.inspect": "allow",
           "godot.inspect": "allow",
           "godot.probe_project": "ask",
+          // API knowledge is project-independent, offline, and uses the
+          // selected trusted engine; local search/lookup needs no approval.
+          "godot.api": "allow",
+          // GDScript diagnostics load and parse project source from a
+          // disposable mirror, so they stay one-time approved.
+          "godot.diagnose": "ask",
           "workspace.write": "deny",
           "process.execute": "deny",
           "network.outbound": "deny",
@@ -22,6 +28,8 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "git.inspect": "allow",
           "godot.inspect": "allow",
           "godot.probe_project": "ask",
+          "godot.api": "allow",
+          "godot.diagnose": "ask",
           "workspace.write": "ask",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -34,6 +42,11 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "git.inspect": "allow",
           "godot.inspect": "allow",
           "godot.probe_project": "deny",
+          // Internal execution profile: never used for Godot tool
+          // permission evaluation. There is no public unconditional
+          // `allow` for diagnostics anywhere.
+          "godot.api": "deny",
+          "godot.diagnose": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -49,6 +62,8 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "git.inspect": "allow",
           "godot.inspect": "allow",
           "godot.probe_project": "deny",
+          "godot.api": "deny",
+          "godot.diagnose": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -64,6 +79,25 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "git.inspect": "allow",
           "godot.inspect": "allow",
           "godot.probe_project": "deny",
+          "godot.api": "deny",
+          "godot.diagnose": "deny",
+          "workspace.write": "deny",
+          "process.execute": "ask",
+          "network.outbound": "deny",
+        },
+      };
+    case "godot-diagnostics-offline":
+      // Internal execution profile: never user-selectable and never used for
+      // tool permission evaluation. Mirrors validation-offline so permission
+      // evaluation is total; check-only diagnostics are Solaris-fixed.
+      return {
+        rules: {
+          "workspace.read": "allow",
+          "git.inspect": "allow",
+          "godot.inspect": "allow",
+          "godot.probe_project": "deny",
+          "godot.api": "deny",
+          "godot.diagnose": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",

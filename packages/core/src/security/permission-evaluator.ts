@@ -69,5 +69,19 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // approved bytes. The policy rule (ask in every user-facing profile)
       // is the approval gate; no additional profile constraint applies.
       return null;
+    case "godot.api":
+      // API knowledge is project-independent, offline, and fixed by
+      // Solaris; the knowledge service revalidates the sandbox and the
+      // selected engine. No additional profile constraint applies.
+      return null;
+    case "godot.diagnose":
+      // GDScript diagnostics are a fixed, Solaris-owned workflow: the
+      // diagnostics service itself revalidates the sandbox, the disposable
+      // mirror, the engine, and the project manifest before anything runs,
+      // and refuses as unavailable when the platform cannot bind execution
+      // to the approved bytes. The policy rule (ask in every user-facing
+      // profile) is the approval gate; no additional profile constraint
+      // applies.
+      return null;
   }
 }

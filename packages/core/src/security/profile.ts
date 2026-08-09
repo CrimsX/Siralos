@@ -3,7 +3,8 @@ export type SandboxProfileId =
   | "develop-offline"
   | "validation-offline"
   | "godot-probe-offline"
-  | "godot-recovery-probe-offline";
+  | "godot-recovery-probe-offline"
+  | "godot-diagnostics-offline";
 
 export type WorkspaceAccess = "read-only" | "read-write";
 
@@ -177,6 +178,39 @@ export const GODOT_RECOVERY_PROBE_OFFLINE_PROFILE: SandboxProfile = {
   },
 };
 
+/**
+ * Internal effective profile for GDScript `--check-only` diagnostics.
+ *
+ * The disposable project mirror is the only project directory visible to
+ * the checked engine: the source workspace is never writable and, where the
+ * backend can enforce a host-read allowlist, is excluded from readable
+ * roots entirely. The mirror and the sandbox-private home/temp are the only
+ * writable roots; network and loopback are denied; stdin is closed; and the
+ * process tree is confined. This profile is never user-selectable and must
+ * never be broadened by public configuration.
+ */
+export const GODOT_DIAGNOSTICS_OFFLINE_PROFILE: SandboxProfile = {
+  id: "godot-diagnostics-offline",
+  filesystem: {
+    workspaceAccess: "read-only",
+    protectGitMetadata: true,
+    protectSolarisMetadata: true,
+    denySensitiveProjectFiles: true,
+    excludeWorkspaceRead: true,
+  },
+  process: {
+    enabled: true,
+    timeoutMs: 30_000,
+    maxOutputBytes: 8 * 1024 * 1024,
+  },
+  network: {
+    outbound: "deny",
+  },
+  environment: {
+    policy: "minimal",
+  },
+};
+
 export function getBuiltInProfile(profileId: SandboxProfileId): SandboxProfile {
   switch (profileId) {
     case "inspect":
@@ -189,5 +223,7 @@ export function getBuiltInProfile(profileId: SandboxProfileId): SandboxProfile {
       return GODOT_PROBE_OFFLINE_PROFILE;
     case "godot-recovery-probe-offline":
       return GODOT_RECOVERY_PROBE_OFFLINE_PROFILE;
+    case "godot-diagnostics-offline":
+      return GODOT_DIAGNOSTICS_OFFLINE_PROFILE;
   }
 }

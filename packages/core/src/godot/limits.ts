@@ -108,4 +108,50 @@ export const GODOT_LIMITS = {
   maxPreparedProbeStateBytes: 8 * 1024 * 1024,
   /** Maximum lifetime of a prepared probe before it expires. */
   preparedProbeTtlMs: 10 * 60 * 1000,
+
+  // --- Version-matched Godot API knowledge ---
+  /** Maximum accepted `--dump-extension-api-with-docs` output file (256 MiB). */
+  maxApiDumpWithDocsBytes: 256 * 1024 * 1024,
+  /** Maximum indexed API classes (native + built-in). */
+  maxApiClasses: 20_000,
+  /** Maximum indexed API symbols (classes, members, globals, utilities). */
+  maxApiSymbols: 500_000,
+  /** Maximum retained description length for one API symbol (256 KiB). */
+  maxApiDescriptionBytes: 256 * 1024,
+  /** Maximum search-result snippet length (2 KiB). */
+  maxApiSummaryBytes: 2 * 1024,
+  /** Maximum API search results returned to the provider or CLI. */
+  maxApiSearchResults: 25,
+  /** Maximum serialized API lookup result bytes (512 KiB). */
+  maxApiLookupResultBytes: 512 * 1024,
+  /** Knowledge profile schema version (immutable; mismatch rebuilds the cache). */
+  knowledgeSchemaVersion: 1,
+  /** With-docs API dump probe timeout (fixed Solaris probe). */
+  apiDocsDumpTimeoutMs: 180_000,
+
+  // --- GDScript check-only diagnostics ---
+  /** Maximum checked GDScript file size (4 MiB). */
+  maxGDScriptFileBytes: 4 * 1024 * 1024,
+  /** Maximum scripts enumerated per project-wide check. */
+  maxGDScriptFilesPerProject: 10_000,
+  /** Maximum aggregate GDScript bytes per project-wide check. */
+  maxGDScriptTotalBytes: 256 * 1024 * 1024,
+  /** Maximum normalized diagnostics retained for one script. */
+  maxDiagnosticsPerScript: 500,
+  /** Maximum normalized diagnostics retained for one check run. */
+  maxDiagnosticsPerRun: 10_000,
+  /** Maximum retained length of one normalized diagnostic message (8 KiB). */
+  maxDiagnosticMessageBytes: 8 * 1024,
+  /** Single check-only invocation timeout (30 seconds). */
+  gdscriptCheckTimeoutMs: 30_000,
+  /** Total budget for one project-wide diagnostic run (10 minutes). */
+  projectDiagnosticsBudgetMs: 10 * 60 * 1000,
+  /** Maximum raw output bytes captured per check stream. */
+  maxCheckStreamBytes: 8 * 1024 * 1024,
+  /** Maximum simultaneously prepared GDScript checks. */
+  maxPreparedChecks: 8,
+  /** Maximum aggregate serialized bytes of all prepared check plans. */
+  maxPreparedCheckStateBytes: 8 * 1024 * 1024,
+  /** Maximum lifetime of a prepared check before it expires. */
+  preparedCheckTtlMs: 10 * 60 * 1000,
 } as const;

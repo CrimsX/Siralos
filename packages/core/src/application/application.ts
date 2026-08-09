@@ -9,13 +9,19 @@ import { createDefaultPolicy } from "../security/default-policy.js";
 import { INSPECT_PROFILE, type SandboxProfile } from "../security/profile.js";
 import type { ProcessOutputEvent } from "../security/sandbox-backend.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import type { ToolExecutionResult } from "../tools/tool.js";
+import type { ToolExecutionContext, ToolExecutionResult } from "../tools/tool.js";
+import type { PreparedGodotProbe, GodotProbePreview } from "../godot/probe.js";
+import type { GodotDiagnosticPreview, PreparedGDScriptCheck } from "../godot/gdscript.js";
 import {
   isPreparedCommandTool,
   isPreparedMutationTool,
   toolCapability,
 } from "../tools/prepared-mutation-tool.js";
 import { isPreparedProbeTool } from "../tools/prepared-probe-tool.js";
+import {
+  isPreparedDiagnosticTool,
+  type PreparedDiagnosticTool,
+} from "../tools/prepared-diagnostic-tool.js";
 import type { PreparedProjectProbeTool } from "../tools/prepared-probe-tool.js";
 import type { PreparedCommandTool } from "../commands/command-tool.js";
 import type { CommandAuditRecord, CommandApplicationEvent } from "../commands/command-events.js";
@@ -23,6 +29,39 @@ import { MAX_RETAINED_COMMAND_AUDIT_RECORDS } from "../commands/command-events.j
 import type { CommandPreview, PreparedCommand } from "../commands/command-runners.js";
 import type { PermissionEvaluation } from "../security/permission-evaluator.js";
 import { PROCESS_RUN_TOOL_NAME } from "../commands/command-tool.js";
+
+/**
+ * Shared shape of the one-time approval protocol for reviewable Godot
+ * tools. The application prepares the plan, asks for one-time approval when
+ * the policy says `ask`, and only then executes with the approved digest.
+ */
+interface ApprovedToolAdapter<THandle, TPreview> {
+  readonly capability: "godot.probe_project" | "godot.diagnose";
+  prepare(
+    input: unknown,
+    context: ToolExecutionContext,
+  ): Promise<
+    | {
+        readonly status: "ready";
+        readonly handle: THandle;
+        readonly preview: TPreview;
+        readonly digest: string;
+      }
+    | {
+        readonly status: "unavailable" | "unsupported" | "cancelled" | "invalid_input" | "failed";
+        readonly message: string;
+      }
+  >;
+  executePrepared(handle: THandle, context: ToolExecutionContext): Promise<ToolExecutionResult>;
+  buildApprovalRequest(
+    id: string,
+    capability: "godot.probe_project" | "godot.diagnose",
+    preview: TPreview,
+    digest: string,
+  ): ApprovalRequest;
+  readonly deniedMessage: string;
+  readonly cancelledMessage: string;
+}
 
 export type ApplicationEvent =
   | {
@@ -75,7 +114,8 @@ export type ApplicationEvent =
       readonly type: "approval_requested";
       readonly requestId: string;
       readonly toolName: string;
-      readonly capability: "workspace.write" | "process.execute" | "godot.probe_project";
+      readonly capability:
+        "workspace.write" | "process.execute" | "godot.probe_project" | "godot.diagnose";
       readonly summary: string;
     }
   | {
@@ -488,6 +528,18 @@ export function createSolarisApplication(
       yield* emitToolOutcome(call.callId, call.toolName, result);
       return result;
     }
+    if (isPreparedDiagnosticTool(tool)) {
+      const result = yield* runPreparedDiagnosticTool(
+        tool,
+        call.callId,
+        call.toolName,
+        call.input,
+        permission,
+        signal,
+      );
+      yield* emitToolOutcome(call.callId, call.toolName, result);
+      return result;
+    }
     if (!isPreparedMutationTool(tool)) {
       if (permission.decision === "ask") {
         const message =
@@ -617,7 +669,87 @@ export function createSolarisApplication(
     permission: PermissionEvaluation,
     signal?: AbortSignal,
   ): AsyncGenerator<ApplicationEvent, ToolExecutionResult, void> {
-    const prepared = await tool.prepare(input, signal === undefined ? {} : { signal });
+    const adapter: ApprovedToolAdapter<PreparedGodotProbe, GodotProbePreview> = {
+      capability: "godot.probe_project",
+      prepare: async (toolInput, context) => {
+        const prepared = await tool.prepare(toolInput, context);
+        return prepared.status === "ready"
+          ? {
+              status: "ready",
+              handle: prepared.probe,
+              preview: prepared.preview,
+              digest: prepared.digest,
+            }
+          : prepared;
+      },
+      executePrepared: (handle, context) => tool.executePrepared(handle, context),
+      buildApprovalRequest: (id, _capability, preview, digest) => ({
+        id,
+        capability: "godot.probe_project" as const,
+        toolName,
+        summary: summarizeProbePreview(preview),
+        preview,
+        digest,
+      }),
+      deniedMessage: "The project probe was denied by the user.",
+      cancelledMessage: "The project probe approval was cancelled.",
+    };
+    return yield* runApprovedTool(adapter, callId, toolName, input, permission, signal);
+  }
+
+  async function* runPreparedDiagnosticTool(
+    tool: PreparedDiagnosticTool,
+    callId: string,
+    toolName: string,
+    input: unknown,
+    permission: PermissionEvaluation,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ApplicationEvent, ToolExecutionResult, void> {
+    const adapter: ApprovedToolAdapter<PreparedGDScriptCheck, GodotDiagnosticPreview> = {
+      capability: "godot.diagnose",
+      prepare: async (toolInput, context) => {
+        const prepared = await tool.prepare(toolInput, context);
+        return prepared.status === "ready"
+          ? {
+              status: "ready",
+              handle: prepared.check,
+              preview: prepared.preview,
+              digest: prepared.digest,
+            }
+          : prepared;
+      },
+      executePrepared: (handle, context) => tool.executePrepared(handle, context),
+      buildApprovalRequest: (id, _capability, preview, digest) => ({
+        id,
+        capability: "godot.diagnose" as const,
+        toolName,
+        summary: summarizeDiagnosticPreview(preview),
+        preview,
+        digest,
+      }),
+      deniedMessage: "The GDScript check was denied by the user.",
+      cancelledMessage: "The GDScript check approval was cancelled.",
+    };
+    return yield* runApprovedTool(adapter, callId, toolName, input, permission, signal);
+  }
+
+  /**
+   * Shared one-time approval protocol for reviewable Godot tools (project
+   * probes and GDScript checks). Preparation freezes the plan; under an
+   * `ask` policy the application requests one-time approval bound to the
+   * exact digest; execution runs only under the approved digest and the
+   * tool's own revalidation. Denial, EOF, reviewer failure, timeout, and
+   * cancellation all prevent execution; approval is never reusable.
+   */
+  async function* runApprovedTool<THandle, TPreview>(
+    adapter: ApprovedToolAdapter<THandle, TPreview>,
+    callId: string,
+    toolName: string,
+    input: unknown,
+    permission: PermissionEvaluation,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ApplicationEvent, ToolExecutionResult, void> {
+    const prepared = await adapter.prepare(input, signal === undefined ? {} : { signal });
     if (prepared.status !== "ready") {
       if (prepared.status === "cancelled") {
         yield { type: "tool_cancelled", callId, toolName };
@@ -634,22 +766,20 @@ export function createSolarisApplication(
         message: prepared.message,
       };
     }
-    const { probe, preview, digest } = prepared;
+    const { handle, preview, digest } = prepared;
     if (permission.decision === "ask") {
       const requestId = `approval-${(approvalCounter += 1)}`;
-      const approvalRequest: ApprovalRequest = {
-        id: requestId,
-        capability: "godot.probe_project",
-        toolName,
-        summary: summarizeProbePreview(preview),
+      const approvalRequest: ApprovalRequest = adapter.buildApprovalRequest(
+        requestId,
+        adapter.capability,
         preview,
         digest,
-      };
+      );
       yield {
         type: "approval_requested",
         requestId,
         toolName,
-        capability: "godot.probe_project",
+        capability: adapter.capability,
         summary: approvalRequest.summary,
       };
       yield {
@@ -668,7 +798,7 @@ export function createSolarisApplication(
       } catch {
         decision = {
           type: "deny",
-          reason: "The approval reviewer failed; the probe was denied.",
+          reason: "The approval reviewer failed; the request was denied.",
         };
       } finally {
         pendingApproval = false;
@@ -686,22 +816,22 @@ export function createSolarisApplication(
       if (decision.type !== "approve_once") {
         if (decision.type === "cancelled") {
           yield { type: "tool_cancelled", callId, toolName };
-          return { status: "cancelled", message: "The project probe approval was cancelled." };
+          return { status: "cancelled", message: adapter.cancelledMessage };
         }
-        const message = decision.reason ?? "The project probe was denied by the user.";
+        const message = decision.reason ?? adapter.deniedMessage;
         yield { type: "tool_failed", callId, toolName, message };
         return { status: "denied", message };
       }
     }
     let result: ToolExecutionResult;
     try {
-      result = await tool.executePrepared(probe, {
+      result = await adapter.executePrepared(handle, {
         ...(signal === undefined ? {} : { signal }),
         approvedDigest: digest,
       });
     } catch (error: unknown) {
       if (signal?.aborted || isCancellationError(error)) {
-        result = { status: "cancelled", message: "The project probe was cancelled." };
+        result = { status: "cancelled", message: adapter.cancelledMessage };
       } else {
         result = { status: "failed", message: describeError(error) };
       }
@@ -1060,6 +1190,13 @@ function summarizeProbePreview(preview: {
     `.NET ${risks.dotnetProjects}`,
   ];
   return `recovery-mode project probe (${parts.join(", ")})`;
+}
+
+function summarizeDiagnosticPreview(preview: GodotDiagnosticPreview): string {
+  const scripts = preview.scripts;
+  const scope =
+    scripts.paths !== null ? scripts.paths.join(", ") : `${scripts.count} project scripts`;
+  return `GDScript check-only diagnostics (${scope})`;
 }
 
 function readCheckpointId(output: JsonValue): string | null {

@@ -4,6 +4,8 @@ export type Capability =
   | "git.inspect"
   | "godot.inspect"
   | "godot.probe_project"
+  | "godot.api"
+  | "godot.diagnose"
   | "process.execute"
   | "network.outbound";
 

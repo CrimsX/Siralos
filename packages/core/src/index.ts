@@ -101,9 +101,15 @@ export {
   type WorkspaceFileState,
 } from "./checkpoints/undo-plan.js";
 export type { UndoOutcome, UndoService } from "./checkpoints/undo-service.js";
+export {
+  isPreparedDiagnosticTool,
+  type GodotDiagnosticToolPreparationResult,
+  type PreparedDiagnosticTool,
+} from "./tools/prepared-diagnostic-tool.js";
 export type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "./security/approval.js";
 export { DEFAULT_MAX_PENDING_APPROVAL_MS } from "./security/approval.js";
 export type {
+  GodotDiagnosticApprovalRequest,
   GodotProjectProbeApprovalRequest,
   ProcessExecutionApprovalRequest,
   WorkspaceWriteApprovalRequest,
@@ -115,6 +121,7 @@ export type {
 } from "./security/change-preview.js";
 export {
   DEVELOP_OFFLINE_PROFILE,
+  GODOT_DIAGNOSTICS_OFFLINE_PROFILE,
   GODOT_PROBE_OFFLINE_PROFILE,
   GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
   INSPECT_PROFILE,
@@ -250,3 +257,52 @@ export type {
   ProjectMirrorRequest,
   ProjectMirrorVerification,
 } from "./godot/mirror.js";
+export type {
+  GodotApiIndex,
+  GodotApiLookupResult,
+  GodotApiParameter,
+  GodotApiSearchOutcome,
+  GodotApiSearchQuery,
+  GodotApiSearchRank,
+  GodotApiSearchResult,
+  GodotApiSymbol,
+  GodotApiSymbolDetails,
+  GodotApiSymbolKind,
+  GodotApiType,
+} from "./godot/api.js";
+export { godotSymbolId } from "./godot/api.js";
+export {
+  KNOWLEDGE_SCHEMA_VERSION,
+  classifyGodotManualChannel,
+  computeGodotKnowledgeProfileDigest,
+  validateGodotKnowledgeCache,
+  type GodotKnowledge,
+  type GodotKnowledgeBase,
+  type GodotKnowledgeCacheValidation,
+  type GodotKnowledgeLookupResult,
+  type GodotKnowledgeProfileV1,
+  type GodotKnowledgeQueryResult,
+  type GodotKnowledgeRefreshResult,
+  type GodotKnowledgeState,
+  type GodotKnowledgeStatus,
+  type GodotKnowledgeSupport,
+} from "./godot/knowledge.js";
+export {
+  aggregateGDScriptDiagnostics,
+  computeGodotPreparedCheckDigest,
+  createPreparedGDScriptCheck,
+  type GDScriptCheckResult,
+  type GodotCheckPreparationResult,
+  type GodotDiagnostics,
+  type GodotDiagnosticsExecutionContext,
+  type GodotDiagnosticsRequest,
+  type GodotDiagnosticsState,
+  type GodotDiagnosticsStatus,
+  type GodotDiagnosticsSupport,
+  type GodotDiagnosticPreview,
+  type GodotGDScriptDiagnostic,
+  type GodotPreparedCheckDigestParts,
+  type GodotProjectCheckResult,
+  type GodotScriptCheckTarget,
+  type PreparedGDScriptCheck,
+} from "./godot/gdscript.js";
