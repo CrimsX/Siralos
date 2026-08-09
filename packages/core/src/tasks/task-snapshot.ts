@@ -38,6 +38,14 @@ export interface TaskRuntimeSnapshot {
   /** Selected Godot engine executable fingerprint, when known. */
   readonly godotEngineFingerprint: string | null;
   readonly workflow: TaskRuntimeSnapshotWorkflowIdentity | null;
+  /**
+   * Revision of the resolved project-instruction inventory that influenced
+   * this task, when the host tracks it (ADR 0017). Historical task
+   * provenance is never silently mutated.
+   */
+  readonly instructionSetRevision: string | null;
+  /** Revision of the project-knowledge state at task start, when tracked. */
+  readonly knowledgeStateRevision: string | null;
 }
 
 export interface TaskRuntimeSnapshotSources {
@@ -48,6 +56,8 @@ export interface TaskRuntimeSnapshotSources {
   readonly workspaceIdentity: string | null;
   readonly godotEngineFingerprint: string | null;
   readonly workflow: TaskRuntimeSnapshotWorkflowIdentity | null;
+  readonly instructionSetRevision?: string | null;
+  readonly knowledgeStateRevision?: string | null;
 }
 
 /** Deterministic revision identity for a capability policy. */
@@ -68,6 +78,8 @@ export function createTaskRuntimeSnapshot(
     workspaceIdentity: sources.workspaceIdentity,
     godotEngineFingerprint: sources.godotEngineFingerprint,
     workflow: sources.workflow === null ? null : { ...sources.workflow },
+    instructionSetRevision: sources.instructionSetRevision ?? null,
+    knowledgeStateRevision: sources.knowledgeStateRevision ?? null,
   };
   return Object.freeze(snapshot);
 }

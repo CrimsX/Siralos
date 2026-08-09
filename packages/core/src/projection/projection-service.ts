@@ -38,6 +38,17 @@ import {
 } from "./tool-projector.js";
 import type { CapabilityPolicy } from "../security/capability.js";
 import type { SandboxProfile } from "../security/profile.js";
+import type { ResolvedInstructionSet } from "../instructions/instruction-model.js";
+import { renderResolvedInstructions } from "../instructions/instruction-model.js";
+import type {
+  KnowledgeRetrievalQuery,
+  KnowledgeRetrievalResult,
+  ProjectKnowledgeFact,
+} from "../knowledge/knowledge-model.js";
+import {
+  renderPinnedKnowledge,
+  renderRetrievedKnowledge,
+} from "../knowledge/knowledge-projection.js";
 
 export type { ProjectionMode } from "./tool-projector.js";
 
@@ -66,7 +77,24 @@ export interface ProjectionServiceOptions {
   /** Read the current task contract request text for contextual segments. */
   readonly getTaskRequest?: () => string | null;
   readonly evidence?: EvidenceProjectionOptions;
-  /** Deterministic stable instructions; defaults to SOLARIS_SYSTEM_INSTRUCTIONS. */
+  /**
+   * Host-owned project-instruction projection. The service consumes a
+   * resolved set; it never resolves or discovers instructions itself.
+   */
+  readonly instructions?: {
+    /** Resolve instructions for the given task focus paths; null when none. */
+    resolve: (focusPaths: readonly string[]) => ResolvedInstructionSet | null;
+  };
+  /**
+   * Host-owned knowledge projection. The service consumes bounded
+   * projections; the KnowledgeCoordinator stays the single writer.
+   */
+  readonly knowledge?: {
+    /** Bounded pinned facts for stable/contextual context. */
+    pinned: () => readonly ProjectKnowledgeFact[];
+    /** Deterministic bounded retrieval for the current turn. */
+    retrieve: (query: KnowledgeRetrievalQuery) => KnowledgeRetrievalResult;
+  }; /** Deterministic stable instructions; defaults to SOLARIS_SYSTEM_INSTRUCTIONS. */
   readonly stableInstructions?: string;
   readonly contextProjector?: ContextProjector;
   readonly toolProjector?: ToolProjector;
@@ -265,6 +293,104 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
     return { ...result, message: view.text };
   }
 
+  /** Paths the current task demonstrably focused on (from read evidence). */
+  function taskFocusPaths(snapshot: TaskState | null): readonly string[] {
+    if (snapshot === null) {
+      return [];
+    }
+    const paths: string[] = [];
+    const seen = new Set<string>();
+    for (const record of snapshot.evidence) {
+      if (record.source.type !== "workspace_read") {
+        continue;
+      }
+      for (const path of record.source.paths) {
+        if (!seen.has(path)) {
+          seen.add(path);
+          paths.push(path);
+        }
+        if (paths.length >= 8) {
+          return paths;
+        }
+      }
+    }
+    return paths;
+  }
+
+  function instructionSegments(
+    snapshot: TaskState | null,
+    resolve: (focusPaths: readonly string[]) => ResolvedInstructionSet | null,
+  ): Array<{
+    readonly id: string;
+    readonly stability: ContextStability;
+    readonly title: string;
+    readonly content: string;
+  }> {
+    const focusPaths = taskFocusPaths(snapshot);
+    const resolved = resolve(focusPaths.length === 0 ? ["."] : focusPaths);
+    if (resolved === null || resolved.instructions.length === 0) {
+      return [];
+    }
+    return [
+      {
+        id: "project-instructions",
+        stability: "contextual",
+        title: "Project instructions",
+        content: renderResolvedInstructions(resolved),
+      },
+    ];
+  }
+
+  function knowledgeSegments(
+    snapshot: TaskState | null,
+    request: string | null,
+    knowledge: {
+      pinned: () => readonly ProjectKnowledgeFact[];
+      retrieve: (query: KnowledgeRetrievalQuery) => KnowledgeRetrievalResult;
+    },
+  ): Array<{
+    readonly id: string;
+    readonly stability: ContextStability;
+    readonly title: string;
+    readonly content: string;
+  }> {
+    const segments: Array<{
+      readonly id: string;
+      readonly stability: ContextStability;
+      readonly title: string;
+      readonly content: string;
+    }> = [];
+    const pinned = knowledge.pinned();
+    if (pinned.length > 0) {
+      segments.push({
+        id: "pinned-project-knowledge",
+        stability: "contextual",
+        title: "Project knowledge",
+        content: renderPinnedKnowledge(pinned),
+      });
+    }
+    // Retrieval basis is task-stable: the task request and the paths the
+    // task demonstrably read. Per-turn user phrasing is intentionally NOT a
+    // signal, so retrieval stays deterministic within a task and the
+    // contextual prefix does not churn between turns.
+    const queryText = request?.trim() ?? "";
+    if (queryText.length > 0) {
+      const retrieved = knowledge.retrieve({
+        text: queryText,
+        paths: taskFocusPaths(snapshot),
+      });
+      if (retrieved.facts.length > 0) {
+        segments.push({
+          id: "retrieved-project-knowledge",
+          stability: "contextual",
+          title: "Task-relevant knowledge",
+          content: renderRetrievedKnowledge(retrieved),
+        });
+      }
+    }
+    return segments;
+  }
+
   function projectContext(): ContextProjection {
     const snapshot = getTaskSnapshot();
     const request = getTaskRequest();
@@ -275,6 +401,12 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
         title: "Solaris instructions",
         content: stableInstructions,
       },
+      ...(options.instructions === undefined
+        ? []
+        : instructionSegments(snapshot, options.instructions.resolve)),
+      ...(options.knowledge === undefined
+        ? []
+        : knowledgeSegments(snapshot, request, options.knowledge)),
       ...taskContextSegments(snapshot, request),
       ...volatileTaskSegments(snapshot),
     ];
