@@ -9,7 +9,7 @@ import { createDefaultPolicy } from "../security/default-policy.js";
 import { INSPECT_PROFILE, type SandboxProfile } from "../security/profile.js";
 import type { ProcessOutputEvent } from "../security/sandbox-backend.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import type { ToolExecutionContext, ToolExecutionResult } from "../tools/tool.js";
+import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult } from "../tools/tool.js";
 import type { PreparedGodotProbe, GodotProbePreview } from "../godot/probe.js";
 import type { GodotDiagnosticPreview, PreparedGDScriptCheck } from "../godot/gdscript.js";
 import type { GDScriptLSPSessionPreview, PreparedGDScriptSession } from "../godot/lsp.js";
@@ -34,6 +34,7 @@ import { MAX_RETAINED_COMMAND_AUDIT_RECORDS } from "../commands/command-events.j
 import type { CommandPreview, PreparedCommand } from "../commands/command-runners.js";
 import type { PermissionEvaluation } from "../security/permission-evaluator.js";
 import { PROCESS_RUN_TOOL_NAME } from "../commands/command-tool.js";
+import type { ProjectionMode, ProjectionService } from "../projection/projection-service.js";
 
 /**
  * Shared shape of the one-time approval protocol for reviewable Godot
@@ -137,6 +138,12 @@ export type ApplicationEvent =
       readonly checkpointId: string;
       readonly path: string;
     }
+  | {
+      readonly type: "context_pressure";
+      readonly state: "normal" | "warn" | "auto" | "hard";
+      readonly estimatedTokens: number;
+      readonly workingMaximum: number;
+    }
   | CommandApplicationEvent;
 
 export interface SessionStatus {
@@ -161,6 +168,15 @@ export interface SolarisApplicationDependencies {
    * finished reviewing validation evidence.
    */
   readonly onProviderTurnCompleted?: () => void;
+  /**
+   * Optional host-owned projection service. When configured, every provider
+   * request is projected (context segments, tool visibility, evidence
+   * views) and preflighted against the working context budget before the
+   * provider is invoked; hard pressure blocks the call entirely. When
+   * absent, requests are built as before (raw history + policy-filtered
+   * registry) — the default keeps existing consumers unchanged.
+   */
+  readonly projection?: ProjectionService;
 }
 
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
@@ -186,7 +202,11 @@ export const PROVIDER_TURN_LIMITS = {
 } as const;
 
 export interface SolarisApplication {
-  sendPrompt(text: string, signal?: AbortSignal): AsyncIterable<ApplicationEvent>;
+  sendPrompt(
+    text: string,
+    signal?: AbortSignal,
+    options?: { readonly mode?: ProjectionMode },
+  ): AsyncIterable<ApplicationEvent>;
 
   getStatus(): SessionStatus;
 
@@ -252,7 +272,11 @@ export function createSolarisApplication(
   let lastCommandExitCode: number | null = null;
   const commandHistory: CommandAuditRecord[] = [];
 
-  async function* sendPrompt(text: string, signal?: AbortSignal): AsyncIterable<ApplicationEvent> {
+  async function* sendPrompt(
+    text: string,
+    signal?: AbortSignal,
+    options?: { readonly mode?: ProjectionMode },
+  ): AsyncIterable<ApplicationEvent> {
     if (state === "responding") {
       throw new Error("Solaris is already responding to a prompt.");
     }
@@ -266,7 +290,7 @@ export function createSolarisApplication(
           yield { type: "response_cancelled" };
           return;
         }
-        const turn = yield* collectProviderTurn(signal);
+        const turn = yield* collectProviderTurn(signal, options?.mode);
         if (turn.kind === "cancelled") {
           yield { type: "response_cancelled" };
           return;
@@ -370,6 +394,7 @@ export function createSolarisApplication(
 
   async function* collectProviderTurn(
     signal?: AbortSignal,
+    mode?: ProjectionMode,
   ): AsyncGenerator<ApplicationEvent, TurnOutcome, void> {
     const transcriptError = validateConversationItems(history);
     if (transcriptError !== null) {
@@ -378,9 +403,39 @@ export function createSolarisApplication(
         message: `The conversation transcript is structurally invalid; the provider request was blocked: ${transcriptError}`,
       };
     }
+    let requestMessages: readonly ConversationItem[] = history;
+    let requestTools: readonly ToolDefinition[] = toolDefinitions;
+    let requestSystem: string | undefined;
+    if (dependencies.projection !== undefined) {
+      const projected = dependencies.projection.projectRequest({
+        mode: mode ?? "generic",
+        messages: [...history],
+        tools: dependencies.tools.definitions(),
+        providerToolCalling: dependencies.provider.toolCalling !== false,
+      });
+      if (projected.pressure.state !== "normal") {
+        yield {
+          type: "context_pressure",
+          state: projected.pressure.state,
+          estimatedTokens: projected.estimatedTokens,
+          workingMaximum: projected.pressure.workingMaximum,
+        };
+      }
+      if (projected.blocked !== null) {
+        yield {
+          type: "response_failed",
+          message: projected.blocked.reason,
+        };
+        return { kind: "failed", message: projected.blocked.reason };
+      }
+      requestMessages = projected.messages;
+      requestTools = projected.tools.map((info) => info.definition);
+      requestSystem = projected.system ?? undefined;
+    }
     const request: ModelRequest = {
-      messages: [...history],
-      tools: toolDefinitions,
+      messages: [...requestMessages],
+      tools: requestTools,
+      ...(requestSystem === undefined ? {} : { system: requestSystem }),
       ...(signal === undefined ? {} : { signal }),
     };
     let assistantText = "";
@@ -513,6 +568,19 @@ export function createSolarisApplication(
       const message = `Unknown tool: ${call.toolName}.`;
       yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
       return { status: "failed", message };
+    }
+    // Defense in depth: the projected request schema is the model's only
+    // legitimate surface. A provider calling a tool that projection hid is
+    // denied here too — visibility is enforced at the schema boundary, and
+    // enforcement never relies on projection alone.
+    const lastProjection = dependencies.projection?.lastProjection();
+    if (lastProjection !== undefined && lastProjection !== null) {
+      const projectedNames = new Set(lastProjection.tools.map((info) => info.definition.name));
+      if (!projectedNames.has(call.toolName)) {
+        const message = `Tool ${call.toolName} is not in the projected tool schema for this session and was denied before execution.`;
+        yield { type: "tool_failed", callId: call.callId, toolName: call.toolName, message };
+        return { status: "denied", message };
+      }
     }
     const capability = toolCapability(tool);
     const permission = evaluatePermission(capability, policy, profile);
