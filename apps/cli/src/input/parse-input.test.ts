@@ -50,6 +50,16 @@ describe("parseInput", () => {
       command: "godot-doctor",
       args: [],
     });
+    expect(parseInput("/godot-probe")).toEqual({
+      type: "command",
+      command: "godot-probe",
+      args: [],
+    });
+    expect(parseInput("/godot-probe-status")).toEqual({
+      type: "command",
+      command: "godot-probe-status",
+      args: [],
+    });
     expect(parseInput("/exit")).toEqual({ type: "command", command: "exit", args: [] });
   });
 

@@ -41,13 +41,15 @@ async function main(): Promise<number> {
   if (args.includes("--godot-doctor")) {
     const godotPath = optionValue(args, "--godot-path");
     const godotInstallation = optionValue(args, "--godot-installation");
+    const recoveryProbeRequested = args.includes("--recovery-probe");
     const report = await runGodotDoctor({
       ...(godotPath === undefined ? {} : { godotPath }),
       ...(godotInstallation === undefined ? {} : { godotInstallation }),
+      recoveryProbeRequested,
     });
     const sanitizer = new TerminalSanitizer();
     stdout.write(sanitizer.push(formatGodotDoctor(report)) + sanitizer.flush());
-    return godotDoctorExitCode(report);
+    return godotDoctorExitCode(report, recoveryProbeRequested);
   }
   const readline = createInterface({ input: stdin, output: stdout });
   const controls: SessionControls = createSessionControls();
@@ -102,6 +104,7 @@ async function main(): Promise<number> {
     checkpoints,
     git,
     godot,
+    godotProbe,
     undo,
     runners,
   } = await createCliApplication({
@@ -116,12 +119,15 @@ async function main(): Promise<number> {
     security,
     git,
     godot,
+    godotProbe,
+    reviewer,
     checkpoints,
     undo,
     runners,
     sandbox,
   };
   const exitCode = await runInteractiveSession(io, application, sessionInfo, controls, inputQueue);
+  godotProbe.disposeAll();
   readline.close();
   stdin.destroy();
   await sandbox.close();

@@ -65,6 +65,11 @@ function report(overrides: Partial<GodotDoctorReport> = {}): GodotDoctorReport {
     },
     probes: [{ installationId: "primary", probe: "profile", status: "success" }],
     degradedCapabilities: [],
+    recoveryProbe: {
+      state: "unavailable",
+      reason: "no identity-bound launch primitive",
+      platform: "linux",
+    },
     ...overrides,
   };
 }
@@ -140,6 +145,38 @@ describe("godotDoctorExitCode", () => {
       },
     });
     expect(godotDoctorExitCode(mismatched)).toBe(GODOT_DOCTOR_EXIT_CODES.identityMismatch);
+  });
+
+  it("ignores the recovery capability unless it was explicitly requested", () => {
+    const unavailable = report({
+      recoveryProbe: {
+        state: "unavailable",
+        reason: "no identity-bound launch primitive",
+        platform: "linux",
+      },
+    });
+    expect(godotDoctorExitCode(unavailable)).toBe(GODOT_DOCTOR_EXIT_CODES.success);
+    expect(godotDoctorExitCode(unavailable, false)).toBe(GODOT_DOCTOR_EXIT_CODES.success);
+  });
+
+  it("returns the recovery-unavailable code when --recovery-probe is requested and unavailable", () => {
+    const unavailable = report({
+      recoveryProbe: {
+        state: "unavailable",
+        reason: "no identity-bound launch primitive",
+        platform: "linux",
+      },
+    });
+    expect(godotDoctorExitCode(unavailable, true)).toBe(
+      GODOT_DOCTOR_EXIT_CODES.recoveryUnavailable,
+    );
+  });
+
+  it("returns zero for recovery when the capability is truthfully available", () => {
+    const available = report({
+      recoveryProbe: { state: "available", reason: null, platform: "linux" },
+    });
+    expect(godotDoctorExitCode(available, true)).toBe(GODOT_DOCTOR_EXIT_CODES.success);
   });
 });
 

@@ -12,6 +12,9 @@ import type {
   GodotDiscoveryResult,
   GodotDoctorReport,
   GodotProjectProfile,
+  GodotProjectProbeStatus,
+  GodotProbePreview,
+  GodotRecoveryProbeResult,
   GodotSelectedInstallation,
   RegisteredToolInfo,
   SandboxBackendStatus,
@@ -28,6 +31,7 @@ const CAPABILITIES: readonly Capability[] = [
   "workspace.write",
   "git.inspect",
   "godot.inspect",
+  "godot.probe_project",
   "process.execute",
   "network.outbound",
 ];
@@ -57,6 +61,8 @@ export function formatHelp(): string {
   /godot-installations  Show all discovered Godot installations and selection rationale
   /godot-project     Show the static Godot project profile
   /godot-doctor      Run bounded Godot diagnostics
+  /godot-probe       Prepare one recovery-mode Godot project probe (approval required; reports unavailable when the platform cannot bind execution)
+  /godot-probe-status  Show the recovery probe capability and last outcome
   /exit              Close Solaris
 `;
 }
@@ -82,6 +88,7 @@ export interface StatusView {
   readonly godotProjectDetected: boolean;
   readonly godotCompatibility: string | null;
   readonly godotWarningCount: number;
+  readonly projectProbe: string;
 }
 
 export function formatStatus(view: StatusView): string {
@@ -109,6 +116,7 @@ Last command exit: ${view.lastCommandExitCode ?? "none"}
 Command profile: ${view.commandProfile}
 Godot: ${view.godotSelectedInstallation === null ? "no installation selected" : view.godotSelectedInstallation}${view.godotVersion === null ? "" : ` (${view.godotVersion})`}
 Godot project: ${view.godotProjectDetected ? "detected" : "none"}${view.godotCompatibility === null ? "" : `, compatibility: ${view.godotCompatibility}`}${view.godotWarningCount > 0 ? `, warnings: ${view.godotWarningCount}` : ""}
+Recovery probe: ${view.projectProbe}
 `;
 }
 
@@ -726,6 +734,110 @@ export function formatGodotProject(
   return `${lines.join("\n")}\n`;
 }
 
+export function formatGodotProbePreview(preview: GodotProbePreview): string {
+  const risks = preview.risks;
+  const mirror = preview.mirror;
+  const lines = [
+    "Godot project probe requires approval.",
+    "",
+    "Project:",
+    `  ${preview.projectName ?? "(unnamed)"}`,
+    "",
+    "Engine:",
+    `  ${preview.engineVersion}`,
+    `  ${preview.engineEdition} edition`,
+    `  Solaris support: ${preview.support}`,
+    `  Static compatibility: ${preview.compatibility}`,
+    "",
+    "Static risk inventory:",
+    `  @tool scripts         ${risks.toolScripts}`,
+    `  enabled plugins       ${risks.enabledEditorPlugins}`,
+    `  GDExtensions          ${risks.gdextensions}`,
+    `  autoloads             ${risks.autoloads}`,
+    `  .NET projects         ${risks.dotnetProjects}`,
+    "",
+    "Probe isolation:",
+    `  Source workspace     not used as project (never writable)`,
+    `  Disposable mirror    yes (~${formatFileCount(mirror.estimatedFileCount)} files, ${formatBytes(mirror.estimatedBytes)})`,
+    `  Recovery mode        required`,
+    `  Headless editor      yes`,
+    `  Network              denied`,
+    `  Provider secrets     removed`,
+    `  Runtime game         disabled`,
+    `  Project scripts      recovery-mode restricted`,
+    `  Mirror deleted       after probe`,
+    "",
+    "The probe may cause Godot to import resources inside the disposable mirror.",
+    "",
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotProbeTerminal(status: string, message: string): string {
+  return `  \u2715 ${status}: ${sanitizeForDisplay(message)}
+`;
+}
+
+export function formatGodotProbeResult(result: GodotRecoveryProbeResult): string {
+  const lines = [
+    "Recovery probe:",
+    `  Status: ${result.status}`,
+    `  Engine: ${result.engine.version} (${result.engine.installationId})`,
+    `  Recovery mode: ${result.recoveryMode ? "active" : "not used"}`,
+    `  Source workspace loaded: no`,
+    `  Mirror: ${result.mirror.sourceFiles} files, ${formatBytes(result.mirror.sourceBytes)} copied`,
+    `  Generated .godot in mirror: ${result.mirror.generatedGodotDirectory ? `yes (${result.mirror.generatedFiles ?? "?"} files, ${result.mirror.generatedBytes === null ? "unknown" : formatBytes(result.mirror.generatedBytes)})` : "no"}`,
+    `  Import state: ${result.mirror.importState}`,
+    `  Errors: ${result.diagnostics.errors.length}`,
+    `  Warnings: ${result.diagnostics.warnings.length}${result.diagnostics.truncated ? " (truncated)" : ""}`,
+    `  Exit: ${result.process.exitCode === null ? "none" : String(result.process.exitCode)} in ${formatDuration(result.process.durationMs)}${result.process.timedOut ? " (timed out)" : ""}`,
+    `  Workspace integrity: ${result.workspaceIntegrity.unchanged ? "unchanged" : "changed during probe"}${result.workspaceIntegrity.bounded ? " (bounded baseline)" : ""}`,
+    `  Mirror removed: ${result.cleanup.completed ? "yes" : "no"}${result.cleanup.message === undefined ? "" : ` (${result.cleanup.message})`}`,
+  ];
+  if (result.diagnostics.errors.length > 0) {
+    lines.push("  Errors:");
+    for (const error of result.diagnostics.errors.slice(0, 10)) {
+      lines.push(`    [${error.category}] ${sanitizeForDisplay(error.message)}`);
+    }
+  }
+  if (result.diagnostics.warnings.length > 0) {
+    lines.push("  Warnings:");
+    for (const warning of result.diagnostics.warnings.slice(0, 10)) {
+      lines.push(`    [${warning.category}] ${sanitizeForDisplay(warning.message)}`);
+    }
+  }
+  lines.push("");
+  lines.push(
+    "Recovery mode reduces editor-side execution risk but does not make arbitrary",
+    "project data inherently safe. The probe also relies on a disposable mirror",
+    "and the OS sandbox.",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatGodotProbeStatus(status: GodotProjectProbeStatus): string {
+  const lines = [
+    "Project probe:",
+    `  Trust state: ${status.state}`,
+    `  Manifest digest: ${status.lastManifestDigest === null ? "none" : `${status.lastManifestDigest.slice(0, 12)}\u2026`}`,
+    `  Last engine: ${status.lastEngineVersion ?? "none"}`,
+  ];
+  if (status.lastResult === null) {
+    lines.push("  Last result: never run");
+  } else {
+    const result = status.lastResult;
+    lines.push(`  Last result: ${result.status}`);
+    lines.push(
+      `  Diagnostics: ${result.diagnostics.errors.length} errors, ${result.diagnostics.warnings.length} warnings${result.diagnostics.truncated ? " (truncated)" : ""}`,
+    );
+    lines.push(
+      `  Workspace integrity: ${result.workspaceIntegrity.unchanged ? "unchanged" : "changed"}`,
+    );
+    lines.push(`  Mirror removed: ${result.cleanup.completed ? "yes" : "no"}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export function formatGodotDoctor(report: GodotDoctorReport): string {
   const discovery = report.discovery;
   const lines: string[] = [
@@ -747,7 +859,12 @@ export function formatGodotDoctor(report: GodotDoctorReport): string {
     "Cache:",
     `  Schema version: ${report.cache.schemaVersion}`,
     `  Cached profiles: ${report.cache.cachedProfileCount}`,
+    "",
+    `Recovery-mode project probe: ${report.recoveryProbe.state} (${report.recoveryProbe.platform})`,
   ];
+  if (report.recoveryProbe.reason !== null) {
+    lines.push(`  ${sanitizeForDisplay(report.recoveryProbe.reason)}`);
+  }
   lines.push("");
   lines.push(formatGodotInstallations(discovery).trimEnd());
   if (report.degradedCapabilities.length > 0) {

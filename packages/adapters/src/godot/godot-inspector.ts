@@ -7,6 +7,7 @@ import {
   type GodotEngineProfile,
   type GodotInspector,
   type GodotProjectProfile,
+  type GodotRecoveryProbeSupport,
   type GodotSelectedInstallation,
   type GodotSelectionPreference,
   type SandboxBackend,
@@ -32,6 +33,14 @@ export interface GodotInspectorDependencies {
   readonly hostPath: string | null;
   readonly hostPathExt: string | null;
   readonly platform: NodeJS.Platform;
+  /**
+   * Recovery-mode project-probe capability probe. The doctor reports its
+   * truthful support state; when unwired it is reported unavailable so the
+   * doctor can never claim a capability that does not exist.
+   */
+  readonly recoveryProbe?: {
+    support(): Promise<GodotRecoveryProbeSupport>;
+  };
   readonly onEvent?: (event: GodotApplicationEvent) => void;
 }
 
@@ -121,6 +130,20 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
         },
       };
     }
+    let recoveryProbe: GodotRecoveryProbeSupport;
+    if (dependencies.recoveryProbe === undefined) {
+      recoveryProbe = {
+        state: "unavailable",
+        reason: "The recovery-probe capability is not wired in this composition.",
+        platform: dependencies.platform,
+      };
+    } else {
+      recoveryProbe = await dependencies.recoveryProbe.support().catch(() => ({
+        state: "unavailable" as const,
+        reason: "The recovery-probe capability could not be inspected.",
+        platform: dependencies.platform,
+      }));
+    }
     const probes: {
       readonly installationId: string;
       readonly probe: string;
@@ -163,6 +186,7 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
         processTreeRestriction: sandboxStatus.capabilities.processTreeRestriction,
       },
       degradedCapabilities: selectedProfile === null ? [] : selectedProfile.degradedCapabilities,
+      recoveryProbe,
       probes,
     };
   }

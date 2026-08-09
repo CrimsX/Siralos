@@ -8,6 +8,7 @@ import type {
 } from "./engine-profile.js";
 import type { GodotInstallationSource } from "./installations.js";
 import type { GodotProjectProfile } from "./project.js";
+import type { GodotRecoveryProbeSupport } from "./probe.js";
 import type { GodotReleaseChannel, GodotVersion } from "./version.js";
 
 /**
@@ -91,6 +92,12 @@ export interface GodotDoctorReport {
    * `--dump-extension-api` probe). Empty when everything verified.
    */
   readonly degradedCapabilities: readonly string[];
+  /**
+   * Truthful recovery-mode project-probe capability: execution is reported
+   * unavailable unless the platform can mechanically bind the engine launch,
+   * the disposable mirror, and the cleanup to the approved bytes.
+   */
+  readonly recoveryProbe: GodotRecoveryProbeSupport;
   /** Bounded per-probe status lines. */
   readonly probes: readonly {
     readonly installationId: string;

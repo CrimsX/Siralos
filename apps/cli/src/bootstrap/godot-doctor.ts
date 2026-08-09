@@ -5,6 +5,12 @@ export interface GodotDoctorOptions {
   readonly godotPath?: string;
   /** `--godot-installation` override. */
   readonly godotInstallation?: string;
+  /**
+   * `--recovery-probe` flag: the doctor additionally requires the
+   * recovery-mode project-probe capability to be available and exits
+   * nonzero when it is unavailable or fails.
+   */
+  readonly recoveryProbeRequested?: boolean;
   /** Test seam; defaults to the composed application inspector. */
   readonly inspectorFactory?: (options: {
     readonly godotPath?: string;
@@ -36,10 +42,15 @@ export interface GodotDoctorOptions {
  * - 6: degraded result — the selected installation profiled but a required
  *   probe degraded (e.g. a degraded `--help` or `--dump-extension-api`
  *   probe), so capabilities are not fully verified.
+ * - 7: recovery capability unavailable — `--recovery-probe` was explicitly
+ *   requested and the recovery-mode project-probe capability is unavailable
+ *   or failed (execution cannot be bound to the approved bytes).
  *
  * Policy: version/help probes and sandbox readiness are required; a
  * degraded probe result is a nonzero doctor outcome (never a pass). Failed
- * cleanup with uncertain safety surfaces as a probe failure.
+ * cleanup with uncertain safety surfaces as a probe failure. The recovery
+ * capability is reported truthfully in every report but only affects the
+ * exit code when it was explicitly requested.
  */
 export const GODOT_DOCTOR_EXIT_CODES = {
   success: 0,
@@ -49,14 +60,25 @@ export const GODOT_DOCTOR_EXIT_CODES = {
   probeFailure: 4,
   identityMismatch: 5,
   degraded: 6,
+  recoveryUnavailable: 7,
 } as const;
 
 /**
  * Computes the `--godot-doctor` exit code from the report. Returns 0 only
  * for a successful doctor outcome; any degraded required probe is a
- * nonzero degraded result.
+ * nonzero degraded result. When `recoveryProbeRequested` is set, an
+ * unavailable or failed recovery capability is a nonzero result.
  */
-export function godotDoctorExitCode(report: GodotDoctorReport): number {
+export function godotDoctorExitCode(
+  report: GodotDoctorReport,
+  recoveryProbeRequested = false,
+): number {
+  if (
+    recoveryProbeRequested &&
+    (report.recoveryProbe.state !== "available" || report.recoveryProbe.reason !== null)
+  ) {
+    return GODOT_DOCTOR_EXIT_CODES.recoveryUnavailable;
+  }
   const sandbox = report.sandbox;
   if (
     sandbox.state !== "available" ||

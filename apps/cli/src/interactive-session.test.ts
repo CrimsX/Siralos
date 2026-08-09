@@ -22,12 +22,15 @@ import {
   type GodotDiscoveryResult,
   type GodotDoctorReport,
   type GodotInspector,
+  type GodotProbePreview,
+  type GodotProjectProbe,
   type GodotProjectProfile,
   type GodotSelectedInstallation,
   type ModelEvent,
   type ModelProvider,
   type ModelRequest,
   type PreparedCommandTool,
+  type PreparedGodotProbe,
   type SandboxBackend,
   type SandboxBackendStatus,
   type SolarisApplication,
@@ -87,6 +90,7 @@ async function createComposedSession(lines: readonly string[]) {
     security,
     git,
     godot,
+    godotProbe,
     checkpoints,
     undo,
     runners,
@@ -98,6 +102,12 @@ async function createComposedSession(lines: readonly string[]) {
     security,
     git,
     godot,
+    godotProbe,
+    reviewer: {
+      review(): Promise<{ type: "deny"; reason: string }> {
+        return Promise.resolve({ type: "deny", reason: "not configured" });
+      },
+    },
     checkpoints,
     undo,
     runners,
@@ -172,6 +182,12 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     security: createFakeSecurity(),
     git: createStubGit(),
     godot: createStubGodotInspector(),
+    godotProbe: createStubGodotProbe(),
+    reviewer: {
+      review(): Promise<{ type: "deny"; reason: string }> {
+        return Promise.resolve({ type: "deny", reason: "stub reviewer denies" });
+      },
+    },
     checkpoints: createStubCheckpointStore(),
     undo: createStubUndo(),
     runners: createCommandRunnerRegistry([]),
@@ -247,8 +263,62 @@ function createStubGodotInspector(): GodotInspector {
           processTreeRestriction: true,
         },
         degradedCapabilities: [],
+        recoveryProbe: {
+          state: "unavailable",
+          reason: "stub: no identity-bound launch primitive",
+          platform: "linux",
+        },
         probes: [],
       });
+    },
+  };
+}
+
+function createStubGodotProbe(): GodotProjectProbe {
+  return {
+    support(): Promise<{ state: "unavailable"; reason: string; platform: string }> {
+      return Promise.resolve({
+        state: "unavailable",
+        reason: "stub: recovery-mode project probing is unavailable",
+        platform: "linux",
+      });
+    },
+    prepare(): Promise<{ status: "unavailable"; message: string }> {
+      return Promise.resolve({
+        status: "unavailable",
+        message: "stub: recovery-mode project probing is unavailable",
+      });
+    },
+    execute(): Promise<import("@solaris/core").GodotRecoveryProbeResult> {
+      return Promise.resolve({
+        status: "unavailable",
+        engine: { installationId: "", version: "", executableFingerprint: "" },
+        recoveryMode: true,
+        mirror: {
+          sourceFiles: 0,
+          sourceBytes: 0,
+          generatedGodotDirectory: false,
+          generatedBytes: null,
+          generatedFiles: null,
+          importState: "import state unknown",
+        },
+        diagnostics: { errors: [], warnings: [], truncated: false },
+        process: { exitCode: null, durationMs: 0, timedOut: false },
+        workspaceIntegrity: { unchanged: true, bounded: false },
+        cleanup: { completed: true },
+        message: "stub: unavailable",
+      });
+    },
+    status() {
+      return {
+        state: "untrusted",
+        lastResult: null,
+        lastManifestDigest: null,
+        lastEngineVersion: null,
+      };
+    },
+    disposeAll(): void {
+      // no-op
     },
   };
 }
@@ -389,12 +459,13 @@ describe("runInteractiveSession tool activity", () => {
     expect(io.text).toContain("Workspace:");
     // git.status and git.diff are always registered; the adapter gates
     // availability (unavailable backends never execute Git).
-    expect(io.text).toContain("Tools: 11");
+    expect(io.text).toContain("Tools: 12");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
     expect(io.text).toContain("Command runners: 2");
     expect(io.text).toContain("Last command exit: none");
+    expect(io.text).toContain("Recovery probe: never run");
   });
 
   it("renders list-files tool activity and a final response", async () => {
@@ -578,7 +649,120 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     const sessionInfo: SessionInfo = buildSessionInfo();
     await runInteractiveSession(io, createTestApplication(), sessionInfo);
     expect(io.text).toContain("Solaris Godot doctor");
+    expect(io.text).toContain("Recovery-mode project probe: unavailable");
     expect(io.text).toContain("No project code was executed.");
+  });
+
+  it("renders /godot-probe-status truthfully", async () => {
+    const io = new ScriptedIO(["/godot-probe-status", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Project probe:");
+    expect(io.text).toContain("Trust state: untrusted");
+    expect(io.text).toContain("Last result: never run");
+  });
+
+  it("refuses /godot-probe without requesting approval when execution is unavailable", async () => {
+    const io = new ScriptedIO(["/godot-probe", "/exit"]);
+    const sessionInfo: SessionInfo = buildSessionInfo();
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("unavailable");
+    expect(io.text).not.toContain("approval approved");
+  });
+
+  it("runs the full approved /godot-probe flow when execution is available", async () => {
+    const io = new ScriptedIO(["/godot-probe", "/exit"]);
+    const readyProbe: GodotProjectProbe = {
+      support(): Promise<{ state: "available"; reason: null; platform: string }> {
+        return Promise.resolve({ state: "available", reason: null, platform: "linux" });
+      },
+      prepare(): Promise<{
+        status: "ready";
+        probe: PreparedGodotProbe;
+        preview: GodotProbePreview;
+        digest: string;
+      }> {
+        return Promise.resolve({
+          status: "ready",
+          probe: {} as PreparedGodotProbe,
+          preview: {
+            projectName: "Fixture",
+            engineVersion: "4.7.1.stable.official",
+            installationId: "test-install",
+            engineEdition: "standard",
+            support: "verified",
+            compatibility: "compatible",
+            risks: {
+              toolScripts: 1,
+              enabledEditorPlugins: 0,
+              gdextensions: 0,
+              autoloads: 0,
+              dotnetProjects: 0,
+            },
+            mirror: { estimatedFileCount: 3, estimatedBytes: 99 },
+            isolation: {
+              sourceWorkspace: "not-used-as-project",
+              disposableMirror: true,
+              recoveryMode: true,
+              headless: true,
+              network: "denied",
+              environment: "minimal",
+              stdin: "closed",
+            },
+            manifestDigest: "m".repeat(64),
+          },
+          digest: "d".repeat(64),
+        });
+      },
+      execute(): Promise<import("@solaris/core").GodotRecoveryProbeResult> {
+        return Promise.resolve({
+          status: "unavailable",
+          engine: {
+            installationId: "test-install",
+            version: "4.7.1.stable.official",
+            executableFingerprint: "abc",
+          },
+          recoveryMode: true,
+          mirror: {
+            sourceFiles: 0,
+            sourceBytes: 0,
+            generatedGodotDirectory: false,
+            generatedBytes: null,
+            generatedFiles: null,
+            importState: "import state unknown",
+          },
+          diagnostics: { errors: [], warnings: [], truncated: false },
+          process: { exitCode: null, durationMs: 0, timedOut: false },
+          workspaceIntegrity: { unchanged: true, bounded: false },
+          cleanup: { completed: true },
+          message: "unavailable",
+        });
+      },
+      status() {
+        return {
+          state: "untrusted",
+          lastResult: null,
+          lastManifestDigest: null,
+          lastEngineVersion: null,
+        };
+      },
+      disposeAll(): void {
+        // no-op
+      },
+    };
+    const sessionInfo: SessionInfo = buildSessionInfo({
+      godotProbe: readyProbe,
+      reviewer: {
+        review(): Promise<{ type: "approve_once" }> {
+          return Promise.resolve({ type: "approve_once" });
+        },
+      },
+    });
+    await runInteractiveSession(io, createTestApplication(), sessionInfo);
+    expect(io.text).toContain("Godot project probe requires approval.");
+    expect(io.text).toContain("Static risk inventory:");
+    expect(io.text).toContain("approval approved");
+    expect(io.text).toContain("Recovery probe:");
   });
 
   it("keeps the session alive when Godot inspection fails", async () => {
