@@ -257,3 +257,15 @@ export {
   type GodotSelectionResolution,
 } from "./godot/config/selection-request.js";
 export { GodotSelectionError } from "./godot/errors.js";
+export {
+  createFakeDiagnosticsService,
+  createFakeGitInspector,
+  createFakeLanguageService,
+  createWorkspaceFilePrimitives,
+  sha256Of,
+  sha256OfBytes,
+  type FakeLanguageControl,
+  type FakeLanguageOptions,
+  type FakeParserControl,
+  type FakeSessionControl,
+} from "./godot/development/gdscript-development-testing.js";

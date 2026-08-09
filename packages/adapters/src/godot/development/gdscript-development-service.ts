@@ -177,8 +177,15 @@ export function createGDScriptDevelopmentService(
 ): GDScriptDevelopmentService {
   const now = dependencies.now ?? (() => Date.now());
   const idFactory = dependencies.idFactory ?? (() => randomUUID());
+  // The port declares `onEvent` as a settable service slot. Hosts (the CLI,
+  // behavior harnesses) assign `development.onEvent = listener` after the
+  // service is created, so emission routes through this mutable slot rather
+  // than the creation-time dependency only.
+  const eventListener: { current: ((event: DevelopmentEvent) => void) | undefined } = {
+    current: dependencies.onEvent,
+  };
   const emit = (event: DevelopmentEvent): void => {
-    dependencies.onEvent?.(event);
+    eventListener.current?.(event);
   };
   const executorDependencies: ChangeSetExecutorDependencies = {
     store: dependencies.store,
@@ -1465,7 +1472,7 @@ export function createGDScriptDevelopmentService(
     };
   }
 
-  return {
+  const service: GDScriptDevelopmentService = {
     support,
     prepareStart,
     start,
@@ -1480,6 +1487,15 @@ export function createGDScriptDevelopmentService(
     cancel,
     close,
   };
+  Object.defineProperty(service, "onEvent", {
+    get: () => eventListener.current,
+    set: (listener: ((event: DevelopmentEvent) => void) | undefined) => {
+      eventListener.current = listener;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  return service;
 }
 
 /** Deterministic mapping of a quality status into the workflow vocabulary. */

@@ -195,5 +195,6 @@ export interface GDScriptDevelopmentService {
   /** Stop the workflow and dispose prepared state (session shutdown). */
   close(): Promise<void>;
 
-  onEvent?(event: DevelopmentEvent): void;
+  /** Host-assignable event listener slot (reassignment allowed). */
+  onEvent?: ((event: DevelopmentEvent) => void) | undefined;
 }

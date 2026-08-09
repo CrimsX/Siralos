@@ -1,0 +1,261 @@
+/**
+ * Deterministic behavior-test harness (Stage 3 milestone 1).
+ *
+ * Behavior tests verify user-observable agent/runtime behavior at the
+ * final observable boundary — the task runtime handle API and the full
+ * application tool loop — rather than implementation internals. They are
+ * network-free and deterministic: the deterministic fake provider, fake
+ * language/parser/Git adapters, a real temp filesystem, a real checkpoint
+ * store, and a fixed-clock task runtime.
+ */
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import {
+  DEVELOP_OFFLINE_PROFILE,
+  TASK_RUNTIME_VERSION,
+  capabilityPolicyFingerprint,
+  createDefaultPolicy,
+  createDevelopmentTaskFlow,
+  createSolarisApplication,
+  createTaskRuntime,
+  createTaskRuntimeSnapshot,
+  createToolRegistry,
+  type ApprovalReviewer,
+  type CheckpointStore,
+  type GDScriptDevelopmentPreview,
+  type GDScriptDevelopmentResult,
+  type GDScriptDevelopmentStatus,
+  type SolarisApplication,
+  type TaskRuntime,
+  type TaskRuntimeSnapshotSources,
+  type TaskState,
+} from "@solaris/core";
+import {
+  createDeterministicFakeProvider,
+  createFakeChangeReviewer,
+  createFakeDiagnosticsService,
+  createFakeGitInspector,
+  createFakeLanguageService,
+  createFilesystemCheckpointStore,
+  createGDScriptDevelopmentService,
+  createGodotDevelopmentStatusTool,
+  createWorkspaceApplyTextChangesetTool,
+  createWorkspaceFilePrimitives,
+  createWorkspaceReadTool,
+} from "@solaris/adapters";
+
+export const FIXTURE_PATH = "scripts/player/player.gd";
+export const FIXTURE_CONTENT =
+  "extends CharacterBody2D\n\nfunc _physics_process(delta):\n\tmove_and_slide()\n";
+
+export function sha256Of(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+export function createBehaviorRuntime(): {
+  readonly runtime: TaskRuntime;
+  readonly sources: TaskRuntimeSnapshotSources;
+  readonly now: () => number;
+} {
+  let tick = 1_000_000;
+  const now = (): number => {
+    tick += 10;
+    return tick;
+  };
+  const policy = createDefaultPolicy("develop-offline");
+  const sources: TaskRuntimeSnapshotSources = {
+    runtimeVersion: TASK_RUNTIME_VERSION,
+    provider: { profileId: "deterministic-fake", route: null },
+    sandboxProfileId: DEVELOP_OFFLINE_PROFILE.id,
+    capabilityPolicyRevision: capabilityPolicyFingerprint(policy),
+    workspaceIdentity: "<behavior-workspace>",
+    godotEngineFingerprint: null,
+    workflow: null,
+  };
+  return { runtime: createTaskRuntime({ now }), sources, now };
+}
+
+export function makeSnapshot(sources: TaskRuntimeSnapshotSources, now: () => number) {
+  return createTaskRuntimeSnapshot(sources, now);
+}
+
+export interface TempWorkspace {
+  readonly root: string;
+  cleanup(): Promise<void>;
+}
+
+export async function createTempWorkspace(): Promise<TempWorkspace> {
+  const root = await mkdtemp(join(tmpdir(), "solaris-behavior-"));
+  return {
+    root,
+    cleanup: () => rm(root, { recursive: true, force: true }),
+  };
+}
+
+export interface BehaviorLoopHarness {
+  readonly workspace: TempWorkspace;
+  readonly store: CheckpointStore;
+  readonly application: SolarisApplication;
+  readonly runtime: TaskRuntime;
+  readonly approvals: () => number;
+  readonly status: () => GDScriptDevelopmentStatus;
+  readonly parserControl: ReturnType<typeof createFakeDiagnosticsService>["control"];
+  readonly languageControl: ReturnType<typeof createFakeLanguageService>["control"];
+  /** Prepare + approve + start the workflow and create the task. */
+  startWorkflow(request: string): Promise<GDScriptDevelopmentPreview>;
+  /** Run the provider loop for a request (drains all tool rounds). */
+  runPrompt(request: string): Promise<void>;
+  /** Host finalization after a terminal workflow: fetches the result and evaluates the task gate. */
+  finalizeTask(): Promise<TaskState | null>;
+  /** Cancel an active workflow (host /cancel semantics) and finalize the task. */
+  cancelWorkflow(): Promise<{
+    readonly result: GDScriptDevelopmentResult | null;
+    readonly task: TaskState | null;
+  }>;
+  cleanup(): Promise<void>;
+}
+
+const checkpointRoots: string[] = [];
+
+async function createTempCheckpointStore(workspaceRoot: string): Promise<CheckpointStore> {
+  const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-behavior-cp-"));
+  checkpointRoots.push(rootDirectory);
+  return createFilesystemCheckpointStore({ workspaceRoot, rootDirectory });
+}
+
+export async function cleanupTempCheckpointDirs(): Promise<void> {
+  for (const directory of checkpointRoots.splice(0)) {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+export async function createBehaviorLoopHarness(): Promise<BehaviorLoopHarness> {
+  const workspace = await createTempWorkspace();
+  await writeFile(
+    join(workspace.root, "project.godot"),
+    '[application]\nconfig/name="behavior-fixture"\n',
+    "utf8",
+  );
+  await mkdir(dirname(join(workspace.root, FIXTURE_PATH)), { recursive: true });
+  await writeFile(join(workspace.root, FIXTURE_PATH), FIXTURE_CONTENT, "utf8");
+  const store = await createTempCheckpointStore(workspace.root);
+  const language = createFakeLanguageService();
+  const parser = createFakeDiagnosticsService();
+  let approvals = 0;
+  const reviewer: ApprovalReviewer = {
+    review(): Promise<{ type: "approve_once" }> {
+      approvals += 1;
+      return Promise.resolve({ type: "approve_once" });
+    },
+  };
+  const gitFake = createFakeGitInspector();
+  const fakeReviewer = createFakeChangeReviewer({ scenario: "clean" });
+  const development = createGDScriptDevelopmentService({
+    workspaceRoot: workspace.root,
+    platform: "linux",
+    store,
+    lock: { acquire: () => Promise.resolve(() => undefined) },
+    language: language.service,
+    diagnostics: parser.service,
+    git: gitFake.git,
+    canApplyIdentityBound: true,
+    primitives: createWorkspaceFilePrimitives(workspace.root),
+    qualityStage: {
+      reviewer: fakeReviewer.reviewer,
+      validation: {
+        discovery: {
+          discover: () => Promise.resolve({ packageScripts: null, unreadable: false }),
+        },
+        executor: {
+          run: (step) => Promise.resolve({ step, status: "passed", exitCode: 0, summary: "ok" }),
+        },
+      },
+    },
+    idFactory: () => `wf-${Math.floor(Math.random() * 1_000_000)}`,
+    settling: { hardTimeoutMs: 1000, pollIntervalMs: 1 },
+  });
+  const tools = createToolRegistry([
+    createWorkspaceReadTool(workspace.root),
+    createWorkspaceApplyTextChangesetTool(development),
+    createGodotDevelopmentStatusTool(development),
+  ]);
+  const { runtime, sources, now } = createBehaviorRuntime();
+  const application = createSolarisApplication({
+    provider: createDeterministicFakeProvider(),
+    tools,
+    policy: createDefaultPolicy("develop-offline"),
+    profile: DEVELOP_OFFLINE_PROFILE,
+    reviewer,
+    onProviderTurnCompleted: () => {
+      development.completeFromProviderTurn();
+    },
+  });
+  // One flow per workflow run, like the CLI's /develop handler; the
+  // service's onEvent slot is reassigned for each run.
+  let flow: ReturnType<typeof createDevelopmentTaskFlow> | null = null;
+  return {
+    workspace,
+    store,
+    application,
+    runtime,
+    approvals: () => approvals,
+    status: () => development.status(),
+    parserControl: parser.control,
+    languageControl: language.control,
+    startWorkflow: async (request: string): Promise<GDScriptDevelopmentPreview> => {
+      const prepared = await development.prepareStart(request);
+      if (prepared.status !== "ready") {
+        throw new Error(prepared.message);
+      }
+      const started = await development.start(prepared.workflowId, {
+        approvedDigest: prepared.digest,
+      });
+      if (started.status !== "ready") {
+        throw new Error(started.message);
+      }
+      flow = createDevelopmentTaskFlow({ runtime, sources, now });
+      development.onEvent = (event) => {
+        flow?.handleEvent(event);
+      };
+      flow.start(request, prepared.preview, prepared.digest);
+      return prepared.preview;
+    },
+    runPrompt: async (request: string): Promise<void> => {
+      for await (const _event of application.sendPrompt(request)) {
+        // drain the bounded provider/tool loop
+      }
+    },
+    finalizeTask: async (): Promise<TaskState | null> => {
+      const status = development.status();
+      const session = status.session;
+      if (session === null || session.state.kind !== "terminal") {
+        return null;
+      }
+      // The CLI fetches the final result through the same cancel call.
+      const cancelled = await development.cancel();
+      return flow === null
+        ? null
+        : flow.finish(status, cancelled.status === "cancelled" ? cancelled.result : null);
+    },
+    cancelWorkflow: async (): Promise<{
+      readonly result: GDScriptDevelopmentResult | null;
+      readonly task: TaskState | null;
+    }> => {
+      const cancelled = await development.cancel();
+      const status = development.status();
+      const result = cancelled.status === "cancelled" ? cancelled.result : null;
+      return { result, task: flow === null ? null : flow.finish(status, result) };
+    },
+    cleanup: async (): Promise<void> => {
+      await development.close();
+      await workspace.cleanup();
+      await cleanupTempCheckpointDirs();
+    },
+  };
+}
+
+export async function readWorkspaceFile(workspaceRoot: string, path: string): Promise<string> {
+  return readFile(join(workspaceRoot, path), "utf8");
+}
