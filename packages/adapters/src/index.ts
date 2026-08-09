@@ -76,6 +76,8 @@ export {
   DEFAULT_CHECKPOINT_ROOT,
   DEFAULT_MAX_CHECKPOINTS,
   DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES,
+  DEFAULT_MAX_PREIMAGE_BYTES,
+  MAX_SUPPORTED_PREIMAGE_BYTES,
   type FilesystemCheckpointStoreOptions,
 } from "./checkpoints/filesystem/checkpoint-store.js";
 export {

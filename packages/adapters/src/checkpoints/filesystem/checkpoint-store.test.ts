@@ -1,14 +1,30 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CheckpointOperation, PreparedCheckpoint } from "@solaris/core";
 import {
   CheckpointStorageLimitError,
   checkedByteTotal,
   createFilesystemCheckpointStore,
+  DEFAULT_MAX_PREIMAGE_BYTES,
+  MAX_SUPPORTED_PREIMAGE_BYTES,
+  verifyPreimageBounded,
 } from "./checkpoint-store.js";
+import type { PreimageReadFunction, VerifiedPreimageOutcome } from "./checkpoint-store.js";
 import { reconcileWorkspaceCheckpoints } from "./reconciliation.js";
 import { cleanupTempDirs, registerTempDir } from "../../git/cli/git-test-support.js";
 import { SYMLINKS_SUPPORTED } from "../../tools/workspace/workspace-fixtures.js";
@@ -1042,6 +1058,646 @@ describe("capacity preimage content verification", () => {
       rootDirectory: context.rootDirectory,
     });
     expect((await refreshed.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+});
+
+describe("preimage identity binding", () => {
+  const originalContent = "before content\n";
+
+  function preimagePathOf(context: StoreContext, checkpointId: string): string {
+    return join(checkpointDirOf(context, checkpointId), "preimage.bin");
+  }
+
+  async function realHandleRead(
+    handle: FileHandle,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<number> {
+    const { bytesRead } = await handle.read(buffer, offset, length, position);
+    return bytesRead;
+  }
+
+  it("IDENTITY_SUBSTITUTION_REFUSED: refuses a same-content hard-link substitution between inspection and opening", async () => {
+    let substituted = false;
+    const context = await withStore({
+      retentionPreimageInspectionHook: async (preimagePath: string) => {
+        if (!substituted) {
+          substituted = true;
+          await rm(preimagePath, { force: true });
+          await link(decoyPath, preimagePath);
+        }
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    const decoyPath = join(context.rootDirectory, "decoy.bin");
+    await writeFile(decoyPath, originalContent, "utf8");
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    // The hook's own substitution left preimage.bin as a hard link to the
+    // decoy; restore a fresh real file and prove the store changed nothing
+    // else, then capacity is provable again.
+    await rm(preimagePathOf(context, first.id), { force: true });
+    await writeFile(preimagePathOf(context, first.id), originalContent, "utf8");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses a hard-link substitution with different bytes", async () => {
+    let substituted = false;
+    const context = await withStore({
+      retentionPreimageInspectionHook: async (preimagePath: string) => {
+        if (!substituted) {
+          substituted = true;
+          await rm(preimagePath, { force: true });
+          await link(decoyPath, preimagePath);
+        }
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    const decoyPath = join(context.rootDirectory, "decoy.bin");
+    await writeFile(decoyPath, "tampered bytes!!", "utf8");
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    await rm(preimagePathOf(context, first.id), { force: true });
+    await writeFile(preimagePathOf(context, first.id), originalContent, "utf8");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses a rename replacement with identical bytes", async () => {
+    let renamed = false;
+    const context = await withStore({
+      retentionPreimageInspectionHook: async (preimagePath: string) => {
+        if (!renamed) {
+          renamed = true;
+          await rm(preimagePath, { force: true });
+          await rename(decoyPath, preimagePath);
+        }
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    const decoyPath = join(context.rootDirectory, "decoy.bin");
+    await writeFile(decoyPath, originalContent, "utf8");
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    // The hook renamed the decoy over the preimage pathname; restore both
+    // entries so the tree is byte-for-byte as it was.
+    await rm(preimagePathOf(context, first.id), { force: true });
+    await writeFile(preimagePathOf(context, first.id), originalContent, "utf8");
+    await writeFile(decoyPath, originalContent, "utf8");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("refuses a rename replacement with different bytes", async () => {
+    let renamed = false;
+    const context = await withStore({
+      retentionPreimageInspectionHook: async (preimagePath: string) => {
+        if (!renamed) {
+          renamed = true;
+          await rm(preimagePath, { force: true });
+          await rename(decoyPath, preimagePath);
+        }
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    const decoyPath = join(context.rootDirectory, "decoy.bin");
+    await writeFile(decoyPath, "tampered bytes!!", "utf8");
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    await rm(preimagePathOf(context, first.id), { force: true });
+    await writeFile(preimagePathOf(context, first.id), originalContent, "utf8");
+    await writeFile(decoyPath, "tampered bytes!!", "utf8");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it(
+    "refuses a symlink substitution with identical target bytes",
+    { skip: !SYMLINKS_SUPPORTED },
+    async () => {
+      let linked = false;
+      const context = await withStore({
+        retentionPreimageInspectionHook: async (preimagePath: string) => {
+          if (!linked) {
+            linked = true;
+            await rm(preimagePath, { force: true });
+            await symlink(decoyPath, preimagePath);
+          }
+        },
+      });
+      const first = await context.store.prepare(preparedUpdate());
+      const decoyPath = join(context.rootDirectory, "decoy.bin");
+      await writeFile(decoyPath, originalContent, "utf8");
+      const before = await snapshotTree(context.rootDirectory);
+      await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+        CheckpointStorageLimitError,
+      );
+      await rm(preimagePathOf(context, first.id), { force: true });
+      await writeFile(preimagePathOf(context, first.id), originalContent, "utf8");
+      expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+      expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+    },
+  );
+
+  it(
+    "refuses a symlink substitution with different target bytes",
+    { skip: !SYMLINKS_SUPPORTED },
+    async () => {
+      let linked = false;
+      const context = await withStore({
+        retentionPreimageInspectionHook: async (preimagePath: string) => {
+          if (!linked) {
+            linked = true;
+            await rm(preimagePath, { force: true });
+            await symlink(decoyPath, preimagePath);
+          }
+        },
+      });
+      const first = await context.store.prepare(preparedUpdate());
+      const decoyPath = join(context.rootDirectory, "decoy.bin");
+      await writeFile(decoyPath, "tampered bytes!!", "utf8");
+      const before = await snapshotTree(context.rootDirectory);
+      await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+        CheckpointStorageLimitError,
+      );
+      await rm(preimagePathOf(context, first.id), { force: true });
+      await writeFile(preimagePathOf(context, first.id), originalContent, "utf8");
+      expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+      expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+    },
+  );
+
+  it(
+    "refuses a junction substitution during inspection",
+    { skip: process.platform !== "win32" },
+    async () => {
+      let linked = false;
+      const context = await withStore({
+        retentionPreimageInspectionHook: async (preimagePath: string) => {
+          if (!linked) {
+            linked = true;
+            await rm(preimagePath, { force: true });
+            const { execFileSync } = await import("node:child_process");
+            try {
+              execFileSync("cmd", ["/c", "mklink", "/J", preimagePath, outsideDir], {
+                stdio: "ignore",
+              });
+            } catch {
+              // junction creation unsupported in this environment
+            }
+          }
+        },
+      });
+      const first = await context.store.prepare(preparedUpdate());
+      const outsideDir = await mkdtemp(join(tmpdir(), "solaris-cp-junction-"));
+      registerTempDir(outsideDir);
+      const before = await snapshotTree(context.rootDirectory);
+      await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+        CheckpointStorageLimitError,
+      );
+      await rm(preimagePathOf(context, first.id), { recursive: true, force: true });
+      await writeFile(preimagePathOf(context, first.id), originalContent, "utf8");
+      expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+      expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+    },
+  );
+
+  it("refuses a preimage replaced after opening through the read seam", async () => {
+    let preimagePath = "";
+    let swapped = false;
+    const context = await withStore({
+      preimageReadSeam: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!swapped && preimagePath.length > 0 && bytesRead > 0) {
+          swapped = true;
+          await rm(preimagePath, { force: true });
+          await link(decoyPath, preimagePath);
+        }
+        return bytesRead;
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    preimagePath = preimagePathOf(context, first.id);
+    const decoyPath = join(context.rootDirectory, "decoy.bin");
+    await writeFile(decoyPath, originalContent, "utf8");
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    await rm(preimagePath, { force: true });
+    await writeFile(preimagePath, originalContent, "utf8");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("loadPreimage rejects a preimage substituted after opening", async () => {
+    let preimagePath = "";
+    let swapped = false;
+    const context = await withStore({
+      preimageReadSeam: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!swapped && preimagePath.length > 0 && bytesRead > 0) {
+          swapped = true;
+          await rm(preimagePath, { force: true });
+          await link(decoyPath, preimagePath);
+        }
+        return bytesRead;
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    preimagePath = preimagePathOf(context, first.id);
+    const decoyPath = join(context.rootDirectory, "decoy.bin");
+    await writeFile(decoyPath, originalContent, "utf8");
+    await expect(context.store.loadPreimage(first.id)).rejects.toThrow(/different object/);
+    await rm(preimagePath, { force: true });
+    await writeFile(preimagePath, originalContent, "utf8");
+    const restored = await context.store.loadPreimage(first.id);
+    expect(Buffer.from(restored ?? []).toString("utf8")).toBe(originalContent);
+  });
+});
+
+describe("bounded preimage read loop", () => {
+  const originalContent = "before content\n";
+
+  function stepReader(step: number): PreimageReadFunction {
+    return async (
+      handle: FileHandle,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => {
+      const { bytesRead } = await handle.read(buffer, offset, Math.min(length, step), position);
+      return bytesRead;
+    };
+  }
+
+  async function tempPreimage(content: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "solaris-cp-verify-"));
+    registerTempDir(dir);
+    const filePath = join(dir, "preimage.bin");
+    await writeFile(filePath, content, "utf8");
+    return filePath;
+  }
+
+  async function verifyContent(
+    filePath: string,
+    content: string,
+    maxBytes: number,
+    overrides: Partial<{
+      readonly signal?: AbortSignal | undefined;
+      readonly deadline?: number | undefined;
+      readonly onInspect?: (path: string) => Promise<void> | void;
+      readonly read?: PreimageReadFunction | undefined;
+    }> = {},
+  ): Promise<VerifiedPreimageOutcome> {
+    const bytes = Buffer.from(content, "utf8");
+    return verifyPreimageBounded({
+      path: filePath,
+      expected: { sha256: hashOf(content), byteLength: bytes.length },
+      maxBytes,
+      context: "direct",
+      ...overrides,
+    });
+  }
+
+  function expectVerified(outcome: VerifiedPreimageOutcome): Buffer {
+    if (outcome.status !== "verified") {
+      throw new Error(`expected a verified outcome, got ${outcome.status}`);
+    }
+    return outcome.bytes;
+  }
+
+  it("reconstructs exact content through repeated one-byte reads and checks the full SHA-256", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: stepReader(1),
+    });
+    expect(expectVerified(outcome).toString("utf8")).toBe(originalContent);
+  });
+
+  it("reconstructs exact content through multiple short reads", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: stepReader(3),
+    });
+    expect(expectVerified(outcome).toString("utf8")).toBe(originalContent);
+  });
+
+  it("verifies a zero-byte preimage", async () => {
+    const filePath = await tempPreimage("");
+    const outcome = await verifyContent(filePath, "", 0);
+    expect(expectVerified(outcome).byteLength).toBe(0);
+  });
+
+  it("succeeds at the exact maximum bound", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 15);
+    expect(expectVerified(outcome).toString("utf8")).toBe(originalContent);
+  });
+
+  it("refuses when the file grows past the bound during reading", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let grew = false;
+    const outcome = await verifyContent(filePath, originalContent, 15, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        if (!grew) {
+          grew = true;
+          await writeFile(filePath, `${originalContent}x`, "utf8");
+        }
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/oversized/);
+    }
+  });
+
+  it("refuses a read error after a partial read", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let reads = 0;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        if (reads > 0) {
+          throw new Error("simulated read failure");
+        }
+        reads += 1;
+        const { bytesRead } = await handle.read(buffer, offset, Math.min(length, 5), position);
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/cannot be read/);
+    }
+  });
+
+  it("cancellation between reads stops before the next read", async () => {
+    const controller = new AbortController();
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      signal: controller.signal,
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        controller.abort();
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("aborted");
+  });
+
+  it("deadline expiry between reads stops before the next read", async () => {
+    const deadline = Date.now() + 25;
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      deadline,
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("expired");
+  });
+
+  it("refuses when the path disappears after opening", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        if (bytesRead > 0) {
+          await rm(filePath, { force: true });
+        }
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/disappeared/);
+    }
+  });
+
+  it("refuses when the path changes type after opening", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        if (bytesRead > 0) {
+          await rm(filePath, { force: true });
+          await mkdir(filePath);
+        }
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/no longer resolves/);
+    }
+  });
+
+  it("refuses when the opened handle identity differs from the inspected object", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const decoyPath = join(dirname(filePath), "decoy.bin");
+    await writeFile(decoyPath, originalContent, "utf8");
+    let substituted = false;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      onInspect: async () => {
+        if (!substituted) {
+          substituted = true;
+          await rm(filePath, { force: true });
+          await link(decoyPath, filePath);
+        }
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/identity substitution/);
+    }
+  });
+
+  it("succeeds for an ordinary unchanged regular file", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16);
+    expect(expectVerified(outcome).toString("utf8")).toBe(originalContent);
+  });
+});
+
+describe("preimage size cap", () => {
+  const originalContent = "before content\n";
+
+  it("accepts the default limit", async () => {
+    const context = await withStore({ maxPreimageBytes: DEFAULT_MAX_PREIMAGE_BYTES });
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("accepts a zero limit and still records a zero-byte preimage", async () => {
+    const context = await withStore({ maxPreimageBytes: 0 });
+    const checkpoint = await context.store.prepare(
+      preparedUpdate({
+        before: { exists: true, sha256: hashOf(""), byteLength: 0, bytes: Buffer.alloc(0) },
+      }),
+    );
+    expect(checkpoint.before.byteLength).toBe(0);
+    await expect(
+      context.store.prepare(
+        preparedUpdate({
+          before: {
+            exists: true,
+            sha256: hashOf(originalContent),
+            byteLength: Buffer.byteLength(originalContent),
+            bytes: Buffer.from(originalContent),
+          },
+        }),
+      ),
+    ).rejects.toThrow(/configured maximum/);
+  });
+
+  it("accepts a small custom limit", async () => {
+    const context = await withStore({ maxPreimageBytes: 16 });
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("accepts a limit exactly at the hard cap", async () => {
+    const context = await withStore({ maxPreimageBytes: MAX_SUPPORTED_PREIMAGE_BYTES });
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("rejects one byte over the hard cap", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+    registerTempDir(workspaceRoot);
+    const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+    registerTempDir(rootDirectory);
+    await expect(
+      createFilesystemCheckpointStore({
+        workspaceRoot,
+        rootDirectory,
+        maxPreimageBytes: MAX_SUPPORTED_PREIMAGE_BYTES + 1,
+      }),
+    ).rejects.toThrow(/maxPreimageBytes/);
+  });
+
+  it("rejects Number.MAX_SAFE_INTEGER", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+    registerTempDir(workspaceRoot);
+    const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+    registerTempDir(rootDirectory);
+    await expect(
+      createFilesystemCheckpointStore({
+        workspaceRoot,
+        rootDirectory,
+        maxPreimageBytes: Number.MAX_SAFE_INTEGER,
+      }),
+    ).rejects.toThrow(/maxPreimageBytes/);
+  });
+
+  it("rejects negative, fractional, NaN, and Infinity limits", async () => {
+    for (const maxPreimageBytes of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+      registerTempDir(workspaceRoot);
+      const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+      registerTempDir(rootDirectory);
+      await expect(
+        createFilesystemCheckpointStore({
+          workspaceRoot,
+          rootDirectory,
+          maxPreimageBytes,
+        }),
+      ).rejects.toThrow(/maxPreimageBytes/);
+    }
+  });
+
+  it("creates no checkpoint directory or file when option validation fails", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+    registerTempDir(workspaceRoot);
+    const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+    registerTempDir(rootDirectory);
+    await expect(
+      createFilesystemCheckpointStore({
+        workspaceRoot,
+        rootDirectory,
+        maxPreimageBytes: MAX_SUPPORTED_PREIMAGE_BYTES + 1,
+      }),
+    ).rejects.toThrow(/maxPreimageBytes/);
+    expect(await readdir(rootDirectory)).toEqual([]);
+    expect(await readdir(workspaceRoot)).toEqual([]);
+  });
+
+  it("refuses an unsupported bound at the verifier itself", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "solaris-cp-verify-"));
+    registerTempDir(dir);
+    const filePath = join(dir, "preimage.bin");
+    await writeFile(filePath, "x", "utf8");
+    const outcome = await verifyPreimageBounded({
+      path: filePath,
+      expected: { sha256: hashOf("x"), byteLength: 1 },
+      maxBytes: MAX_SUPPORTED_PREIMAGE_BYTES + 1,
+      context: "direct",
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/bound is unsupported/);
+    }
   });
 });
 

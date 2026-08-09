@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import { mkdir, open, readFile, realpath, rename, lstat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative as pathRelative, sep } from "node:path";
 import type {
@@ -27,18 +29,37 @@ export interface FilesystemCheckpointStoreOptions {
   readonly retentionDeadlineMs?: number;
   /**
    * Test-visible observation point invoked by retention capacity
-   * verification between the preimage lstat and the bounded read, so the
+   * verification between the preimage lstat and the open, so the
    * changed-during-inspection fail-closed path is exercised
    * deterministically. Never invoked by `loadPreimage()` or any other
    * store path.
    */
   readonly retentionPreimageInspectionHook?: (preimagePath: string) => Promise<void> | void;
+  /**
+   * Test-visible seam for the bounded read loop inside preimage
+   * verification (retention capacity and `loadPreimage()` alike), so
+   * short reads, read errors, and mid-verification filesystem changes are
+   * exercised deterministically. The production default calls the real
+   * handle reader.
+   */
+  readonly preimageReadSeam?: PreimageReadFunction | undefined;
 }
 
 export const DEFAULT_CHECKPOINT_ROOT = join(homedir(), ".solaris", "checkpoints");
 export const DEFAULT_MAX_CHECKPOINTS = 100;
 export const DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_MAX_PREIMAGE_BYTES = 1024 * 1024;
+/**
+ * Hard implementation cap for configured preimage limits. The bounded
+ * verifier materializes at most `maxBytes + 1` bytes in a single buffer, so
+ * an unchecked configuration value must never be able to drive a
+ * proportional allocation: this cap keeps `maxBytes + 1` representable and
+ * allocatable within a reasonable resource envelope, safely below Node's
+ * maximum buffer length, and within the 100 MiB per-workspace storage
+ * envelope. Store creation rejects larger configured values (never silently
+ * clamped); the default limit sits at or below the cap.
+ */
+export const MAX_SUPPORTED_PREIMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_METADATA_BYTES = 64 * 1024;
 const MAX_TOOL_NAME_LENGTH = 256;
 const MAX_CREATED_AT_LENGTH = 64;
@@ -144,25 +165,70 @@ export type VerifiedPreimageOutcome =
   | { readonly status: "expired" };
 
 /**
+ * Signature of the bounded read-loop operation inside preimage
+ * verification: reads up to `length` bytes into `buffer` at `offset` from
+ * the explicit `position` and resolves with the actual byte count
+ * (0 means EOF). Mirrors `FileHandle.read`; the production default calls
+ * the real handle reader, tests may substitute a seam.
+ */
+export type PreimageReadFunction = (
+  handle: FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+) => Promise<number>;
+
+async function defaultPreimageRead(
+  handle: FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+): Promise<number> {
+  const { bytesRead } = await handle.read(buffer, offset, length, position);
+  return bytesRead;
+}
+
+/**
+ * Read-only open flags for preimage verification. `O_NOFOLLOW` is applied
+ * on POSIX (where Node exposes it) so a symlink inserted at the leaf
+ * between inspection and opening makes the open itself fail; on Windows the
+ * constant is unavailable, so the open may follow a reparse point and the
+ * handle/path identity comparison rejects it instead. No stronger Windows
+ * no-follow guarantee is claimed.
+ */
+const PREIMAGE_READ_FLAGS =
+  process.platform === "win32" || typeof fsConstants.O_NOFOLLOW !== "number"
+    ? fsConstants.O_RDONLY
+    : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
+
+/**
  * Shared bounded preimage reading and hash verification. This is the single
  * content-verification primitive for BOTH retention capacity verification
- * and `loadPreimage()`: the exact bytes on disk are read (never assumed
- * from a size), capped at `maxBytes + 1`, and required to match the
- * metadata-declared byte length and SHA-256. Symlinks, junctions (detected
- * through the caller's canonical-identity check), directories, and special
- * files are rejected without being opened; non-`ENOENT` inspection failures
- * are reported as `invalid` and are never treated as absence.
+ * and `loadPreimage()`.
  *
- * The single-shot buffer is justified by the per-preimage bound: at most
- * `maxBytes + 1` bytes are ever materialized, the pre-read lstat enforces
- * the bound before any allocation-sensitive read, and the post-read length
- * check enforces it again — so a file grown, shrunk, or substituted between
- * the lstat and the read is detected through a length or hash mismatch and
- * never fully materialized. Cancellation and deadline are honored between
- * every inspection phase, and `onInspect` (used only by the retention pass
- * through the test-visible store option) runs between the lstat and the
- * open so a changed-during-inspection substitution can be exercised
- * deterministically.
+ * Identity binding: the pathname is lstat'd and its stable identity fields
+ * (`dev`/`ino`, bigint) are captured before opening; the path must be a
+ * non-link regular file of an acceptable size. The file is then opened
+ * read-only (`O_NOFOLLOW` on POSIX) and the opened handle must be a regular
+ * file whose identity equals the inspected snapshot, while a fresh path
+ * lstat must still identify the same object. After the bounded read
+ * completes, the handle/path identity pair is verified again before the
+ * result is accepted. Content equality is never a substitute for identity
+ * equality: a same-content replacement (hard link, rename, symlink,
+ * junction, reparse point) is refused. If the platform's identity fields
+ * are unusable (zero `dev`/`ino`), verification fails closed rather than
+ * claiming a binding it cannot prove.
+ *
+ * Bounded read loop: one short read is never treated as EOF. Reading
+ * continues with an explicit offset until EOF, `maxBytes + 1` collected
+ * bytes, cancellation, deadline expiry, a read error, or an identity
+ * mismatch; at most `maxBytes + 1` bytes are ever materialized in a single
+ * buffer (the cap enforced here is `MAX_SUPPORTED_PREIMAGE_BYTES`).
+ * Cancellation and deadline are checked before every read and after the
+ * loop. The handle stays open through the read and the final identity
+ * verification, and is closed on every outcome.
  */
 export async function verifyPreimageBounded(options: {
   readonly path: string;
@@ -172,10 +238,20 @@ export async function verifyPreimageBounded(options: {
   readonly signal?: AbortSignal | undefined;
   readonly deadline?: number | undefined;
   readonly onInspect?: ((path: string) => Promise<void> | void) | undefined;
+  readonly read?: PreimageReadFunction | undefined;
 }): Promise<VerifiedPreimageOutcome> {
-  let stats;
+  if (
+    !isSafeNonNegativeInteger(options.maxBytes) ||
+    options.maxBytes > MAX_SUPPORTED_PREIMAGE_BYTES
+  ) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${options.context} preimage bound is unsupported (${String(options.maxBytes)}).`,
+    };
+  }
+  let inspected;
   try {
-    stats = await lstat(options.path);
+    inspected = await lstat(options.path, { bigint: true });
   } catch (error: unknown) {
     if (isNotFoundError(error)) {
       return { status: "missing" };
@@ -185,17 +261,17 @@ export async function verifyPreimageBounded(options: {
       message: `Checkpoint ${options.context} preimage cannot be inspected: ${describeError(error)}`,
     };
   }
-  const interrupted = verificationInterruption(options.signal, options.deadline);
-  if (interrupted !== null) {
-    return interrupted;
+  const beforeOpen = verificationInterruption(options.signal, options.deadline);
+  if (beforeOpen !== null) {
+    return beforeOpen;
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) {
+  if (inspected.isSymbolicLink() || !inspected.isFile()) {
     return {
       status: "invalid",
       message: `Checkpoint ${options.context} preimage is not a regular file.`,
     };
   }
-  if (stats.size > options.maxBytes) {
+  if (inspected.size > options.maxBytes) {
     return {
       status: "invalid",
       message: `Checkpoint ${options.context} preimage is oversized.`,
@@ -210,50 +286,177 @@ export async function verifyPreimageBounded(options: {
   }
   let handle;
   try {
-    handle = await open(options.path, "r");
+    handle = await open(options.path, PREIMAGE_READ_FLAGS);
   } catch (error: unknown) {
     return {
       status: "invalid",
       message: `Checkpoint ${options.context} preimage cannot be opened: ${describeError(error)}`,
     };
   }
-  let bytes: Buffer;
   try {
+    // The opened handle must be the exact object that was inspected: the
+    // handle identity and a fresh path lstat must both equal the pre-open
+    // snapshot.
+    const afterOpen = await verifyOpenedIdentity(
+      handle,
+      options.path,
+      inspected.dev,
+      inspected.ino,
+      options.context,
+    );
+    if (afterOpen !== null) {
+      return afterOpen;
+    }
+    const readFn = options.read ?? defaultPreimageRead;
     const buffer = Buffer.allocUnsafe(options.maxBytes + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    if (bytesRead > options.maxBytes) {
+    let total = 0;
+    while (true) {
+      const interruption = verificationInterruption(options.signal, options.deadline);
+      if (interruption !== null) {
+        return interruption;
+      }
+      const remaining = buffer.length - total;
+      if (remaining === 0) {
+        break;
+      }
+      let bytesRead: number;
+      try {
+        bytesRead = await readFn(handle, buffer, total, remaining, total);
+      } catch (error: unknown) {
+        return {
+          status: "invalid",
+          message: `Checkpoint ${options.context} preimage cannot be read: ${describeError(error)}`,
+        };
+      }
+      if (bytesRead === 0) {
+        break; // EOF
+      }
+      if (!isSafeNonNegativeInteger(bytesRead) || bytesRead > remaining) {
+        return {
+          status: "invalid",
+          message: `Checkpoint ${options.context} preimage read returned an invalid byte count.`,
+        };
+      }
+      total += bytesRead;
+    }
+    const afterRead = verificationInterruption(options.signal, options.deadline);
+    if (afterRead !== null) {
+      return afterRead;
+    }
+    // The handle must still be the inspected object and the pathname must
+    // still resolve to it after reading completed.
+    const finalIdentity = await verifyOpenedIdentity(
+      handle,
+      options.path,
+      inspected.dev,
+      inspected.ino,
+      options.context,
+    );
+    if (finalIdentity !== null) {
+      return finalIdentity;
+    }
+    if (total > options.maxBytes) {
       return {
         status: "invalid",
         message: `Checkpoint ${options.context} preimage is oversized.`,
       };
     }
-    bytes = buffer.subarray(0, bytesRead);
-  } catch (error: unknown) {
-    return {
-      status: "invalid",
-      message: `Checkpoint ${options.context} preimage cannot be read: ${describeError(error)}`,
-    };
+    const bytes = buffer.subarray(0, total);
+    if (options.expected.byteLength !== null && bytes.length !== options.expected.byteLength) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${options.context} preimage size (${bytes.length} bytes) disagrees with its metadata (${options.expected.byteLength} bytes).`,
+      };
+    }
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    if (options.expected.sha256 !== null && hash !== options.expected.sha256) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${options.context} preimage hash does not match its metadata.`,
+      };
+    }
+    return { status: "verified", bytes };
   } finally {
     await handle.close().catch(() => undefined);
   }
-  const afterRead = verificationInterruption(options.signal, options.deadline);
-  if (afterRead !== null) {
-    return afterRead;
-  }
-  if (options.expected.byteLength !== null && bytes.length !== options.expected.byteLength) {
+}
+
+/**
+ * Platform-aware identity binding check: the opened handle and a fresh
+ * pathname lstat must both be the exact non-link regular file whose
+ * `dev`/`ino` were captured before opening. Identity fields are compared as
+ * bigints (never as case-folded path strings); when either side reports an
+ * unusable identity (zero `dev`/`ino` — possible on filesystems without
+ * stable file identifiers), the check fails closed instead of claiming a
+ * binding that cannot be proven.
+ */
+async function verifyOpenedIdentity(
+  handle: FileHandle,
+  path: string,
+  expectedDev: bigint,
+  expectedIno: bigint,
+  context: string,
+): Promise<{ readonly status: "invalid"; readonly message: string } | null> {
+  let handleStats;
+  try {
+    handleStats = await handle.stat({ bigint: true });
+  } catch (error: unknown) {
     return {
       status: "invalid",
-      message: `Checkpoint ${options.context} preimage size (${bytes.length} bytes) disagrees with its metadata (${options.expected.byteLength} bytes).`,
+      message: `Checkpoint ${context} opened preimage handle cannot be inspected: ${describeError(error)}`,
     };
   }
-  const hash = createHash("sha256").update(bytes).digest("hex");
-  if (options.expected.sha256 !== null && hash !== options.expected.sha256) {
+  if (handleStats.isSymbolicLink() || !handleStats.isFile()) {
     return {
       status: "invalid",
-      message: `Checkpoint ${options.context} preimage hash does not match its metadata.`,
+      message: `Checkpoint ${context} opened preimage object is not a regular file.`,
     };
   }
-  return { status: "verified", bytes };
+  if (!sameFileIdentity(handleStats, expectedDev, expectedIno)) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} opened preimage object differs from the inspected object (identity substitution).`,
+    };
+  }
+  let pathStats;
+  try {
+    pathStats = await lstat(path, { bigint: true });
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${context} preimage path disappeared after it was opened.`,
+      };
+    }
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage path cannot be re-inspected after opening: ${describeError(error)}`,
+    };
+  }
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage path no longer resolves to a non-link regular file.`,
+    };
+  }
+  if (!sameFileIdentity(pathStats, expectedDev, expectedIno)) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage path now resolves to a different object.`,
+    };
+  }
+  return null;
+}
+
+function sameFileIdentity(
+  stats: { readonly dev: bigint; readonly ino: bigint },
+  expectedDev: bigint,
+  expectedIno: bigint,
+): boolean {
+  if (stats.dev === 0n || stats.ino === 0n || expectedDev === 0n || expectedIno === 0n) {
+    return false;
+  }
+  return stats.dev === expectedDev && stats.ino === expectedIno;
 }
 
 function verificationInterruption(
@@ -279,6 +482,11 @@ export async function createFilesystemCheckpointStore(
   requireSafeNonNegativeIntegerOption(maxCheckpoints, "maxCheckpoints");
   requireSafeNonNegativeIntegerOption(maxStorageBytes, "maxStorageBytes");
   requireSafeNonNegativeIntegerOption(maxPreimageBytes, "maxPreimageBytes");
+  if (maxPreimageBytes > MAX_SUPPORTED_PREIMAGE_BYTES) {
+    throw new Error(
+      `Checkpoint store option maxPreimageBytes (${maxPreimageBytes}) exceeds the supported maximum of ${MAX_SUPPORTED_PREIMAGE_BYTES} bytes.`,
+    );
+  }
   if (!Number.isFinite(retentionDeadlineMs)) {
     throw new Error("Checkpoint store option retentionDeadlineMs must be a finite number.");
   }
@@ -594,6 +802,7 @@ export async function createFilesystemCheckpointStore(
             signal,
             deadline,
             onInspect: options.retentionPreimageInspectionHook,
+            read: options.preimageReadSeam,
           });
           if (outcome.status === "aborted") {
             throw new DOMException("Checkpoint preparation was aborted.", "AbortError");
@@ -821,6 +1030,7 @@ export async function createFilesystemCheckpointStore(
       expected: checkpoint.before,
       maxBytes: maxPreimageBytes,
       context: checkpointId,
+      read: options.preimageReadSeam,
     });
     if (outcome.status === "missing") {
       throw new Error(`Checkpoint preimage is missing: ${checkpointId}.`);
