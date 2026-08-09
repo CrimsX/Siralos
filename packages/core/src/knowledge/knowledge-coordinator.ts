@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
+import { isValidResearchSourceRef } from "../research/research-model.js";
 import {
   KNOWLEDGE_LIMITS,
   KNOWLEDGE_RETRIEVAL_SCORING,
@@ -34,6 +35,11 @@ import {
  * retrieves facts. It never touches ToolProjector, CapabilityPolicy,
  * SandboxBackend, or approval rules, and its retrieval output is framed as
  * factual context by the projection layer.
+ *
+ * Research observations never become facts automatically: there is no
+ * automatic proposal path from research evidence into knowledge. A fact may
+ * cite `research_evidence` provenance only through an explicit `propose`
+ * call whose evidence the host verifies (`hasResearchEvidence`).
  */
 
 export type KnowledgeProposalResult =
@@ -49,6 +55,13 @@ export interface KnowledgeCoordinatorOptions {
   readonly hasEvidence?: (evidenceId: string) => boolean;
   /** Validates that a referenced workspace file state exists; rejects when false. */
   readonly hasFile?: (path: string, sha256: string) => boolean;
+  /**
+   * Validates that referenced research evidence exists (host-verified).
+   * `research_evidence` provenance is accepted iff this is provided AND
+   * returns true for the id; otherwise it is rejected with a precise
+   * reason. Research never enters knowledge automatically.
+   */
+  readonly hasResearchEvidence?: (evidenceId: string) => boolean;
   readonly limits?: Partial<Record<keyof typeof KNOWLEDGE_LIMITS, number>>;
 }
 
@@ -93,6 +106,7 @@ export function createKnowledgeCoordinator(
   const secrets = options.secrets ?? [];
   const hasEvidence = options.hasEvidence;
   const hasFile = options.hasFile;
+  const hasResearchEvidence = options.hasResearchEvidence;
   const limits = { ...KNOWLEDGE_LIMITS, ...options.limits };
   // subjectKey -> entry (immutable revisions + current pointer).
   const bySubject = new Map<string, FactEntry>();
@@ -179,6 +193,24 @@ export function createKnowledgeCoordinator(
       }
       if (hasFile !== undefined && !hasFile(ref.path, ref.sha256)) {
         return `The referenced file state "${ref.path}" does not match the current workspace; reread the file before citing it.`;
+      }
+      return null;
+    }
+    if (ref.type === "research_evidence") {
+      if (ref.evidenceId.length === 0) {
+        return "A research-evidence provenance reference requires an evidence id.";
+      }
+      if (!isValidResearchSourceRef(ref.source)) {
+        return "A research-evidence provenance reference requires a valid research source.";
+      }
+      if (typeof ref.fetchedAtMs !== "number" || !Number.isFinite(ref.fetchedAtMs)) {
+        return "A research-evidence provenance reference requires a valid fetch timestamp.";
+      }
+      if (hasResearchEvidence === undefined) {
+        return "Research-evidence provenance requires host verification; no research-evidence verifier is configured.";
+      }
+      if (!hasResearchEvidence(ref.evidenceId)) {
+        return `The referenced research evidence "${ref.evidenceId}" does not exist; a fact cannot cite missing evidence.`;
       }
       return null;
     }

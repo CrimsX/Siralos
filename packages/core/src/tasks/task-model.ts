@@ -1,4 +1,10 @@
 import type { AcceptanceCriterionId } from "./task-contract.js";
+import type {
+  ReferenceAlias,
+  ReferenceId,
+  ReferenceRevision,
+} from "../reference/reference-model.js";
+import type { ResearchSourceRef } from "../research/research-model.js";
 
 /**
  * Authoritative application-owned task state (Stage 3 milestone 1).
@@ -46,7 +52,10 @@ export type EvidenceKind =
   | "parser_result"
   | "lsp_result"
   | "validation_result"
-  | "review_result";
+  | "review_result"
+  | "reference_read"
+  | "reference_search"
+  | "research";
 
 /**
  * Bounded evidence source. Evidence points at already-owned artifacts
@@ -89,7 +98,37 @@ export type EvidenceSource =
       readonly revision?: string;
     }
   | { readonly type: "api_lookup"; readonly symbol: string }
-  | { readonly type: "lsp_query"; readonly query: string };
+  | { readonly type: "lsp_query"; readonly query: string }
+  | {
+      readonly type: "reference_read";
+      readonly referenceId: ReferenceId;
+      readonly alias: ReferenceAlias;
+      /** Registry-bound revision at read time; historical revisions stay immutable. */
+      readonly revision: ReferenceRevision;
+      readonly path: string;
+      readonly mode: "exact" | "structural" | "summary";
+      readonly sha256: string;
+    }
+  | {
+      readonly type: "reference_search";
+      readonly referenceId: ReferenceId;
+      readonly alias: ReferenceAlias;
+      readonly revision: ReferenceRevision;
+      readonly query: string;
+      readonly matchCount: number;
+    }
+  | {
+      readonly type: "research";
+      readonly source: ResearchSourceRef;
+      readonly requestId: string;
+      readonly fetchedAtMs: number;
+      readonly resolvedRevision: string | null;
+      readonly version: string | null;
+      readonly fallback: boolean;
+      /** Bounded first-section excerpt (service-bounded; attach-time byte checks still apply). */
+      readonly excerpt: string;
+      readonly truncated: boolean;
+    };
 
 export interface EvidenceRecord {
   readonly id: string;

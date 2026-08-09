@@ -741,3 +741,108 @@ export {
   type WorkspaceSummaryOptions,
   type WorkspaceSummaryResult,
 } from "./workspace/workspace-summary.js";
+
+// --- Stage 3 milestone 5: references (external read-only sources) ---
+
+export {
+  REFERENCE_ID_PREFIX,
+  REFERENCE_LIMITS,
+  createReferenceId,
+  formatReferenceAlias,
+  referenceDisplayName,
+  referenceIdOf,
+  validateReferenceAlias,
+  type MaterializationStatus,
+  type Reference,
+  type ReferenceAlias,
+  type ReferenceId,
+  type ReferenceKind,
+  type ReferenceLimits,
+  type ReferenceRevision,
+  type ReferenceSource,
+  type ReferenceStatus,
+  type ReferenceTaskBinding,
+  type ReferenceTrustClass,
+  type RepositoryRef,
+  type ResolvedReferenceIdentity,
+} from "./reference/reference-model.js";
+export {
+  isAbsolutePath,
+  normalizeRepositoryOrigin,
+  parseReferenceDeclaration,
+  parseReferenceDeclarationsSection,
+  type ReferenceDeclaration,
+} from "./reference/reference-declaration.js";
+export type {
+  MaterializationOutcome,
+  ReferenceAccessPort,
+  ReferenceListRequest,
+  ReferenceListResult,
+  ReferenceMaterializerPort,
+  ReferenceReadRequest,
+  ReferenceReadResult,
+  ReferenceResolutionOutcome,
+  ReferenceResolverPort,
+  ReferenceSearchRequest,
+  ReferenceSearchResult,
+} from "./reference/reference-ports.js";
+export {
+  createReferenceRegistry,
+  isPathWithin,
+  type ReferenceRefreshResult,
+  type ReferenceRegistry,
+  type ReferenceRegistryOptions,
+} from "./reference/reference-registry.js";
+export {
+  DEFAULT_REFERENCE_VIEW_MAX_BYTES,
+  formatReferenceEvidenceLine,
+  formatReferenceEvidenceView,
+  referenceIdentityAnchor,
+  type ReferenceEvidenceView,
+  type ReferenceObservation,
+} from "./reference/reference-evidence.js";
+
+// --- Stage 3 milestone 5: research (bounded external fetches) ---
+
+export {
+  RESEARCH_LIMITS,
+  computeResearchDocumentId,
+  defaultResearchBounds,
+  isResearchSourceKind,
+  isValidResearchSourceRef,
+  validateResearchRequest,
+  type ResearchBounds,
+  type ResearchContentType,
+  type ResearchDocument,
+  type ResearchDocumentId,
+  type ResearchLink,
+  type ResearchOutcome,
+  type ResearchProvenance,
+  type ResearchRequest,
+  type ResearchSection,
+  type ResearchSourceKind,
+  type ResearchSourceRef,
+} from "./research/research-model.js";
+export type {
+  ResearchSourcePort,
+  ResearchTransportPort,
+  TransportOutcome,
+} from "./research/research-ports.js";
+export {
+  DEFAULT_RESEARCH_VIEW_MAX_BYTES,
+  createResearchService,
+  formatResearchEvidenceView,
+  type ResearchEvidence,
+  type ResearchFetchResult,
+  type ResearchRevisionBound,
+  type ResearchService,
+  type ResearchServiceOptions,
+} from "./research/research-service.js";
+
+// --- Stage 3 milestone 5: projection integration ---
+
+export {
+  MAX_RESEARCH_EVIDENCE_VIEWS,
+  MAX_REFERENCE_EVIDENCE_VIEWS,
+  REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES,
+} from "./projection/projection-service.js";

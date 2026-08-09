@@ -1,5 +1,6 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import type { CapabilityPolicy } from "../security/capability.js";
+import type { ReferenceAlias, ReferenceRevision } from "../reference/reference-model.js";
 
 /**
  * Immutable task-runtime configuration snapshot (Stage 3 milestone 1).
@@ -46,6 +47,12 @@ export interface TaskRuntimeSnapshot {
   readonly instructionSetRevision: string | null;
   /** Revision of the project-knowledge state at task start, when tracked. */
   readonly knowledgeStateRevision: string | null;
+  /**
+   * Reference revisions bound at task start (the registry's `bindTask`
+   * snapshot), newest task-visible; bounded to 16. Historical — a later
+   * registry refresh never mutates a captured task snapshot.
+   */
+  readonly referenceRevisions: readonly { alias: ReferenceAlias; revision: ReferenceRevision }[];
 }
 
 export interface TaskRuntimeSnapshotSources {
@@ -58,6 +65,7 @@ export interface TaskRuntimeSnapshotSources {
   readonly workflow: TaskRuntimeSnapshotWorkflowIdentity | null;
   readonly instructionSetRevision?: string | null;
   readonly knowledgeStateRevision?: string | null;
+  readonly referenceRevisions?: readonly { alias: ReferenceAlias; revision: ReferenceRevision }[];
 }
 
 /** Deterministic revision identity for a capability policy. */
@@ -80,6 +88,9 @@ export function createTaskRuntimeSnapshot(
     workflow: sources.workflow === null ? null : { ...sources.workflow },
     instructionSetRevision: sources.instructionSetRevision ?? null,
     knowledgeStateRevision: sources.knowledgeStateRevision ?? null,
+    referenceRevisions: (sources.referenceRevisions ?? [])
+      .slice(0, 16)
+      .map((entry) => ({ alias: entry.alias, revision: entry.revision })),
   };
   return Object.freeze(snapshot);
 }

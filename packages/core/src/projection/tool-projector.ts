@@ -66,6 +66,8 @@ const MODE_CAPABILITY_ALLOWLIST: Readonly<Record<ProjectionMode, readonly Capabi
     "godot.development",
     "process.execute",
     "network.outbound",
+    "reference.inspect",
+    "research.fetch",
   ],
   development: [
     "workspace.read",
@@ -74,9 +76,21 @@ const MODE_CAPABILITY_ALLOWLIST: Readonly<Record<ProjectionMode, readonly Capabi
     "godot.inspect",
     "godot.api",
     "godot.development",
+    "reference.inspect",
+    // Research tools map to the research.fetch capability; the default
+    // policy denies it in every built-in profile, so research tools stay
+    // hidden unless a policy explicitly permits bounded retrieval.
+    "research.fetch",
   ],
   review: ["workspace.read", "git.inspect", "godot.inspect", "godot.api", "godot.lsp"],
-  inspection: ["workspace.read", "git.inspect", "godot.inspect", "godot.api"],
+  inspection: [
+    "workspace.read",
+    "git.inspect",
+    "godot.inspect",
+    "godot.api",
+    "reference.inspect",
+    "research.fetch",
+  ],
 };
 
 /** Exact tool names a mode may expose (narrower than the capability). */
@@ -91,6 +105,11 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "godot.inspect_project",
     "godot.api_search",
     "godot.api_lookup",
+    "reference.list",
+    "reference.read",
+    "reference.search",
+    "research.repository",
+    "research.godot_docs",
   ],
   review: [
     "workspace.list",
@@ -104,6 +123,13 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "godot.lsp_diagnostics",
     "godot.hover",
     "godot.definition",
+    // Review mode exposes reference inspection by exact tool name (the
+    // reference.inspect capability is allow in every built-in profile) but
+    // never research tools: network.outbound is not in the review-mode
+    // capability allowlist and research names are not in this list.
+    "reference.list",
+    "reference.read",
+    "reference.search",
   ],
   inspection: [
     "workspace.list",
@@ -113,8 +139,21 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "godot.inspect_project",
     "godot.api_search",
     "godot.api_lookup",
+    "reference.list",
+    "reference.read",
+    "reference.search",
+    "research.repository",
+    "research.godot_docs",
   ],
 };
+
+/**
+ * Assembly note (Stage 3 milestone 5): reference tools are registered by
+ * the composition root (CLI) only when the reference registry has at least
+ * one declared reference; research tools are registered only when research
+ * sources are configured. ToolProjector only gates by mode ∩ capability —
+ * it never decides whether references/research exist.
+ */
 
 export interface ToolProjectorOptions {
   readonly policy: CapabilityPolicy;

@@ -46,7 +46,15 @@ export function createDevelopmentTaskSteps(): readonly TaskStepSpec[] {
       id: "investigate",
       description: "Investigate the workspace, API knowledge, and request",
       kind: "research",
-      accepts: ["workspace_read", "api_lookup", "lsp_query", "change_preview"],
+      accepts: [
+        "workspace_read",
+        "api_lookup",
+        "lsp_query",
+        "change_preview",
+        "reference_read",
+        "reference_search",
+        "research",
+      ],
     },
     {
       id: "propose",

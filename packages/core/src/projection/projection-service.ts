@@ -49,6 +49,12 @@ import {
   renderPinnedKnowledge,
   renderRetrievedKnowledge,
 } from "../knowledge/knowledge-projection.js";
+import type { Reference } from "../reference/reference-model.js";
+import type { ReferenceEvidenceView } from "../reference/reference-evidence.js";
+import { formatReferenceEvidenceLine } from "../reference/reference-evidence.js";
+import type { ResearchEvidence } from "../research/research-service.js";
+import { formatResearchEvidenceView } from "../research/research-service.js";
+import { truncateText } from "./evidence-projector.js";
 
 export type { ProjectionMode } from "./tool-projector.js";
 
@@ -96,6 +102,24 @@ export interface ProjectionServiceOptions {
     retrieve: (query: KnowledgeRetrievalQuery) => KnowledgeRetrievalResult;
   }; /** Deterministic stable instructions; defaults to SOLARIS_SYSTEM_INSTRUCTIONS. */
   readonly stableInstructions?: string;
+  /**
+   * Host-owned reference projection (Stage 3 milestone 5). The service
+   * consumes bounded views; the registry stays the single owner of
+   * reference identity.
+   */
+  readonly references?: {
+    list: () => readonly Reference[];
+    /** Bounded recent reference observations, oldest first. */
+    latestEvidence: () => readonly ReferenceEvidenceView[];
+  };
+  /**
+   * Host-owned research projection. The service consumes bounded views;
+   * the ResearchService stays the single coordinator.
+   */
+  readonly research?: {
+    /** Bounded recent research evidence, oldest first. */
+    latestEvidence: () => readonly ResearchEvidence[];
+  };
   readonly contextProjector?: ContextProjector;
   readonly toolProjector?: ToolProjector;
   readonly evidenceProjector?: EvidenceProjector;
@@ -224,6 +248,86 @@ function volatileTaskSegments(snapshot: TaskState | null): Array<{
       content: `evidence ${latest.id} (${latest.kind}) attached${revision === undefined ? "" : ` @ ${revision}`}`,
     },
   ];
+}
+
+/** Combined volatile budget for the reference + research evidence sections. */
+export const REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES = 12 * 1024;
+/** Most recent reference observations rendered per turn. */
+export const MAX_REFERENCE_EVIDENCE_VIEWS = 4;
+/** Most recent research evidence entries rendered per turn. */
+export const MAX_RESEARCH_EVIDENCE_VIEWS = 4;
+
+/**
+ * Volatile `[Reference evidence]` + `[Research evidence]` sections, always
+ * composed AFTER `[Latest evidence]` and last in the segment list. Content
+ * is bounded (4 most recent views/entries each, combined 12 KiB budget
+ * with explicit `… [truncated]`); never includes absolute cache paths, and
+ * never enters stable/contextual segments or instruction/knowledge
+ * sections. Both sections are volatile, so the stable fingerprint is
+ * unaffected by their content.
+ */
+function referenceResearchSegments(options: {
+  readonly references?: {
+    list: () => readonly Reference[];
+    latestEvidence: () => readonly ReferenceEvidenceView[];
+  };
+  readonly research?: { latestEvidence: () => readonly ResearchEvidence[] };
+}): Array<{
+  readonly id: string;
+  readonly stability: ContextStability;
+  readonly title: string;
+  readonly content: string;
+}> {
+  const segments: Array<{
+    readonly id: string;
+    readonly stability: ContextStability;
+    readonly title: string;
+    readonly content: string;
+  }> = [];
+  const encoder = new TextEncoder();
+  let referenceContent = "";
+  let researchContent = "";
+  if (options.references !== undefined) {
+    const views = options.references.latestEvidence().slice(-MAX_REFERENCE_EVIDENCE_VIEWS);
+    referenceContent = views.map((view) => formatReferenceEvidenceLine(view)).join("\n");
+  }
+  if (options.research !== undefined) {
+    const entries = options.research.latestEvidence().slice(-MAX_RESEARCH_EVIDENCE_VIEWS);
+    researchContent = entries
+      .map((entry) => formatResearchEvidenceView(entry, { maxBytes: 4 * 1024 }))
+      .join("\n\n");
+  }
+  const referenceBytes = encoder.encode(referenceContent).length;
+  const researchBytes = encoder.encode(researchContent).length;
+  if (referenceBytes + researchBytes > REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES) {
+    const remainingForResearch = REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES - referenceBytes;
+    if (remainingForResearch > 0) {
+      researchContent = truncateText(researchContent, remainingForResearch).text;
+    } else {
+      researchContent = "";
+      referenceContent = truncateText(
+        referenceContent,
+        REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES,
+      ).text;
+    }
+  }
+  if (referenceContent.length > 0) {
+    segments.push({
+      id: "reference-evidence",
+      stability: "volatile",
+      title: "Reference evidence",
+      content: referenceContent,
+    });
+  }
+  if (researchContent.length > 0) {
+    segments.push({
+      id: "research-evidence",
+      stability: "volatile",
+      title: "Research evidence",
+      content: researchContent,
+    });
+  }
+  return segments;
 }
 
 export function createProjectionService(options: ProjectionServiceOptions): ProjectionService {
@@ -409,6 +513,11 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
         : knowledgeSegments(snapshot, request, options.knowledge)),
       ...taskContextSegments(snapshot, request),
       ...volatileTaskSegments(snapshot),
+      // Reference/research evidence render AFTER [Latest evidence] and last.
+      // The ContextProjector sorts volatile segments by id, and
+      // current-task-evidence < reference-evidence < research-evidence
+      // holds lexically, so the ordering is deterministic.
+      ...referenceResearchSegments(options),
     ];
     return contextProjector.project({ segments });
   }

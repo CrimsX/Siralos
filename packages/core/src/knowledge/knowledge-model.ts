@@ -1,5 +1,6 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import type { EvidenceKind } from "../tasks/task-model.js";
+import type { ResearchSourceRef } from "../research/research-model.js";
 
 /**
  * Structured project knowledge facts (Stage 3 milestone 4).
@@ -32,12 +33,20 @@ export type KnowledgeFactId = string;
 
 /**
  * Provenance reference. Facts point at already-owned artifacts instead of
- * duplicating raw adapter output: task evidence records, or exact
- * workspace file states (path + SHA-256).
+ * duplicating raw adapter output: task evidence records, exact workspace
+ * file states (path + SHA-256), or host-verified research evidence.
+ * Research observations never become facts automatically — a fact may only
+ * cite research evidence that the host verified (`hasResearchEvidence`).
  */
 export type KnowledgeProvenanceRef =
   | { readonly type: "evidence"; readonly evidenceId: string; readonly kind: EvidenceKind }
-  | { readonly type: "workspace_file"; readonly path: string; readonly sha256: string };
+  | { readonly type: "workspace_file"; readonly path: string; readonly sha256: string }
+  | {
+      readonly type: "research_evidence";
+      readonly evidenceId: string;
+      readonly source: ResearchSourceRef;
+      readonly fetchedAtMs: number;
+    };
 
 export interface ProjectKnowledgeFact {
   /** Deterministic identity of this exact revision instance. */
