@@ -242,9 +242,17 @@ const PREIMAGE_READ_FLAGS =
  * must still be a non-link regular file matching the final handle snapshot.
  * A same-inode in-place rewrite during verification changes size and/or the
  * mutation timestamps and is refused; restoring `mtime` cannot hide a
- * changed `ctime`, which user space cannot set. The guarantee is detection
- * of mutation between the pre-read and final snapshots — never atomic
- * protection against a modification occurring after final verification.
+ * changed `ctime`, which user space cannot set. After the final stability
+ * verification the preimage's bytes are re-read once more from the same
+ * handle and must still match the expected byte length and SHA-256: a
+ * same-size in-place rewrite performed by another handle is not reliably
+ * visible through metadata observed on a handle that has not read since the
+ * rewrite (platform-dependent), so this second bounded read pass — which
+ * runs after every mutation window, including EOF and the final-verification
+ * hook — makes the fail-closed guarantee platform-independent. The guarantee
+ * is detection of mutation between the pre-read snapshot and the final
+ * content re-verification — never atomic protection against a modification
+ * occurring after final verification.
  * If the platform's identity or stability fields are unusable (zero
  * `dev`/`ino`, or unrepresentable timestamps), verification fails closed
  * rather than claiming a binding it cannot prove.
@@ -461,6 +469,73 @@ export async function verifyPreimageBounded(options: {
         status: "invalid",
         message: `Checkpoint ${options.context} preimage hash does not match its metadata.`,
       };
+    }
+    // Final content re-verification: the preimage's bytes are re-read once
+    // more from the same handle and must still match the expected byte
+    // length and SHA-256. A same-size in-place rewrite performed by
+    // another handle is not reliably visible through metadata observed on
+    // a handle that has not read since the rewrite, so the stability
+    // comparison alone cannot close every mutation window; the second
+    // bounded read pass runs after every mutation window (the final
+    // data-bearing read, EOF, and the final-verification hook) and makes
+    // the fail-closed guarantee independent of platform metadata caching.
+    if (options.expected.sha256 !== null || options.expected.byteLength !== null) {
+      const reverifyBuffer = Buffer.allocUnsafe(options.maxBytes + 1);
+      let reverifiedTotal = 0;
+      while (true) {
+        const reverifyInterruption = verificationInterruption(options.signal, options.deadline);
+        if (reverifyInterruption !== null) {
+          return reverifyInterruption;
+        }
+        const reverifyRemaining = reverifyBuffer.length - reverifiedTotal;
+        if (reverifyRemaining === 0) {
+          break;
+        }
+        let reverifiedRead: number;
+        try {
+          reverifiedRead = await readFn(
+            handle,
+            reverifyBuffer,
+            reverifiedTotal,
+            reverifyRemaining,
+            reverifiedTotal,
+          );
+        } catch (error: unknown) {
+          return {
+            status: "invalid",
+            message: `Checkpoint ${options.context} preimage cannot be re-read: ${describeError(error)}`,
+          };
+        }
+        if (reverifiedRead === 0) {
+          break; // EOF
+        }
+        if (!isSafeNonNegativeInteger(reverifiedRead) || reverifiedRead > reverifyRemaining) {
+          return {
+            status: "invalid",
+            message: `Checkpoint ${options.context} preimage re-read returned an invalid byte count.`,
+          };
+        }
+        reverifiedTotal += reverifiedRead;
+      }
+      if (reverifiedTotal > options.maxBytes) {
+        return {
+          status: "invalid",
+          message: `Checkpoint ${options.context} preimage is oversized.`,
+        };
+      }
+      const reverifiedBytes = reverifyBuffer.subarray(0, reverifiedTotal);
+      const reverifiedSizeMatches =
+        options.expected.byteLength === null ||
+        reverifiedBytes.length === options.expected.byteLength;
+      const reverifiedHashMatches =
+        options.expected.sha256 === null ||
+        createHash("sha256").update(reverifiedBytes).digest("hex") === options.expected.sha256;
+      if (!reverifiedSizeMatches || !reverifiedHashMatches) {
+        return {
+          status: "invalid",
+          message: `Checkpoint ${options.context} preimage changed during verification (in-place mutation).`,
+        };
+      }
     }
     return { status: "verified", bytes };
   } finally {
