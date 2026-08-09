@@ -154,4 +154,40 @@ export const GODOT_LIMITS = {
   maxPreparedCheckStateBytes: 8 * 1024 * 1024,
   /** Maximum lifetime of a prepared check before it expires. */
   preparedCheckTtlMs: 10 * 60 * 1000,
+
+  // --- Bounded Godot GDScript LSP client ---
+  /** Maximum incoming LSP message body (16 MiB). */
+  lspMessageBodyBytes: 16 * 1024 * 1024,
+  /** Maximum LSP header block (32 KiB). */
+  lspHeaderBytes: 32 * 1024,
+  /** Maximum concurrent pending JSON-RPC requests. */
+  lspMaxPendingRequests: 128,
+  /** Maximum simultaneously open LSP documents. */
+  lspMaxOpenDocuments: 256,
+  /** Maximum normalized diagnostics retained per document. */
+  lspMaxDiagnosticsPerDocument: 2_000,
+  /** Maximum completion items returned per query. */
+  lspMaxCompletionItems: 500,
+  /** Maximum retained hover content bytes (512 KiB). */
+  lspMaxHoverBytes: 512 * 1024,
+  /** Maximum definition locations returned per query. */
+  lspMaxDefinitionLocations: 100,
+  /** LSP session startup timeout (30 seconds). */
+  lspStartupTimeoutMs: 30_000,
+  /** LSP request timeout (15 seconds). */
+  lspRequestTimeoutMs: 15_000,
+  /** LSP session idle timeout (10 minutes). */
+  lspIdleTimeoutMs: 10 * 60 * 1000,
+  /** Maximum LSP session lifetime (30 minutes). */
+  lspMaxSessionLifetimeMs: 30 * 60 * 1000,
+  /** Bounded shutdown wait after LSP shutdown (5 seconds). */
+  lspShutdownTimeoutMs: 5_000,
+  /** LSP session policy version (binds every approval). */
+  lspPolicyVersion: 1,
+  /** Maximum simultaneously prepared LSP sessions. */
+  maxPreparedLSPSessions: 4,
+  /** Maximum aggregate serialized bytes of all prepared LSP session plans. */
+  maxPreparedLSPSessionStateBytes: 8 * 1024 * 1024,
+  /** Maximum lifetime of a prepared LSP session before it expires. */
+  preparedLSPSessionTtlMs: 10 * 60 * 1000,
 } as const;

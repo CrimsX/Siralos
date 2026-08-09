@@ -16,6 +16,10 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           // GDScript diagnostics load and parse project source from a
           // disposable mirror, so they stay one-time approved.
           "godot.diagnose": "ask",
+          // A Godot LSP session runs a recovery editor against a disposable
+          // mirror over loopback; it is one-time approved per session and
+          // never unconditionally allowed by public configuration.
+          "godot.lsp": "ask",
           "workspace.write": "deny",
           "process.execute": "deny",
           "network.outbound": "deny",
@@ -30,6 +34,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.probe_project": "ask",
           "godot.api": "allow",
           "godot.diagnose": "ask",
+          "godot.lsp": "ask",
           "workspace.write": "ask",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -47,6 +52,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           // `allow` for diagnostics anywhere.
           "godot.api": "deny",
           "godot.diagnose": "deny",
+          "godot.lsp": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -64,6 +70,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.probe_project": "deny",
           "godot.api": "deny",
           "godot.diagnose": "deny",
+          "godot.lsp": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -81,6 +88,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.probe_project": "deny",
           "godot.api": "deny",
           "godot.diagnose": "deny",
+          "godot.lsp": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",
@@ -98,6 +106,25 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
           "godot.probe_project": "deny",
           "godot.api": "deny",
           "godot.diagnose": "deny",
+          "godot.lsp": "deny",
+          "workspace.write": "deny",
+          "process.execute": "ask",
+          "network.outbound": "deny",
+        },
+      };
+    case "godot-lsp-local":
+      // Internal execution profile: never user-selectable and never used for
+      // tool permission evaluation. Mirrors validation-offline so permission
+      // evaluation is total; the LSP session is Solaris-fixed.
+      return {
+        rules: {
+          "workspace.read": "allow",
+          "git.inspect": "allow",
+          "godot.inspect": "allow",
+          "godot.probe_project": "deny",
+          "godot.api": "deny",
+          "godot.diagnose": "deny",
+          "godot.lsp": "deny",
           "workspace.write": "deny",
           "process.execute": "ask",
           "network.outbound": "deny",

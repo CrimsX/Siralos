@@ -3,6 +3,7 @@ import type { ChangePreview } from "../security/change-preview.js";
 import type { PreparedCommandTool } from "../commands/command-tool.js";
 import { isPreparedProbeTool, type PreparedProjectProbeTool } from "./prepared-probe-tool.js";
 import type { PreparedDiagnosticTool } from "./prepared-diagnostic-tool.js";
+import type { PreparedLSPSessionTool } from "./prepared-lsp-session-tool.js";
 import type { Tool, ToolExecutionContext, ToolExecutionResult, ToolDefinition } from "./tool.js";
 
 export type ToolPreparationResult =
@@ -34,7 +35,8 @@ export type RegisteredTool =
   | PreparedMutationTool
   | PreparedCommandTool
   | PreparedProjectProbeTool
-  | PreparedDiagnosticTool;
+  | PreparedDiagnosticTool
+  | PreparedLSPSessionTool;
 
 const preparedMutationBrand: unique symbol = Symbol("preparedMutationBrand");
 

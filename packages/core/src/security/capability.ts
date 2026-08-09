@@ -6,6 +6,7 @@ export type Capability =
   | "godot.probe_project"
   | "godot.api"
   | "godot.diagnose"
+  | "godot.lsp"
   | "process.execute"
   | "network.outbound";
 

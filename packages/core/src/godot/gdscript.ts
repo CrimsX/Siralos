@@ -12,7 +12,8 @@ import { GODOT_LIMITS } from "./limits.js";
  * unknown line/column values are never fabricated.
  */
 export interface GodotGDScriptDiagnostic {
-  readonly source: "godot-check-only";
+  /** `godot-check-only` from the parser runner; `godot-lsp` from LSP. */
+  readonly source: "godot-check-only" | "godot-lsp";
   readonly severity: "error" | "warning" | "info" | "unknown";
   /** Workspace-relative path; null when the engine output carries none. */
   readonly path: string | null;

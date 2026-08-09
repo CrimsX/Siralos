@@ -2,6 +2,7 @@ import type { ChangePreview } from "./change-preview.js";
 import type { CommandPreview } from "../commands/command-runners.js";
 import type { GodotProbePreview } from "../godot/probe.js";
 import type { GodotDiagnosticPreview } from "../godot/gdscript.js";
+import type { GDScriptLSPSessionPreview } from "../godot/lsp.js";
 
 export interface WorkspaceWriteApprovalRequest {
   readonly id: string;
@@ -61,11 +62,29 @@ export interface GodotDiagnosticApprovalRequest {
   readonly digest: string;
 }
 
+export interface GodotLSPSessionApprovalRequest {
+  readonly id: string;
+  readonly capability: "godot.lsp";
+  readonly toolName: string;
+  readonly summary: string;
+  /** The immutable language-session preview; approval applies to the digest below. */
+  readonly preview: GDScriptLSPSessionPreview;
+  /**
+   * SHA-256 over the prepared LSP session: the risk-manifest digest, the
+   * executable identity and version, the mirror-copy policy, the LSP
+   * capability set, the sandbox profile, the LSP policy version, and the
+   * session limits. Approval applies to exactly one session; anything
+   * changing before startup is a conflict.
+   */
+  readonly digest: string;
+}
+
 export type ApprovalRequest =
   | WorkspaceWriteApprovalRequest
   | ProcessExecutionApprovalRequest
   | GodotProjectProbeApprovalRequest
-  | GodotDiagnosticApprovalRequest;
+  | GodotDiagnosticApprovalRequest
+  | GodotLSPSessionApprovalRequest;
 
 export type ApprovalDecision =
   | {

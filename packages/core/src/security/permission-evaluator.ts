@@ -83,5 +83,15 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // profile) is the approval gate; no additional profile constraint
       // applies.
       return null;
+    case "godot.lsp":
+      // The GDScript language session is a fixed, Solaris-owned workflow:
+      // the language service itself revalidates the sandbox, the loopback
+      // LSP channel, the disposable mirror, the engine, and the project
+      // manifest before anything runs, and refuses as unavailable when the
+      // platform cannot bind the editor launch and the session lifecycle
+      // to the approved bytes. The policy rule (ask in every user-facing
+      // profile) is the approval gate; no additional profile constraint
+      // applies.
+      return null;
   }
 }

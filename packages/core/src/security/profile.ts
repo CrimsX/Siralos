@@ -4,7 +4,8 @@ export type SandboxProfileId =
   | "validation-offline"
   | "godot-probe-offline"
   | "godot-recovery-probe-offline"
-  | "godot-diagnostics-offline";
+  | "godot-diagnostics-offline"
+  | "godot-lsp-local";
 
 export type WorkspaceAccess = "read-only" | "read-write";
 
@@ -30,6 +31,14 @@ export interface SandboxProfile {
   };
   readonly network: {
     readonly outbound: "deny";
+    /**
+     * Loopback scope intent. `lsp-only` means loopback is limited to the
+     * Solaris-to-Godot LSP channel; enforcement depends on backend
+     * capabilities and is reported truthfully (never claimed when the
+     * backend cannot enforce a port-specific rule). Absent means loopback
+     * is not a permitted channel at all.
+     */
+    readonly loopback?: "denied" | "lsp-only";
   };
   readonly environment: {
     readonly policy: "minimal";
@@ -189,6 +198,42 @@ export const GODOT_RECOVERY_PROBE_OFFLINE_PROFILE: SandboxProfile = {
  * process tree is confined. This profile is never user-selectable and must
  * never be broadened by public configuration.
  */
+/**
+ * Internal effective profile for a Godot GDScript LSP session.
+ *
+ * The disposable project mirror is the only project directory visible to
+ * the recovery-mode editor; the source workspace is never writable and,
+ * where the backend can enforce a host-read allowlist, is excluded from
+ * readable roots entirely. External outbound network is denied; loopback is
+ * intended to be limited to the Solaris-to-Godot LSP channel (`lsp-only`),
+ * and when the backend cannot enforce that port-specific scope the session
+ * reports the isolation as unverified and fails closed rather than
+ * claiming port-specific isolation. This profile is never user-selectable
+ * and must never be broadened by public configuration.
+ */
+export const GODOT_LSP_LOCAL_PROFILE: SandboxProfile = {
+  id: "godot-lsp-local",
+  filesystem: {
+    workspaceAccess: "read-only",
+    protectGitMetadata: true,
+    protectSolarisMetadata: true,
+    denySensitiveProjectFiles: true,
+    excludeWorkspaceRead: true,
+  },
+  process: {
+    enabled: true,
+    timeoutMs: 30 * 60 * 1000,
+    maxOutputBytes: 8 * 1024 * 1024,
+  },
+  network: {
+    outbound: "deny",
+    loopback: "lsp-only",
+  },
+  environment: {
+    policy: "minimal",
+  },
+};
+
 export const GODOT_DIAGNOSTICS_OFFLINE_PROFILE: SandboxProfile = {
   id: "godot-diagnostics-offline",
   filesystem: {
@@ -225,5 +270,7 @@ export function getBuiltInProfile(profileId: SandboxProfileId): SandboxProfile {
       return GODOT_RECOVERY_PROBE_OFFLINE_PROFILE;
     case "godot-diagnostics-offline":
       return GODOT_DIAGNOSTICS_OFFLINE_PROFILE;
+    case "godot-lsp-local":
+      return GODOT_LSP_LOCAL_PROFILE;
   }
 }

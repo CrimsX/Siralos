@@ -12,6 +12,7 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { ToolExecutionContext, ToolExecutionResult } from "../tools/tool.js";
 import type { PreparedGodotProbe, GodotProbePreview } from "../godot/probe.js";
 import type { GodotDiagnosticPreview, PreparedGDScriptCheck } from "../godot/gdscript.js";
+import type { GDScriptLSPSessionPreview, PreparedGDScriptSession } from "../godot/lsp.js";
 import {
   isPreparedCommandTool,
   isPreparedMutationTool,
@@ -22,6 +23,10 @@ import {
   isPreparedDiagnosticTool,
   type PreparedDiagnosticTool,
 } from "../tools/prepared-diagnostic-tool.js";
+import {
+  isPreparedLSPSessionTool,
+  type PreparedLSPSessionTool,
+} from "../tools/prepared-lsp-session-tool.js";
 import type { PreparedProjectProbeTool } from "../tools/prepared-probe-tool.js";
 import type { PreparedCommandTool } from "../commands/command-tool.js";
 import type { CommandAuditRecord, CommandApplicationEvent } from "../commands/command-events.js";
@@ -36,7 +41,7 @@ import { PROCESS_RUN_TOOL_NAME } from "../commands/command-tool.js";
  * the policy says `ask`, and only then executes with the approved digest.
  */
 interface ApprovedToolAdapter<THandle, TPreview> {
-  readonly capability: "godot.probe_project" | "godot.diagnose";
+  readonly capability: "godot.probe_project" | "godot.diagnose" | "godot.lsp";
   prepare(
     input: unknown,
     context: ToolExecutionContext,
@@ -55,7 +60,7 @@ interface ApprovedToolAdapter<THandle, TPreview> {
   executePrepared(handle: THandle, context: ToolExecutionContext): Promise<ToolExecutionResult>;
   buildApprovalRequest(
     id: string,
-    capability: "godot.probe_project" | "godot.diagnose",
+    capability: "godot.probe_project" | "godot.diagnose" | "godot.lsp",
     preview: TPreview,
     digest: string,
   ): ApprovalRequest;
@@ -115,7 +120,11 @@ export type ApplicationEvent =
       readonly requestId: string;
       readonly toolName: string;
       readonly capability:
-        "workspace.write" | "process.execute" | "godot.probe_project" | "godot.diagnose";
+        | "workspace.write"
+        | "process.execute"
+        | "godot.probe_project"
+        | "godot.diagnose"
+        | "godot.lsp";
       readonly summary: string;
     }
   | {
@@ -540,6 +549,18 @@ export function createSolarisApplication(
       yield* emitToolOutcome(call.callId, call.toolName, result);
       return result;
     }
+    if (isPreparedLSPSessionTool(tool)) {
+      const result = yield* runPreparedLSPSessionTool(
+        tool,
+        call.callId,
+        call.toolName,
+        call.input,
+        permission,
+        signal,
+      );
+      yield* emitToolOutcome(call.callId, call.toolName, result);
+      return result;
+    }
     if (!isPreparedMutationTool(tool)) {
       if (permission.decision === "ask") {
         const message =
@@ -729,6 +750,42 @@ export function createSolarisApplication(
       }),
       deniedMessage: "The GDScript check was denied by the user.",
       cancelledMessage: "The GDScript check approval was cancelled.",
+    };
+    return yield* runApprovedTool(adapter, callId, toolName, input, permission, signal);
+  }
+
+  async function* runPreparedLSPSessionTool(
+    tool: PreparedLSPSessionTool,
+    callId: string,
+    toolName: string,
+    input: unknown,
+    permission: PermissionEvaluation,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ApplicationEvent, ToolExecutionResult, void> {
+    const adapter: ApprovedToolAdapter<PreparedGDScriptSession, GDScriptLSPSessionPreview> = {
+      capability: "godot.lsp",
+      prepare: async (toolInput, context) => {
+        const prepared = await tool.prepare(toolInput, context);
+        return prepared.status === "ready"
+          ? {
+              status: "ready",
+              handle: prepared.session,
+              preview: prepared.preview,
+              digest: prepared.digest,
+            }
+          : prepared;
+      },
+      executePrepared: (handle, context) => tool.executePrepared(handle, context),
+      buildApprovalRequest: (id, _capability, preview, digest) => ({
+        id,
+        capability: "godot.lsp" as const,
+        toolName,
+        summary: summarizeLSPSessionPreview(preview),
+        preview,
+        digest,
+      }),
+      deniedMessage: "The Godot language session was denied by the user.",
+      cancelledMessage: "The Godot language session approval was cancelled.",
     };
     return yield* runApprovedTool(adapter, callId, toolName, input, permission, signal);
   }
@@ -1190,6 +1247,11 @@ function summarizeProbePreview(preview: {
     `.NET ${risks.dotnetProjects}`,
   ];
   return `recovery-mode project probe (${parts.join(", ")})`;
+}
+
+function summarizeLSPSessionPreview(preview: GDScriptLSPSessionPreview): string {
+  const project = preview.projectIntelligence;
+  return `Godot GDScript language session (${project.gdscriptFiles} scripts, ${project.toolScripts} @tool, ${project.editorPlugins} plugins)`;
 }
 
 function summarizeDiagnosticPreview(preview: GodotDiagnosticPreview): string {

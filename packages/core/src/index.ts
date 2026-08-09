@@ -106,10 +106,16 @@ export {
   type GodotDiagnosticToolPreparationResult,
   type PreparedDiagnosticTool,
 } from "./tools/prepared-diagnostic-tool.js";
+export {
+  isPreparedLSPSessionTool,
+  type GDScriptLSPSessionToolPreparationResult,
+  type PreparedLSPSessionTool,
+} from "./tools/prepared-lsp-session-tool.js";
 export type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "./security/approval.js";
 export { DEFAULT_MAX_PENDING_APPROVAL_MS } from "./security/approval.js";
 export type {
   GodotDiagnosticApprovalRequest,
+  GodotLSPSessionApprovalRequest,
   GodotProjectProbeApprovalRequest,
   ProcessExecutionApprovalRequest,
   WorkspaceWriteApprovalRequest,
@@ -122,6 +128,7 @@ export type {
 export {
   DEVELOP_OFFLINE_PROFILE,
   GODOT_DIAGNOSTICS_OFFLINE_PROFILE,
+  GODOT_LSP_LOCAL_PROFILE,
   GODOT_PROBE_OFFLINE_PROFILE,
   GODOT_RECOVERY_PROBE_OFFLINE_PROFILE,
   INSPECT_PROFILE,
@@ -309,3 +316,33 @@ export {
   type GodotScriptCheckTarget,
   type PreparedGDScriptCheck,
 } from "./godot/gdscript.js";
+export {
+  computeGDScriptPreparedSessionDigest,
+  createPreparedGDScriptSession,
+  EMPTY_GDScript_LSP_CAPABILITIES,
+  type GDScriptCompletionItem,
+  type GDScriptCompletionResult,
+  type GDScriptDefinitionLocation,
+  type GDScriptDefinitionResult,
+  type GDScriptDiagnosticResult,
+  type GDScriptDocumentRequest,
+  type GDScriptHoverResult,
+  type GDScriptHoverSection,
+  type GDScriptLanguageService,
+  type GDScriptLanguageSession,
+  type GDScriptLanguageSupport,
+  type GDScriptLSPCapabilities,
+  type GDScriptLSPSessionPreview,
+  type GDScriptPosition,
+  type GDScriptPositionRequest,
+  type GDScriptPreparedSessionDigestParts,
+  type GDScriptQueryOutcome,
+  type GDScriptSessionPreparationResult,
+  type GDScriptSessionStartContext,
+  type GDScriptSessionStartResult,
+  type GDScriptSessionState,
+  type GDScriptSessionStatus,
+  type GDScriptSourceRange,
+  type LanguageSessionEvent,
+  type PreparedGDScriptSession,
+} from "./godot/lsp.js";
