@@ -8,7 +8,9 @@ import {
   readdir,
   rename,
   rm,
+  stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -24,7 +26,11 @@ import {
   MAX_SUPPORTED_PREIMAGE_BYTES,
   verifyPreimageBounded,
 } from "./checkpoint-store.js";
-import type { PreimageReadFunction, VerifiedPreimageOutcome } from "./checkpoint-store.js";
+import type {
+  FileVerificationSnapshot,
+  PreimageReadFunction,
+  VerifiedPreimageOutcome,
+} from "./checkpoint-store.js";
 import { reconcileWorkspaceCheckpoints } from "./reconciliation.js";
 import { cleanupTempDirs, registerTempDir } from "../../git/cli/git-test-support.js";
 import { SYMLINKS_SUPPORTED } from "../../tools/workspace/workspace-fixtures.js";
@@ -116,6 +122,58 @@ async function rewriteMetadata(
   const record = await readMetadata(context, id);
   mutate(record);
   await writeFile(metadataPathOf(context, id), JSON.stringify(record, null, 2), "utf8");
+}
+
+async function realHandleRead(
+  handle: FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+): Promise<number> {
+  const { bytesRead } = await handle.read(buffer, offset, length, position);
+  return bytesRead;
+}
+
+async function tempPreimage(content: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "solaris-cp-verify-"));
+  registerTempDir(dir);
+  const filePath = join(dir, "preimage.bin");
+  await writeFile(filePath, content, "utf8");
+  return filePath;
+}
+
+type DirectVerifyOverrides = Partial<{
+  readonly signal: AbortSignal | undefined;
+  readonly deadline: number | undefined;
+  readonly onInspect: ((path: string) => Promise<void> | void) | undefined;
+  readonly read: PreimageReadFunction | undefined;
+  readonly finalVerificationHook: ((path: string) => Promise<void> | void) | undefined;
+  readonly snapshotSeam:
+    ((snapshot: FileVerificationSnapshot) => FileVerificationSnapshot | undefined) | undefined;
+}>;
+
+async function verifyContent(
+  filePath: string,
+  content: string,
+  maxBytes: number,
+  overrides: DirectVerifyOverrides = {},
+): Promise<VerifiedPreimageOutcome> {
+  const bytes = Buffer.from(content, "utf8");
+  return verifyPreimageBounded({
+    path: filePath,
+    expected: { sha256: hashOf(content), byteLength: bytes.length },
+    maxBytes,
+    context: "direct",
+    ...overrides,
+  });
+}
+
+function expectVerified(outcome: VerifiedPreimageOutcome): Buffer {
+  if (outcome.status !== "verified") {
+    throw new Error(`expected a verified outcome, got ${outcome.status}`);
+  }
+  return outcome.bytes;
 }
 
 /**
@@ -1068,17 +1126,6 @@ describe("preimage identity binding", () => {
     return join(checkpointDirOf(context, checkpointId), "preimage.bin");
   }
 
-  async function realHandleRead(
-    handle: FileHandle,
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number,
-  ): Promise<number> {
-    const { bytesRead } = await handle.read(buffer, offset, length, position);
-    return bytesRead;
-  }
-
   it("IDENTITY_SUBSTITUTION_REFUSED: refuses a same-content hard-link substitution between inspection and opening", async () => {
     let substituted = false;
     const context = await withStore({
@@ -1355,42 +1402,6 @@ describe("bounded preimage read loop", () => {
     };
   }
 
-  async function tempPreimage(content: string): Promise<string> {
-    const dir = await mkdtemp(join(tmpdir(), "solaris-cp-verify-"));
-    registerTempDir(dir);
-    const filePath = join(dir, "preimage.bin");
-    await writeFile(filePath, content, "utf8");
-    return filePath;
-  }
-
-  async function verifyContent(
-    filePath: string,
-    content: string,
-    maxBytes: number,
-    overrides: Partial<{
-      readonly signal?: AbortSignal | undefined;
-      readonly deadline?: number | undefined;
-      readonly onInspect?: (path: string) => Promise<void> | void;
-      readonly read?: PreimageReadFunction | undefined;
-    }> = {},
-  ): Promise<VerifiedPreimageOutcome> {
-    const bytes = Buffer.from(content, "utf8");
-    return verifyPreimageBounded({
-      path: filePath,
-      expected: { sha256: hashOf(content), byteLength: bytes.length },
-      maxBytes,
-      context: "direct",
-      ...overrides,
-    });
-  }
-
-  function expectVerified(outcome: VerifiedPreimageOutcome): Buffer {
-    if (outcome.status !== "verified") {
-      throw new Error(`expected a verified outcome, got ${outcome.status}`);
-    }
-    return outcome.bytes;
-  }
-
   it("reconstructs exact content through repeated one-byte reads and checks the full SHA-256", async () => {
     const filePath = await tempPreimage(originalContent);
     const outcome = await verifyContent(filePath, originalContent, 16, {
@@ -1580,6 +1591,285 @@ describe("bounded preimage read loop", () => {
     const filePath = await tempPreimage(originalContent);
     const outcome = await verifyContent(filePath, originalContent, 16);
     expect(expectVerified(outcome).toString("utf8")).toBe(originalContent);
+  });
+});
+
+describe("in-place preimage mutation detection", () => {
+  const originalContent = "before content\n";
+  const tamperedContent = "tampered bytes!";
+
+  function preimagePathOf(context: StoreContext, checkpointId: string): string {
+    return join(checkpointDirOf(context, checkpointId), "preimage.bin");
+  }
+
+  it("IN_PLACE_REWRITE_REFUSED: refuses a same-size in-place rewrite during capacity verification", async () => {
+    let preimagePath = "";
+    let rewrote = false;
+    const context = await withStore({
+      preimageReadSeam: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!rewrote && preimagePath.length > 0 && bytesRead > 0) {
+          // An in-place rewrite of the SAME inode (same size): dev/ino are
+          // preserved; only size/mtime/ctime stability reveals it.
+          rewrote = true;
+          await writeFile(preimagePath, tamperedContent, "utf8");
+        }
+        return bytesRead;
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    preimagePath = preimagePathOf(context, first.id);
+    const before = await snapshotTree(context.rootDirectory);
+    await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
+      CheckpointStorageLimitError,
+    );
+    // The seam's own rewrite left the corrupted content; restore the
+    // original bytes and prove the store changed nothing else.
+    await writeFile(preimagePath, originalContent, "utf8");
+    expect(await snapshotTree(context.rootDirectory)).toEqual(before);
+    expect((await context.store.prepare(preparedUpdate())).state).toBe("prepared");
+  });
+
+  it("loadPreimage rejects the same in-place rewrite", async () => {
+    let preimagePath = "";
+    let rewrote = false;
+    const context = await withStore({
+      preimageReadSeam: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!rewrote && preimagePath.length > 0 && bytesRead > 0) {
+          rewrote = true;
+          await writeFile(preimagePath, tamperedContent, "utf8");
+        }
+        return bytesRead;
+      },
+    });
+    const first = await context.store.prepare(preparedUpdate());
+    preimagePath = preimagePathOf(context, first.id);
+    await expect(context.store.loadPreimage(first.id)).rejects.toThrow(/in-place mutation/);
+    await writeFile(preimagePath, originalContent, "utf8");
+    const restored = await context.store.loadPreimage(first.id);
+    expect(Buffer.from(restored ?? []).toString("utf8")).toBe(originalContent);
+  });
+
+  it("refuses a same-size in-place rewrite immediately after the first read", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let rewrote = false;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!rewrote && bytesRead > 0) {
+          rewrote = true;
+          await writeFile(filePath, tamperedContent, "utf8");
+        }
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/in-place mutation/);
+    }
+  });
+
+  it("refuses a different-size in-place rewrite", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let rewrote = false;
+    const outcome = await verifyContent(filePath, originalContent, 32, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!rewrote && bytesRead > 0) {
+          rewrote = true;
+          await writeFile(filePath, "this content is far too long", "utf8");
+        }
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+  });
+
+  it("refuses an in-place truncation to zero", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let truncated = false;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!truncated && bytesRead > 0) {
+          truncated = true;
+          await writeFile(filePath, "", "utf8");
+        }
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+  });
+
+  it("refuses an in-place append", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let appended = false;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!appended && bytesRead > 0) {
+          appended = true;
+          await writeFile(filePath, `${originalContent}x`, "utf8");
+        }
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+  });
+
+  it("refuses an in-place rewrite during a multi-read sequence", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let reads = 0;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        reads += 1;
+        if (reads === 2) {
+          await writeFile(filePath, tamperedContent, "utf8");
+        }
+        const { bytesRead } = await handle.read(buffer, offset, Math.min(length, 3), position);
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+  });
+
+  it("refuses an in-place rewrite after the final data-bearing read but before EOF is observed", async () => {
+    const filePath = await tempPreimage(originalContent);
+    let rewrote = false;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        if (rewrote) {
+          return 0; // EOF already observed on the previous probe
+        }
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (bytesRead > 0) {
+          rewrote = true;
+          await writeFile(filePath, tamperedContent, "utf8");
+          return bytesRead;
+        }
+        return 0;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+  });
+
+  it("refuses an in-place rewrite after EOF but before final verification via the final-verification hook", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      finalVerificationHook: async () => {
+        await writeFile(filePath, tamperedContent, "utf8");
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/in-place mutation/);
+    }
+  });
+
+  it("refuses an in-place rewrite that restores the original mtime (changed ctime still detected)", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const original = await stat(filePath, { bigint: true });
+    let rewrote = false;
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      read: async (
+        handle: FileHandle,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const bytesRead = await realHandleRead(handle, buffer, offset, length, position);
+        if (!rewrote && bytesRead > 0) {
+          rewrote = true;
+          await writeFile(filePath, tamperedContent, "utf8");
+          // Best-effort mtime restoration (ms precision): even when the
+          // mtime matches, the change time that user space cannot set has
+          // moved and the rewrite is still refused.
+          await utimes(
+            filePath,
+            new Date(Number(original.atimeNs) / 1_000_000),
+            new Date(Number(original.mtimeNs) / 1_000_000),
+          );
+        }
+        return bytesRead;
+      },
+    });
+    expect(outcome.status).toBe("invalid");
+  });
+
+  it("succeeds for an unchanged ordinary file under stability verification", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16);
+    expect(expectVerified(outcome).toString("utf8")).toBe(originalContent);
+  });
+
+  it("succeeds for an unchanged zero-byte file under stability verification", async () => {
+    const filePath = await tempPreimage("");
+    const outcome = await verifyContent(filePath, "", 0);
+    expect(expectVerified(outcome).byteLength).toBe(0);
+  });
+
+  it("fails closed when stability fields are unusable", async () => {
+    const filePath = await tempPreimage(originalContent);
+    const outcome = await verifyContent(filePath, originalContent, 16, {
+      snapshotSeam: (snapshot) => ({
+        ...snapshot,
+        mtimeNs: "unusable" as unknown as bigint,
+      }),
+    });
+    expect(outcome.status).toBe("invalid");
+    if (outcome.status === "invalid") {
+      expect(outcome.message).toMatch(/unusable/);
+    }
   });
 });
 

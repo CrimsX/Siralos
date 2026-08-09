@@ -157,6 +157,23 @@ export function checkedByteTotal(a: number, b: number): number {
   return total;
 }
 
+/**
+ * Immutable verification snapshot captured from the opened handle before
+ * any byte is read. Same object identity (`dev`/`ino`) proves the pathname
+ * and handle address the same object; the size and mutation timestamps
+ * prove the object's CONTENT state did not change in place while it was
+ * being read. Stable `dev`/`ino` alone never proves content stability: an
+ * in-place rewrite preserves them, and only a size/mtime/ctime change
+ * reveals it.
+ */
+export interface FileVerificationSnapshot {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
 export type VerifiedPreimageOutcome =
   | { readonly status: "missing" }
   | { readonly status: "verified"; readonly bytes: Buffer }
@@ -213,13 +230,24 @@ const PREIMAGE_READ_FLAGS =
  * non-link regular file of an acceptable size. The file is then opened
  * read-only (`O_NOFOLLOW` on POSIX) and the opened handle must be a regular
  * file whose identity equals the inspected snapshot, while a fresh path
- * lstat must still identify the same object. After the bounded read
- * completes, the handle/path identity pair is verified again before the
- * result is accepted. Content equality is never a substitute for identity
- * equality: a same-content replacement (hard link, rename, symlink,
- * junction, reparse point) is refused. If the platform's identity fields
- * are unusable (zero `dev`/`ino`), verification fails closed rather than
- * claiming a binding it cannot prove.
+ * lstat must still identify the same object. Content equality is never a
+ * substitute for identity equality: a same-content replacement (hard link,
+ * rename, symlink, junction, reparse point) is refused.
+ *
+ * Stability binding: immediately after opening (before any read) an
+ * immutable snapshot is captured from the opened handle — `dev`, `ino`,
+ * `size`, `mtimeNs`, `ctimeNs` (bigint nanoseconds). After the bounded read
+ * loop, the opened handle must still be a regular file whose identity, size,
+ * and mutation timestamps all equal that snapshot, and a fresh path lstat
+ * must still be a non-link regular file matching the final handle snapshot.
+ * A same-inode in-place rewrite during verification changes size and/or the
+ * mutation timestamps and is refused; restoring `mtime` cannot hide a
+ * changed `ctime`, which user space cannot set. The guarantee is detection
+ * of mutation between the pre-read and final snapshots — never atomic
+ * protection against a modification occurring after final verification.
+ * If the platform's identity or stability fields are unusable (zero
+ * `dev`/`ino`, or unrepresentable timestamps), verification fails closed
+ * rather than claiming a binding it cannot prove.
  *
  * Bounded read loop: one short read is never treated as EOF. Reading
  * continues with an explicit offset until EOF, `maxBytes + 1` collected
@@ -227,7 +255,7 @@ const PREIMAGE_READ_FLAGS =
  * mismatch; at most `maxBytes + 1` bytes are ever materialized in a single
  * buffer (the cap enforced here is `MAX_SUPPORTED_PREIMAGE_BYTES`).
  * Cancellation and deadline are checked before every read and after the
- * loop. The handle stays open through the read and the final identity
+ * loop. The handle stays open through the read and the final stability
  * verification, and is closed on every outcome.
  */
 export async function verifyPreimageBounded(options: {
@@ -239,6 +267,18 @@ export async function verifyPreimageBounded(options: {
   readonly deadline?: number | undefined;
   readonly onInspect?: ((path: string) => Promise<void> | void) | undefined;
   readonly read?: PreimageReadFunction | undefined;
+  /**
+   * Test-visible observation point invoked after the bounded read loop and
+   * before the final stability verification, so an in-place rewrite after
+   * EOF is exercised deterministically.
+   */
+  readonly finalVerificationHook?: ((path: string) => Promise<void> | void) | undefined;
+  /**
+   * Test-visible seam over the pre-read stability snapshot, so unusable or
+   * mutated snapshot fields exercise the fail-closed path deterministically.
+   */
+  readonly snapshotSeam?:
+    ((snapshot: FileVerificationSnapshot) => FileVerificationSnapshot | undefined) | undefined;
 }): Promise<VerifiedPreimageOutcome> {
   if (
     !isSafeNonNegativeInteger(options.maxBytes) ||
@@ -294,9 +334,8 @@ export async function verifyPreimageBounded(options: {
     };
   }
   try {
-    // The opened handle must be the exact object that was inspected: the
-    // handle identity and a fresh path lstat must both equal the pre-open
-    // snapshot.
+    // Post-open identity binding: the opened handle and a fresh path lstat
+    // must both be the exact object that was inspected.
     const afterOpen = await verifyOpenedIdentity(
       handle,
       options.path,
@@ -306,6 +345,45 @@ export async function verifyPreimageBounded(options: {
     );
     if (afterOpen !== null) {
       return afterOpen;
+    }
+    // The immutable stability snapshot is captured from the opened handle
+    // before any byte is read. Identity fields bind the object; size and
+    // mutation timestamps bind its content state, so an in-place rewrite of
+    // the same inode during reading is detected by the final stability
+    // verification.
+    let handleStats;
+    try {
+      handleStats = await handle.stat({ bigint: true });
+    } catch (error: unknown) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${options.context} opened preimage handle cannot be inspected: ${describeError(error)}`,
+      };
+    }
+    if (handleStats.isSymbolicLink() || !handleStats.isFile()) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${options.context} opened preimage object is not a regular file.`,
+      };
+    }
+    let snapshot: FileVerificationSnapshot = {
+      dev: handleStats.dev,
+      ino: handleStats.ino,
+      size: handleStats.size,
+      mtimeNs: handleStats.mtimeNs,
+      ctimeNs: handleStats.ctimeNs,
+    };
+    if (options.snapshotSeam !== undefined) {
+      const altered = options.snapshotSeam(snapshot);
+      if (altered !== undefined) {
+        snapshot = altered;
+      }
+    }
+    if (!isUsableVerificationSnapshot(snapshot)) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${options.context} preimage stability fields are unusable on this filesystem; verification fails closed.`,
+      };
     }
     const readFn = options.read ?? defaultPreimageRead;
     const buffer = Buffer.allocUnsafe(options.maxBytes + 1);
@@ -339,27 +417,36 @@ export async function verifyPreimageBounded(options: {
       }
       total += bytesRead;
     }
-    const afterRead = verificationInterruption(options.signal, options.deadline);
-    if (afterRead !== null) {
-      return afterRead;
-    }
-    // The handle must still be the inspected object and the pathname must
-    // still resolve to it after reading completed.
-    const finalIdentity = await verifyOpenedIdentity(
-      handle,
-      options.path,
-      inspected.dev,
-      inspected.ino,
-      options.context,
-    );
-    if (finalIdentity !== null) {
-      return finalIdentity;
-    }
     if (total > options.maxBytes) {
       return {
         status: "invalid",
         message: `Checkpoint ${options.context} preimage is oversized.`,
       };
+    }
+    const afterRead = verificationInterruption(options.signal, options.deadline);
+    if (afterRead !== null) {
+      return afterRead;
+    }
+    if (options.finalVerificationHook !== undefined) {
+      await options.finalVerificationHook(options.path);
+    }
+    const afterFinalHook = verificationInterruption(options.signal, options.deadline);
+    if (afterFinalHook !== null) {
+      return afterFinalHook;
+    }
+    // Final stability verification: the opened handle must still be the
+    // exact object captured before reading, with identical size and
+    // mutation timestamps (an in-place rewrite of the same inode changes
+    // size and/or mtimeNs/ctimeNs and is refused), and the pathname must
+    // still resolve to that exact object.
+    const finalStability = await verifyOpenedStability(
+      handle,
+      options.path,
+      snapshot,
+      options.context,
+    );
+    if (finalStability !== null) {
+      return finalStability;
     }
     const bytes = buffer.subarray(0, total);
     if (options.expected.byteLength !== null && bytes.length !== options.expected.byteLength) {
@@ -457,6 +544,106 @@ function sameFileIdentity(
     return false;
   }
   return stats.dev === expectedDev && stats.ino === expectedIno;
+}
+
+/**
+ * Final stability verification: the opened handle must still be the exact
+ * non-link regular file captured in the pre-read snapshot — identical
+ * identity, size, and mutation timestamps — and the pathname must still
+ * resolve to that exact object (identity, size, and mutation timestamps
+ * matching the final handle state). A same-inode in-place rewrite during
+ * verification changes size and/or `mtimeNs`/`ctimeNs` and is refused here;
+ * restoring `mtime` cannot hide a changed `ctime`, which user space cannot
+ * set. This is a detection guarantee for mutation between the pre-read and
+ * final snapshots, never atomic protection against modification after final
+ * verification.
+ */
+async function verifyOpenedStability(
+  handle: FileHandle,
+  path: string,
+  expected: FileVerificationSnapshot,
+  context: string,
+): Promise<{ readonly status: "invalid"; readonly message: string } | null> {
+  let handleStats;
+  try {
+    handleStats = await handle.stat({ bigint: true });
+  } catch (error: unknown) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} opened preimage handle cannot be re-inspected: ${describeError(error)}`,
+    };
+  }
+  if (handleStats.isSymbolicLink() || !handleStats.isFile()) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} opened preimage object is not a regular file.`,
+    };
+  }
+  if (
+    handleStats.dev !== expected.dev ||
+    handleStats.ino !== expected.ino ||
+    handleStats.size !== expected.size ||
+    handleStats.mtimeNs !== expected.mtimeNs ||
+    handleStats.ctimeNs !== expected.ctimeNs
+  ) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage changed during verification (in-place mutation).`,
+    };
+  }
+  let pathStats;
+  try {
+    pathStats = await lstat(path, { bigint: true });
+  } catch (error: unknown) {
+    if (isNotFoundError(error)) {
+      return {
+        status: "invalid",
+        message: `Checkpoint ${context} preimage path disappeared after it was opened.`,
+      };
+    }
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage path cannot be re-inspected after opening: ${describeError(error)}`,
+    };
+  }
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage path no longer resolves to a non-link regular file.`,
+    };
+  }
+  if (
+    pathStats.dev !== handleStats.dev ||
+    pathStats.ino !== handleStats.ino ||
+    pathStats.size !== handleStats.size ||
+    pathStats.mtimeNs !== handleStats.mtimeNs ||
+    pathStats.ctimeNs !== handleStats.ctimeNs
+  ) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage path now resolves to a different object.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * A stability snapshot is usable only when every field is a bigint and the
+ * identity fields are non-zero. Node's bigint stats always expose these
+ * fields on supported filesystems; where they are missing, invalid, or
+ * zero-identity (a filesystem without stable identifiers), verification
+ * fails closed instead of silently degrading to a weaker check.
+ */
+function isUsableVerificationSnapshot(snapshot: FileVerificationSnapshot): boolean {
+  return (
+    typeof snapshot.dev === "bigint" &&
+    typeof snapshot.ino === "bigint" &&
+    typeof snapshot.size === "bigint" &&
+    typeof snapshot.mtimeNs === "bigint" &&
+    typeof snapshot.ctimeNs === "bigint" &&
+    snapshot.dev !== 0n &&
+    snapshot.ino !== 0n
+  );
 }
 
 function verificationInterruption(
