@@ -18,6 +18,8 @@ import {
   capabilityPolicyFingerprint,
   createDefaultPolicy,
   createDevelopmentTaskFlow,
+  createProjectionService,
+  createRouteContextCapacity,
   createSolarisApplication,
   createTaskRuntime,
   createTaskRuntimeSnapshot,
@@ -27,6 +29,9 @@ import {
   type GDScriptDevelopmentPreview,
   type GDScriptDevelopmentResult,
   type GDScriptDevelopmentStatus,
+  type ModelProvider,
+  type ModelRequest,
+  type ProjectionService,
   type SolarisApplication,
   type TaskRuntime,
   type TaskRuntimeSnapshotSources,
@@ -94,6 +99,35 @@ export async function createTempWorkspace(): Promise<TempWorkspace> {
   };
 }
 
+/** Records every provider request for final-boundary assertions. */
+export interface RecordingProvider {
+  readonly provider: ModelProvider;
+  readonly requests: ModelRequest[];
+}
+
+export function createRecordingProvider(
+  inner: ModelProvider = createDeterministicFakeProvider(),
+): RecordingProvider {
+  const requests: ModelRequest[] = [];
+  return {
+    provider: {
+      ...inner,
+      stream(request: ModelRequest): AsyncIterable<import("@solaris/core").ModelEvent> {
+        requests.push(request);
+        return inner.stream(request);
+      },
+    },
+    requests,
+  };
+}
+
+export interface BehaviorLoopHarnessOptions {
+  /** Wire the projection service (development mode) into the application. */
+  readonly projection?: boolean;
+  /** Reviewer scenario for the quality stage (fake-change-reviewer). */
+  readonly reviewerScenario?: "clean" | "high";
+}
+
 export interface BehaviorLoopHarness {
   readonly workspace: TempWorkspace;
   readonly store: CheckpointStore;
@@ -131,7 +165,9 @@ export async function cleanupTempCheckpointDirs(): Promise<void> {
   }
 }
 
-export async function createBehaviorLoopHarness(): Promise<BehaviorLoopHarness> {
+export async function createBehaviorLoopHarness(
+  options: BehaviorLoopHarnessOptions = {},
+): Promise<BehaviorLoopHarness> {
   const workspace = await createTempWorkspace();
   await writeFile(
     join(workspace.root, "project.godot"),
@@ -151,7 +187,9 @@ export async function createBehaviorLoopHarness(): Promise<BehaviorLoopHarness> 
     },
   };
   const gitFake = createFakeGitInspector();
-  const fakeReviewer = createFakeChangeReviewer({ scenario: "clean" });
+  const fakeReviewer = createFakeChangeReviewer({
+    scenario: options.reviewerScenario ?? "clean",
+  });
   const development = createGDScriptDevelopmentService({
     workspaceRoot: workspace.root,
     platform: "linux",
@@ -182,12 +220,23 @@ export async function createBehaviorLoopHarness(): Promise<BehaviorLoopHarness> 
     createGodotDevelopmentStatusTool(development),
   ]);
   const { runtime, sources, now } = createBehaviorRuntime();
+  const projection: ProjectionService | undefined =
+    options.projection === true
+      ? createProjectionService({
+          policy: createDefaultPolicy("develop-offline"),
+          profile: DEVELOP_OFFLINE_PROFILE,
+          capacity: createRouteContextCapacity("develop-offline"),
+          getTaskSnapshot: () => runtime.latestTask()?.snapshot() ?? null,
+          getTaskRequest: () => runtime.latestTask()?.contract().request ?? null,
+        })
+      : undefined;
   const application = createSolarisApplication({
     provider: createDeterministicFakeProvider(),
     tools,
     policy: createDefaultPolicy("develop-offline"),
     profile: DEVELOP_OFFLINE_PROFILE,
     reviewer,
+    ...(projection === undefined ? {} : { projection }),
     onProviderTurnCompleted: () => {
       development.completeFromProviderTurn();
     },
