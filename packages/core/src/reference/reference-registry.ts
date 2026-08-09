@@ -103,6 +103,11 @@ const WORKSPACE_CONTAINMENT_REFUSAL = "reference root must be outside the worksp
 export function isPathWithin(root: string, target: string): boolean {
   const rootNorm = normalizeAbsolutePath(root);
   const targetNorm = normalizeAbsolutePath(target);
+  // Relative inputs would anchor to the process CWD — never meaningful for
+  // containment. Fail closed (not within) rather than guess.
+  if (!isAbsoluteForm(rootNorm) || !isAbsoluteForm(targetNorm)) {
+    return false;
+  }
   if (isWindowsForm(rootNorm) && isWindowsForm(targetNorm)) {
     const rootLower = rootNorm.toLowerCase();
     return (
@@ -110,6 +115,10 @@ export function isPathWithin(root: string, target: string): boolean {
     );
   }
   return targetNorm === rootNorm || targetNorm.startsWith(`${rootNorm}/`);
+}
+
+function isAbsoluteForm(path: string): boolean {
+  return path.startsWith("/") || isWindowsForm(path);
 }
 
 function isWindowsForm(path: string): boolean {

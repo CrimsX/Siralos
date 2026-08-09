@@ -460,13 +460,16 @@ export async function createCliApplication(
     createGitDiffTool(git),
     processTool,
   ];
-  // Reference tools register ONLY when at least one reference is declared
-  // (no empty tool surface); research tools register always — the
+  // Reference tools register ONLY when at least one reference is READY
+  // (no empty/declined tool surface); research tools register always — the
   // ToolProjector hides them under the default deny policy for
   // `research.fetch`.
+  const readyReferenceCount = referenceServices.registry
+    .list()
+    .filter((reference) => reference.status === "ready").length;
   const registeredTools = [
     ...workspaceTools,
-    ...(referenceServices.registry.list().length > 0 ? referenceTools : []),
+    ...(readyReferenceCount > 0 ? referenceTools : []),
     ...researchTools,
   ];
   const registry = createToolRegistry(registeredTools);

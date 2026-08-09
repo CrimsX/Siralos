@@ -40,18 +40,36 @@ import {
 const COMMIT_SHA_PATTERN = /^[0-9a-fA-F]{40}$/;
 const GITHUB_ORIGIN_PREFIX = "https://github.com/";
 
-function resolveRef(ref: string | null): {
-  readonly refPart: string;
-  readonly requestedRef: string | null;
-  readonly resolvedRevision: string | null;
-} {
+function resolveRef(
+  ref: string | null,
+):
+  | {
+      readonly ok: true;
+      readonly refPart: string;
+      readonly requestedRef: string | null;
+      readonly resolvedRevision: string | null;
+    }
+  | { readonly ok: false; readonly reason: string } {
   if (ref === null) {
-    return { refPart: "HEAD", requestedRef: null, resolvedRevision: null };
+    return { ok: true, refPart: "HEAD", requestedRef: null, resolvedRevision: null };
+  }
+  // The ref is embedded into a URL path: reject traversal/control/absolute
+  // forms so URL normalization can never fetch from a different repository
+  // than the declared origin (defense in depth; the request model bounds
+  // the length).
+  if (
+    ref.length === 0 ||
+    ref.startsWith("/") ||
+    ref.includes("\\") ||
+    ref.includes("\0") ||
+    ref.split("/").some((segment) => segment === ".." || segment === ".")
+  ) {
+    return { ok: false, reason: "the repository ref must be a plain ref name or commit sha" };
   }
   if (COMMIT_SHA_PATTERN.test(ref)) {
-    return { refPart: ref, requestedRef: ref, resolvedRevision: ref };
+    return { ok: true, refPart: ref, requestedRef: ref, resolvedRevision: ref };
   }
-  return { refPart: ref, requestedRef: ref, resolvedRevision: null };
+  return { ok: true, refPart: ref, requestedRef: ref, resolvedRevision: null };
 }
 
 /** Encode each path segment (slashes preserved as separators). */
@@ -157,7 +175,11 @@ export function createGitHubResearchSource(
         if (!pathResult.ok) {
           return { status: "refused", reason: pathResult.reason };
         }
-        const { refPart, requestedRef, resolvedRevision } = resolveRef(request.ref);
+        const refResolution = resolveRef(request.ref);
+        if (!refResolution.ok) {
+          return { status: "refused", reason: refResolution.reason };
+        }
+        const { refPart, requestedRef, resolvedRevision } = refResolution;
         const url = `https://raw.githubusercontent.com/${repoPath}/${encodePathSegments(refPart)}/${encodePathSegments(request.path)}`;
         const outcome = await options.transport.get(url, transportOptions);
         if (outcome.status !== "ok") {
