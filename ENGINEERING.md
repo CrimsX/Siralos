@@ -251,3 +251,43 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
    TaskState, and dispositions are descriptive/control-flow state; they
    grant no capabilities. Approvals, sandboxing, capability policy, path
    containment, and checkpoint integrity stay authoritative elsewhere.
+
+## Projection rules
+
+1. **Authoritative state is never the provider context.** TaskContract,
+   TaskState, and raw evidence stay where they are; model context is a
+   disposable projection that can always be reconstructed.
+2. **Model-visible tools are a projection, not the global registry.**
+   Visibility is (task mode ∩ capability policy ∩ provider capability);
+   the projected tool ABI has a stable fingerprint.
+3. **Hidden tools must be absent from provider requests.** Hidden is not
+   "permission denied": the tool does not appear in the schema at all.
+4. **Runtime enforcement remains authoritative even for projected tools.**
+   A projection bug must never grant authority; every invocation still
+   passes capability policy, approvals, scope checks, and sandboxing.
+5. **Raw evidence is never destroyed to save model tokens.** Only
+   disposable model views are bounded, redacted, or truncated; the
+   authoritative record (history, task evidence, tool outputs) is
+   untouched, and security transforms (secret redaction) are never
+   reverted by size rules.
+6. **Model evidence views must clearly disclose truncation** (marker and
+   byte metadata) and reference the raw evidence rather than claiming a
+   complete representation.
+7. **Stable prompt segments must avoid volatile data** (timestamps,
+   iteration counts, Git status, paths, tool output); volatile changes
+   must not change the stable fingerprint or the stable prefix bytes.
+8. **Context limits are enforced before provider calls.** The working
+   budget is authoritative over advertised maximums; hard pressure blocks
+   the invocation, auto pressure performs deterministic pair-preserving
+   reduction, and provider rejection is never used as flow control.
+9. **Async results must be revision-bound; stale results are discarded.**
+   Every async projection/helper result carries the revision it was
+   computed for and is dropped when state has advanced; tests use
+   deterministic fake scheduling, never sleeps.
+10. **Context/result caches use high/low watermarks** instead of threshold
+    thrashing, and model-context eviction never deletes durable evidence
+    required by TaskState.
+11. **Behavioral/security-sensitive projection changes require
+    final-boundary tests**: the actual provider request (tools absent),
+    the actual provider invocation (or its absence at hard pressure), and
+    the actual task state after projection.

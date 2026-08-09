@@ -440,6 +440,89 @@ tests/behavior/         deterministic behavior fixtures (behaviors 1-15)
 
 The milestone does not implement planning, ContextProjector/ToolProjector/EvidenceProjector, knowledge retrieval, scenes/resources, multi-agent TaskGraph, persistent background jobs, an ACP/runtime server, plugins, or `/evolve`.
 
+## Context, tool, and evidence projection
+
+The projection layer (Stage 3 milestone 2, ADR 0015) is the application-owned
+boundary between authoritative Solaris state and what a model sees, calls,
+and consumes. It lives in core (`packages/core/src/projection/`) and is
+provider-neutral, Node-free, and mutation-free (architecture-enforced: no
+provider ports, no task-runtime mutation surface, no sandbox implementations,
+no Godot modules). The CLI composition root wires one `ProjectionService`
+into the application; provider adapters receive already-projected
+provider-neutral inputs.
+
+```text
+packages/core/src/projection/
+  context-capacity.ts      route working budgets (advertised vs verified vs
+                           working maximum)
+  context-estimator.ts     deterministic token estimator (UTF-8 bytes / 4)
+  context-pressure.ts      normal | warn | auto | hard classification
+  context-projector.ts     stability classes, stable fingerprint, system
+                           prefix serialization, core instructions
+  tool-projector.ts        available | gated | hidden, mode allowlists,
+                           stable ABI fingerprint
+  evidence-projector.ts    deterministic transforms, secret redaction,
+                           truncation disclosure, never-worse rule
+  conversation-trim.ts     pair-preserving conversation reduction
+  watermark-cache.ts       high/low watermark hysteresis for disposable caches
+  stale-result.ts          revision-bound async results
+  projection-service.ts    composition: project -> estimate -> classify ->
+                           fit/reduce -> provider (pre-flight)
+```
+
+- **Context**: `ContextProjector` projects stable (core instructions),
+  contextual (task contract, task state, acceptance, phase, findings), and
+  volatile (latest evidence) segments. The provider `system` prefix is the
+  deterministic serialization of stable + contextual segments; its
+  `stableFingerprint` and stable bytes are unaffected by ordinary volatile
+  changes (prompt-cache stability). Context is disposable: deleting a
+  projection never loses task knowledge, and context is reconstructed from
+  authoritative TaskContract/TaskState each turn.
+- **Budgets and pressure**: the route `workingMaximum` is authoritative
+  over advertised maximums. Every turn runs the pre-flight pipeline;
+  `auto` performs deterministic pair-preserving conversation reduction
+  (tool call + result pairs are dropped whole, the active request
+  survives, TaskContract stays in the system prefix), and `hard` blocks
+  the provider call entirely — the provider is never invoked with
+  knowingly over-budget context, and provider rejection is never used as
+  flow control. `warn` surfaces `context_pressure` events and status.
+- **Tools**: `ToolProjector` classifies every registered tool as
+  available / gated / hidden from (mode ∩ capability policy ∩ provider
+  capability). Hidden tools are absent from the provider schema — never a
+  runtime "permission denied". The projected ABI has a stable fingerprint;
+  ordinary task progress does not reorder it. Modes: `generic` (session
+  default), `development` (exactly the GDScript workflow's tool set),
+  `review` (read-only: no mutation/process tools even if registered),
+  `inspection`. A route without tool calling fails clearly for
+  tool-requiring modes instead of silently degrading. Projection is not
+  the security boundary: every invocation still passes capability policy,
+  approvals, scope checks, and sandboxing.
+- **Evidence**: `EvidenceProjector` is the boundary between authoritative
+  raw evidence and the bounded model view. Model views are disposable
+  copies: ANSI stripped, repeated lines collapsed, configured secrets
+  redacted (the single core redaction primitive; never reverted by size
+  rules), lines bounded, and total size truncated with an explicit marker
+  and byte metadata plus a reference to the raw evidence. The never-worse
+  rule retains the bounded original when a reduction would inflate it.
+  Structured diagnostics/process results remain structured; only textual
+  summaries are transformed. Disposable model-evidence views live in a
+  high/low-watermark cache that never evicts durable task evidence.
+- **Async**: async projection/helper results are revision-bound
+  (`RevisionGuard`/`awaitCurrent`); results completing after a state
+  advance are discarded, never injected into a newer turn (deterministic
+  fake scheduling in tests). Provider streaming stays bounded by the
+  existing cumulative per-turn limits — a drip-feeding stream cannot live
+  forever; idle-timeout/hard-lifetime timers are deferred until a real
+  provider requires them.
+- **Integration**: `/develop` prompts run in `development` mode through
+  the projection service; the independent reviewer runs in `review` mode
+  (final-boundary tests prove mutation tools are absent from the actual
+  reviewer provider request, and the reviewer never receives implementer
+  private state, secrets, approval capability, or the implementer
+  transcript). CLI observability: `/context` (segment sizes, working
+  budget, pressure, tool ABI fingerprint), `/tools` and
+  `/development-status` projection lines.
+
 ## Deferred: persistence
 
 Sessions are in-memory only. No SQLite, transcript storage, or session restoration exists. TaskState may remain in memory by design for this milestone: the types are serializable, no runtime handles are embedded in domain state, and the persistent-state schema/versioning requirements are documented in ADR 0014 (a future persistence milestone can rely on `runtimeVersion`, the revisioned contract history, and the append-only activity log). A persistence port will be added only when a real requirement demands it.
