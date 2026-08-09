@@ -15,7 +15,10 @@ import { dirname, join } from "node:path";
 import {
   DEVELOP_OFFLINE_PROFILE,
   TASK_RUNTIME_VERSION,
+  canonicalizeJson,
   capabilityPolicyFingerprint,
+  createWorkspaceRevisionRegistry,
+  sha256Hex,
   createDefaultPolicy,
   createDevelopmentTaskFlow,
   createProjectionService,
@@ -32,10 +35,13 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ProjectionService,
+  type GDScriptDevelopmentService,
   type SolarisApplication,
   type TaskRuntime,
   type TaskRuntimeSnapshotSources,
   type TaskState,
+  type Tool,
+  type WorkspaceRevisionRegistry,
 } from "@solaris/core";
 import {
   createDeterministicFakeProvider,
@@ -126,6 +132,12 @@ export interface BehaviorLoopHarnessOptions {
   readonly projection?: boolean;
   /** Reviewer scenario for the quality stage (fake-change-reviewer). */
   readonly reviewerScenario?: "clean" | "high";
+  /**
+   * When false, the development service is created without the quality
+   * stage so the workflow stays in the reviewing phase after an apply and
+   * direct mutation sequences can be exercised end to end.
+   */
+  readonly qualityStage?: boolean;
 }
 
 export interface BehaviorLoopHarness {
@@ -135,8 +147,12 @@ export interface BehaviorLoopHarness {
   readonly runtime: TaskRuntime;
   readonly approvals: () => number;
   readonly status: () => GDScriptDevelopmentStatus;
+  readonly development: GDScriptDevelopmentService;
+  readonly workspaceRead: Tool;
   readonly parserControl: ReturnType<typeof createFakeDiagnosticsService>["control"];
   readonly languageControl: ReturnType<typeof createFakeLanguageService>["control"];
+  /** Session revision registry (workspace-scoped, opaque handles). */
+  readonly revisions: WorkspaceRevisionRegistry;
   /** Prepare + approve + start the workflow and create the task. */
   startWorkflow(request: string): Promise<GDScriptDevelopmentPreview>;
   /** Run the provider loop for a request (drains all tool rounds). */
@@ -190,6 +206,9 @@ export async function createBehaviorLoopHarness(
   const fakeReviewer = createFakeChangeReviewer({
     scenario: options.reviewerScenario ?? "clean",
   });
+  const revisions = createWorkspaceRevisionRegistry({
+    workspaceFingerprint: sha256Hex(canonicalizeJson({ workspaceRoot: workspace.root })),
+  });
   const development = createGDScriptDevelopmentService({
     workspaceRoot: workspace.root,
     platform: "linux",
@@ -198,24 +217,31 @@ export async function createBehaviorLoopHarness(
     language: language.service,
     diagnostics: parser.service,
     git: gitFake.git,
+    revisions,
     canApplyIdentityBound: true,
     primitives: createWorkspaceFilePrimitives(workspace.root),
-    qualityStage: {
-      reviewer: fakeReviewer.reviewer,
-      validation: {
-        discovery: {
-          discover: () => Promise.resolve({ packageScripts: null, unreadable: false }),
-        },
-        executor: {
-          run: (step) => Promise.resolve({ step, status: "passed", exitCode: 0, summary: "ok" }),
-        },
-      },
-    },
+    ...(options.qualityStage === false
+      ? {}
+      : {
+          qualityStage: {
+            reviewer: fakeReviewer.reviewer,
+            validation: {
+              discovery: {
+                discover: () => Promise.resolve({ packageScripts: null, unreadable: false }),
+              },
+              executor: {
+                run: (step) =>
+                  Promise.resolve({ step, status: "passed", exitCode: 0, summary: "ok" }),
+              },
+            },
+          },
+        }),
     idFactory: () => `wf-${Math.floor(Math.random() * 1_000_000)}`,
     settling: { hardTimeoutMs: 1000, pollIntervalMs: 1 },
   });
+  const workspaceReadTool = createWorkspaceReadTool(workspace.root, { revisions });
   const tools = createToolRegistry([
-    createWorkspaceReadTool(workspace.root),
+    workspaceReadTool,
     createWorkspaceApplyTextChangesetTool(development),
     createGodotDevelopmentStatusTool(development),
   ]);
@@ -253,6 +279,9 @@ export async function createBehaviorLoopHarness(
     status: () => development.status(),
     parserControl: parser.control,
     languageControl: language.control,
+    revisions,
+    development,
+    workspaceRead: workspaceReadTool,
     startWorkflow: async (request: string): Promise<GDScriptDevelopmentPreview> => {
       const prepared = await development.prepareStart(request);
       if (prepared.status !== "ready") {
