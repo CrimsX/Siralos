@@ -58,3 +58,14 @@ describe("file-uri conversion", () => {
     expect(workspaceRelativeToMirrorUri("", MIRROR)).toBeNull();
   });
 });
+
+describe("file-uri traversal rejection", () => {
+  it("rejects decoded .. segments that would escape the mirror root", () => {
+    expect(
+      mirrorUriToWorkspaceRelative(pathToFileUri(`${MIRROR}/../secret.gd`), MIRROR),
+    ).toBeNull();
+    expect(
+      mirrorUriToWorkspaceRelative(pathToFileUri(`${MIRROR}/src/../secret.gd`), MIRROR),
+    ).toBeNull();
+  });
+});

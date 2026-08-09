@@ -326,3 +326,16 @@ describe("normalizeDefinition", () => {
     expect(JSON.stringify(result)).not.toContain(MIRROR);
   });
 });
+
+describe("completion insertText sanitization", () => {
+  it("sanitizes and bounds insertText like every other field", () => {
+    const result = normalizeCompletion(
+      uri("a.gd"),
+      [{ label: "x", insertText: `bad \u001b[31m${MIRROR}/secret` }],
+      context("a.gd"),
+    );
+    const insertText = result.items[0]?.insertText ?? "";
+    expect(insertText).not.toContain("\u001b");
+    expect(insertText).not.toContain(MIRROR);
+  });
+});

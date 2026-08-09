@@ -71,7 +71,23 @@ export function mirrorUriToWorkspaceRelative(uri: string, mirrorRootPath: string
   if (relative.length === 0) {
     return null;
   }
+  // Decoded `..` segments must never escape the mirror root: the decoded
+  // path is checked after percent-decoding, so `file:///mirror/../secret.gd`
+  // is rejected here rather than normalized away.
+  if (containsEscapingSegment(relative)) {
+    return null;
+  }
   return relative.replace(/\\/g, "/");
+}
+
+function containsEscapingSegment(relativePath: string): boolean {
+  const segments = relativePath.split(/[\\/]/);
+  for (const segment of segments) {
+    if (segment === "..") {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Converts a workspace-relative path to the mirror file URI, or null. */

@@ -258,7 +258,8 @@ function normalizeCompletionItem(
   const kind = typeof record["kind"] === "number" ? String(record["kind"]) : null;
   const detail = boundedDetail(record["detail"], context);
   const documentation = boundedDocumentation(record["documentation"], context);
-  const insertText = typeof record["insertText"] === "string" ? record["insertText"] : null;
+  const insertText =
+    typeof record["insertText"] === "string" ? boundedDetail(record["insertText"], context) : null;
   return {
     label: truncateUtf8Bytes(label, GODOT_LIMITS.lspMaxHoverBytes),
     kind,
