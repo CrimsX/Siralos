@@ -40,9 +40,7 @@ import {
 const COMMIT_SHA_PATTERN = /^[0-9a-fA-F]{40}$/;
 const GITHUB_ORIGIN_PREFIX = "https://github.com/";
 
-function resolveRef(
-  ref: string | null,
-):
+function resolveRef(ref: string | null):
   | {
       readonly ok: true;
       readonly refPart: string;
