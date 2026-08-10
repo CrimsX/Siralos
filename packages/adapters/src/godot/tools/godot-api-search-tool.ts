@@ -5,6 +5,7 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
 } from "@solaris/core";
+import { errorMessage } from "../../support/error-message.js";
 
 /**
  * `godot.api_search` provider tool: bounded literal/token search over the
@@ -93,7 +94,7 @@ export function createGodotApiSearchTool(knowledge: GodotKnowledge): Tool {
       } catch (error: unknown) {
         return {
           status: "failed",
-          message: describeError(error),
+          message: errorMessage(error, "An unknown Godot API search failure occurred."),
         };
       }
     },
@@ -137,11 +138,4 @@ function parseInput(input: unknown):
       ...(limit === undefined ? {} : { limit }),
     },
   };
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown Godot API search failure occurred.";
 }

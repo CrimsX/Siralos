@@ -7,6 +7,9 @@ import {
   type GodotProjectFsOps,
 } from "./traversal-limits.js";
 import { samePathIdentity } from "../../fs-path-identity.js";
+import { createErrorDescriber } from "../../support/error-message.js";
+
+const describeError = createErrorDescriber("an unknown filesystem error occurred");
 
 export interface GodotProjectFileInfo {
   readonly exists: boolean;
@@ -165,11 +168,4 @@ export async function inspectProjectFileInfo(
 
 function isNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "an unknown filesystem error occurred";
 }

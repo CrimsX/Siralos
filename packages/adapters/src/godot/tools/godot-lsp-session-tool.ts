@@ -7,6 +7,7 @@ import type {
   ToolExecutionResult,
 } from "@solaris/core";
 import type { LanguageQueryGate } from "./godot-lsp-query-tools.js";
+import { errorMessage } from "../../support/error-message.js";
 
 /**
  * `godot.lsp_session` reviewable provider tool: one-time-approved startup
@@ -71,7 +72,10 @@ export function createGodotLSPSessionTool(
             message: "The language session preparation was cancelled.",
           };
         }
-        return { status: "failed", message: describeError(error) };
+        return {
+          status: "failed",
+          message: errorMessage(error, "An unknown Godot language-session failure occurred."),
+        };
       }
     },
     async executePrepared(
@@ -98,7 +102,10 @@ export function createGodotLSPSessionTool(
         if (isAbortError(error)) {
           return { status: "cancelled", message: "The language session startup was cancelled." };
         }
-        return { status: "failed", message: describeError(error) };
+        return {
+          status: "failed",
+          message: errorMessage(error, "An unknown Godot language-session failure occurred."),
+        };
       }
     },
   };
@@ -127,11 +134,4 @@ function mapStartResult(result: GodotLSPSessionStartResult): ToolExecutionResult
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.name === "DOMException");
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown Godot language-session failure occurred.";
 }

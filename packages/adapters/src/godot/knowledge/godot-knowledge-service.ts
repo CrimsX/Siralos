@@ -17,6 +17,7 @@ import {
   type SandboxBackend,
 } from "@solaris/core";
 import { join } from "node:path";
+import { stringifyError } from "../../support/error-message.js";
 import { homedir } from "node:os";
 import type { UserGodotConfig } from "../../config/user-config.js";
 import type { GodotEngineProfileCache } from "../cache/engine-profile-cache.js";
@@ -181,7 +182,7 @@ export function createGodotKnowledgeService(
       if (isAbortError(error)) {
         return { status: "cancelled", message: "API knowledge generation was cancelled." };
       }
-      return { status: "failed", message: describeError(error) };
+      return { status: "failed", message: stringifyError(error) };
     }
   }
 
@@ -405,8 +406,4 @@ function createAbortError(): Error {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.name === "DOMException");
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -17,6 +17,9 @@ import {
 } from "@anthropic-ai/sandbox-runtime";
 import { spawn, type ChildProcess } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { createErrorDescriber } from "../../support/error-message.js";
+
+const describeError = createErrorDescriber("An unknown sandbox failure occurred.");
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import {
@@ -1083,11 +1086,4 @@ function classifyExecutionError(error: unknown): SandboxError {
     return new SandboxError("sandbox_setup_required", message, error);
   }
   return new SandboxError("sandbox_execution_denied", message, error);
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown sandbox failure occurred.";
 }

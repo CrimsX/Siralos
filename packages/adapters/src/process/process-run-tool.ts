@@ -19,6 +19,7 @@ import {
   type ToolExecutionResult,
 } from "@solaris/core";
 import type { MutationLock } from "../tools/workspace/mutations/mutation-lock.js";
+import { errorMessage } from "../support/error-message.js";
 import type { CommandRunPaths } from "@solaris/core";
 import type { RunDirectoryProvider } from "./run-directories.js";
 
@@ -153,7 +154,7 @@ export function createProcessRunTool(
     } catch (error: unknown) {
       return {
         status: "failed",
-        message: `The command run directory could not be prepared: ${describeError(error)}`,
+        message: `The command run directory could not be prepared: ${errorMessage(error, "an unknown error occurred")}`,
       };
     }
     if (!runPaths.ok) {
@@ -167,14 +168,16 @@ export function createProcessRunTool(
       result = await executeWithinLock(payload, context, runPaths.paths);
     } catch (error: unknown) {
       failure = error;
-      result = { status: "failed", message: describeError(error) };
+      result = { status: "failed", message: errorMessage(error, "an unknown error occurred") };
     }
     const cleanup = await dependencies.runDirectories.remove(runPaths.paths.runId);
     if (!cleanup.ok) {
       result = attachCleanupWarning(result, cleanup.message);
     }
     if (failure !== undefined) {
-      throw failure instanceof Error ? failure : new Error(describeError(failure));
+      throw failure instanceof Error
+        ? failure
+        : new Error(errorMessage(failure, "an unknown error occurred"));
     }
     return result;
   }
@@ -240,7 +243,7 @@ export function createProcessRunTool(
         }
         return {
           status: "failed",
-          message: `The sandboxed command failed: ${describeError(error)}`,
+          message: `The sandboxed command failed: ${errorMessage(error, "an unknown error occurred")}`,
         };
       }
       const after = await snapshotGitState(dependencies.git);
@@ -484,11 +487,4 @@ function formatSeconds(timeoutMs: number): string {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "an unknown error occurred";
 }

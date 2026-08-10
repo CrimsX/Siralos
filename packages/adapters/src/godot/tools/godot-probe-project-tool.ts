@@ -6,6 +6,7 @@ import type {
   ToolExecutionResult,
   GodotProbeToolPreparationResult,
 } from "@solaris/core";
+import { errorMessage } from "../../support/error-message.js";
 
 /**
  * Reviewable `godot.probe_project` provider tool.
@@ -57,7 +58,10 @@ export function createGodotProbeProjectTool(probe: GodotProjectProbe): PreparedP
         if (isAbortError(error)) {
           return { status: "cancelled", message: "The project probe preparation was cancelled." };
         }
-        return { status: "failed", message: describeError(error) };
+        return {
+          status: "failed",
+          message: errorMessage(error, "An unknown Godot project probe failure occurred."),
+        };
       }
     },
     async executePrepared(
@@ -74,7 +78,10 @@ export function createGodotProbeProjectTool(probe: GodotProjectProbe): PreparedP
         if (isAbortError(error)) {
           return { status: "cancelled", message: "The project probe was cancelled." };
         }
-        return { status: "failed", message: describeError(error) };
+        return {
+          status: "failed",
+          message: errorMessage(error, "An unknown Godot project probe failure occurred."),
+        };
       }
       return mapProbeResult(result);
     },
@@ -177,11 +184,4 @@ function isAbortError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || ("code" in error && error.code === "ABORT_ERR"))
   );
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown Godot project probe failure occurred.";
 }

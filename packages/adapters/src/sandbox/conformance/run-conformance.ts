@@ -13,10 +13,13 @@ import { COMMAND_LIMITS, VALIDATION_OFFLINE_PROFILE } from "@solaris/core";
 import { buildCommandEnvironment } from "../../environment/command-environment.js";
 import { createRunDirectoryProvider, type CommandRunPaths } from "../../process/run-directories.js";
 import { resolveNpmCli, type NpmCliResolution } from "../../process/trusted-executables.js";
+import { createErrorDescriber } from "../../support/error-message.js";
 import {
   hostReadAllowSurface,
   isWithinHostReadAllowSurface,
 } from "../anthropic-runtime/anthropic-sandbox-runtime-backend.js";
+
+const describeError = createErrorDescriber("Unknown conformance failure.");
 
 export interface ConformanceProbeResult {
   readonly probeId: string;
@@ -660,13 +663,6 @@ function describeResult(result: SandboxedProcessResult): string {
     details.push(`stdout=${result.stdout.slice(0, 200)}`);
   }
   return details.join("; ");
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "Unknown conformance failure.";
 }
 
 async function startLoopbackServer(): Promise<Server> {

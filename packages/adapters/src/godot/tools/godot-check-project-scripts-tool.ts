@@ -6,6 +6,7 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
 } from "@solaris/core";
+import { errorMessage } from "../../support/error-message.js";
 
 /**
  * `godot.check_project_scripts` reviewable provider tool: one-time-approved,
@@ -78,7 +79,7 @@ export function createGodotCheckProjectScriptsTool(
       } catch (error: unknown) {
         return {
           status: "failed",
-          message: describeError(error),
+          message: errorMessage(error, "An unknown GDScript project check failure occurred."),
         };
       }
     },
@@ -161,11 +162,4 @@ function mapExecution(
         : result.status,
     message: result.message,
   };
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown GDScript project check failure occurred.";
 }

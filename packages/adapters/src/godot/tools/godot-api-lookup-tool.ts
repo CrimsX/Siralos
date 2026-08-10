@@ -6,6 +6,7 @@ import {
   type ToolExecutionResult,
 } from "@solaris/core";
 import { truncateUtf8Bytes } from "../knowledge/api-dump-with-docs.js";
+import { errorMessage } from "../../support/error-message.js";
 
 const MAX_SYMBOL_LENGTH = 1024;
 
@@ -126,7 +127,7 @@ export function createGodotApiLookupTool(knowledge: GodotKnowledge): Tool {
       } catch (error: unknown) {
         return {
           status: "failed",
-          message: describeError(error),
+          message: errorMessage(error, "An unknown Godot API lookup failure occurred."),
         };
       }
     },
@@ -140,11 +141,4 @@ function boundLookupDescription(description: string | null): string | null {
   }
   const bound = GODOT_LIMITS.maxApiLookupResultBytes - 16 * 1024;
   return truncateUtf8Bytes(description, Math.max(bound, 0));
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown Godot API lookup failure occurred.";
 }

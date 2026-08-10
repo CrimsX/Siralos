@@ -6,6 +6,7 @@ import type {
   ToolExecutionResult,
 } from "@solaris/core";
 import { GitError } from "@solaris/core";
+import { errorMessage } from "../../support/error-message.js";
 import {
   readJsonObject,
   readOptionalString,
@@ -105,7 +106,10 @@ export function createGitDiffTool(git: GitInspector): Tool {
         if (error instanceof GitError) {
           return { status: "failed", message: error.message };
         }
-        return { status: "failed", message: describeError(error) };
+        return {
+          status: "failed",
+          message: errorMessage(error, "An unknown Git diff failure occurred."),
+        };
       }
     },
   };
@@ -117,11 +121,4 @@ function totalAdded(files: readonly { addedLines: number }[]): number {
 
 function totalRemoved(files: readonly { removedLines: number }[]): number {
   return files.reduce((total, file) => total + file.removedLines, 0);
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown Git diff failure occurred.";
 }

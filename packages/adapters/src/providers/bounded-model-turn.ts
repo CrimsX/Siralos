@@ -4,6 +4,7 @@ import type {
   ToolDefinition,
   ToolExecutionResult,
 } from "@solaris/core";
+import { errorMessage } from "../support/error-message.js";
 
 /**
  * Immutable collection limits for one provider turn.
@@ -183,7 +184,7 @@ export async function collectBoundedModelTurn(
         options.signal.removeEventListener("abort", onAbort);
         resolve({
           kind: "failed",
-          message: `${options.actor} provider failed: ${describeError(error)}`,
+          message: `${options.actor} provider failed: ${errorMessage(error, "unknown error")}`,
         });
       },
     );
@@ -328,7 +329,7 @@ async function collect(options: CollectBoundedModelTurnOptions): Promise<Bounded
     }
     return {
       kind: "failed",
-      message: `${actor} provider failed: ${describeError(error)}`,
+      message: `${actor} provider failed: ${errorMessage(error, "unknown error")}`,
     };
   }
 
@@ -342,8 +343,4 @@ async function collect(options: CollectBoundedModelTurnOptions): Promise<Bounded
     };
   }
   return { kind: "turn", text, toolCalls };
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : "unknown error";
 }

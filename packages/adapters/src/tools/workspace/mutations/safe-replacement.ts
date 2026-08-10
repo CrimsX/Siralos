@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { link, lstat, readFile, rename, rm, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createErrorDescriber } from "../../../support/error-message.js";
+
+const describeError = createErrorDescriber("an unknown filesystem failure occurred");
 
 export interface ReplacementFsOps {
   rename(from: string, to: string): Promise<void>;
@@ -611,11 +614,4 @@ export async function removeQuarantinedCopy(
   ops?: ReplacementFsOps,
 ): Promise<void> {
   await (ops ?? REAL_REPLACEMENT_FS_OPS).rm(quarantinePath, { force: true });
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "an unknown filesystem failure occurred";
 }

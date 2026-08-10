@@ -16,6 +16,9 @@ import type {
 } from "@solaris/core";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
 import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
+import { createErrorDescriber } from "../../support/error-message.js";
+
+const describeError = createErrorDescriber("Unknown checkpoint store failure.");
 
 export interface FilesystemCheckpointStoreOptions {
   readonly workspaceRoot: string;
@@ -1643,13 +1646,6 @@ function assertValidCheckpointId(id: string): void {
 function isInside(root: string, target: string): boolean {
   const rootPrefix = root.endsWith("/") || root.endsWith("\\") ? root : `${root}${sep}`;
   return target.startsWith(rootPrefix);
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "Unknown checkpoint store failure.";
 }
 
 function isNotFoundError(error: unknown): boolean {

@@ -1,5 +1,6 @@
 import type { GitInspector, Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
 import { GitError } from "@solaris/core";
+import { errorMessage } from "../../support/error-message.js";
 
 export function createGitStatusTool(git: GitInspector): Tool {
   return {
@@ -52,15 +53,11 @@ export function createGitStatusTool(git: GitInspector): Tool {
         if (error instanceof GitError) {
           return { status: "failed", message: error.message };
         }
-        return { status: "failed", message: describeError(error) };
+        return {
+          status: "failed",
+          message: errorMessage(error, "An unknown Git inspection failure occurred."),
+        };
       }
     },
   };
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown Git inspection failure occurred.";
 }

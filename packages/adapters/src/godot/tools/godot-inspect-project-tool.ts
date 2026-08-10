@@ -6,6 +6,7 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
 } from "@solaris/core";
+import { errorMessage } from "../../support/error-message.js";
 
 /**
  * Read-only `godot.inspect_project` provider tool.
@@ -105,16 +106,9 @@ export function createGodotInspectProjectTool(inspector: GodotInspector): Tool {
       } catch (error: unknown) {
         return {
           status: "failed",
-          message: describeError(error),
+          message: errorMessage(error, "An unknown Godot project inspection failure occurred."),
         };
       }
     },
   };
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "An unknown Godot project inspection failure occurred.";
 }

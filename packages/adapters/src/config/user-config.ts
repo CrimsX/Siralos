@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { GODOT_LIMITS, REFERENCE_LIMITS, validateReferenceAlias } from "@solaris/core";
 import { readFileBounded } from "../fs/file-read.js";
+import { errorMessage } from "../support/error-message.js";
 
 export type UserSandboxProfileId = "inspect" | "develop-offline";
 
@@ -94,7 +95,9 @@ export async function loadUserConfig(configPath: string): Promise<UserConfig> {
     if (isNotFoundError(error)) {
       return DEFAULT_USER_CONFIG;
     }
-    throw new Error(`Cannot read Solaris configuration at ${configPath}: ${describeError(error)}`);
+    throw new Error(
+      `Cannot read Solaris configuration at ${configPath}: ${errorMessage(error, "unknown error")}`,
+    );
   }
   if (stats.isSymbolicLink() || !stats.isFile()) {
     throw new Error(`Solaris configuration at ${configPath} is not a regular file.`);
@@ -116,7 +119,7 @@ export async function loadUserConfig(configPath: string): Promise<UserConfig> {
     parsed = JSON.parse(content);
   } catch (error: unknown) {
     throw new Error(
-      `Solaris configuration at ${configPath} is not valid JSON: ${describeError(error)}`,
+      `Solaris configuration at ${configPath} is not valid JSON: ${errorMessage(error, "unknown error")}`,
     );
   }
   return parseUserConfig(parsed);
@@ -414,11 +417,4 @@ function parseReferenceRef(value: unknown, alias: string): unknown {
 
 function isNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-  return "unknown error";
 }
