@@ -379,6 +379,56 @@ const QUALITY_FORBIDDEN_IMPORT_ROOTS = [
   { root: join("src", "environment"), label: "child-environment adapters" },
 ];
 
+/**
+ * Stage 3 milestone 7: the planner adapter directory (ADR 0020). The
+ * planner is strictly read-only and advisory: it can never mutate,
+ * execute, approve, checkpoint, or alter sandbox rules or provider
+ * credentials, and it must never touch the task runtime surface (the host
+ * owns TaskState).
+ */
+const PLANNER_ADAPTER_DIRECTORY = join("src", "planning");
+
+function isPlannerAdapterModule(packageRelativeFile, file) {
+  if (isTestSupportFile(file)) {
+    return false;
+  }
+  return packageRelativeFile.startsWith(PLANNER_ADAPTER_DIRECTORY + sep);
+}
+
+const PLANNER_FORBIDDEN_IMPORT_ROOTS = [
+  { root: join("src", "tools", "workspace", "mutations"), label: "workspace mutation adapters" },
+  { root: join("src", "process"), label: "process adapters" },
+  { root: join("src", "checkpoints"), label: "checkpoint adapters" },
+  { root: join("src", "sandbox"), label: "sandbox adapters" },
+  { root: join("src", "environment"), label: "child-environment adapters" },
+];
+
+/**
+ * Stage 3 milestone 7: core planning modules (src/planning). The host owns
+ * planning: the deterministic policy, the immutable plan model, the
+ * validation boundary, and the host planning flow. They never depend on
+ * provider ports, security/capability machinery (a plan can never grant
+ * capability), mutation/checkpoint machinery, projection (projection
+ * consumes the structured plan state — never the reverse), or Godot
+ * modules (the generic digest utility is allowed).
+ */
+const PLANNING_DIRECTORY = join("src", "planning");
+
+function isCorePlanningModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(PLANNING_DIRECTORY + sep);
+}
+
+/** Planning-policy identifiers provider adapters must never import: the
+ * provider never chooses planning depth — the host does. */
+const PLANNING_POLICY_BANNED_IDENTIFIERS = new Set([
+  "createPlanningPolicy",
+  "PlanningPolicy",
+  "PlanningDecisionInput",
+  "PlanningDecision",
+  "containsProtectedConfigReference",
+  "createPlanningFlow",
+]);
+
 const CHILD_PROCESS_MODULE = "child_process";
 
 /** Destructive filesystem APIs tracked structurally. */
@@ -1657,6 +1707,38 @@ export function runChecks(root) {
               );
             }
           }
+          if (pkg.name === "@solaris/core" && isCorePlanningModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: planning modules must not depend on provider ports; the planner is provider-neutral and the host owns planning`,
+              );
+            }
+            if (specifier.startsWith("../security/")) {
+              errors.push(
+                `${location}: planning modules must not import security/capability/approval machinery; a plan can never grant capability and approvals stay outside planning`,
+              );
+            }
+            if (
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../workspace/") ||
+              specifier.startsWith("../tools/") ||
+              specifier.startsWith("../godot/development/")
+            ) {
+              errors.push(
+                `${location}: planning modules must not import mutation/checkpoint/development machinery; the planner is read-only and plans are descriptive`,
+              );
+            }
+            if (specifier.startsWith("../projection/")) {
+              errors.push(
+                `${location}: planning modules must not import projection modules; ContextProjector consumes structured plan state, never the reverse`,
+              );
+            }
+            if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
+              errors.push(
+                `${location}: planning modules must not depend on Godot modules (the generic digest utility is allowed); planning is Godot-agnostic and does not depend on future scene/multi-agent modules`,
+              );
+            }
+          }
           if (pkg.name === "@solaris/core" && isCoreInstructionModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
@@ -1791,6 +1873,22 @@ export function runChecks(root) {
               }
             }
             if (
+              pkg.name === "@solaris/adapters" &&
+              !isTestSupportFile(file) &&
+              packageRelativeFile.startsWith(join("src", "providers") + sep)
+            ) {
+              for (const binding of analysis.importedNames) {
+                if (
+                  binding.module === "@solaris/core" &&
+                  PLANNING_POLICY_BANNED_IDENTIFIERS.has(binding.originalName)
+                ) {
+                  errors.push(
+                    `${location}: provider adapters must not import planning policy/flow surfaces (${binding.originalName}); the host decides planning depth and owns plan state — providers never choose depth`,
+                  );
+                }
+              }
+            }
+            if (
               packageRelativeFile.startsWith(
                 join("src", "tools", "workspace", "mutations") + sep,
               ) &&
@@ -1828,6 +1926,23 @@ export function runChecks(root) {
               if (targetsAReviewerImplementation && !isReviewerImplementationItself) {
                 errors.push(
                   `${location}: deterministic quality gates must not import reviewer implementations; the reviewer is an isolated reasoning signal`,
+                );
+              }
+            }
+
+            if (isPlannerAdapterModule(packageRelativeFile, file)) {
+              for (const forbidden of PLANNER_FORBIDDEN_IMPORT_ROOTS) {
+                if (isUnder(target, join(pkg.path, forbidden.root))) {
+                  errors.push(
+                    `${location}: the planner adapter must not import ${forbidden.label}; the planner is read-only and advisory and cannot mutate, execute, approve, checkpoint, or alter sandbox rules or provider credentials`,
+                  );
+                }
+              }
+              // The planner is a fresh read-only reasoning surface; host
+              // planning flow and policy never enter the adapter.
+              if (analysis.importedNames.some((binding) => PLANNING_POLICY_BANNED_IDENTIFIERS.has(binding.originalName))) {
+                errors.push(
+                  `${location}: the planner adapter must not import planning policy/flow surfaces; the host decides planning depth and owns plan state`,
                 );
               }
             }
