@@ -227,6 +227,31 @@ npm run check
 
 runs formatting, linting, type checking, tests, and the architecture check without modifying files. Before a change is considered complete, it must pass.
 
+## Self-reference and capability doctor
+
+Solaris explains its own installed behavior from host-owned metadata
+instead of model memory:
+
+- **`@solaris` self-reference** — built-in read-only documentation of the
+  exact installed runtime: version/build identity, commands, config
+  surface, capabilities, sandbox profiles, registered tools, Godot
+  capability status, references/research configuration, and Task Runtime
+  concepts, with a stable runtime revision. Retrieve it on demand with
+  the `self.read` / `self.search` tools, `/solaris`, or `solaris --self`.
+  It contains no secrets and has no mutation surface.
+- **`solaris --doctor [area] [--json] [--report-safe]`** (interactive:
+  `/doctor [area]`) — deterministic read-only diagnostics over ten areas
+  (runtime, configuration, providers, sandbox, workspace, godot, project,
+  references, research, capabilities), with per-check timeouts, honest
+  fail-closed sandbox reporting, and documented exit codes (0 = no
+  failures, 1 = one or more failures, 2 = invocation error; warnings
+  never fail). Default operation is offline, non-paid, and never mutates
+  anything. `--json` emits a deterministic schema-versioned report;
+  `--report-safe` emits a sanitized report for bug reports (paths,
+  credentials, and source content excluded — NOT anonymous).
+- The command catalog is the single source for the interactive command
+  vocabulary and help; `/doctor` and `/solaris` are catalogued commands.
+
 ## Next planned milestone
 
-Godot executable discovery, validation, and static project detection are complete; read-only engine capability probing is intentionally unavailable at this stage (the probe runner reports `unavailable` and never spawns the executable), so no engine profile can be produced until an identity-bound launch primitive exists. The version-matched Godot knowledge surface (profile model, dump parser, index builder, search/lookup, CLI commands, ADR 0010), the read-only GDScript diagnostic surface (check-only contracts, static preparation, normalization, approval machinery, CLI commands), and the bounded Godot GDScript LSP surface (session contracts, transport, normalization, session plan, CLI/tool commands, ADR 0011) are implemented as fail-closed surfaces: generation, check-only execution, and session startup report typed `unavailable` outcomes on every platform and never spawn the engine. The bounded GDScript development workflow (ADR 0012) — the complete edit/validate/repair loop with exact change sets, one-time approvals, mandatory checkpoints, `--check-only` and fresh-LSP validation gates, evidence, and bounded repairs — is implemented as contracts, change-set machinery, orchestration, CLI commands, deterministic fixtures, and truthful reporting, but its change-set applier fails closed as unavailable on every platform (no directory-relative commit primitive), so no mutation, approval for a mutation, or checkpoint occurs at this stage. The next narrow task after that is to add GDScript development quality gates and independent review: Godot style/convention checks, targeted testing, architecture review, changed-file regression analysis, and optional independent reviewer subagents before declaring development tasks complete. Solaris does not open, import, execute, or run any Godot project at this stage. See `ROADMAP.md`.
+Godot executable discovery, validation, and static project detection are complete; read-only engine capability probing is intentionally unavailable at this stage (the probe runner reports `unavailable` and never spawns the executable), so no engine profile can be produced until an identity-bound launch primitive exists. The version-matched Godot knowledge surface (profile model, dump parser, index builder, search/lookup, CLI commands, ADR 0010), the read-only GDScript diagnostic surface (check-only contracts, static preparation, normalization, approval machinery, CLI commands), and the bounded Godot GDScript LSP surface (session contracts, transport, normalization, session plan, CLI/tool commands, ADR 0011) are implemented as fail-closed surfaces: generation, check-only execution, and session startup report typed `unavailable` outcomes on every platform and never spawn the engine. The bounded GDScript development workflow (ADR 0012) — the complete edit/validate/repair loop with exact change sets, one-time approvals, mandatory checkpoints, `--check-only` and fresh-LSP validation gates, evidence, and bounded repairs — is implemented as contracts, change-set machinery, orchestration, CLI commands, deterministic fixtures, and truthful reporting, but its change-set applier fails closed as unavailable on every platform (no directory-relative commit primitive), so no mutation, approval for a mutation, or checkpoint occurs at this stage. The next narrow task after that is to add GDScript development quality gates and independent review: Godot style/convention checks, targeted testing, architecture review, changed-file regression analysis, and optional independent reviewer subagents before declaring development tasks complete. Solaris does not open, import, execute, or run any Godot project at this stage. The next narrow milestone is the Stage 3 Planning Foundation (deterministic plan-routing policy, no-plan/light-plan/full-plan modes, immutable revisioned plans, plan approval bound to plan revision, plan-to-TaskState integration). See `ROADMAP.md`.

@@ -416,3 +416,40 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
     write/checkpoint), the actual policy gate (denied research never
     invokes a source port), and the actual projected context (evidence
     sections, never instruction authority).
+
+## Self-reference and doctor rules (Stage 3 milestone 6, ADR 0019)
+
+1. **Solaris answers questions about its own installed behavior from
+   host-owned current metadata, not model memory.** The installed
+   package version, the command catalog, capability ids, profile ids,
+   and the registered tool surface are authoritative; training memory
+   never overrides them.
+2. **Capability support, configuration, availability, projection, and
+   authorization are distinct.** They are never presented as synonyms
+   ("Godot LSP supported" ≠ "Godot detected" ≠ "LSP available" ≠ "LSP
+   started" ≠ "LSP capability gated").
+3. **Doctor diagnostics are read-only.** The doctor never installs,
+   modifies, downloads, mutates, creates checkpoints, refreshes
+   references, or starts services; remediation is instructions only.
+4. **The default doctor is offline and non-paid.** No network requests,
+   no live probes, no provider calls, no engine launches.
+5. **Live external probes require explicit user action** and are not
+   implemented at this milestone.
+6. **Diagnostic reports never include secret values.** Checks report
+   credential names and presence only; the safe report additionally
+   strips absolute paths, source content, and credential-shaped tokens.
+7. **ToolProjector remains authoritative for model-visible tools.** The
+   doctor queries it through the sources port; doctor/self modules never
+   import projection internals or capability-resolution machinery
+   (architecture-enforced).
+8. **SandboxBackend remains authoritative for enforcement capability.**
+   Required enforcement failures report `fail`, and no unrestricted
+   fallback is ever reported or used.
+9. **The doctor does not silently repair or broaden permissions.** A
+   snapshot is observation; it grants nothing.
+10. **Current task runtime snapshots are diagnostic facts**, never
+    mutable through the doctor.
+11. **Expensive diagnostics are opt-in.** Anything that scans, hashes,
+    launches, or fetches is skipped or reported available-on-demand.
+12. **The self-reference and doctor surfaces require final-boundary
+    tests** for no-mutation, no-secret, and no-network behavior.

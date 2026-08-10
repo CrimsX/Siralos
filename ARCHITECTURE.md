@@ -828,3 +828,86 @@ Core owns the Git-neutral contracts (`GitInspector` port, status/diff models, `G
 ## Recovery checkpoints
 
 Core owns the checkpoint model, lifecycle rules, the `CheckpointStore` port, undo planning, and undo conflict rules; it never touches the filesystem. The filesystem checkpoint store (`packages/adapters/src/checkpoints/filesystem`) owns storage at `~/.solaris/checkpoints/<workspace-fingerprint>/<checkpoint-id>/`: atomic metadata replacement, preimage persistence, hash validation, symlink rejection, fail-closed retention limits (no automatic pruning: reaching the count or byte limit — or failing to prove capacity because any checkpoint's metadata or preimage is unreadable, invalid, oversized, linked, or size-inconsistent, or because content beyond the exact `metadata.json`/`preimage.bin` layout (unknown files, nested directories, temporary files, case-variant duplicates, links, special files) is present — refuses new checkpoints with a typed storage-limit error before any write and deletes nothing; the byte limit measures actual regular-file bytes beneath the checkpoint directory including metadata and preimages, declared preimages are content-verified through a shared handle-bound bounded verifier (exact bytes read must match the metadata byte length and SHA-256 via an explicit-offset read loop — a short read is never treated as EOF — with the opened handle and pathname identity proven against the pre-open lstat snapshot and a pre-read/final stability snapshot (identity, size, and mtime/ctime nanoseconds) captured from the handle before reading and re-verified after it, so a same-size corrupted preimage, a same-content hard-link/rename/symlink/junction substitution, or a same-inode in-place rewrite during verification is a refusal; `O_NOFOLLOW` is applied on POSIX while Windows carries the binding through the identity/stability comparisons, and unusable identity or stability fields fail closed), configured preimage limits are capped at 64 MiB with larger values rejected at store creation, checkpoint operations are bound to their before/after existence states (create: absent→present; update: present→present; delete: present→absent) by one shared validator for prepared and stored records, with the proposed checkpoint's exact serialized metadata and preimage bytes counted before any write, and unexpected content is never repaired, renamed, truncated, or quarantined; no checkpoint entry is skipped during retention; existing checkpoints are preserved), and the `reconcileWorkspaceCheckpoints` startup pass. **No new checkpoint is ever created at this stage** — every mutation fails closed as `unavailable` before recording — and `/checkpoints` may still list historical checkpoint data from earlier sessions if any exists. The undo service fails closed as `unavailable` (restoring requires pathname-based displacement, and Node offers no directory-relative primitive); the former reverse-diff/approval/restore machinery was largely deleted and the identity-bound design is documented as future work, while the store itself is tested internal code. The CLI's `/git-status`, `/diff`, `/checkpoints`, and `/undo` commands are thin renderers over these core-owned ports; the CLI never parses Git output and never restores files directly.
+
+## Self-reference and capability diagnostics (Stage 3 milestone 6, ADR 0019)
+
+Solaris explains its own installed behavior through host-owned surfaces
+instead of model memory:
+
+```text
+Installed Solaris Runtime
+        │
+        ├── SelfReference (@solaris)
+        │       ↓
+        │   exact current docs/config/capabilities
+        │
+        └── CapabilityDoctor
+                ↓
+           deterministic read-only diagnosis
+```
+
+### SelfReference (`packages/core/src/self`, `packages/core/src/commands/command-catalog.ts`)
+
+- `COMMAND_CATALOG` is the single source for the interactive command
+  vocabulary: `parse-input.ts` derives the `SlashCommand` union from it,
+  `/help` renders its descriptions, and the self-reference documents it.
+  A command cannot exist in the session without being catalogued, and it
+  cannot be catalogued without being documented — no hand-maintained
+  command list can drift.
+- `createSelfReference` builds bounded sections from authoritative
+  metadata: runtime identity (installed package version, Node major,
+  platform), commands, configuration surface (`CONFIG_SCHEMA_SUMMARY`,
+  conformance-tested against `schemas/user-config.schema.json`),
+  capability ids (`CAPABILITY_IDS`), sandbox profiles
+  (`SANDBOX_PROFILE_IDS`), the registered tool surface, Godot capability
+  status, references/research configuration, Task Runtime concepts, and
+  the doctor surface.
+- A stable revision fingerprints the installed surface (version +
+  command catalog revision + config schema revision + capability schema
+  revision + tool ABI revision). No Git metadata is invented when
+  unavailable in packaged builds.
+- The self-reference is retrieved on demand via the read-only
+  `self.read` / `self.search` tools (`self.inspect`, allowed in every
+  built-in profile). Full documentation is never injected into prompts.
+  There is no mutation tool for it.
+
+### CapabilitySnapshot (`packages/core/src/doctor/doctor-model.ts`, `capability-state.ts`)
+
+- `CapabilityState` distinguishes available / configured / unavailable /
+  unsupported / degraded / blocked_by_policy / requires_approval /
+  unknown. `CapabilitySnapshot` is a typed observation of the current
+  runtime (providers, sandbox, workspace, godot, references, research,
+  tools); it grants nothing — SandboxBackend, ToolProjector, and the
+  security layer stay authoritative.
+
+### CapabilityDoctor (`packages/core/src/doctor`)
+
+- `DoctorSources` is the single port through which the doctor queries
+  authoritative subsystem owners (sandbox backend inspect, Godot
+  inspector doctor, reference registry, research service, ToolProjector,
+  task runtime, config loader, Git, checkpoint store). The doctor never
+  re-implements subsystem logic.
+- Ten areas (runtime, configuration, providers, sandbox, workspace,
+  godot, project, references, research, capabilities), typed checks with
+  pass/warn/fail/skip, per-check timeouts, deterministic ordering, and
+  documented exit codes (0/1/2; warnings never fail).
+- The doctor is read-only and offline by default: no network, no live
+  probes, no refreshes, no mutations, no checkpoints. Required sandbox
+  enforcement failures are `fail`, never "warn but usable". Recovery /
+  LSP / check-only operations are reported as "available but requires
+  approval" and never triggered. Task runtime snapshots are compared as
+  diagnostic facts and never mutated.
+- Safe reports (`--report-safe`) drop details/remediations and sanitize
+  summaries (absolute paths and credential-shaped tokens); they keep OS
+  family, Node major, and version and are NOT anonymous. JSON output
+  (`--json`) is schema-versioned and deterministic.
+
+### Dependency direction
+
+Core doctor/self modules never import network modules, fs, mutation /
+undo / checkpoint machinery, default-policy construction, or projection
+internals; projection never imports the doctor; safe-report rendering is
+separate from diagnostic collection; self-reference tool adapters carry
+only the fixed `self.inspect` capability. The CLI composition root wires
+everything: `solaris --doctor [area] [--json] [--report-safe]`, `--self`,
+`/doctor [area]`, `/solaris`.

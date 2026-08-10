@@ -104,6 +104,47 @@ External material is governed by the same authority separation as instructions a
 - **No auto-trust of remote content.** Research documents are normalized bounded text; the transport is https-only with bounded redirects; a research document never becomes knowledge automatically — a fact may cite `research_evidence` provenance only through an explicit host-verified `propose` (fixtures 23, 24).
 - **Fail-closed posture.** Real repository materialization is unavailable at this stage: the production repository resolver reports `unavailable` (no sandboxed Git execution, nothing spawned, nothing fetched), the managed cache is a no-op, and local-directory references are direct read-only roots. Nothing is created or fetched; unavailable is reported loudly, never passed.
 
+## Self-reference and capability diagnostics (ADR 0019)
+
+Solaris inspects itself through host-owned read-only surfaces with the same
+authority separation as everything else:
+
+- **Host-owned, not model memory.** The `@solaris` self-reference and the
+  capability doctor describe the exact installed runtime from installed
+  package metadata, the command catalog, capability ids, profile ids, and
+  the registered tool surface. Model training memory can never override
+  them: if memory claims a feature the installed build does not have, the
+  host-grounded current state wins (behavior fixture 32).
+- **The doctor is read-only.** `solaris --doctor` never installs
+  dependencies, modifies config, changes permissions, downloads tools,
+  mutates the workspace, creates checkpoints, refreshes references, or
+  starts services. Remediation is instructions only; there is no auto-fix.
+- **Default doctor is offline and non-paid.** No network requests, no live
+  provider probes, no reference fetches, no engine launches. A controlled
+  transport attached to the research service is never invoked (effect
+  test 46); a fixture workspace, its checkpoints, and its git index are
+  untouched (effect test 47).
+- **Capability states are distinct.** supported ≠ configured ≠ available
+  ≠ projected ≠ authorized. A `CapabilitySnapshot` is observation, not
+  policy — it grants nothing; SandboxBackend stays authoritative for
+  enforcement capability and ToolProjector stays authoritative for
+  model-visible tool state (the doctor queries both through its sources
+  port and never re-derives resolution; architecture-enforced).
+- **Fail-closed reporting.** If a required sandbox profile cannot be
+  enforced, the doctor reports `fail`, never "warn but usable", and never
+  an unrestricted fallback. Recovery/LSP/check-only capabilities are
+  reported as "available but requires approval" and are never triggered
+  by the doctor.
+- **No secrets in reports.** Doctor checks report credential _names_ and
+  presence only, never values. The safe report (`--report-safe`) drops
+  details/remediations, sanitizes summaries (absolute paths and
+  credential-shaped tokens), and excludes source content; it keeps OS
+  family/Node major/version and is NOT anonymous (effect test 48).
+- **Task snapshots are facts.** The doctor may report differences between
+  a running task's immutable runtime snapshot and the current global
+  configuration; it never mutates the running task (behavior fixtures
+  23–24).
+
 ## Environment filtering
 
 See "Credential isolation" above. The allowlist keeps only variables required to run ordinary development tools (`PATH`, `SystemRoot`, `WINDIR`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP`, `TMPDIR`, `LANG`, `LC_ALL`, `TERM`), with sandbox-controlled home and temp values.
