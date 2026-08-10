@@ -100,8 +100,8 @@ External material is governed by the same authority separation as instructions a
 - **Reference repositories and READMEs are never trusted.** A reference is untrusted data with a trust _class_ (`explicit-user` / `trusted-project` / `untrusted-project` / `managed`) that is metadata for policy decisions — it never changes what the tools may do. Reference content cannot enable a tool, grant a permission, override policy, or appear under instruction authority; it surfaces only under bounded evidence sections (fixtures 12, 13, 22, 53).
 - **No secret values in reference configuration.** Reference declarations are parsed strictly with unknown keys rejected, so a secret cannot hide inside a declaration; descriptions and aliases are bounded and sanitized in display. Provider-private continuation data and secrets never enter research evidence (fixture 30).
 - **Path containment.** Reference paths are root-relative with the same containment class as workspace paths: no absolute paths, no surviving `..`, symlink escapes rejected against the canonical root, null bytes rejected, backslashes treated as separators everywhere. Reference roots must resolve outside the workspace namespace (checked by the registry at resolution and refresh, re-verified at access time), and workspace tools cannot address reference content through crafted paths or traversal (fixtures 2, 2b, 3, 4). Managed cache paths are never model-facing.
-- **Network policy for research: denied by default.** The `research.fetch` capability is `deny` in every built-in profile, and the `ResearchService` gates on it before any source port is invoked — `ask` is refused too (no approval protocol exists in this milestone), and denied research never invokes a configured source port (fixture 52). Research is bounded (download/document/section caps with truncation disclosure), cancellable (abort + timeout), and provenance-bearing (requested vs resolved revision, explicit version-fallback marking).
-- **No auto-trust of remote content.** Research documents are normalized bounded text; the transport is https-only with bounded redirects; a research document never becomes knowledge automatically — a fact may cite `research_evidence` provenance only through an explicit host-verified `propose` (fixtures 23, 24).
+- **Network policy for research: denied by default.** The `research.fetch` capability is `deny` in every built-in profile, and the `ResearchService` gates on it before any source port is invoked — `ask` is refused too (no approval protocol exists in this milestone), and denied research never invokes a configured source port (fixture 52). Research is bounded (download/document/section caps with truncation disclosure), cancellable (caller abort plus a service timeout that aborts the source), provenance-bearing (requested vs resolved revision, explicit version-fallback marking), and service-bound to the exact active task id plus TaskContract revision; a stale result is discarded before return or evidence retention.
+- **No auto-trust of remote content.** Research documents are normalized bounded text; the transport is https-only with bounded redirects, an exact per-source DNS-host allowlist applied to the initial request and every redirect, default HTTPS ports only, no URL credentials, and one absolute redirect-chain deadline. A research document never becomes knowledge automatically — a fact may cite `research_evidence` provenance only through an explicit host-verified `propose` (fixtures 23, 24).
 - **Fail-closed posture.** Real repository materialization is unavailable at this stage: the production repository resolver reports `unavailable` (no sandboxed Git execution, nothing spawned, nothing fetched), the managed cache is a no-op, and local-directory references are direct read-only roots. Nothing is created or fetched; unavailable is reported loudly, never passed.
 
 ## Self-reference and capability diagnostics (ADR 0019)
@@ -242,7 +242,9 @@ The recovery probe is the first moment Godot can execute project-authored code (
   registry contains no mutation, process, approval, checkpoint, or undo
   tools; the executor refuses every non-read-only tool at the runtime
   boundary; the ToolProjector `planning` mode hides the rest from the
-  provider-visible schema. The planner cannot approve anything, cannot
+  provider-visible schema. Only tools projected as `available` execute;
+  visible-but-gated and fabricated hidden calls return failed tool results
+  without execution. The planner cannot approve anything, cannot
   broaden capabilities, cannot mark validation or the task complete, and
   its private reasoning is never stored or forwarded.
 - **Plan content never grants capability.** The plan model has no
@@ -277,6 +279,12 @@ The recovery probe is the first moment Godot can execute project-authored code (
 - **Planning has a bounded budget** (tool rounds, per-turn calls, output
   bytes, timeout, attempts); repeated identical no-progress reads fail
   planning cleanly and never grant mutation capability.
+- **Planner and reviewer streams are strict and cumulatively bounded.**
+  Iterator EOF is not completion, events after `completed` fail the turn,
+  duplicate call ids are rejected across an attempt, text/event/tool/id/name/
+  argument/aggregate byte budgets are enforced, and JSON tool inputs are
+  detached before execution. Exactly the configured number of tool rounds may
+  run, followed by one final provider turn that can consume the last result.
 
 ## Development quality gates and independent review (ADR 0013)
 

@@ -2,7 +2,14 @@
 
 Solaris is an independent, provider-neutral, interactive agent harness for programming and developing games with the Godot Engine.
 
-This repository currently contains the **foundation vertical slice**: an executable interactive CLI, a provider-neutral application core, and a deterministic fake provider. It does not yet develop Godot games.
+This repository contains the provider-neutral harness foundations through
+**Stage 3 milestone 7 (Host-Controlled Planning)**: an executable interactive
+CLI, deterministic fake provider, bounded tool and projection pipelines,
+read-only workspace/Godot inspection, structured task state, references and
+research contracts, capability diagnostics, and revision-bound planning. It
+does not yet develop Godot games end to end: every operation that would require
+an identity-bound filesystem or process primitive still fails closed as
+`unavailable`.
 
 ## Current status
 
@@ -254,4 +261,11 @@ instead of model memory:
 
 ## Next planned milestone
 
-Godot executable discovery, validation, and static project detection are complete; read-only engine capability probing is intentionally unavailable at this stage (the probe runner reports `unavailable` and never spawns the executable), so no engine profile can be produced until an identity-bound launch primitive exists. The version-matched Godot knowledge surface (profile model, dump parser, index builder, search/lookup, CLI commands, ADR 0010), the read-only GDScript diagnostic surface (check-only contracts, static preparation, normalization, approval machinery, CLI commands), and the bounded Godot GDScript LSP surface (session contracts, transport, normalization, session plan, CLI/tool commands, ADR 0011) are implemented as fail-closed surfaces: generation, check-only execution, and session startup report typed `unavailable` outcomes on every platform and never spawn the engine. The bounded GDScript development workflow (ADR 0012) — the complete edit/validate/repair loop with exact change sets, one-time approvals, mandatory checkpoints, `--check-only` and fresh-LSP validation gates, evidence, and bounded repairs — is implemented as contracts, change-set machinery, orchestration, CLI commands, deterministic fixtures, and truthful reporting, but its change-set applier fails closed as unavailable on every platform (no directory-relative commit primitive), so no mutation, approval for a mutation, or checkpoint occurs at this stage. The next narrow task after that is to add GDScript development quality gates and independent review: Godot style/convention checks, targeted testing, architecture review, changed-file regression analysis, and optional independent reviewer subagents before declaring development tasks complete. Solaris does not open, import, execute, or run any Godot project at this stage. The next narrow milestone is the Stage 3 Planning Foundation (deterministic plan-routing policy, no-plan/light-plan/full-plan modes, immutable revisioned plans, plan approval bound to plan revision, plan-to-TaskState integration). See `ROADMAP.md`.
+The next narrow milestone is **Stage 3 milestone 8: Read-Only Godot Scene and
+Resource Intelligence**. It adds deterministic, bounded parsing and structured
+inspection for `.tscn`, `.tres`, UID/resource relationships, scene inheritance,
+node ownership, script attachments, signals, project settings, and autoloads.
+It remains strictly read-only: no scene/resource mutation, project import, or
+Godot launch is part of that milestone. The existing engine, mutation, command,
+and development execution surfaces remain intentionally unavailable until an
+identity-bound host primitive can enforce them. See `ROADMAP.md`.

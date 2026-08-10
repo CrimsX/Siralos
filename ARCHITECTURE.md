@@ -428,10 +428,10 @@ packages/core/src/tasks/
 tests/behavior/         deterministic behavior fixtures (behaviors 1-15)
 ```
 
-- **Single-owner state rule**: every authoritative mutable Solaris domain has exactly one runtime owner. `TaskState` is owned exclusively by the `TaskRuntime` created in the CLI composition root; CLI, providers, adapters, and the UI receive immutable snapshots, projections, or events. The runtime's mutable state is closure-private; `snapshot()` returns detached copies; `activityLog()` returns copies of copies; `TaskRuntimeSnapshot` is frozen. Provider adapters cannot import the task runtime surface at all (architecture-enforced); the CLI is a read-only renderer of snapshots plus the completion-gate evaluation.
-- **TaskContract** distinguishes what the user requested, constraints, individually addressable acceptance criteria (`deterministic` / `review` / `user`), and the pause policy. Contracts are immutable and revisioned: a material change produces revision N+1, never a mutation of revision N. Later milestones bind plan/mutation approvals and workflow continuation to contract revisions.
+- **Single-owner state rule**: every authoritative mutable Solaris domain has exactly one runtime owner. `TaskState` is owned exclusively by the `TaskRuntime` created in the CLI composition root; CLI, providers, adapters, and the UI receive immutable snapshots, projections, or events. The runtime's mutable state is closure-private; task contracts, runtime snapshots, step specifications, plan revisions, evidence sources, and returned snapshots are detached from caller-owned objects, and revisioned artifacts are deeply frozen. Duplicate task ids are rejected rather than replacing history, and terminal tasks refuse further authoritative mutation. Provider adapters cannot import the task runtime surface at all (architecture-enforced); the CLI is a read-only renderer of snapshots plus the completion-gate evaluation.
+- **TaskContract** distinguishes what the user requested, constraints, individually addressable acceptance criteria (`deterministic` / `review` / `user`), and the pause policy. Contracts are bounded, deeply immutable, and revisioned: a material change produces revision N+1 with the same task id, never a mutation of revision N. Later milestones bind plan/mutation approvals and workflow continuation to contract revisions.
 - **TaskState** is a materialized, serializable object: phase (`prepared | working | validating | reviewing | blocked | completed | cancelled | failed`), bounded steps with evidence references, acceptance states, evidence-backed findings, validation/review status, iteration, host-observed progress, and terminal timestamps. It never stores private chain-of-thought, provider continuation internals, secrets, or raw adapter output — evidence references point at already-owned artifacts (change-set ids, checkpoint ids, counts, digests) with a 4 KiB source bound.
-- **Evidence-backed completion**: a step completes only through `completeStep(stepId, evidenceRefs)` with refs that exist, belong to the task, and match the step's declared evidence kinds (`research` steps accept read/lookup evidence; review steps accept reviewer results; no hard-coded "every step needs a mutation"). `WorkflowDisposition` is a structured _request_: a model-issued `complete` is a completion request that still passes the host completion gate (steps completed, criteria satisfied, validation/review clean, no unresolved critical/high findings). A model asserting "done" in text never reaches the runtime.
+- **Evidence-backed completion**: a step completes only through `completeStep(stepId, evidenceRefs)` with refs that exist, belong to the task, and match the step's declared evidence kinds (`research` steps accept read/lookup evidence; review steps accept reviewer results; no hard-coded "every step needs a mutation"). Evidence count/id/source bytes are bounded, and every declared evidence kind is runtime-bound to its corresponding source shape (for example, `review_result` cannot carry a `workspace_read` source). `WorkflowDisposition` is a structured _request_: a model-issued `complete` is a completion request that still passes the host completion gate (steps completed, criteria satisfied, validation/review clean, no unresolved critical/high findings). A model asserting "done" in text never reaches the runtime.
 - **Progress**: the host feeds typed observations (`action` + canonical result fingerprint); identical repeated actions with identical results do not repeatedly count as progress. The bounded window surfaces `healthy / degraded / stalled` deterministically; the runtime never swaps models, spawns advisors, or hands off — those are future milestones.
 - **TaskRuntimeSnapshot** is captured once at task start (runtime version, provider profile id, sandbox profile id, capability-policy fingerprint, workspace identity, Godot engine fingerprint, workflow identity + prepared-operation digest). Ordinary global configuration changes affect future tasks, never a running task's snapshot; a security revocation terminates/restricts existing work only where existing Solaris policy already requires it.
 - **Activity log**: typed append-only `TaskActivityEvent` records (deterministic per-task sequence, host timestamps) for auditability/debugging/future persistence/UI projection — not event sourcing, not a competing state, and never a generic event bus. Events carry no provider-private continuation state (allowlisted field types).
@@ -789,13 +789,16 @@ packages/adapters/src/tools/reference/
   link layers. Provenance records requested vs resolved identity
   (`requestedRef`/`resolvedRevision`, `requestedVersion`/`usedVersion`,
   explicit `fallback` marking — e.g. Godot docs patch → minor → stable).
-  Results are stale-result-bound (`requestId` + task-contract revision;
-  `bind`/`isCurrent`); stale results are discarded before entering
-  evidence or context. The real adapters cover a narrow read-only scope —
+  Results are stale-result-bound inside the service to the exact active
+  task id and TaskContract revision. The service snapshots that identity
+  before invoking a source and checks it again before returning or retaining
+  a document; stale results are discarded before entering evidence or
+  context, so callers cannot omit the check. The real adapters cover a narrow read-only scope —
   GitHub known-file content and latest-release notes
   (`research.repository`) and Godot documentation class/search pages
   (`research.godot_docs`) — through a single bounded https-only
-  node:https transport.
+  node:https transport whose exact DNS-host allowlist applies to the initial
+  URL and every redirect under one absolute deadline.
 - **Evidence and knowledge integration**: task evidence gains
   `reference_read`, `reference_search`, and `research` kinds with bounded
   sources; the ContextProjector renders volatile `[Reference evidence]`
@@ -955,7 +958,9 @@ ways: the composition-root registry contains only read-only tools
 policy-gated research, self-reference); the executor refuses every
 prepared or non-read-only tool at the runtime boundary; and the
 ToolProjector `planning` mode hides mutation, process, and approval-grant
-tools from the provider-visible schema. The planner cannot approve its
+tools from the provider-visible schema. A visible but gated tool is returned
+as a failed tool result and never executes because planning has no approval
+protocol. The planner cannot approve its
 own plan, approve edits, broaden capabilities, mark validation complete,
 or mark the task complete, and it cannot choose planning depth.
 
@@ -991,7 +996,9 @@ apply. Plan requirements are descriptive and grant nothing.
 - `/develop [--plan|--plan-light] <request>` — host-controlled routing
   before the executor provider call; full plans ask for plan approval
   through the interactive reviewer; verified-touchpoint staleness and the
-  full-plan acceptance gate surface before execution.
+  full-plan acceptance-and-exact-approval gate surface before execution;
+  denial/cancellation terminates the workflow, and a stale verified
+  touchpoint invalidates the plan before the executor boundary.
 - `/development-status`, `/status`, `/task-status` — planning depth, plan
   revision, plan state, approval state, staleness.
 

@@ -75,7 +75,8 @@ execution:
    checkpoint, and undo surfaces are absent from its tool registry BY
    CONSTRUCTION and additionally hidden by the ToolProjector's `planning`
    mode; the executor refuses any non-read-only tool at the runtime
-   boundary. The planner cannot approve its own plan, cannot approve
+   boundary and executes only tools the host projection marks `available`
+   (a visible-but-gated call fails without execution). The planner cannot approve its own plan, cannot approve
    edits, cannot broaden capabilities, cannot mark validation or the task
    complete, and cannot choose planning depth (the host routes).
 
@@ -121,12 +122,15 @@ execution:
    `plan_invalidated`) appends to the existing activity log.
 
 10. **Planning budgets** — the planner has a bounded budget (max tool
-    rounds, per-turn tool calls, output bytes, timeout, max attempts) and
+    rounds, per-turn tool calls, text events, output/tool/aggregate bytes,
+    timeout, max attempts), requires an explicit provider completion event,
+    rejects post-completion events and duplicate call ids, and
     repeated identical no-progress reads fail planning cleanly while
     feeding the host progress tracker (they never count as indefinite
     progress and never grant mutation capability).
 
-11. **Full-plan acceptance gate** — full-plan execution requires
+11. **Full-plan acceptance gate** — full-plan execution requires the exact
+    current plan revision to be approved and
     meaningful acceptance criteria in the TaskContract (at least two
     criteria, one host-verifiable) before any source mutation; a full
     plan on a contract without them is blocked with a precise reason.
@@ -138,8 +142,9 @@ execution:
     zero workspace changes and zero mutation checkpoints) and `/develop`
     routing (host-controlled depth before the executor provider call;
     `--plan` / `--plan-light` force the depth; full plans ask for plan
-    approval through the interactive reviewer; verified-touchpoint
-    staleness and the acceptance gate are surfaced before execution;
+    approval through the interactive reviewer; denial or cancellation stops
+    before the executor, and verified-touchpoint staleness invalidates the
+    plan before the acceptance/approval gate and execution;
     planning failure/cancel terminates the workflow cleanly).
     `/development-status`, `/status`, and `/task-status` show planning
     depth, plan revision, plan state, approval state, and staleness.

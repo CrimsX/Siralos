@@ -442,10 +442,14 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
    the gate — denied by every built-in profile, `ask` refused (no
    approval protocol exists) — and the source port is never invoked when
    the gate does not allow.
-8. **Research is bounded, cancellable, and provenance-bearing.** Download
-   and document caps with explicit truncation disclosure, caller-abort
-   plus timeout racing, and provenance that records requested vs resolved
-   identity and marks every version fallback.
+8. **Research is bounded, cancellable, provenance-bearing, and task-bound.**
+   Download and document caps have explicit truncation disclosure; one
+   service timeout aborts the source instead of merely abandoning it; the
+   HTTPS transport snapshots an exact per-source host allowlist for the
+   initial URL and every redirect; provenance records requested vs resolved
+   identity and marks every version fallback. The service snapshots the
+   active task id plus TaskContract revision and discards a document if either
+   changes before completion, so callers cannot forget the stale-result check.
 9. **Research never becomes knowledge automatically.** A fact may cite
    `research_evidence` provenance only through an explicit host-verified
    `propose`; there is no automatic proposal path.

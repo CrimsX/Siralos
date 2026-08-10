@@ -110,17 +110,22 @@ Neither becomes project knowledge automatically.
   this milestone, so `ask` is refused too), every built-in profile denies
   it by default, and the request is validated against the bounded model
   (query/topic/path/ref/version shapes and caps) and must name a
-  configured source. Fetches race the caller's abort signal and a timeout
+  configured source (the configured identity, not model-supplied display
+  metadata, is passed to the source). Fetches race the caller's abort signal and a timeout
   (10 s, 30 s hard lifetime) and are bounded at every layer: 2 MiB
   download cap, 256 KiB normalized document cap, section/link/heading caps,
   and explicit truncation disclosure. Provenance records what was asked
   for versus what was served (`requestedRef` / `resolvedRevision`,
   `requestedVersion` / `usedVersion`), with any fallback (e.g. Godot docs
   patch → minor → `stable`) explicitly marked — mismatched guidance is
-  never served silently. Asynchronous results are stale-result-bound:
-  every fetch mints a `requestId`, the caller binds to the task-contract
-  revision, and results checked against `isCurrent` before entering
-  evidence or context are discarded when stale.
+  never served silently. The HTTPS transport applies an exact per-source
+  DNS-host allowlist to the initial request and every redirect, rejects URL
+  credentials and alternate ports, and uses one deadline for the full chain.
+  Asynchronous results are stale-result-bound inside the service: every fetch
+  mints a `requestId`, snapshots the exact active task id and TaskContract
+  revision, then re-checks both before returning or retaining a document.
+  Stale results are discarded before evidence or context, so callers cannot
+  omit the check.
 - **Evidence integration.** Task evidence gains `reference_read`,
   `reference_search`, and `research` kinds with bounded sources
   (reference id/alias/revision/path/mode/SHA-256; search query and match
