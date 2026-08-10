@@ -1,4 +1,3 @@
-import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import { truncateText } from "../projection/evidence-projector.js";
 import type { CapabilityPolicy } from "../security/capability.js";
 import { evaluatePermission } from "../security/permission-evaluator.js";
@@ -8,13 +7,33 @@ import {
   defaultResearchBounds,
   validateResearchRequest,
   type ResearchBounds,
-  type ResearchDocument,
   type ResearchOutcome,
   type ResearchRequest,
   type ResearchSourceKind,
-  type ResearchSourceRef,
 } from "./research-model.js";
 import type { ResearchSourcePort } from "./research-ports.js";
+import { createResearchEvidenceStore } from "./research-evidence-store.js";
+import type {
+  ResearchEvidence,
+  ResearchFetchResult,
+  ResearchTaskBinding,
+} from "./research-service-model.js";
+import {
+  composeResearchSignal,
+  createResearchRequestId,
+  describeResearchError,
+  isValidResearchTaskBinding,
+  normalizeBoundedInteger,
+  normalizeResearchBounds,
+  raceWithResearchSignal,
+  sameResearchTaskBinding,
+} from "./research-service-support.js";
+
+export type {
+  ResearchEvidence,
+  ResearchFetchResult,
+  ResearchTaskBinding,
+} from "./research-service-model.js";
 
 /**
  * ResearchService (Stage 3 milestone 5) — the application-owned research
@@ -46,47 +65,6 @@ import type { ResearchSourcePort } from "./research-ports.js";
  * `propose` call with host verification.
  */
 
-export interface ResearchEvidence {
-  readonly evidenceId: string;
-  readonly requestId: string;
-  readonly taskId: string;
-  readonly taskContractRevision: number;
-  readonly source: ResearchSourceRef;
-  readonly fetchedAtMs: number;
-  readonly resolvedRevision: string | null;
-  readonly version: string | null;
-  readonly fallback: boolean;
-  /** First-section excerpt, bounded by `maxResearchEvidenceExcerptBytes`. */
-  readonly excerpt: string;
-  readonly truncated: boolean;
-  readonly byteLength: number;
-}
-
-export type ResearchFetchResult =
-  | { readonly status: "refused"; readonly reason: string }
-  | {
-      readonly status: "document";
-      readonly document: ResearchDocument;
-      readonly evidence: ResearchEvidence;
-    }
-  | {
-      readonly status:
-        | "unsupported-content"
-        | "oversized"
-        | "timeout"
-        | "cancelled"
-        | "stale"
-        | "unavailable"
-        | "failed";
-      readonly reason: string;
-    };
-
-/** Exact task identity captured around one asynchronous research request. */
-export interface ResearchTaskBinding {
-  readonly taskId: string;
-  readonly taskContractRevision: number;
-}
-
 export interface ResearchServiceOptions {
   readonly policy: CapabilityPolicy;
   readonly profile: SandboxProfile;
@@ -113,212 +91,16 @@ export interface ResearchService {
 
 export const DEFAULT_RESEARCH_VIEW_MAX_BYTES = 2 * 1024;
 
-function describeError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-
-function requestDigest(request: ResearchRequest): string {
-  return sha256Hex(
-    canonicalizeJson({
-      source: request.source,
-      query: request.query,
-      topic: request.topic,
-      path: request.path,
-      ref: request.ref,
-      version: request.version,
-    }),
-  );
-}
-
-/**
- * Compose the caller's abort signal with a service timeout into one signal
- * handed to the source port, so the source can cancel its own work on
- * either condition.
- */
-function composeSignal(
-  signal: AbortSignal | undefined,
-  timeoutMs: number,
-): {
-  readonly signal: AbortSignal;
-  readonly timedOut: () => boolean;
-  readonly cleanup: () => void;
-} {
-  const controller = new AbortController();
-  const cleanups: Array<() => void> = [];
-  let timeoutTriggered = false;
-  if (signal !== undefined) {
-    if (signal.aborted) {
-      controller.abort(signal.reason);
-    } else {
-      const onAbort = (): void => controller.abort(signal.reason);
-      signal.addEventListener("abort", onAbort, { once: true });
-      cleanups.push(() => signal.removeEventListener("abort", onAbort));
-    }
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  if (timeoutMs > 0) {
-    timer = setTimeout(() => {
-      timeoutTriggered = true;
-      controller.abort(new DOMException("Research request timed out", "TimeoutError"));
-    }, timeoutMs);
-    cleanups.push(() => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-    });
-  }
-  return {
-    signal: controller.signal,
-    timedOut: () => timeoutTriggered,
-    cleanup: () => {
-      for (const cleanup of cleanups) {
-        cleanup();
-      }
-    },
-  };
-}
-
-/**
- * Race one promise against a composed abort signal. The signal already
- * carries both caller cancellation and the service timeout, so there is
- * only one timer and the source is always aborted when the service stops
- * waiting for it.
- */
-function raceWithSignal<T>(
-  promise: Promise<T>,
-  signal: AbortSignal,
-  onAbort: () => T,
-  onFailure: (error: unknown) => T,
-): Promise<T> {
-  if (signal.aborted) {
-    return Promise.resolve(onAbort());
-  }
-  return new Promise<T>((resolve) => {
-    let settled = false;
-    const finish = (value: T): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      signal.removeEventListener("abort", onAbortEvent);
-      resolve(value);
-    };
-    const onAbortEvent = (): void => finish(onAbort());
-    signal.addEventListener("abort", onAbortEvent, { once: true });
-    promise.then(finish, (error: unknown) => finish(onFailure(error)));
-  });
-}
-
-function normalizeInteger(
-  value: number | undefined,
-  fallback: number,
-  minimum: number,
-  maximum: number,
-): number {
-  if (value === undefined || !Number.isFinite(value)) {
-    return fallback;
-  }
-  return Math.min(maximum, Math.max(minimum, Math.floor(value)));
-}
-
-function normalizeResearchBounds(input: ResearchBounds): ResearchBounds {
-  const timeoutMs = normalizeInteger(
-    input.timeoutMs,
-    RESEARCH_LIMITS.timeoutMs,
-    1,
-    RESEARCH_LIMITS.timeoutMs,
-  );
-  return Object.freeze({
-    maxDownloadBytes: normalizeInteger(
-      input.maxDownloadBytes,
-      RESEARCH_LIMITS.maxDownloadBytes,
-      1,
-      RESEARCH_LIMITS.maxDownloadBytes,
-    ),
-    maxDocumentBytes: normalizeInteger(
-      input.maxDocumentBytes,
-      RESEARCH_LIMITS.maxDocumentBytes,
-      1,
-      RESEARCH_LIMITS.maxDocumentBytes,
-    ),
-    maxSections: normalizeInteger(
-      input.maxSections,
-      RESEARCH_LIMITS.maxSections,
-      1,
-      RESEARCH_LIMITS.maxSections,
-    ),
-    maxLinks: normalizeInteger(
-      input.maxLinks,
-      RESEARCH_LIMITS.maxLinks,
-      0,
-      RESEARCH_LIMITS.maxLinks,
-    ),
-    maxHeadingBytes: normalizeInteger(
-      input.maxHeadingBytes,
-      RESEARCH_LIMITS.maxHeadingBytes,
-      1,
-      RESEARCH_LIMITS.maxHeadingBytes,
-    ),
-    maxSectionTextBytes: normalizeInteger(
-      input.maxSectionTextBytes,
-      RESEARCH_LIMITS.maxSectionTextBytes,
-      1,
-      RESEARCH_LIMITS.maxSectionTextBytes,
-    ),
-    maxRedirects: normalizeInteger(
-      input.maxRedirects,
-      RESEARCH_LIMITS.maxRedirects,
-      0,
-      RESEARCH_LIMITS.maxRedirects,
-    ),
-    timeoutMs,
-    hardLifetimeMs: Math.max(
-      timeoutMs,
-      normalizeInteger(
-        input.hardLifetimeMs,
-        RESEARCH_LIMITS.hardLifetimeMs,
-        1,
-        RESEARCH_LIMITS.hardLifetimeMs,
-      ),
-    ),
-  });
-}
-
-function isValidTaskBinding(value: ResearchTaskBinding | null): value is ResearchTaskBinding {
-  return (
-    value !== null &&
-    value.taskId.trim().length > 0 &&
-    new TextEncoder().encode(value.taskId).length <= 128 &&
-    Number.isSafeInteger(value.taskContractRevision) &&
-    value.taskContractRevision >= 1
-  );
-}
-
-function sameTaskBinding(
-  expected: ResearchTaskBinding,
-  current: ResearchTaskBinding | null,
-): boolean {
-  return (
-    current !== null &&
-    current.taskId === expected.taskId &&
-    current.taskContractRevision === expected.taskContractRevision
-  );
-}
-
 export function createResearchService(options: ResearchServiceOptions): ResearchService {
   const bounds = normalizeResearchBounds(options.bounds ?? defaultResearchBounds());
   const sources = [...options.sources];
-  const evidence: ResearchEvidence[] = [];
-  const maxEvidenceBytes = normalizeInteger(
+  const maxEvidenceBytes = normalizeBoundedInteger(
     options.maxEvidenceBytes,
     RESEARCH_LIMITS.maxRetainedEvidenceViews * RESEARCH_LIMITS.maxResearchEvidenceExcerptBytes,
     0,
     RESEARCH_LIMITS.maxRetainedEvidenceViews * RESEARCH_LIMITS.maxResearchEvidenceExcerptBytes,
   );
-  let evidenceCounter = 0;
+  const evidenceStore = createResearchEvidenceStore(maxEvidenceBytes);
   let requestCounter = 0;
   let activeRequests = 0;
 
@@ -336,46 +118,6 @@ export function createResearchService(options: ResearchServiceOptions): Research
     return null;
   }
 
-  function buildEvidence(
-    document: ResearchDocument,
-    requestId: string,
-    task: ResearchTaskBinding,
-  ): ResearchEvidence {
-    const firstSection = document.sections[0];
-    const raw = firstSection?.text ?? "";
-    const excerpt = truncateText(raw, RESEARCH_LIMITS.maxResearchEvidenceExcerptBytes);
-    evidenceCounter += 1;
-    return {
-      evidenceId: `ev-research-${evidenceCounter}`,
-      requestId,
-      taskId: task.taskId,
-      taskContractRevision: task.taskContractRevision,
-      source: document.source,
-      fetchedAtMs: document.fetchedAtMs,
-      resolvedRevision: document.provenance.resolvedRevision,
-      version: document.provenance.usedVersion,
-      fallback: document.provenance.fallback,
-      excerpt: excerpt.text,
-      truncated: excerpt.truncated,
-      byteLength: new TextEncoder().encode(excerpt.text).length,
-    };
-  }
-
-  function retainEvidence(entry: ResearchEvidence): void {
-    evidence.push(entry);
-    let totalBytes = evidence.reduce((sum, item) => sum + item.byteLength, 0);
-    while (
-      evidence.length > RESEARCH_LIMITS.maxRetainedEvidenceViews ||
-      totalBytes > maxEvidenceBytes
-    ) {
-      const dropped = evidence.shift();
-      if (dropped === undefined) {
-        break;
-      }
-      totalBytes -= dropped.byteLength;
-    }
-  }
-
   function toFetchResult(
     outcome: ResearchOutcome,
     requestId: string,
@@ -383,8 +125,7 @@ export function createResearchService(options: ResearchServiceOptions): Research
   ): ResearchFetchResult {
     switch (outcome.status) {
       case "document": {
-        const evidenceEntry = buildEvidence(outcome.document, requestId, task);
-        retainEvidence(evidenceEntry);
+        const evidenceEntry = evidenceStore.record(outcome.document, requestId, task);
         return { status: "document", document: outcome.document, evidence: evidenceEntry };
       }
       case "refused":
@@ -434,7 +175,7 @@ export function createResearchService(options: ResearchServiceOptions): Research
         };
       }
       const currentTask = options.currentTask();
-      if (!isValidTaskBinding(currentTask)) {
+      if (!isValidResearchTaskBinding(currentTask)) {
         return {
           status: "refused",
           reason:
@@ -457,17 +198,10 @@ export function createResearchService(options: ResearchServiceOptions): Research
         ...validated.request,
         source: { kind: source.kind, id: source.id, label: source.label },
       };
-      const requestId = `req_${sha256Hex(
-        canonicalizeJson({
-          requestDigest: requestDigest(sourceRequest),
-          taskId: task.taskId,
-          taskContractRevision: task.taskContractRevision,
-          sequence: requestCounter,
-        }),
-      ).slice(0, 24)}`;
+      const requestId = createResearchRequestId(sourceRequest, task, requestCounter);
       activeRequests += 1;
       try {
-        const composed = composeSignal(opts.signal, bounds.timeoutMs);
+        const composed = composeResearchSignal(opts.signal, bounds.timeoutMs);
         try {
           const outcomePromise = (async (): Promise<ResearchOutcome> => {
             try {
@@ -475,11 +209,11 @@ export function createResearchService(options: ResearchServiceOptions): Research
             } catch (error) {
               return {
                 status: "failed",
-                reason: `The research source failed unexpectedly: ${describeError(error)}`,
+                reason: `The research source failed unexpectedly: ${describeResearchError(error)}`,
               };
             }
           })();
-          const outcome = await raceWithSignal(
+          const outcome = await raceWithResearchSignal(
             outcomePromise,
             composed.signal,
             () =>
@@ -488,10 +222,13 @@ export function createResearchService(options: ResearchServiceOptions): Research
                 : { status: "cancelled" as const },
             (error: unknown) => ({
               status: "failed" as const,
-              reason: `The research source failed unexpectedly: ${describeError(error)}`,
+              reason: `The research source failed unexpectedly: ${describeResearchError(error)}`,
             }),
           );
-          if (outcome.status === "document" && !sameTaskBinding(task, options.currentTask())) {
+          if (
+            outcome.status === "document" &&
+            !sameResearchTaskBinding(task, options.currentTask())
+          ) {
             return {
               status: "stale",
               reason:
@@ -508,7 +245,7 @@ export function createResearchService(options: ResearchServiceOptions): Research
     },
 
     latestEvidence(): readonly ResearchEvidence[] {
-      return evidence.map((entry) => ({ ...entry, source: { ...entry.source } }));
+      return evidenceStore.snapshots();
     },
 
     activeRequestCount(): number {
