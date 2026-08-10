@@ -1940,7 +1940,11 @@ export function runChecks(root) {
               }
               // The planner is a fresh read-only reasoning surface; host
               // planning flow and policy never enter the adapter.
-              if (analysis.importedNames.some((binding) => PLANNING_POLICY_BANNED_IDENTIFIERS.has(binding.originalName))) {
+              if (
+                analysis.importedNames.some((binding) =>
+                  PLANNING_POLICY_BANNED_IDENTIFIERS.has(binding.originalName),
+                )
+              ) {
                 errors.push(
                   `${location}: the planner adapter must not import planning policy/flow surfaces; the host decides planning depth and owns plan state`,
                 );
