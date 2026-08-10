@@ -323,6 +323,40 @@ function isCoreResearchModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(RESEARCH_DIRECTORY + sep);
 }
 
+/**
+ * Stage 3 milestone 6: self-reference and doctor modules. The built-in
+ * @solaris self-reference is host-owned installed-runtime documentation;
+ * the CapabilityDoctor is a deterministic read-only orchestrator. Both
+ * are pure core domain surfaces: they must never reach the network, never
+ * touch files, never import mutation/checkpoint/undo machinery, never
+ * re-derive capability resolution (ToolProjector + security stay
+ * authoritative), and never depend on CLI rendering (core can never
+ * import apps, enforced structurally).
+ */
+const DOCTOR_DIRECTORY = join("src", "doctor");
+const SELF_DIRECTORY = join("src", "self");
+const SELF_TOOLS_DIRECTORY = join("src", "tools", "self");
+
+function isCoreDoctorModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(DOCTOR_DIRECTORY + sep);
+}
+
+function isCoreSelfModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(SELF_DIRECTORY + sep);
+}
+
+function isSelfToolAdapterModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(SELF_TOOLS_DIRECTORY + sep);
+}
+
+/** Capability-resolution authority identifiers banned in doctor/self modules. */
+const DOCTOR_CAPABILITY_BANNED_IDENTIFIERS = new Set([
+  "evaluatePermission",
+  "PermissionEvaluation",
+  "createDefaultPolicy",
+  "createToolProjector",
+]);
+
 /** Adapter modules that implement or surface the reference surface. */
 function isReferenceAdapterModule(packageRelativeFile) {
   return (
@@ -1276,6 +1310,35 @@ export function runChecks(root) {
             }
           }
           if (
+            pkg.name === "@solaris/core" &&
+            !isTestSupportFile(file) &&
+            (isCoreDoctorModule(packageRelativeFile) || isCoreSelfModule(packageRelativeFile))
+          ) {
+            for (const binding of analysis.importedNames) {
+              if (DOCTOR_CAPABILITY_BANNED_IDENTIFIERS.has(binding.originalName)) {
+                errors.push(
+                  `${location}: doctor and self-reference modules must not import capability-granting/resolution policy (${binding.originalName}); capability rules arrive through injected sources and ToolProjector stays the authority`,
+                );
+              }
+            }
+          }
+          if (
+            pkg.name === "@solaris/adapters" &&
+            !isTestSupportFile(file) &&
+            isSelfToolAdapterModule(packageRelativeFile)
+          ) {
+            for (const binding of analysis.importedNames) {
+              if (
+                binding.module === "@solaris/core" &&
+                DOCTOR_CAPABILITY_BANNED_IDENTIFIERS.has(binding.originalName)
+              ) {
+                errors.push(
+                  `${location}: self-reference tool adapters must not import capability-granting policy (${binding.originalName}); self tools may carry only the fixed self.inspect capability string on their Tool definitions`,
+                );
+              }
+            }
+          }
+          if (
             pkg.name === "@solaris/adapters" &&
             !isTestSupportFile(file) &&
             isResearchAdapterModule(packageRelativeFile)
@@ -1472,6 +1535,11 @@ export function runChecks(root) {
                 `${location}: projection modules must not import network modules (${specifier}); ContextProjector performs no network calls`,
               );
             }
+            if (specifier.startsWith("../doctor/") || specifier.startsWith("../self/")) {
+              errors.push(
+                `${location}: projection modules must not import the doctor or self-reference surface (${specifier}); ContextProjector never runs doctor automatically and ToolProjector stays the authority for model-visible tool state`,
+              );
+            }
             if (specifier.startsWith("../workspace/workspace-revision")) {
               errors.push(
                 `${location}: projection modules must not own workspace revisions; they consume revision handles as data only`,
@@ -1495,6 +1563,66 @@ export function runChecks(root) {
             if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
               errors.push(
                 `${location}: projection modules must not depend on Godot modules (the generic digest utility is allowed)`,
+              );
+            }
+          }
+          if (
+            pkg.name === "@solaris/core" &&
+            (isCoreDoctorModule(packageRelativeFile) || isCoreSelfModule(packageRelativeFile))
+          ) {
+            if (NETWORK_IO_MODULES.has(normalized)) {
+              errors.push(
+                `${location}: doctor and self-reference modules must not import network modules (${specifier}); default doctor operation is offline`,
+              );
+            }
+            if (
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../undo/") ||
+              (specifier.startsWith("../tools/") &&
+                specifier !== "../tools/tool.js" &&
+                specifier !== "../tools/tool-registry.js") ||
+              specifier.startsWith("../workspace/mutation")
+            ) {
+              errors.push(
+                `${location}: doctor and self-reference modules must not import mutation, undo, or checkpoint machinery (${specifier}); the doctor is read-only and never creates checkpoints`,
+              );
+            }
+            if (specifier.startsWith("../security/default-policy")) {
+              errors.push(
+                `${location}: doctor and self-reference modules must not import default policy construction (${specifier}); capability rules arrive through injected sources, never re-derived`,
+              );
+            }
+            if (specifier.startsWith("../security/permission-evaluator")) {
+              errors.push(
+                `${location}: doctor and self-reference modules must not import capability evaluation (${specifier}); ToolProjector and the security layer stay authoritative for capability resolution`,
+              );
+            }
+            if (specifier.startsWith("../projection/")) {
+              errors.push(
+                `${location}: doctor and self-reference modules must not import projection internals (${specifier}); ToolProjector remains the authority for model-visible tool state and is queried through the doctor sources port`,
+              );
+            }
+            if (
+              isCoreDoctorModule(packageRelativeFile) &&
+              specifier.startsWith("../self/") &&
+              specifier !== "../self/self-reference.js"
+            ) {
+              errors.push(
+                `${location}: doctor modules must not import the self-reference surface (${specifier}); the doctor and the self-reference stay separable surfaces (the shared SolarisRuntimeIdentity type is allowed)`,
+              );
+            }
+            if (isCoreSelfModule(packageRelativeFile) && specifier.startsWith("../doctor/")) {
+              errors.push(
+                `${location}: self-reference modules must not import the doctor surface (${specifier}); the self-reference documents, it never diagnoses`,
+              );
+            }
+            if (
+              isCoreDoctorModule(packageRelativeFile) &&
+              !isTestSupportFile(file) &&
+              specifier.endsWith("safe-report.js")
+            ) {
+              errors.push(
+                `${location}: diagnostic collection (capability-doctor/capability-state) must not import the safe-report renderer (${specifier}); safe report rendering stays separate from diagnostic collection`,
               );
             }
           }

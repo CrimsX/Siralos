@@ -1575,3 +1575,93 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
     expect(errors).toEqual([]);
   });
 });
+
+// --- Stage 3 milestone 6: self-reference and doctor boundaries ---
+
+describe("doctor and self-reference boundaries (milestone 6)", () => {
+  it("rejects doctor modules importing network modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/capability-doctor.ts"] =
+      'import { request } from "node:https";\nexport const x = request;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("doctor and self-reference modules must not import network modules"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects doctor modules importing checkpoint machinery", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/capability-doctor.ts"] =
+      'import { createFilesystemCheckpointStore } from "../checkpoints/checkpoint-store.js";\nexport const x = createFilesystemCheckpointStore;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("must not import mutation, undo, or checkpoint machinery"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects doctor modules importing default policy construction", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/capability-doctor.ts"] =
+      'import { createDefaultPolicy } from "../security/default-policy.js";\nexport const x = createDefaultPolicy;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) => error.includes("must not import default policy construction")),
+    ).toBe(true);
+  });
+
+  it("rejects doctor modules importing capability evaluation", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/capability-doctor.ts"] =
+      'import { evaluatePermission } from "../security/permission-evaluator.js";\nexport const x = evaluatePermission;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not import capability evaluation"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects doctor modules importing the safe-report renderer (collection/render separation)", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/capability-doctor.ts"] =
+      'import { toSafeReport } from "./safe-report.js";\nexport const x = toSafeReport;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors.some((error) => error.includes("must not import the safe-report renderer"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects projection modules importing the doctor surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/context-projector.ts"] =
+      'import { createCapabilityDoctor } from "../doctor/capability-doctor.js";\nexport const x = createCapabilityDoctor;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("projection modules must not import the doctor or self-reference surface"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects self-reference tool adapters importing capability-granting policy", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/tools/self/self-reference-tools.ts"] =
+      'import { createDefaultPolicy } from "@solaris/core";\nexport const x = createDefaultPolicy;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("self-reference tool adapters must not import capability-granting policy"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts doctor modules importing the shared identity type from self-reference", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/doctor-model.ts"] =
+      'import type { SolarisRuntimeIdentity } from "../self/self-reference.js";\nexport type X = SolarisRuntimeIdentity;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+});
