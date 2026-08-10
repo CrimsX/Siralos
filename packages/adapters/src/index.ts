@@ -338,6 +338,16 @@ export {
   type ReferenceServices,
   type ReferenceServicesOptions,
 } from "./reference/reference-services.js";
+
+// --- Stage 3 milestone 6: self-reference tools (installed runtime docs) ---
+
+export {
+  SELF_REFERENCE_TOOL_METADATA,
+  createSelfReferenceReadTool,
+  createSelfReferenceSearchTool,
+  createSelfReferenceTools,
+  type SelfReferenceTool,
+} from "./tools/self/self-reference-tools.js";
 // --- Stage 3 milestone 5: research source adapters (bounded retrieval) ---
 export {
   TRUNCATION_MARKER,

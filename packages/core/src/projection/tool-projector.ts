@@ -68,6 +68,8 @@ const MODE_CAPABILITY_ALLOWLIST: Readonly<Record<ProjectionMode, readonly Capabi
     "network.outbound",
     "reference.inspect",
     "research.fetch",
+    // Read-only self-reference inspection (installed runtime docs).
+    "self.inspect",
   ],
   development: [
     "workspace.read",
@@ -81,8 +83,17 @@ const MODE_CAPABILITY_ALLOWLIST: Readonly<Record<ProjectionMode, readonly Capabi
     // policy denies it in every built-in profile, so research tools stay
     // hidden unless a policy explicitly permits bounded retrieval.
     "research.fetch",
+    // Read-only self-reference inspection (installed runtime docs).
+    "self.inspect",
   ],
-  review: ["workspace.read", "git.inspect", "godot.inspect", "godot.api", "godot.lsp"],
+  review: [
+    "workspace.read",
+    "git.inspect",
+    "godot.inspect",
+    "godot.api",
+    "godot.lsp",
+    "self.inspect",
+  ],
   inspection: [
     "workspace.read",
     "git.inspect",
@@ -90,6 +101,8 @@ const MODE_CAPABILITY_ALLOWLIST: Readonly<Record<ProjectionMode, readonly Capabi
     "godot.api",
     "reference.inspect",
     "research.fetch",
+    // Read-only self-reference inspection (installed runtime docs).
+    "self.inspect",
   ],
 };
 
@@ -110,6 +123,9 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "reference.search",
     "research.repository",
     "research.godot_docs",
+    // Self-reference inspection is available in every mode (read-only).
+    "self.read",
+    "self.search",
   ],
   review: [
     "workspace.list",
@@ -130,6 +146,9 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "reference.list",
     "reference.read",
     "reference.search",
+    // Self-reference inspection is available in every mode (read-only).
+    "self.read",
+    "self.search",
   ],
   inspection: [
     "workspace.list",
@@ -144,6 +163,9 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "reference.search",
     "research.repository",
     "research.godot_docs",
+    // Self-reference inspection is available in every mode (read-only).
+    "self.read",
+    "self.search",
   ],
 };
 
