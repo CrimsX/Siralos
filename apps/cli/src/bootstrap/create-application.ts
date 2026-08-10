@@ -31,6 +31,8 @@ import {
   createGodotProbeRunner,
   createGodotProjectProbeService,
   createGitHubResearchSource,
+  createSelfReferenceTools,
+  SELF_REFERENCE_TOOL_METADATA,
   createGodotDocsResearchSource,
   createMutationLock,
   createNodeHttpsTransport,
@@ -85,6 +87,7 @@ import {
   parseReferenceDeclarationsSection,
   VALIDATION_OFFLINE_PROFILE,
   type ApprovalReviewer,
+  type CapabilityPolicy,
   type CheckpointStore,
   type CommandRunnerRegistry,
   type GDScriptDevelopmentService,
@@ -103,7 +106,9 @@ import {
   type ResearchService,
   type ResearchSourcePort,
   type SandboxBackend,
+  type SandboxProfile,
   type ProjectionService,
+  type SelfReference,
   type SolarisApplication,
   type SolarisSecurity,
   type TaskRuntime,
@@ -119,6 +124,7 @@ import {
   createResearchTools,
   observeReferenceTools,
 } from "./reference-research.js";
+import { createRuntimeSelfReference } from "./self-reference.js";
 
 export interface CreateCliApplicationOptions {
   readonly reviewer?: ApprovalReviewer;
@@ -137,6 +143,12 @@ export interface CliApplication {
   readonly providerId: string;
   readonly application: SolarisApplication;
   readonly workspaceRoot: string;
+  /** Absolute path of the user configuration file. */
+  readonly configPath: string;
+  readonly policy: CapabilityPolicy;
+  readonly profile: SandboxProfile;
+  readonly provider: ModelProvider;
+  readonly selfReference: SelfReference;
   readonly tasks: TaskRuntime;
   readonly taskSources: TaskRuntimeSnapshotSources;
   readonly projection: ProjectionService;
@@ -467,11 +479,22 @@ export async function createCliApplication(
   const readyReferenceCount = referenceServices.registry
     .list()
     .filter((reference) => reference.status === "ready").length;
-  const registeredTools = [
+  const baseTools = [
     ...workspaceTools,
     ...(readyReferenceCount > 0 ? referenceTools : []),
     ...researchTools,
   ];
+  // Self-reference (Stage 3 milestone 6): the built-in @solaris surface is
+  // built from the ACTUAL registered tool metadata (including the self
+  // tools themselves), then the executable self tools wrap it. Read-only.
+  const selfToolMetadata = SELF_REFERENCE_TOOL_METADATA as readonly RegisteredToolInfo[];
+  const selfReference = createRuntimeSelfReference({
+    registeredTools: [...createToolRegistry(baseTools).definitions(), ...selfToolMetadata],
+    sandboxProfileId: profile.id,
+    policy,
+  });
+  const selfTools = createSelfReferenceTools(selfReference);
+  const registeredTools = [...baseTools, ...selfTools];
   const registry = createToolRegistry(registeredTools);
   const provider = createDeterministicFakeProvider();
   const tasks = createTaskRuntime();
@@ -527,6 +550,11 @@ export async function createCliApplication(
     providerId: provider.id,
     application,
     workspaceRoot,
+    configPath: options.configPath ?? getDefaultUserConfigPath(),
+    policy,
+    profile,
+    provider,
+    selfReference,
     tasks,
     taskSources,
     projection,

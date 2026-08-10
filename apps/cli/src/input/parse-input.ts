@@ -1,46 +1,15 @@
-export type SlashCommand =
-  | "help"
-  | "status"
-  | "clear"
-  | "tools"
-  | "sandbox"
-  | "permissions"
-  | "git-status"
-  | "diff"
-  | "checkpoints"
-  | "undo"
-  | "commands"
-  | "cancel"
-  | "develop"
-  | "development-status"
-  | "task"
-  | "task-status"
-  | "context"
-  | "instructions"
-  | "knowledge"
-  | "read-structure"
-  | "quality"
-  | "review-change"
-  | "godot"
-  | "godot-installations"
-  | "godot-project"
-  | "godot-doctor"
-  | "godot-probe"
-  | "godot-probe-status"
-  | "godot-knowledge"
-  | "godot-knowledge-refresh"
-  | "godot-api"
-  | "gdscript-check"
-  | "gdscript-diagnostics"
-  | "gdscript-lsp"
-  | "gdscript-lsp-stop"
-  | "gdscript-hover"
-  | "gdscript-complete"
-  | "gdscript-definition"
-  | "references"
-  | "reference"
-  | "research-status"
-  | "exit";
+import type { CommandId } from "@solaris/core";
+import { COMMAND_CATALOG_IDS } from "@solaris/core";
+
+/**
+ * The interactive command vocabulary derives from the core command catalog
+ * (Stage 3 milestone 6): a command cannot be typed in this session unless
+ * it is catalogued, and the exhaustive switch in the session renderer
+ * cannot compile for an id the parser cannot produce. The catalog is also
+ * what the built-in @solaris self-reference documents — no hand-maintained
+ * command list can drift.
+ */
+export type SlashCommand = CommandId;
 
 export type ParsedInput =
   | {
@@ -60,50 +29,8 @@ export type ParsedInput =
       readonly input: string;
     };
 
-const SLASH_COMMANDS: readonly SlashCommand[] = [
-  "help",
-  "status",
-  "clear",
-  "tools",
-  "sandbox",
-  "permissions",
-  "git-status",
-  "diff",
-  "checkpoints",
-  "undo",
-  "commands",
-  "cancel",
-  "develop",
-  "development-status",
-  "task",
-  "task-status",
-  "context",
-  "instructions",
-  "knowledge",
-  "read-structure",
-  "quality",
-  "review-change",
-  "godot",
-  "godot-installations",
-  "godot-project",
-  "godot-doctor",
-  "godot-probe",
-  "godot-probe-status",
-  "godot-knowledge",
-  "godot-knowledge-refresh",
-  "godot-api",
-  "gdscript-check",
-  "gdscript-diagnostics",
-  "gdscript-lsp",
-  "gdscript-lsp-stop",
-  "gdscript-hover",
-  "gdscript-complete",
-  "gdscript-definition",
-  "references",
-  "reference",
-  "research-status",
-  "exit",
-];
+export const SLASH_COMMANDS: readonly SlashCommand[] =
+  COMMAND_CATALOG_IDS as readonly SlashCommand[];
 
 export function parseInput(raw: string): ParsedInput {
   const trimmed = raw.trim();

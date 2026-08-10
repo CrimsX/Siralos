@@ -1,5 +1,6 @@
 import type {
   ApprovalReviewer,
+  CapabilityPolicy,
   CheckpointStore,
   CommandRunnerRegistry,
   DevelopmentTaskFlow,
@@ -13,6 +14,7 @@ import type {
   GodotProjectProbe,
   GodotProjectProbeStatus,
   KnowledgeCoordinator,
+  ModelProvider,
   RegisteredToolInfo,
   ReferenceMaterializerPort,
   ReferenceRegistry,
@@ -20,6 +22,8 @@ import type {
   ResearchSourcePort,
   SandboxBackend,
   SandboxBackendStatus,
+  SandboxProfile,
+  SelfReference,
   SolarisApplication,
   SolarisSecurity,
   ProjectionMode,
@@ -40,6 +44,7 @@ import { GitError } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
 import type { InputQueue } from "./input/input-queue.js";
 import type { StatusView } from "./output.js";
+import { createCliDoctor, isDoctorArea, type CliDoctorDependencies } from "./bootstrap/doctor.js";
 import {
   describeError,
   formatCancelReport,
@@ -90,6 +95,8 @@ import {
   formatSandbox,
   formatSandboxViolation,
   formatStatus,
+  formatSolarisDoctorReport,
+  formatSelfReference,
   formatToolCancelled,
   formatToolCompleted,
   formatToolProjection,
@@ -110,6 +117,12 @@ export interface SessionIO {
 
 export interface SessionInfo {
   readonly workspaceRoot: string;
+  /** Absolute path of the user configuration file. */
+  readonly configPath: string;
+  readonly policy: CapabilityPolicy;
+  readonly profile: SandboxProfile;
+  readonly provider: ModelProvider;
+  readonly selfReference: SelfReference;
   readonly tools: readonly RegisteredToolInfo[];
   readonly security: SolarisSecurity;
   readonly git: GitInspector;
@@ -348,6 +361,12 @@ export async function runInteractiveSession(
                 sessionInfo.researchSources,
               ),
             );
+            break;
+          case "doctor":
+            await runSolarisDoctorCommand(io, sessionInfo, parsed.args);
+            break;
+          case "solaris":
+            io.write(formatSelfReference(sessionInfo.selfReference));
             break;
           case "knowledge":
             if (parsed.args[0] === "why") {
@@ -868,6 +887,61 @@ async function runGodotDoctorCommand(io: SessionIO, sessionInfo: SessionInfo): P
   } catch (error: unknown) {
     io.write(formatProviderFailure(describeGodotFailure(error)));
   }
+}
+
+async function runSolarisDoctorCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  args: readonly string[],
+): Promise<void> {
+  const jsonOutput = args.includes("--json");
+  const areaArg = args.find((arg) => !arg.startsWith("--"));
+  if (areaArg !== undefined && !isDoctorArea(areaArg)) {
+    io.write(
+      `Unknown doctor area: ${areaArg}. Areas: runtime, configuration, providers, sandbox, workspace, godot, project, references, research, capabilities.\n`,
+    );
+    return;
+  }
+  const doctor = createCliDoctor(
+    sessionDoctorDependencies(
+      sessionInfo,
+      activeDevelopmentTaskFlow !== null ? "development" : "generic",
+    ),
+  );
+  try {
+    const report = await doctor.inspect({
+      ...(areaArg === undefined ? {} : { areas: [areaArg] }),
+    });
+    if (jsonOutput) {
+      io.write(`${JSON.stringify(report, null, 2)}\n`);
+    } else {
+      io.write(formatSolarisDoctorReport(report));
+    }
+  } catch (error: unknown) {
+    io.write(formatProviderFailure(describeError(error)));
+  }
+}
+
+function sessionDoctorDependencies(sessionInfo: SessionInfo, mode: string): CliDoctorDependencies {
+  return {
+    workspaceRoot: sessionInfo.workspaceRoot,
+    configPath: sessionInfo.configPath,
+    policy: sessionInfo.policy,
+    profile: sessionInfo.profile,
+    sandbox: sessionInfo.sandbox,
+    provider: sessionInfo.provider,
+    godot: sessionInfo.godot,
+    references: sessionInfo.references,
+    referenceConfigError: sessionInfo.referenceConfigError,
+    research: sessionInfo.research,
+    researchSources: sessionInfo.researchSources,
+    tasks: sessionInfo.tasks,
+    taskSources: sessionInfo.taskSources,
+    git: sessionInfo.git,
+    checkpoints: sessionInfo.checkpoints,
+    tools: sessionInfo.tools,
+    mode,
+  };
 }
 
 async function runGodotProbeCommand(

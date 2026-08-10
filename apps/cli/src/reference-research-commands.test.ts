@@ -62,6 +62,11 @@ async function createComposedSession(lines: readonly string[], configPath: strin
   const app = await createCliApplication({ configPath });
   const sessionInfo: SessionInfo = {
     workspaceRoot: app.workspaceRoot,
+    configPath: app.configPath,
+    policy: app.policy,
+    profile: app.profile,
+    provider: app.provider,
+    selfReference: app.selfReference,
     tasks: app.tasks,
     taskSources: app.taskSources,
     projection: app.projection,

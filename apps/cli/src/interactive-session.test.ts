@@ -9,6 +9,7 @@ import {
   createWorkspaceRevisionRegistry,
   createDefaultPolicy,
   createPreparedCommand,
+  createSelfReference,
   createSolarisApplication,
   createSolarisSecurity,
   createTaskRuntime,
@@ -18,6 +19,7 @@ import {
   INSPECT_PROFILE,
   createEmptyGodotProjectProfile,
   type CheckpointStore,
+  type SelfReference,
   type CommandRunner,
   type CommandToolPreparationResult,
   type DevelopmentQualityReport,
@@ -132,9 +134,19 @@ async function createComposedSession(lines: readonly string[]) {
     referenceConfigError,
     research,
     researchSources,
+    configPath,
+    policy,
+    profile,
+    provider,
+    selfReference,
   } = await createCliApplication();
   const sessionInfo: SessionInfo = {
     workspaceRoot,
+    configPath,
+    policy,
+    profile,
+    provider,
+    selfReference,
     tasks,
     taskSources,
     projection,
@@ -263,6 +275,11 @@ function createStubUndo(): UndoService {
 function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
     workspaceRoot: "/workspace",
+    configPath: "/config.json",
+    policy: createDefaultPolicy("develop-offline"),
+    profile: DEVELOP_OFFLINE_PROFILE,
+    provider: createStubProvider(),
+    selfReference: createStubSelfReference(),
     tools: [],
     security: createFakeSecurity(),
     git: createStubGit(),
@@ -339,6 +356,25 @@ function createStubReferenceMaterializer(): ReferenceMaterializerPort {
     materialize: () => Promise.resolve({ status: "unavailable", reason: "stub materializer" }),
     status: () => "unavailable",
   };
+}
+
+function createStubProvider(): ModelProvider {
+  return {
+    id: "stub-provider",
+    toolCalling: true,
+    stream() {
+      return (async function* () {})();
+    },
+  };
+}
+
+function createStubSelfReference(): SelfReference {
+  return createSelfReference({
+    runtime: { version: "0.0.0", nodeMajor: 24, platform: "linux" },
+    registeredTools: [],
+    sandboxProfileId: "develop-offline",
+    policy: createDefaultPolicy("develop-offline"),
+  });
 }
 
 function createStubResearchService(): ResearchService {
@@ -787,8 +823,9 @@ describe("runInteractiveSession tool activity", () => {
     // git.status and git.diff are always registered; the adapter gates
     // availability (unavailable backends never execute Git). The
     // development workflow adds workspace.apply_text_changeset and
-    // godot.development_status to the registered tool count.
-    expect(io.text).toContain("Tools: 25");
+    // godot.development_status to the registered tool count; the
+    // self-reference adds self.read and self.search (Stage 3 milestone 6).
+    expect(io.text).toContain("Tools: 27");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
