@@ -4,6 +4,10 @@ import type {
   ReviseTaskContractInput,
 } from "./task-contract.js";
 import { reviseTaskContract } from "./task-contract.js";
+import type { TaskPlan, TaskPlanId, TaskPlanState } from "../planning/planning-model.js";
+import { NO_TASK_PLAN, PLANNING_LIMITS } from "../planning/planning-model.js";
+import type { PlanningDepth } from "../planning/planning-model.js";
+import type { PlanningDecisionReason } from "../planning/planning-policy.js";
 import type {
   AcceptanceState,
   EvidenceKind,
@@ -141,6 +145,28 @@ export interface TaskHandle {
   setReviewStatus(status: TaskReviewStatus): void;
   setIteration(iteration: number): void;
 
+  /** Record the host's planning-depth routing (deterministic policy). */
+  routePlanning(depth: PlanningDepth, reason: PlanningDecisionReason): void;
+  /** Record a host-observed plan rejection (invalid candidate, denial). */
+  rejectPlan(reason: string): void;
+  /**
+   * Store an immutable plan revision (host-owned). The plan must bind to
+   * the current TaskContract revision; advancing a plan revision
+   * invalidates any prior approval of an older revision.
+   */
+  setPlan(plan: TaskPlan): StepOpResult;
+  /**
+   * Bind approval to the EXACT current plan revision and current contract
+   * revision. Approving never authorizes source edits or commands.
+   */
+  approvePlan(planId: TaskPlanId, planRevision: number): StepOpResult;
+  /** Mark the current plan stale and its approval invalid (host decision). */
+  invalidatePlan(reason: string): void;
+  /** The full immutable current plan, when any. */
+  currentPlan(): TaskPlan | null;
+  /** Immutable plan revision history, oldest first. */
+  planRevisions(): readonly TaskPlan[];
+
   /** Structured workflow disposition: a request that the host runtime evaluates. */
   submitDisposition(disposition: WorkflowDisposition, source?: "host" | "model"): DispositionResult;
   /** Host completion gate: completion requires steps, criteria, validation, review, findings. */
@@ -168,7 +194,12 @@ type Mutable<T> = {
   -readonly [K in keyof T]: T[K] extends readonly (infer U)[] ? Mutable<U>[] : T[K];
 };
 
-type MutableTaskState = Mutable<TaskState>;
+type MutableTaskState = Omit<Mutable<TaskState>, "plan"> & { plan: MutablePlanState };
+
+/** The TaskState plan reference is mutable ONLY inside the runtime record. */
+type MutablePlanState = {
+  -readonly [K in keyof TaskPlanState]: TaskPlanState[K];
+};
 
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
 
@@ -188,6 +219,15 @@ interface TaskRecord {
   readonly contractRevisions: TaskContract[];
   readonly snapshot: TaskRuntimeSnapshot;
   state: MutableTaskState;
+  /** Immutable plan revision history, oldest first (host-inspectable). */
+  readonly plans: TaskPlan[];
+  /** Most recent plan approval; binds to exact plan + contract revisions. */
+  planApproval: {
+    readonly planId: TaskPlanId;
+    readonly planRevision: number;
+    readonly taskContractRevision: number;
+    readonly approvedAt: number;
+  } | null;
   readonly activity: TaskActivityEvent[];
   sequence: number;
   readonly progress: InternalProgress;
@@ -293,6 +333,7 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       taskId: record.id,
       contractRevision: input.contract.revision,
       phase: "prepared",
+      plan: { ...NO_TASK_PLAN },
       steps,
       acceptance,
       currentFindings: [],
@@ -325,6 +366,8 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       contractRevisions: [input.contract],
       snapshot: input.snapshot,
       state: undefined as unknown as MutableTaskState,
+      plans: [],
+      planApproval: null,
       activity: [],
       sequence: 0,
       progress: {
@@ -551,6 +594,32 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         record.contractRevisions.push(revision);
         record.contract = revision;
         record.state.contractRevision = revision.revision;
+        // A material TaskContract change makes any plan bound to an older
+        // revision stale and any plan approval invalid: never silently
+        // execute an old plan against a changed contract.
+        if (record.plans.length > 0) {
+          const current = record.plans[record.plans.length - 1] as TaskPlan;
+          record.state.plan.state = "stale";
+          record.state.plan.staleReason =
+            "The TaskContract revision advanced after this plan was created.";
+          if (record.planApproval !== null) {
+            record.state.plan.approval = "invalidated";
+            appendActivity(record, {
+              type: "plan_invalidated",
+              planId: record.planApproval.planId,
+              revision: record.planApproval.planRevision,
+              reason: "The TaskContract revision advanced; the plan approval no longer applies.",
+            });
+          }
+          record.planApproval = null;
+          appendActivity(record, {
+            type: "plan_invalidated",
+            planId: current.id,
+            revision: current.revision,
+            reason:
+              "The TaskContract revision advanced; the plan is stale until revalidated or replanned.",
+          });
+        }
         appendActivity(record, {
           type: "task_contract_revised",
           revision: revision.revision,
@@ -637,6 +706,149 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       },
       setIteration(iteration: number): void {
         record.state.iteration = Math.max(0, iteration);
+      },
+
+      routePlanning(depth: PlanningDepth, reason: PlanningDecisionReason): void {
+        record.state.plan.depth = depth;
+        appendActivity(record, { type: "planning_routed", depth, reason });
+      },
+      rejectPlan(reason: string): void {
+        appendActivity(record, { type: "plan_rejected", reason });
+      },
+      setPlan(plan: TaskPlan): StepOpResult {
+        if (plan.taskId !== record.id) {
+          return {
+            status: "rejected",
+            reason: `Plan ${plan.id} belongs to task ${plan.taskId}, not ${record.id}.`,
+          };
+        }
+        if (plan.taskContractRevision !== record.contract.revision) {
+          return {
+            status: "rejected",
+            reason: `Plan ${plan.id} binds to TaskContract revision ${plan.taskContractRevision}, but the current revision is ${record.contract.revision}.`,
+          };
+        }
+        if (plan.revision < 1) {
+          return { status: "rejected", reason: "A plan revision must be at least 1." };
+        }
+        const previous = record.plans[record.plans.length - 1] ?? null;
+        if (
+          previous !== null &&
+          previous.id === plan.id &&
+          plan.revision !== previous.revision + 1
+        ) {
+          return {
+            status: "rejected",
+            reason: `Plan ${plan.id} revision ${plan.revision} does not follow revision ${previous.revision}; plans are immutable and revisions only ever advance by one.`,
+          };
+        }
+        if (record.plans.length >= PLANNING_LIMITS.maxPlanRevisions) {
+          return {
+            status: "rejected",
+            reason: `The task already holds the maximum of ${PLANNING_LIMITS.maxPlanRevisions} plan revisions; replanning is not possible within this bound.`,
+          };
+        }
+        // Advancing a plan revision invalidates any prior approval of an
+        // older revision: approval binds to the exact revision only.
+        const priorApproved =
+          record.planApproval !== null &&
+          record.planApproval.planId === plan.id &&
+          record.planApproval.planRevision !== plan.revision;
+        record.plans.push(plan);
+        record.state.plan.planId = plan.id;
+        record.state.plan.planRevision = plan.revision;
+        record.state.plan.depth = plan.depth;
+        record.state.plan.state = "current";
+        record.state.plan.staleReason = null;
+        if (priorApproved) {
+          record.state.plan.approval = "invalidated";
+          appendActivity(record, {
+            type: "plan_invalidated",
+            planId: plan.id,
+            revision: record.planApproval!.planRevision,
+            reason: "The plan revision advanced; the previous approval no longer applies.",
+          });
+        } else {
+          record.state.plan.approval = "none";
+        }
+        record.planApproval = null;
+        appendActivity(record, {
+          type: "plan_created",
+          planId: plan.id,
+          revision: plan.revision,
+          depth: plan.depth,
+        });
+        observeProgress(record, {
+          action: "plan.created",
+          fingerprint: `${plan.id}:${plan.revision}`,
+          progress: true,
+        });
+        return { status: "ok" };
+      },
+      approvePlan(planId: TaskPlanId, planRevision: number): StepOpResult {
+        const current = record.plans[record.plans.length - 1] ?? null;
+        if (current === null || current.id !== planId) {
+          return {
+            status: "rejected",
+            reason: `No current plan matches ${planId}; nothing was approved.`,
+          };
+        }
+        if (current.revision !== planRevision) {
+          return {
+            status: "rejected",
+            reason: `Approval binds to the exact plan revision: plan ${planId} is revision ${current.revision}, not ${planRevision}; the stale approval is refused.`,
+          };
+        }
+        if (current.taskContractRevision !== record.contract.revision) {
+          return {
+            status: "rejected",
+            reason: `Plan ${planId} binds to TaskContract revision ${current.taskContractRevision}, which is no longer current; the approval is refused.`,
+          };
+        }
+        if (record.state.plan.state === "stale") {
+          return {
+            status: "rejected",
+            reason: "The current plan is stale and cannot be approved.",
+          };
+        }
+        record.planApproval = {
+          planId: current.id,
+          planRevision: current.revision,
+          taskContractRevision: current.taskContractRevision,
+          approvedAt: now(),
+        };
+        record.state.plan.approval = "approved";
+        appendActivity(record, {
+          type: "plan_approved",
+          planId: current.id,
+          revision: current.revision,
+        });
+        return { status: "ok" };
+      },
+      invalidatePlan(reason: string): void {
+        const current = record.plans[record.plans.length - 1] ?? null;
+        if (current === null) {
+          return;
+        }
+        record.state.plan.state = "stale";
+        record.state.plan.staleReason = reason;
+        if (record.planApproval !== null) {
+          record.state.plan.approval = "invalidated";
+        }
+        record.planApproval = null;
+        appendActivity(record, {
+          type: "plan_invalidated",
+          planId: current.id,
+          revision: current.revision,
+          reason,
+        });
+      },
+      currentPlan(): TaskPlan | null {
+        const current = record.plans[record.plans.length - 1] ?? null;
+        return current === null ? null : structuredClone(current);
+      },
+      planRevisions(): readonly TaskPlan[] {
+        return record.plans.map((plan) => structuredClone(plan));
       },
 
       submitDisposition(

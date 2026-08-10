@@ -124,6 +124,7 @@ export type {
   GodotLSPSessionApprovalRequest,
   GodotProjectProbeApprovalRequest,
   ProcessExecutionApprovalRequest,
+  TaskPlanApprovalRequest,
   WorkspaceWriteApprovalRequest,
 } from "./security/approval.js";
 export type {
@@ -546,6 +547,64 @@ export {
   type DevelopmentTaskFlow,
   type DevelopmentTaskFlowOptions,
 } from "./tasks/task-development.js";
+export {
+  NO_TASK_PLAN,
+  PLANNING_LIMITS,
+  PLAN_CONSTRAINT_ID_PATTERN,
+  PLAN_ID_PATTERN,
+  PLAN_REVISION_HANDLE_PATTERN,
+  PLAN_RISK_ID_PATTERN,
+  PLAN_STEP_ID_PATTERN,
+  PLAN_TOUCHPOINT_ID_PATTERN,
+  computePlanRevisionDigest,
+  createTaskPlan,
+  hasMeaningfulAcceptanceCriteria,
+  reviseTaskPlan,
+  summarizePlan,
+  type CreateTaskPlanInput,
+  type PlanApproval,
+  type PlanConstraint,
+  type PlanRisk,
+  type PlanRiskSeverity,
+  type PlanRollbackStrategy,
+  type PlanScope,
+  type PlanStep,
+  type PlanTouchpoint,
+  type PlanValidationStrategy,
+  type PlanningDepth,
+  type ReviseTaskPlanInput,
+  type TaskPlan,
+  type TaskPlanContent,
+  type TaskPlanId,
+  type TaskPlanState,
+  type TouchpointConfidence,
+} from "./planning/planning-model.js";
+export {
+  containsProtectedConfigReference,
+  createPlanningPolicy,
+  type PlanningDecision,
+  type PlanningDecisionInput,
+  type PlanningDecisionReason,
+  type PlanningPolicy,
+} from "./planning/planning-policy.js";
+export {
+  extractPlanCandidateJson,
+  isSafePlanPath,
+  planTouchpointStaleness,
+  rejectPlanPolicyClaims,
+  validatePlanCandidate,
+  type PlanCandidateContext,
+  type PlanCandidateResult,
+} from "./planning/planning-validation.js";
+export {
+  createPlanningFlow,
+  type PlanFlowResult,
+  type PlannerOutcome,
+  type PlannerPort,
+  type PlannerRequest,
+  type PlanningFlow,
+  type PlanningFlowOptions,
+} from "./planning/planning-flow.js";
 export {
   DEFAULT_CONTEXT_MAX_OUTPUT_TOKENS,
   DEFAULT_CONTEXT_WORKING_MAXIMUM,

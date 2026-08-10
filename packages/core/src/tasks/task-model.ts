@@ -5,6 +5,7 @@ import type {
   ReferenceRevision,
 } from "../reference/reference-model.js";
 import type { ResearchSourceRef } from "../research/research-model.js";
+import type { TaskPlanState } from "../planning/planning-model.js";
 
 /**
  * Authoritative application-owned task state (Stage 3 milestone 1).
@@ -216,6 +217,13 @@ export interface TaskState {
   readonly taskId: TaskId;
   readonly contractRevision: number;
   readonly phase: TaskPhase;
+  /**
+   * Bounded current-plan reference (Stage 3 milestone 7). The full
+   * immutable plan lives in the runtime's plan history; TaskState carries
+   * identity, depth, staleness, and approval state only — never giant plan
+   * text and never planner private reasoning.
+   */
+  readonly plan: TaskPlanState;
   readonly steps: readonly TaskStepState[];
   readonly acceptance: readonly AcceptanceState[];
   readonly currentFindings: readonly FindingRef[];

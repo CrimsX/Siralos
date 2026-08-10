@@ -1,6 +1,8 @@
 import type { TaskPhase, TaskStepId, WorkflowDisposition } from "./task-model.js";
 import type { TaskId } from "./task-model.js";
 import type { EvidenceKind } from "./task-model.js";
+import type { PlanningDepth, TaskPlanId } from "../planning/planning-model.js";
+import type { PlanningDecisionReason } from "../planning/planning-policy.js";
 
 /**
  * Typed append-only task activity records (Stage 3 milestone 1).
@@ -113,6 +115,47 @@ export type TaskActivityEvent =
       readonly accepted: boolean;
       readonly note: string | null;
       readonly atMs: number;
+    }
+  | {
+      readonly type: "planning_routed";
+      readonly sequence: number;
+      readonly taskId: TaskId;
+      readonly depth: PlanningDepth;
+      readonly reason: PlanningDecisionReason;
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "plan_created";
+      readonly sequence: number;
+      readonly taskId: TaskId;
+      readonly planId: TaskPlanId;
+      readonly revision: number;
+      readonly depth: "light" | "full";
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "plan_rejected";
+      readonly sequence: number;
+      readonly taskId: TaskId;
+      readonly reason: string;
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "plan_approved";
+      readonly sequence: number;
+      readonly taskId: TaskId;
+      readonly planId: TaskPlanId;
+      readonly revision: number;
+      readonly atMs: number;
+    }
+  | {
+      readonly type: "plan_invalidated";
+      readonly sequence: number;
+      readonly taskId: TaskId;
+      readonly planId: TaskPlanId;
+      readonly revision: number;
+      readonly reason: string;
+      readonly atMs: number;
     };
 
 export const TASK_ACTIVITY_EVENT_TYPES = [
@@ -129,6 +172,11 @@ export const TASK_ACTIVITY_EVENT_TYPES = [
   "task_cancelled",
   "task_failed",
   "disposition_submitted",
+  "planning_routed",
+  "plan_created",
+  "plan_rejected",
+  "plan_approved",
+  "plan_invalidated",
 ] as const;
 
 /** Allowed top-level keys of any activity record (behavior-test allowlist). */
@@ -150,5 +198,7 @@ export const TASK_ACTIVITY_EVENT_KEYS = [
   "source",
   "accepted",
   "note",
+  "planId",
+  "depth",
   "atMs",
 ] as const;
