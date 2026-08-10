@@ -256,6 +256,17 @@ export const GODOT_DIAGNOSTICS_OFFLINE_PROFILE: SandboxProfile = {
   },
 };
 
+/** Every built-in profile id, in canonical order (self-reference/drift checks). */
+export const SANDBOX_PROFILE_IDS: readonly SandboxProfileId[] = [
+  "inspect",
+  "develop-offline",
+  "validation-offline",
+  "godot-probe-offline",
+  "godot-recovery-probe-offline",
+  "godot-diagnostics-offline",
+  "godot-lsp-local",
+] as const;
+
 export function getBuiltInProfile(profileId: SandboxProfileId): SandboxProfile {
   switch (profileId) {
     case "inspect":

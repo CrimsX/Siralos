@@ -846,3 +846,106 @@ export {
   MAX_REFERENCE_EVIDENCE_VIEWS,
   REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES,
 } from "./projection/projection-service.js";
+
+// --- Stage 3 milestone 6: self-reference (installed runtime surface) ---
+
+export {
+  COMMAND_CATALOG,
+  COMMAND_CATALOG_IDS,
+  COMMAND_CATALOG_REVISION,
+  catalogEntry,
+  type CommandCatalog,
+  type CommandCatalogEntry,
+  type CommandCatalogGroup,
+  type CommandId,
+} from "./commands/command-catalog.js";
+export {
+  CONFIG_SCHEMA_REVISION,
+  CONFIG_SCHEMA_SUMMARY,
+  type ConfigSchemaKey,
+  type ConfigSchemaSection,
+} from "./self/config-schema-summary.js";
+export {
+  SELF_REFERENCE_NAME,
+  computeSelfReferenceRevision,
+  createSelfReference,
+  toolAbiRevision,
+  type SelfReference,
+  type SelfReferenceInput,
+  type SelfReferenceLine,
+  type SelfReferencePort,
+  type SelfReferenceSearchMatch,
+  type SelfReferenceSection,
+  type SelfReferenceSectionId,
+  type SolarisRuntimeIdentity,
+} from "./self/self-reference.js";
+
+// --- Stage 3 milestone 6: capability doctor (read-only diagnostics) ---
+
+export {
+  DOCTOR_AREAS,
+  DOCTOR_EXIT_FAILURES,
+  DOCTOR_EXIT_INVOCATION,
+  DOCTOR_EXIT_OK,
+  DOCTOR_SCHEMA_VERSION,
+  DoctorInvocationError,
+  countDoctorReport,
+  doctorExitCodeFor,
+  normalizeDoctorRequest,
+  type CapabilitySnapshot,
+  type CapabilityState,
+  type DoctorArea,
+  type DoctorCheckResult,
+  type DoctorDetail,
+  type DoctorRemediation,
+  type DoctorReport,
+  type DoctorReportCounts,
+  type DoctorRequest,
+  type DoctorStatus,
+  type GodotCapabilityStatus,
+  type ProviderCapabilityStatus,
+  type ReferenceCapabilityStatus,
+  type ResearchCapabilityStatus,
+  type SandboxCapabilityStatus,
+  type ToolCapabilityStatus,
+  type WorkspaceCapabilityStatus,
+} from "./doctor/doctor-model.js";
+export type {
+  CapabilityDiagnosticResult,
+  ConfigurationDiagnosticResult,
+  CredentialRefStatus,
+  DoctorSources,
+  GodotDiagnosticResult,
+  GodotVersionMatchStatus,
+  ProviderDiagnosticResult,
+  ProviderEndpointStatus,
+  ProviderModelStatus,
+  ProjectedToolStatus,
+  ReferenceDiagnosticResult,
+  ReferenceEntryStatus,
+  ResearchDiagnosticResult,
+  RuntimeDiagnosticResult,
+  SandboxDiagnosticResult,
+  TaskSnapshotDiagnosticResult,
+  TaskSnapshotDifference,
+  WorkspaceDiagnosticResult,
+} from "./doctor/doctor-ports.js";
+export {
+  buildCapabilitySnapshot,
+  type CapabilitySnapshotInput,
+} from "./doctor/capability-state.js";
+export {
+  DEFAULT_DOCTOR_CHECK_TIMEOUT_MS,
+  DoctorCancelledError,
+  DoctorTimeoutError,
+  createCapabilityDoctor,
+  type CapabilityDoctor,
+  type CapabilityDoctorOptions,
+} from "./doctor/capability-doctor.js";
+export {
+  sanitizeSafeDoctorText,
+  toSafeReport,
+  type SafeDoctorCheck,
+  type SafeDoctorErrorCategory,
+  type SafeDoctorReport,
+} from "./doctor/safe-report.js";

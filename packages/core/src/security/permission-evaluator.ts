@@ -112,5 +112,10 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // network.outbound (denied by every built-in profile). No profile
       // constraint applies beyond the policy rule.
       return null;
+    case "self.inspect":
+      // Built-in self-reference inspection is host-generated read-only
+      // documentation about the installed runtime; no profile constraint
+      // applies beyond the policy rule.
+      return null;
   }
 }
