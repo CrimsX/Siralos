@@ -49,8 +49,12 @@ export interface ToolProjectionInput {
 /**
  * Task-context modes. `generic` is the unrestricted session surface; the
  * workflow modes project only the tools their workflow actually needs.
+ * `planning` is the read-only planner surface (Stage 3 milestone 7): the
+ * planner may inspect the workspace, API knowledge, references, and (where
+ * policy permits) research — never mutation, process execution, approval,
+ * or capability surfaces.
  */
-export type ProjectionMode = "generic" | "development" | "review" | "inspection";
+export type ProjectionMode = "generic" | "development" | "review" | "inspection" | "planning";
 
 /** Capabilities each mode may expose at most. */
 const MODE_CAPABILITY_ALLOWLIST: Readonly<Record<ProjectionMode, readonly Capability[]>> = {
@@ -95,6 +99,20 @@ const MODE_CAPABILITY_ALLOWLIST: Readonly<Record<ProjectionMode, readonly Capabi
     "self.inspect",
   ],
   inspection: [
+    "workspace.read",
+    "git.inspect",
+    "godot.inspect",
+    "godot.api",
+    "reference.inspect",
+    "research.fetch",
+    // Read-only self-reference inspection (installed runtime docs).
+    "self.inspect",
+  ],
+  // The planner capability profile is structurally read-only: no write,
+  // no process execution, no approval-gated tool classes, no development
+  // surface, no network capability. Research stays policy-gated
+  // (research.fetch is denied by every built-in profile).
+  planning: [
     "workspace.read",
     "git.inspect",
     "godot.inspect",
@@ -151,6 +169,27 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "self.search",
   ],
   inspection: [
+    "workspace.list",
+    "workspace.read",
+    "workspace.search",
+    "godot.inspect_engine",
+    "godot.inspect_project",
+    "godot.api_search",
+    "godot.api_lookup",
+    "reference.list",
+    "reference.read",
+    "reference.search",
+    "research.repository",
+    "research.godot_docs",
+    // Self-reference inspection is available in every mode (read-only).
+    "self.read",
+    "self.search",
+  ],
+  // The planner tool surface is read-only by exact name: workspace
+  // inspection, Godot inspection and API knowledge, references, research
+  // (policy-gated), and self-reference. No mutation, no process, no
+  // approval-gated tool classes.
+  planning: [
     "workspace.list",
     "workspace.read",
     "workspace.search",

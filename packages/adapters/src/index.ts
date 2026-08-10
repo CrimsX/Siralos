@@ -353,6 +353,14 @@ export {
   createSelfReferenceTools,
   type SelfReferenceTool,
 } from "./tools/self/self-reference-tools.js";
+
+// --- Stage 3 milestone 7: read-only planning adapter surface ---
+
+export { createPlannerExecutor, type PlannerExecutorOptions } from "./planning/planner-executor.js";
+export {
+  createPlannerToolRegistry,
+  type PlannerToolDependencies,
+} from "./planning/planner-tools.js";
 // --- Stage 3 milestone 5: research source adapters (bounded retrieval) ---
 export {
   TRUNCATION_MARKER,

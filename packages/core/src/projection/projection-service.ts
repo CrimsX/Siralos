@@ -2,6 +2,7 @@ import type { ConversationItem } from "../domain/conversation.js";
 import type { ToolExecutionResult } from "../tools/tool.js";
 import type { RegisteredToolInfo } from "../tools/tool-registry.js";
 import type { TaskState } from "../tasks/task-model.js";
+import type { TaskPlan } from "../planning/planning-model.js";
 import type { ContextCapacity } from "./context-capacity.js";
 import { estimateTokens } from "./context-estimator.js";
 import { estimateConversationTokens } from "./conversation-trim.js";
@@ -82,6 +83,12 @@ export interface ProjectionServiceOptions {
   readonly getTaskSnapshot?: () => TaskState | null;
   /** Read the current task contract request text for contextual segments. */
   readonly getTaskRequest?: () => string | null;
+  /**
+   * Read the current immutable plan for contextual rendering (Stage 3
+   * milestone 7); null when absent. Only the CURRENT plan revision is ever
+   * projected — historical revisions are never injected.
+   */
+  readonly getCurrentPlan?: () => TaskPlan | null;
   readonly evidence?: EvidenceProjectionOptions;
   /**
    * Host-owned project-instruction projection. The service consumes a
@@ -157,7 +164,63 @@ export interface ProjectionService {
 }
 
 /** Modes whose workflows require tool calling; no silent text-only fallback. */
-const TOOL_REQUIRING_MODES: readonly ProjectionMode[] = ["development", "review", "inspection"];
+const TOOL_REQUIRING_MODES: readonly ProjectionMode[] = [
+  "development",
+  "review",
+  "inspection",
+  "planning",
+];
+
+/** Bounded rendering budget for the current-plan context segment. */
+export const MAX_PLAN_SEGMENT_BYTES = 4 * 1024;
+
+function planSegment(
+  snapshot: TaskState | null,
+  plan: TaskPlan | null,
+): Array<{
+  readonly id: string;
+  readonly stability: ContextStability;
+  readonly title: string;
+  readonly content: string;
+}> {
+  const ref = snapshot?.plan;
+  if (ref === undefined || ref === null || ref.state === "none") {
+    return [];
+  }
+  const lines = [
+    `Plan: ${ref.planId ?? "<unknown>"} rev ${ref.planRevision} (${ref.depth})`,
+    `Plan state: ${ref.state}${ref.staleReason === null ? "" : ` — ${ref.staleReason}`}`,
+    `Plan approval: ${ref.approval}`,
+  ];
+  if (plan !== null && plan.id === ref.planId) {
+    const verified = plan.touchpoints
+      .filter((touchpoint) => touchpoint.confidence === "verified")
+      .map((touchpoint) => touchpoint.path);
+    const candidates = plan.touchpoints
+      .filter((touchpoint) => touchpoint.confidence === "candidate")
+      .map((touchpoint) => touchpoint.path);
+    lines.push(`Objective: ${plan.objective}`);
+    if (verified.length > 0) {
+      lines.push(`Verified: ${verified.join(", ")}`);
+    }
+    if (candidates.length > 0) {
+      lines.push(`Candidate: ${candidates.join(", ")}`);
+    }
+    lines.push(`Steps: ${plan.steps.map((step) => `${step.id} ${step.title}`).join(" | ")}`);
+    lines.push(`Validation: ${plan.validation.checks.join("; ")}`);
+    if (plan.risks.length > 0) {
+      lines.push(`Risks: ${plan.risks.map((risk) => risk.description).join("; ")}`);
+    }
+  }
+  return [
+    {
+      id: "task-plan",
+      stability: "contextual",
+      title: "Task plan",
+      content: truncateText(lines.join("\n"), MAX_PLAN_SEGMENT_BYTES).text,
+    },
+  ];
+}
 
 function taskContextSegments(
   snapshot: TaskState | null,
@@ -343,6 +406,7 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
   const stableInstructions = options.stableInstructions ?? SOLARIS_SYSTEM_INSTRUCTIONS;
   const getTaskSnapshot = options.getTaskSnapshot ?? (() => null);
   const getTaskRequest = options.getTaskRequest ?? (() => null);
+  const getCurrentPlan = options.getCurrentPlan ?? (() => null);
   // Disposable model-evidence view cache with high/low watermark hysteresis.
   // It never holds durable evidence: task evidence records and the raw
   // history remain authoritative and are unaffected by eviction.
@@ -514,6 +578,7 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
         ? []
         : knowledgeSegments(snapshot, request, options.knowledge)),
       ...taskContextSegments(snapshot, request),
+      ...planSegment(snapshot, getCurrentPlan()),
       ...volatileTaskSegments(snapshot),
       // Reference/research evidence render AFTER [Latest evidence] and last.
       // The ContextProjector sorts segments by stability then id, and

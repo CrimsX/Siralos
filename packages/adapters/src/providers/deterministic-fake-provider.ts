@@ -447,6 +447,11 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   if (signal?.aborted) {
     throw createAbortError();
   }
+  const planningScenario = findPlanningPrompt(request.messages);
+  if (planningScenario) {
+    yield* streamPlanningScenario(request, signal);
+    return;
+  }
   const developScenario = findDevelopScenario(request.messages);
   if (developScenario !== null) {
     yield* streamDevelopScenario(developScenario, request, signal);
@@ -534,6 +539,80 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
   }
   const responseText = formatResponse(request.messages);
   yield* streamTextChunks(responseText, signal);
+}
+
+async function* streamPlanningScenario(
+  request: ModelRequest,
+  signal: AbortSignal | undefined,
+): AsyncIterable<ModelEvent> {
+  const result = findLatestResult(itemsAfterLastUserMessage(request.messages), "workspace.list");
+  if (result === undefined && isToolAvailable(request.tools, "workspace.list")) {
+    yield {
+      type: "tool_call",
+      callId: "call-plan-1",
+      toolName: "workspace.list",
+      input: { path: "." },
+    };
+    await Promise.resolve();
+    yield { type: "completed" };
+    return;
+  }
+  const prompt = findLatestUserPrompt(request.messages);
+  const depth = /This is a (LIGHT|FULL) plan/.test(prompt) ? "light" : "full";
+  const objective = extractPlanningRequest(prompt);
+  const plan = {
+    depth,
+    objective: `Structured plan for: ${objective}`,
+    scope: { inScope: ["the requested workspace change"], outOfScope: [] },
+    nonGoals: [],
+    touchpoints: [
+      { id: "t1", path: "src/player/player.gd", confidence: "candidate" },
+      { id: "t2", path: "tests/player/**", confidence: "candidate" },
+    ],
+    constraints: [],
+    risks:
+      depth === "full"
+        ? [{ id: "r1", severity: "low", description: "Bounded change; risk is minimal." }]
+        : [],
+    steps: [
+      {
+        id: "step-1",
+        title: "Inspect the relevant files",
+        expectedTouchpoints: ["t1"],
+      },
+      { id: "step-2", title: "Implement the bounded change", expectedTouchpoints: ["t1", "t2"] },
+      {
+        id: "step-3",
+        title: "Validate with check-only parsing and existing tests",
+        expectedTouchpoints: [],
+      },
+    ],
+    validation: {
+      checks: ["check-only parse", "existing project tests"],
+      requirements: ["workspace mutation"],
+    },
+    ...(depth === "full" ? { rollback: { description: "Revert the prepared change set." } } : {}),
+  };
+  yield* streamTextChunks(JSON.stringify(plan, null, 2), signal);
+}
+
+/** Detects the host-authored planner prompt (fresh planner context). */
+function findPlanningPrompt(messages: readonly ConversationItem[]): boolean {
+  return messages.some(
+    (message) =>
+      message.type === "user_message" && message.content.startsWith("You are the Solaris planner."),
+  );
+}
+
+function extractPlanningRequest(prompt: string): string {
+  const marker = "Task request:";
+  const index = prompt.indexOf(marker);
+  if (index < 0) {
+    return "the requested task";
+  }
+  const rest = prompt.slice(index + marker.length).trim();
+  const nextSection = rest.indexOf("\nAcceptance criteria:");
+  return (nextSection < 0 ? rest : rest.slice(0, nextSection)).trim().slice(0, 120);
 }
 
 type WriteScenario = "create" | "edit" | "delete";

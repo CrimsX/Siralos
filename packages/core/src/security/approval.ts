@@ -98,13 +98,34 @@ export interface GDScriptDevelopmentApprovalRequest {
   readonly digest: string;
 }
 
+/**
+ * Plan-approval request (Stage 3 milestone 7). Approving a plan binds the
+ * host decision to the EXACT immutable plan revision and TaskContract
+ * revision recorded in the request. Plan approval authorizes ONLY the
+ * plan's acceptance as the execution reference — it never authorizes
+ * source edits, commands, or capabilities; those keep their own exact
+ * one-time approval paths.
+ */
+export interface TaskPlanApprovalRequest {
+  readonly id: string;
+  readonly capability: "plan.approve";
+  readonly toolName: string;
+  readonly summary: string;
+  readonly planId: string;
+  readonly planRevision: number;
+  readonly taskContractRevision: number;
+  /** SHA-256 over the exact plan revision (approval binds to it). */
+  readonly digest: string;
+}
+
 export type ApprovalRequest =
   | WorkspaceWriteApprovalRequest
   | ProcessExecutionApprovalRequest
   | GodotProjectProbeApprovalRequest
   | GodotDiagnosticApprovalRequest
   | GodotLSPSessionApprovalRequest
-  | GDScriptDevelopmentApprovalRequest;
+  | GDScriptDevelopmentApprovalRequest
+  | TaskPlanApprovalRequest;
 
 export type ApprovalDecision =
   | {
