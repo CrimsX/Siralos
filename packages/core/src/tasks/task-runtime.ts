@@ -3,9 +3,9 @@ import type {
   TaskContract,
   ReviseTaskContractInput,
 } from "./task-contract.js";
-import { reviseTaskContract } from "./task-contract.js";
+import { reviseTaskContract, validateTaskContract } from "./task-contract.js";
 import type { TaskPlan, TaskPlanId, TaskPlanState } from "../planning/planning-model.js";
-import { NO_TASK_PLAN, PLANNING_LIMITS } from "../planning/planning-model.js";
+import { NO_TASK_PLAN, PLAN_ID_PATTERN, PLANNING_LIMITS } from "../planning/planning-model.js";
 import type { PlanningDepth } from "../planning/planning-model.js";
 import type { PlanningDecisionReason } from "../planning/planning-policy.js";
 import type {
@@ -29,6 +29,8 @@ import type {
 import { isTerminalPhase } from "./task-model.js";
 import type { TaskActivityEvent } from "./task-events.js";
 import type { TaskRuntimeSnapshot } from "./task-snapshot.js";
+import { deepFreeze } from "../domain/deep-freeze.js";
+import { validatePlanCandidate } from "../planning/planning-validation.js";
 
 /**
  * Host-owned structured task runtime (Stage 3 milestone 1).
@@ -50,6 +52,14 @@ import type { TaskRuntimeSnapshot } from "./task-snapshot.js";
 
 /** Evidence sources are bounded references; never embed raw adapter output. */
 export const MAX_EVIDENCE_SOURCE_BYTES = 4096;
+/** Hard per-task evidence-record bound; task state cannot grow without limit. */
+export const MAX_TASK_EVIDENCE_RECORDS = 256;
+/** Hard task-shape bounds enforced before authoritative state is created. */
+export const MAX_TASK_STEPS = 128;
+export const MAX_TASK_FINDINGS = 128;
+export const MAX_TASK_STEP_DESCRIPTION_BYTES = 4096;
+export const MAX_TASK_FINDING_FIELD_BYTES = 4096;
+export const MAX_TASK_EVIDENCE_ID_BYTES = 256;
 
 /** Bounded recent-observation window for stuck-pattern detection. */
 export const PROGRESS_WINDOW_SIZE = 8;
@@ -234,6 +244,27 @@ interface TaskRecord {
 }
 
 const textEncoder = new TextEncoder();
+const TASK_STEP_ID_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
+const TASK_STEP_KINDS = new Set(["research", "implementation", "review"]);
+const FINDING_SEVERITIES = new Set(["critical", "high", "medium", "low"]);
+const EVIDENCE_SOURCE_TYPE_BY_KIND: Readonly<Record<EvidenceKind, EvidenceSource["type"]>> = {
+  workspace_read: "workspace_read",
+  api_lookup: "api_lookup",
+  lsp_query: "lsp_query",
+  change_preview: "change_preview",
+  mutation_receipt: "mutation",
+  checkpoint: "checkpoint",
+  parser_result: "parser",
+  lsp_result: "lsp",
+  validation_result: "validation",
+  review_result: "review",
+  reference_read: "reference_read",
+  reference_search: "reference_search",
+  research: "research",
+};
+const EVIDENCE_KINDS = new Set<EvidenceKind>(
+  Object.keys(EVIDENCE_SOURCE_TYPE_BY_KIND) as EvidenceKind[],
+);
 
 const ALLOWED_TRANSITIONS: Readonly<Record<TaskPhase, readonly TaskPhase[]>> = {
   prepared: ["working", "cancelled", "failed"],
@@ -319,7 +350,7 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       failedReason: null,
       blockedReason: null,
     }));
-    const acceptance: Mutable<AcceptanceState>[] = input.contract.acceptanceCriteria.map(
+    const acceptance: Mutable<AcceptanceState>[] = record.contract.acceptanceCriteria.map(
       (criterion) => ({
         criterionId: criterion.id,
         description: criterion.description,
@@ -331,7 +362,7 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
     );
     return {
       taskId: record.id,
-      contractRevision: input.contract.revision,
+      contractRevision: record.contract.revision,
       phase: "prepared",
       plan: { ...NO_TASK_PLAN },
       steps,
@@ -340,7 +371,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       evidence: [],
       validationStatus: "not_run",
       reviewStatus: "not_run",
-      iteration: input.iteration ?? 0,
+      iteration:
+        input.iteration === undefined || !Number.isFinite(input.iteration)
+          ? 0
+          : Math.max(0, Math.floor(input.iteration)),
       progress: progressSnapshot(record.progress),
       startedAtMs: now(),
       completedAtMs: null,
@@ -349,22 +383,48 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
   }
 
   function buildRecord(input: CreateTaskInput): TaskRecord {
+    if ((input.steps ?? []).length > MAX_TASK_STEPS) {
+      throw new Error(`A task accepts at most ${MAX_TASK_STEPS} steps.`);
+    }
     const specs = new Map<string, TaskStepSpec>();
     for (const spec of input.steps ?? []) {
+      if (!TASK_STEP_ID_PATTERN.test(spec.id)) {
+        throw new Error(`Invalid task step id: ${spec.id}`);
+      }
       if (specs.has(spec.id)) {
         throw new Error(`Duplicate task step id: ${spec.id}`);
+      }
+      const description = spec.description.trim();
+      if (description.length === 0) {
+        throw new Error(`Task step ${spec.id} requires a non-empty description.`);
+      }
+      if (textEncoder.encode(description).length > MAX_TASK_STEP_DESCRIPTION_BYTES) {
+        throw new Error(
+          `Task step ${spec.id} description exceeds ${MAX_TASK_STEP_DESCRIPTION_BYTES} UTF-8 bytes.`,
+        );
+      }
+      if (!TASK_STEP_KINDS.has(spec.kind)) {
+        throw new Error(`Task step ${spec.id} has invalid kind ${String(spec.kind)}.`);
       }
       if (spec.accepts.length === 0) {
         throw new Error(`Task step ${spec.id} accepts no evidence kinds.`);
       }
-      specs.set(spec.id, spec);
+      if (spec.accepts.some((kind) => !EVIDENCE_KINDS.has(kind))) {
+        throw new Error(`Task step ${spec.id} contains an invalid evidence kind.`);
+      }
+      if (new Set(spec.accepts).size !== spec.accepts.length) {
+        throw new Error(`Task step ${spec.id} contains duplicate evidence kinds.`);
+      }
+      specs.set(spec.id, deepFreeze({ ...spec, description, accepts: [...spec.accepts] }));
     }
+    const contract = deepFreeze(structuredClone(input.contract));
+    const snapshot = deepFreeze(structuredClone(input.snapshot));
     const record: TaskRecord = {
-      id: input.contract.id,
+      id: contract.id,
       specs,
-      contract: input.contract,
-      contractRevisions: [input.contract],
-      snapshot: input.snapshot,
+      contract,
+      contractRevisions: [contract],
+      snapshot,
       state: undefined as unknown as MutableTaskState,
       plans: [],
       planApproval: null,
@@ -379,7 +439,12 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         window: [],
       },
     };
-    record.state = buildInitialState(record, input);
+    record.state = buildInitialState(record, {
+      ...input,
+      contract,
+      snapshot,
+      steps: [...specs.values()],
+    });
     appendActivity(record, {
       type: "task_started",
       contractRevision: input.contract.revision,
@@ -393,6 +458,40 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
 
   function findStep(record: TaskRecord, stepId: TaskStepId) {
     return record.state.steps.find((step) => step.id === stepId) ?? null;
+  }
+
+  /**
+   * Reconcile materialized acceptance state with a new contract revision.
+   * An unchanged criterion keeps its evidence-backed state. A new criterion,
+   * or one whose meaning/verification kind changed under the same id, starts
+   * pending. Removed criteria disappear from the authoritative state.
+   */
+  function reconcileAcceptanceState(record: TaskRecord, contract: TaskContract): void {
+    const previous = new Map(record.state.acceptance.map((entry) => [entry.criterionId, entry]));
+    record.state.acceptance = contract.acceptanceCriteria.map((criterion) => {
+      const existing = previous.get(criterion.id);
+      if (
+        existing !== undefined &&
+        existing.description === criterion.description &&
+        existing.verificationKind === criterion.verificationKind
+      ) {
+        return { ...existing };
+      }
+      return {
+        criterionId: criterion.id,
+        description: criterion.description,
+        verificationKind: criterion.verificationKind,
+        status: "pending",
+        verifiedBy: null,
+        note: null,
+      };
+    });
+  }
+
+  function terminalMutationReason(record: TaskRecord): string | null {
+    return isTerminalPhase(record.state.phase)
+      ? `The task is terminal (${record.state.phase}); authoritative state can no longer be changed.`
+      : null;
   }
 
   function transitionPhaseLocked(record: TaskRecord, phase: TaskPhase): StepOpResult {
@@ -418,6 +517,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
     stepId: TaskStepId,
     refs: readonly EvidenceRef[],
   ): StepOpResult {
+    const terminalReason = terminalMutationReason(record);
+    if (terminalReason !== null) {
+      return { status: "rejected", reason: terminalReason };
+    }
     const step = findStep(record, stepId);
     if (step === null) {
       return { status: "rejected", reason: `Unknown step: ${stepId}` };
@@ -481,13 +584,49 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
     record: TaskRecord,
     input: { readonly id: string; readonly kind: EvidenceKind; readonly source: EvidenceSource },
   ): EvidenceAttachResult {
+    const terminalReason = terminalMutationReason(record);
+    if (terminalReason !== null) {
+      return { status: "rejected", reason: terminalReason };
+    }
     if (input.id.trim().length === 0) {
       return { status: "rejected", reason: "Evidence requires a non-empty id." };
+    }
+    if (textEncoder.encode(input.id).length > MAX_TASK_EVIDENCE_ID_BYTES) {
+      return {
+        status: "rejected",
+        reason: `Evidence id exceeds the ${MAX_TASK_EVIDENCE_ID_BYTES}-byte bound.`,
+      };
+    }
+    if (!EVIDENCE_KINDS.has(input.kind)) {
+      return { status: "rejected", reason: `Unknown evidence kind: ${String(input.kind)}` };
+    }
+    if (input.source.type !== EVIDENCE_SOURCE_TYPE_BY_KIND[input.kind]) {
+      return {
+        status: "rejected",
+        reason: `Evidence kind ${input.kind} requires source type ${EVIDENCE_SOURCE_TYPE_BY_KIND[input.kind]}, not ${input.source.type}.`,
+      };
     }
     if (record.state.evidence.some((entry) => entry.id === input.id)) {
       return { status: "rejected", reason: `Evidence id already attached: ${input.id}` };
     }
-    const bytes = textEncoder.encode(JSON.stringify(input.source)).length;
+    if (record.state.evidence.length >= MAX_TASK_EVIDENCE_RECORDS) {
+      return {
+        status: "rejected",
+        reason: `The task already has the maximum of ${MAX_TASK_EVIDENCE_RECORDS} evidence records.`,
+      };
+    }
+    let serialized: string;
+    let source: EvidenceSource;
+    try {
+      serialized = JSON.stringify(input.source);
+      source = structuredClone(input.source);
+    } catch {
+      return {
+        status: "rejected",
+        reason: "Evidence source must be finite JSON-serializable data.",
+      };
+    }
+    const bytes = textEncoder.encode(serialized).length;
     if (bytes > MAX_EVIDENCE_SOURCE_BYTES) {
       return {
         status: "rejected",
@@ -498,7 +637,7 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       id: input.id,
       kind: input.kind,
       taskId: record.id,
-      source: { ...input.source },
+      source,
       attachedAtMs: now(),
     };
     record.state.evidence.push(entry);
@@ -517,6 +656,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
     verifiedBy: string | null,
     note: string | undefined,
   ): CriterionResult {
+    const terminalReason = terminalMutationReason(record);
+    if (terminalReason !== null) {
+      return { status: "rejected", reason: terminalReason };
+    }
     const criterion = record.state.acceptance.find((entry) => entry.criterionId === criterionId);
     if (criterion === undefined) {
       return { status: "rejected", reason: `Unknown acceptance criterion: ${criterionId}` };
@@ -564,6 +707,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
   }
 
   function finalizeCompleteLocked(record: TaskRecord): CompletionResult {
+    const terminalReason = terminalMutationReason(record);
+    if (terminalReason !== null) {
+      return { status: "rejected", reasons: [terminalReason] };
+    }
     const evaluation = evaluateCompletionLocked(record);
     if (!evaluation.allowed) {
       return { status: "rejected", reasons: [...evaluation.missing] };
@@ -590,10 +737,15 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         return record.contractRevisions.map((revision) => structuredClone(revision));
       },
       reviseContract(changes: ReviseTaskContractInput): TaskContract {
+        const terminalReason = terminalMutationReason(record);
+        if (terminalReason !== null) {
+          throw new Error(terminalReason);
+        }
         const revision = reviseTaskContract(record.contract, changes);
         record.contractRevisions.push(revision);
         record.contract = revision;
         record.state.contractRevision = revision.revision;
+        reconcileAcceptanceState(record, revision);
         // A material TaskContract change makes any plan bound to an older
         // revision stale and any plan approval invalid: never silently
         // execute an old plan against a changed contract.
@@ -637,6 +789,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         return transitionPhaseLocked(record, phase);
       },
       beginStep(stepId: TaskStepId): StepOpResult {
+        const terminalReason = terminalMutationReason(record);
+        if (terminalReason !== null) {
+          return { status: "rejected", reason: terminalReason };
+        }
         const step = findStep(record, stepId);
         if (step === null) {
           return { status: "rejected", reason: `Unknown step: ${stepId}` };
@@ -657,6 +813,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         return completeStepLocked(record, stepId, evidenceRefs);
       },
       failStep(stepId: TaskStepId, reason: string): StepOpResult {
+        const terminalReason = terminalMutationReason(record);
+        if (terminalReason !== null) {
+          return { status: "rejected", reason: terminalReason };
+        }
         const step = findStep(record, stepId);
         if (step === null) {
           return { status: "rejected", reason: `Unknown step: ${stepId}` };
@@ -684,6 +844,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         return verifyCriterionLocked(record, criterionId, verifiedBy, note);
       },
       markCriterionFailed(criterionId: AcceptanceCriterionId, note?: string): CriterionResult {
+        const terminalReason = terminalMutationReason(record);
+        if (terminalReason !== null) {
+          return { status: "rejected", reason: terminalReason };
+        }
         const criterion = record.state.acceptance.find(
           (entry) => entry.criterionId === criterionId,
         );
@@ -696,26 +860,72 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         return { status: "failed", reason: null };
       },
       setFindings(findings: readonly FindingRef[]): void {
+        if (terminalMutationReason(record) !== null) {
+          return;
+        }
+        if (findings.length > MAX_TASK_FINDINGS) {
+          throw new Error(`A task accepts at most ${MAX_TASK_FINDINGS} current findings.`);
+        }
+        const ids = new Set<string>();
+        for (const finding of findings) {
+          if (finding.findingId.trim().length === 0 || finding.source.trim().length === 0) {
+            throw new Error("Task findings require non-empty ids and sources.");
+          }
+          if (
+            textEncoder.encode(finding.findingId).length > MAX_TASK_FINDING_FIELD_BYTES ||
+            textEncoder.encode(finding.source).length > MAX_TASK_FINDING_FIELD_BYTES
+          ) {
+            throw new Error(
+              `Task finding fields cannot exceed ${MAX_TASK_FINDING_FIELD_BYTES} UTF-8 bytes.`,
+            );
+          }
+          if (ids.has(finding.findingId)) {
+            throw new Error(`Duplicate task finding id: ${finding.findingId}`);
+          }
+          ids.add(finding.findingId);
+          if (!FINDING_SEVERITIES.has(finding.severity)) {
+            throw new Error(`Invalid task finding severity: ${String(finding.severity)}`);
+          }
+        }
         record.state.currentFindings = findings.map((finding) => ({ ...finding }));
       },
       setValidationStatus(status: TaskValidationStatus): void {
+        if (terminalMutationReason(record) !== null) {
+          return;
+        }
         record.state.validationStatus = status;
       },
       setReviewStatus(status: TaskReviewStatus): void {
+        if (terminalMutationReason(record) !== null) {
+          return;
+        }
         record.state.reviewStatus = status;
       },
       setIteration(iteration: number): void {
-        record.state.iteration = Math.max(0, iteration);
+        if (terminalMutationReason(record) !== null || !Number.isFinite(iteration)) {
+          return;
+        }
+        record.state.iteration = Math.max(0, Math.floor(iteration));
       },
 
       routePlanning(depth: PlanningDepth, reason: PlanningDecisionReason): void {
+        if (terminalMutationReason(record) !== null) {
+          return;
+        }
         record.state.plan.depth = depth;
         appendActivity(record, { type: "planning_routed", depth, reason });
       },
       rejectPlan(reason: string): void {
+        if (terminalMutationReason(record) !== null) {
+          return;
+        }
         appendActivity(record, { type: "plan_rejected", reason });
       },
       setPlan(plan: TaskPlan): StepOpResult {
+        const terminalReason = terminalMutationReason(record);
+        if (terminalReason !== null) {
+          return { status: "rejected", reason: terminalReason };
+        }
         if (plan.taskId !== record.id) {
           return {
             status: "rejected",
@@ -728,10 +938,29 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
             reason: `Plan ${plan.id} binds to TaskContract revision ${plan.taskContractRevision}, but the current revision is ${record.contract.revision}.`,
           };
         }
-        if (plan.revision < 1) {
-          return { status: "rejected", reason: "A plan revision must be at least 1." };
+        if (!PLAN_ID_PATTERN.test(plan.id)) {
+          return { status: "rejected", reason: `Invalid plan id: ${plan.id}` };
+        }
+        if (!Number.isSafeInteger(plan.revision) || plan.revision < 1) {
+          return { status: "rejected", reason: "A plan revision must be a positive safe integer." };
+        }
+        if (!Number.isSafeInteger(plan.createdAt) || plan.createdAt < 0) {
+          return { status: "rejected", reason: "A plan requires a valid createdAt timestamp." };
+        }
+        const validated = validatePlanCandidate(plan, {
+          contract: record.contract,
+          depth: plan.depth,
+        });
+        if (!validated.ok) {
+          return {
+            status: "rejected",
+            reason: `The plan is invalid: ${validated.reasons.join(" ")}`,
+          };
         }
         const previous = record.plans[record.plans.length - 1] ?? null;
+        if (previous === null && plan.revision !== 1) {
+          return { status: "rejected", reason: "The first plan revision must be 1." };
+        }
         if (
           previous !== null &&
           previous.id === plan.id &&
@@ -741,6 +970,20 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
             status: "rejected",
             reason: `Plan ${plan.id} revision ${plan.revision} does not follow revision ${previous.revision}; plans are immutable and revisions only ever advance by one.`,
           };
+        }
+        if (previous !== null && previous.id !== plan.id) {
+          if (plan.revision !== 1) {
+            return {
+              status: "rejected",
+              reason: `Replacement plan ${plan.id} must begin at revision 1.`,
+            };
+          }
+          if (record.plans.some((revision) => revision.id === plan.id)) {
+            return {
+              status: "rejected",
+              reason: `Plan id ${plan.id} was already used by this task and cannot be restarted.`,
+            };
+          }
         }
         if (record.plans.length >= PLANNING_LIMITS.maxPlanRevisions) {
           return {
@@ -754,10 +997,19 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
           record.planApproval !== null &&
           (record.planApproval.planId !== plan.id ||
             record.planApproval.planRevision !== plan.revision);
-        record.plans.push(plan);
-        record.state.plan.planId = plan.id;
-        record.state.plan.planRevision = plan.revision;
-        record.state.plan.depth = plan.depth;
+        const storedPlan: TaskPlan = deepFreeze({
+          id: plan.id,
+          revision: plan.revision,
+          taskId: plan.taskId,
+          taskContractRevision: plan.taskContractRevision,
+          depth: plan.depth,
+          ...structuredClone(validated.content),
+          createdAt: plan.createdAt,
+        });
+        record.plans.push(storedPlan);
+        record.state.plan.planId = storedPlan.id;
+        record.state.plan.planRevision = storedPlan.revision;
+        record.state.plan.depth = storedPlan.depth;
         record.state.plan.state = "current";
         record.state.plan.staleReason = null;
         if (priorApproved) {
@@ -775,18 +1027,22 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         record.planApproval = null;
         appendActivity(record, {
           type: "plan_created",
-          planId: plan.id,
-          revision: plan.revision,
-          depth: plan.depth,
+          planId: storedPlan.id,
+          revision: storedPlan.revision,
+          depth: storedPlan.depth,
         });
         observeProgress(record, {
           action: "plan.created",
-          fingerprint: `${plan.id}:${plan.revision}`,
+          fingerprint: `${storedPlan.id}:${storedPlan.revision}`,
           progress: true,
         });
         return { status: "ok" };
       },
       approvePlan(planId: TaskPlanId, planRevision: number): StepOpResult {
+        const terminalReason = terminalMutationReason(record);
+        if (terminalReason !== null) {
+          return { status: "rejected", reason: terminalReason };
+        }
         const current = record.plans[record.plans.length - 1] ?? null;
         if (current === null || current.id !== planId) {
           return {
@@ -827,6 +1083,9 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         return { status: "ok" };
       },
       invalidatePlan(reason: string): void {
+        if (terminalMutationReason(record) !== null) {
+          return;
+        }
         const current = record.plans[record.plans.length - 1] ?? null;
         if (current === null) {
           return;
@@ -856,6 +1115,15 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         disposition: WorkflowDisposition,
         source: "host" | "model" = "host",
       ): DispositionResult {
+        const terminalReason = terminalMutationReason(record);
+        if (terminalReason !== null) {
+          return {
+            accepted: false,
+            disposition,
+            evaluation: disposition.type === "complete" ? evaluateCompletionLocked(record) : null,
+            reason: terminalReason,
+          };
+        }
         if (disposition.type === "complete") {
           const evaluation = evaluateCompletionLocked(record);
           if (evaluation.allowed) {
@@ -946,6 +1214,9 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       },
 
       observe(observation: HostObservation): ProgressState {
+        if (terminalMutationReason(record) !== null) {
+          return progressSnapshot(record.progress);
+        }
         return observeProgress(record, observation);
       },
       progress(): ProgressState {
@@ -956,7 +1227,11 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
 
   return {
     createTask(input: CreateTaskInput): TaskHandle {
-      const record = buildRecord(input);
+      const contract = validateTaskContract(input.contract);
+      if (records.has(contract.id)) {
+        throw new Error(`A task with id ${contract.id} already exists.`);
+      }
+      const record = buildRecord({ ...input, contract });
       records.set(record.id, record);
       return createHandle(record);
     },

@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
+import { deepFreeze } from "../domain/deep-freeze.js";
 
 /**
  * Provider-neutral structured task contract (Stage 3 milestone 1).
@@ -66,6 +67,21 @@ export interface CreateTaskContractInput {
   readonly pausePolicy?: PausePolicy;
 }
 
+/** Host-owned hard bounds for revisioned task contracts. */
+export const TASK_CONTRACT_LIMITS = Object.freeze({
+  maxIdBytes: 95,
+  maxRequestBytes: 16 * 1024,
+  maxContextBytes: 32 * 1024,
+  maxConstraints: 32,
+  maxAcceptanceCriteria: 64,
+  maxEntryIdBytes: 64,
+  maxEntryDescriptionBytes: 4096,
+});
+
+const TASK_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,94}$/;
+const ENTRY_ID_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
+const textEncoder = new TextEncoder();
+
 interface ContractShape {
   readonly id: TaskContractId;
   readonly request: string;
@@ -77,36 +93,128 @@ interface ContractShape {
 }
 
 function validateContractShape(input: ContractShape): TaskContract {
+  if (!TASK_ID_PATTERN.test(input.id)) {
+    throw new Error(`Invalid task contract id: ${input.id}`);
+  }
   const request = input.request.trim();
   if (request.length === 0) {
     throw new Error("A task contract requires a non-empty request.");
   }
-  if (input.revision < 1) {
+  if (textEncoder.encode(request).length > TASK_CONTRACT_LIMITS.maxRequestBytes) {
+    throw new Error(
+      `A task contract request exceeds ${TASK_CONTRACT_LIMITS.maxRequestBytes} UTF-8 bytes.`,
+    );
+  }
+  if (!Number.isSafeInteger(input.revision) || input.revision < 1) {
     throw new Error("A task contract revision must be at least 1.");
   }
-  const ids = new Set<string>();
+  if (input.acceptanceCriteria.length > TASK_CONTRACT_LIMITS.maxAcceptanceCriteria) {
+    throw new Error(
+      `A task contract accepts at most ${TASK_CONTRACT_LIMITS.maxAcceptanceCriteria} acceptance criteria.`,
+    );
+  }
+  if (input.constraints.length > TASK_CONTRACT_LIMITS.maxConstraints) {
+    throw new Error(
+      `A task contract accepts at most ${TASK_CONTRACT_LIMITS.maxConstraints} constraints.`,
+    );
+  }
+  const criterionIds = new Set<string>();
   for (const criterion of input.acceptanceCriteria) {
-    if (ids.has(criterion.id)) {
+    if (!ENTRY_ID_PATTERN.test(criterion.id)) {
+      throw new Error(`Invalid acceptance criterion id: ${criterion.id}`);
+    }
+    if (criterionIds.has(criterion.id)) {
       throw new Error(`Duplicate acceptance criterion id: ${criterion.id}`);
     }
-    ids.add(criterion.id);
+    criterionIds.add(criterion.id);
+    validateEntryDescription("acceptance criterion", criterion.id, criterion.description);
+    if (!(["deterministic", "review", "user"] as const).includes(criterion.verificationKind)) {
+      throw new Error(
+        `Acceptance criterion ${criterion.id} has invalid verification kind ${String(criterion.verificationKind)}.`,
+      );
+    }
   }
   if (input.acceptanceCriteria.length === 0) {
     throw new Error("A task contract requires at least one acceptance criterion.");
+  }
+  const constraintIds = new Set<string>();
+  for (const constraint of input.constraints) {
+    if (!ENTRY_ID_PATTERN.test(constraint.id)) {
+      throw new Error(`Invalid task constraint id: ${constraint.id}`);
+    }
+    if (constraintIds.has(constraint.id)) {
+      throw new Error(`Duplicate task constraint id: ${constraint.id}`);
+    }
+    constraintIds.add(constraint.id);
+    validateEntryDescription("task constraint", constraint.id, constraint.description);
+    if (!(["scope", "process", "security", "escalation"] as const).includes(constraint.kind)) {
+      throw new Error(
+        `Task constraint ${constraint.id} has invalid kind ${String(constraint.kind)}.`,
+      );
+    }
+  }
+  if (!(["none", "on_approval", "on_escalation"] as const).includes(input.pausePolicy)) {
+    throw new Error(`Invalid task pause policy: ${String(input.pausePolicy)}`);
   }
   const context =
     input.context === undefined || input.context.trim().length === 0
       ? undefined
       : input.context.trim();
-  return {
+  if (
+    context !== undefined &&
+    textEncoder.encode(context).length > TASK_CONTRACT_LIMITS.maxContextBytes
+  ) {
+    throw new Error(
+      `A task contract context exceeds ${TASK_CONTRACT_LIMITS.maxContextBytes} UTF-8 bytes.`,
+    );
+  }
+  return deepFreeze({
     id: input.id,
     revision: input.revision,
     request,
     ...(context === undefined ? {} : { context }),
-    constraints: input.constraints.map((constraint) => ({ ...constraint })),
-    acceptanceCriteria: input.acceptanceCriteria.map((criterion) => ({ ...criterion })),
+    constraints: input.constraints.map((constraint) => ({
+      ...constraint,
+      description: constraint.description.trim(),
+    })),
+    acceptanceCriteria: input.acceptanceCriteria.map((criterion) => ({
+      ...criterion,
+      description: criterion.description.trim(),
+    })),
     pausePolicy: input.pausePolicy,
-  };
+  });
+}
+
+/**
+ * Validate and detach an existing contract at a runtime boundary.
+ *
+ * TypeScript's readonly types do not protect the runtime from a cast,
+ * deserialized object, or caller mutation. TaskRuntime uses this helper
+ * before accepting a contract so only the same normalized shape produced
+ * by `createTaskContract` can become authoritative state.
+ */
+export function validateTaskContract(input: TaskContract): TaskContract {
+  return validateContractShape({
+    id: input.id,
+    revision: input.revision,
+    request: input.request,
+    ...(input.context === undefined ? {} : { context: input.context }),
+    constraints: input.constraints,
+    acceptanceCriteria: input.acceptanceCriteria,
+    pausePolicy: input.pausePolicy,
+  });
+}
+
+function validateEntryDescription(kind: string, id: string, description: string): void {
+  const trimmed = description.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`${kind} ${id} requires a non-empty description.`);
+  }
+  if (textEncoder.encode(trimmed).length > TASK_CONTRACT_LIMITS.maxEntryDescriptionBytes) {
+    throw new Error(
+      `${kind} ${id} description exceeds ${TASK_CONTRACT_LIMITS.maxEntryDescriptionBytes} UTF-8 bytes.`,
+    );
+  }
 }
 
 export function createTaskContract(input: CreateTaskContractInput): TaskContract {
@@ -139,6 +247,11 @@ export function reviseTaskContract(
   previous: TaskContract,
   changes: ReviseTaskContractInput,
 ): TaskContract {
+  if (changes.id !== previous.id) {
+    throw new Error(
+      `A task contract revision must preserve id ${previous.id}; received ${changes.id}.`,
+    );
+  }
   return validateContractShape({
     id: changes.id,
     request: changes.request ?? previous.request,

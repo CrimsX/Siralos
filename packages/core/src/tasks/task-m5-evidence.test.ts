@@ -225,6 +225,12 @@ describe("milestone 5 task snapshot", () => {
       kind: "repository",
       commit: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
     });
-    expect(snapshot).toBe(Object.freeze(snapshot) ? snapshot : snapshot);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.referenceRevisions)).toBe(true);
+    expect(Object.isFrozen(snapshot.referenceRevisions[0])).toBe(true);
+    expect(Object.isFrozen(snapshot.referenceRevisions[0]?.revision.identity)).toBe(true);
+    expect(() => {
+      (snapshot.referenceRevisions as unknown as unknown[]).push({});
+    }).toThrow();
   });
 });

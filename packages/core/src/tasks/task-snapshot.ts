@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
+import { deepFreeze } from "../domain/deep-freeze.js";
 import type { CapabilityPolicy } from "../security/capability.js";
 import type { ReferenceAlias, ReferenceRevision } from "../reference/reference-model.js";
 
@@ -92,5 +93,5 @@ export function createTaskRuntimeSnapshot(
       .slice(0, 16)
       .map((entry) => ({ alias: entry.alias, revision: entry.revision })),
   };
-  return Object.freeze(snapshot);
+  return deepFreeze(snapshot);
 }

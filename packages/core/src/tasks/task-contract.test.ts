@@ -3,6 +3,7 @@ import {
   computeTaskContractDigest,
   createTaskContract,
   reviseTaskContract,
+  TASK_CONTRACT_LIMITS,
 } from "./task-contract.js";
 
 describe("task contract model", () => {
@@ -55,6 +56,67 @@ describe("task contract model", () => {
     // Omitted fields carry over.
     expect(revision.acceptanceCriteria).toEqual(original.acceptanceCriteria);
     expect(computeTaskContractDigest(original)).not.toBe(computeTaskContractDigest(revision));
+  });
+
+  it("deep-freezes every revision and detaches nested caller input", () => {
+    const criteria = [
+      { id: "a", description: "criterion", verificationKind: "deterministic" as const },
+    ];
+    const constraints = [{ id: "scope", description: "workspace", kind: "scope" as const }];
+    const contract = createTaskContract({
+      id: "task-frozen",
+      request: "Request",
+      acceptanceCriteria: criteria,
+      constraints,
+    });
+
+    criteria[0]!.description = "caller mutation";
+    constraints[0]!.description = "caller mutation";
+
+    expect(contract.acceptanceCriteria[0]?.description).toBe("criterion");
+    expect(contract.constraints[0]?.description).toBe("workspace");
+    expect(Object.isFrozen(contract)).toBe(true);
+    expect(Object.isFrozen(contract.acceptanceCriteria)).toBe(true);
+    expect(Object.isFrozen(contract.acceptanceCriteria[0])).toBe(true);
+    expect(() => {
+      (contract.acceptanceCriteria as unknown as Array<{ description: string }>)[0]!.description =
+        "forged";
+    }).toThrow();
+  });
+
+  it("rejects an id change across revisions", () => {
+    const contract = createTaskContract({
+      id: "task-stable-id",
+      request: "Request",
+      acceptanceCriteria: [
+        { id: "a", description: "criterion", verificationKind: "deterministic" },
+      ],
+    });
+
+    expect(() => reviseTaskContract(contract, { id: "task-different" })).toThrow(
+      /must preserve id/,
+    );
+  });
+
+  it("rejects invalid identities and oversized structured fields", () => {
+    expect(() =>
+      createTaskContract({
+        id: "task with spaces",
+        request: "Request",
+        acceptanceCriteria: [
+          { id: "a", description: "criterion", verificationKind: "deterministic" },
+        ],
+      }),
+    ).toThrow(/Invalid task contract id/);
+    expect(() =>
+      createTaskContract({
+        id: "task-large-request",
+        request: "界".repeat(TASK_CONTRACT_LIMITS.maxRequestBytes),
+        acceptanceCriteria: [
+          { id: "a", description: "criterion", verificationKind: "deterministic" },
+        ],
+      }),
+    ).toThrow(/request exceeds/);
   });
 
   it("digests are canonical: object key order does not change the digest", () => {

@@ -209,6 +209,21 @@ export function createDevelopmentTaskFlow(
     return `ev-${prefix}-${evidenceCounter}`;
   }
 
+  function nextTaskId(): TaskId {
+    if (options.idFactory !== undefined) {
+      return options.idFactory();
+    }
+    // A new bridge instance is created for each workflow run, so its local
+    // counter alone is not a runtime-wide identity. Advance past existing
+    // records rather than replacing or colliding with prior task history.
+    let candidate: TaskId;
+    do {
+      taskCounter += 1;
+      candidate = `task-dev-${taskCounter}`;
+    } while (runtime.getTask(candidate) !== null);
+    return candidate;
+  }
+
   function attach(
     kind: EvidenceKind,
     source: TaskState["evidence"][number]["source"],
@@ -253,10 +268,8 @@ export function createDevelopmentTaskFlow(
       if (handle !== null) {
         return handle.snapshot();
       }
-      taskCounter += 1;
       evidenceCounter = 0;
-      const taskId =
-        options.idFactory === undefined ? `task-dev-${taskCounter}` : options.idFactory();
+      const taskId = nextTaskId();
       const contract = createDevelopmentTaskContract(taskId, request);
       const snapshot = createTaskRuntimeSnapshot(
         {
