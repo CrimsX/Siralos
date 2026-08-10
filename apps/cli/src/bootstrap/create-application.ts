@@ -40,6 +40,8 @@ import {
   createNodeScriptRunner,
   createProcessRunTool,
   createProviderChangeReviewer,
+  createPlannerExecutor,
+  createPlannerToolRegistry,
   createQualityValidationExecutor,
   createReferenceServices,
   createReviewerToolRegistry,
@@ -99,6 +101,7 @@ import {
   type GodotDiagnostics,
   type KnowledgeCoordinator,
   type ModelProvider,
+  type PlannerPort,
   type ProjectInstructionService,
   type ReferenceMaterializerPort,
   type ReferenceRegistry,
@@ -176,6 +179,8 @@ export interface CliApplication {
   readonly research: ResearchService;
   /** The configured research source ports (kind/id/label, in registration order). */
   readonly researchSources: readonly ResearchSourcePort[];
+  /** Read-only planner execution boundary (host-owned planning phase). */
+  readonly planner: PlannerPort;
   /** Releases the reference services (currently a no-op; kept for interface stability). */
   close(): void;
 }
@@ -496,6 +501,26 @@ export async function createCliApplication(
   const selfTools = createSelfReferenceTools(selfReference);
   const registeredTools = [...baseTools, ...selfTools];
   const registry = createToolRegistry(registeredTools);
+  // Read-only planner surface (Stage 3 milestone 7): the planner sees only
+  // read-only tools (workspace inspection, Godot inspection/API,
+  // references, research — policy-gated, self-reference). Mutation,
+  // process, approval, and checkpoint surfaces are absent by construction
+  // AND hidden by the ToolProjector's planning-mode allowlist.
+  const planner = createPlannerExecutor({
+    providerFactory: () => createDeterministicFakeProvider(),
+    tools: createPlannerToolRegistry({
+      workspaceRoot,
+      godot,
+      knowledge,
+      ...(readyReferenceCount > 0 ? { referenceTools } : {}),
+      researchTools,
+      selfTools,
+    }),
+    toolProjector: createToolProjector({ policy, profile }),
+    onObservation: (observation) => {
+      tasks.latestTask()?.observe(observation);
+    },
+  });
   const provider = createDeterministicFakeProvider();
   const tasks = createTaskRuntime();
   const taskSources: TaskRuntimeSnapshotSources = {
@@ -513,6 +538,9 @@ export async function createCliApplication(
     capacity: createRouteContextCapacity("develop-offline"),
     getTaskSnapshot: () => tasks.latestTask()?.snapshot() ?? null,
     getTaskRequest: () => tasks.latestTask()?.contract().request ?? null,
+    // Only the CURRENT plan revision is ever projected into context;
+    // historical revisions are never injected (ADR 0020 §56).
+    getCurrentPlan: () => tasks.latestTask()?.currentPlan() ?? null,
     instructions: {
       resolve: (focusPaths) => {
         const safe = focusPaths.filter(isSafeRelativeFocusPath);
@@ -580,6 +608,7 @@ export async function createCliApplication(
     referenceConfigError,
     research,
     researchSources,
+    planner,
     close(): void {
       referenceServices.close();
     },

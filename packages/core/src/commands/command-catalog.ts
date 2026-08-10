@@ -110,7 +110,13 @@ export const COMMAND_CATALOG = [
   {
     id: "develop",
     description:
-      "Start one GDScript development workflow (one-time approval; each source change is approved separately)",
+      "Start one GDScript development workflow (host-controlled planning; one-time approval; each source change is approved separately; /develop --plan <request> forces full planning before execution)",
+    group: "workflow",
+  },
+  {
+    id: "plan",
+    description:
+      "Plan-only mode: run read-only planning for a request and return a structured plan; no source is modified, no mutation approval is requested, and no execution follows",
     group: "workflow",
   },
   {

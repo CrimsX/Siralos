@@ -79,6 +79,7 @@ async function createComposedSession(lines: readonly string[], configPath: strin
     referenceConfigError: app.referenceConfigError,
     research: app.research,
     researchSources: app.researchSources,
+    planner: app.planner,
     tools: app.tools,
     security: app.security,
     git: app.git,

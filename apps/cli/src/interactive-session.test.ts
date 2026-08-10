@@ -134,6 +134,7 @@ async function createComposedSession(lines: readonly string[]) {
     referenceConfigError,
     research,
     researchSources,
+    planner,
     configPath,
     policy,
     profile,
@@ -177,6 +178,7 @@ async function createComposedSession(lines: readonly string[]) {
     referenceConfigError,
     research,
     researchSources,
+    planner,
   };
   return { io, application, sessionInfo };
 }
@@ -321,6 +323,11 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
     referenceConfigError: null,
     research: createStubResearchService(),
     researchSources: [],
+    planner: {
+      plan(): Promise<{ status: "failed"; message: string }> {
+        return Promise.resolve({ status: "failed", message: "stub planner unavailable" });
+      },
+    },
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",

@@ -15,6 +15,8 @@ import type {
   GodotProjectProbeStatus,
   KnowledgeCoordinator,
   ModelProvider,
+  PlannerPort,
+  PlanningDecisionInput,
   RegisteredToolInfo,
   ReferenceMaterializerPort,
   ReferenceRegistry,
@@ -36,9 +38,13 @@ import type {
 } from "@solaris/core";
 import type { ProjectInstructionService } from "@solaris/core";
 import {
+  computePlanRevisionDigest,
+  containsProtectedConfigReference,
   createAdHocTaskContract,
   createDevelopmentTaskFlow,
+  createPlanningFlow,
   createTaskRuntimeSnapshot,
+  planTouchpointStaleness,
 } from "@solaris/core";
 import { GitError } from "@solaris/core";
 import { parseInput } from "./input/parse-input.js";
@@ -54,6 +60,8 @@ import {
   formatCommandTerminal,
   formatCommands,
   formatContextStatus,
+  formatPlan,
+  formatPlanningStatus,
   formatInstructions,
   formatKnowledge,
   formatKnowledgeTrace,
@@ -151,6 +159,8 @@ export interface SessionInfo {
   readonly research: ResearchService;
   /** The configured research source ports (kind/id/label, in registration order). */
   readonly researchSources: readonly ResearchSourcePort[];
+  /** Read-only planner execution boundary (host-owned planning phase). */
+  readonly planner: PlannerPort;
 }
 
 /** The host-owned task flow of the active /develop run, if any. */
@@ -230,6 +240,7 @@ export async function runInteractiveSession(
             break;
           case "status":
             io.write(formatStatus(await buildStatusView(application, sessionInfo)));
+            io.write(formatPlanningStatus(sessionInfo.tasks.latestTask()?.snapshot() ?? null));
             break;
           case "clear":
             io.clear();
@@ -320,8 +331,12 @@ export async function runInteractiveSession(
               inputQueue,
             );
             break;
+          case "plan":
+            await runPlanCommand(io, sessionInfo, controls, parsed.args);
+            break;
           case "development-status":
             io.write(formatDevelopmentStatus(sessionInfo.development.status()));
+            io.write(formatPlanningStatus(sessionInfo.tasks.latestTask()?.snapshot() ?? null));
             io.write(formatContextStatus(sessionInfo.projection));
             break;
           case "task":
@@ -563,10 +578,12 @@ async function runDevelopCommand(
   inputBuffer: string[],
   inputQueue?: InputQueue,
 ): Promise<void> {
-  const request = args.join(" ").trim();
+  const planningFlags = parseDevelopPlanningFlags(args);
+  const request = planningFlags.request;
   if (request.length === 0) {
     io.write("Usage: /develop <request>\n");
     io.write("Example: /develop Add a health component to the player script\n");
+    io.write("Planning flags: --plan (force full planning before execution), --plan-light\n");
     return;
   }
   const controller = controls.beginPrompt();
@@ -639,6 +656,98 @@ async function runDevelopCommand(
         },
       ),
     );
+    // Host-controlled planning (Stage 3 milestone 7): the host routes the
+    // depth through the deterministic PlanningPolicy BEFORE any executor
+    // provider call; the planner is read-only; a plan binds to the exact
+    // TaskContract revision; approving a plan never approves edits or
+    // commands.
+    const planningInput: PlanningDecisionInput = {
+      request,
+      explicitPlanRequest: planningFlags.explicitPlan,
+      ...(planningFlags.requestedDepth === undefined
+        ? {}
+        : { requestedDepth: planningFlags.requestedDepth }),
+      inspectionOnly: false,
+      expectedMutation: true,
+      acceptanceCriterionCount: task.acceptance.length,
+      protectedConfigInvolved: containsProtectedConfigReference(request),
+      spansMultipleSubsystems: false,
+      researchRequired: false,
+      capabilityUncertainty: false,
+      narrowRepair: false,
+      knownTouchpoints: 0,
+    };
+    const handle = sessionInfo.tasks.getTask(task.taskId);
+    if (handle === null) {
+      throw new Error("The development task was not found after start.");
+    }
+    const planningFlow = createPlanningFlow({
+      handle,
+      planner: sessionInfo.planner,
+    });
+    const planningDecision = planningFlow.route(planningInput);
+    io.write(`Planning: ${planningDecision.depth} (${planningDecision.reason})\n`);
+    if (planningDecision.depth !== "none") {
+      const planningResult = await planningFlow.run(controller.signal);
+      if (planningResult.status === "planned") {
+        io.write(formatPlan(planningResult.plan, handle.snapshot().plan));
+        if (planningResult.plan.depth === "full") {
+          const planDecision = await sessionInfo.reviewer.review(
+            {
+              id: `plan-${planningResult.plan.id}-rev${planningResult.plan.revision}`,
+              capability: "plan.approve",
+              toolName: "/plan",
+              summary: `${planningResult.plan.objective} (${planningResult.plan.steps.length} steps)`,
+              planId: planningResult.plan.id,
+              planRevision: planningResult.plan.revision,
+              taskContractRevision: planningResult.plan.taskContractRevision,
+              digest: computePlanRevisionDigest(planningResult.plan),
+            },
+            controller.signal,
+          );
+          if (planDecision.type === "approve_once") {
+            const approved = planningFlow.approve();
+            if (approved.status === "ok") {
+              io.write("  plan approved (binds to this exact plan revision only)\n");
+            } else {
+              io.write(`  \u2715 plan approval refused: ${approved.reason}\n`);
+            }
+          } else if (planDecision.type === "cancelled") {
+            io.write("  \u2715 plan approval cancelled\n");
+          } else {
+            io.write(`  \u2715 plan denied: ${planDecision.reason ?? "not approved"}\n`);
+          }
+        }
+        // Surface verified-touchpoint staleness before mutation starts
+        // (Part M §38); this never auto-invalidates the plan.
+        const stale = planTouchpointStaleness(planningResult.plan, (path) =>
+          sessionInfo.revisions.currentRevision(path),
+        );
+        if (stale.length > 0) {
+          io.write(`  \u26A0 plan has stale verified touchpoints: ${stale.join(", ")}\n`);
+        }
+        const blocked = planningFlow.mutationExecutionBlocked();
+        if (blocked !== null) {
+          io.write(`  \u26A0 ${blocked}\n`);
+        }
+      } else if (planningResult.status === "cancelled") {
+        io.write("  \u2715 planning cancelled\n");
+        await cancelActiveDevelopment(io, sessionInfo);
+        return;
+      } else if (planningResult.status === "timed_out") {
+        io.write(`  \u2715 planning timed out: ${planningResult.message}\n`);
+        await cancelActiveDevelopment(io, sessionInfo);
+        return;
+      } else if (planningResult.status === "routed") {
+        io.write("  \u2715 planning was routed but produced no plan\n");
+        await cancelActiveDevelopment(io, sessionInfo);
+        return;
+      } else {
+        io.write(`  \u2715 planning failed: ${planningResult.message}\n`);
+        await cancelActiveDevelopment(io, sessionInfo);
+        return;
+      }
+    }
   } catch (error: unknown) {
     if (controller.signal.aborted) {
       io.write("  \u2715 development workflow cancelled\n");
@@ -677,6 +786,156 @@ async function runDevelopCommand(
       activeDevelopmentTaskFlow = null;
       sessionInfo.development.onEvent = undefined;
     }
+  }
+}
+
+interface DevelopPlanningFlags {
+  readonly request: string;
+  readonly explicitPlan: boolean;
+  readonly requestedDepth: "light" | "full" | undefined;
+}
+
+/** Parses /develop planning flags: `--plan` and `--plan-light` before the request. */
+function parseDevelopPlanningFlags(args: readonly string[]): DevelopPlanningFlags {
+  let explicitPlan = false;
+  let requestedDepth: "light" | "full" | undefined;
+  const rest: string[] = [];
+  for (const arg of args) {
+    if (arg === "--plan" && !explicitPlan) {
+      explicitPlan = true;
+      requestedDepth = "full";
+      continue;
+    }
+    if (arg === "--plan-light" && !explicitPlan) {
+      explicitPlan = true;
+      requestedDepth = "light";
+      continue;
+    }
+    rest.push(arg);
+  }
+  return { request: rest.join(" ").trim(), explicitPlan, requestedDepth };
+}
+
+/**
+ * Cancels an active development workflow and finishes its task flow with
+ * the terminal state (used when planning fails/cancels before execution).
+ */
+async function cancelActiveDevelopment(io: SessionIO, sessionInfo: SessionInfo): Promise<void> {
+  const status = sessionInfo.development.status();
+  if (status.session === null || status.session.state.kind === "terminal") {
+    return;
+  }
+  const result = await sessionInfo.development.cancel();
+  if (result.status === "cancelled" && result.result !== null) {
+    io.write(formatDevelopmentResult(result.result));
+  }
+  if (activeDevelopmentTaskFlow !== null) {
+    const finalTask = activeDevelopmentTaskFlow.finish(
+      status,
+      result.status === "cancelled" ? result.result : null,
+    );
+    if (finalTask !== null) {
+      io.write(
+        formatTaskStatus(
+          finalTask,
+          sessionInfo.tasks.getTask(finalTask.taskId)?.evaluateCompletion() ?? {
+            allowed: false,
+            missing: [],
+          },
+        ),
+      );
+    }
+    activeDevelopmentTaskFlow = null;
+    sessionInfo.development.onEvent = undefined;
+  }
+}
+
+/**
+ * `/plan <request>` — plan-only mode (Stage 3 milestone 7, Part L).
+ * Creates a host-owned planning task, routes planning (an explicit plan
+ * request always plans, full by default), runs the READ-ONLY planner,
+ * validates and stores the immutable plan revision, prints the plan, and
+ * stops. No source is modified, no mutation approval is requested (none
+ * was prepared), and no execution follows.
+ */
+async function runPlanCommand(
+  io: SessionIO,
+  sessionInfo: SessionInfo,
+  controls: SessionControls,
+  args: readonly string[],
+): Promise<void> {
+  const request = args.join(" ").trim();
+  if (request.length === 0) {
+    io.write("Usage: /plan <request>\n");
+    io.write("Example: /plan Add health regeneration after 5 seconds without damage\n");
+    io.write("Plan-only mode: returns a structured plan and stops; no source is modified.\n");
+    return;
+  }
+  const controller = controls.beginPrompt();
+  try {
+    const taskId = `task-${sessionInfo.tasks.listTasks().length + 1}`;
+    const handle = sessionInfo.tasks.createTask({
+      contract: createAdHocTaskContract(taskId, request),
+      snapshot: createTaskRuntimeSnapshot(sessionInfo.taskSources),
+      steps: [],
+    });
+    handle.transitionPhase("working");
+    const planningFlow = createPlanningFlow({ handle, planner: sessionInfo.planner });
+    const decision = planningFlow.route({
+      request,
+      explicitPlanRequest: true,
+      inspectionOnly: false,
+      expectedMutation: true,
+      acceptanceCriterionCount: handle.contract().acceptanceCriteria.length,
+      protectedConfigInvolved: containsProtectedConfigReference(request),
+      spansMultipleSubsystems: false,
+      researchRequired: false,
+      capabilityUncertainty: false,
+      narrowRepair: false,
+      knownTouchpoints: 0,
+    });
+    io.write(`Planning: ${decision.depth} (${decision.reason})\n`);
+    const result = await planningFlow.run(controller.signal);
+    if (result.status === "planned") {
+      io.write(formatPlan(result.plan, handle.snapshot().plan));
+      io.write(
+        "Plan-only mode: no source was modified, no mutation approval was requested,\n" +
+          "and no execution follows. Use /develop <request> to execute (edits still\n" +
+          "require their own exact one-time approval).\n",
+      );
+      handle.markBlocked(
+        "plan-only mode \u2014 execution not started; re-run /develop to execute the plan",
+      );
+    } else if (result.status === "cancelled") {
+      io.write("  \u2715 planning cancelled\n");
+      handle.markBlocked("plan-only mode \u2014 planning cancelled");
+    } else if (result.status === "timed_out") {
+      io.write(`  \u2715 planning timed out: ${result.message}\n`);
+      handle.markBlocked("plan-only mode \u2014 planning timed out");
+    } else if (result.status === "routed") {
+      io.write("  \u2715 planning was routed but produced no plan\n");
+      handle.markBlocked("plan-only mode \u2014 planning produced no plan");
+    } else {
+      io.write(`  \u2715 planning failed: ${result.message}\n`);
+      handle.markBlocked("plan-only mode \u2014 planning failed");
+    }
+    io.write(
+      formatTaskStatus(
+        handle.snapshot(),
+        sessionInfo.tasks.getTask(taskId)?.evaluateCompletion() ?? {
+          allowed: false,
+          missing: [],
+        },
+      ),
+    );
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      io.write("  \u2715 planning cancelled\n");
+      return;
+    }
+    io.write(formatProviderFailure(describeGodotFailure(error)));
+  } finally {
+    controls.endPrompt();
   }
 }
 

@@ -314,6 +314,9 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
   if (request.capability === "godot.development") {
     return formatDevelopmentStartPreview(request.preview);
   }
+  if (request.capability === "plan.approve") {
+    return formatPlanApprovalPrompt(request);
+  }
   const files = request.preview.files;
   const lines = [
     "Approval required",
@@ -345,6 +348,128 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
 
 function operationMark(operation: "create" | "update" | "delete"): string {
   return operation === "create" ? "A" : operation === "update" ? "M" : "D";
+}
+
+function formatPlanApprovalPrompt(
+  request: Extract<ApprovalRequest, { capability: "plan.approve" }>,
+): string {
+  return (
+    [
+      "Plan approval required",
+      "",
+      `Plan: ${request.planId} rev ${request.planRevision}`,
+      `TaskContract revision: ${request.taskContractRevision}`,
+      `Digest: ${request.digest.slice(0, 8)}`,
+      "",
+      request.summary,
+      "",
+      "Approving this plan binds the host decision to EXACTLY this plan revision.",
+      "Plan approval NEVER authorizes source edits or commands: every mutation",
+      "and every command still requires its own exact one-time approval, and",
+      "plan content never grants capability.",
+    ].join("\n") + "\n"
+  );
+}
+
+/**
+ * Human-readable plan rendering (Stage 3 milestone 7). Rendering stays
+ * separate from the domain types; only the CURRENT plan revision is ever
+ * rendered, and plans are compact by validation bounds.
+ */
+export function formatPlan(
+  plan: import("@solaris/core").TaskPlan,
+  state: import("@solaris/core").TaskPlanState | null,
+): string {
+  const lines = [
+    `Plan rev ${plan.revision} \u2014 ${plan.depth === "full" ? "Full" : "Light"}`,
+    "",
+    "Objective",
+    plan.objective,
+  ];
+  if (plan.depth === "full") {
+    const scope = [
+      ...plan.scope.inScope,
+      ...plan.scope.outOfScope.map((entry) => `(out of scope) ${entry}`),
+    ];
+    if (scope.length > 0) {
+      lines.push("", "Scope", ...scope.map((entry) => `- ${entry}`));
+    }
+    if (plan.nonGoals.length > 0) {
+      lines.push("", "Non-goals", ...plan.nonGoals.map((entry) => `- ${entry}`));
+    }
+  }
+  const verified = plan.touchpoints.filter((touchpoint) => touchpoint.confidence === "verified");
+  const candidates = plan.touchpoints.filter((touchpoint) => touchpoint.confidence === "candidate");
+  if (verified.length > 0) {
+    lines.push(
+      "",
+      "Verified",
+      ...verified.map(
+        (touchpoint) =>
+          `- ${touchpoint.path} @ ${touchpoint.revision}${touchpoint.evidence === undefined ? "" : ` (${touchpoint.evidence})`}`,
+      ),
+    );
+  }
+  if (candidates.length > 0) {
+    lines.push("", "Candidate", ...candidates.map((touchpoint) => `- ${touchpoint.path}`));
+  }
+  lines.push("", "Steps");
+  for (const step of plan.steps) {
+    const verification =
+      step.verification === undefined || step.verification.length === 0
+        ? ""
+        : ` [acceptance: ${step.verification.join(", ")}]`;
+    lines.push(`${step.id}: ${step.title}${verification}`);
+    if (step.description !== undefined) {
+      lines.push(`   ${step.description}`);
+    }
+  }
+  if (plan.risks.length > 0) {
+    lines.push(
+      "",
+      "Risks",
+      ...plan.risks.map((risk) => `- [${risk.severity}] ${risk.description}`),
+    );
+  }
+  if (plan.constraints.length > 0) {
+    lines.push("", "Constraints", ...plan.constraints.map((entry) => `- ${entry.description}`));
+  }
+  lines.push("", "Validation", ...plan.validation.checks.map((check) => `- ${check}`));
+  if (plan.validation.requirements !== undefined && plan.validation.requirements.length > 0) {
+    lines.push(
+      "",
+      "Requirements (descriptive only \u2014 they grant nothing)",
+      ...plan.validation.requirements.map((requirement) => `- ${requirement}`),
+    );
+  }
+  if (plan.rollback !== undefined) {
+    lines.push("", "Rollback", plan.rollback.description);
+  }
+  if (plan.rationale !== undefined) {
+    lines.push("", "Rationale", plan.rationale);
+  }
+  if (state !== null) {
+    lines.push(
+      "",
+      `Plan state: ${state.state}${state.staleReason === null ? "" : ` \u2014 ${state.staleReason}`}`,
+      `Plan approval: ${state.approval}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** Compact planning status block appended to /development-status and /status. */
+export function formatPlanningStatus(task: import("@solaris/core").TaskState | null): string {
+  if (task === null || task.plan.state === "none") {
+    return "Planning: none\n";
+  }
+  const plan = task.plan;
+  return [
+    `Planning: ${plan.depth} (plan ${plan.planId} rev ${plan.planRevision})`,
+    `Plan state: ${plan.state}${plan.staleReason === null ? "" : ` \u2014 ${plan.staleReason}`}`,
+    `Plan approval: ${plan.approval}`,
+    "",
+  ].join("\n");
 }
 
 function formatGodotProbeApprovalPrompt(
@@ -1813,9 +1938,17 @@ export function formatTaskStatus(
   const completionLine = completion.allowed
     ? "Completion: allowed"
     : `Completion: NOT allowed (${completion.missing.length} reason${completion.missing.length === 1 ? "" : "s"})`;
+  const planLines =
+    task.plan.state === "none"
+      ? []
+      : [
+          `Plan: ${task.plan.planId} rev ${task.plan.planRevision} (${task.plan.depth})`,
+          `Plan state: ${task.plan.state}${task.plan.staleReason === null ? "" : ` \u2014 ${task.plan.staleReason}`}`,
+          `Plan approval: ${task.plan.approval}`,
+        ];
   return `Task ${task.taskId} (contract revision ${task.contractRevision})
 ${taskPhaseMark(task.phase)} Phase: ${task.phase}${phaseNote}
-Steps: ${task.steps.length - pendingSteps.length}/${task.steps.length} completed${
+${planLines.join("\n")}${planLines.length === 0 ? "" : "\n"}Steps: ${task.steps.length - pendingSteps.length}/${task.steps.length} completed${
     activeStep === undefined ? "" : ` \u2014 active: ${activeStep.id}`
   }
 ${stepLines.join("\n")}
