@@ -12,7 +12,9 @@ import {
   createSelfReference,
   createSolarisApplication,
   createSolarisSecurity,
+  createAdHocTaskContract,
   createTaskRuntime,
+  createTaskRuntimeSnapshot,
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   GitError,
@@ -788,6 +790,23 @@ describe("runInteractiveSession", () => {
     expect(io.text).toContain("host-verified pending");
     expect(io.text).toContain("Completion: NOT allowed");
     expect(io.text).toContain("Progress: healthy");
+  });
+
+  it("allocates an unused ad-hoc task id when existing ids are sparse", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "/task Add a stamina component",
+      "/exit",
+    ]);
+    sessionInfo.tasks.createTask({
+      contract: createAdHocTaskContract("task-2", "Existing sparse task"),
+      snapshot: createTaskRuntimeSnapshot(sessionInfo.taskSources),
+      steps: [],
+    });
+
+    await runInteractiveSession(io, application, sessionInfo);
+
+    expect(sessionInfo.tasks.getTask("task-3")).not.toBeNull();
+    expect(io.text).toContain("Task task-3 (contract revision 1)");
   });
 
   it("renders an empty task status when no task exists", async () => {
