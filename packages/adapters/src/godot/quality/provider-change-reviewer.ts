@@ -19,6 +19,13 @@ import {
   isPreparedProbeTool,
   normalizeReviewFindings,
 } from "@solaris/core";
+import {
+  collectBoundedModelTurn,
+  detachBoundedToolResult,
+  normalizeBoundedInteger,
+  utf8ByteLength,
+  type BoundedModelTurnLimits,
+} from "../../providers/bounded-model-turn.js";
 
 /**
  * Model-based independent change reviewer (ADR 0013 §26–§27, §51).
@@ -56,16 +63,42 @@ export interface ProviderChangeReviewerOptions {
   readonly maxOutputBytes?: number;
 }
 
-const MAX_TOOL_CALLS_PER_TURN = 8;
 const MAX_ASSISTANT_TEXT_BYTES = 256 * 1024;
 const MAX_PROMPT_BYTES = 2 * 1024 * 1024;
+const MAX_TOOL_RESULT_BYTES = 2 * 1024 * 1024;
+const MAX_REVIEW_TOOL_RESULT_BYTES = 8 * 1024 * 1024;
+
+const REVIEWER_TURN_LIMITS: BoundedModelTurnLimits = Object.freeze({
+  maxTextBytes: MAX_ASSISTANT_TEXT_BYTES,
+  maxTextEvents: 4096,
+  maxToolCalls: 8,
+  maxToolNameBytes: 256,
+  maxCallIdBytes: 256,
+  maxToolArgumentBytes: 128 * 1024,
+  maxTurnBytes: 512 * 1024,
+});
 
 export function createProviderChangeReviewer(
   options: ProviderChangeReviewerOptions,
 ): ChangeReviewer {
-  const timeoutMs = options.timeoutMs ?? QUALITY_LIMITS.reviewTimeoutMs;
-  const maxToolRounds = options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
-  const maxOutputBytes = options.maxOutputBytes ?? MAX_ASSISTANT_TEXT_BYTES;
+  const timeoutMs = normalizeBoundedInteger(
+    options.timeoutMs,
+    QUALITY_LIMITS.reviewTimeoutMs,
+    1,
+    10 * 60_000,
+  );
+  const maxToolRounds = normalizeBoundedInteger(
+    options.maxToolRounds,
+    DEFAULT_MAX_TOOL_ROUNDS,
+    0,
+    32,
+  );
+  const maxOutputBytes = normalizeBoundedInteger(
+    options.maxOutputBytes,
+    MAX_ASSISTANT_TEXT_BYTES,
+    1,
+    MAX_ASSISTANT_TEXT_BYTES,
+  );
 
   async function review(
     request: ChangeReviewRequest,
@@ -82,30 +115,56 @@ export function createProviderChangeReviewer(
       controller.abort();
     }, timeoutMs);
     try {
-      const prompt = buildReviewPrompt(request);
+      let prompt: string;
+      try {
+        prompt = buildReviewPrompt(request);
+      } catch (error: unknown) {
+        return {
+          status: "failed",
+          findings: [],
+          message: `The review request could not be serialized: ${error instanceof Error ? error.message : "unknown error"}`,
+        };
+      }
+      if (utf8ByteLength(prompt) > MAX_PROMPT_BYTES) {
+        return {
+          status: "failed",
+          findings: [],
+          message: `The review prompt exceeded the ${MAX_PROMPT_BYTES}-byte limit; the provider was not invoked.`,
+        };
+      }
       const messages: ConversationItem[] = [{ type: "user_message", content: prompt }];
       const provider = options.providerFactory();
+      const registeredTools = options.tools.definitions();
+      const projection = options.toolProjector?.project({
+        mode: "review",
+        registeredTools,
+      });
       const tools =
-        options.toolProjector === undefined
-          ? options.tools.definitions().map((info) => info.definition)
-          : options.toolProjector.project({
-              mode: "review",
-              registeredTools: options.tools.definitions(),
-            }).requestTools;
-      for (let round = 0; round < maxToolRounds; round += 1) {
+        projection === undefined
+          ? registeredTools.map((info) => info.definition)
+          : projection.requestTools;
+      const executableToolNames = new Set(
+        projection === undefined
+          ? tools.map((tool) => tool.name)
+          : projection.tools
+              .filter((tool) => tool.visibility === "available")
+              .map((tool) => tool.name),
+      );
+      const seenCallIds = new Set<string>();
+      let completedToolRounds = 0;
+      let toolResultBytes = 0;
+      for (;;) {
         // A stalled provider stream must never block the review: the turn
         // is raced against the abort signal (timeout or caller abort).
-        const turn = await raceAbort(
-          collectTurn(provider, messages, tools, controller.signal, maxOutputBytes),
-          controller.signal,
-        );
-        if (turn === "aborted") {
-          return {
-            status: timedOut ? "failed" : "cancelled",
-            findings: [],
-            message: timedOut ? "The review timed out." : "The review was cancelled.",
-          };
-        }
+        const turn = await collectBoundedModelTurn({
+          actor: "The reviewer",
+          provider,
+          messages,
+          tools,
+          signal: controller.signal,
+          limits: { ...REVIEWER_TURN_LIMITS, maxTextBytes: maxOutputBytes },
+          seenCallIds,
+        });
         if (turn.kind === "aborted") {
           return {
             status: timedOut ? "failed" : "cancelled",
@@ -122,6 +181,14 @@ export function createProviderChangeReviewer(
         if (turn.toolCalls.length === 0) {
           return parseReviewOutput(turn.text);
         }
+        if (completedToolRounds >= maxToolRounds) {
+          return {
+            status: "failed",
+            findings: [],
+            message: `The review exceeded the maximum of ${maxToolRounds} tool rounds; the additional calls were not executed.`,
+          };
+        }
+        completedToolRounds += 1;
         for (const call of turn.toolCalls) {
           messages.push({
             type: "assistant_tool_call",
@@ -131,13 +198,19 @@ export function createProviderChangeReviewer(
           });
           const tool = options.tools.get(call.toolName);
           let result: ToolExecutionResult;
-          if (tool === undefined || !isPlainReviewerTool(tool)) {
+          if (
+            tool === undefined ||
+            !executableToolNames.has(call.toolName) ||
+            !isPlainReviewerTool(tool)
+          ) {
             result = {
               status: "failed",
               message:
                 tool === undefined
                   ? `Unknown tool: ${call.toolName}.`
-                  : `Tool ${call.toolName} is not a read-only reviewer tool.`,
+                  : !executableToolNames.has(call.toolName)
+                    ? `Tool ${call.toolName} is not available in the host-projected reviewer tool surface.`
+                    : `Tool ${call.toolName} is not a read-only reviewer tool.`,
             };
           } else {
             try {
@@ -151,6 +224,19 @@ export function createProviderChangeReviewer(
               };
             }
           }
+          const detached = detachBoundedToolResult(result, MAX_TOOL_RESULT_BYTES, call.toolName);
+          if (!detached.ok) {
+            return { status: "failed", findings: [], message: detached.message };
+          }
+          toolResultBytes += detached.byteLength;
+          if (toolResultBytes > MAX_REVIEW_TOOL_RESULT_BYTES) {
+            return {
+              status: "failed",
+              findings: [],
+              message: `The review exceeded the ${MAX_REVIEW_TOOL_RESULT_BYTES}-byte cumulative tool-result limit.`,
+            };
+          }
+          result = detached.result;
           messages.push({
             type: "tool_result",
             callId: call.callId,
@@ -159,11 +245,6 @@ export function createProviderChangeReviewer(
           });
         }
       }
-      return {
-        status: "failed",
-        findings: [],
-        message: `The review exceeded the maximum of ${maxToolRounds} tool rounds.`,
-      };
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
@@ -216,132 +297,10 @@ export function createProviderChangeReviewer(
       "Change under review (JSON):",
       payload,
     ].join("\n");
-    return prompt.slice(0, MAX_PROMPT_BYTES);
+    return prompt;
   }
 
   return { review };
-}
-
-type TurnOutcome =
-  | {
-      readonly kind: "turn";
-      readonly text: string;
-      readonly toolCalls: readonly {
-        readonly callId: string;
-        readonly toolName: string;
-        readonly input: unknown;
-      }[];
-    }
-  | { readonly kind: "aborted" }
-  | { readonly kind: "failed"; readonly message: string };
-
-/**
- * Races the turn collection against the abort signal so a provider that
- * never yields (or ignores the signal) still terminates the review within
- * the timeout. The abandoned generator is never awaited again.
- */
-async function raceAbort(
-  pending: Promise<TurnOutcome>,
-  signal: AbortSignal,
-): Promise<TurnOutcome | "aborted"> {
-  if (signal.aborted) {
-    return "aborted";
-  }
-  return new Promise<TurnOutcome | "aborted">((resolve) => {
-    const onAbort = (): void => {
-      resolve("aborted");
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    pending.then(
-      (outcome) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(outcome);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve({
-          kind: "failed",
-          message: `The reviewer provider failed: ${error instanceof Error ? error.message : "unknown error"}`,
-        });
-      },
-    );
-  });
-}
-
-async function collectTurn(
-  provider: ModelProvider,
-  messages: readonly ConversationItem[],
-  tools: readonly import("@solaris/core").ToolDefinition[],
-  signal: AbortSignal,
-  maxOutputBytes: number,
-): Promise<TurnOutcome> {
-  const request = {
-    messages: [...messages],
-    tools,
-    signal,
-  };
-  let text = "";
-  let textBytes = 0;
-  let completionSeen = false;
-  const toolCalls: { callId: string; toolName: string; input: unknown }[] = [];
-  const seenCallIds = new Set<string>();
-  try {
-    for await (const event of provider.stream(request)) {
-      if (signal.aborted) {
-        return { kind: "aborted" };
-      }
-      if (completionSeen) {
-        return {
-          kind: "failed",
-          message: "The reviewer stream emitted an event after completion.",
-        };
-      }
-      if (event.type === "completed") {
-        completionSeen = true;
-        continue;
-      }
-      if (event.type === "text_delta") {
-        textBytes += new TextEncoder().encode(event.text).length;
-        if (textBytes > maxOutputBytes) {
-          return { kind: "failed", message: "The review output exceeded its byte limit." };
-        }
-        text += event.text;
-        continue;
-      }
-      if (event.callId.length === 0 || event.toolName.length === 0) {
-        return {
-          kind: "failed",
-          message: "The reviewer emitted a tool call with an empty id or name.",
-        };
-      }
-      if (seenCallIds.has(event.callId)) {
-        return {
-          kind: "failed",
-          message: `The reviewer emitted duplicate tool call id ${event.callId}.`,
-        };
-      }
-      if (toolCalls.length >= MAX_TOOL_CALLS_PER_TURN) {
-        return { kind: "failed", message: "The reviewer exceeded the per-turn tool-call limit." };
-      }
-      seenCallIds.add(event.callId);
-      toolCalls.push({ callId: event.callId, toolName: event.toolName, input: event.input });
-    }
-  } catch (error: unknown) {
-    if (signal.aborted) {
-      return { kind: "aborted" };
-    }
-    return {
-      kind: "failed",
-      message: `The reviewer provider failed: ${error instanceof Error ? error.message : "unknown error"}`,
-    };
-  }
-  if (signal.aborted) {
-    return { kind: "aborted" };
-  }
-  if (!completionSeen) {
-    return { kind: "failed", message: "The reviewer stream ended without a completion event." };
-  }
-  return { kind: "turn", text, toolCalls };
 }
 
 /**

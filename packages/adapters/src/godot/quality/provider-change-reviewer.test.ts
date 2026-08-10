@@ -5,6 +5,7 @@ import {
   type ModelProvider,
   type ModelRequest,
   type Tool,
+  type ToolProjector,
 } from "@solaris/core";
 import { QUALITY_LIMITS } from "@solaris/core";
 import { createProviderChangeReviewer } from "./provider-change-reviewer.js";
@@ -212,6 +213,109 @@ describe("provider change reviewer isolation", () => {
         (item) => item.type === "tool_result" && item.toolName === "workspace.read",
       ),
     ).toBe(true);
+  });
+
+  it("allows a final response after exactly the configured tool-round budget", async () => {
+    let executions = 0;
+    const readTool: Tool = {
+      ...readOnlyTool("workspace.read"),
+      execute: () => {
+        executions += 1;
+        return Promise.resolve({ status: "success", output: {}, summary: "read" });
+      },
+    };
+    const reviewer = createProviderChangeReviewer({
+      providerFactory: () =>
+        scriptedProvider({
+          turns: [
+            {
+              events: [
+                {
+                  type: "tool_call",
+                  callId: "call-1",
+                  toolName: "workspace.read",
+                  input: { path: "scripts/player/player.gd" },
+                },
+                { type: "completed" },
+              ],
+            },
+            jsonTurn('{"findings":[]}'),
+          ],
+        }),
+      tools: createToolRegistry([readTool]),
+      timeoutMs: 1000,
+      maxToolRounds: 1,
+    });
+
+    const result = await reviewer.review(reviewRequest());
+
+    expect(result.status).toBe("completed");
+    expect(executions).toBe(1);
+  });
+
+  it("never executes a gated projected reviewer tool", async () => {
+    let executions = 0;
+    const observed: ModelRequest[] = [];
+    const readTool: Tool = {
+      ...readOnlyTool("workspace.read"),
+      execute: () => {
+        executions += 1;
+        return Promise.resolve({ status: "success", output: {}, summary: "read" });
+      },
+    };
+    const toolProjector: ToolProjector = {
+      project() {
+        return {
+          fingerprint: "gated",
+          tools: [
+            {
+              name: "workspace.read",
+              visibility: "gated",
+              description: "read",
+              inputSchema: {},
+            },
+          ],
+          counts: { available: 0, gated: 1, hidden: 0 },
+          requestTools: [readTool.definition],
+        };
+      },
+    };
+    const reviewer = createProviderChangeReviewer({
+      providerFactory: () =>
+        scriptedProvider({
+          turns: [
+            {
+              events: [
+                {
+                  type: "tool_call",
+                  callId: "call-1",
+                  toolName: "workspace.read",
+                  input: {},
+                },
+                { type: "completed" },
+              ],
+            },
+            jsonTurn('{"findings":[]}'),
+          ],
+          observe: (request) => observed.push(request),
+        }),
+      tools: createToolRegistry([readTool]),
+      toolProjector,
+      timeoutMs: 1000,
+      maxToolRounds: 1,
+    });
+
+    const result = await reviewer.review(reviewRequest());
+
+    expect(result.status).toBe("completed");
+    expect(executions).toBe(0);
+    const toolResult = observed[1]?.messages.find((item) => item.type === "tool_result");
+    expect(toolResult?.type).toBe("tool_result");
+    if (toolResult?.type === "tool_result" && toolResult.result.status !== "success") {
+      expect(toolResult.result.message).toContain("host-projected reviewer tool surface");
+    } else {
+      throw new Error("expected the gated reviewer call to be refused");
+    }
   });
 
   it("refuses to execute prepared/write tools even if one is registered", async () => {
@@ -442,14 +546,16 @@ describe("provider change reviewer isolation", () => {
   });
 
   it("bounds the reviewer output and tool-round budget", async () => {
-    const turnWithCalls: readonly ModelEvent[] = Array.from({ length: 8 }, (_, index) => ({
-      type: "tool_call" as const,
-      callId: `call-${index}`,
-      toolName: "workspace.read",
-      input: {},
-    }));
-    const turns: readonly ScriptedTurn[] = Array.from({ length: 10 }, () => ({
-      events: [...turnWithCalls, { type: "completed" as const }],
+    const turns: readonly ScriptedTurn[] = Array.from({ length: 10 }, (_, round) => ({
+      events: [
+        ...Array.from({ length: 8 }, (_, index) => ({
+          type: "tool_call" as const,
+          callId: `call-${round}-${index}`,
+          toolName: "workspace.read",
+          input: {},
+        })),
+        { type: "completed" as const },
+      ],
     }));
     const reviewer = createProviderChangeReviewer({
       providerFactory: () => scriptedProvider({ turns }),
@@ -460,6 +566,33 @@ describe("provider change reviewer isolation", () => {
     const result = await reviewer.review(reviewRequest());
     expect(result.status).toBe("failed");
     expect(result.message).toContain("tool rounds");
+  });
+
+  it("rejects an oversized UTF-8 prompt before creating a provider", async () => {
+    let providerCreations = 0;
+    const reviewer = createProviderChangeReviewer({
+      providerFactory: () => {
+        providerCreations += 1;
+        return scriptedProvider({ turns: [jsonTurn('{"findings":[]}')] });
+      },
+      tools: createToolRegistry([]),
+      timeoutMs: 1000,
+    });
+
+    const result = await reviewer.review(
+      reviewRequest({
+        files: [
+          {
+            path: "scripts/player/player.gd",
+            unifiedDiff: "界".repeat(700_000),
+          },
+        ],
+      }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("prompt exceeded");
+    expect(providerCreations).toBe(0);
   });
 
   it("keeps reviewer provider credentials isolated from the request", async () => {

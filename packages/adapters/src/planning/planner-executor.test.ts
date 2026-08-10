@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createPlannerToolRegistry } from "@solaris/adapters";
 import {
   createAdHocTaskContract,
+  createTaskContract,
   createToolRegistry,
   type GodotInspector,
   type GodotKnowledge,
@@ -12,6 +13,7 @@ import {
   type ModelRequest,
   type PlannerPort,
   type Tool,
+  type ToolProjector,
 } from "@solaris/core";
 import type { TaskContract } from "@solaris/core";
 import { createPlannerExecutor } from "./planner-executor.js";
@@ -97,7 +99,13 @@ function makeContract(): TaskContract {
 
 function makePlanner(
   providerFactory: () => ModelProvider,
-  options: { readonly workspaceRoot?: string; readonly tools?: Tool[] } = {},
+  options: {
+    readonly workspaceRoot?: string;
+    readonly tools?: Tool[];
+    readonly toolProjector?: ToolProjector;
+    readonly maxToolRounds?: number;
+    readonly maxAttempts?: number;
+  } = {},
 ): PlannerPort {
   return createPlannerExecutor({
     providerFactory,
@@ -109,6 +117,9 @@ function makePlanner(
             knowledge: {} as GodotKnowledge,
           })
         : createToolRegistry(options.tools),
+    ...(options.toolProjector === undefined ? {} : { toolProjector: options.toolProjector }),
+    ...(options.maxToolRounds === undefined ? {} : { maxToolRounds: options.maxToolRounds }),
+    ...(options.maxAttempts === undefined ? {} : { maxAttempts: options.maxAttempts }),
   });
 }
 
@@ -240,6 +251,118 @@ describe("createPlannerExecutor", () => {
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
+  });
+
+  it("allows a final answer after exactly the configured tool-round budget", async () => {
+    let executions = 0;
+    const requests: ModelRequest[] = [];
+    const readTool: Tool = {
+      definition: { name: "workspace.read", description: "read", inputSchema: {} },
+      capability: "workspace.read",
+      execute: () => {
+        executions += 1;
+        return Promise.resolve({ status: "success", output: {}, summary: "read" });
+      },
+    };
+    const planner = makePlanner(
+      () =>
+        createScriptedProvider(
+          [
+            { kind: "tool-call", toolName: "workspace.read", input: { path: "player.gd" } },
+            { kind: "text", text: lightPlanText() },
+          ],
+          (request) => requests.push(request),
+        ),
+      { tools: [readTool], maxToolRounds: 1 },
+    );
+
+    const outcome = await planner.plan({ request: "x", contract: makeContract(), depth: "light" });
+
+    expect(outcome.status).toBe("ready");
+    expect(executions).toBe(1);
+    expect(requests).toHaveLength(2);
+  });
+
+  it("never executes a gated projected tool even when the provider calls its visible name", async () => {
+    let executions = 0;
+    const requests: ModelRequest[] = [];
+    const readTool: Tool = {
+      definition: { name: "workspace.read", description: "read", inputSchema: {} },
+      capability: "workspace.read",
+      execute: () => {
+        executions += 1;
+        return Promise.resolve({ status: "success", output: {}, summary: "read" });
+      },
+    };
+    const toolProjector: ToolProjector = {
+      project() {
+        return {
+          fingerprint: "gated",
+          tools: [
+            {
+              name: "workspace.read",
+              visibility: "gated",
+              description: "read",
+              inputSchema: {},
+            },
+          ],
+          counts: { available: 0, gated: 1, hidden: 0 },
+          requestTools: [readTool.definition],
+        };
+      },
+    };
+    const planner = makePlanner(
+      () =>
+        createScriptedProvider(
+          [
+            { kind: "tool-call", toolName: "workspace.read", input: { path: "player.gd" } },
+            { kind: "text", text: lightPlanText() },
+          ],
+          (request) => requests.push(request),
+        ),
+      { tools: [readTool], toolProjector, maxToolRounds: 1 },
+    );
+
+    const outcome = await planner.plan({ request: "x", contract: makeContract(), depth: "light" });
+
+    expect(outcome.status).toBe("ready");
+    expect(executions).toBe(0);
+    expect(requests[0]?.tools.map((tool) => tool.name)).toEqual(["workspace.read"]);
+    const result = requests[1]?.messages.find((item) => item.type === "tool_result");
+    expect(result?.type).toBe("tool_result");
+    if (result?.type === "tool_result" && result.result.status !== "success") {
+      expect(result.result.message).toContain("host-projected planner tool surface");
+    } else {
+      throw new Error("expected the gated planner call to be refused");
+    }
+  });
+
+  it("rejects an oversized UTF-8 prompt before creating a provider", async () => {
+    let providerCreations = 0;
+    const contract = createTaskContract({
+      id: "task-large-planner-prompt",
+      request: "Plan the change",
+      acceptanceCriteria: Array.from({ length: 32 }, (_, index) => ({
+        id: `criterion-${index}`,
+        description: "界".repeat(1200),
+        verificationKind: "deterministic" as const,
+      })),
+    });
+    const planner = makePlanner(
+      () => {
+        providerCreations += 1;
+        return createScriptedProvider([{ kind: "text", text: lightPlanText() }]);
+      },
+      { tools: [], maxAttempts: 1 },
+    );
+
+    const outcome = await planner.plan({ request: contract.request, contract, depth: "light" });
+
+    expect(outcome.status).toBe("failed");
+    if (outcome.status === "failed") {
+      expect(outcome.message).toContain("prompt exceeded");
+    }
+    expect(providerCreations).toBe(0);
   });
 
   it("fails cleanly when the planner repeats identical reads without progress (fixture 29)", async () => {

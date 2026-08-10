@@ -211,6 +211,58 @@ describe("provider stream resource bounds", () => {
     expect(failReason(events)).toContain("tool-name byte limit");
   });
 
+  it("rejects an oversized tool-call id before retaining or executing it", async () => {
+    const { provider } = createScriptedProvider([
+      [
+        toolCall("c".repeat(PROVIDER_TURN_LIMITS.maxCallIdBytes + 1), "a.tool", {}),
+        { type: "completed" },
+      ],
+    ]);
+    const { tool, calls } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(calls).toHaveLength(0);
+    expect(failReason(events)).toContain("tool-call id byte limit");
+  });
+
+  it("rejects non-JSON tool arguments", async () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    const { provider } = createScriptedProvider([
+      [toolCall("c1", "a.tool", circular), { type: "completed" }],
+    ]);
+    const { tool, calls } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(calls).toHaveLength(0);
+    expect(failReason(events)).toContain("tool-argument JSON validity");
+  });
+
+  it("detaches tool input from provider-owned objects before execution", async () => {
+    const input = { value: "original" };
+    let turn = 0;
+    const provider: ModelProvider = {
+      id: "mutating-stub",
+      stream(): AsyncIterable<ModelEvent> {
+        turn += 1;
+        return {
+          async *[Symbol.asyncIterator](): AsyncIterableIterator<ModelEvent> {
+            await Promise.resolve();
+            if (turn === 1) {
+              yield toolCall("c1", "a.tool", input);
+              input.value = "mutated-after-yield";
+            }
+            yield { type: "completed" };
+          },
+        };
+      },
+    };
+    const { tool, calls } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool], 1);
+    await collectEvents(application.sendPrompt("hello"));
+    expect(calls).toEqual([{ value: "original" }]);
+  });
+
   it("counts UTF-8 bytes, not characters", async () => {
     const { provider } = createScriptedProvider([
       [{ type: "text_delta", text: "\u00e9".repeat(PROVIDER_TURN_LIMITS.maxAssistantTextBytes) }],
@@ -326,6 +378,34 @@ describe("provider stream resource bounds", () => {
     await completion;
     expect(events.some((event) => event.type === "response_cancelled")).toBe(true);
     expect(events.some((event) => event.type === "response_completed")).toBe(false);
+  });
+
+  it("cancels promptly when a provider never yields and ignores the signal", async () => {
+    const controller = new AbortController();
+    let returnCount = 0;
+    const provider: ModelProvider = {
+      id: "never-yields",
+      stream(): AsyncIterable<ModelEvent> {
+        return {
+          [Symbol.asyncIterator](): AsyncIterator<ModelEvent> {
+            return {
+              next: () => new Promise<IteratorResult<ModelEvent>>(() => undefined),
+              return: () => {
+                returnCount += 1;
+                return Promise.resolve({ done: true, value: undefined });
+              },
+            };
+          },
+        };
+      },
+    };
+    const application = makeApplication(provider, []);
+    const completion = collectEvents(application.sendPrompt("hello", controller.signal));
+    setTimeout(() => controller.abort(), 0);
+    const events = await completion;
+
+    expect(events.some((event) => event.type === "response_cancelled")).toBe(true);
+    expect(returnCount).toBe(1);
   });
 });
 

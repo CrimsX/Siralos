@@ -1,7 +1,7 @@
 import { isCancellationError } from "../domain/cancellation.js";
 import { validateConversationItems, type ConversationItem } from "../domain/conversation.js";
 import type { JsonObject, JsonValue } from "../domain/json.js";
-import type { ModelProvider, ModelRequest } from "../ports/provider.js";
+import type { ModelEvent, ModelProvider, ModelRequest } from "../ports/provider.js";
 import { evaluatePermission } from "../security/permission-evaluator.js";
 import type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "../security/approval.js";
 import type { CapabilityPolicy } from "../security/capability.js";
@@ -180,6 +180,7 @@ export interface SolarisApplicationDependencies {
 }
 
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_ROUNDS = 32;
 
 /**
  * Per-turn provider stream bounds. Every bound is enforced on UTF-8 byte
@@ -193,11 +194,13 @@ export const PROVIDER_TURN_LIMITS = {
   maxTextEvents: 4096,
   /** Number of tool_call events in one turn. */
   maxToolCallsPerTurn: 32,
+  /** UTF-8 bytes of one tool-call correlation id. */
+  maxCallIdBytes: 256,
   /** UTF-8 bytes of one tool name. */
   maxToolNameBytes: 256,
   /** UTF-8 bytes of one tool-call argument payload. */
   maxToolArgumentBytes: 128 * 1024,
-  /** Aggregate UTF-8 bytes (text + tool names + arguments) of one turn. */
+  /** Aggregate UTF-8 bytes (text + ids + tool names + arguments) of one turn. */
   maxTurnBytes: 256 * 1024,
 } as const;
 
@@ -253,6 +256,72 @@ function utf8ByteLength(text: string): number {
   return textEncoder.encode(text).length;
 }
 
+function normalizeMaxToolRounds(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return DEFAULT_MAX_TOOL_ROUNDS;
+  }
+  return Math.min(MAX_TOOL_ROUNDS, Math.max(0, Math.floor(value)));
+}
+
+type ProviderIteratorRead =
+  | { readonly kind: "next"; readonly result: IteratorResult<ModelEvent> }
+  | { readonly kind: "cancelled" };
+
+/**
+ * Await one provider event without allowing an iterator that ignores its
+ * AbortSignal to hold the application open forever after caller
+ * cancellation. The abandoned `next()` remains handled to avoid an
+ * unhandled rejection, but its eventual value is never consumed.
+ */
+function nextProviderEvent(
+  iterator: AsyncIterator<ModelEvent>,
+  signal: AbortSignal | undefined,
+): Promise<ProviderIteratorRead> {
+  if (signal?.aborted === true) {
+    return Promise.resolve({ kind: "cancelled" });
+  }
+  if (signal === undefined) {
+    return iterator.next().then((result) => ({ kind: "next", result }));
+  }
+  return new Promise<ProviderIteratorRead>((resolve, reject) => {
+    let settled = false;
+    const finish = (value: ProviderIteratorRead): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      reject(error instanceof Error ? error : new Error(describeError(error)));
+    };
+    const onAbort = (): void => finish({ kind: "cancelled" });
+    signal.addEventListener("abort", onAbort, { once: true });
+    iterator.next().then(
+      (result) => finish({ kind: "next", result }),
+      (error: unknown) => fail(error),
+    );
+  });
+}
+
+function closeProviderIterator(iterator: AsyncIterator<ModelEvent> | undefined): void {
+  try {
+    const closing = iterator?.return?.();
+    if (closing !== undefined) {
+      void closing.catch(() => undefined);
+    }
+  } catch {
+    // Best-effort close only: the already-selected application outcome is
+    // authoritative, and a provider cleanup failure cannot replace it.
+  }
+}
+
 export function createSolarisApplication(
   dependencies: SolarisApplicationDependencies,
 ): SolarisApplication {
@@ -260,7 +329,7 @@ export function createSolarisApplication(
   const policy = dependencies.policy ?? createDefaultPolicy("inspect");
   const profile = dependencies.profile ?? INSPECT_PROFILE;
   const reviewer = dependencies.reviewer;
-  const maxToolRounds = dependencies.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+  const maxToolRounds = normalizeMaxToolRounds(dependencies.maxToolRounds);
   const toolDefinitions = dependencies.tools
     .definitions()
     .filter((info) => evaluatePermission(info.capability, policy, profile).decision !== "deny")
@@ -447,11 +516,20 @@ export function createSolarisApplication(
     let invalidCallIndex = 0;
     let completionSeen = false;
     let exceeded: string | null = null;
+    let iterator: AsyncIterator<ModelEvent> | undefined;
+    let iteratorDone = false;
     try {
-      for await (const event of dependencies.provider.stream(request)) {
-        if (signal?.aborted) {
+      iterator = dependencies.provider.stream(request)[Symbol.asyncIterator]();
+      for (;;) {
+        const read = await nextProviderEvent(iterator, signal);
+        if (read.kind === "cancelled") {
           break;
         }
+        if (read.result.done === true) {
+          iteratorDone = true;
+          break;
+        }
+        const event = read.result.value;
         if (completionSeen) {
           exceeded = "an event after completion";
           break;
@@ -484,8 +562,25 @@ export function createSolarisApplication(
           yield { type: "text_delta", text: event.text };
           continue;
         }
+        const callIdBytes = utf8ByteLength(event.callId);
         const nameBytes = utf8ByteLength(event.toolName);
-        const argumentBytes = utf8ByteLength(JSON.stringify(event.input) ?? "");
+        let serializedInput: string;
+        try {
+          const serialized = JSON.stringify(event.input);
+          if (serialized === undefined) {
+            exceeded = "the tool-argument JSON validity";
+            break;
+          }
+          serializedInput = serialized;
+        } catch {
+          exceeded = "the tool-argument JSON validity";
+          break;
+        }
+        const argumentBytes = utf8ByteLength(serializedInput);
+        if (callIdBytes > PROVIDER_TURN_LIMITS.maxCallIdBytes) {
+          exceeded = "the tool-call id byte limit";
+          break;
+        }
         if (nameBytes > PROVIDER_TURN_LIMITS.maxToolNameBytes) {
           exceeded = "the tool-name byte limit";
           break;
@@ -494,7 +589,7 @@ export function createSolarisApplication(
           exceeded = "the tool-argument byte limit";
           break;
         }
-        turnBytes += nameBytes + argumentBytes;
+        turnBytes += callIdBytes + nameBytes + argumentBytes;
         if (turnBytes > PROVIDER_TURN_LIMITS.maxTurnBytes) {
           exceeded = "the aggregate turn byte limit";
           break;
@@ -525,7 +620,7 @@ export function createSolarisApplication(
             kind: "execute",
             callId: event.callId,
             toolName: event.toolName,
-            input: event.input,
+            input: JSON.parse(serializedInput) as unknown,
           });
         }
       }
@@ -534,6 +629,10 @@ export function createSolarisApplication(
         return { kind: "cancelled" };
       }
       return { kind: "failed", message: describeError(error) };
+    } finally {
+      if (!iteratorDone) {
+        closeProviderIterator(iterator);
+      }
     }
     if (signal?.aborted) {
       return { kind: "cancelled" };

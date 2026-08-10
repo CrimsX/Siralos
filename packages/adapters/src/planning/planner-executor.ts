@@ -19,6 +19,13 @@ import {
   isPreparedMutationTool,
   isPreparedProbeTool,
 } from "@solaris/core";
+import {
+  collectBoundedModelTurn,
+  detachBoundedToolResult,
+  normalizeBoundedInteger,
+  utf8ByteLength,
+  type BoundedModelTurnLimits,
+} from "../providers/bounded-model-turn.js";
 
 /**
  * Read-only model-based planner executor (Stage 3 milestone 7, ADR 0020).
@@ -69,7 +76,6 @@ export interface PlannerExecutorOptions {
   }) => void;
 }
 
-const MAX_TOOL_CALLS_PER_TURN = 8;
 const MAX_ASSISTANT_TEXT_BYTES = 256 * 1024;
 const MAX_PROMPT_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -78,6 +84,18 @@ const DEFAULT_MAX_ATTEMPTS = 2;
 /** Repeated identical (tool, result) calls within this window stall the planner. */
 const STALL_REPEAT_THRESHOLD = 3;
 const STALL_WINDOW = 5;
+const MAX_TOOL_RESULT_BYTES = 2 * 1024 * 1024;
+const MAX_ATTEMPT_TOOL_RESULT_BYTES = 8 * 1024 * 1024;
+
+const PLANNER_TURN_LIMITS: BoundedModelTurnLimits = Object.freeze({
+  maxTextBytes: MAX_ASSISTANT_TEXT_BYTES,
+  maxTextEvents: 4096,
+  maxToolCalls: 8,
+  maxToolNameBytes: 256,
+  maxCallIdBytes: 256,
+  maxToolArgumentBytes: 128 * 1024,
+  maxTurnBytes: 512 * 1024,
+});
 
 /** Deterministic FNV-1a fingerprint over a bounded tool-result view. */
 function resultFingerprint(toolName: string, result: ToolExecutionResult): string {
@@ -95,9 +113,14 @@ function resultFingerprint(toolName: string, result: ToolExecutionResult): strin
 }
 
 export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerPort {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maxToolRounds = options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
-  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  const timeoutMs = normalizeBoundedInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, 1, 10 * 60_000);
+  const maxToolRounds = normalizeBoundedInteger(
+    options.maxToolRounds,
+    DEFAULT_MAX_TOOL_ROUNDS,
+    0,
+    32,
+  );
+  const maxAttempts = normalizeBoundedInteger(options.maxAttempts, DEFAULT_MAX_ATTEMPTS, 1, 3);
   const observe = options.onObservation ?? (() => undefined);
 
   async function plan(input: PlannerRequest, signal?: AbortSignal): Promise<PlannerOutcome> {
@@ -112,13 +135,25 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
       controller.abort();
     }, timeoutMs);
     try {
+      const registeredTools = options.tools.definitions();
+      const projection = options.toolProjector?.project({
+        mode: "planning",
+        registeredTools,
+      });
       const tools =
-        options.toolProjector === undefined
-          ? options.tools.definitions().map((info) => info.definition)
-          : options.toolProjector.project({
-              mode: "planning",
-              registeredTools: options.tools.definitions(),
-            }).requestTools;
+        projection === undefined
+          ? registeredTools.map((info) => info.definition)
+          : projection.requestTools;
+      // A projected tool may be visible but gated. Planning has no approval
+      // protocol, so only tools the host classified as available may execute.
+      // Hidden names are refused too, even if a provider fabricates a call.
+      const executableToolNames = new Set(
+        projection === undefined
+          ? tools.map((tool) => tool.name)
+          : projection.tools
+              .filter((tool) => tool.visibility === "available")
+              .map((tool) => tool.name),
+      );
       let lastFailure: string | null = null;
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         // Every attempt gets a fresh provider and a fresh conversation:
@@ -126,6 +161,7 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
         const outcome = await attemptOnce(
           input,
           tools,
+          executableToolNames,
           controller.signal,
           maxToolRounds,
           lastFailure,
@@ -163,6 +199,7 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
   async function attemptOnce(
     input: PlannerRequest,
     tools: readonly ToolDefinition[],
+    executableToolNames: ReadonlySet<string>,
     signal: AbortSignal,
     rounds: number,
     previousFailure: string | null,
@@ -173,13 +210,30 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
     | { readonly kind: "timed_out" }
     | { readonly kind: "failed"; readonly message: string }
   > {
-    const provider = options.providerFactory();
     const prompt = buildPlannerPrompt(input, previousFailure);
+    if (utf8ByteLength(prompt) > MAX_PROMPT_BYTES) {
+      return {
+        kind: "failed",
+        message: `The planner prompt exceeded the ${MAX_PROMPT_BYTES}-byte limit; the provider was not invoked.`,
+      };
+    }
+    const provider = options.providerFactory();
     const messages: ConversationItem[] = [{ type: "user_message", content: prompt }];
     const recentResults: string[] = [];
-    for (let round = 0; round < rounds; round += 1) {
-      const turn = await raceAbort(collectTurn(provider, messages, tools, signal), signal);
-      if (turn === "aborted" || turn.kind === "aborted") {
+    const seenCallIds = new Set<string>();
+    let completedToolRounds = 0;
+    let toolResultBytes = 0;
+    for (;;) {
+      const turn = await collectBoundedModelTurn({
+        actor: "The planner",
+        provider,
+        messages,
+        tools,
+        signal,
+        limits: PLANNER_TURN_LIMITS,
+        seenCallIds,
+      });
+      if (turn.kind === "aborted") {
         return isTimedOut() ? { kind: "timed_out" } : { kind: "cancelled" };
       }
       if (turn.kind === "failed") {
@@ -205,6 +259,13 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
               : `The planner returned an invalid plan: ${validated === null ? "invalid candidate" : validated.reasons.join(" ")}`,
         };
       }
+      if (completedToolRounds >= rounds) {
+        return {
+          kind: "failed",
+          message: `The planner exceeded the maximum of ${rounds} tool rounds; the additional calls were not executed.`,
+        };
+      }
+      completedToolRounds += 1;
       for (const call of turn.toolCalls) {
         messages.push({
           type: "assistant_tool_call",
@@ -214,13 +275,19 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
         });
         const tool = options.tools.get(call.toolName);
         let result: ToolExecutionResult;
-        if (tool === undefined || !isPlainPlannerTool(tool)) {
+        if (
+          tool === undefined ||
+          !executableToolNames.has(call.toolName) ||
+          !isPlainPlannerTool(tool)
+        ) {
           result = {
             status: "failed",
             message:
               tool === undefined
                 ? `Unknown tool: ${call.toolName}.`
-                : `Tool ${call.toolName} is not a read-only planner tool.`,
+                : !executableToolNames.has(call.toolName)
+                  ? `Tool ${call.toolName} is not available in the host-projected planner tool surface.`
+                  : `Tool ${call.toolName} is not a read-only planner tool.`,
           };
         } else {
           try {
@@ -234,6 +301,18 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
             };
           }
         }
+        const detached = detachBoundedToolResult(result, MAX_TOOL_RESULT_BYTES, call.toolName);
+        if (!detached.ok) {
+          return { kind: "failed", message: detached.message };
+        }
+        toolResultBytes += detached.byteLength;
+        if (toolResultBytes > MAX_ATTEMPT_TOOL_RESULT_BYTES) {
+          return {
+            kind: "failed",
+            message: `The planner exceeded the ${MAX_ATTEMPT_TOOL_RESULT_BYTES}-byte cumulative tool-result limit.`,
+          };
+        }
+        result = detached.result;
         const fingerprint = resultFingerprint(call.toolName, result);
         recentResults.push(fingerprint);
         if (recentResults.length > STALL_WINDOW) {
@@ -260,10 +339,6 @@ export function createPlannerExecutor(options: PlannerExecutorOptions): PlannerP
         });
       }
     }
-    return {
-      kind: "failed",
-      message: `The planner exceeded the maximum of ${rounds} tool rounds; planning failed cleanly.`,
-    };
   }
 
   return { plan };
@@ -333,128 +408,7 @@ function buildPlannerPrompt(input: PlannerRequest, previousFailure: string | nul
     "  network, approvals, or execution).",
     "- Keep every field bounded; at most 12 steps (6 for light plans).",
   ].join("\n");
-  return prompt.slice(0, MAX_PROMPT_BYTES);
-}
-
-type TurnOutcome =
-  | {
-      readonly kind: "turn";
-      readonly text: string;
-      readonly toolCalls: readonly {
-        readonly callId: string;
-        readonly toolName: string;
-        readonly input: unknown;
-      }[];
-    }
-  | { readonly kind: "aborted" }
-  | { readonly kind: "failed"; readonly message: string };
-
-/**
- * Races turn collection against the abort signal so a provider that never
- * yields (or ignores the signal) still terminates planning within the
- * timeout. The abandoned generator is never awaited again.
- */
-async function raceAbort(
-  pending: Promise<TurnOutcome>,
-  signal: AbortSignal,
-): Promise<TurnOutcome | "aborted"> {
-  if (signal.aborted) {
-    return "aborted";
-  }
-  return new Promise<TurnOutcome | "aborted">((resolve) => {
-    const onAbort = (): void => {
-      resolve("aborted");
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    pending.then(
-      (outcome) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(outcome);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve({
-          kind: "failed",
-          message: `The planner provider failed: ${error instanceof Error ? error.message : "unknown error"}`,
-        });
-      },
-    );
-  });
-}
-
-async function collectTurn(
-  provider: ModelProvider,
-  messages: readonly ConversationItem[],
-  tools: readonly ToolDefinition[],
-  signal: AbortSignal,
-): Promise<TurnOutcome> {
-  const request = {
-    messages: [...messages],
-    tools,
-    signal,
-  };
-  let text = "";
-  let textBytes = 0;
-  let completionSeen = false;
-  const toolCalls: { callId: string; toolName: string; input: unknown }[] = [];
-  const seenCallIds = new Set<string>();
-  try {
-    for await (const event of provider.stream(request)) {
-      if (signal.aborted) {
-        return { kind: "aborted" };
-      }
-      if (completionSeen) {
-        return {
-          kind: "failed",
-          message: "The planner stream emitted an event after completion.",
-        };
-      }
-      if (event.type === "completed") {
-        completionSeen = true;
-        continue;
-      }
-      if (event.type === "text_delta") {
-        textBytes += new TextEncoder().encode(event.text).length;
-        if (textBytes > MAX_ASSISTANT_TEXT_BYTES) {
-          return { kind: "failed", message: "The planner output exceeded its byte limit." };
-        }
-        text += event.text;
-        continue;
-      }
-      if (event.callId.length === 0 || event.toolName.length === 0) {
-        return {
-          kind: "failed",
-          message: "The planner emitted a tool call with an empty id or name.",
-        };
-      }
-      if (seenCallIds.has(event.callId)) {
-        return {
-          kind: "failed",
-          message: `The planner emitted duplicate tool call id ${event.callId}.`,
-        };
-      }
-      if (toolCalls.length >= MAX_TOOL_CALLS_PER_TURN) {
-        return { kind: "failed", message: "The planner exceeded the per-turn tool-call limit." };
-      }
-      seenCallIds.add(event.callId);
-      toolCalls.push({ callId: event.callId, toolName: event.toolName, input: event.input });
-    }
-  } catch (error: unknown) {
-    if (signal.aborted) {
-      return { kind: "aborted" };
-    }
-    return {
-      kind: "failed",
-      message: `The planner provider failed: ${error instanceof Error ? error.message : "unknown error"}`,
-    };
-  }
-  if (signal.aborted) {
-    return { kind: "aborted" };
-  }
-  if (!completionSeen) {
-    return { kind: "failed", message: "The planner stream ended without a completion event." };
-  }
-  return { kind: "turn", text, toolCalls };
+  return prompt;
 }
 
 /**
