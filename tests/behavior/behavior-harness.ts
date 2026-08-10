@@ -170,8 +170,16 @@ export interface BehaviorLoopHarnessOptions {
   readonly extraTools?: readonly RegisteredTool[];
   /** Wrap the application provider in a recording provider for request assertions. */
   readonly recording?: boolean;
+  /** Replace the application provider entirely (scripted provider scenarios). */
+  readonly providerOverride?: ModelProvider;
   /** Reviewer scenario for the quality stage (fake-change-reviewer). */
   readonly reviewerScenario?: "clean" | "high";
+  /**
+   * Override the interactive approval reviewer (workflow start, plan
+   * approval, and every mutation approval flow through it). Defaults to
+   * auto-approve.
+   */
+  readonly reviewerOverride?: ApprovalReviewer;
   /**
    * When false, the development service is created without the quality
    * stage so the workflow stays in the reviewing phase after an apply and
@@ -248,7 +256,7 @@ export async function createBehaviorLoopHarness(
   const language = createFakeLanguageService();
   const parser = createFakeDiagnosticsService();
   let approvals = 0;
-  const reviewer: ApprovalReviewer = {
+  const reviewer: ApprovalReviewer = options.reviewerOverride ?? {
     review(): Promise<{ type: "approve_once" }> {
       approvals += 1;
       return Promise.resolve({ type: "approve_once" });
@@ -380,6 +388,7 @@ export async function createBehaviorLoopHarness(
           capacity: createRouteContextCapacity("develop-offline"),
           getTaskSnapshot: () => runtime.latestTask()?.snapshot() ?? null,
           getTaskRequest: () => runtime.latestTask()?.contract().request ?? null,
+          getCurrentPlan: () => runtime.latestTask()?.currentPlan() ?? null,
           ...(options.instructions === undefined
             ? {}
             : {
@@ -420,7 +429,7 @@ export async function createBehaviorLoopHarness(
         })
       : undefined;
   const application = createSolarisApplication({
-    provider: recording?.provider ?? createDeterministicFakeProvider(),
+    provider: options.providerOverride ?? recording?.provider ?? createDeterministicFakeProvider(),
     tools,
     policy: createDefaultPolicy("develop-offline"),
     profile: DEVELOP_OFFLINE_PROFILE,
