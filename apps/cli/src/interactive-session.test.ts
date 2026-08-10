@@ -716,6 +716,23 @@ describe("runInteractiveSession", () => {
     expect(io.text).toContain("Solaris received: hello");
   });
 
+  it("/plan runs plan-only planning and stops without executing", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "/plan Add health regeneration",
+      "/exit",
+    ]);
+    const exitCode = await runInteractiveSession(io, application, sessionInfo);
+    expect(exitCode).toBe(0);
+    // The deterministic fake provider produced a validated structured plan.
+    expect(io.text).toContain("Plan rev 1 — Full");
+    expect(io.text).toContain(
+      "Plan-only mode: no source was modified, no mutation approval was requested,",
+    );
+    expect(io.text).toContain("plan-only mode — execution not started");
+    // No mutation approval was requested: the composed session's reviewer
+    // denies everything, and the session still produced the plan.
+  });
+
   it("preserves conversation history across prompts", async () => {
     const { io, application, sessionInfo } = await createComposedSession([
       "first",

@@ -180,13 +180,13 @@ export function createPlanningFlow(options: PlanningFlowOptions): PlanningFlow {
     },
 
     mutationExecutionBlocked(): string | null {
-      const contract = handle.contract();
-      if (routed?.depth === "full" && !hasMeaningfulAcceptanceCriteria(contract)) {
-        return "Full-plan execution requires explicit acceptance criteria in the TaskContract (at least two criteria, one host-verifiable); the contract does not meet that bar, so mutation execution is blocked.";
-      }
       const state = handle.snapshot().plan;
       if (state.state === "stale") {
         return `The current plan is stale (${state.staleReason ?? "plan invalidated"}); revalidate or replan before mutation.`;
+      }
+      const contract = handle.contract();
+      if (routed?.depth === "full" && !hasMeaningfulAcceptanceCriteria(contract)) {
+        return "Full-plan execution requires explicit acceptance criteria in the TaskContract (at least two criteria, one host-verifiable); the contract does not meet that bar, so mutation execution is blocked.";
       }
       return null;
     },

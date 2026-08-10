@@ -726,10 +726,6 @@ async function runDevelopCommand(
         if (stale.length > 0) {
           io.write(`  \u26A0 plan has stale verified touchpoints: ${stale.join(", ")}\n`);
         }
-        const blocked = planningFlow.mutationExecutionBlocked();
-        if (blocked !== null) {
-          io.write(`  \u26A0 ${blocked}\n`);
-        }
       } else if (planningResult.status === "cancelled") {
         io.write("  \u2715 planning cancelled\n");
         await cancelActiveDevelopment(io, sessionInfo);
@@ -747,6 +743,16 @@ async function runDevelopCommand(
         await cancelActiveDevelopment(io, sessionInfo);
         return;
       }
+    }
+    // Full-plan acceptance gate: the host refuses to start the executor
+    // loop when the plan cannot support mutation execution (no meaningful
+    // acceptance criteria) or is stale — the gate is enforcement, not a
+    // warning, at this boundary.
+    const blocked = planningFlow.mutationExecutionBlocked();
+    if (blocked !== null) {
+      io.write(`  \u2715 ${blocked}\n`);
+      await cancelActiveDevelopment(io, sessionInfo);
+      return;
     }
   } catch (error: unknown) {
     if (controller.signal.aborted) {

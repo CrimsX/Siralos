@@ -748,12 +748,12 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
             reason: `The task already holds the maximum of ${PLANNING_LIMITS.maxPlanRevisions} plan revisions; replanning is not possible within this bound.`,
           };
         }
-        // Advancing a plan revision invalidates any prior approval of an
-        // older revision: approval binds to the exact revision only.
+        // Advancing a plan revision OR replacing the plan invalidates any
+        // prior approval: approval binds to the exact plan id and revision.
         const priorApproved =
           record.planApproval !== null &&
-          record.planApproval.planId === plan.id &&
-          record.planApproval.planRevision !== plan.revision;
+          (record.planApproval.planId !== plan.id ||
+            record.planApproval.planRevision !== plan.revision);
         record.plans.push(plan);
         record.state.plan.planId = plan.id;
         record.state.plan.planRevision = plan.revision;
@@ -764,9 +764,10 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
           record.state.plan.approval = "invalidated";
           appendActivity(record, {
             type: "plan_invalidated",
-            planId: plan.id,
+            planId: record.planApproval!.planId,
             revision: record.planApproval!.planRevision,
-            reason: "The plan revision advanced; the previous approval no longer applies.",
+            reason:
+              "The plan identity or revision advanced; the previous approval no longer applies.",
           });
         } else {
           record.state.plan.approval = "none";

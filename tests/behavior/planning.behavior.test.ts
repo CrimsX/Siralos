@@ -646,6 +646,9 @@ describe("Planning Foundation behavior fixtures", () => {
     expect(snapshot.plan.state).toBe("stale");
     expect(snapshot.plan.approval).toBe("invalidated");
     expect(handle.approvePlan(result.plan.id, result.plan.revision).status).toBe("rejected");
+    // The host mutation gate refuses execution while the plan is stale
+    // (the CLI enforces this gate before starting the executor loop).
+    expect(flow.mutationExecutionBlocked()).toContain("stale");
   });
 
   it("fixture 16 — a candidate touchpoint is never promoted to verified", async () => {

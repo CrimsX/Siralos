@@ -458,11 +458,13 @@ async function collectTurn(
 }
 
 /**
- * Defense in depth: the planner may only execute plain read-only tools
- * whose capability is in the fixed read-only set. Prepared tools
+ * Defense in depth: the planner may only execute plain tools whose
+ * capability is inside the fixed read-only set. Prepared tools
  * (mutations, commands, probes, checks, sessions) are never executable by
- * the planner even if one were registered by mistake, and a future plain
- * tool with side effects would be refused here rather than executed
+ * the planner even if one were registered by mistake. Tools without a
+ * declared capability execute (the planner registry contains only
+ * read-only tools by construction); a future plain tool whose capability
+ * is outside the read-only set is refused here rather than executed
  * outside the permission machinery.
  */
 const READ_ONLY_PLANNER_CAPABILITIES = new Set([
