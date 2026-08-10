@@ -268,7 +268,7 @@ export function validateResearchRequest(
   return {
     ok: true,
     request: {
-      source,
+      source: { kind: source.kind, id: source.id, label: source.label },
       query,
       topic,
       path,

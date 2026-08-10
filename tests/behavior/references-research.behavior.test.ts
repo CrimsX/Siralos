@@ -254,12 +254,18 @@ function researchRequest(overrides: Partial<ResearchRequest> = {}): ResearchRequ
 
 function researchService(
   sources: readonly ResearchSourcePort[],
-  opts: { readonly bounds?: ResearchBounds; readonly policy?: CapabilityPolicy } = {},
+  opts: {
+    readonly bounds?: ResearchBounds;
+    readonly policy?: CapabilityPolicy;
+    readonly currentTask?: () => { readonly taskId: string; readonly taskContractRevision: number };
+  } = {},
 ): ResearchService {
   return createResearchService({
     policy: opts.policy ?? allowResearchPolicy(),
     profile: DEVELOP_OFFLINE_PROFILE,
     sources,
+    currentTask:
+      opts.currentTask ?? (() => ({ taskId: "task-reference-research", taskContractRevision: 1 })),
     ...(opts.bounds === undefined ? {} : { bounds: opts.bounds }),
   });
 }
@@ -1040,6 +1046,7 @@ describe("Research bounds and outcomes (16–18)", () => {
       maxRedirects: 2,
       timeoutMs: 1_000,
       signal: new AbortController().signal,
+      allowedHosts: ["example.com"],
     });
     expect(transportOutcome.status).toBe("oversized");
     const mapped = transportErrorToResearchOutcome(
@@ -1061,6 +1068,7 @@ describe("Research bounds and outcomes (16–18)", () => {
       maxRedirects: 2,
       timeoutMs: 1_000,
       signal: new AbortController().signal,
+      allowedHosts: ["example.com"],
     });
     expect(outcome.status).toBe("unsupported-content");
     // HTML with no extractable text fails closed as unsupported-content.
@@ -1139,17 +1147,30 @@ describe("Research bounds and outcomes (16–18)", () => {
 
 describe("Research revision binding and provenance (19–20)", () => {
   it("19. a stale async research result does not enter a newer task revision", async () => {
-    const source = createFakeRepositorySource(fakeResearchFixture());
-    const service = researchService([source]);
-    const bound = service.bind(1);
-    const first = await service.fetch(researchRequest(), { taskContractRevision: 1 });
-    expect(first.status).toBe("document");
-    // The task contract advances before the async result is consumed.
-    service.bind(2);
-    expect(service.isCurrent(bound)).toBe(false);
-    // A result bound at the new revision is current and consumable.
-    const boundAtNewRevision = service.bind(2);
-    expect(service.isCurrent(boundAtNewRevision)).toBe(true);
+    const underlying = createFakeRepositorySource(fakeResearchFixture());
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const source: ResearchSourcePort = {
+      kind: underlying.kind,
+      id: underlying.id,
+      label: underlying.label,
+      async fetch(request, bounds, signal) {
+        await gate;
+        return underlying.fetch(request, bounds, signal);
+      },
+    };
+    let currentTask = { taskId: "task-research-stale", taskContractRevision: 1 };
+    const service = researchService([source], { currentTask: () => currentTask });
+    const pending = service.fetch(researchRequest());
+    currentTask = { taskId: "task-research-stale", taskContractRevision: 2 };
+    release();
+
+    const result = await pending;
+
+    expect(result.status).toBe("stale");
+    expect(service.latestEvidence()).toEqual([]);
   });
 
   it("20. a research document records source/fetched/revision provenance", async () => {
@@ -1585,6 +1606,7 @@ describe("Final-boundary effect tests (51–54)", () => {
       policy: createDefaultPolicy("develop-offline"),
       profile: DEVELOP_OFFLINE_PROFILE,
       sources: [countingSource],
+      currentTask: () => ({ taskId: "task-policy-effect", taskContractRevision: 1 }),
     });
     const result = await service.fetch({
       source: { kind: "fake", id: "counting", label: "Counting source" },

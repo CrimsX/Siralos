@@ -6,6 +6,7 @@ const DEFAULT_OPTIONS = {
   maxRedirects: 4,
   timeoutMs: 1000,
   signal: new AbortController().signal,
+  allowedHosts: ["example.com"],
 };
 
 function aborted(): AbortSignal {
@@ -87,6 +88,54 @@ describe("createFakeTransport", () => {
       maxRedirects: 1,
     });
     expect(capped).toEqual({ status: "failed", reason: "too many redirects" });
+  });
+
+  it("refuses an https redirect outside the exact host allowlist", async () => {
+    const transport = createFakeTransport({
+      "https://example.com/a": { redirectsTo: "https://internal.example.test/private" },
+      "https://internal.example.test/private": { body: "secret" },
+    });
+
+    expect(await transport.get("https://example.com/a", DEFAULT_OPTIONS)).toEqual({
+      status: "refused",
+      reason: "redirect destination is not allowlisted",
+    });
+  });
+
+  it("snapshots the host allowlist before following redirects", async () => {
+    const allowedHosts = ["example.com"];
+    const transport = createFakeTransport({
+      "https://example.com/a": {
+        delayMs: 5,
+        redirectsTo: "https://other.example/final",
+      },
+      "https://other.example/final": { body: "must not be reached" },
+    });
+    const pending = transport.get("https://example.com/a", {
+      ...DEFAULT_OPTIONS,
+      allowedHosts,
+    });
+    allowedHosts.push("other.example");
+
+    expect(await pending).toEqual({
+      status: "refused",
+      reason: "redirect destination is not allowlisted",
+    });
+  });
+
+  it("refuses credentials, alternate ports, and invalid transport bounds", async () => {
+    const transport = createFakeTransport({});
+    expect(await transport.get("https://user@example.com/a", DEFAULT_OPTIONS)).toMatchObject({
+      status: "refused",
+      reason: "destination host is not allowlisted",
+    });
+    expect(await transport.get("https://example.com:8443/a", DEFAULT_OPTIONS)).toMatchObject({
+      status: "refused",
+      reason: "destination host is not allowlisted",
+    });
+    expect(
+      await transport.get("https://example.com/a", { ...DEFAULT_OPTIONS, maxBytes: Infinity }),
+    ).toEqual({ status: "refused", reason: "invalid transport bounds" });
   });
 
   it("returns timeout when the route latency exceeds timeoutMs", async () => {

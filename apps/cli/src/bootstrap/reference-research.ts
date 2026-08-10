@@ -296,6 +296,8 @@ function mapResearchResult(result: ResearchFetchResult): ToolExecutionResult {
       return { status: "timed_out", message: result.reason };
     case "cancelled":
       return { status: "cancelled", message: result.reason };
+    case "stale":
+      return { status: "conflict", message: result.reason };
     case "unsupported-content":
     case "oversized":
     case "failed":

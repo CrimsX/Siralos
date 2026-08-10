@@ -62,6 +62,7 @@ function makeService(): ResearchService {
     policy: allowPolicy(),
     profile: INSPECT_PROFILE,
     sources: [createFakeGodotDocsSource(DOCS_FIXTURE), createFakeRepositorySource(REPO_FIXTURE)],
+    currentTask: () => ({ taskId: "task-research-integration", taskContractRevision: 1 }),
   });
 }
 
@@ -109,6 +110,7 @@ describe("research service integration with fake sources", () => {
       policy: { rules: { ...base.rules, "research.fetch": "deny" } },
       profile: INSPECT_PROFILE,
       sources: [createFakeGodotDocsSource(DOCS_FIXTURE)],
+      currentTask: () => ({ taskId: "task-research-integration", taskContractRevision: 1 }),
     });
     const result = await service.fetch(request({ topic: "class_node" }));
     expect(result.status).toBe("refused");

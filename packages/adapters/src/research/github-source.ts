@@ -124,10 +124,11 @@ export function createGitHubResearchSource(
         const repoPath = originResult.origin.slice(GITHUB_ORIGIN_PREFIX.length);
         const now = (options.now ?? Date.now)();
         const transportOptions = {
-          maxBytes: bounds.maxDownloadBytes,
+          maxBytes: Math.min(request.maxBytes ?? bounds.maxDownloadBytes, bounds.maxDownloadBytes),
           maxRedirects: bounds.maxRedirects,
           timeoutMs: bounds.timeoutMs,
           signal,
+          allowedHosts: ["api.github.com", "raw.githubusercontent.com"],
         };
         const wantsRelease =
           request.path === null &&

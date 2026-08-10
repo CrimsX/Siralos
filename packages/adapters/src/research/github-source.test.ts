@@ -128,6 +128,18 @@ describe("createGitHubResearchSource", () => {
     expect(outcome.status).toBe("unsupported-content");
   });
 
+  it("honors a request-level download cap without exceeding the host bound", async () => {
+    const source = makeSource({
+      [RAW_README_URL]: { body: "x".repeat(32), contentType: "text/plain" },
+    });
+    const outcome = await source.fetch(
+      request({ path: "README.md", maxBytes: 16 }),
+      bounds({ maxDownloadBytes: 1024 }),
+      new AbortController().signal,
+    );
+    expect(outcome.status).toBe("oversized");
+  });
+
   it("maps 404 to failed resource not found", async () => {
     const source = makeSource({ [RAW_README_URL]: { body: "nope", statusCode: 404 } });
     const outcome = await source.fetch(

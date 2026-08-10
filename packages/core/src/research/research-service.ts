@@ -1,7 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import { truncateText } from "../projection/evidence-projector.js";
-import { createRevisionGuard } from "../projection/stale-result.js";
-import type { RevisionBound } from "../projection/stale-result.js";
 import type { CapabilityPolicy } from "../security/capability.js";
 import { evaluatePermission } from "../security/permission-evaluator.js";
 import type { SandboxProfile } from "../security/profile.js";
@@ -37,14 +35,11 @@ import type { ResearchSourcePort } from "./research-ports.js";
  *      as its absolute ceiling. Timeout -> `timeout`, abort -> `cancelled`.
  *      No indefinite waits.
  *
- * Stale-result binding: every fetch records a minted `requestId`
- * (`req_` + 24 hex) and the caller-supplied task contract revision. The
- * caller (task flow / tools) obtains a `ResearchRevisionBound` token via
- * `bind(taskContractRevision)` and checks `isCurrent(bound)` before
- * injecting the result into evidence or context. The SERVICE does not
- * discard anything itself — it returns the bound token so the caller can
- * discard stale results: asynchronous research results MUST be checked
- * against the task contract revision before entering evidence/context.
+ * Stale-result binding is enforced inside the service. Every fetch records
+ * a unique request id and captures the active task id + TaskContract
+ * revision before invoking a source. That identity is checked again before
+ * returning or retaining a document; stale results are discarded before
+ * they can enter evidence or context, so callers cannot omit the check.
  *
  * Research never becomes knowledge automatically: the KnowledgeCoordinator
  * only accepts `research_evidence` provenance through an explicit
@@ -54,6 +49,8 @@ import type { ResearchSourcePort } from "./research-ports.js";
 export interface ResearchEvidence {
   readonly evidenceId: string;
   readonly requestId: string;
+  readonly taskId: string;
+  readonly taskContractRevision: number;
   readonly source: ResearchSourceRef;
   readonly fetchedAtMs: number;
   readonly resolvedRevision: string | null;
@@ -74,19 +71,29 @@ export type ResearchFetchResult =
     }
   | {
       readonly status:
-        "unsupported-content" | "oversized" | "timeout" | "cancelled" | "unavailable" | "failed";
+        | "unsupported-content"
+        | "oversized"
+        | "timeout"
+        | "cancelled"
+        | "stale"
+        | "unavailable"
+        | "failed";
       readonly reason: string;
     };
 
-/** Revision-bound token: `bind` + `isCurrent` implement stale-result checks. */
-export type ResearchRevisionBound = RevisionBound<{ readonly requestId: string | null }>;
+/** Exact task identity captured around one asynchronous research request. */
+export interface ResearchTaskBinding {
+  readonly taskId: string;
+  readonly taskContractRevision: number;
+}
 
 export interface ResearchServiceOptions {
   readonly policy: CapabilityPolicy;
   readonly profile: SandboxProfile;
   readonly sources: readonly ResearchSourcePort[];
+  /** Current active task identity; null means research must fail closed. */
+  readonly currentTask: () => ResearchTaskBinding | null;
   readonly bounds?: ResearchBounds;
-  readonly now?: () => number;
   /** Total retained evidence-excerpt budget for the ring. */
   readonly maxEvidenceBytes?: number;
 }
@@ -94,11 +101,8 @@ export interface ResearchServiceOptions {
 export interface ResearchService {
   fetch(
     request: ResearchRequest,
-    opts?: { readonly taskContractRevision?: number; readonly signal?: AbortSignal },
+    opts?: { readonly signal?: AbortSignal },
   ): Promise<ResearchFetchResult>;
-  /** Bind the current revision to a token; caller checks `isCurrent` before consuming results. */
-  bind(taskContractRevision: number): ResearchRevisionBound;
-  isCurrent(bound: ResearchRevisionBound): boolean;
   /** Retained evidence views, oldest first (bounded ring). */
   latestEvidence(): readonly ResearchEvidence[];
   /** In-flight fetch count (CLI /research-status). */
@@ -137,9 +141,14 @@ function requestDigest(request: ResearchRequest): string {
 function composeSignal(
   signal: AbortSignal | undefined,
   timeoutMs: number,
-): { readonly signal: AbortSignal; readonly cleanup: () => void } {
+): {
+  readonly signal: AbortSignal;
+  readonly timedOut: () => boolean;
+  readonly cleanup: () => void;
+} {
   const controller = new AbortController();
   const cleanups: Array<() => void> = [];
+  let timeoutTriggered = false;
   if (signal !== undefined) {
     if (signal.aborted) {
       controller.abort(signal.reason);
@@ -151,10 +160,10 @@ function composeSignal(
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   if (timeoutMs > 0) {
-    timer = setTimeout(
-      () => controller.abort(new DOMException("Research request timed out", "TimeoutError")),
-      timeoutMs,
-    );
+    timer = setTimeout(() => {
+      timeoutTriggered = true;
+      controller.abort(new DOMException("Research request timed out", "TimeoutError"));
+    }, timeoutMs);
     cleanups.push(() => {
       if (timer !== undefined) {
         clearTimeout(timer);
@@ -163,6 +172,7 @@ function composeSignal(
   }
   return {
     signal: controller.signal,
+    timedOut: () => timeoutTriggered,
     cleanup: () => {
       for (const cleanup of cleanups) {
         cleanup();
@@ -172,63 +182,145 @@ function composeSignal(
 }
 
 /**
- * Race one promise against the caller's abort signal and a timeout.
- * Whichever fires first wins; the result is deterministic per input.
+ * Race one promise against a composed abort signal. The signal already
+ * carries both caller cancellation and the service timeout, so there is
+ * only one timer and the source is always aborted when the service stops
+ * waiting for it.
  */
-function raceWithTimeout<T>(
+function raceWithSignal<T>(
   promise: Promise<T>,
-  timeoutMs: number,
-  signal: AbortSignal | undefined,
-  onTimeout: () => T,
+  signal: AbortSignal,
   onAbort: () => T,
   onFailure: (error: unknown) => T,
 ): Promise<T> {
-  if (signal !== undefined && signal.aborted) {
+  if (signal.aborted) {
     return Promise.resolve(onAbort());
   }
   return new Promise<T>((resolve) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (value: T): void => {
       if (settled) {
         return;
       }
       settled = true;
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-      signal?.removeEventListener("abort", onAbortEvent);
+      signal.removeEventListener("abort", onAbortEvent);
       resolve(value);
     };
     const onAbortEvent = (): void => finish(onAbort());
-    if (timeoutMs > 0) {
-      timer = setTimeout(() => finish(onTimeout()), timeoutMs);
-    }
-    if (signal !== undefined) {
-      signal.addEventListener("abort", onAbortEvent, { once: true });
-    }
+    signal.addEventListener("abort", onAbortEvent, { once: true });
     promise.then(finish, (error: unknown) => finish(onFailure(error)));
   });
 }
 
+function normalizeInteger(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(maximum, Math.max(minimum, Math.floor(value)));
+}
+
+function normalizeResearchBounds(input: ResearchBounds): ResearchBounds {
+  const timeoutMs = normalizeInteger(
+    input.timeoutMs,
+    RESEARCH_LIMITS.timeoutMs,
+    1,
+    RESEARCH_LIMITS.timeoutMs,
+  );
+  return Object.freeze({
+    maxDownloadBytes: normalizeInteger(
+      input.maxDownloadBytes,
+      RESEARCH_LIMITS.maxDownloadBytes,
+      1,
+      RESEARCH_LIMITS.maxDownloadBytes,
+    ),
+    maxDocumentBytes: normalizeInteger(
+      input.maxDocumentBytes,
+      RESEARCH_LIMITS.maxDocumentBytes,
+      1,
+      RESEARCH_LIMITS.maxDocumentBytes,
+    ),
+    maxSections: normalizeInteger(
+      input.maxSections,
+      RESEARCH_LIMITS.maxSections,
+      1,
+      RESEARCH_LIMITS.maxSections,
+    ),
+    maxLinks: normalizeInteger(
+      input.maxLinks,
+      RESEARCH_LIMITS.maxLinks,
+      0,
+      RESEARCH_LIMITS.maxLinks,
+    ),
+    maxHeadingBytes: normalizeInteger(
+      input.maxHeadingBytes,
+      RESEARCH_LIMITS.maxHeadingBytes,
+      1,
+      RESEARCH_LIMITS.maxHeadingBytes,
+    ),
+    maxSectionTextBytes: normalizeInteger(
+      input.maxSectionTextBytes,
+      RESEARCH_LIMITS.maxSectionTextBytes,
+      1,
+      RESEARCH_LIMITS.maxSectionTextBytes,
+    ),
+    maxRedirects: normalizeInteger(
+      input.maxRedirects,
+      RESEARCH_LIMITS.maxRedirects,
+      0,
+      RESEARCH_LIMITS.maxRedirects,
+    ),
+    timeoutMs,
+    hardLifetimeMs: Math.max(
+      timeoutMs,
+      normalizeInteger(
+        input.hardLifetimeMs,
+        RESEARCH_LIMITS.hardLifetimeMs,
+        1,
+        RESEARCH_LIMITS.hardLifetimeMs,
+      ),
+    ),
+  });
+}
+
+function isValidTaskBinding(value: ResearchTaskBinding | null): value is ResearchTaskBinding {
+  return (
+    value !== null &&
+    value.taskId.trim().length > 0 &&
+    new TextEncoder().encode(value.taskId).length <= 128 &&
+    Number.isSafeInteger(value.taskContractRevision) &&
+    value.taskContractRevision >= 1
+  );
+}
+
+function sameTaskBinding(
+  expected: ResearchTaskBinding,
+  current: ResearchTaskBinding | null,
+): boolean {
+  return (
+    current !== null &&
+    current.taskId === expected.taskId &&
+    current.taskContractRevision === expected.taskContractRevision
+  );
+}
+
 export function createResearchService(options: ResearchServiceOptions): ResearchService {
-  const bounds = options.bounds ?? defaultResearchBounds();
-  const guard = createRevisionGuard(0);
+  const bounds = normalizeResearchBounds(options.bounds ?? defaultResearchBounds());
   const sources = [...options.sources];
   const evidence: ResearchEvidence[] = [];
-  const maxEvidenceBytes =
-    options.maxEvidenceBytes ??
-    RESEARCH_LIMITS.maxRetainedEvidenceViews * RESEARCH_LIMITS.maxResearchEvidenceExcerptBytes;
+  const maxEvidenceBytes = normalizeInteger(
+    options.maxEvidenceBytes,
+    RESEARCH_LIMITS.maxRetainedEvidenceViews * RESEARCH_LIMITS.maxResearchEvidenceExcerptBytes,
+    0,
+    RESEARCH_LIMITS.maxRetainedEvidenceViews * RESEARCH_LIMITS.maxResearchEvidenceExcerptBytes,
+  );
   let evidenceCounter = 0;
+  let requestCounter = 0;
   let activeRequests = 0;
-  let latestRequestId: string | null = null;
-
-  function observeRevision(taskContractRevision: number | undefined): void {
-    const revision = taskContractRevision ?? 0;
-    while (guard.revision < revision) {
-      guard.advance();
-    }
-  }
 
   function findSource(request: ResearchRequest): ResearchSourcePort | null {
     for (const source of sources) {
@@ -244,7 +336,11 @@ export function createResearchService(options: ResearchServiceOptions): Research
     return null;
   }
 
-  function buildEvidence(document: ResearchDocument, requestId: string): ResearchEvidence {
+  function buildEvidence(
+    document: ResearchDocument,
+    requestId: string,
+    task: ResearchTaskBinding,
+  ): ResearchEvidence {
     const firstSection = document.sections[0];
     const raw = firstSection?.text ?? "";
     const excerpt = truncateText(raw, RESEARCH_LIMITS.maxResearchEvidenceExcerptBytes);
@@ -252,6 +348,8 @@ export function createResearchService(options: ResearchServiceOptions): Research
     return {
       evidenceId: `ev-research-${evidenceCounter}`,
       requestId,
+      taskId: task.taskId,
+      taskContractRevision: task.taskContractRevision,
       source: document.source,
       fetchedAtMs: document.fetchedAtMs,
       resolvedRevision: document.provenance.resolvedRevision,
@@ -278,10 +376,14 @@ export function createResearchService(options: ResearchServiceOptions): Research
     }
   }
 
-  function toFetchResult(outcome: ResearchOutcome, requestId: string): ResearchFetchResult {
+  function toFetchResult(
+    outcome: ResearchOutcome,
+    requestId: string,
+    task: ResearchTaskBinding,
+  ): ResearchFetchResult {
     switch (outcome.status) {
       case "document": {
-        const evidenceEntry = buildEvidence(outcome.document, requestId);
+        const evidenceEntry = buildEvidence(outcome.document, requestId, task);
         retainEvidence(evidenceEntry);
         return { status: "document", document: outcome.document, evidence: evidenceEntry };
       }
@@ -304,7 +406,7 @@ export function createResearchService(options: ResearchServiceOptions): Research
   return {
     async fetch(
       request: ResearchRequest,
-      opts: { readonly taskContractRevision?: number; readonly signal?: AbortSignal } = {},
+      opts: { readonly signal?: AbortSignal } = {},
     ): Promise<ResearchFetchResult> {
       // 1. Policy gate FIRST — the source port is never invoked when the
       //    gate does not allow (effect-test contract).
@@ -331,20 +433,45 @@ export function createResearchService(options: ResearchServiceOptions): Research
           reason: `Unknown research source ${request.source.kind}:${request.source.id}; it is not configured.`,
         };
       }
+      const currentTask = options.currentTask();
+      if (!isValidTaskBinding(currentTask)) {
+        return {
+          status: "refused",
+          reason:
+            "Research requires an active task with a valid TaskContract revision; no task-bound request was started.",
+        };
+      }
+      // Snapshot primitive identity fields. Holding a caller-owned object
+      // reference would let an in-place revision change mutate both the
+      // expected and current values and defeat the stale-result check.
+      const task: ResearchTaskBinding = Object.freeze({
+        taskId: currentTask.taskId,
+        taskContractRevision: currentTask.taskContractRevision,
+      });
       // Already-aborted calls fail fast without invoking the source.
       if (opts.signal !== undefined && opts.signal.aborted) {
         return { status: "cancelled", reason: "Research request cancelled." };
       }
-      observeRevision(opts.taskContractRevision);
-      const requestId = `req_${sha256Hex(requestDigest(validated.request)).slice(0, 24)}`;
-      latestRequestId = requestId;
+      requestCounter += 1;
+      const sourceRequest: ResearchRequest = {
+        ...validated.request,
+        source: { kind: source.kind, id: source.id, label: source.label },
+      };
+      const requestId = `req_${sha256Hex(
+        canonicalizeJson({
+          requestDigest: requestDigest(sourceRequest),
+          taskId: task.taskId,
+          taskContractRevision: task.taskContractRevision,
+          sequence: requestCounter,
+        }),
+      ).slice(0, 24)}`;
       activeRequests += 1;
       try {
         const composed = composeSignal(opts.signal, bounds.timeoutMs);
         try {
           const outcomePromise = (async (): Promise<ResearchOutcome> => {
             try {
-              return await source.fetch(validated.request, bounds, composed.signal);
+              return await source.fetch(sourceRequest, bounds, composed.signal);
             } catch (error) {
               return {
                 status: "failed",
@@ -352,18 +479,26 @@ export function createResearchService(options: ResearchServiceOptions): Research
               };
             }
           })();
-          const outcome = await raceWithTimeout(
+          const outcome = await raceWithSignal(
             outcomePromise,
-            bounds.timeoutMs,
-            opts.signal,
-            () => ({ status: "timeout" as const }),
-            () => ({ status: "cancelled" as const }),
+            composed.signal,
+            () =>
+              composed.timedOut()
+                ? { status: "timeout" as const }
+                : { status: "cancelled" as const },
             (error: unknown) => ({
               status: "failed" as const,
               reason: `The research source failed unexpectedly: ${describeError(error)}`,
             }),
           );
-          return toFetchResult(outcome, requestId);
+          if (outcome.status === "document" && !sameTaskBinding(task, options.currentTask())) {
+            return {
+              status: "stale",
+              reason:
+                "The active task or TaskContract revision changed while research was in flight; the result was discarded before evidence retention.",
+            };
+          }
+          return toFetchResult(outcome, requestId, task);
         } finally {
           composed.cleanup();
         }
@@ -372,17 +507,8 @@ export function createResearchService(options: ResearchServiceOptions): Research
       }
     },
 
-    bind(taskContractRevision: number): ResearchRevisionBound {
-      observeRevision(taskContractRevision);
-      return guard.bind({ requestId: latestRequestId });
-    },
-
-    isCurrent(bound: ResearchRevisionBound): boolean {
-      return guard.isCurrent(bound);
-    },
-
     latestEvidence(): readonly ResearchEvidence[] {
-      return evidence.map((entry) => ({ ...entry }));
+      return evidence.map((entry) => ({ ...entry, source: { ...entry.source } }));
     },
 
     activeRequestCount(): number {

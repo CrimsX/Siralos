@@ -67,6 +67,8 @@ export interface ResearchTransportPort {
       readonly maxRedirects: number;
       readonly timeoutMs: number;
       readonly signal: AbortSignal;
+      /** Exact lowercase DNS names permitted for the initial URL and every redirect. */
+      readonly allowedHosts: readonly string[];
     },
   ): Promise<TransportOutcome>;
 }

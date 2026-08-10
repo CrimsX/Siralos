@@ -28,6 +28,8 @@ const request: ResearchRequest = {
   maxBytes: null,
 };
 
+const TEST_TASK = { taskId: "task-research-test", taskContractRevision: 1 } as const;
+
 function makeDocument(overrides: Partial<ResearchDocument> = {}): ResearchDocument {
   const source = { kind: "fake" as const, id: "fake-source", label: "Fake source" };
   return {
@@ -92,6 +94,7 @@ function makeService(
     policy: policyWith("allow"),
     profile: INSPECT_PROFILE,
     sources,
+    currentTask: () => TEST_TASK,
     ...overrides,
   });
 }
@@ -103,6 +106,7 @@ describe("research service policy gate", () => {
       policy: policyWith("deny"),
       profile: INSPECT_PROFILE,
       sources: [source],
+      currentTask: () => TEST_TASK,
     });
     const result = await service.fetch(request);
     expect(result.status).toBe("refused");
@@ -118,6 +122,7 @@ describe("research service policy gate", () => {
       policy: policyWith("ask"),
       profile: INSPECT_PROFILE,
       sources: [source],
+      currentTask: () => TEST_TASK,
     });
     const result = await service.fetch(request);
     expect(result.status).toBe("refused");
@@ -133,6 +138,7 @@ describe("research service policy gate", () => {
       policy: policyWith("deny"),
       profile: INSPECT_PROFILE,
       sources: [source],
+      currentTask: () => TEST_TASK,
     });
     const result = await service.fetch({ ...request, query: "" });
     expect(result.status).toBe("refused");
@@ -174,9 +180,26 @@ describe("research service fetch", () => {
     expect(source.calls()).toBe(0);
   });
 
-  it("matches a source by label when the id differs", async () => {
+  it("refuses before source invocation when no active task can bind the result", async () => {
+    const source = fakeSource(() => ({ status: "document", document: makeDocument() }));
+    const service = makeService([source], { currentTask: () => null });
+
+    const result = await service.fetch(request);
+
+    expect(result.status).toBe("refused");
+    expect(source.calls()).toBe(0);
+  });
+
+  it("matches a source by label but canonicalizes its configured identity", async () => {
+    let observedSource: ResearchRequest["source"] | null = null;
     const source = fakeSource(
-      () => ({ status: "document", document: makeDocument() }),
+      (received) => {
+        observedSource = received.source;
+        return {
+          status: "document",
+          document: makeDocument({ source: received.source }),
+        };
+      },
       "fake",
       "other-id",
     );
@@ -188,6 +211,10 @@ describe("research service fetch", () => {
     });
     expect(result.status).toBe("document");
     expect(source.calls()).toBe(1);
+    expect(observedSource).toEqual({ kind: "fake", id: "other-id", label: "Fake source" });
+    if (result.status === "document") {
+      expect(result.document.source.id).toBe("other-id");
+    }
   });
 
   it("passes source outcomes through (unsupported-content, oversized, failed)", async () => {
@@ -226,7 +253,19 @@ describe("research service fetch", () => {
   });
 
   it("times out without waiting indefinitely", async () => {
-    const source = fakeSource(() => new Promise<ResearchOutcome>(() => {}));
+    let sourceSignalAborted = false;
+    const source = fakeSource(
+      (_request, _bounds, signal) =>
+        new Promise<ResearchOutcome>(() => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              sourceSignalAborted = true;
+            },
+            { once: true },
+          );
+        }),
+    );
     const service = makeService([source], {
       bounds: { ...defaultBounds(), timeoutMs: 20 },
     });
@@ -234,6 +273,7 @@ describe("research service fetch", () => {
     const result = await service.fetch(request);
     expect(result.status).toBe("timeout");
     expect(Date.now() - started).toBeLessThan(2_000);
+    expect(sourceSignalAborted).toBe(true);
   });
 
   it("aborts to cancelled (pre-aborted call never invokes the source)", async () => {
@@ -336,23 +376,69 @@ describe("research service evidence ring", () => {
 });
 
 describe("stale-result binding", () => {
-  it("bind/isCurrent track the task contract revision", async () => {
-    const source = fakeSource(() => ({ status: "document", document: makeDocument() }));
-    const service = makeService([source]);
-    const bound = service.bind(1);
-    expect(service.isCurrent(bound)).toBe(true);
-    // A fetch under a newer contract revision advances the guard.
-    await service.fetch(request, { taskContractRevision: 2 });
-    expect(service.isCurrent(bound)).toBe(false);
+  it("discards an in-flight result when the active task revision changes", async () => {
+    let current = { taskId: "task-research", taskContractRevision: 1 };
+    let resolveOutcome!: (outcome: ResearchOutcome) => void;
+    const source = fakeSource(
+      () =>
+        new Promise<ResearchOutcome>((resolve) => {
+          resolveOutcome = resolve;
+        }),
+    );
+    const service = makeService([source], { currentTask: () => current });
+    const pending = service.fetch(request);
+    await Promise.resolve();
+    current = { taskId: "task-research", taskContractRevision: 2 };
+    resolveOutcome({ status: "document", document: makeDocument() });
+
+    const result = await pending;
+
+    expect(result.status).toBe("stale");
+    expect(service.latestEvidence()).toEqual([]);
   });
 
-  it("bind records the latest request id and stays current without advances", async () => {
+  it("detects an in-place mutation of the active task binding object", async () => {
+    const current = { taskId: "task-research", taskContractRevision: 1 };
+    let resolveOutcome!: (outcome: ResearchOutcome) => void;
+    const source = fakeSource(
+      () =>
+        new Promise<ResearchOutcome>((resolve) => {
+          resolveOutcome = resolve;
+        }),
+    );
+    const service = makeService([source], { currentTask: () => current });
+    const pending = service.fetch(request);
+    await Promise.resolve();
+    current.taskContractRevision = 2;
+    resolveOutcome({ status: "document", document: makeDocument() });
+
+    expect((await pending).status).toBe("stale");
+    expect(service.latestEvidence()).toEqual([]);
+  });
+
+  it("binds retained evidence to the exact active task identity", async () => {
     const source = fakeSource(() => ({ status: "document", document: makeDocument() }));
     const service = makeService([source]);
-    await service.fetch(request, { taskContractRevision: 3 });
-    const bound = service.bind(3);
-    expect(bound.value.requestId).toMatch(/^req_/);
-    expect(service.isCurrent(bound)).toBe(true);
+    const result = await service.fetch(request);
+
+    expect(result.status).toBe("document");
+    if (result.status === "document") {
+      expect(result.evidence.taskId).toBe(TEST_TASK.taskId);
+      expect(result.evidence.taskContractRevision).toBe(TEST_TASK.taskContractRevision);
+    }
+  });
+
+  it("mints unique request ids for identical requests", async () => {
+    const source = fakeSource(() => ({ status: "document", document: makeDocument() }));
+    const service = makeService([source]);
+    const first = await service.fetch(request);
+    const second = await service.fetch(request);
+
+    expect(first.status).toBe("document");
+    expect(second.status).toBe("document");
+    if (first.status === "document" && second.status === "document") {
+      expect(first.evidence.requestId).not.toBe(second.evidence.requestId);
+    }
   });
 });
 
@@ -360,6 +446,8 @@ describe("formatResearchEvidenceView", () => {
   const evidence: ResearchEvidence = {
     evidenceId: "ev-research-1",
     requestId: "req_abcd",
+    taskId: "task-research-test",
+    taskContractRevision: 1,
     source: { kind: "fake", id: "fake-source", label: "Fake source" },
     fetchedAtMs: 1_700_000_000_000,
     resolvedRevision: "abc123",

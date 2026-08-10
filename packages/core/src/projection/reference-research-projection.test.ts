@@ -46,6 +46,8 @@ function researchEvidence(overrides: Partial<ResearchEvidence> = {}): ResearchEv
   return {
     evidenceId: "ev-research-1",
     requestId: "req_abcd",
+    taskId: "task-research",
+    taskContractRevision: 1,
     source: { kind: "godot-docs", id: "godot-docs", label: "Godot documentation" },
     fetchedAtMs: 1_700_000_000_000,
     resolvedRevision: "abc123",

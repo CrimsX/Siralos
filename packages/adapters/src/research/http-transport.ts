@@ -18,6 +18,12 @@ import { boundedErrorMessage, classifyContentType } from "./normalization.js";
 
 const USER_AGENT = "solaris-research/0.1";
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_TRANSPORT_BYTES = 2 * 1024 * 1024;
+const MAX_TRANSPORT_REDIRECTS = 4;
+const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
+const MAX_ALLOWED_HOSTS = 8;
+const HOST_PATTERN =
+  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/;
 
 function parseHttpsUrl(
   raw: string,
@@ -35,6 +41,49 @@ function parseHttpsUrl(
     return { ok: false, reason: "only https URLs are supported" };
   }
   return { ok: true, url: parsed };
+}
+
+interface TransportOptions {
+  readonly maxBytes: number;
+  readonly maxRedirects: number;
+  readonly timeoutMs: number;
+  readonly signal: AbortSignal;
+  readonly allowedHosts: readonly string[];
+}
+
+function validateTransportOptions(options: TransportOptions): string | null {
+  if (
+    !Number.isSafeInteger(options.maxBytes) ||
+    options.maxBytes < 1 ||
+    options.maxBytes > MAX_TRANSPORT_BYTES ||
+    !Number.isSafeInteger(options.maxRedirects) ||
+    options.maxRedirects < 0 ||
+    options.maxRedirects > MAX_TRANSPORT_REDIRECTS ||
+    !Number.isSafeInteger(options.timeoutMs) ||
+    options.timeoutMs < 1 ||
+    options.timeoutMs > MAX_TRANSPORT_TIMEOUT_MS
+  ) {
+    return "invalid transport bounds";
+  }
+  if (
+    options.allowedHosts.length === 0 ||
+    options.allowedHosts.length > MAX_ALLOWED_HOSTS ||
+    options.allowedHosts.some(
+      (host) => host !== host.toLowerCase() || !HOST_PATTERN.test(host) || host.length > 253,
+    )
+  ) {
+    return "invalid transport host allowlist";
+  }
+  return null;
+}
+
+function destinationAllowed(url: URL, allowedHosts: readonly string[]): boolean {
+  return (
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    (url.port.length === 0 || url.port === "443") &&
+    allowedHosts.includes(url.hostname.toLowerCase())
+  );
 }
 
 type SingleExchangeOutcome =
@@ -142,6 +191,10 @@ function performRequest(
 export function createNodeHttpsTransport(): ResearchTransportPort {
   return {
     async get(url, options): Promise<TransportOutcome> {
+      const invalidOptions = validateTransportOptions(options);
+      if (invalidOptions !== null) {
+        return { status: "refused", reason: invalidOptions };
+      }
       let current = parseHttpsUrl(url);
       if (!current.ok) {
         return { status: "refused", reason: current.reason };
@@ -149,11 +202,20 @@ export function createNodeHttpsTransport(): ResearchTransportPort {
       if (options.signal.aborted) {
         return { status: "cancelled" };
       }
+      const allowedHosts = [...options.allowedHosts];
+      if (!destinationAllowed(current.url, allowedHosts)) {
+        return { status: "refused", reason: "destination host is not allowlisted" };
+      }
+      const deadline = Date.now() + options.timeoutMs;
       let redirects = 0;
       for (;;) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          return { status: "timeout" };
+        }
         const outcome = await performRequest(current.url, {
           maxBytes: options.maxBytes,
-          timeoutMs: options.timeoutMs,
+          timeoutMs: remainingMs,
           signal: options.signal,
         });
         if (outcome.status !== "redirect") {
@@ -172,6 +234,9 @@ export function createNodeHttpsTransport(): ResearchTransportPort {
         const next = parseHttpsUrl(resolved.href);
         if (!next.ok) {
           return { status: "refused", reason: next.reason };
+        }
+        if (!destinationAllowed(next.url, allowedHosts)) {
+          return { status: "refused", reason: "redirect destination is not allowlisted" };
         }
         current = next;
       }
@@ -201,6 +266,10 @@ export type FakeTransportRoutes = Readonly<Record<string, FakeTransportRoute>>;
 export function createFakeTransport(routes: FakeTransportRoutes): ResearchTransportPort {
   return {
     async get(url, options): Promise<TransportOutcome> {
+      const invalidOptions = validateTransportOptions(options);
+      if (invalidOptions !== null) {
+        return { status: "refused", reason: invalidOptions };
+      }
       const current = parseHttpsUrl(url);
       if (!current.ok) {
         return { status: "refused", reason: current.reason };
@@ -208,21 +277,27 @@ export function createFakeTransport(routes: FakeTransportRoutes): ResearchTransp
       if (options.signal.aborted) {
         return { status: "cancelled" };
       }
+      const allowedHosts = [...options.allowedHosts];
+      if (!destinationAllowed(current.url, allowedHosts)) {
+        return { status: "refused", reason: "destination host is not allowlisted" };
+      }
       let currentUrl = current.url;
       let redirects = 0;
+      let elapsedMs = 0;
       for (;;) {
         const route = routes[currentUrl.href];
         if (route === undefined) {
           return { status: "failed", reason: "no route" };
         }
         if (route.delayMs !== undefined && route.delayMs > 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, route.delayMs));
-          if (options.signal.aborted) {
-            return { status: "cancelled" };
-          }
-          if (route.delayMs > options.timeoutMs) {
+          if (elapsedMs + route.delayMs > options.timeoutMs) {
             return { status: "timeout" };
           }
+          const delay = await waitForFakeDelay(route.delayMs, options.signal);
+          if (delay === "cancelled") {
+            return { status: "cancelled" };
+          }
+          elapsedMs += route.delayMs;
         }
         if (route.redirectsTo !== undefined) {
           redirects += 1;
@@ -238,6 +313,9 @@ export function createFakeTransport(routes: FakeTransportRoutes): ResearchTransp
           const next = parseHttpsUrl(resolved.href);
           if (!next.ok) {
             return { status: "refused", reason: next.reason };
+          }
+          if (!destinationAllowed(next.url, allowedHosts)) {
+            return { status: "refused", reason: "redirect destination is not allowlisted" };
           }
           currentUrl = next.url;
           continue;
@@ -263,4 +341,22 @@ export function createFakeTransport(routes: FakeTransportRoutes): ResearchTransp
       }
     },
   };
+}
+
+function waitForFakeDelay(delayMs: number, signal: AbortSignal): Promise<"elapsed" | "cancelled"> {
+  if (signal.aborted) {
+    return Promise.resolve("cancelled");
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve("elapsed");
+    }, delayMs);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve("cancelled");
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

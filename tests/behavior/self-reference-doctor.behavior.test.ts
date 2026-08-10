@@ -444,6 +444,7 @@ describe("Capability snapshot behaviors (6, 11)", () => {
       policy: POLICY,
       profile: getBuiltInProfile("inspect"),
       sources: [source],
+      currentTask: () => ({ taskId: "task-doctor-effect", taskContractRevision: 1 }),
     });
     // Control: the counter is genuinely wired — invoking the source
     // directly (bypassing the policy gate) reaches the transport.

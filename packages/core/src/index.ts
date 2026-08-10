@@ -467,8 +467,10 @@ export {
 export {
   createAdHocTaskContract,
   createTaskContract,
+  validateTaskContract,
   reviseTaskContract,
   computeTaskContractDigest,
+  TASK_CONTRACT_LIMITS,
   type AcceptanceCriterion,
   type AcceptanceCriterionId,
   type CreateTaskContractInput,
@@ -521,6 +523,12 @@ export {
 } from "./tasks/task-snapshot.js";
 export {
   MAX_EVIDENCE_SOURCE_BYTES,
+  MAX_TASK_EVIDENCE_RECORDS,
+  MAX_TASK_EVIDENCE_ID_BYTES,
+  MAX_TASK_FINDINGS,
+  MAX_TASK_FINDING_FIELD_BYTES,
+  MAX_TASK_STEPS,
+  MAX_TASK_STEP_DESCRIPTION_BYTES,
   PROGRESS_DEGRADED_REPETITIONS,
   PROGRESS_STALLED_REPETITIONS,
   PROGRESS_WINDOW_SIZE,
@@ -893,7 +901,7 @@ export {
   formatResearchEvidenceView,
   type ResearchEvidence,
   type ResearchFetchResult,
-  type ResearchRevisionBound,
+  type ResearchTaskBinding,
   type ResearchService,
   type ResearchServiceOptions,
 } from "./research/research-service.js";

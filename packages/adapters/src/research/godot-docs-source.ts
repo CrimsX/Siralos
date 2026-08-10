@@ -128,10 +128,11 @@ export function createGodotDocsResearchSource(
         const url = buildDocsUrl(resolution.usedVersion, request);
         const now = (options.now ?? Date.now)();
         const outcome = await options.transport.get(url, {
-          maxBytes: bounds.maxDownloadBytes,
+          maxBytes: Math.min(request.maxBytes ?? bounds.maxDownloadBytes, bounds.maxDownloadBytes),
           maxRedirects: bounds.maxRedirects,
           timeoutMs: bounds.timeoutMs,
           signal,
+          allowedHosts: ["docs.godotengine.org"],
         });
         if (outcome.status !== "ok") {
           return transportErrorToResearchOutcome(outcome);

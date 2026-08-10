@@ -86,6 +86,7 @@ import {
   createToolRegistry,
   createResearchService,
   getBuiltInProfile,
+  isTerminalPhase,
   parseReferenceDeclarationsSection,
   VALIDATION_OFFLINE_PROFILE,
   type ApprovalReviewer,
@@ -191,6 +192,7 @@ export async function createCliApplication(
   const config = await loadUserConfig(options.configPath ?? getDefaultUserConfigPath());
   const profile = getBuiltInProfile(config.sandbox.profile);
   const policy = createDefaultPolicy(config.sandbox.profile);
+  const tasks = createTaskRuntime();
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const runsRoot = join(homedir(), ".solaris", "runs");
   const sandbox = createAnthropicSandboxRuntimeBackend({ workspaceRoot });
@@ -228,7 +230,23 @@ export async function createCliApplication(
     createGitHubResearchSource({ transport: researchTransport }),
     createGodotDocsResearchSource({ transport: researchTransport }),
   ];
-  const research = createResearchService({ policy, profile, sources: researchSources });
+  const research = createResearchService({
+    policy,
+    profile,
+    sources: researchSources,
+    currentTask: () => {
+      const current = [...tasks.listTasks()]
+        .reverse()
+        .find((task) => !isTerminalPhase(task.snapshot().phase));
+      if (current === undefined) {
+        return null;
+      }
+      return {
+        taskId: current.taskId,
+        taskContractRevision: current.contract().revision,
+      };
+    },
+  });
   const referenceEvidenceRing = createReferenceEvidenceRing();
   const referenceTools = observeReferenceTools(
     referenceServices.tools,
@@ -522,7 +540,6 @@ export async function createCliApplication(
     },
   });
   const provider = createDeterministicFakeProvider();
-  const tasks = createTaskRuntime();
   const taskSources: TaskRuntimeSnapshotSources = {
     runtimeVersion: TASK_RUNTIME_VERSION,
     provider: { profileId: provider.id, route: null },

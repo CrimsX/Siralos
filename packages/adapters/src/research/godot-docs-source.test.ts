@@ -108,6 +108,19 @@ describe("buildDocsUrl", () => {
 });
 
 describe("createGodotDocsResearchSource", () => {
+  it("honors a request-level download cap without exceeding the host bound", async () => {
+    const url = "https://docs.godotengine.org/en/stable/search.html?q=how%20do%20signals%20work";
+    const source = makeSource({
+      [url]: { body: "x".repeat(32), contentType: "text/plain" },
+    });
+    const outcome = await source.fetch(
+      request({ maxBytes: 16 }),
+      bounds({ maxDownloadBytes: 1024 }),
+      new AbortController().signal,
+    );
+    expect(outcome.status).toBe("oversized");
+  });
+
   it("serves the exact version with no fallback marking", async () => {
     const url = "https://docs.godotengine.org/en/4.7/classes/class_characterbody2d.html";
     const source = makeSource({ [url]: { body: CLASS_PAGE_HTML, contentType: "text/html" } });
