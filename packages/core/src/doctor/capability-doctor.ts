@@ -71,17 +71,23 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: AbortSi
       reject(new DoctorCancelledError());
       return;
     }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      reject(new DoctorTimeoutError(timeoutMs));
-    }, timeoutMs);
     const onAbort = () => {
       clearTimeout(timer);
       reject(new DoctorCancelledError());
     };
     if (signal !== undefined) {
       signal.addEventListener("abort", onAbort, { once: true });
+      // The signal may have aborted between the earlier check and the
+      // listener registration; cancellation wins over timeout.
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
     }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DoctorTimeoutError(timeoutMs));
+    }, timeoutMs);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -411,8 +417,14 @@ function sandboxChecks(result: SandboxDiagnosticResult): DoctorCheckResult[] {
         : result.backend.state === "setup-required" || result.backend.state === "dependency-missing"
           ? "warn"
           : "fail";
-  const enforcement: DoctorCheckResult =
-    result.requiredCapabilitiesMissing.length === 0
+  const enforcement: DoctorCheckResult = !result.profileRequiresProcess
+    ? check(
+        "sandbox.required_enforcement",
+        "sandbox",
+        "skip",
+        `Profile ${result.selectedProfileId} does not require sandboxed execution in this runtime (no commands execute); execution fails closed regardless of backend state`,
+      )
+    : result.requiredCapabilitiesMissing.length === 0
       ? check(
           "sandbox.required_enforcement",
           "sandbox",
@@ -1083,8 +1095,11 @@ function buildAreaChecks(
       return referenceChecks(value as ReferenceDiagnosticResult);
     case "research":
       return researchChecks(value as ResearchDiagnosticResult);
+    // The capabilities area checks (projection/trace/task snapshot) are
+    // emitted by the inspect loop itself, which owns the task probe;
+    // buildAreaChecks never runs for the capabilities area.
     case "capabilities":
-      return capabilitiesChecks(value as CapabilityDiagnosticResult, null);
+      return [];
     default:
       return [];
   }

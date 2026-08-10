@@ -12,6 +12,11 @@ export {
   type UserSandboxProfileId,
 } from "./config/user-config.js";
 export {
+  readConfigurationDiagnostics,
+  readConfigurationFileState,
+  type ConfigurationFileState,
+} from "./config/config-diagnostics.js";
+export {
   INSTRUCTION_DISCOVERY_LIMITS,
   createProjectInstructionService,
   discoverProjectInstructions,

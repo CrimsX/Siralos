@@ -6,7 +6,6 @@ import {
   type CapabilityPolicy,
   type CapabilityDiagnosticResult,
   type CheckpointStore,
-  type ConfigurationDiagnosticResult,
   type DoctorArea,
   type DoctorReport,
   type DoctorSources,
@@ -32,15 +31,9 @@ import {
   type TaskRuntimeSnapshotSources,
   type WorkspaceDiagnosticResult,
 } from "@solaris/core";
-import { loadUserConfig } from "@solaris/adapters";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readConfigurationDiagnostics, readConfigurationFileState } from "@solaris/adapters";
+import { readdir } from "node:fs/promises";
 import { readInstalledSolarisVersion } from "./self-reference.js";
-
-function isNotFoundError(error: unknown): boolean {
-  return (
-    error instanceof Error && "code" in error && (error as { code?: unknown }).code === "ENOENT"
-  );
-}
 
 /**
  * Composition-root doctor wiring (Stage 3 milestone 6).
@@ -75,84 +68,17 @@ export interface CliDoctorDependencies {
   readonly mode?: string;
 }
 
-interface RawConfigShape {
-  readonly sandbox?: Record<string, unknown>;
-  readonly godot?: Record<string, unknown>;
-  readonly quality?: Record<string, unknown>;
-  readonly references?: Record<string, unknown>;
-}
-
-async function readConfigurationDiagnostics(
-  configPath: string,
-): Promise<ConfigurationDiagnosticResult> {
-  const sections = [
-    { name: "sandbox", present: false },
-    { name: "godot", present: false },
-    { name: "quality", present: false },
-    { name: "references", present: false },
-  ];
-  let raw: RawConfigShape = {};
-  try {
-    const content = await readFile(configPath, "utf8");
-    const parsed = JSON.parse(content) as unknown;
-    if (typeof parsed === "object" && parsed !== null) {
-      raw = parsed;
-    }
-  } catch {
-    // The runtime/configuration-file check reports readability; here we
-    // only derive section presence from whatever parsed.
-  }
-  for (const section of sections) {
-    section.present = raw[section.name as keyof RawConfigShape] !== undefined;
-  }
-  const unknownFields = Object.keys(raw).filter(
-    (key) => !["sandbox", "godot", "quality", "references"].includes(key),
-  );
-  // Reuse the existing config validation (never duplicate it): a parse
-  // failure is reported with the loader's precise message.
-  let validationErrors: string[] = [];
-  let loaded = true;
-  try {
-    await loadUserConfig(configPath);
-  } catch (error: unknown) {
-    loaded = false;
-    validationErrors = [error instanceof Error ? error.message : String(error)];
-  }
-  return {
-    loaded,
-    sections,
-    unknownFields,
-    validationErrors,
-    // No provider credential environment variables exist in this runtime
-    // (the only provider is the deterministic fake; no model routes).
-    credentialRefs: [],
-    overrideInUse: false,
-  };
-}
-
 async function readRuntimeDiagnostics(
   configPath: string,
   checkpoints: CheckpointStore,
 ): Promise<RuntimeDiagnosticResult> {
-  let configurationFile: RuntimeDiagnosticResult["configurationFile"] = {
-    state: "readable",
-    detail: null,
-  };
-  try {
-    const stats = await stat(configPath);
-    if (!stats.isFile()) {
-      configurationFile = {
-        state: "unreadable",
-        detail: "configuration path is not a regular file",
-      };
-    }
-  } catch (error: unknown) {
-    if (isNotFoundError(error)) {
-      configurationFile = { state: "missing", detail: null };
-    } else {
-      configurationFile = { state: "unreadable", detail: "configuration could not be inspected" };
-    }
-  }
+  const fileState = await readConfigurationFileState(configPath);
+  const configurationFile: RuntimeDiagnosticResult["configurationFile"] =
+    fileState === "readable"
+      ? { state: "readable", detail: null }
+      : fileState === "missing"
+        ? { state: "missing", detail: null }
+        : { state: "unreadable", detail: "configuration path is not a regular file" };
   let checkpointStoreAccessible = true;
   try {
     await checkpoints.list({ limit: 1 });
@@ -179,7 +105,9 @@ function readProviderDiagnostics(provider: ModelProvider): ProviderDiagnosticRes
   return {
     active: {
       profileId: provider.id,
-      toolCalling: provider.toolCalling ?? true,
+      // Absent toolCalling stays unknown (never assumed); the deterministic
+      // fake declares toolCalling: true, so the real wiring reports it.
+      toolCalling: provider.toolCalling ?? null,
       state: "available",
       reason: null,
     },
@@ -201,15 +129,25 @@ async function readSandboxDiagnostics(
   profile: SandboxProfile,
 ): Promise<SandboxDiagnosticResult> {
   const backend = await sandbox.inspect();
+  // Mirror the authoritative execution gate (sandboxEnforcesBoundary in the
+  // git adapter and the Godot runners): any sandboxed command requires the
+  // FULL boundary — filesystem read+write restriction, network restriction,
+  // and process-tree restriction — so a process-enabled profile requires all
+  // four capabilities. Profiles without process execution (inspect) require
+  // no sandboxed execution at all; the doctor reports that explicitly.
   const requiredCapabilitiesMissing: string[] = [];
-  if (profile.process.enabled && !backend.capabilities.processTreeRestriction) {
-    requiredCapabilitiesMissing.push("processTreeRestriction");
-  }
-  if (
-    profile.filesystem.workspaceAccess !== "read-only" &&
-    !backend.capabilities.filesystemWriteRestriction
-  ) {
-    requiredCapabilitiesMissing.push("filesystemWriteRestriction");
+  if (profile.process.enabled) {
+    const required = [
+      ["filesystemReadRestriction", "filesystemReadRestriction"],
+      ["filesystemWriteRestriction", "filesystemWriteRestriction"],
+      ["networkRestriction", "networkRestriction"],
+      ["processTreeRestriction", "processTreeRestriction"],
+    ] as const;
+    for (const [capability, label] of required) {
+      if (!backend.capabilities[capability]) {
+        requiredCapabilitiesMissing.push(label);
+      }
+    }
   }
   return {
     backend,
@@ -280,7 +218,12 @@ async function readGodotDiagnostics(
   const versionMatch =
     report.cache.enabled && selected !== null
       ? report.cache.cachedProfileCount > 0
-        ? { state: "exact" as const, reason: null }
+        ? // The cache payload carries no fingerprint, so exactness cannot be
+          // proven; report unknown rather than guessing "exact".
+          {
+            state: "unknown" as const,
+            reason: "cached profile exists but fingerprint comparison is unavailable",
+          }
         : { state: "absent" as const, reason: "no cached profile for the selected engine" }
       : {
           state: "absent" as const,
@@ -353,11 +296,14 @@ function readResearchDiagnostics(
     })),
     policyRule: rule,
     gate: rule === "deny" ? "blocked_by_policy" : "allowed",
+    // Both research adapters are implemented (repository = GitHub
+    // known-file/release content over the bounded HTTPS transport; godot_docs
+    // = Godot documentation pages). Availability is NOT the gate — the
+    // research.fetch policy rule is, and every built-in profile denies it.
     adapterAvailability: sources.map((source) => ({
       kind: source.kind,
-      available: source.kind === "godot-docs",
-      reason:
-        source.kind === "repository" ? "sandboxed git execution unavailable at this stage" : null,
+      available: true,
+      reason: null,
     })),
     latestEvidenceCount: research.latestEvidence().length,
   };

@@ -24,7 +24,13 @@ import {
   type ToolDefinition,
   type WorkspaceDiagnosticResult,
 } from "@solaris/core";
-import { createCapabilityDoctor } from "@solaris/core";
+import {
+  createCapabilityDoctor,
+  createResearchService,
+  defaultResearchBounds,
+  getBuiltInProfile,
+  type RegisteredTool,
+} from "@solaris/core";
 import {
   createBehaviorLoopHarness,
   createTempWorkspace,
@@ -230,6 +236,7 @@ function merge<T>(base: T, override: Partial<T> | Error | undefined): T | Error 
 function sources(
   overrides: {
     runtime?: Partial<RuntimeDiagnosticResult>;
+    configuration?: Partial<ConfigurationDiagnosticResult>;
     providers?: Partial<ProviderDiagnosticResult>;
     sandbox?: Partial<SandboxDiagnosticResult>;
     workspace?: Partial<WorkspaceDiagnosticResult>;
@@ -242,7 +249,8 @@ function sources(
 ): DoctorSources {
   return {
     runtime: () => Promise.resolve(merge(OK_RUNTIME, overrides.runtime) as RuntimeDiagnosticResult),
-    configuration: () => Promise.resolve(OK_CONFIG),
+    configuration: () =>
+      Promise.resolve(merge(OK_CONFIG, overrides.configuration) as ConfigurationDiagnosticResult),
     providers: () =>
       Promise.resolve(merge(OK_PROVIDERS, overrides.providers) as ProviderDiagnosticResult),
     sandbox: () => Promise.resolve(merge(OK_SANDBOX, overrides.sandbox) as SandboxDiagnosticResult),
@@ -261,6 +269,29 @@ function sources(
 
 const doctor = (overrides: Parameters<typeof sources>[0] = {}) =>
   createCapabilityDoctor(sources(overrides));
+
+/** Research tools registered in the harness registry (policy denies research.fetch in every built-in profile). */
+const RESEARCH_TOOLS: readonly RegisteredTool[] = [
+  {
+    definition: {
+      name: "research.repository",
+      description: "Fetch repository research",
+      inputSchema: { type: "object" },
+    },
+    capability: "research.fetch",
+    // Never executed: policy hides these tools before any provider request.
+    execute: () => Promise.resolve({ status: "success", summary: "stub", output: {} }),
+  },
+  {
+    definition: {
+      name: "research.godot_docs",
+      description: "Fetch Godot documentation research",
+      inputSchema: { type: "object" },
+    },
+    capability: "research.fetch",
+    execute: () => Promise.resolve({ status: "success", summary: "stub", output: {} }),
+  },
+];
 
 function findCheck(report: DoctorReport, id: string) {
   const check = report.checks.find((entry) => entry.id === id);
@@ -395,15 +426,56 @@ describe("Capability snapshot behaviors (6, 11)", () => {
   });
 
   it("11. default provider doctor performs no network request", async () => {
-    const transportCalls = 0;
-    const researchWithTransport = {
-      ...OK_RESEARCH,
+    // A real recording transport is wired through a real Godot-docs source
+    // and research service; the doctor consumes the service-derived result,
+    // so any fetch in the doctor path would increment the counter.
+    const { createFakeTransport, createGodotDocsResearchSource } =
+      await import("@solaris/adapters");
+    let fetchCalls = 0;
+    const transport = createFakeTransport({});
+    const wrapped = {
+      get(url: string, options: { readonly signal: AbortSignal }): Promise<unknown> {
+        fetchCalls += 1;
+        return transport.get(url, options as never);
+      },
     };
-    const report = await doctor({ research: researchWithTransport }).inspect({});
+    const source = createGodotDocsResearchSource({ transport: wrapped as never });
+    const service = createResearchService({
+      policy: POLICY,
+      profile: getBuiltInProfile("inspect"),
+      sources: [source],
+    });
+    // Control: the counter is genuinely wired — invoking the source
+    // directly (bypassing the policy gate) reaches the transport.
+    const control = await source.fetch(
+      {
+        source: { kind: source.kind, id: source.id, label: source.label },
+        query: "signal",
+        topic: null,
+        path: null,
+        ref: null,
+        version: null,
+        maxBytes: null,
+      },
+      defaultResearchBounds(),
+      new AbortController().signal,
+    );
+    // The control proves the counter is wired: the transport was reached
+    // (the outcome may be failed without a fake route — the counter is the
+    // assertion).
+    void control;
+    expect(fetchCalls).toBe(1);
+    fetchCalls = 0;
+    const research: ResearchDiagnosticResult = {
+      sources: [{ kind: source.kind, id: source.id, label: source.label }],
+      policyRule: POLICY.rules["research.fetch"],
+      gate: "blocked_by_policy",
+      adapterAvailability: [{ kind: source.kind, available: true, reason: null }],
+      latestEvidenceCount: service.latestEvidence().length,
+    };
+    const report = await doctor({ research }).inspect({});
     expect(report.counts.fail).toBe(0);
-    expect(transportCalls).toBe(0);
-    // No network surface exists anywhere in the doctor graph; the
-    // research gate is blocked by policy and nothing fetched.
+    expect(fetchCalls).toBe(0);
     const policy = findCheck(report, "research.policy");
     expect(JSON.stringify(policy.details)).toContain("blocked_by_policy");
   });
@@ -466,6 +538,8 @@ describe("Sandbox doctor behaviors (12–14)", () => {
   it("12. sandbox backend unavailable for a required profile reports failure", async () => {
     const report = await doctor({
       sandbox: {
+        selectedProfileId: "develop-offline",
+        profileRequiresProcess: true,
         backend: {
           state: "failed",
           backendId: "anthropic-runtime",
@@ -480,7 +554,12 @@ describe("Sandbox doctor behaviors (12–14)", () => {
           },
           message: "sandbox runtime failed to start",
         },
-        requiredCapabilitiesMissing: ["processTreeRestriction"],
+        requiredCapabilitiesMissing: [
+          "filesystemReadRestriction",
+          "filesystemWriteRestriction",
+          "networkRestriction",
+          "processTreeRestriction",
+        ],
       },
     }).inspect({ areas: ["sandbox"] });
     expect(findCheck(report, "sandbox.backend").status).toBe("fail");
@@ -638,36 +717,107 @@ describe("Reference/research doctor behaviors (18–20)", () => {
   });
 
   it("19. default doctor does not fetch or update a remote reference", async () => {
-    const materializeCalls = 0;
-    const report = await doctor({
-      references: {
-        references: [
-          {
-            alias: "remote",
-            kind: "repository",
-            trust: "explicit-user",
-            status: "ready",
-            failureReason: null,
-            revision: { kind: "commit", fingerprint: null, commit: "a1b2c3" },
-            materialized: "unavailable",
-          },
-        ],
+    // A real reference registry (adapters) with a repository reference and
+    // a recording materializer: the doctor's reference diagnostics derive
+    // from the registry exactly like the composition root does, so any
+    // materialize/refresh in the doctor path would increment the counter.
+    const { createReferenceServices } = await import("@solaris/adapters");
+    let materializeCalls = 0;
+    const recordingMaterializer = {
+      materialize(): Promise<{ status: "unavailable"; reason: string }> {
+        materializeCalls += 1;
+        return Promise.resolve({ status: "unavailable", reason: "doctor never materializes" });
       },
-    }).inspect({ areas: ["references"] });
-    expect(report.counts.fail).toBe(0);
-    expect(materializeCalls).toBe(0);
-    expect(JSON.stringify(findCheck(report, "references.revisions").details)).toContain("a1b2c3");
+      status(): "not-materialized" {
+        return "not-materialized";
+      },
+    };
+    const services = await createReferenceServices({
+      declarations: [
+        {
+          alias: "remote",
+          kind: "repository",
+          source: {
+            kind: "repository",
+            repository: "https://github.com/example/docs",
+            ref: { kind: "commit", commit: "a1b2c3d4" },
+          },
+          description: "remote docs",
+        },
+      ],
+      workspaceRoot: "/tmp/unrelated-workspace",
+      materializer: recordingMaterializer,
+    });
+    try {
+      const result: ReferenceDiagnosticResult = {
+        configError: null,
+        references: services.registry.list().map((reference) => {
+          const revision = services.registry.revision(reference.id);
+          return {
+            alias: reference.alias,
+            kind: reference.kind,
+            trust: reference.trust,
+            status: reference.status,
+            failureReason: reference.failureReason,
+            revision:
+              revision === null
+                ? null
+                : revision.identity.kind === "repository"
+                  ? { kind: "commit", fingerprint: null, commit: revision.identity.commit }
+                  : {
+                      kind: "fingerprint",
+                      fingerprint: revision.identity.fingerprint,
+                      commit: null,
+                    },
+            materialized: "unavailable (repository materialization is not available at this stage)",
+          };
+        }),
+      };
+      const before = JSON.stringify(services.registry.list());
+      const report = await doctor({ references: result }).inspect({ areas: ["references"] });
+      expect(report.counts.fail).toBe(0);
+      expect(materializeCalls).toBe(0);
+      const revisions = findCheck(report, "references.revisions");
+      const text = JSON.stringify(revisions.details);
+      expect(text).toContain("remote");
+      // The registry truthfully reports the repository as unavailable
+      // (resolution requires sandboxed git, which is not available at this
+      // stage) with no revision — nothing was fetched or resolved.
+      expect(text).toContain("unavailable");
+      expect(text).toContain("revision: none");
+      // The registry is unchanged afterwards — nothing refreshed or
+      // re-resolved by the doctor.
+      expect(JSON.stringify(services.registry.list())).toBe(before);
+    } finally {
+      services.close();
+    }
   });
 
   it("20. research doctor makes no network requests by default", async () => {
-    const sourceCalls = 0;
+    // Same recording-transport wiring as behavior 11, restricted to the
+    // research area: the transport is the only network surface in the
+    // graph and the doctor never reaches it.
+    const { createFakeTransport, createGodotDocsResearchSource } =
+      await import("@solaris/adapters");
+    let fetchCalls = 0;
+    const transport = createFakeTransport({});
+    const wrapped = {
+      get(url: string, options: { readonly signal: AbortSignal }): Promise<unknown> {
+        fetchCalls += 1;
+        return transport.get(url, options as never);
+      },
+    };
+    const source = createGodotDocsResearchSource({ transport: wrapped as never });
     const research: ResearchDiagnosticResult = {
-      ...OK_RESEARCH,
-      adapterAvailability: [{ kind: "repository", available: false, reason: "unavailable" }],
+      sources: [{ kind: source.kind, id: source.id, label: source.label }],
+      policyRule: POLICY.rules["research.fetch"],
+      gate: "blocked_by_policy",
+      adapterAvailability: [{ kind: source.kind, available: true, reason: null }],
+      latestEvidenceCount: 0,
     };
     const report = await doctor({ research }).inspect({ areas: ["research"] });
     expect(report.counts.fail).toBe(0);
-    expect(sourceCalls).toBe(0);
+    expect(fetchCalls).toBe(0);
     const policy = findCheck(report, "research.policy");
     expect(JSON.stringify(policy.details)).toContain("deny");
   });
@@ -730,7 +880,11 @@ describe("Capability-resolution behaviors (21–24)", () => {
   it("22. hidden tool remains absent from the actual provider schema; doctor introspection does not alter projection", async () => {
     let harness: BehaviorLoopHarness | null = null;
     try {
-      harness = await createBehaviorLoopHarness({ projection: true, recording: true });
+      harness = await createBehaviorLoopHarness({
+        projection: true,
+        recording: true,
+        extraTools: RESEARCH_TOOLS,
+      });
       const before = harness.requests();
       await harness.runPrompt("list files");
       // research.* tools are hidden under the default deny policy and were
@@ -770,11 +924,6 @@ describe("Capability-resolution behaviors (21–24)", () => {
           activeTask: true,
           runtimeVersion: "task-runtime-1",
           differences: [
-            {
-              field: "provider profile",
-              snapshotValue: "deterministic-fake",
-              currentValue: "deterministic-fake",
-            },
             { field: "sandbox profile", snapshotValue: "inspect", currentValue: "develop-offline" },
           ],
         },
@@ -824,13 +973,31 @@ describe("Safe report behaviors (25–28)", () => {
   });
 
   it("26. safe report excludes provider secret values", async () => {
-    const report = await doctor({
-      providers: {
-        credentials: [{ name: "OPENROUTER_API_KEY", referenced: true, present: true }],
-      },
-    }).inspect({ areas: ["providers"] });
-    const text = JSON.stringify(toSafeReport(report));
-    expect(text).not.toMatch(/sk-/);
+    // A real configuration file carries a secret-shaped value in a field;
+    // the REAL config diagnostics read it (the loader rejects unknown
+    // fields and its error names the field, never the value). The safe
+    // report must not contain the value or any credential token.
+    const secret = "sk-CONFIGSECRETVALUE9876543210";
+    const fixture = await createTempWorkspace();
+    try {
+      await writeFile(
+        join(fixture.root, "config.json"),
+        JSON.stringify({ sandbox: { profile: "inspect" }, providerCredential: secret }),
+        "utf8",
+      );
+      const { readConfigurationDiagnostics } = await import("@solaris/adapters");
+      const configuration = await readConfigurationDiagnostics(join(fixture.root, "config.json"));
+      expect(configuration.loaded).toBe(false);
+      const report = await doctor({ configuration }).inspect({ areas: ["configuration"] });
+      const text = JSON.stringify(toSafeReport(report));
+      expect(text).not.toContain(secret);
+      expect(text).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/);
+      // The failure itself is reported (the loader rejected the unknown
+      // field) — the secret value never is.
+      expect(findCheck(report, "configuration.validity").status).toBe("fail");
+    } finally {
+      await fixture.cleanup();
+    }
   });
 
   it("27. safe report excludes source/project content", async () => {
@@ -924,7 +1091,11 @@ describe("Workflow regression and authority behaviors (31–32)", () => {
   it("32. model memory cannot elevate an unsupported capability", async () => {
     let harness: BehaviorLoopHarness | null = null;
     try {
-      harness = await createBehaviorLoopHarness({ projection: true, recording: true });
+      harness = await createBehaviorLoopHarness({
+        projection: true,
+        recording: true,
+        extraTools: RESEARCH_TOOLS,
+      });
       // The model "claims" a capability that policy denies; the runtime
       // projects it hidden and the provider request never carries it.
       const report = await doctor({
@@ -952,21 +1123,48 @@ describe("Workflow regression and authority behaviors (31–32)", () => {
 
 describe("Final-boundary effect tests (46–49)", () => {
   it("46. no-network default doctor: a controlled transport is never invoked", async () => {
-    // Attach a counting fake transport through a research service wiring
-    // and run the FULL doctor; the transport must never be invoked.
+    // The transport is the ONLY network surface in the graph: a recording
+    // wrapper around a real fake transport, wired through a real
+    // Godot-docs source into the research result the doctor consumes. The
+    // control proves the counter works (a direct source fetch reaches the
+    // transport); the full default doctor run must not invoke it.
     const { createFakeTransport, createGodotDocsResearchSource } =
       await import("@solaris/adapters");
+    let fetchCalls = 0;
     const transport = createFakeTransport({});
-    const source = createGodotDocsResearchSource({ transport });
+    const wrapped = {
+      get(url: string, options: { readonly signal: AbortSignal }): Promise<unknown> {
+        fetchCalls += 1;
+        return transport.get(url, options as never);
+      },
+    };
+    const source = createGodotDocsResearchSource({ transport: wrapped as never });
+    const control = await source.fetch(
+      {
+        source: { kind: source.kind, id: source.id, label: source.label },
+        query: "signal",
+        topic: null,
+        path: null,
+        ref: null,
+        version: null,
+        maxBytes: null,
+      },
+      defaultResearchBounds(),
+      new AbortController().signal,
+    );
+    // Control: the counter is genuinely wired — the transport was reached.
+    void control;
+    expect(fetchCalls).toBe(1);
+    fetchCalls = 0;
     const report = await doctor({
       research: {
         ...OK_RESEARCH,
         sources: [{ kind: source.kind, id: source.id, label: source.label }],
+        adapterAvailability: [{ kind: source.kind, available: true, reason: null }],
       },
     }).inspect({});
     expect(report.counts.fail).toBe(0);
-    const calls = JSON.stringify(transport);
-    expect(calls).not.toContain("fetch");
+    expect(fetchCalls).toBe(0);
   });
 
   it("47. no-mutation effect: doctor leaves a fixture workspace, checkpoints, and git index untouched", async () => {
@@ -979,7 +1177,49 @@ describe("Final-boundary effect tests (46–49)", () => {
         "utf8",
       );
       await writeFile(join(fixture.root, "main.gd"), "func _ready():\n\tpass\n", "utf8");
+      // A REAL git repository in the fixture: the doctor must leave the
+      // index and HEAD untouched.
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const exec = promisify(execFile);
+      await exec("git", ["init", "-q"], { cwd: fixture.root });
+      await exec("git", ["add", "."], { cwd: fixture.root });
+      await exec(
+        "git",
+        [
+          "-c",
+          "user.name=fixture",
+          "-c",
+          "user.email=fixture@example.test",
+          "commit",
+          "-q",
+          "-m",
+          "fixture",
+        ],
+        { cwd: fixture.root },
+      );
+      const gitDir = join(fixture.root, ".git");
+      // The harness scaffolds its own project files; let it settle, then
+      // commit the scaffold and take the git baseline AFTER the harness —
+      // the doctor is the only thing that must not touch the repository.
       const harness = await createBehaviorLoopHarness({ workspaceRoot: fixture.root });
+      await exec("git", ["add", "."], { cwd: fixture.root });
+      await exec(
+        "git",
+        [
+          "-c",
+          "user.name=fixture",
+          "-c",
+          "user.email=fixture@example.test",
+          "commit",
+          "-q",
+          "-m",
+          "scaffold",
+        ],
+        { cwd: fixture.root },
+      );
+      const beforeIndex = await readFile(join(gitDir, "index"));
+      const beforeHead = (await exec("git", ["rev-parse", "HEAD"], { cwd: fixture.root })).stdout;
       const beforeEntries = await readdir(fixture.root);
       const beforeCheckpoints = await harness.store.list();
       // Snapshot every file's bytes.
@@ -999,6 +1239,14 @@ describe("Final-boundary effect tests (46–49)", () => {
         expect(await readFile(join(fixture.root, entry), "utf8")).toBe(bytes);
       }
       expect(await harness.store.list()).toEqual(beforeCheckpoints);
+      // Git index and HEAD untouched, and the working tree still clean.
+      expect(await readFile(join(gitDir, "index"))).toEqual(beforeIndex);
+      const headAfter = (await exec("git", ["rev-parse", "HEAD"], { cwd: fixture.root })).stdout;
+      expect(headAfter).toBe(beforeHead);
+      const { stdout: statusAfter } = await exec("git", ["status", "--porcelain"], {
+        cwd: fixture.root,
+      });
+      expect(statusAfter.trim()).toBe("");
       await harness.cleanup();
     } finally {
       await fixture?.cleanup();
@@ -1006,18 +1254,34 @@ describe("Final-boundary effect tests (46–49)", () => {
   });
 
   it("48. secret-report effect: an injected synthetic secret never reaches the human or JSON reports", async () => {
+    // The secret is injected at the REAL boundary: a configuration file
+    // containing a credential-shaped value, read by the REAL config
+    // diagnostics (the loader rejects the unknown field by name, never by
+    // value). Neither the human report (with details) nor the JSON safe
+    // report may contain the value or any credential-shaped token.
     const secret = "sk-SUPERSECRETTESTVALUE1234567890";
-    const report = await doctor({
-      providers: {
-        credentials: [{ name: "OPENROUTER_API_KEY", referenced: true, present: true }],
-      },
-    }).inspect({});
-    const human = JSON.stringify(report);
-    const safe = JSON.stringify(toSafeReport(report));
-    expect(human).not.toContain(secret);
-    expect(safe).not.toContain(secret);
-    expect(human).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/);
-    expect(safe).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/);
+    const fixture = await createTempWorkspace();
+    try {
+      await writeFile(
+        join(fixture.root, "config.json"),
+        JSON.stringify({ sandbox: { profile: "inspect" }, providerCredential: secret }),
+        "utf8",
+      );
+      const { readConfigurationDiagnostics } = await import("@solaris/adapters");
+      const configuration = await readConfigurationDiagnostics(join(fixture.root, "config.json"));
+      const report = await doctor({ configuration }).inspect({});
+      const human = JSON.stringify(report);
+      const safe = JSON.stringify(toSafeReport(report));
+      expect(human).not.toContain(secret);
+      expect(safe).not.toContain(secret);
+      expect(human).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/);
+      expect(safe).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/);
+      // The failure itself IS reported (unknown field rejected by the
+      // loader) — only the value is excluded.
+      expect(findCheck(report, "configuration.validity").status).toBe("fail");
+    } finally {
+      await fixture.cleanup();
+    }
   });
 
   it("49. self-reference drift: newly registered tools cannot exist without appearing in self-reference metadata", () => {

@@ -72,6 +72,31 @@ describe("config schema summary conformance", () => {
     }
   });
 
+  it("documents exactly the schema's key shapes (JSON type)", async () => {
+    const schema = await loadSchema();
+    for (const section of CONFIG_SCHEMA_SUMMARY) {
+      for (const key of section.keys) {
+        const schemaSection = schema.properties?.[section.name];
+        // The alias key's shape is the declaration object
+        // (additionalProperties map); the summary documents it as "object".
+        const schemaKey =
+          schemaSection?.properties?.[key.name] ??
+          (typeof schemaSection?.additionalProperties === "object"
+            ? schemaSection.additionalProperties
+            : undefined);
+        const schemaType =
+          key.name === "<alias>"
+            ? "object"
+            : Array.isArray(schemaKey?.type)
+              ? (schemaKey.type as unknown[]).join("|")
+              : typeof schemaKey?.type === "string"
+                ? schemaKey.type
+                : "unknown";
+        expect(key.shape, `section ${section.name}.${key.name}`).toBe(schemaType);
+      }
+    }
+  });
+
   it("has a stable revision", async () => {
     const { CONFIG_SCHEMA_REVISION } = await import("@solaris/core");
     expect(CONFIG_SCHEMA_REVISION).toMatch(/^[0-9a-f]{64}$/);

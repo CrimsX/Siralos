@@ -38,6 +38,7 @@ import {
   type ProjectionService,
   type GDScriptDevelopmentService,
   type ReferenceAccessPort,
+  type RegisteredTool,
   type ReferenceEvidenceView,
   type ResearchService,
   type SolarisApplication,
@@ -160,6 +161,13 @@ export interface BehaviorLoopHarnessOptions {
   readonly references?: ReferenceServices;
   /** Wire a research service into the `[Research evidence]` projection section (requires `projection: true`). */
   readonly research?: ResearchService;
+  /**
+   * Extra registered tools appended to the harness tool registry (e.g.
+   * research tools registered under the deny-by-default research.fetch
+   * capability, so the hidden-by-policy path is exercised through the real
+   * ToolProjector and provider requests).
+   */
+  readonly extraTools?: readonly RegisteredTool[];
   /** Wrap the application provider in a recording provider for request assertions. */
   readonly recording?: boolean;
   /** Reviewer scenario for the quality stage (fake-change-reviewer). */
@@ -360,6 +368,7 @@ export async function createBehaviorLoopHarness(
     createWorkspaceApplyTextChangesetTool(development),
     createGodotDevelopmentStatusTool(development),
     ...referenceTools,
+    ...(options.extraTools ?? []),
   ]);
   const { runtime, sources, now } = createBehaviorRuntime();
   const recording = options.recording === true ? createRecordingProvider() : null;

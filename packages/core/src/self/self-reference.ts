@@ -303,7 +303,7 @@ function referencesSection(): SelfReferenceSection {
 }
 
 const RESEARCH_LINES: readonly SelfReferenceLine[] = [
-  line("capability", "research.fetch (denied by every built-in profile)"),
+  line("capability", "research.fetch — denied by every built-in profile"),
   line(
     "source-kinds",
     "repository (GitHub known-file/release content) | godot_docs (Godot documentation pages)",

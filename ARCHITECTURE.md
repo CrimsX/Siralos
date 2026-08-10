@@ -162,7 +162,7 @@ The workspace root is the canonicalized directory Solaris was launched from; it 
 The CLI is an input/output adapter:
 
 - Reads terminal input and renders terminal output through a small `SessionIO` interface
-- Parses slash commands (`/help`, `/status`, `/clear`, `/exit`, and the Godot commands `/godot`, `/godot-installations`, `/godot-project`, `/godot-doctor`) in a pure module separate from rendering
+- Parses every command in `COMMAND_CATALOG` (the `SlashCommand` union derives from it, and the session switch is exhaustiveness-checked against it) in a pure module separate from rendering
 - Renders application events incrementally
 - Handles process startup, EOF, `Ctrl+C`, and shutdown
 - Exposes the `solaris` binary and the composition root

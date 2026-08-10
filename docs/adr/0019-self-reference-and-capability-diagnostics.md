@@ -62,10 +62,12 @@ Introduce three host-owned surfaces plus safe reporting:
    offline and non-paid; every probe is bounded by a per-check timeout;
    failures are classified honestly (required sandbox enforcement
    failures are `fail`, never "warn but usable"); recovery/LSP/check-only
-   operations are reported as "available but requires approval" and are
-   never triggered by the doctor; current task runtime snapshots are
-   compared against the current global configuration as diagnostic facts
-   and are never mutated. Safe reports (`--report-safe`) and JSON output
+   operations are reported separately as approval-required (policy
+   rule) and are never triggered by the doctor, with their execution
+   state reported truthfully — currently `unavailable` at this stage
+   because execution cannot be identity-bound; current task runtime
+   snapshots are compared against the current global configuration as
+   diagnostic facts and are never mutated. Safe reports (`--report-safe`) and JSON output
    (`--json`, schema-versioned) are deterministic, bounded, and
    sanitized: absolute user paths, credential values, and source content
    are excluded; the safe report is NOT anonymous (OS family, Node

@@ -48,13 +48,16 @@ export interface SafeDoctorReport {
 }
 
 const PATH_PATTERNS: readonly RegExp[] = [
-  // Windows drive paths
+  // Windows drive paths (backslash and forward-slash forms)
   /[A-Za-z]:\\[^\s"']*/g,
+  /[A-Za-z]:\/[^\s"']*/g,
   // POSIX absolute paths under common roots
   /\/(?:Users|home|tmp|var|etc|usr|opt|mnt|media|run|srv|root|workspaces|app|data)(?:\/[^\s"']*)?/g,
   // Defense in depth: any other multi-segment absolute POSIX path (two or
   // more segments, so single-segment tokens like "/doctor" stay intact).
   /\/(?:[A-Za-z0-9_.-]+\/){2,}[^\s"']*/g,
+  // UNC shares
+  /\\\\[A-Za-z0-9_.-]+\\[^\s"']*/g,
   // Leading home shorthand
   /~[^\s"']*/g,
 ];

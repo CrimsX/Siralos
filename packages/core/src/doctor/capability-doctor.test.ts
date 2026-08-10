@@ -396,6 +396,10 @@ describe("capability doctor", () => {
     const doctor = createCapabilityDoctor(
       fakeDoctorSources({
         sandbox: {
+          // A process-enabled profile requires the full boundary; the
+          // backend cannot provide process-tree restriction.
+          selectedProfileId: "develop-offline",
+          profileRequiresProcess: true,
           requiredCapabilitiesMissing: ["processTreeRestriction"],
         },
       }),

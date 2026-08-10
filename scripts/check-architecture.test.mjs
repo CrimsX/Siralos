@@ -1591,6 +1591,30 @@ describe("doctor and self-reference boundaries (milestone 6)", () => {
     ).toBe(true);
   });
 
+  it("rejects doctor modules performing global fetch( calls (no import needed)", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/capability-doctor.ts"] =
+      'export async function x() {\n  await fetch("https://example.com");\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("doctor and self-reference modules must not perform network calls"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects doctor modules importing bare https (not just node:-prefixed)", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/doctor/capability-doctor.ts"] =
+      'import { request } from "https";\nexport const x = request;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("doctor and self-reference modules must not import network modules"),
+      ),
+    ).toBe(true);
+  });
+
   it("rejects doctor modules importing checkpoint machinery", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/core/src/doctor/capability-doctor.ts"] =

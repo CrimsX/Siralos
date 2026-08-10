@@ -2347,3 +2347,49 @@ describe("runInteractiveSession quality commands", () => {
     });
   });
 });
+
+describe("runInteractiveSession self-reference and doctor commands", () => {
+  it("renders the installed-runtime identity for /solaris", async () => {
+    const { io, application, sessionInfo } = await createComposedSession(["/solaris", "/exit"]);
+    const exitCode = await runInteractiveSession(io, application, sessionInfo);
+    expect(exitCode).toBe(0);
+    expect(io.text).toContain("@solaris — installed Solaris runtime");
+    expect(io.text).toContain("Version: 0.0.0");
+    expect(io.text).toContain("Self-reference revision:");
+    expect(io.text).toContain("Sections (self.read <section>):");
+  });
+
+  it("renders a bounded doctor report for /doctor", async () => {
+    const { io, application, sessionInfo } = await createComposedSession(["/doctor", "/exit"]);
+    const exitCode = await runInteractiveSession(io, application, sessionInfo);
+    expect(exitCode).toBe(0);
+    expect(io.text).toContain("Solaris Doctor");
+    expect(io.text).toContain("runtime");
+    expect(io.text).toContain(
+      "Exit codes: 0 = no failures, 1 = one or more failures, 2 = invocation error.",
+    );
+  });
+
+  it("filters /doctor to one area", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "/doctor providers",
+      "/exit",
+    ]);
+    await runInteractiveSession(io, application, sessionInfo);
+    expect(io.text).toContain("Solaris Doctor");
+    expect(io.text).toContain("providers");
+    expect(io.text).not.toContain("runtime         PASS");
+  });
+
+  it("reports an unknown doctor area without ending the session", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "/doctor bogus",
+      "/status",
+      "/exit",
+    ]);
+    const exitCode = await runInteractiveSession(io, application, sessionInfo);
+    expect(exitCode).toBe(0);
+    expect(io.text).toContain("Unknown doctor area: bogus");
+    expect(io.text).toContain("Provider: deterministic-fake");
+  });
+});

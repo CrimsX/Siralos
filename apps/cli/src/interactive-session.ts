@@ -389,6 +389,14 @@ export async function runInteractiveSession(
             break;
           case "exit":
             return 0;
+          default: {
+            // Exhaustiveness guard: the switch cannot drift from the
+            // command catalog — a catalogued command without a case here
+            // fails to compile (parsed.command would not be `never`).
+            const exhaustive: never = parsed.command;
+            void exhaustive;
+            io.write("Unhandled command.\n");
+          }
         }
         break;
       case "empty":

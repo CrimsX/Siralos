@@ -133,8 +133,9 @@ authority separation as everything else:
 - **Fail-closed reporting.** If a required sandbox profile cannot be
   enforced, the doctor reports `fail`, never "warn but usable", and never
   an unrestricted fallback. Recovery/LSP/check-only capabilities are
-  reported as "available but requires approval" and are never triggered
-  by the doctor.
+  reported separately as approval-required (policy rule) and never
+  triggered by the doctor, with their execution state reported
+  truthfully — currently `unavailable` at this stage.
 - **No secrets in reports.** Doctor checks report credential _names_ and
   presence only, never values. The safe report (`--report-safe`) drops
   details/remediations, sanitizes summaries (absolute paths and

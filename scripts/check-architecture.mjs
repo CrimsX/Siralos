@@ -1397,6 +1397,16 @@ export function runChecks(root) {
               `${location}: projection modules must not perform network calls; fetch( is prohibited — ContextProjector builds pure deterministic model context with no network I/O`,
             );
           }
+          if (
+            pkg.name === "@solaris/core" &&
+            (isCoreDoctorModule(packageRelativeFile) || isCoreSelfModule(packageRelativeFile)) &&
+            !isTestSupportFile(file) &&
+            /\bfetch\s*\(/.test(source)
+          ) {
+            errors.push(
+              `${location}: doctor and self-reference modules must not perform network calls; fetch( is prohibited — the default doctor is offline by construction (a global fetch( needs no import)`,
+            );
+          }
           if (isDevelopmentWorkflowOrchestrator(packageRelativeFile)) {
             for (const specifier of analysis.imports) {
               if (
