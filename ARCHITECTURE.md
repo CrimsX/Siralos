@@ -911,3 +911,98 @@ separate from diagnostic collection; self-reference tool adapters carry
 only the fixed `self.inspect` capability. The CLI composition root wires
 everything: `solaris --doctor [area] [--json] [--report-safe]`, `--self`,
 `/doctor [area]`, `/solaris`.
+
+## Host-controlled planning (Stage 3 milestone 7, ADR 0020)
+
+Planning is a runtime-owned phase. The model may propose a plan, but the
+host decides whether planning is needed, how deep it is, and whether it
+is approved:
+
+```text
+TaskContract
+    ↓
+PlanningPolicy (deterministic host routing)
+    ├── none   → existing Task Runtime path (no planner call)
+    ├── light  → read-only plan → host validation → execution
+    └── full   → read-only plan → host validation → plan approval → execution
+```
+
+### Ownership
+
+- **PlanningPolicy** (`packages/core/src/planning/planning-policy.ts`)
+  — pure deterministic depth routing from host-visible task facts;
+  identical inputs produce identical decisions; never a model call.
+- **Planner** (`packages/adapters/src/planning/planner-executor.ts`) —
+  advisory and read-only; proposes structured plan content only; fresh
+  provider context per attempt; bounded budget with stall detection.
+- **TaskPlan** (`packages/core/src/planning/planning-model.ts`) —
+  immutable revisioned planning artifact bound to the exact TaskContract
+  revision; identity is host-assigned; revisions only advance by one.
+- **TaskState** (`packages/core/src/tasks/task-runtime.ts`) — owns
+  execution progress and carries a bounded plan reference (id, revision,
+  depth, state, approval, stale reason). Plan steps never become
+  competing mutable progress.
+- **Approval system** (`packages/core/src/security/approval.ts`) —
+  authorizes plan acceptance and mutations separately. Plan approval
+  binds to the exact plan revision and TaskContract revision; it never
+  authorizes source edits or commands.
+
+### Read-only planner
+
+The planner capability profile is structurally read-only, enforced three
+ways: the composition-root registry contains only read-only tools
+(workspace inspection, Godot inspection/API knowledge, references,
+policy-gated research, self-reference); the executor refuses every
+prepared or non-read-only tool at the runtime boundary; and the
+ToolProjector `planning` mode hides mutation, process, and approval-grant
+tools from the provider-visible schema. The planner cannot approve its
+own plan, approve edits, broaden capabilities, mark validation complete,
+or mark the task complete, and it cannot choose planning depth.
+
+### Plan lifecycle
+
+```text
+planner output (untrusted)
+    ↓ validatePlanCandidate (depth match, bounds, paths, revisions,
+    │   acceptance refs, secrets, policy-shaped claims)
+    ↓ createTaskPlan / reviseTaskPlan (host-owned identity)
+    ↓ handle.setPlan  → plan_created
+    ↓ handle.approvePlan (exact revision binding) → plan_approved
+    ↓ TaskContract revision change → stale + approval invalidated
+```
+
+### Plan approval semantics
+
+```text
+approve plan rev N  ⇒  only plan rev N is approved
+plan becomes rev N+1 ⇒  rev N approval is invalid (refused)
+TaskContract rev advances ⇒  plan stale, approval invalid (refused)
+```
+
+Plan approval does not approve edits: every source mutation still
+requires prepared exact diff → one-time mutation approval → checkpoint →
+apply. Plan requirements are descriptive and grant nothing.
+
+### CLI
+
+- `/plan <request>` — plan-only mode: read-only planning, structured plan
+  printed, zero workspace changes, zero mutation checkpoints, no
+  execution follows.
+- `/develop [--plan|--plan-light] <request>` — host-controlled routing
+  before the executor provider call; full plans ask for plan approval
+  through the interactive reviewer; verified-touchpoint staleness and the
+  full-plan acceptance gate surface before execution.
+- `/development-status`, `/status`, `/task-status` — planning depth, plan
+  revision, plan state, approval state, staleness.
+
+### Dependency direction
+
+Core planning modules never import provider ports, security/capability/
+approval machinery, mutation/checkpoint/development machinery,
+projection, or Godot modules (generic digest allowed). The planner adapter
+never imports workspace-mutation, process, checkpoint, sandbox, or
+environment adapters, and never imports planning policy/flow surfaces.
+Provider adapters never import planning policy/flow identifiers —
+providers never choose depth. TaskState remains the execution authority;
+the approval subsystem remains the authorization authority; ToolProjector
+remains the model-visible tool authority.

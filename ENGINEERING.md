@@ -252,6 +252,51 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
    grant no capabilities. Approvals, sandboxing, capability policy, path
    containment, and checkpoint integrity stay authoritative elsewhere.
 
+## Planning rules (Stage 3 milestone 7, ADR 0020)
+
+1. **Planning depth is selected by deterministic host policy.** The
+   `PlanningPolicy` routes `none | light | full` from host-visible task
+   facts; the model never classifies complexity and the provider never
+   chooses depth (architecture-enforced).
+2. **Simple tasks must not incur planner cost without reason.** `none`
+   routing never invokes a planner provider — the existing Task Runtime
+   path runs directly.
+3. **Planner capabilities are structurally read-only.** The planner
+   registry has no mutation/process/approval/checkpoint/undo tools, the
+   executor refuses every non-read-only tool at the runtime boundary, and
+   the ToolProjector `planning` mode hides anything else from the
+   provider-visible schema.
+4. **Plans are immutable and revisioned.** A material change produces rev
+   N+1; rev N is never mutated and stays inspectable. Plan identity is
+   host-assigned.
+5. **Plans bind to a TaskContract revision.** A plan created against rev
+   N is stale the moment the contract moves to N+1; stale plans are never
+   silently executed.
+6. **Verified touchpoints require evidence; guesses remain candidates.**
+   A verified touchpoint records the exact inspected workspace revision
+   handle; candidate touchpoints are explicitly unverified.
+7. **Full-plan execution requires explicit acceptance criteria.** At
+   least two criteria with one host-verifiable criterion, or mutation
+   execution is blocked with a precise reason.
+8. **Plan approval binds to the exact plan revision.** Advancing the plan
+   revision or the TaskContract revision invalidates the prior approval;
+   the runtime refuses stale approvals.
+9. **Plan approval never authorizes source edits or commands.** Mutations
+   and commands keep their own exact one-time approval paths; plan
+   requirements are descriptive and grant nothing.
+10. **Security/capability policy outranks plan content.** The plan model
+    has no capability surface, and policy-shaped claims in plan text are
+    rejected at validation.
+11. **TaskState, not TaskPlan, owns execution progress.** Plan steps are
+    proposed structure; they never become competing mutable progress.
+12. **Planner private reasoning is not authoritative state.** Planner and
+    executor use separate provider contexts; only the validated structured
+    plan (current revision) enters TaskState, projection, or activity.
+13. **Planning behavior requires final-boundary tests.** Behavior
+    fixtures 1–35 and effect tests 47–51 cover routing, read-only
+    enforcement, immutability, approval binding, staleness, plan-only
+    zero-effect, and security invariance.
+
 ## Projection rules
 
 1. **Authoritative state is never the provider context.** TaskContract,

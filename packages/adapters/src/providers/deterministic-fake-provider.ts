@@ -558,7 +558,7 @@ async function* streamPlanningScenario(
     return;
   }
   const prompt = findLatestUserPrompt(request.messages);
-  const depth = /This is a (LIGHT|FULL) plan/.test(prompt) ? "light" : "full";
+  const depth = /This is a LIGHT plan/.test(prompt) ? "light" : "full";
   const objective = extractPlanningRequest(prompt);
   const plan = {
     depth,

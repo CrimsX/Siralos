@@ -231,6 +231,53 @@ The recovery probe is the first moment Godot can execute project-authored code (
 - **Partial application recovery is hash-gated.** A partial infrastructure failure restores only the files Solaris just changed, each gated on its current hash still matching the partially applied result, restored from the just-created checkpoint preimages; external changes are preserved and reported; outcomes are `apply_failed_recovered`, `apply_failed_partial_recovery`, or `apply_failed_uncertain` — success is never reported after partial application.
 - **The source workspace is never a Godot project path**; runtime/game execution, scene execution, DAP, visual QA, and editor integration stay deferred; the workflow orchestrator and change-set executor import no Node infrastructure (architecture-enforced).
 
+## Host-controlled planning (ADR 0020)
+
+- **Planning depth is a host decision, never a model classification.** The
+  deterministic `PlanningPolicy` routes `none | light | full` from
+  host-visible task facts; the model never decides whether a plan is
+  needed, and provider adapters never choose depth (architecture-enforced).
+  `none` routing performs no planner call at all.
+- **The planner is structurally read-only and advisory.** The planner
+  registry contains no mutation, process, approval, checkpoint, or undo
+  tools; the executor refuses every non-read-only tool at the runtime
+  boundary; the ToolProjector `planning` mode hides the rest from the
+  provider-visible schema. The planner cannot approve anything, cannot
+  broaden capabilities, cannot mark validation or the task complete, and
+  its private reasoning is never stored or forwarded.
+- **Plan content never grants capability.** The plan model has no
+  capability/policy surface; validation rejects policy-shaped claims
+  ("enable unrestricted network", "disable sandbox") and secret-shaped
+  content; sandbox, capability policy, approval, and checkpoint authority
+  all remain outside planning. A rejected plan changes nothing.
+- **Plan approval binds to the exact plan revision and TaskContract
+  revision.** Approving plan rev N approves ONLY rev N; advancing the plan
+  revision or the TaskContract revision invalidates the prior approval,
+  and the runtime refuses stale approvals. **Plan approval never
+  authorizes source edits or commands**: every mutation still requires the
+  exact prepared change set → one-time mutation approval → checkpoint →
+  apply path, and every command keeps its own approval rules. Plan
+  requirements are descriptive grants of nothing.
+- **Plans are immutable and bound to the contract.** A plan revision is
+  never mutated in place; a changed plan is a new revision, and a plan is
+  stale the moment its TaskContract revision is no longer current — stale
+  plans are never silently executed.
+- **Verified touchpoints require evidence.** A verified touchpoint records
+  the exact inspected workspace revision handle; candidate touchpoints are
+  explicitly unverified and never promoted without evidence. Paths stay
+  workspace-relative and contained; reference/research namespaces are
+  never editable workspace paths.
+- **Full-plan execution requires explicit acceptance criteria** (at least
+  two criteria, one host-verifiable) before any source mutation; plans
+  never change acceptance criteria and never create a second acceptance
+  system.
+- **Plan-only mode is zero-effect.** `/plan` runs read-only planning and
+  stops: no source modification, no mutation approval requested (none was
+  prepared), zero workspace changes, zero mutation checkpoints.
+- **Planning has a bounded budget** (tool rounds, per-turn calls, output
+  bytes, timeout, attempts); repeated identical no-progress reads fail
+  planning cleanly and never grant mutation capability.
+
 ## Development quality gates and independent review (ADR 0013)
 
 > **Status note (fail-closed).** The quality stage lives inside the development workflow, whose change-set applier fails closed as unavailable on every platform; the stage, the reviewer plumbing, the validation executor, and the report machinery are tested internal code exercised through injected fakes, and in the shipped product no quality stage, review, or validation command runs. The opt-in `npm run test:godot-quality` conformance verifies this truthfully and always reports the live quality-stage isolation probe as skipped, never passed.
