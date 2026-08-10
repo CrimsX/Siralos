@@ -711,20 +711,30 @@ async function runDevelopCommand(
               io.write("  plan approved (binds to this exact plan revision only)\n");
             } else {
               io.write(`  \u2715 plan approval refused: ${approved.reason}\n`);
+              await cancelActiveDevelopment(io, sessionInfo);
+              return;
             }
           } else if (planDecision.type === "cancelled") {
             io.write("  \u2715 plan approval cancelled\n");
+            await cancelActiveDevelopment(io, sessionInfo);
+            return;
           } else {
             io.write(`  \u2715 plan denied: ${planDecision.reason ?? "not approved"}\n`);
+            await cancelActiveDevelopment(io, sessionInfo);
+            return;
           }
         }
         // Surface verified-touchpoint staleness before mutation starts
-        // (Part M §38); this never auto-invalidates the plan.
+        // (Part M §38). A stale verified revision invalidates the current
+        // plan before the executor boundary; it is never only a warning.
         const stale = planTouchpointStaleness(planningResult.plan, (path) =>
           sessionInfo.revisions.currentRevision(path),
         );
         if (stale.length > 0) {
           io.write(`  \u26A0 plan has stale verified touchpoints: ${stale.join(", ")}\n`);
+          handle.invalidatePlan(
+            `Verified plan touchpoints changed after inspection: ${stale.join(", ")}.`,
+          );
         }
       } else if (planningResult.status === "cancelled") {
         io.write("  \u2715 planning cancelled\n");
@@ -746,8 +756,8 @@ async function runDevelopCommand(
     }
     // Full-plan acceptance gate: the host refuses to start the executor
     // loop when the plan cannot support mutation execution (no meaningful
-    // acceptance criteria) or is stale — the gate is enforcement, not a
-    // warning, at this boundary.
+    // acceptance criteria, exact approval absent, or stale plan). The gate
+    // is enforcement, not a warning, at this boundary.
     const blocked = planningFlow.mutationExecutionBlocked();
     if (blocked !== null) {
       io.write(`  \u2715 ${blocked}\n`);

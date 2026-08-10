@@ -7,7 +7,7 @@ import {
   reviseTaskPlan,
   type TaskPlanContent,
 } from "./planning-model.js";
-import { validatePlanCandidate } from "./planning-validation.js";
+import { planTouchpointStaleness, validatePlanCandidate } from "./planning-validation.js";
 
 function makeContract(): TaskContract {
   return createTaskContract({
@@ -64,6 +64,43 @@ describe("validatePlanCandidate", () => {
     if (result.ok) {
       expect(result.content.objective).toContain("health regeneration");
       expect(result.content.touchpoints[0]?.confidence).toBe("verified");
+    }
+  });
+
+  it("returns an exact detached plan shape without unknown provider fields", () => {
+    const contract = makeContract();
+    const candidate = {
+      ...makeContent(),
+      touchpoints: [
+        {
+          id: "t1",
+          path: "src/player/player.gd",
+          confidence: "verified",
+          revision: "rev_".padEnd(36, "a"),
+          evidence: "read:src/player/player.gd",
+          untrustedExtra: "must not cross the validation boundary",
+        },
+      ],
+      steps: [
+        {
+          id: "step-1",
+          title: "Update player health timing state",
+          expectedTouchpoints: ["t1"],
+          verification: ["parses"],
+          untrustedExtra: { hidden: true },
+        },
+      ],
+    };
+
+    const result = validatePlanCandidate(candidate, { contract, depth: "full" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.content.touchpoints[0]).not.toHaveProperty("untrustedExtra");
+      expect(result.content.steps[0]).not.toHaveProperty("untrustedExtra");
+      candidate.touchpoints[0]!.path = "forged.gd";
+      candidate.steps[0]!.expectedTouchpoints[0] = "forged";
+      expect(result.content.touchpoints[0]?.path).toBe("src/player/player.gd");
+      expect(result.content.steps[0]?.expectedTouchpoints).toEqual(["t1"]);
     }
   });
 
@@ -227,6 +264,13 @@ describe("TaskPlan immutability and revision semantics", () => {
     expect(() => {
       (plan as { objective: string }).objective = "mutated";
     }).toThrow();
+    expect(Object.isFrozen(plan.scope)).toBe(true);
+    expect(Object.isFrozen(plan.steps)).toBe(true);
+    expect(Object.isFrozen(plan.steps[0]?.expectedTouchpoints)).toBe(true);
+    expect(() => {
+      (plan.steps as unknown as Array<{ title: string }>)[0]!.title = "forged nested step";
+    }).toThrow();
+    expect(plan.steps[0]?.title).toBe("Update player health timing state");
   });
 
   it("creates rev 2 rather than mutating rev 1 (fixture 12)", () => {
@@ -258,6 +302,42 @@ describe("TaskPlan immutability and revision semantics", () => {
     expect(plan.taskContractRevision).toBe(3);
   });
 
+  it("rejects non-finite or non-incrementable plan metadata", () => {
+    expect(() =>
+      createTaskPlan({
+        id: "plan-task-1",
+        taskId: "task-1",
+        taskContractRevision: Number.NaN,
+        depth: "full",
+        content: makeContent(),
+        createdAt: 1000,
+      }),
+    ).toThrow(/safe-integer task contract revision/);
+    expect(() =>
+      createTaskPlan({
+        id: "plan-task-1",
+        taskId: "task-1",
+        taskContractRevision: 1,
+        depth: "full",
+        content: makeContent(),
+        createdAt: Number.POSITIVE_INFINITY,
+      }),
+    ).toThrow(/safe-integer createdAt/);
+
+    const plan = structuredClone(
+      createTaskPlan({
+        id: "plan-task-1",
+        taskId: "task-1",
+        taskContractRevision: 1,
+        depth: "full",
+        content: makeContent(),
+        createdAt: 1000,
+      }),
+    );
+    (plan as { revision: number }).revision = Number.MAX_SAFE_INTEGER;
+    expect(() => reviseTaskPlan(plan, { content: makeContent() })).toThrow(/incrementable/);
+  });
+
   it("detects meaningful acceptance criteria for full-plan execution", () => {
     const contract = makeContract();
     expect(hasMeaningfulAcceptanceCriteria(contract)).toBe(true);
@@ -269,5 +349,21 @@ describe("TaskPlan immutability and revision semantics", () => {
       ],
     });
     expect(hasMeaningfulAcceptanceCriteria(singleUser)).toBe(false);
+  });
+
+  it("treats a missing current revision as a stale verified touchpoint", () => {
+    const plan = createTaskPlan({
+      id: "plan-task-1",
+      taskId: "task-1",
+      taskContractRevision: 1,
+      depth: "full",
+      content: makeContent(),
+      createdAt: 1000,
+    });
+
+    expect(planTouchpointStaleness(plan, () => null)).toContain("src/player/player.gd");
+    expect(planTouchpointStaleness(plan, () => "rev_".padEnd(36, "a"))).not.toContain(
+      "src/player/player.gd",
+    );
   });
 });

@@ -561,29 +561,63 @@ export function validatePlanCandidate(
     return { ok: false, reasons: reasons.slice(0, 8) };
   }
 
+  // Construct a fresh exact-shape value. Validation deliberately ignores
+  // unknown keys, but those keys must never cross the boundary into the
+  // immutable plan (where they could carry unreviewed data or defeat the
+  // documented schema even while all known fields are valid).
+  const cleanTouchpoints = (touchpointsRaw as Record<string, unknown>[]).map((entry) => ({
+    id: entry["id"] as string,
+    path: entry["path"] as string,
+    confidence: entry["confidence"] as PlanTouchpoint["confidence"],
+    ...(entry["revision"] === undefined ? {} : { revision: entry["revision"] as string }),
+    ...(entry["evidence"] === undefined ? {} : { evidence: entry["evidence"] as string }),
+    ...(entry["note"] === undefined ? {} : { note: entry["note"] as string }),
+  }));
+  const cleanConstraints: PlanConstraint[] = (
+    constraintsRaw === undefined ? [] : (constraintsRaw as Record<string, unknown>[])
+  ).map((entry) => ({
+    id: entry["id"] as string,
+    description: entry["description"] as string,
+  }));
+  const cleanRisks: PlanRisk[] = (
+    risksRaw === undefined ? [] : (risksRaw as Record<string, unknown>[])
+  ).map((entry) => ({
+    id: entry["id"] as string,
+    severity: entry["severity"] as PlanRisk["severity"],
+    description: entry["description"] as string,
+  }));
+  const cleanSteps: PlanStep[] = (stepsRaw as Record<string, unknown>[]).map((entry) => ({
+    id: entry["id"] as string,
+    title: entry["title"] as string,
+    ...(entry["description"] === undefined ? {} : { description: entry["description"] as string }),
+    expectedTouchpoints: [...(entry["expectedTouchpoints"] as string[])],
+    ...(entry["verification"] === undefined
+      ? {}
+      : { verification: [...(entry["verification"] as string[])] }),
+  }));
   const content: TaskPlanContent = {
     objective: objective as string,
     scope:
       scopeRaw === undefined
         ? { inScope: [], outOfScope: [] }
         : {
-            inScope: (scopeRaw as Record<string, unknown>)["inScope"] as string[],
-            outOfScope: (scopeRaw as Record<string, unknown>)["outOfScope"] as string[],
+            inScope: [...((scopeRaw as Record<string, unknown>)["inScope"] as string[])],
+            outOfScope: [...((scopeRaw as Record<string, unknown>)["outOfScope"] as string[])],
           },
-    nonGoals: nonGoals === undefined ? [] : (nonGoals as string[]),
-    touchpoints: touchpointsRaw as unknown[] as PlanTouchpoint[],
-    constraints: (constraintsRaw === undefined
-      ? []
-      : (constraintsRaw as unknown[])) as PlanConstraint[],
-    risks: (risksRaw === undefined ? [] : (risksRaw as unknown[])) as PlanRisk[],
-    steps: stepsRaw as unknown[] as PlanStep[],
+    nonGoals: nonGoals === undefined ? [] : [...(nonGoals as string[])],
+    touchpoints: cleanTouchpoints,
+    constraints: cleanConstraints,
+    risks: cleanRisks,
+    steps: cleanSteps,
     validation: {
-      checks: (validationRaw as Record<string, unknown>)["checks"] as string[],
+      checks: [...((validationRaw as Record<string, unknown>)["checks"] as string[])],
       ...(((validationRaw as Record<string, unknown>)["requirements"] as string[] | undefined) ===
       undefined
         ? {}
         : {
-            requirements: (validationRaw as Record<string, unknown>)["requirements"] as string[],
+            requirements: [
+              ...((validationRaw as Record<string, unknown>)["requirements"] as string[]),
+            ],
           }),
     },
     ...(rollbackObject === null
@@ -624,7 +658,7 @@ export function planTouchpointStaleness(
       continue;
     }
     const current = currentRevision(touchpoint.path);
-    if (current !== null && current !== touchpoint.revision) {
+    if (current !== touchpoint.revision) {
       stale.push(touchpoint.path);
     }
   }

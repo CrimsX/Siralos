@@ -172,6 +172,40 @@ describe("task runtime plan integration", () => {
     expect(handle.snapshot().plan.approval).toBe("approved");
   });
 
+  it("blocks full-plan mutation execution until the exact current revision is approved", async () => {
+    const handle = makeHandle(makeContract());
+    const flow = createPlanningFlow({ handle, planner: fakePlanner(makeContent()) });
+    flow.route(planInput());
+    const result = await flow.run();
+    expect(result.status).toBe("planned");
+
+    expect(flow.mutationExecutionBlocked()).toContain("approval");
+    expect(flow.approve().status).toBe("ok");
+    expect(flow.mutationExecutionBlocked()).toBeNull();
+  });
+
+  it("does not invoke the planner after the task becomes terminal", async () => {
+    const handle = makeHandle(makeContract());
+    let calls = 0;
+    const flow = createPlanningFlow({
+      handle,
+      planner: {
+        plan() {
+          calls += 1;
+          return Promise.resolve({ status: "ready", content: makeContent() });
+        },
+      },
+    });
+    flow.route(planInput());
+    handle.cancel("user cancelled");
+
+    const result = await flow.run();
+
+    expect(result.status).toBe("failed");
+    expect(calls).toBe(0);
+    expect(handle.currentPlan()).toBeNull();
+  });
+
   it("marks the plan stale and invalidates approval when the contract changes (fixtures 14/21)", async () => {
     const handle = makeHandle(makeContract());
     const flow = createPlanningFlow({ handle, planner: fakePlanner(makeContent()) });

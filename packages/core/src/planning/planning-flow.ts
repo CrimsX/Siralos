@@ -1,5 +1,6 @@
 import type { TaskContract } from "../tasks/task-contract.js";
 import type { TaskHandle } from "../tasks/task-runtime.js";
+import { isTerminalPhase } from "../tasks/task-model.js";
 import type { TaskPlan, TaskPlanContent } from "./planning-model.js";
 import {
   hasMeaningfulAcceptanceCriteria,
@@ -87,8 +88,9 @@ export interface PlanningFlow {
   approve(): { readonly status: "ok" } | { readonly status: "rejected"; readonly reason: string };
   /**
    * Full-plan mutation-execution gate (Part I §25): full plans require
-   * meaningful acceptance criteria in the TaskContract before any source
-   * mutation. Returns a blocking reason or null when execution may proceed.
+   * a current, exactly approved plan plus meaningful acceptance criteria in
+   * the TaskContract before any source mutation. Returns a blocking reason
+   * or null when execution may proceed.
    */
   mutationExecutionBlocked(): string | null;
 }
@@ -121,6 +123,14 @@ export function createPlanningFlow(options: PlanningFlowOptions): PlanningFlow {
       }
       if (routed.depth === "none") {
         return { status: "routed", decision: routed };
+      }
+      const taskState = handle.snapshot();
+      if (isTerminalPhase(taskState.phase)) {
+        return {
+          status: "failed",
+          decision: routed,
+          message: `Planning cannot run for a terminal task (${taskState.phase}).`,
+        };
       }
       const contract = handle.contract();
       const outcome = await options.planner.plan(
@@ -187,6 +197,14 @@ export function createPlanningFlow(options: PlanningFlowOptions): PlanningFlow {
       const contract = handle.contract();
       if (routed?.depth === "full" && !hasMeaningfulAcceptanceCriteria(contract)) {
         return "Full-plan execution requires explicit acceptance criteria in the TaskContract (at least two criteria, one host-verifiable); the contract does not meet that bar, so mutation execution is blocked.";
+      }
+      if (routed?.depth === "full") {
+        if (state.state !== "current" || state.planId === null || state.depth !== "full") {
+          return "Full-plan execution requires a current full plan; no matching current plan exists, so mutation execution is blocked.";
+        }
+        if (state.approval !== "approved") {
+          return "Full-plan execution requires approval of the exact current plan revision; approval is absent or invalidated, so mutation execution is blocked.";
+        }
       }
       return null;
     },

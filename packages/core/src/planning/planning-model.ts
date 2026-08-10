@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
+import { deepFreeze } from "../domain/deep-freeze.js";
 import type { AcceptanceCriterionId, TaskContract } from "../tasks/task-contract.js";
 import type { TaskId } from "../tasks/task-model.js";
 
@@ -277,14 +278,14 @@ export function createTaskPlan(input: CreateTaskPlanInput): TaskPlan {
   if (!PLAN_ID_PATTERN.test(input.id)) {
     throw new Error(`Invalid plan id: ${input.id}`);
   }
-  if (input.taskContractRevision < 1) {
-    throw new Error("A plan requires a task contract revision of at least 1.");
+  if (!Number.isSafeInteger(input.taskContractRevision) || input.taskContractRevision < 1) {
+    throw new Error("A plan requires a positive safe-integer task contract revision.");
   }
   if (input.depth !== "light" && input.depth !== "full") {
     throw new Error("A plan requires depth light or full.");
   }
-  if (input.createdAt < 0) {
-    throw new Error("A plan requires a non-negative createdAt timestamp.");
+  if (!Number.isSafeInteger(input.createdAt) || input.createdAt < 0) {
+    throw new Error("A plan requires a non-negative safe-integer createdAt timestamp.");
   }
   const plan: TaskPlan = {
     id: input.id,
@@ -295,7 +296,7 @@ export function createTaskPlan(input: CreateTaskPlanInput): TaskPlan {
     ...buildContent(input.content),
     createdAt: input.createdAt,
   };
-  return Object.freeze(plan);
+  return deepFreeze(plan);
 }
 
 export interface ReviseTaskPlanInput {
@@ -309,12 +310,31 @@ export interface ReviseTaskPlanInput {
  * (the runtime invalidates it when the revision advances).
  */
 export function reviseTaskPlan(previous: TaskPlan, changes: ReviseTaskPlanInput): TaskPlan {
+  if (!PLAN_ID_PATTERN.test(previous.id)) {
+    throw new Error(`Invalid plan id: ${previous.id}`);
+  }
+  if (
+    !Number.isSafeInteger(previous.revision) ||
+    previous.revision < 1 ||
+    previous.revision >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error("A previous plan revision must be a positive incrementable safe integer.");
+  }
+  if (!Number.isSafeInteger(previous.taskContractRevision) || previous.taskContractRevision < 1) {
+    throw new Error("A previous plan requires a positive safe-integer task contract revision.");
+  }
+  if (!Number.isSafeInteger(previous.createdAt) || previous.createdAt < 0) {
+    throw new Error("A previous plan requires a non-negative safe-integer createdAt timestamp.");
+  }
+  if (previous.depth !== "light" && previous.depth !== "full") {
+    throw new Error("A previous plan requires depth light or full.");
+  }
   const plan: TaskPlan = {
     ...previous,
     revision: previous.revision + 1,
     ...buildContent(changes.content),
   };
-  return Object.freeze(plan);
+  return deepFreeze(plan);
 }
 
 /** Deterministic digest over a plan revision (approval binding identity). */

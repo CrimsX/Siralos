@@ -387,8 +387,6 @@ function createStubSelfReference(): SelfReference {
 function createStubResearchService(): ResearchService {
   return {
     fetch: () => Promise.resolve({ status: "refused", reason: "stub research service" }),
-    bind: () => ({ key: "stub", revision: 0, value: { requestId: null } }),
-    isCurrent: () => false,
     latestEvidence: () => [],
     activeRequestCount: () => 0,
     sourceKinds: () => [],
@@ -1986,6 +1984,154 @@ describe("runInteractiveSession development workflow commands", () => {
     await runInteractiveSession(io, createTestApplication(), sessionInfo);
     expect(io.text).toContain("unavailable");
     expect(io.text).not.toContain("approval approved");
+  });
+
+  it("stops before the executor when exact full-plan approval is denied", async () => {
+    let active = false;
+    let cancelCalls = 0;
+    let executorProviderCalls = 0;
+    let approvalCalls = 0;
+    const development: GDScriptDevelopmentService = {
+      ...createStubDevelopmentService(),
+      support: () => Promise.resolve({ state: "available", reason: null, platform: "linux" }),
+      prepareStart: (request) =>
+        Promise.resolve({
+          status: "ready",
+          workflowId: "workflow-plan-denial",
+          preview: {
+            request,
+            projectName: "Test",
+            projectFingerprint: "a".repeat(64),
+            engineVersion: null,
+            engineFingerprint: null,
+            limits: {
+              maxIterations: 4,
+              maxRepairProposals: 3,
+              maxFilesPerChangeSet: 8,
+              maxReviewRounds: 3,
+            },
+            authorization: {
+              sourceWrites: "each change set approved separately",
+              languageSession: "read-only; recreated after approved edits under this approval",
+              checkOnlyParsing: "covered",
+              apiLookup: "covered",
+              workspaceInspection: "covered",
+              gitInspection: "covered",
+              projectValidationCommands: "each command approved separately",
+              independentReview: "read-only; fresh provider context",
+              network: "denied",
+              gameExecution: "disabled",
+            },
+          },
+          digest: "b".repeat(64),
+        }),
+      start: (_workflowId, _context) => {
+        active = true;
+        return Promise.resolve({
+          status: "ready",
+          session: {
+            id: "workflow-plan-denial",
+            projectFingerprint: "a".repeat(64),
+            engineFingerprint: null,
+            request: "change the player",
+            state: { kind: "active", phase: "investigating" },
+            iteration: 0,
+            repairProposalsUsed: 0,
+            evidence: [],
+            qualityReport: null,
+          },
+        });
+      },
+      status: () => ({
+        support: { available: true, reason: null, platform: "linux" },
+        session: active
+          ? {
+              id: "workflow-plan-denial",
+              request: "change the player",
+              state: { kind: "active" as const, phase: "investigating" as const },
+              iteration: 0,
+              maxIterations: 4,
+              repairProposalsRemaining: 3,
+              validation: null,
+              appliedChangeSets: 0,
+              errors: 0,
+              warnings: 0,
+              quality: {
+                status: null,
+                report: null,
+                blockingFindings: 0,
+                advisories: 0,
+                reviewRoundsUsed: 0,
+                maxReviewRounds: 3,
+                repairRoundsUsed: 0,
+                maxRepairRounds: 2,
+              },
+            }
+          : null,
+      }),
+      cancel: () => {
+        active = false;
+        cancelCalls += 1;
+        return Promise.resolve({ status: "cancelled", result: null });
+      },
+    };
+    const reviewer: ApprovalReviewer = {
+      review() {
+        approvalCalls += 1;
+        return Promise.resolve(
+          approvalCalls === 1
+            ? ({ type: "approve_once" } as const)
+            : ({ type: "deny", reason: "plan needs revision" } as const),
+        );
+      },
+    };
+    const planner: SessionInfo["planner"] = {
+      plan: () =>
+        Promise.resolve({
+          status: "ready",
+          content: {
+            objective: "Change the player safely",
+            scope: { inScope: ["player"], outOfScope: [] },
+            nonGoals: [],
+            touchpoints: [],
+            constraints: [],
+            risks: [],
+            steps: [
+              {
+                id: "step-1",
+                title: "Prepare the player change",
+                expectedTouchpoints: [],
+                verification: ["user-approval"],
+              },
+            ],
+            validation: { checks: ["repository check"] },
+          },
+        }),
+    };
+    const application = createSolarisApplication({
+      provider: {
+        id: "must-not-run",
+        async *stream(): AsyncIterable<ModelEvent> {
+          await Promise.resolve();
+          executorProviderCalls += 1;
+          yield { type: "text_delta", text: "unexpected executor call" };
+          yield { type: "completed" };
+        },
+      },
+      tools: createToolRegistry([]),
+    });
+    const io = new ScriptedIO(["/develop --plan change the player", "/exit"]);
+
+    await runInteractiveSession(
+      io,
+      application,
+      buildSessionInfo({ development, reviewer, planner }),
+    );
+
+    expect(io.text).toContain("plan denied: plan needs revision");
+    expect(executorProviderCalls).toBe(0);
+    expect(cancelCalls).toBe(1);
+    expect(approvalCalls).toBe(2);
   });
 
   it("shows /development-status with no active workflow", async () => {
