@@ -1,0 +1,52 @@
+# Architecture index
+
+This file is a **map**, not an architecture document. It resolves a code
+domain to its source paths, its architecture documentation, and its
+applicable ADRs so that executor-context discovery is deterministic
+(ADR 0023 Parts M–O). The authoritative architecture content stays in
+[ARCHITECTURE.md](../ARCHITECTURE.md), engineering rules in
+[ENGINEERING.md](../ENGINEERING.md), and the security contract in
+[SECURITY.md](../SECURITY.md); this index only points at them.
+
+Machine-readable metadata lives in the ADR frontmatter
+(`id` / `status` / `domains` / `paths` / `supersedes`) and the runtime
+documentation index (`packages/core/src/executor/documentation-context.ts`).
+Keep this page and the runtime index consistent; the architecture check
+(`npm run check:architecture`) validates frontmatter against the runtime
+index.
+
+## Selection order
+
+Normal executor-context discovery follows: root `AGENTS.md` → applicable
+nested `AGENTS.md` → this index → mapped subsystem docs → applicable
+accepted ADRs. Superseded/deprecated and `docs/archive/` material is
+excluded unless historical reasoning is explicitly requested. Never
+recursively ingest `docs/`.
+
+## Domain map
+
+| Domain                                                                   | Source paths                                                                                                                                 | Architecture                                                          | ADRs                                                       |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Task runtime                                                             | `packages/core/src/tasks/**`                                                                                                                 | ARCHITECTURE.md § Task runtime                                        | ADR-0014                                                   |
+| Projection / context                                                     | `packages/core/src/projection/**`                                                                                                            | ARCHITECTURE.md § Context, tool, and evidence projection              | ADR-0015, ADR-0002                                         |
+| Workspace revisions / reads                                              | `packages/core/src/workspace/**`                                                                                                             | ARCHITECTURE.md § Workspace revision and structural reads             | ADR-0016                                                   |
+| Workspace mutations                                                      | `packages/core/src/workspace/**`, `packages/adapters/src/tools/workspace/**`                                                                 | ARCHITECTURE.md § Approved mutations                                  | ADR-0005                                                   |
+| Instructions / knowledge                                                 | `packages/core/src/instructions/**`, `packages/core/src/knowledge/**`                                                                        | ARCHITECTURE.md § Project instructions and knowledge                  | ADR-0017                                                   |
+| References / research                                                    | `packages/core/src/reference/**`, `packages/core/src/research/**`, `packages/adapters/src/reference/**`, `packages/adapters/src/research/**` | ARCHITECTURE.md § Workspace, reference, and research resource classes | ADR-0018                                                   |
+| Self-reference / doctor                                                  | `packages/core/src/self/**`, `packages/core/src/doctor/**`                                                                                   | ARCHITECTURE.md § Self-reference and capability diagnostics           | ADR-0019                                                   |
+| Planning                                                                 | `packages/core/src/planning/**`, `packages/adapters/src/planning/**`                                                                         | ARCHITECTURE.md § Host-controlled planning                            | ADR-0020                                                   |
+| Executor briefing                                                        | `packages/core/src/executor/**`                                                                                                              | ADR-0022, ADR-0023                                                    | ADR-0022, ADR-0023                                         |
+| Godot static inspection                                                  | `packages/core/src/godot/**`, `packages/adapters/src/godot/**`                                                                               | ARCHITECTURE.md § Godot engine discovery and profiling                | ADR-0021, ADR-0008–0013                                    |
+| Godot discovery / recovery / knowledge / diagnostics / LSP / development | `packages/adapters/src/godot/**`, `packages/core/src/godot/**`                                                                               | ARCHITECTURE.md § Godot sections                                      | ADR-0008, ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013 |
+| Providers / tool loop                                                    | `packages/core/src/ports/**`, `packages/adapters/src/providers/**`                                                                           | ARCHITECTURE.md § Tool loop, § Adapters                               | ADR-0002                                                   |
+| Security / sandbox / capability                                          | `packages/core/src/security/**`                                                                                                              | SECURITY.md, ARCHITECTURE.md § Security model                         | ADR-0004, ADR-0007                                         |
+| Git / checkpoints                                                        | `packages/adapters/src/git/**`, `packages/adapters/src/checkpoints/**`                                                                       | ARCHITECTURE.md § Git inspection, § Recovery checkpoints              | ADR-0006                                                   |
+| Process execution                                                        | `packages/adapters/src/process/**`                                                                                                           | ARCHITECTURE.md § Command execution                                   | ADR-0007                                                   |
+| Overall architecture                                                     | `packages/**`                                                                                                                                | ARCHITECTURE.md                                                       | ADR-0001                                                   |
+
+## ADR status
+
+All ADRs are `accepted` and current unless their frontmatter says
+otherwise. ADR 0003 was never adopted; there are no superseded or
+deprecated ADRs today. Obsolete historical material, when it exists,
+lives in `docs/archive/` and is excluded from normal discovery.
