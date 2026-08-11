@@ -26,6 +26,11 @@ unsafe filesystem or process boundary intentionally fails closed.
   reasons.
 - Stage 3 is active. Milestones 1–8 are implemented and tested. Milestone 9 is
   next.
+- The cross-cutting executor briefing foundation (ADR 0022) is implemented:
+  a versioned Execution Contract, milestone manifests (S3M8 has a real
+  validated manifest), evidence-backed milestone acceptance, the Executor
+  Context Pack, the deterministic Executor Brief Compiler, and the
+  `/brief` / `/milestone` inspection commands. It is not a roadmap stage.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation

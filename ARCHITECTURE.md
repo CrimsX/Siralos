@@ -1104,3 +1104,78 @@ consumes bounded semantic-model views, not raw parser internals. The
 relationship index is application-owned and never holds source-of-truth
 file contents. No scene/resource mutation API exists anywhere in the
 milestone surface.
+
+## Structured executor briefing and milestone acceptance (executor briefing foundation, ADR 0022)
+
+Executor invocations are compiled from permanent rules plus a
+milestone-specific delta instead of giant hand-maintained prompts. The
+model has seven distinct artifacts; each stays host-owned and none of
+them grants capability:
+
+- **Execution Contract** (`packages/core/src/executor/execution-contract.ts`)
+  — versioned, immutable permanent executor rules (Git discipline,
+  security, architecture, standard validation, testing, reporting).
+  Every rule references its real enforcement (`enforcedBy`); the
+  contract never re-implements or bypasses it. `DEFAULT_EXECUTION_CONTRACT`
+  is revision 1; changing it affects future tasks, never an active
+  task's snapshot.
+- **Milestone Manifest** (`packages/core/src/executor/milestone-manifest.ts`,
+  `s3m8-manifest.ts`) — versioned, immutable milestone delta: goal,
+  deliverables, invariants, non-goals, acceptance requirements with
+  stable ids (`S3M8.PARSE.TSCN`), required tests, and deterministic
+  architecture-concern tags. `S3M8_MILESTONE_MANIFEST` is the first real
+  manifest (read-only Godot scene/resource intelligence, ADR 0021).
+- **Acceptance IDs and Evaluator** (`packages/core/src/executor/acceptance.ts`,
+  `standard-acceptance.ts`) — stable ids decoupled from test filenames;
+  `STANDARD.*` reusable definitions; the evaluator maps requirements to
+  host-attached evidence records and host-verified criteria only.
+  Executor claims are structurally unrepresentable as evidence.
+- **Executor Context Pack** (`packages/core/src/executor/context-pack.ts`)
+  — derived, bounded context (contract/plan refs, path-scoped
+  instruction refs, deterministic ADR selection, verified/candidate
+  touchpoints, capability summary, findings, acceptance refs). Never a
+  source of truth; never raw file contents.
+- **Executor Brief Compiler** (`packages/core/src/executor/brief-compiler.ts`)
+  — deterministic, bounded, fingerprintable compilation to a short
+  brief that references `Execution Contract rev N` instead of restating
+  permanent rules; bounds trim low-value context before
+  invariants/acceptance/verified touchpoints.
+- **Standard Validation Profile** (`packages/core/src/executor/validation-profile.ts`)
+  — `standard-repo-validation` represents format/lint/typecheck/tests/
+  behavior/architecture checks as a host-owned reference.
+- **Briefing service and snapshot identity** (`packages/core/src/executor/briefing-service.ts`)
+  — memoized per task-stable identity; the task runtime snapshot records
+  execution-contract revision, milestone-manifest identity, and the
+  initial brief fingerprint.
+
+### Ownership
+
+- **Model + compiler** (`packages/core/src/executor/`) — pure, offline,
+  deterministic. Never imports provider ports, security/capability/
+  approval machinery, task-runtime mutation, projection, knowledge,
+  network, or Godot modules (generic digest excepted). Architecture
+  checks enforce these boundaries.
+- **Projection** — `[Executor brief]` is a contextual, bounded,
+  project-data segment rendered from the compiled brief; only
+  projection-service consumes the brief surface.
+- **CLI** — `/brief` and `/milestone` render host-compiled artifacts
+  (dry-run, provider-free); briefing semantics never live in the CLI.
+- **Provider adapters** — never import or recreate executor briefing.
+
+### Reproducibility
+
+Brief compilation is deterministic: identical (contract, plan, contract
+revision, milestone version, context) inputs produce byte-identical
+briefs and fingerprints. Task runtime snapshots carry the
+execution-contract revision, milestone identity, and initial brief
+fingerprint, so an active task stays reproducibly tied to the artifacts
+it started under even after the global contract advances.
+
+### Milestone acceptance
+
+Milestone acceptance is satisfied only by host-observed evidence
+(attached evidence records, host-verified criteria). The milestone
+manifest states what evidence kinds count; `STANDARD.*` references reuse
+common definitions. The evaluator supports `pass`, `fail`,
+`incomplete`, and `not_applicable`; a single incomplete requirement
+keeps the milestone incomplete no matter what an executor claims.

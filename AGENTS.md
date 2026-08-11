@@ -10,8 +10,9 @@
 
 ## Current implementation
 
-- Stage 3 milestones 1–7 are implemented: task runtime, projections, workspace revisions and structural reads, project instructions and knowledge, references and research, self-reference and capability diagnostics, and host-controlled planning.
-- The next narrow milestone is Stage 3 milestone 8: read-only Godot scene and resource intelligence. Do not start scene/resource mutation.
+- Stage 3 milestones 1–8 are implemented: task runtime, projections, workspace revisions and structural reads, project instructions and knowledge, references and research, self-reference and capability diagnostics, host-controlled planning, and read-only Godot scene/resource intelligence.
+- The next narrow milestone is Stage 3 milestone 9. Do not start scene/resource mutation.
+- The cross-cutting executor briefing foundation (ADR 0022) is implemented: a versioned Execution Contract, milestone manifests with stable acceptance IDs (S3M8 has a real manifest), an evidence-backed AcceptanceEvaluator, the Executor Context Pack, the deterministic Executor Brief Compiler, and `/brief` / `/milestone` inspection. Briefs reference the execution contract by revision and never restate permanent rules; milestone acceptance is satisfied only by host-observed evidence, never executor claims.
 - Working read-only surfaces include the deterministic fake provider, bounded workspace list/read/search, static Godot installation and project inspection, local-directory references, denied-by-default bounded research adapters, self-reference, capability diagnostics, and the interactive CLI.
 - Task contracts, snapshots, plans, evidence, provider requests, tool definitions, and public result values must be detached from caller-owned mutable data. Task state is host-owned; model completion is only a request evaluated by host gates.
 - Provider streams and tool loops are bounded, protocol-checked, cancellation-aware, transcript-paired, and sanitized at the terminal boundary. Provider output and external content are always untrusted data.
