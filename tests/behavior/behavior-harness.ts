@@ -17,6 +17,8 @@ import {
   TASK_RUNTIME_VERSION,
   canonicalizeJson,
   capabilityPolicyFingerprint,
+  computeExecutorBriefFingerprint,
+  createExecutorBriefing,
   createWorkspaceRevisionRegistry,
   sha256Hex,
   createDefaultPolicy,
@@ -29,10 +31,14 @@ import {
   createToolRegistry,
   resolveInstructionSet,
   type ApprovalReviewer,
+  type CapabilitySnapshot,
   type CheckpointStore,
+  type ExecutionContract,
+  type ExecutorBrief,
   type GDScriptDevelopmentPreview,
   type GDScriptDevelopmentResult,
   type GDScriptDevelopmentStatus,
+  type MilestoneManifest,
   type ModelProvider,
   type ModelRequest,
   type ProjectionService,
@@ -184,6 +190,17 @@ export interface BehaviorLoopHarnessOptions {
    * workspace and feeds `[Scene evidence]` projections.
    */
   readonly intelligence?: boolean;
+  /**
+   * Wire the executor briefing foundation into the harness: compiles the
+   * bounded executor brief for the current task and feeds the
+   * `[Executor brief]` projection section (requires `projection: true`).
+   */
+  readonly briefing?: {
+    readonly executionContract: ExecutionContract;
+    readonly milestone?: MilestoneManifest | null;
+    readonly selectMilestone?: (request: string) => MilestoneManifest | null;
+    readonly capabilitySnapshot?: CapabilitySnapshot | null;
+  };
   /** Replace the application provider entirely (scripted provider scenarios). */
   readonly providerOverride?: ModelProvider;
   /** Reviewer scenario for the quality stage (fake-change-reviewer). */
@@ -221,6 +238,10 @@ export interface BehaviorLoopHarness {
   readonly tools: () => readonly RegisteredToolInfo[];
   /** Read-only Godot scene/resource intelligence (when `intelligence: true`). */
   readonly intelligence: GodotSceneIntelligence | null;
+  /** Compiled executor brief for the current task (when `briefing` wired). */
+  readonly briefing: () => ExecutorBrief | null;
+  /** Fingerprint of the compiled executor brief; null when none. */
+  readonly briefingFingerprint: () => string | null;
   /** Recorded scene/resource inspection observations feeding `[Scene evidence]`. */
   readonly sceneObservations: () => readonly GodotSceneEvidenceView[];
   /** Recorded provider requests (when `recording: true`). */
@@ -426,7 +447,50 @@ export async function createBehaviorLoopHarness(
     ...referenceTools,
     ...(options.extraTools ?? []),
   ]);
-  const { runtime, sources, now } = createBehaviorRuntime();
+  const { runtime, sources: baseSources, now } = createBehaviorRuntime();
+  let sources = baseSources;
+  // Executor briefing foundation: session-level briefing service. The
+  // harness consumes the same core service the CLI composition root uses;
+  // briefing semantics never live in the harness.
+  const briefingService =
+    options.briefing === undefined
+      ? null
+      : createExecutorBriefing({
+          executionContract: options.briefing.executionContract,
+          milestone: options.briefing.milestone ?? null,
+          ...(options.briefing.selectMilestone === undefined
+            ? {}
+            : { selectMilestone: options.briefing.selectMilestone }),
+          getTaskContract: () => runtime.latestTask()?.contract() ?? null,
+          getTaskSnapshot: () => runtime.latestTask()?.snapshot() ?? null,
+          getCurrentPlan: () => runtime.latestTask()?.currentPlan() ?? null,
+          ...(options.instructions === undefined
+            ? {}
+            : {
+                resolveInstructions: (focusPaths) => {
+                  const safe = focusPaths.filter(isSafeRelativeFocusPath);
+                  const set = resolveInstructionSet({
+                    instructions: options.instructions!.instructions(),
+                    paths: safe.length === 0 ? ["."] : safe,
+                  });
+                  return set.instructions.length === 0 ? null : set;
+                },
+              }),
+          ...(options.briefing.capabilitySnapshot === undefined
+            ? {}
+            : {
+                getCapabilitySnapshot: () => options.briefing!.capabilitySnapshot ?? null,
+              }),
+        });
+  if (briefingService !== null && options.briefing !== undefined) {
+    sources = {
+      ...baseSources,
+      executionContract: {
+        id: options.briefing.executionContract.id,
+        revision: options.briefing.executionContract.revision,
+      },
+    };
+  }
   const recording = options.recording === true ? createRecordingProvider() : null;
   const projection: ProjectionService | undefined =
     options.projection === true
@@ -481,6 +545,9 @@ export async function createBehaviorLoopHarness(
                   latestEvidence: () => [...sceneObservations],
                 },
               }),
+          ...(briefingService === null
+            ? {}
+            : { getExecutorBrief: () => briefingService.latestOrCompile() }),
         })
       : undefined;
   const application = createSolarisApplication({
@@ -510,6 +577,8 @@ export async function createBehaviorLoopHarness(
     revisions,
     tools: () => tools.definitions(),
     intelligence,
+    briefing: () => (briefingService === null ? null : briefingService.latestOrCompile()),
+    briefingFingerprint: () => (briefingService === null ? null : briefingService.fingerprint()),
     sceneObservations: () => [...sceneObservations],
     development,
     workspaceRead: workspaceReadTool,
@@ -527,7 +596,25 @@ export async function createBehaviorLoopHarness(
       if (started.status !== "ready") {
         throw new Error(started.message);
       }
-      flow = createDevelopmentTaskFlow({ runtime, sources, now });
+      flow = createDevelopmentTaskFlow({
+        runtime,
+        sources,
+        now,
+        ...(briefingService === null
+          ? {}
+          : {
+              // Executor briefing foundation: the immutable task snapshot
+              // records the manifest identity and initial brief fingerprint.
+              snapshotExtras: ({ taskId, contract }) => {
+                const brief = briefingService.compileForRequest(taskId, contract.request);
+                return {
+                  milestoneManifest: brief?.milestone ?? null,
+                  executorBriefFingerprint:
+                    brief === null ? null : computeExecutorBriefFingerprint(brief),
+                };
+              },
+            }),
+      });
       development.onEvent = (event) => {
         flow?.handleEvent(event);
       };
