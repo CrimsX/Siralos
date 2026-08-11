@@ -5,6 +5,7 @@ domains: [architecture]
 paths: [packages/**]
 supersedes: []
 ---
+
 # ADR 0001: Modular monolith
 
 Status: accepted

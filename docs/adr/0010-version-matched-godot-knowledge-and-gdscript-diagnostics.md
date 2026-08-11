@@ -5,6 +5,7 @@ domains: [godot, knowledge, diagnostics]
 paths: [packages/core/src/godot/**, packages/adapters/src/godot/**]
 supersedes: []
 ---
+
 # ADR 0010: Version-matched Godot API knowledge and GDScript check-only diagnostics (fail-closed at this stage)
 
 Status: accepted

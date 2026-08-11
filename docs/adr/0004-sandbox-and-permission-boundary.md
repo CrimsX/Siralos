@@ -5,6 +5,7 @@ domains: [security, sandbox]
 paths: [packages/core/src/security/**]
 supersedes: []
 ---
+
 # ADR 0004: Sandbox and permission boundary
 
 Status: accepted

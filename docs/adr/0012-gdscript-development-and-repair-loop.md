@@ -5,6 +5,7 @@ domains: [godot, development]
 paths: [packages/core/src/godot/**, packages/adapters/src/godot/**]
 supersedes: []
 ---
+
 # ADR 0012: Bounded GDScript development and repair loop (fail-closed at this stage)
 
 Status: accepted

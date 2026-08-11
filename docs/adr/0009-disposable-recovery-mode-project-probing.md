@@ -5,6 +5,7 @@ domains: [godot, recovery]
 paths: [packages/adapters/src/godot/**]
 supersedes: []
 ---
+
 # ADR 0009: Disposable recovery-mode project probing (fail-closed at this stage)
 
 Status: accepted

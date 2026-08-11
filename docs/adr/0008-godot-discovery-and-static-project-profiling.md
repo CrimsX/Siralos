@@ -5,6 +5,7 @@ domains: [godot, discovery]
 paths: [packages/adapters/src/godot/**]
 supersedes: []
 ---
+
 # ADR 0008: Godot executable discovery and static project profiling
 
 Status: accepted

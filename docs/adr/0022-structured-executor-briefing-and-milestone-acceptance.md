@@ -5,6 +5,7 @@ domains: [executor-briefing, context]
 paths: [packages/core/src/executor/**]
 supersedes: []
 ---
+
 # ADR 0022 — Structured Executor Briefing and Milestone Acceptance
 
 - Status: accepted (cross-cutting executor briefing foundation)

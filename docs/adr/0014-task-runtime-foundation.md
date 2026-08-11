@@ -5,6 +5,7 @@ domains: [task-runtime, evidence]
 paths: [packages/core/src/tasks/**]
 supersedes: []
 ---
+
 # ADR 0014 — Host-owned structured Task Runtime
 
 - Status: accepted (Stage 3 milestone 1)

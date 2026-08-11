@@ -5,6 +5,7 @@ domains: [workspace, revisions]
 paths: [packages/core/src/workspace/**]
 supersedes: []
 ---
+
 # ADR 0016 — Workspace Revision and Structural Read Foundation
 
 - Status: accepted (Stage 3 milestone 3)
