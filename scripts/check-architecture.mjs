@@ -1434,6 +1434,34 @@ function checkDocsConsistency(root, errors) {
       `${path}: the runtime documentation index must never reference docs/archive/ material; archived documents are excluded from ordinary selection`,
     );
   }
+  // Every non-ADR index entry path (root/scoped AGENTS.md, architecture
+  // docs, engineering/security docs) must exist on disk.
+  const allIndexPaths = [...indexSource.matchAll(/\bpath: "([^"]+)"/g)].map((match) => match[1]);
+  for (const path of new Set(allIndexPaths)) {
+    if (path.startsWith("docs/adr/") || path.startsWith("docs/archive/")) {
+      continue;
+    }
+    if (!existsSync(join(root, ...path.split("/")))) {
+      errors.push(`${path}: runtime documentation index references a missing document`);
+    }
+  }
+  // Scoped-guidance entries must point at an existing AGENTS.md and carry
+  // source-path globs so path-scoped selection can match them.
+  const nestedAgentEntries = [
+    ...indexSource.matchAll(/path: "([^"]+)",\s*kind: "nested-agents"[\s\S]*?paths: \[([^\]]*)\]/g),
+  ];
+  for (const match of nestedAgentEntries) {
+    const [, path, globs] = match;
+    if (!path.endsWith("AGENTS.md")) {
+      errors.push(`${path}: nested-agents index entries must point at an AGENTS.md file`);
+    }
+    if (!existsSync(join(root, ...path.split("/")))) {
+      errors.push(`${path}: scoped guidance registered in the index does not exist`);
+    }
+    if (globs.trim().length === 0) {
+      errors.push(`${path}: nested-agents index entry must declare source-path globs for scoping`);
+    }
+  }
   for (const file of adrFiles) {
     const number = file.slice(0, 4);
     if (!/^\d{4}$/.test(number)) {
