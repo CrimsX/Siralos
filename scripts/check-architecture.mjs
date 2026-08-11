@@ -492,6 +492,14 @@ const BRIEFING_BANNED_IDENTIFIERS = new Set([
   "renderExecutorBrief",
   "DEFAULT_EXECUTION_CONTRACT",
   "S3M8_MILESTONE_MANIFEST",
+  "selectDocumentationContext",
+  "createWorkspaceScope",
+  "createActiveWorkingSet",
+  "detectProliferationSignals",
+  "evaluateScopeDiff",
+  "parseAdrFrontmatter",
+  "DOCUMENTATION_INDEX",
+  "ADR_DOCUMENTATION_ENTRIES",
 ]);
 
 const CHILD_PROCESS_MODULE = "child_process";
@@ -1345,10 +1353,124 @@ function isGitMutationCall(call) {
   });
 }
 
+/**
+ * Docs-consistency validation (ADR 0023 Parts O/R/Z): the ADR
+ * frontmatter and the runtime documentation index must stay aligned.
+ *
+ * - every `docs/adr/*.md` file opens with frontmatter whose `id` matches
+ *   its filename and whose `status` is one of accepted/superseded/
+ *   deprecated;
+ * - every ADR file is present in the runtime documentation index
+ *   (`packages/core/src/executor/documentation-context.ts`);
+ * - every runtime-index ADR path exists on disk and matches its
+ *   frontmatter id;
+ * - the runtime documentation index never points into `docs/archive/`
+ *   (archived material is excluded from ordinary selection by design).
+ */
+const DOCUMENTATION_STATUSES = new Set(["accepted", "superseded", "deprecated"]);
+
+function parseAdrFrontmatterText(text) {
+  if (!text.startsWith("---")) {
+    return null;
+  }
+  const close = text.indexOf("\n---", 3);
+  if (close < 0) {
+    return null;
+  }
+  const block = text.slice(3, close);
+  const fields = {};
+  for (const line of block.split("\n")) {
+    const colon = line.indexOf(":");
+    if (colon < 0) {
+      continue;
+    }
+    const key = line.slice(0, colon).trim();
+    const value = line.slice(colon + 1).trim();
+    if (key.length > 0 && value.length > 0) {
+      fields[key] = value;
+    }
+  }
+  return fields;
+}
+
+function checkDocsConsistency(root, errors) {
+  const adrDirectory = join(root, "docs", "adr");
+  if (!existsSync(adrDirectory)) {
+    return;
+  }
+  const adrFiles = readdirSync(adrDirectory)
+    .filter((entry) => entry.endsWith(".md"))
+    .sort();
+  // Runtime documentation index: extract every docs/adr path and every
+  // docs/archive path literal from the index module.
+  const indexSourcePath = join(
+    root,
+    "packages",
+    "core",
+    "src",
+    "executor",
+    "documentation-context.ts",
+  );
+  const indexSource = existsSync(indexSourcePath) ? readFileSync(indexSourcePath, "utf8") : "";
+  const indexedAdrPaths = new Set(
+    [...indexSource.matchAll(/path: "(docs\/adr\/[0-9]{4}[^"]*\.md)"/g)].map((match) => match[1]),
+  );
+  const archivedIndexPaths = [...indexSource.matchAll(/path: "(docs\/archive\/[^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  for (const path of archivedIndexPaths) {
+    errors.push(
+      `${path}: the runtime documentation index must never reference docs/archive/ material; archived documents are excluded from ordinary selection`,
+    );
+  }
+  for (const file of adrFiles) {
+    const number = file.slice(0, 4);
+    if (!/^\d{4}$/.test(number)) {
+      errors.push(`docs/adr/${file}: ADR filenames must start with a four-digit number`);
+      continue;
+    }
+    const expectedId = `ADR-${number}`;
+    const path = `docs/adr/${file}`;
+    const metadata = parseAdrFrontmatterText(readFileSync(join(adrDirectory, file), "utf8"));
+    if (metadata === null) {
+      errors.push(`${path}: missing ADR frontmatter (id/status/domains/paths/supersedes)`);
+      continue;
+    }
+    if (metadata.id !== expectedId) {
+      errors.push(
+        `${path}: frontmatter id ${metadata.id ?? "<missing>"} does not match ${expectedId}`,
+      );
+    }
+    if (!DOCUMENTATION_STATUSES.has(metadata.status)) {
+      errors.push(
+        `${path}: frontmatter status ${metadata.status ?? "<missing>"} must be one of ${[...DOCUMENTATION_STATUSES].join("/")}`,
+      );
+    }
+    if (!indexedAdrPaths.has(path)) {
+      errors.push(
+        `${path}: ADR is not present in the runtime documentation index (packages/core/src/executor/documentation-context.ts); selection cannot map it`,
+      );
+    }
+  }
+  for (const path of indexedAdrPaths) {
+    if (!existsSync(join(root, ...path.split("/")))) {
+      errors.push(`${path}: runtime documentation index references a missing ADR file`);
+      continue;
+    }
+    const metadata = parseAdrFrontmatterText(readFileSync(join(root, ...path.split("/")), "utf8"));
+    if (metadata === null || metadata.id !== `ADR-${path.slice(9, 13)}`) {
+      errors.push(
+        `${path}: runtime documentation index entry disagrees with the ADR frontmatter id`,
+      );
+    }
+  }
+}
+
 export function runChecks(root) {
   const errors = [];
   const packages = collectWorkspacePackages(root);
   const packagesByName = new Map(packages.map((pkg) => [pkg.name, pkg]));
+  checkDocsConsistency(root, errors);
 
   for (const pkg of packages) {
     const sourceRoot = join(pkg.path, "src");
