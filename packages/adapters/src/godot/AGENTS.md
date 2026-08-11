@@ -4,8 +4,9 @@
 
 - `packages/adapters/src/godot` owns Godot executable discovery, probes,
   API knowledge, diagnostics, the LSP client, the development-loop
-  runners, and the scene/resource intelligence tooling. The static
-  inspection semantics live in `packages/core/src/godot` (see
+  runners, the scene/resource intelligence tooling, and the impact
+  analysis service (Stage 3 milestone 9). The static inspection and
+  impact semantics live in `packages/core/src/godot` (see
   `packages/core/AGENTS.md`).
 
 ## Rules

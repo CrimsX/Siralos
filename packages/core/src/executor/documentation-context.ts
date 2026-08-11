@@ -455,6 +455,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["documentation", "context", "executor-briefing"],
     paths: ["packages/core/src/executor/**", "docs/architecture/**", "AGENTS.md"],
   },
+  {
+    id: "adr:0025",
+    path: "docs/adr/0025-godot-review-context-and-impact-intelligence.md",
+    kind: "adr",
+    concerns: ["godot", "godot-static-inspection", "review", "impact"],
+    status: "accepted",
+    domains: ["godot", "impact", "review"],
+    paths: ["packages/core/src/godot/impact/**", "packages/adapters/src/godot/intelligence/**"],
+  },
 ]);
 
 /**
