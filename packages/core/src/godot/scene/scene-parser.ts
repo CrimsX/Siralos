@@ -69,6 +69,17 @@ export function parseGodotScene(
       diagnostics.push({ code, severity, message, ...(line === undefined ? {} : { line }) });
     }
   };
+  // Bounded-truncation diagnostics are emitted ONCE per limit so repeated
+  // excess records cannot exhaust the diagnostic budget and mask real
+  // errors later in the document.
+  const reportedLimits = new Set<string>();
+  const reportLimit = (reason: string, message: string, line?: number): void => {
+    if (reportedLimits.has(reason)) {
+      return;
+    }
+    reportedLimits.add(reason);
+    addDiagnostic("scene.document_truncated", "error", message, line);
+  };
 
   const externalResources: ExternalResourceRef[] = [];
   const subResources: MutableSubResource[] = [];
@@ -112,9 +123,8 @@ export function parseGodotScene(
       if (sectionCount > GODOT_SCENE_LIMITS.maxSections) {
         truncated = true;
         limitReached = true;
-        addDiagnostic(
-          "scene.document_truncated",
-          "error",
+        reportLimit(
+          "sections",
           `The section count exceeded the bound (${GODOT_SCENE_LIMITS.maxSections}); parsing stopped.`,
         );
         break;
@@ -184,9 +194,8 @@ export function parseGodotScene(
           currentNode = null;
           if (resourceCount >= GODOT_SCENE_LIMITS.maxResources) {
             truncated = true;
-            addDiagnostic(
-              "scene.document_truncated",
-              "error",
+            reportLimit(
+              "resources",
               `The resource count exceeded the bound (${GODOT_SCENE_LIMITS.maxResources}); remaining resources are ignored.`,
               index + 1,
             );
@@ -214,9 +223,8 @@ export function parseGodotScene(
           currentNode = null;
           if (resourceCount >= GODOT_SCENE_LIMITS.maxResources) {
             truncated = true;
-            addDiagnostic(
-              "scene.document_truncated",
-              "error",
+            reportLimit(
+              "resources",
               `The resource count exceeded the bound (${GODOT_SCENE_LIMITS.maxResources}); remaining resources are ignored.`,
               index + 1,
             );
@@ -256,9 +264,8 @@ export function parseGodotScene(
           currentSubResource = null;
           if (nodes.length >= GODOT_SCENE_LIMITS.maxNodes) {
             truncated = true;
-            addDiagnostic(
-              "scene.document_truncated",
-              "error",
+            reportLimit(
+              "nodes",
               `The node count exceeded the bound (${GODOT_SCENE_LIMITS.maxNodes}); remaining nodes are ignored.`,
               index + 1,
             );
@@ -275,9 +282,8 @@ export function parseGodotScene(
           currentNode = null;
           if (connections.length >= GODOT_SCENE_LIMITS.maxConnections) {
             truncated = true;
-            addDiagnostic(
-              "scene.document_truncated",
-              "error",
+            reportLimit(
+              "connections",
               `The connection count exceeded the bound (${GODOT_SCENE_LIMITS.maxConnections}); remaining connections are ignored.`,
               index + 1,
             );
@@ -332,9 +338,8 @@ export function parseGodotScene(
     if (currentSection === "node" && currentNode !== null) {
       if (propertyCount >= GODOT_SCENE_LIMITS.maxProperties) {
         truncated = true;
-        addDiagnostic(
-          "scene.document_truncated",
-          "error",
+        reportLimit(
+          "properties",
           `The property count exceeded the bound (${GODOT_SCENE_LIMITS.maxProperties}); remaining properties are ignored.`,
           record.line,
         );
@@ -347,9 +352,8 @@ export function parseGodotScene(
     } else if (currentSection === "sub_resource" && currentSubResource !== null) {
       if (propertyCount >= GODOT_SCENE_LIMITS.maxProperties) {
         truncated = true;
-        addDiagnostic(
-          "scene.document_truncated",
-          "error",
+        reportLimit(
+          "properties",
           `The property count exceeded the bound (${GODOT_SCENE_LIMITS.maxProperties}); remaining properties are ignored.`,
           record.line,
         );

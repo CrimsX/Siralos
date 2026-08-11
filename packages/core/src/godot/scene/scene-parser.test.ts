@@ -389,6 +389,56 @@ unquoted = bare_token_here
     ).toBe(true);
   });
 
+  it("enforces the resource-count bound with a single truncation diagnostic", () => {
+    const lines: string[] = ["[gd_scene format=3]"];
+    const limit = GODOT_SCENE_LIMITS.maxResources;
+    for (let index = 0; index < limit + 10; index += 1) {
+      lines.push(`[ext_resource type="Script" path="res://r${index}.gd" id="r_${index}"]`);
+    }
+    lines.push('[node name="Root" type="Node2D"]');
+    const result = parseGodotScene(lines.join("\n"), "scenes/many_resources.tscn");
+    expect(result.truncated).toBe(true);
+    expect(result.document!.externalResources.length).toBeLessThanOrEqual(limit);
+    // Repeated excess records produce ONE diagnostic, not one per record.
+    expect(
+      result.diagnostics.filter((diagnostic) => diagnostic.code === "scene.document_truncated"),
+    ).toHaveLength(1);
+  });
+
+  it("enforces the property-count bound with a single truncation diagnostic", () => {
+    const lines: string[] = ["[gd_scene format=3]", '[node name="Root" type="Node2D"]'];
+    const limit = GODOT_SCENE_LIMITS.maxProperties;
+    for (let index = 0; index < limit + 10; index += 1) {
+      lines.push(`prop_${index} = ${index}`);
+    }
+    const result = parseGodotScene(lines.join("\n"), "scenes/many_properties.tscn");
+    expect(result.truncated).toBe(true);
+    const totalProperties = result.document!.nodes.reduce(
+      (sum, node) => sum + node.properties.length,
+      0,
+    );
+    expect(totalProperties).toBeLessThanOrEqual(limit);
+    expect(
+      result.diagnostics.filter((diagnostic) => diagnostic.code === "scene.document_truncated"),
+    ).toHaveLength(1);
+  });
+
+  it("enforces the section-count bound and stops parsing", () => {
+    const lines: string[] = ["[gd_scene format=3]"];
+    const limit = GODOT_SCENE_LIMITS.maxSections;
+    for (let index = 0; index < limit + 10; index += 1) {
+      lines.push(`[editable path="Node${index}"]`);
+    }
+    lines.push('[node name="After" type="Node2D"]');
+    const result = parseGodotScene(lines.join("\n"), "scenes/many_sections.tscn");
+    expect(result.truncated).toBe(true);
+    // Parsing stopped at the section bound: the trailing node was not seen.
+    expect(result.document!.nodes).toHaveLength(0);
+    expect(
+      result.diagnostics.filter((diagnostic) => diagnostic.code === "scene.document_truncated"),
+    ).toHaveLength(1);
+  });
+
   it("returns an invalid result for a resource header inside a scene parse", () => {
     const result = parseGodotScene(
       '[gd_resource type="Resource" format=3]\n[resource]\nfoo = 1\n',
@@ -469,5 +519,19 @@ hover = SubResource("StyleBoxFlat_inner")
       "resources/not_a_resource.tres",
     );
     expect(result.status).toBe("invalid");
+  });
+
+  it("enforces the property-count bound for resources with a single diagnostic", () => {
+    const lines: string[] = ['[gd_resource type="Resource" format=3]', "[resource]"];
+    const limit = GODOT_SCENE_LIMITS.maxProperties;
+    for (let index = 0; index < limit + 10; index += 1) {
+      lines.push(`prop_${index} = ${index}`);
+    }
+    const result = parseGodotResource(lines.join("\n"), "resources/many_properties.tres");
+    expect(result.truncated).toBe(true);
+    expect(result.document!.properties.length).toBeLessThanOrEqual(limit);
+    expect(
+      result.diagnostics.filter((diagnostic) => diagnostic.code === "resource.document_truncated"),
+    ).toHaveLength(1);
   });
 });

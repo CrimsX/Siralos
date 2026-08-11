@@ -60,6 +60,17 @@ export function parseGodotResource(
       diagnostics.push({ code, severity, message, ...(line === undefined ? {} : { line }) });
     }
   };
+  // Bounded-truncation diagnostics are emitted ONCE per limit so repeated
+  // excess records cannot exhaust the diagnostic budget and mask real
+  // errors later in the document.
+  const reportedLimits = new Set<string>();
+  const reportLimit = (reason: string, message: string, line?: number): void => {
+    if (reportedLimits.has(reason)) {
+      return;
+    }
+    reportedLimits.add(reason);
+    addDiagnostic("resource.document_truncated", "error", message, line);
+  };
 
   const externalResources: ExternalResourceRef[] = [];
   const subResources: MutableSubResource[] = [];
@@ -99,9 +110,8 @@ export function parseGodotResource(
       if (sectionCount > GODOT_SCENE_LIMITS.maxSections) {
         truncated = true;
         limitReached = true;
-        addDiagnostic(
-          "resource.document_truncated",
-          "error",
+        reportLimit(
+          "sections",
           `The section count exceeded the bound (${GODOT_SCENE_LIMITS.maxSections}); parsing stopped.`,
         );
         break;
@@ -168,9 +178,8 @@ export function parseGodotResource(
           currentSubResource = null;
           if (resourceCount >= GODOT_SCENE_LIMITS.maxResources) {
             truncated = true;
-            addDiagnostic(
-              "resource.document_truncated",
-              "error",
+            reportLimit(
+              "resources",
               `The resource count exceeded the bound (${GODOT_SCENE_LIMITS.maxResources}); remaining resources are ignored.`,
               index + 1,
             );
@@ -197,9 +206,8 @@ export function parseGodotResource(
           currentSection = "sub_resource";
           if (resourceCount >= GODOT_SCENE_LIMITS.maxResources) {
             truncated = true;
-            addDiagnostic(
-              "resource.document_truncated",
-              "error",
+            reportLimit(
+              "resources",
               `The resource count exceeded the bound (${GODOT_SCENE_LIMITS.maxResources}); remaining resources are ignored.`,
               index + 1,
             );
@@ -262,9 +270,8 @@ export function parseGodotResource(
     if (currentSection === "resource") {
       if (propertyCount >= GODOT_SCENE_LIMITS.maxProperties) {
         truncated = true;
-        addDiagnostic(
-          "resource.document_truncated",
-          "error",
+        reportLimit(
+          "properties",
           `The property count exceeded the bound (${GODOT_SCENE_LIMITS.maxProperties}); remaining properties are ignored.`,
           record.line,
         );
@@ -279,9 +286,8 @@ export function parseGodotResource(
     } else if (currentSection === "sub_resource" && currentSubResource !== null) {
       if (propertyCount >= GODOT_SCENE_LIMITS.maxProperties) {
         truncated = true;
-        addDiagnostic(
-          "resource.document_truncated",
-          "error",
+        reportLimit(
+          "properties",
           `The property count exceeded the bound (${GODOT_SCENE_LIMITS.maxProperties}); remaining properties are ignored.`,
           record.line,
         );

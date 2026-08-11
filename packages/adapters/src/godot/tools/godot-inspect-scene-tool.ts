@@ -137,6 +137,7 @@ export function createGodotInspectSceneTool(intelligence: GodotSceneIntelligence
           message: diagnostic.message,
           ...(diagnostic.line === undefined ? {} : { line: diagnostic.line }),
         })),
+        diagnosticsTruncated: (document?.diagnostics ?? []).length > maxListItems,
       };
       if (model !== null) {
         output["baseScene"] =
