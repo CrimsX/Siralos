@@ -1689,3 +1689,141 @@ describe("doctor and self-reference boundaries (milestone 6)", () => {
     expect(errors).toEqual([]);
   });
 });
+
+// --- Executor briefing foundation: contract/manifest/compiler boundaries ---
+
+describe("executor briefing boundaries (cross-cutting foundation)", () => {
+  it("accepts clean executor-briefing modules importing allowed model types", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/brief-compiler.ts"] =
+      'import { sha256Hex } from "../godot/digest.js";\nimport type { TaskContract } from "../tasks/task-contract.js";\nimport type { MilestoneManifest } from "./milestone-manifest.js";\nexport const x = sha256Hex;\nexport type Y = TaskContract;\nexport type Z = MilestoneManifest;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects executor-briefing modules importing capability-granting policy", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/execution-contract.ts"] =
+      'import { createDefaultPolicy } from "../security/default-policy.js";\nexport const x = createDefaultPolicy;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes(
+          "an execution contract, milestone manifest, or brief can never grant capability",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects the brief compiler importing the task runtime mutation surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/brief-compiler.ts"] =
+      'import { createTaskRuntime } from "../tasks/task-runtime.js";\nexport const x = createTaskRuntime;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes(
+          "executor-briefing modules must not import the task runtime mutation surface",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects executor-briefing modules importing provider ports", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/briefing-service.ts"] =
+      'import type { ModelRequest } from "../ports/provider.js";\nexport type X = ModelRequest;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("executor-briefing modules must not depend on provider ports"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects executor-briefing modules importing projection modules", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/context-pack.ts"] =
+      'import type { ContextProjection } from "../projection/context-projector.js";\nexport type X = ContextProjection;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("executor-briefing modules must not import projection modules"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects executor-briefing modules importing project knowledge", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/brief-compiler.ts"] =
+      'import type { ProjectKnowledgeFact } from "../knowledge/knowledge-model.js";\nexport type X = ProjectKnowledgeFact;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("knowledge facts never enter briefs as policy or authority"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects executor-briefing modules performing global fetch( calls", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/briefing-service.ts"] =
+      'export async function x() {\n  await fetch("https://example.com");\n}\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("executor-briefing modules must not perform network calls"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects executor-briefing test files importing security machinery is NOT enforced (test support exempt)", () => {
+    // Test support files stay exempt from the briefing boundary rules so
+    // deterministic tests can exercise the compiler against real runtimes.
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/executor/briefing-service.test.ts"] =
+      'import { createTaskRuntime } from "../tasks/task-runtime.js";\nexport const x = createTaskRuntime;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects projection modules other than projection-service importing the executor-brief surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/tool-projector.ts"] =
+      'import type { ExecutorBrief } from "../executor/brief-compiler.js";\nexport type X = ExecutorBrief;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("only projection-service consumes the executor-brief surface"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts projection-service importing the executor-brief surface", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/core/src/projection/projection-service.ts"] =
+      'import type { ExecutorBrief } from "../executor/brief-compiler.js";\nimport { renderExecutorBrief } from "../executor/brief-compiler.js";\nexport type X = ExecutorBrief;\nexport const y = renderExecutorBrief;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects provider adapters importing executor-briefing surfaces", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { createExecutorBriefing } from "@solaris/core";\nexport const x = createExecutorBriefing;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(
+      errors.some((error) =>
+        error.includes("provider adapters must not import executor-briefing surfaces"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts provider adapters importing unrelated core contracts", () => {
+    const fixture = cleanWorkspaceFixture();
+    fixture["packages/adapters/src/providers/fake.ts"] =
+      'import { createToolRegistry } from "@solaris/core";\nexport const x = createToolRegistry;\n';
+    const errors = runChecks(writeFixture(fixture));
+    expect(errors).toEqual([]);
+  });
+});

@@ -469,6 +469,31 @@ const PLANNING_POLICY_BANNED_IDENTIFIERS = new Set([
   "createPlanningFlow",
 ]);
 
+/**
+ * Executor briefing foundation: core executor-briefing modules
+ * (src/executor). The compiler/service compose existing authoritative
+ * systems; they never own TaskState, never grant capability, never touch
+ * provider ports, and never perform network or filesystem work. The host
+ * owns briefing semantics — provider adapters never recreate them.
+ */
+const BRIEFING_DIRECTORY = join("src", "executor");
+
+function isCoreBriefingModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(BRIEFING_DIRECTORY + sep);
+}
+
+/** Briefing identifiers provider adapters must never import: providers do
+ * not independently compile or evaluate executor briefs. */
+const BRIEFING_BANNED_IDENTIFIERS = new Set([
+  "createExecutorBriefing",
+  "compileExecutorBrief",
+  "buildExecutorContextPack",
+  "createAcceptanceEvaluator",
+  "renderExecutorBrief",
+  "DEFAULT_EXECUTION_CONTRACT",
+  "S3M8_MILESTONE_MANIFEST",
+]);
+
 const CHILD_PROCESS_MODULE = "child_process";
 
 /** Destructive filesystem APIs tracked structurally. */
@@ -1370,6 +1395,19 @@ export function runChecks(root) {
           if (
             pkg.name === "@solaris/adapters" &&
             !isTestSupportFile(file) &&
+            packageRelativeFile.startsWith(join("src", "providers") + sep)
+          ) {
+            for (const binding of analysis.importedNames) {
+              if (BRIEFING_BANNED_IDENTIFIERS.has(binding.originalName)) {
+                errors.push(
+                  `${location}: provider adapters must not import executor-briefing surfaces (${binding.originalName}); providers never independently compile or evaluate executor briefs`,
+                );
+              }
+            }
+          }
+          if (
+            pkg.name === "@solaris/adapters" &&
+            !isTestSupportFile(file) &&
             isCoreTaskModule(packageRelativeFile) === false
           ) {
             for (const binding of analysis.importedNames) {
@@ -1485,6 +1523,16 @@ export function runChecks(root) {
           ) {
             errors.push(
               `${location}: projection modules must not perform network calls; fetch( is prohibited — ContextProjector builds pure deterministic model context with no network I/O`,
+            );
+          }
+          if (
+            pkg.name === "@solaris/core" &&
+            !isTestSupportFile(file) &&
+            isCoreBriefingModule(packageRelativeFile) &&
+            /\bfetch\s*\(/.test(source)
+          ) {
+            errors.push(
+              `${location}: executor-briefing modules must not perform network calls; fetch( is prohibited — brief compilation is offline and deterministic`,
             );
           }
           if (
@@ -1672,6 +1720,15 @@ export function runChecks(root) {
                 `${location}: projection modules must not depend on Godot modules (the generic digest utility is allowed)`,
               );
             }
+            if (
+              specifier.startsWith("../executor/") &&
+              packageRelativeFile !== join(PROJECTION_DIRECTORY, "projection-service.ts") &&
+              packageRelativeFile !== join(PROJECTION_DIRECTORY, "projection-service.test.ts")
+            ) {
+              errors.push(
+                `${location}: only projection-service consumes the executor-brief surface (${specifier}); briefing semantics stay host-owned in core`,
+              );
+            }
           }
           if (
             pkg.name === "@solaris/core" &&
@@ -1783,6 +1840,66 @@ export function runChecks(root) {
             if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
               errors.push(
                 `${location}: planning modules must not depend on Godot modules (the generic digest utility is allowed); planning is Godot-agnostic and does not depend on future scene/multi-agent modules`,
+              );
+            }
+          }
+          if (
+            pkg.name === "@solaris/core" &&
+            !isTestSupportFile(file) &&
+            isCoreBriefingModule(packageRelativeFile)
+          ) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: executor-briefing modules must not depend on provider ports; briefs are provider-neutral compiled artifacts`,
+              );
+            }
+            if (specifier.startsWith("../security/")) {
+              errors.push(
+                `${location}: executor-briefing modules must not import security/capability/approval machinery (${specifier}); an execution contract, milestone manifest, or brief can never grant capability`,
+              );
+            }
+            if (specifier.startsWith("../tasks/task-runtime")) {
+              errors.push(
+                `${location}: executor-briefing modules must not import the task runtime mutation surface; the compiler consumes task snapshots through injected getters and never owns TaskState`,
+              );
+            }
+            if (
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../workspace/") ||
+              specifier.startsWith("../tools/") ||
+              specifier.startsWith("../commands/") ||
+              specifier.startsWith("../application/")
+            ) {
+              errors.push(
+                `${location}: executor-briefing modules must not import mutation/command/application machinery; briefing is read-only derived context`,
+              );
+            }
+            if (specifier.startsWith("../projection/")) {
+              errors.push(
+                `${location}: executor-briefing modules must not import projection modules; ContextProjector consumes the compiled brief, never the reverse`,
+              );
+            }
+            if (specifier.startsWith("../knowledge/")) {
+              errors.push(
+                `${location}: executor-briefing modules must not import project knowledge; knowledge facts never enter briefs as policy or authority`,
+              );
+            }
+            if (
+              specifier.startsWith("../instructions/") &&
+              specifier !== "../instructions/instruction-model.js"
+            ) {
+              errors.push(
+                `${location}: executor-briefing modules consume resolved instruction sets only; instruction discovery/resolution stays in the host-owned instruction service`,
+              );
+            }
+            if (NETWORK_IO_MODULES.has(normalized)) {
+              errors.push(
+                `${location}: executor-briefing modules must not import network modules (${specifier}); brief compilation is offline and deterministic`,
+              );
+            }
+            if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
+              errors.push(
+                `${location}: executor-briefing modules must not depend on Godot modules (the generic digest utility is allowed)`,
               );
             }
           }
