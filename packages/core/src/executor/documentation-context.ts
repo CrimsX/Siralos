@@ -464,6 +464,18 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["godot", "impact", "review"],
     paths: ["packages/core/src/godot/impact/**", "packages/adapters/src/godot/intelligence/**"],
   },
+  {
+    id: "adr:0026",
+    path: "docs/adr/0026-approved-scene-and-resource-mutation.md",
+    kind: "adr",
+    concerns: ["godot", "godot-static-inspection", "workspace", "security"],
+    status: "accepted",
+    domains: ["godot", "mutation", "security"],
+    paths: [
+      "packages/core/src/godot/scene-mutation/**",
+      "packages/adapters/src/godot/scene-mutation/**",
+    ],
+  },
 ]);
 
 /**
