@@ -34,6 +34,7 @@ import {
   runTaskCommand,
   runTaskStatusCommand,
 } from "./session/session-development-commands.js";
+import { runBriefCommand, runMilestoneCommand } from "./session/session-briefing-commands.js";
 export type { SessionControls, SessionIO, SessionInfo } from "./session/session-types.js";
 import { createCliDoctor, isDoctorArea, type CliDoctorDependencies } from "./bootstrap/doctor.js";
 import {
@@ -294,6 +295,12 @@ export async function runInteractiveSession(
             break;
           case "read-structure":
             await runReadStructureCommand(io, sessionInfo, parsed.args);
+            break;
+          case "brief":
+            runBriefCommand(io, sessionInfo);
+            break;
+          case "milestone":
+            runMilestoneCommand(io, sessionInfo);
             break;
           case "quality":
             io.write(formatQualityReport(sessionInfo.development.qualityReport()));

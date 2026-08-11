@@ -78,6 +78,17 @@ export const COMMAND_CATALOG = [
     description: "Show the active development workflow's bounded status",
     group: "inspection",
   },
+  {
+    id: "brief",
+    description:
+      "Show the compiled executor brief for the current task (task goal, manifest/contract identity, touchpoints, invariants, acceptance ids)",
+    group: "inspection",
+  },
+  {
+    id: "milestone",
+    description: "Show the current milestone manifest and its evidence-backed acceptance status",
+    group: "inspection",
+  },
   // --- workspace ---
   {
     id: "git-status",

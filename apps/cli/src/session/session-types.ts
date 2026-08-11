@@ -3,6 +3,7 @@ import type {
   CapabilityPolicy,
   CheckpointStore,
   CommandRunnerRegistry,
+  ExecutorBriefing,
   GDScriptDevelopmentService,
   GDScriptLanguageService,
   GitInspector,
@@ -11,6 +12,7 @@ import type {
   GodotKnowledge,
   GodotProjectProbe,
   KnowledgeCoordinator,
+  MilestoneManifest,
   ModelProvider,
   PlannerPort,
   ProjectionService,
@@ -71,6 +73,10 @@ export interface SessionInfo {
   readonly research: ResearchService;
   readonly researchSources: readonly ResearchSourcePort[];
   readonly planner: PlannerPort;
+  /** Executor briefing foundation: compiles the current task's bounded brief. */
+  readonly briefing: ExecutorBriefing;
+  /** The current milestone manifest and its evidence-backed acceptance status. */
+  readonly milestoneManifest: MilestoneManifest;
 }
 
 export interface SessionControls {

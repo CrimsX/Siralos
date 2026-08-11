@@ -75,11 +75,15 @@ import {
   buildGodotProjectKnowledgeCandidates,
   canonicalizeJson,
   capabilityPolicyFingerprint,
+  containsGodotSceneOrResourceReference,
   createCommandRunnerRegistry,
+  createExecutorBriefing,
   createKnowledgeCoordinator,
   createWorkspaceRevisionRegistry,
+  DEFAULT_EXECUTION_CONTRACT,
   resolveInstructionSet,
   sha256Hex,
+  S3M8_MILESTONE_MANIFEST,
   createDefaultPolicy,
   createProjectionService,
   createRouteContextCapacity,
@@ -97,6 +101,7 @@ import {
   type CapabilityPolicy,
   type CheckpointStore,
   type CommandRunnerRegistry,
+  type ExecutorBriefing,
   type GDScriptDevelopmentService,
   type GitInspector,
   type GodotInspector,
@@ -107,6 +112,7 @@ import {
   type GodotKnowledge,
   type GodotDiagnostics,
   type KnowledgeCoordinator,
+  type MilestoneManifest,
   type ModelProvider,
   type PlannerPort,
   type ProjectInstructionService,
@@ -190,6 +196,13 @@ export interface CliApplication {
   readonly researchSources: readonly ResearchSourcePort[];
   /** Read-only planner execution boundary (host-owned planning phase). */
   readonly planner: PlannerPort;
+  /**
+   * Executor briefing foundation: session-level briefing service that
+   * compiles the bounded executor brief for the current task.
+   */
+  readonly briefing: ExecutorBriefing;
+  /** The current milestone manifest (S3M8 today; milestone manifests are repo-owned). */
+  readonly milestoneManifest: MilestoneManifest;
   /** Releases the reference services (currently a no-op; kept for interface stability). */
   close(): void;
 }
@@ -565,6 +578,31 @@ export async function createCliApplication(
     },
   });
   const provider = createDeterministicFakeProvider();
+  // Executor briefing foundation: the host owns briefing semantics. The
+  // milestone manifest is selected deterministically by request — the
+  // current S3M8 manifest applies to tasks that reference Godot
+  // scene/resource concerns; everything else gets no milestone manifest.
+  const briefing = createExecutorBriefing({
+    executionContract: DEFAULT_EXECUTION_CONTRACT,
+    milestone: null,
+    selectMilestone: (request) =>
+      containsGodotSceneOrResourceReference(request) ? S3M8_MILESTONE_MANIFEST : null,
+    getTaskContract: () => tasks.latestTask()?.contract() ?? null,
+    getTaskSnapshot: () => tasks.latestTask()?.snapshot() ?? null,
+    getCurrentPlan: () => tasks.latestTask()?.currentPlan() ?? null,
+    resolveInstructions: (focusPaths) => {
+      const safe = focusPaths.filter(isSafeRelativeFocusPath);
+      const set = resolveInstructionSet({
+        instructions: instructions.instructions(),
+        paths: safe.length === 0 ? ["."] : safe,
+      });
+      return set.instructions.length === 0 ? null : set;
+    },
+    // The capability snapshot is only available when the read-only doctor
+    // runs; without one the brief honestly omits the capability-limits
+    // section instead of guessing.
+    getCapabilitySnapshot: () => null,
+  });
   const taskSources: TaskRuntimeSnapshotSources = {
     runtimeVersion: TASK_RUNTIME_VERSION,
     provider: { profileId: provider.id, route: null },
@@ -573,6 +611,11 @@ export async function createCliApplication(
     workspaceIdentity: workspaceRoot,
     godotEngineFingerprint: null,
     workflow: null,
+    executionContract: {
+      id: DEFAULT_EXECUTION_CONTRACT.id,
+      revision: DEFAULT_EXECUTION_CONTRACT.revision,
+    },
+    milestoneManifest: null,
   };
   const projection = createProjectionService({
     policy,
@@ -607,6 +650,7 @@ export async function createCliApplication(
     scenes: {
       latestEvidence: () => [...sceneEvidenceRing],
     },
+    getExecutorBrief: () => briefing.latestOrCompile(),
   });
   const application = createSolarisApplication({
     provider,
@@ -655,6 +699,8 @@ export async function createCliApplication(
     research,
     researchSources,
     planner,
+    briefing,
+    milestoneManifest: S3M8_MILESTONE_MANIFEST,
     close(): void {
       referenceServices.close();
     },

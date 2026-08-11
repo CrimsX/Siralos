@@ -80,6 +80,8 @@ async function createComposedSession(lines: readonly string[], configPath: strin
     research: app.research,
     researchSources: app.researchSources,
     planner: app.planner,
+    briefing: app.briefing,
+    milestoneManifest: app.milestoneManifest,
     tools: app.tools,
     security: app.security,
     git: app.git,

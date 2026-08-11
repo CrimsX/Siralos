@@ -8,6 +8,7 @@ import type {
   SessionStatus,
   SolarisSecurity,
 } from "@solaris/core";
+import { renderExecutorBrief } from "@solaris/core";
 import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
 import { sanitizeForDisplay, sanitizePathForDisplay } from "./output/sanitize.js";
 import {
@@ -501,6 +502,57 @@ export function formatPlanningStatus(task: import("@solaris/core").TaskState | n
     `Plan approval: ${plan.approval}`,
     "",
   ].join("\n");
+}
+
+/** Rendered executor brief with its identity and fingerprint (dry-run surface). */
+export function formatExecutorBrief(
+  brief: import("@solaris/core").ExecutorBrief,
+  fingerprint: string | null,
+): string {
+  const identity = [
+    `Executor brief (${brief.executionContract.id} rev ${brief.executionContract.revision})`,
+    `Task: ${brief.taskId} (contract rev ${brief.contractRevision})`,
+    brief.milestone === null
+      ? null
+      : `Milestone: ${brief.milestone.id} rev ${brief.milestone.version}`,
+    fingerprint === null ? null : `Fingerprint: ${fingerprint.slice(0, 16)}\u2026`,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+  return `${identity}\n\n${renderExecutorBrief(brief)}\n`;
+}
+
+/** Milestone manifest summary plus its evidence-backed acceptance status. */
+export function formatMilestoneManifest(
+  manifest: import("@solaris/core").MilestoneManifest,
+  report: import("@solaris/core").MilestoneAcceptanceReport | null,
+): string {
+  const lines = [
+    `Milestone ${manifest.id} rev ${manifest.version} \u2014 ${manifest.title}`,
+    `Goal: ${manifest.goal}`,
+    "",
+    "Invariants:",
+    ...manifest.invariants.map((invariant) => `- ${invariant.description}`),
+    "",
+    "Non-goals:",
+    ...manifest.nonGoals.map((nonGoal) => `- ${nonGoal}`),
+    "",
+    "Acceptance:",
+  ];
+  if (report === null) {
+    lines.push("- no task evidence yet (start /task or /develop to attach host evidence)");
+  } else {
+    for (const requirement of report.requirements) {
+      lines.push(
+        `- ${requirement.id} [${requirement.status}]${requirement.note === null ? "" : ` \u2014 ${requirement.note}`}`,
+      );
+    }
+    lines.push(
+      "",
+      `Result: ${report.counts.pass} pass, ${report.counts.fail} fail, ${report.counts.incomplete} incomplete, ${report.counts.not_applicable} n/a${report.passed ? " \u2014 PASSED" : " \u2014 not complete"}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function formatGodotProbeApprovalPrompt(

@@ -138,6 +138,8 @@ async function main(): Promise<number> {
     research,
     researchSources,
     planner,
+    briefing,
+    milestoneManifest,
   } = cliApp;
   stdout.write(sanitizer.push(formatHeader(providerId)) + sanitizer.flush());
   const sessionInfo: SessionInfo = {
@@ -160,6 +162,8 @@ async function main(): Promise<number> {
     research,
     researchSources,
     planner,
+    briefing,
+    milestoneManifest,
     tools,
     security,
     git,

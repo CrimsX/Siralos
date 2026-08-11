@@ -1,5 +1,6 @@
 import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
 import {
+  computeExecutorBriefFingerprint,
   computePlanRevisionDigest,
   containsGodotSceneOrResourceReference,
   containsProtectedConfigReference,
@@ -100,6 +101,15 @@ export async function runDevelopCommand(
         ...sessionInfo.taskSources,
         instructionSetRevision: sessionInfo.instructions.revision(),
         knowledgeStateRevision: sessionInfo.projectKnowledge.revision(),
+      },
+      // Executor briefing foundation: the immutable task snapshot records
+      // the manifest identity and the initial brief fingerprint.
+      snapshotExtras: ({ taskId, contract }) => {
+        const brief = sessionInfo.briefing.compileForRequest(taskId, contract.request);
+        return {
+          milestoneManifest: brief?.milestone ?? null,
+          executorBriefFingerprint: brief === null ? null : computeExecutorBriefFingerprint(brief),
+        };
       },
     });
     sessionInfo.development.onEvent = (event) => activeDevelopmentTaskFlow?.handleEvent(event);
@@ -235,9 +245,14 @@ export async function runPlanCommand(
   const controller = controls.beginPrompt();
   try {
     const taskId = nextAdHocTaskId(sessionInfo.tasks);
+    const brief = sessionInfo.briefing.compileForRequest(taskId, request);
     const handle = sessionInfo.tasks.createTask({
       contract: createAdHocTaskContract(taskId, request),
-      snapshot: createTaskRuntimeSnapshot(sessionInfo.taskSources),
+      snapshot: createTaskRuntimeSnapshot({
+        ...sessionInfo.taskSources,
+        milestoneManifest: brief?.milestone ?? null,
+        executorBriefFingerprint: brief === null ? null : computeExecutorBriefFingerprint(brief),
+      }),
       steps: [],
     });
     handle.transitionPhase("working");
@@ -359,9 +374,14 @@ export function runTaskCommand(
     return;
   }
   const taskId = nextAdHocTaskId(sessionInfo.tasks);
+  const brief = sessionInfo.briefing.compileForRequest(taskId, request);
   const handle = sessionInfo.tasks.createTask({
     contract: createAdHocTaskContract(taskId, request),
-    snapshot: createTaskRuntimeSnapshot(sessionInfo.taskSources),
+    snapshot: createTaskRuntimeSnapshot({
+      ...sessionInfo.taskSources,
+      milestoneManifest: brief?.milestone ?? null,
+      executorBriefFingerprint: brief === null ? null : computeExecutorBriefFingerprint(brief),
+    }),
     steps: [],
   });
   handle.transitionPhase("working");

@@ -3,11 +3,13 @@ import { parseInput } from "./input/parse-input.js";
 import {
   TASK_RUNTIME_VERSION,
   createCommandRunnerRegistry,
+  createExecutorBriefing,
   createKnowledgeCoordinator,
   createProjectionService,
   createRouteContextCapacity,
   createWorkspaceRevisionRegistry,
   createDefaultPolicy,
+  DEFAULT_EXECUTION_CONTRACT,
   createPreparedCommand,
   createSelfReference,
   createSolarisApplication,
@@ -19,6 +21,7 @@ import {
   DEVELOP_OFFLINE_PROFILE,
   GitError,
   INSPECT_PROFILE,
+  S3M8_MILESTONE_MANIFEST,
   createEmptyGodotProjectProfile,
   type CheckpointStore,
   type SelfReference,
@@ -137,6 +140,8 @@ async function createComposedSession(lines: readonly string[]) {
     research,
     researchSources,
     planner,
+    briefing,
+    milestoneManifest,
     configPath,
     policy,
     profile,
@@ -181,6 +186,8 @@ async function createComposedSession(lines: readonly string[]) {
     research,
     researchSources,
     planner,
+    briefing,
+    milestoneManifest,
   };
   return { io, application, sessionInfo };
 }
@@ -330,6 +337,13 @@ function buildSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
         return Promise.resolve({ status: "failed", message: "stub planner unavailable" });
       },
     },
+    briefing: createExecutorBriefing({
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      getTaskContract: () => null,
+      getTaskSnapshot: () => null,
+      getCurrentPlan: () => null,
+    }),
+    milestoneManifest: S3M8_MILESTONE_MANIFEST,
     sandbox: createStubBackend({
       backendId: "stub-backend",
       state: "available",
@@ -813,6 +827,43 @@ describe("runInteractiveSession", () => {
     const { io, application, sessionInfo } = await createComposedSession(["/task-status", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("No task is tracked yet.");
+  });
+
+  it("renders the compiled executor brief for the current task", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "/task Inspect the main scene file read-only",
+      "/brief",
+      "/exit",
+    ]);
+    await runInteractiveSession(io, application, sessionInfo);
+    expect(io.text).toContain("Executor brief (solaris-execution-contract rev 1)");
+    expect(io.text).toContain("TASK\nInspect the main scene file read-only");
+    expect(io.text).toContain("Milestone: S3M8 rev 1");
+    expect(io.text).toContain("Fingerprint:");
+    expect(io.text).toContain("S3M8.PARSE.TSCN");
+  });
+
+  it("renders no brief when no task is tracked yet", async () => {
+    const { io, application, sessionInfo } = await createComposedSession(["/brief", "/exit"]);
+    await runInteractiveSession(io, application, sessionInfo);
+    expect(io.text).toContain("No task is tracked yet.");
+  });
+
+  it("renders the milestone manifest and its evidence-backed acceptance status", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "/task Add a health component",
+      "/milestone",
+      "/exit",
+    ]);
+    await runInteractiveSession(io, application, sessionInfo);
+    expect(io.text).toContain(
+      "Milestone S3M8 rev 1 — Read-Only Godot Scene and Resource Intelligence",
+    );
+    expect(io.text).toContain("S3M8.PARSE.TSCN [incomplete]");
+    expect(io.text).toContain("Result: 0 pass, 0 fail");
+    // A task about health has no scene/resource request, so the brief
+    // carries no milestone — but the /milestone command still renders the
+    // session's current manifest with the task's (empty) evidence.
   });
 
   it("clears the terminal without clearing conversation history", async () => {
