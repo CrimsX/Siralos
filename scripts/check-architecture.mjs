@@ -438,9 +438,16 @@ const SCENE_INTELLIGENCE_FORBIDDEN_IMPORT_ROOTS = [
 
 /** Stage 3 milestone 8: core scene/resource semantic modules (src/godot/scene). */
 const SCENE_DIRECTORY = join("src", "godot", "scene");
+/** Stage 3 milestone 9: impact analysis modules (src/godot/impact). */
+const IMPACT_DIRECTORY = join("src", "godot", "impact");
 
 function isCoreSceneModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(SCENE_DIRECTORY + sep);
+}
+
+/** Stage 3 milestone 9: impact analysis is derived read-only state. */
+function isCoreImpactModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(IMPACT_DIRECTORY + sep);
 }
 
 /**
@@ -2093,6 +2100,26 @@ export function runChecks(root) {
             ) {
               errors.push(
                 `${location}: scene/resource semantic modules must not import security/task/checkpoint/projection/tool machinery; parsed models are derived read-only domain state that never grants capability or mutates the workspace`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/core" && isCoreImpactModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: impact modules must not depend on provider ports; impact analysis is provider-neutral derived context`,
+              );
+            }
+            if (
+              specifier.startsWith("../security/") ||
+              specifier.startsWith("../tasks/") ||
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../projection/") ||
+              specifier.startsWith("../tools/") ||
+              specifier.startsWith("../application/") ||
+              specifier.startsWith("../commands/")
+            ) {
+              errors.push(
+                `${location}: impact modules must not import security/task/checkpoint/projection/tool/application machinery; a ReviewContextManifest is derived read-only state that never grants capability, mutates, or executes`,
               );
             }
           }
