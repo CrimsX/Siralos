@@ -163,6 +163,16 @@ export interface DevelopmentTaskFlowOptions {
   readonly sources: TaskRuntimeSnapshotSources;
   readonly now?: () => number;
   readonly idFactory?: () => string;
+  /**
+   * Host-owned per-task snapshot extras (executor briefing foundation):
+   * called once at task start so the immutable runtime snapshot records
+   * execution-contract/manifest identity and the initial brief
+   * fingerprint for reproducibility.
+   */
+  readonly snapshotExtras?: (input: {
+    readonly taskId: TaskId;
+    readonly contract: TaskContract;
+  }) => Partial<TaskRuntimeSnapshotSources> | null;
 }
 
 export interface DevelopmentTaskFlow {
@@ -280,6 +290,10 @@ export function createDevelopmentTaskFlow(
             version: DEVELOPMENT_WORKFLOW_VERSION,
             digest,
           },
+          ...(options.snapshotExtras?.({
+            taskId,
+            contract,
+          }) ?? {}),
         },
         now,
       );

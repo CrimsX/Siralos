@@ -54,6 +54,16 @@ export interface TaskRuntimeSnapshot {
    * registry refresh never mutates a captured task snapshot.
    */
   readonly referenceRevisions: readonly { alias: ReferenceAlias; revision: ReferenceRevision }[];
+  /**
+   * Execution-contract identity bound at task start (executor briefing
+   * foundation). Changing the contract affects future tasks, never this
+   * snapshot, unless immediate hard-security policy requires otherwise.
+   */
+  readonly executionContract: { readonly id: string; readonly revision: number } | null;
+  /** Milestone-manifest identity bound at task start, when one applies. */
+  readonly milestoneManifest: { readonly id: string; readonly version: number } | null;
+  /** Fingerprint of the executor brief compiled at task start, when any. */
+  readonly executorBriefFingerprint: string | null;
 }
 
 export interface TaskRuntimeSnapshotSources {
@@ -67,6 +77,9 @@ export interface TaskRuntimeSnapshotSources {
   readonly instructionSetRevision?: string | null;
   readonly knowledgeStateRevision?: string | null;
   readonly referenceRevisions?: readonly { alias: ReferenceAlias; revision: ReferenceRevision }[];
+  readonly executionContract?: { readonly id: string; readonly revision: number } | null;
+  readonly milestoneManifest?: { readonly id: string; readonly version: number } | null;
+  readonly executorBriefFingerprint?: string | null;
 }
 
 /** Deterministic revision identity for a capability policy. */
@@ -92,6 +105,15 @@ export function createTaskRuntimeSnapshot(
     referenceRevisions: (sources.referenceRevisions ?? [])
       .slice(0, 16)
       .map((entry) => ({ alias: entry.alias, revision: entry.revision })),
+    executionContract:
+      sources.executionContract === null || sources.executionContract === undefined
+        ? null
+        : { id: sources.executionContract.id, revision: sources.executionContract.revision },
+    milestoneManifest:
+      sources.milestoneManifest === null || sources.milestoneManifest === undefined
+        ? null
+        : { id: sources.milestoneManifest.id, version: sources.milestoneManifest.version },
+    executorBriefFingerprint: sources.executorBriefFingerprint ?? null,
   };
   return deepFreeze(snapshot);
 }

@@ -56,6 +56,8 @@ import { formatReferenceEvidenceLine } from "../reference/reference-evidence.js"
 import type { GodotSceneEvidenceView } from "../godot/scene/intelligence.js";
 import type { ResearchEvidence } from "../research/research-service.js";
 import { formatResearchEvidenceView } from "../research/research-service.js";
+import type { ExecutorBrief } from "../executor/brief-compiler.js";
+import { renderExecutorBrief } from "../executor/brief-compiler.js";
 import { truncateText } from "./evidence-projector.js";
 
 export type { ProjectionMode } from "./tool-projector.js";
@@ -137,6 +139,12 @@ export interface ProjectionServiceOptions {
     /** Bounded recent scene/resource inspection observations, oldest first. */
     latestEvidence: () => readonly GodotSceneEvidenceView[];
   };
+  /**
+   * Host-owned executor brief projection (executor briefing foundation).
+   * The service consumes a bounded compiled brief; the host owns briefing
+   * semantics and the compiler stays in core. Null when no brief applies.
+   */
+  readonly getExecutorBrief?: () => ExecutorBrief | null;
   readonly contextProjector?: ContextProjector;
   readonly toolProjector?: ToolProjector;
   readonly evidenceProjector?: EvidenceProjector;
@@ -184,6 +192,9 @@ const TOOL_REQUIRING_MODES: readonly ProjectionMode[] = [
 /** Bounded rendering budget for the current-plan context segment. */
 export const MAX_PLAN_SEGMENT_BYTES = 4 * 1024;
 
+/** Bounded rendering budget for the executor-brief context segment. */
+export const MAX_EXECUTOR_BRIEF_SEGMENT_BYTES = 4 * 1024;
+
 function planSegment(
   snapshot: TaskState | null,
   plan: TaskPlan | null,
@@ -228,6 +239,25 @@ function planSegment(
       stability: "contextual",
       title: "Task plan",
       content: truncateText(lines.join("\n"), MAX_PLAN_SEGMENT_BYTES).text,
+    },
+  ];
+}
+
+function executorBriefSegment(brief: ExecutorBrief | null): Array<{
+  readonly id: string;
+  readonly stability: ContextStability;
+  readonly title: string;
+  readonly content: string;
+}> {
+  if (brief === null) {
+    return [];
+  }
+  return [
+    {
+      id: "executor-brief",
+      stability: "contextual",
+      title: "Executor brief",
+      content: truncateText(renderExecutorBrief(brief), MAX_EXECUTOR_BRIEF_SEGMENT_BYTES).text,
     },
   ];
 }
@@ -621,6 +651,7 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
         : knowledgeSegments(snapshot, request, options.knowledge)),
       ...taskContextSegments(snapshot, request),
       ...planSegment(snapshot, getCurrentPlan()),
+      ...executorBriefSegment(options.getExecutorBrief?.() ?? null),
       ...volatileTaskSegments(snapshot),
       // Reference/research evidence render AFTER [Latest evidence] and last.
       // The ContextProjector sorts segments by stability then id, and
