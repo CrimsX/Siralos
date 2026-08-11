@@ -382,8 +382,9 @@ describe("Behavior — context scope and documentation discipline", () => {
     // selected into ordinary executor guidance.
     expect(briefSegment).not.toContain("docs/archive/hostile.md");
     expect(briefSegment).not.toContain(ARCHIVED_AUTHORITY_TEXT);
-    // Even if read as historical data, it grants no capability: no
-    // approval was requested and the sandbox stays unavailable.
+    // No approval was requested for anything during the run; capability
+    // non-grant is structural (selection is index-driven and executor
+    // modules cannot import capability machinery).
     expect(harness.approvals()).toBe(0);
     await harness.cancelWorkflow();
   });

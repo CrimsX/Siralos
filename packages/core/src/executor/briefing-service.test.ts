@@ -10,6 +10,7 @@ import {
   type TaskRuntimeSnapshot,
 } from "../tasks/task-snapshot.js";
 import { createTaskPlan, type TaskPlan } from "../planning/planning-model.js";
+import { createWorkspaceScope, promoteCandidateFile } from "./workspace-scope.js";
 
 function makeRuntime(): TaskRuntime {
   return createTaskRuntime({ now: () => 1000 });
@@ -233,3 +234,45 @@ import type { ExecutorBrief } from "./brief-compiler.js";
 function computeFingerprint(brief: ExecutorBrief): string {
   return sha256Hex(canonicalizeJson(brief));
 }
+
+describe("executor briefing service — evolving context memo", () => {
+  it("recompiles when the workspace scope changes under a stable plan revision", () => {
+    const runtime = makeRuntime();
+    startTask(runtime, "Inspect scenes read-only.");
+    const options = {
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      milestone: S3M8_MILESTONE_MANIFEST,
+      getTaskContract: () => runtime.latestTask()?.contract() ?? null,
+      getTaskSnapshot: () => runtime.latestTask()?.snapshot() ?? null,
+      getCurrentPlan: () => runtime.latestTask()?.currentPlan() ?? null,
+      workspaceScope: createWorkspaceScope({
+        candidateFiles: [
+          {
+            path: "packages/core/src/godot/scene/parser.ts",
+            confidence: "candidate",
+            view: "none",
+          },
+        ],
+      }),
+    };
+    const briefing = createExecutorBriefing(options);
+    const first = briefing.latestOrCompile();
+    expect(first?.workspaceVerifiedFiles).toEqual([]);
+    const firstFingerprint = briefing.fingerprint();
+    // Scope evolves during the task (promotion); the same plan revision
+    // must NOT serve the stale memoized brief.
+    const promoted = promoteCandidateFile(
+      options.workspaceScope,
+      "packages/core/src/godot/scene/parser.ts",
+      {
+        evidence: "read:packages/core/src/godot/scene/parser.ts",
+        revision: "rev_".padEnd(36, "a"),
+        reason: "promoted by deterministic discovery",
+      },
+    );
+    options.workspaceScope = promoted.scope;
+    const second = briefing.latestOrCompile();
+    expect(second?.workspaceVerifiedFiles).toEqual(["packages/core/src/godot/scene/parser.ts"]);
+    expect(briefing.fingerprint()).not.toBe(firstFingerprint);
+  });
+});

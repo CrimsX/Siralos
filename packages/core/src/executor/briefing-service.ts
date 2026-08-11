@@ -12,6 +12,7 @@ import type { WorkspaceScope, ActiveWorkingSet } from "./workspace-scope.js";
 import type { NewFileRationale } from "./new-file-discipline.js";
 import type { ExecutorContextPack, ScopeSignalRef } from "./context-pack.js";
 import { buildExecutorContextPack } from "./context-pack.js";
+import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import type { ExecutorBrief } from "./brief-compiler.js";
 import { compileExecutorBrief, computeExecutorBriefFingerprint } from "./brief-compiler.js";
 
@@ -81,6 +82,8 @@ interface MemoKey {
   readonly planApproval: string;
   readonly milestoneVersion: number;
   readonly executionContractRevision: number;
+  /** Digest of the evolving context inputs (scope, working set, docs, signals). */
+  readonly dynamicContextDigest: string;
 }
 
 function memoKeyEquals(a: MemoKey, b: MemoKey): boolean {
@@ -91,8 +94,30 @@ function memoKeyEquals(a: MemoKey, b: MemoKey): boolean {
     a.planRevision === b.planRevision &&
     a.planApproval === b.planApproval &&
     a.milestoneVersion === b.milestoneVersion &&
-    a.executionContractRevision === b.executionContractRevision
+    a.executionContractRevision === b.executionContractRevision &&
+    a.dynamicContextDigest === b.dynamicContextDigest
   );
+}
+
+/**
+ * Deterministic digest of the evolving context inputs. The workspace
+ * scope, working set, documentation index, signals, new-file rationales,
+ * and capability areas may change while a task's plan identity stays
+ * stable (scope promotion, budget eviction, step transitions) — the memo
+ * must not serve a stale brief for the same plan revision.
+ */
+function dynamicContextDigest(options: ExecutorBriefingOptions): string {
+  const dynamic = {
+    ...(options.workspaceScope == null ? {} : { workspaceScope: options.workspaceScope }),
+    ...(options.activeWorkingSet == null ? {} : { activeWorkingSet: options.activeWorkingSet }),
+    ...(options.documentationIndex === undefined
+      ? {}
+      : { documentationIndex: options.documentationIndex }),
+    ...(options.scopeSignals === undefined ? {} : { scopeSignals: options.scopeSignals }),
+    ...(options.newFiles === undefined ? {} : { newFiles: options.newFiles }),
+    ...(options.capabilityAreas === undefined ? {} : { capabilityAreas: options.capabilityAreas }),
+  };
+  return sha256Hex(canonicalizeJson(dynamic));
 }
 
 export function createExecutorBriefing(options: ExecutorBriefingOptions): ExecutorBriefing {
@@ -117,6 +142,7 @@ export function createExecutorBriefing(options: ExecutorBriefingOptions): Execut
       planApproval: snapshot?.plan.approval ?? "none",
       milestoneVersion: selected === null ? 0 : selected.version,
       executionContractRevision: options.executionContract.revision,
+      dynamicContextDigest: dynamicContextDigest(options),
     };
   }
 

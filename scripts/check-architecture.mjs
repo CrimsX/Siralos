@@ -1413,11 +1413,22 @@ function checkDocsConsistency(root, errors) {
   );
   const indexSource = existsSync(indexSourcePath) ? readFileSync(indexSourcePath, "utf8") : "";
   const indexedAdrPaths = new Set(
-    [...indexSource.matchAll(/path: "(docs\/adr\/[0-9]{4}[^"]*\.md)"/g)].map((match) => match[1]),
+    [...indexSource.matchAll(/path: ["'](docs\/adr\/[0-9]{4}[^"']*\.md)["']/g)].map(
+      (match) => match[1],
+    ),
   );
-  const archivedIndexPaths = [...indexSource.matchAll(/path: "(docs\/archive\/[^"]+)"/g)].map(
-    (match) => match[1],
-  );
+  const indexedAdrMetadata = new Map();
+  const entryPattern =
+    /id: "(adr:\d{4})",[\s\S]*?path: "([^"]+\.md)",[\s\S]*?status: "(accepted|superseded|deprecated)"/g;
+  for (const match of indexSource.matchAll(entryPattern)) {
+    const [, id, path, status] = match;
+    if (path.startsWith("docs/adr/")) {
+      indexedAdrMetadata.set(path, { id, status });
+    }
+  }
+  const archivedIndexPaths = [
+    ...indexSource.matchAll(/path: ["'](docs\/archive\/[^"']+)["']/g),
+  ].map((match) => match[1]);
   for (const path of archivedIndexPaths) {
     errors.push(
       `${path}: the runtime documentation index must never reference docs/archive/ material; archived documents are excluded from ordinary selection`,
@@ -1449,6 +1460,20 @@ function checkDocsConsistency(root, errors) {
     if (!indexedAdrPaths.has(path)) {
       errors.push(
         `${path}: ADR is not present in the runtime documentation index (packages/core/src/executor/documentation-context.ts); selection cannot map it`,
+      );
+      continue;
+    }
+    // Selection keys off the INDEX status, so a superseded/deprecated
+    // frontmatter left `accepted` in the index would keep being selected
+    // into executor context — that drift must fail here.
+    const indexed = indexedAdrMetadata.get(path);
+    if (
+      indexed === undefined ||
+      indexed.status !== metadata.status ||
+      indexed.id !== `adr:${number}`
+    ) {
+      errors.push(
+        `${path}: runtime documentation index entry (${indexed?.id ?? "<missing>"}, ${indexed?.status ?? "<missing>"}) disagrees with frontmatter (${metadata.id}, ${metadata.status})`,
       );
     }
   }
