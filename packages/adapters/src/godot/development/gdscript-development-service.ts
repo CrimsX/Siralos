@@ -81,6 +81,14 @@ export interface GDScriptDevelopmentServiceDependencies {
       readonly executor: QualityValidationExecutor;
     };
   };
+  /**
+   * Optional bounded impact-context provider (Stage 3 milestone 9): given
+   * the changed workspace paths, derive a ReviewContextManifest for the
+   * independent reviewer. Read-only; absent when no intelligence is wired.
+   */
+  readonly reviewContextProvider?: (
+    changedPaths: readonly string[],
+  ) => Promise<import("@solaris/core").ReviewContextManifest | null>;
   readonly onEvent?: (event: DevelopmentEvent) => void;
   readonly now?: () => number;
   readonly idFactory?: () => string;
@@ -95,6 +103,20 @@ const AUTHENTICATION_POLICY_VERSION = 2;
 const MAX_REQUEST_CHARS = 4096;
 /** Marker for an approved-deleted file in the applied-files map. */
 const ABSENT_MARKER = "absent";
+
+/** Derive bounded impact context for the reviewer (Stage 3 milestone 9). */
+async function deriveReviewContext(
+  dependencies: GDScriptDevelopmentServiceDependencies,
+  changedPaths: readonly string[],
+): Promise<
+  { readonly reviewContext: import("@solaris/core").ReviewContextManifest } | Record<string, never>
+> {
+  if (dependencies.reviewContextProvider === undefined) {
+    return {};
+  }
+  const manifest = await dependencies.reviewContextProvider(changedPaths);
+  return manifest === null ? {} : { reviewContext: manifest };
+}
 
 interface PendingStart {
   readonly id: string;
@@ -823,6 +845,10 @@ export function createGDScriptDevelopmentService(
       lspDiagnostics: evidence.lsp.diagnostics,
       reviewer: dependencies.qualityStage.reviewer,
       validation: dependencies.qualityStage.validation,
+      ...(await deriveReviewContext(
+        dependencies,
+        current.lastChangeSetFiles.map((file) => file.path),
+      )),
       previousFindingIds: [...current.reviewFindingIds],
       reviewRound: current.reviewRoundsUsed + 1,
       repairRoundsUsed: current.reviewRepairRoundsUsed,
@@ -1091,6 +1117,11 @@ export function createGDScriptDevelopmentService(
       };
     }
     const latest = current.evidence[current.evidence.length - 1] as DevelopmentEvidence;
+    const changedPaths = current.lastChangeSetFiles.map((file) => file.path);
+    const reviewContext =
+      dependencies.reviewContextProvider === undefined
+        ? undefined
+        : ((await dependencies.reviewContextProvider(changedPaths)) ?? undefined);
     const request = buildChangeReviewRequest({
       developmentId: current.id,
       request: current.request,
@@ -1099,6 +1130,7 @@ export function createGDScriptDevelopmentService(
       evidence: latest,
       previousFindingIds: [...current.reviewFindingIds],
       reviewRound: current.reviewRoundsUsed + 1,
+      ...(reviewContext === undefined ? {} : { reviewContext }),
     });
     return dependencies.qualityStage.reviewer.review(request, signal);
   }

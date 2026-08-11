@@ -23,6 +23,7 @@ import {
   createGodotLSPDiagnosticsTool,
   createGodotLSPSessionTool,
   createGodotDependenciesTool,
+  createGodotReviewContextTool,
   createGodotInspectEngineTool,
   createGodotInspectProjectTool,
   createGodotInspectResourceTool,
@@ -492,6 +493,17 @@ export async function createCliApplication(
     canApplyIdentityBound: false,
     primitives: createFailClosedChangeSetFilePrimitives(),
     qualityStage,
+    // Stage 3 milestone 9: derive bounded impact context for the
+    // independent reviewer from the changed surfaces (read-only).
+    reviewContextProvider: async (changedPaths) => {
+      const contract = tasks.latestTask()?.contract() ?? null;
+      const result = await intelligence.reviewContext({
+        taskId: contract?.id ?? "develop-review",
+        taskContractRevision: contract?.revision ?? 1,
+        changedPaths,
+      });
+      return result.status === "ok" ? result.manifest : null;
+    },
   });
   developmentHolder.current = development;
   const workspaceReadTool = createWorkspaceReadTool(workspaceRoot, { revisions });
@@ -508,6 +520,7 @@ export async function createCliApplication(
     createGodotInspectSceneTool(intelligence),
     createGodotInspectResourceTool(intelligence),
     createGodotDependenciesTool(intelligence),
+    createGodotReviewContextTool(intelligence),
     createGodotProbeProjectTool(godotProbe),
     createGodotApiSearchTool(knowledge),
     createGodotApiLookupTool(knowledge),

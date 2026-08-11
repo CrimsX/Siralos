@@ -858,3 +858,120 @@ describe("deterministic quality gates (stage runner)", () => {
 function gateOf(gates: readonly QualityGateResult[], id: string): QualityGateResult | undefined {
   return gates.find((gate) => gate.id === id);
 }
+
+describe("development review context (Stage 3 milestone 9)", () => {
+  it("derives bounded impact context for the changed surfaces and passes it to the reviewer", async () => {
+    const workspace = await createTempWorkspace();
+    await writeFixtureFiles(workspace.root, {
+      "project.godot": '[application]\nconfig/name="fixture"\n',
+      [FIXTURE_PATH]: FIXTURE_CONTENT,
+    });
+    const store = await createTempCheckpointStore(workspace.root);
+    const languageFake = createFakeLanguageService();
+    const parserFake = createFakeDiagnosticsService();
+    const validation = createScriptedValidation({
+      packageScripts: null,
+      outcomes: [],
+      defaultStatus: "passed",
+      defaultExitCode: 0,
+      runs: [],
+    });
+    const fakeReviewer = createFakeChangeReviewer({ scenario: "clean" });
+    const captured: Array<import("@solaris/core").ChangeReviewRequest> = [];
+    const reviewer = {
+      ...fakeReviewer.reviewer,
+      review: async (
+        request: import("@solaris/core").ChangeReviewRequest,
+        signal?: AbortSignal,
+      ) => {
+        captured.push(request);
+        return fakeReviewer.reviewer.review(request, signal);
+      },
+    };
+    const gitFake = createFakeGitInspector();
+    const development = createGDScriptDevelopmentService({
+      workspaceRoot: workspace.root,
+      platform: "linux",
+      store,
+      lock: { acquire: () => Promise.resolve(() => undefined) },
+      language: languageFake.service,
+      diagnostics: parserFake.service,
+      git: gitFake.git,
+      canApplyIdentityBound: true,
+      primitives: createWorkspaceFilePrimitives(workspace.root),
+      qualityStage: {
+        reviewer,
+        validation,
+      },
+      // Stage 3 milestone 9: bounded impact context for the reviewer.
+      reviewContextProvider: async (changedPaths) => {
+        const manifest = await import("@solaris/core").then((core) =>
+          core.validateReviewContextManifest({
+            taskId: "task-review",
+            taskContractRevision: 1,
+            primaryChanges: changedPaths.map((path) => ({
+              path,
+              kind: "script" as const,
+              revision: "rev_".padEnd(36, "a"),
+              confidence: "verified" as const,
+              evidence: "impact:changed-surface",
+            })),
+            relatedSurfaces: [],
+            regressionAreas: [],
+            validation: [],
+            evidence: ["impact:changed-surface"],
+            completeness: "complete" as const,
+            diagnostics: [],
+          }),
+        );
+        return manifest;
+      },
+      idFactory: () => `wf-${Math.random().toString(36).slice(2, 8)}`,
+      settling: { hardTimeoutMs: 1000, pollIntervalMs: 1 },
+    });
+    const tools = createToolRegistry([
+      createWorkspaceReadTool(workspace.root),
+      createWorkspaceApplyTextChangesetTool(development),
+    ]);
+    const application = createSolarisApplication({
+      provider: createDeterministicFakeProvider(),
+      tools,
+      policy: createDefaultPolicy("develop-offline"),
+      profile: DEVELOP_OFFLINE_PROFILE,
+      reviewer: { review: () => Promise.resolve({ type: "approve_once" }) },
+      onProviderTurnCompleted: () => {
+        development.completeFromProviderTurn();
+      },
+    });
+    const flowHarness = {
+      workspace,
+      application,
+      startWorkflow: async (request: string): Promise<void> => {
+        const prepared = await development.prepareStart(request);
+        if (prepared.status !== "ready") {
+          throw new Error(prepared.message);
+        }
+        const started = await development.start(prepared.workflowId, {
+          approvedDigest: prepared.digest,
+        });
+        if (started.status !== "ready") {
+          throw new Error(started.message);
+        }
+      },
+    };
+    await flowHarness.startWorkflow("develop fixture");
+    for await (const _event of application.sendPrompt("develop fixture")) {
+      // drain the bounded provider/tool loop
+    }
+    expect(captured.length).toBeGreaterThan(0);
+    const request = captured[0]!;
+    expect(request.reviewContext).not.toBeUndefined();
+    expect(request.reviewContext!.primaryChanges[0]!.path).toBe(FIXTURE_PATH);
+    // The reviewer request stays bounded: the manifest carries only the
+    // changed surfaces, never unrelated project context.
+    expect(request.reviewContext!.relatedSurfaces).toHaveLength(0);
+    expect(JSON.stringify(request)).not.toContain("AGENTS.md");
+    await workspace.cleanup();
+    await cleanupTempCheckpointDirs();
+  });
+});

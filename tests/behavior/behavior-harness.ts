@@ -67,6 +67,7 @@ import {
   createGDScriptDevelopmentService,
   createGodotDevelopmentStatusTool,
   createGodotDependenciesTool,
+  createGodotReviewContextTool,
   createGodotInspectResourceTool,
   createGodotInspectSceneTool,
   createGodotSceneIntelligence,
@@ -329,6 +330,21 @@ export async function createBehaviorLoopHarness(
     revisions,
     canApplyIdentityBound: true,
     primitives: createWorkspaceFilePrimitives(workspace.root),
+    // Stage 3 milestone 9: bounded impact context for the independent
+    // reviewer, derived from the changed surfaces (read-only).
+    reviewContextProvider: async (changedPaths) => {
+      const current = intelligenceHolder.current;
+      if (current === null) {
+        return null;
+      }
+      const contract = runtime.latestTask()?.contract() ?? null;
+      const result = await current.reviewContext({
+        taskId: contract?.id ?? "develop-review",
+        taskContractRevision: contract?.revision ?? 1,
+        changedPaths,
+      });
+      return result.status === "ok" ? result.manifest : null;
+    },
     ...(options.qualityStage === false
       ? {}
       : {
@@ -353,6 +369,7 @@ export async function createBehaviorLoopHarness(
   // application-owned subsystem). Composition-root style wiring: the
   // service records bounded observations and the projection consumes them.
   const sceneObservations: GodotSceneEvidenceView[] = [];
+  const intelligenceHolder: { current: GodotSceneIntelligence | null } = { current: null };
   const intelligence =
     options.intelligence === true
       ? createGodotSceneIntelligence({
@@ -366,6 +383,7 @@ export async function createBehaviorLoopHarness(
           },
         })
       : null;
+  intelligenceHolder.current = intelligence;
   const sceneTools =
     intelligence === null
       ? []
@@ -373,6 +391,7 @@ export async function createBehaviorLoopHarness(
           createGodotInspectSceneTool(intelligence),
           createGodotInspectResourceTool(intelligence),
           createGodotDependenciesTool(intelligence),
+          createGodotReviewContextTool(intelligence),
         ];
   // Reference services (Stage 3 milestone 5): register the read-only
   // reference tools and record every successful access call as a

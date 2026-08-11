@@ -77,6 +77,8 @@ export interface QualityStageInput {
     readonly discovery: ValidationPlanDiscovery;
     readonly executor: QualityValidationExecutor;
   };
+  /** Bounded derived impact context (Stage 3 milestone 9); optional. */
+  readonly reviewContext?: import("@solaris/core").ReviewContextManifest;
   readonly previousFindingIds: readonly string[];
   readonly reviewRound: number;
   readonly repairRoundsUsed: number;
@@ -539,6 +541,8 @@ export function buildChangeReviewRequest(input: {
   readonly evidence: DevelopmentEvidence;
   readonly previousFindingIds: readonly string[];
   readonly reviewRound: number;
+  /** Bounded derived impact context (Stage 3 milestone 9); optional. */
+  readonly reviewContext?: import("@solaris/core").ReviewContextManifest;
 }): ChangeReviewRequest {
   const metrics = computeMetrics(input.files);
   const evidenceSummary: QualityEvidence[] = [
@@ -571,6 +575,7 @@ export function buildChangeReviewRequest(input: {
     })),
     metrics,
     evidenceSummary,
+    ...(input.reviewContext === undefined ? {} : { reviewContext: input.reviewContext }),
     repositoryGuidance: null,
     previousFindingIds: input.previousFindingIds,
     reviewRound: input.reviewRound,

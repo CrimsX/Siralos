@@ -1,5 +1,6 @@
 import { canonicalizeJson, sha256Hex } from "../digest.js";
 import { QUALITY_LIMITS, type ChangeDiffMetrics, type QualityEvidence } from "./quality-model.js";
+import type { ReviewContextManifest } from "../impact/review-context.js";
 
 /**
  * Independent change reviewer contracts (§25–§36).
@@ -65,6 +66,13 @@ export interface ChangeReviewRequest {
   readonly metrics: ChangeDiffMetrics;
   /** Bounded validation evidence summary (parser, LSP, scope, tests). */
   readonly evidenceSummary: readonly QualityEvidence[];
+  /**
+   * Bounded derived review context (Stage 3 milestone 9): impact
+   * analysis of the changed surfaces (related scenes/resources, signal
+   * connections, autoload reach, candidate tests, validation
+   * recommendations). Optional; never unrelated project context.
+   */
+  readonly reviewContext?: ReviewContextManifest;
   /** Applicable repository guidance when the workflow discovered any. */
   readonly repositoryGuidance: string | null;
   /** Finding ids of previous review rounds, for traceability only (§35). */
