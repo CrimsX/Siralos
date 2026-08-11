@@ -1,3 +1,10 @@
+---
+id: ADR-0020
+status: accepted
+domains: [planning]
+paths: [packages/core/src/planning/**, packages/adapters/src/planning/**]
+supersedes: []
+---
 # ADR 0020 — Host-Controlled Planning Foundation
 
 - Status: accepted (Stage 3 milestone 7)

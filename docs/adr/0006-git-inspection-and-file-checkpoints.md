@@ -1,3 +1,10 @@
+---
+id: ADR-0006
+status: accepted
+domains: [git, checkpoints]
+paths: [packages/adapters/src/git/**, packages/adapters/src/checkpoints/**]
+supersedes: []
+---
 # ADR 0006: Git inspection and file checkpoints
 
 Status: accepted

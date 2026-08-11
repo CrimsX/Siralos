@@ -1,3 +1,10 @@
+---
+id: ADR-0005
+status: accepted
+domains: [workspace, mutations]
+paths: [packages/core/src/workspace/**, packages/adapters/src/tools/workspace/**]
+supersedes: []
+---
 # ADR 0005: Approved workspace mutations
 
 Status: accepted

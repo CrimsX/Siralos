@@ -1,3 +1,10 @@
+---
+id: ADR-0002
+status: accepted
+domains: [provider, tool-loop]
+paths: [packages/core/src/ports/**, packages/adapters/src/providers/**]
+supersedes: []
+---
 # ADR 0002: Provider-neutral tool loop
 
 Status: accepted

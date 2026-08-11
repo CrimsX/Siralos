@@ -1,3 +1,10 @@
+---
+id: ADR-0017
+status: accepted
+domains: [instructions, knowledge]
+paths: [packages/core/src/instructions/**, packages/core/src/knowledge/**]
+supersedes: []
+---
 # ADR 0017 — Project Instructions and Knowledge
 
 - Status: accepted (Stage 3 milestone 4)

@@ -1,3 +1,10 @@
+---
+id: ADR-0019
+status: accepted
+domains: [self-reference, capability, doctor]
+paths: [packages/core/src/self/**, packages/core/src/doctor/**]
+supersedes: []
+---
 # ADR 0019 — Solaris Self-Reference and Capability Diagnostics
 
 - Status: accepted (Stage 3 milestone 6)

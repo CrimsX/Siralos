@@ -1,3 +1,10 @@
+---
+id: ADR-0015
+status: accepted
+domains: [projection, context]
+paths: [packages/core/src/projection/**]
+supersedes: []
+---
 # ADR 0015 — Context, Tool, and Evidence Projection Foundation
 
 - Status: accepted (Stage 3 milestone 2)

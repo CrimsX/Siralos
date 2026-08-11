@@ -1,3 +1,10 @@
+---
+id: ADR-0007
+status: accepted
+domains: [process, sandbox]
+paths: [packages/adapters/src/process/**]
+supersedes: []
+---
 # ADR 0007: Sandboxed validation-command runners
 
 Status: accepted

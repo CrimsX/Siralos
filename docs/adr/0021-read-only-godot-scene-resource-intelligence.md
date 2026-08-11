@@ -1,3 +1,10 @@
+---
+id: ADR-0021
+status: accepted
+domains: [godot, static-inspection]
+paths: [packages/core/src/godot/**, packages/adapters/src/godot/**]
+supersedes: []
+---
 # ADR 0021 — Read-Only Godot Scene and Resource Intelligence
 
 - Status: accepted (Stage 3 milestone 8)

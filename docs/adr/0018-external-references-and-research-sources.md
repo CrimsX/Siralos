@@ -1,3 +1,10 @@
+---
+id: ADR-0018
+status: accepted
+domains: [references, research]
+paths: [packages/core/src/reference/**, packages/core/src/research/**, packages/adapters/src/reference/**, packages/adapters/src/research/**]
+supersedes: []
+---
 # ADR 0018 — External References and Research Sources
 
 - Status: accepted (Stage 3 milestone 5)

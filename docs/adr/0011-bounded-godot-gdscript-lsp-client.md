@@ -1,3 +1,10 @@
+---
+id: ADR-0011
+status: accepted
+domains: [godot, lsp]
+paths: [packages/adapters/src/godot/**]
+supersedes: []
+---
 # ADR 0011: Bounded Godot GDScript LSP client (fail-closed at this stage)
 
 Status: accepted

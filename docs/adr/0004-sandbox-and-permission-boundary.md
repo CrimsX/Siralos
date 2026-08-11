@@ -1,3 +1,10 @@
+---
+id: ADR-0004
+status: accepted
+domains: [security, sandbox]
+paths: [packages/core/src/security/**]
+supersedes: []
+---
 # ADR 0004: Sandbox and permission boundary
 
 Status: accepted

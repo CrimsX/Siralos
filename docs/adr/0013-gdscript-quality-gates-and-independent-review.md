@@ -1,3 +1,10 @@
+---
+id: ADR-0013
+status: accepted
+domains: [godot, quality, review]
+paths: [packages/core/src/godot/**]
+supersedes: []
+---
 # ADR 0013: GDScript development quality gates and independent review
 
 Status: accepted
