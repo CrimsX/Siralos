@@ -440,6 +440,8 @@ const SCENE_INTELLIGENCE_FORBIDDEN_IMPORT_ROOTS = [
 const SCENE_DIRECTORY = join("src", "godot", "scene");
 /** Stage 3 milestone 9: impact analysis modules (src/godot/impact). */
 const IMPACT_DIRECTORY = join("src", "godot", "impact");
+/** Stage 3 milestone 10: scene/resource mutation modules (src/godot/scene-mutation). */
+const SCENE_MUTATION_DIRECTORY = join("src", "godot", "scene-mutation");
 
 function isCoreSceneModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(SCENE_DIRECTORY + sep);
@@ -448,6 +450,11 @@ function isCoreSceneModule(packageRelativeFile) {
 /** Stage 3 milestone 9: impact analysis is derived read-only state. */
 function isCoreImpactModule(packageRelativeFile) {
   return packageRelativeFile.startsWith(IMPACT_DIRECTORY + sep);
+}
+
+/** Stage 3 milestone 10: mutation models/serializers are pure derived state. */
+function isCoreSceneMutationModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(SCENE_MUTATION_DIRECTORY + sep);
 }
 
 /**
@@ -2120,6 +2127,26 @@ export function runChecks(root) {
             ) {
               errors.push(
                 `${location}: impact modules must not import security/task/checkpoint/projection/tool/application machinery; a ReviewContextManifest is derived read-only state that never grants capability, mutates, or executes`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/core" && isCoreSceneMutationModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: mutation model modules must not depend on provider ports; mutation models are provider-neutral derived state`,
+              );
+            }
+            if (
+              specifier.startsWith("../security/") ||
+              specifier.startsWith("../tasks/") ||
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../projection/") ||
+              specifier.startsWith("../tools/") ||
+              specifier.startsWith("../application/") ||
+              specifier.startsWith("../commands/")
+            ) {
+              errors.push(
+                `${location}: mutation model modules must not import security/task/checkpoint/projection/tool/application machinery; a prepared mutation never grants capability and the serializer cannot bypass the prepared artifact`,
               );
             }
           }
