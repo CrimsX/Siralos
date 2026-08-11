@@ -149,6 +149,36 @@ function disappearingRunner(): {
 }
 
 describe("Godot doctor snapshot consistency", () => {
+  it("produces the lightweight status snapshot from one discovery generation", async () => {
+    const root = await withTemp();
+    const workspace = join(root, "workspace");
+    await mkdir(workspace, { recursive: true });
+    const executable = await executableFixture(join(root, "bin"));
+    const { runner, versionCalls } = disappearingRunner();
+    const inspector = createGodotInspector({
+      config: {
+        activeInstallation: null,
+        installations: { primary: { path: executable, editionHint: "standard" } },
+        discoverOnPath: false,
+      },
+      preference: { kind: "installation-id", installationId: "primary" },
+      overrideSource: null,
+      workspaceRoot: workspace,
+      backend: enforcingBackend(),
+      probeRunner: runner,
+      cache: createEngineProfileCache({ rootDirectory: join(root, "cache") }),
+      hostPath: null,
+      hostPathExt: null,
+      platform: "win32",
+    });
+
+    const snapshot = await inspector.statusSnapshot!();
+    expect(versionCalls()).toBe(1);
+    expect(snapshot.selected?.version.raw).toBe("4.7.1.stable.official");
+    expect(snapshot.project.detected).toBe(false);
+    expect(snapshot.compatibility.status).toBe("no-project");
+  });
+
   it("produces the doctor report from ONE discovery generation", async () => {
     const root = await withTemp();
     const workspace = join(root, "workspace");

@@ -237,6 +237,7 @@ export type {
   GodotInstallationOverview,
   GodotInspector,
   GodotSelectedInstallation,
+  GodotStatusSnapshot,
 } from "./godot/inspector.js";
 export type { GodotApplicationEvent } from "./godot/events.js";
 export {

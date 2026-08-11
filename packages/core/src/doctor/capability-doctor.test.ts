@@ -309,6 +309,65 @@ describe("capability doctor", () => {
     }
   });
 
+  it("starts independent probes concurrently while preserving canonical report order", async () => {
+    let providersStarted = false;
+    let sandboxStarted = false;
+    let resolveProviders!: (value: ProviderDiagnosticResult) => void;
+    let resolveSandbox!: (value: SandboxDiagnosticResult) => void;
+    const sources: DoctorSources = {
+      ...fakeDoctorSources(),
+      providers: () => {
+        providersStarted = true;
+        return new Promise((resolve) => {
+          resolveProviders = resolve;
+        });
+      },
+      sandbox: () => {
+        sandboxStarted = true;
+        return new Promise((resolve) => {
+          resolveSandbox = resolve;
+        });
+      },
+    };
+
+    const pending = createCapabilityDoctor(sources).inspect({
+      areas: ["sandbox", "providers"],
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(providersStarted).toBe(true);
+    expect(sandboxStarted).toBe(true);
+
+    // Resolve in reverse order; output must still follow DOCTOR_AREAS.
+    resolveSandbox(OK_SANDBOX);
+    resolveProviders(OK_PROVIDERS);
+    const report = await pending;
+    expect(report.checks[0]?.area).toBe("providers");
+    expect(report.checks.findIndex((entry) => entry.area === "sandbox")).toBeGreaterThan(0);
+  });
+
+  it("shares authoritative probes used by multiple doctor areas", async () => {
+    let runtimeCalls = 0;
+    let godotCalls = 0;
+    const base = fakeDoctorSources();
+    const report = await createCapabilityDoctor({
+      ...base,
+      runtime: async () => {
+        runtimeCalls += 1;
+        return base.runtime();
+      },
+      godot: async () => {
+        godotCalls += 1;
+        return base.godot();
+      },
+    }).inspect({});
+
+    expect(runtimeCalls).toBe(1);
+    expect(godotCalls).toBe(1);
+    expect(report.checks.filter((entry) => entry.id === "godot.selection")).toHaveLength(1);
+    expect(report.checks.filter((entry) => entry.id === "project.profile")).toHaveLength(1);
+  });
+
   it("rejects unknown areas with a typed invocation error", async () => {
     const doctor = createCapabilityDoctor(fakeDoctorSources());
     await expect(doctor.inspect({ areas: ["agents" as never] })).rejects.toBeInstanceOf(

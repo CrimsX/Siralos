@@ -4,6 +4,7 @@ import type {
   ResearchService,
   SolarisApplication,
   SolarisSecurity,
+  GodotStatusSnapshot,
 } from "@solaris/core";
 import { formatQualitySummary, type StatusView } from "../output.js";
 import type { SessionInfo } from "./session-types.js";
@@ -12,18 +13,18 @@ export async function buildSessionStatusView(
   application: SolarisApplication,
   sessionInfo: SessionInfo,
 ): Promise<StatusView> {
-  const inspection = await sessionInfo.git.inspectRepository().catch(() => null);
+  const inspectionPromise = sessionInfo.git.inspectRepository().catch(() => null);
+  const checkpointsPromise = sessionInfo.checkpoints.list().catch(() => []);
+  const godotPromise = readGodotStatusSnapshot(sessionInfo);
+  const inspection = await inspectionPromise;
   const statusResult =
     inspection?.repositoryState === "repository"
       ? await sessionInfo.git.getStatus({}).catch(() => null)
       : null;
-  const checkpoints = await sessionInfo.checkpoints.list().catch(() => []);
+  const [checkpoints, godot] = await Promise.all([checkpointsPromise, godotPromise]);
   const latestApplied = checkpoints.find((checkpoint) => checkpoint.state === "applied");
   const processDecision = sessionInfo.security.evaluateCapability("process.execute");
   const researchDecision = sessionInfo.security.evaluateCapability("research.fetch");
-  const godotSelected = await sessionInfo.godot.selected().catch(() => null);
-  const godotProject = await sessionInfo.godot.projectProfile().catch(() => null);
-  const godotCompatibility = await sessionInfo.godot.compatibility().catch(() => null);
   return {
     status: application.getStatus(),
     workspaceRoot: sessionInfo.workspaceRoot,
@@ -58,17 +59,31 @@ export async function buildSessionStatusView(
     activeCommandId: application.getStatus().activeCommandId,
     lastCommandExitCode: application.getLastCommandExitCode(),
     commandProfile: "validation-offline",
-    godotSelectedInstallation: godotSelected?.installationId ?? null,
-    godotVersion: godotSelected?.version.raw ?? null,
-    godotProjectDetected: godotProject?.detected ?? false,
-    godotCompatibility: godotCompatibility?.status ?? null,
-    godotWarningCount: godotProject?.warnings.length ?? 0,
+    godotSelectedInstallation: godot?.selected?.installationId ?? null,
+    godotVersion: godot?.selected?.version.raw ?? null,
+    godotProjectDetected: godot?.project.detected ?? false,
+    godotCompatibility: godot?.compatibility.status ?? null,
+    godotWarningCount: godot?.project.warnings.length ?? 0,
     projectProbe: describeProjectProbe(sessionInfo.godotProbe.status()),
     knowledge: describeKnowledge(sessionInfo.knowledge.status()),
     languageSession: describeLanguageSession(sessionInfo.language.status()),
     developmentQuality: describeDevelopmentQuality(sessionInfo.development.status()),
     research: describeResearch(sessionInfo.research, researchDecision),
   };
+}
+
+async function readGodotStatusSnapshot(
+  sessionInfo: SessionInfo,
+): Promise<GodotStatusSnapshot | null> {
+  if (sessionInfo.godot.statusSnapshot !== undefined) {
+    return sessionInfo.godot.statusSnapshot().catch(() => null);
+  }
+  const [selected, project, compatibility] = await Promise.all([
+    sessionInfo.godot.selected().catch(() => null),
+    sessionInfo.godot.projectProfile().catch(() => null),
+    sessionInfo.godot.compatibility().catch(() => null),
+  ]);
+  return project === null || compatibility === null ? null : { selected, project, compatibility };
 }
 
 function describeResearch(

@@ -19,14 +19,17 @@ export async function runCommandsCommand(
   application: SolarisApplication,
   sessionInfo: SessionInfo,
 ): Promise<void> {
-  const availability: Record<string, boolean> = {};
-  for (const runner of sessionInfo.runners.definitions) {
-    const instance = sessionInfo.runners.get(runner.id);
-    availability[runner.id] = (await instance?.isAvailable().catch(() => false)) ?? false;
-  }
-  const backendStatus: SandboxBackendStatus | null = await sessionInfo.sandbox
-    .inspect()
-    .catch(() => null);
+  const [availabilityEntries, backendStatus] = await Promise.all([
+    Promise.all(
+      sessionInfo.runners.definitions.map(async (runner) => {
+        const instance = sessionInfo.runners.get(runner.id);
+        const available = (await instance?.isAvailable().catch(() => false)) ?? false;
+        return [runner.id, available] as const;
+      }),
+    ),
+    sessionInfo.sandbox.inspect().catch(() => null as SandboxBackendStatus | null),
+  ]);
+  const availability = Object.fromEntries(availabilityEntries);
   const decision = sessionInfo.security.evaluateCapability("process.execute");
   const view: CommandsView = {
     runners: sessionInfo.runners.definitions,

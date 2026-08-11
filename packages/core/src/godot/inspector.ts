@@ -121,6 +121,13 @@ export interface GodotDoctorReport {
   }[];
 }
 
+/** One internally consistent read-only snapshot used by lightweight status surfaces. */
+export interface GodotStatusSnapshot {
+  readonly selected: GodotSelectedInstallation | null;
+  readonly project: GodotProjectProfile;
+  readonly compatibility: GodotCompatibilityAssessment;
+}
+
 /**
  * Provider-neutral Godot inspection port. Implemented by the adapter layer;
  * the CLI and provider tools consume only this port.
@@ -142,6 +149,12 @@ export interface GodotInspector {
 
   /** Compatibility between the selected engine and the static project. */
   compatibility(signal?: AbortSignal): Promise<GodotCompatibilityAssessment>;
+
+  /**
+   * Optional optimized status snapshot. Implementations that provide it must
+   * derive all three values from one discovery/project generation.
+   */
+  statusSnapshot?(signal?: AbortSignal): Promise<GodotStatusSnapshot>;
 
   /** Full bounded diagnostics report. */
   doctor(signal?: AbortSignal): Promise<GodotDoctorReport>;

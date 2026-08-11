@@ -11,6 +11,7 @@ import {
   type GodotProjectProfile,
   type GodotRecoveryProbeSupport,
   type GodotSelectedInstallation,
+  type GodotStatusSnapshot,
   type GodotSelectionPreference,
   type SandboxBackend,
 } from "@solaris/core";
@@ -77,27 +78,7 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
   }
 
   async function selected(signal?: AbortSignal): Promise<GodotSelectedInstallation | null> {
-    const selection = await profiler.selectedProfile(signal);
-    if (selection === null) {
-      return null;
-    }
-    const { installation, profile } = selection;
-    return {
-      installationId: installation.id,
-      sourceLabel: installation.sourceLabel,
-      source: installation.source,
-      version: profile.version,
-      edition: profile.edition,
-      editionConfidence: profile.editionConfidence,
-      releaseChannel: profile.releaseChannel,
-      support: profile.support,
-      capabilities: profile.capabilities,
-      verifiedCapabilities: profile.verifiedCapabilities,
-      degradedCapabilities: profile.degradedCapabilities,
-      executableFingerprint: profile.fingerprint,
-      apiDumpSha256: profile.apiDumpSha256,
-      diagnostics: profile.diagnostics,
-    };
+    return toSelectedInstallation(await profiler.selectedProfile(signal));
   }
 
   async function projectProfile(signal?: AbortSignal): Promise<GodotProjectProfile> {
@@ -115,6 +96,18 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
   async function selectedEngineProfile(signal?: AbortSignal): Promise<GodotEngineProfile | null> {
     const selection = await profiler.selectedProfile(signal);
     return selection?.profile ?? null;
+  }
+
+  async function statusSnapshot(signal?: AbortSignal): Promise<GodotStatusSnapshot> {
+    const [{ selected: selection }, project] = await Promise.all([
+      profiler.discoverWithSelection(signal),
+      projectInspector.inspect(signal),
+    ]);
+    return {
+      selected: toSelectedInstallation(selection),
+      project,
+      compatibility: assessGodotCompatibility(selection?.profile ?? null, project),
+    };
   }
 
   async function doctor(signal?: AbortSignal): Promise<GodotDoctorReport> {
@@ -237,5 +230,30 @@ export function createGodotInspector(dependencies: GodotInspectorDependencies): 
     };
   }
 
-  return { discover, selected, projectProfile, compatibility, doctor };
+  return { discover, selected, projectProfile, compatibility, statusSnapshot, doctor };
+}
+
+type SelectedProfile = Awaited<ReturnType<GodotEngineProfiler["selectedProfile"]>>;
+
+function toSelectedInstallation(selection: SelectedProfile): GodotSelectedInstallation | null {
+  if (selection === null) {
+    return null;
+  }
+  const { installation, profile } = selection;
+  return {
+    installationId: installation.id,
+    sourceLabel: installation.sourceLabel,
+    source: installation.source,
+    version: profile.version,
+    edition: profile.edition,
+    editionConfidence: profile.editionConfidence,
+    releaseChannel: profile.releaseChannel,
+    support: profile.support,
+    capabilities: profile.capabilities,
+    verifiedCapabilities: profile.verifiedCapabilities,
+    degradedCapabilities: profile.degradedCapabilities,
+    executableFingerprint: profile.fingerprint,
+    apiDumpSha256: profile.apiDumpSha256,
+    diagnostics: profile.diagnostics,
+  };
 }

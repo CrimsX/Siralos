@@ -109,6 +109,32 @@ type AreaOutcome<T> =
   | { readonly kind: "cancelled" }
   | { readonly kind: "error"; readonly message: string };
 
+async function runProbe<T>(
+  probe: () => Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<AreaOutcome<T>> {
+  if (isAborted(signal)) {
+    return { kind: "cancelled" };
+  }
+  try {
+    const value = await withTimeout(Promise.resolve().then(probe), timeoutMs, signal);
+    return { kind: "ok", value };
+  } catch (error) {
+    if (error instanceof DoctorCancelledError || isAborted(signal)) {
+      return { kind: "cancelled" };
+    }
+    if (error instanceof DoctorTimeoutError) {
+      return { kind: "timeout" };
+    }
+    return { kind: "error", message: boundedMessage(error) };
+  }
+}
+
+function isAborted(signal?: AbortSignal): boolean {
+  return signal?.aborted ?? false;
+}
+
 function check(
   id: string,
   area: DoctorArea,
@@ -875,14 +901,30 @@ export function createCapabilityDoctor(
 
   async function inspect(request: DoctorRequest, signal?: AbortSignal): Promise<DoctorReport> {
     const areas = normalizeDoctorRequest(request);
+    const probeAreas: readonly DoctorArea[] = areas.includes("capabilities") ? DOCTOR_AREAS : areas;
 
-    // The report always carries runtime identity; probe it once up front.
-    let runtimeResult: RuntimeDiagnosticResult | null = null;
-    try {
-      runtimeResult = await withTimeout(sources.runtime(), checkTimeoutMs, signal);
-    } catch {
-      runtimeResult = null;
+    // Start each authoritative source once. Independent probes run in
+    // parallel, while the report below consumes their outcomes in canonical
+    // area order so output remains deterministic. `godot` owns both the
+    // Godot and project areas and is intentionally shared.
+    const sourceMethods = new Set<keyof DoctorSources>(["runtime"]);
+    for (const area of probeAreas) {
+      sourceMethods.add(AREA_METHODS[area]);
     }
+    if (areas.includes("capabilities")) {
+      sourceMethods.add("tasks");
+    }
+    const sourceProbes = new Map<keyof DoctorSources, Promise<AreaOutcome<unknown>>>();
+    for (const method of sourceMethods) {
+      const probe = sources[method] as () => Promise<unknown>;
+      sourceProbes.set(method, runProbe(probe, checkTimeoutMs, signal));
+    }
+
+    // The report always carries runtime identity, even when runtime checks
+    // were not requested. Reuse the same probe rather than invoking it twice.
+    const runtimeOutcome = await sourceProbes.get("runtime")!;
+    const runtimeResult =
+      runtimeOutcome.kind === "ok" ? (runtimeOutcome.value as RuntimeDiagnosticResult) : null;
     const runtime =
       runtimeResult === null
         ? { version: "unknown", nodeMajor: 0, nodeSupported: false, platform: "unknown" }
@@ -897,29 +939,8 @@ export function createCapabilityDoctor(
 
     // The capabilities area reports the FULL capability snapshot, so it
     // probes every area; checks are still emitted only for requested areas.
-    const probeAreas: readonly DoctorArea[] = areas.includes("capabilities") ? DOCTOR_AREAS : areas;
     for (const area of probeAreas) {
-      if (signal !== undefined && signal.aborted) {
-        checks.push(check(`${area}.cancelled`, area, "skip", "Check cancelled before it started"));
-        continue;
-      }
-      let outcome: AreaOutcome<unknown>;
-      try {
-        if (area === "runtime" && runtimeResult !== null) {
-          outcome = { kind: "ok", value: runtimeResult };
-        } else {
-          const probe = (sources[AREA_METHODS[area]] as () => Promise<unknown>)();
-          outcome = { kind: "ok", value: await withTimeout(probe, checkTimeoutMs, signal) };
-        }
-      } catch (error) {
-        if (error instanceof DoctorCancelledError || (signal !== undefined && signal.aborted)) {
-          outcome = { kind: "cancelled" };
-        } else if (error instanceof DoctorTimeoutError) {
-          outcome = { kind: "timeout" };
-        } else {
-          outcome = { kind: "error", message: boundedMessage(error) };
-        }
-      }
+      const outcome = await sourceProbes.get(AREA_METHODS[area])!;
       if (outcome.kind === "timeout") {
         if (areas.includes(area)) {
           checks.push(
@@ -960,42 +981,35 @@ export function createCapabilityDoctor(
       if (area === "capabilities") {
         let taskResult: TaskSnapshotDiagnosticResult | null = null;
         let taskCheckEmitted = false;
-        if (signal !== undefined && signal.aborted) {
+        const taskOutcome = await sourceProbes.get("tasks")!;
+        if (taskOutcome.kind === "cancelled") {
           checks.push(
             check("capabilities.task_snapshot", "capabilities", "skip", "Check cancelled"),
           );
           taskCheckEmitted = true;
+        } else if (taskOutcome.kind === "timeout") {
+          checks.push(
+            check(
+              "capabilities.task_snapshot",
+              "capabilities",
+              "fail",
+              `Task snapshot probe timed out after ${checkTimeoutMs}ms`,
+            ),
+          );
+          taskCheckEmitted = true;
+        } else if (taskOutcome.kind === "error") {
+          checks.push(
+            check(
+              "capabilities.task_snapshot",
+              "capabilities",
+              "fail",
+              "Task snapshot probe failed",
+              [{ label: "error", value: taskOutcome.message }],
+            ),
+          );
+          taskCheckEmitted = true;
         } else {
-          try {
-            const taskProbe = sources.tasks();
-            taskResult = await withTimeout(taskProbe, checkTimeoutMs, signal);
-          } catch (error) {
-            taskCheckEmitted = true;
-            if (error instanceof DoctorCancelledError || (signal !== undefined && signal.aborted)) {
-              checks.push(
-                check("capabilities.task_snapshot", "capabilities", "skip", "Check cancelled"),
-              );
-            } else if (error instanceof DoctorTimeoutError) {
-              checks.push(
-                check(
-                  "capabilities.task_snapshot",
-                  "capabilities",
-                  "fail",
-                  `Task snapshot probe timed out after ${checkTimeoutMs}ms`,
-                ),
-              );
-            } else {
-              checks.push(
-                check(
-                  "capabilities.task_snapshot",
-                  "capabilities",
-                  "fail",
-                  "Task snapshot probe failed",
-                  [{ label: "error", value: boundedMessage(error) }],
-                ),
-              );
-            }
-          }
+          taskResult = taskOutcome.value as TaskSnapshotDiagnosticResult;
         }
         // When the task probe itself failed, do not emit a second,
         // contradictory task_snapshot check from the capabilities builder.
@@ -1086,11 +1100,9 @@ function buildAreaChecks(
     case "workspace":
       return workspaceChecks(value as WorkspaceDiagnosticResult);
     case "godot":
+      return godotChecks(value as GodotDiagnosticResult);
     case "project":
-      return [
-        ...godotChecks(value as GodotDiagnosticResult),
-        ...projectChecks(value as GodotDiagnosticResult),
-      ];
+      return projectChecks(value as GodotDiagnosticResult);
     case "references":
       return referenceChecks(value as ReferenceDiagnosticResult);
     case "research":

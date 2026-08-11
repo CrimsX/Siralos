@@ -1275,6 +1275,46 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     expect(io.text).toContain("Uncertain checkpoints: 0");
   });
 
+  it("uses the atomic Godot status snapshot when the inspector provides one", async () => {
+    let snapshotCalls = 0;
+    let legacyCalls = 0;
+    const base = createStubGodotInspector();
+    const sessionInfo: SessionInfo = buildSessionInfo({
+      godot: {
+        ...base,
+        statusSnapshot: () => {
+          snapshotCalls += 1;
+          const project = createEmptyGodotProjectProfile();
+          return Promise.resolve({
+            selected: null,
+            project,
+            compatibility: { status: "no-project", severity: "info", reasons: [] },
+          });
+        },
+        selected: () => {
+          legacyCalls += 1;
+          return Promise.resolve(null);
+        },
+        projectProfile: () => {
+          legacyCalls += 1;
+          return Promise.resolve(createEmptyGodotProjectProfile());
+        },
+        compatibility: () => {
+          legacyCalls += 1;
+          return Promise.resolve({ status: "no-project", severity: "info", reasons: [] });
+        },
+      },
+    });
+
+    await runInteractiveSession(
+      new ScriptedIO(["/status", "/exit"]),
+      createTestApplication(),
+      sessionInfo,
+    );
+    expect(snapshotCalls).toBe(1);
+    expect(legacyCalls).toBe(0);
+  });
+
   it("renders /commands with runners, sandbox, and limits", async () => {
     const io = new ScriptedIO(["/commands", "/exit"]);
     const sessionInfo: SessionInfo = buildSessionInfo({
@@ -1294,6 +1334,43 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     expect(io.text).toContain("stdout limit: 1 MiB");
     expect(io.text).toContain("Recent commands:");
     expect(io.text).not.toContain("C:\\Users");
+  });
+
+  it("checks command-runner availability concurrently", async () => {
+    let firstStarted = false;
+    let secondStarted = false;
+    let resolveFirst!: (available: boolean) => void;
+    let resolveSecond!: (available: boolean) => void;
+    const first: CommandRunner = {
+      ...createStubRunner("first"),
+      isAvailable: () => {
+        firstStarted = true;
+        return new Promise((resolve) => {
+          resolveFirst = resolve;
+        });
+      },
+    };
+    const second: CommandRunner = {
+      ...createStubRunner("second"),
+      isAvailable: () => {
+        secondStarted = true;
+        return new Promise((resolve) => {
+          resolveSecond = resolve;
+        });
+      },
+    };
+    const pending = runInteractiveSession(
+      new ScriptedIO(["/commands", "/exit"]),
+      createTestApplication(),
+      buildSessionInfo({ runners: createCommandRunnerRegistry([first, second]) }),
+    );
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const startedTogether = firstStarted && secondStarted;
+    resolveFirst(true);
+    resolveSecond(true);
+    await pending;
+    expect(startedTogether).toBe(true);
   });
 
   it("reports /cancel when no command is active", async () => {
