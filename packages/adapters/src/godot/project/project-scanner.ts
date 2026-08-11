@@ -1,4 +1,11 @@
-import { GODOT_LIMITS, type GodotAutoloadSummary, type SafeDiagnostic } from "@solaris/core";
+import {
+  GODOT_LIMITS,
+  isBalancedText,
+  parseGodotVariant,
+  type GodotAutoloadSummary,
+  type GodotInputAction,
+  type SafeDiagnostic,
+} from "@solaris/core";
 import { validateProjectRelativePath } from "./traversal-limits.js";
 
 /** Bounded structural record of one project.godot property. */
@@ -31,6 +38,7 @@ export interface GodotProjectScanResult {
   readonly dotnetAssemblyName: string | null;
   readonly autoloads: readonly GodotAutoloadSummary[];
   readonly enabledPlugins: readonly string[];
+  readonly inputActions: readonly GodotInputAction[];
   readonly warnings: readonly SafeDiagnostic[];
   /** True when a bounded scan limit was reached. */
   readonly truncated: boolean;
@@ -40,6 +48,7 @@ const MAX_SECTIONS = 128;
 const MAX_PROPERTIES_PER_SECTION = 4096;
 const MAX_LINE_LENGTH = 64 * 1024;
 const MAX_WARNINGS = 50;
+const MAX_VALUE_CONTINUATION_LINES = 64;
 
 /**
  * Conservative, purpose-built read-only scanner for untrusted
@@ -91,7 +100,27 @@ export function scanProjectFile(content: string): GodotProjectScanResult {
     }
     propertyCount += 1;
     const key = unquoteKey(trimmed.slice(0, equalsIndex).trim());
-    const rawValue = trimmed.slice(equalsIndex + 1).trim();
+    // Values may span multiple lines (e.g. `[input]` action dictionaries);
+    // accumulate continuation lines until the value is balanced.
+    let rawValue = trimmed.slice(equalsIndex + 1).trim();
+    let continuation = 0;
+    while (!isBalancedText(rawValue) && continuation < MAX_VALUE_CONTINUATION_LINES) {
+      index += 1;
+      continuation += 1;
+      if (index >= lines.length) {
+        break;
+      }
+      const nextLine = lines[index]?.trim() ?? "";
+      if (nextLine.length === 0 || isCommentLine(nextLine)) {
+        continue;
+      }
+      rawValue = `${rawValue}\n${nextLine}`;
+    }
+    if (!isBalancedText(rawValue)) {
+      addWarning(
+        `The value of ${section}.${key} at line ${index + 1} is unbalanced and was truncated at the continuation bound.`,
+      );
+    }
     properties.push({ section, key, rawValue, lineNumber: index + 1 });
   }
   const configVersion = readInteger(properties, "", "config_version", warnings);
@@ -106,6 +135,7 @@ export function scanProjectFile(content: string): GodotProjectScanResult {
   const dotnetAssemblyName = readString(properties, "dotnet", "project/assembly_name", warnings);
   const autoloads = readAutoloads(properties, warnings);
   const enabledPlugins = readEnabledPlugins(properties, warnings);
+  const inputActions = readInputActions(properties, warnings);
   const distinct = [...new Set(renderingMethods)];
   return {
     properties,
@@ -118,6 +148,7 @@ export function scanProjectFile(content: string): GodotProjectScanResult {
     dotnetAssemblyName,
     autoloads,
     enabledPlugins,
+    inputActions,
     warnings,
     truncated,
   };
@@ -383,6 +414,83 @@ function addScanWarning(warnings: SafeDiagnostic[], message: string): void {
   if (warnings.length < MAX_WARNINGS) {
     warnings.push({ severity: "warning", message });
   }
+}
+
+/**
+ * Bounded `[input]` action intelligence: action name, deadzone, and event
+ * count/types where the serialized dictionary parses. Full InputEvent
+ * semantics are deliberately out of scope; unknown forms expose the
+ * action name only (never fabricated event data).
+ */
+function readInputActions(
+  properties: readonly ScannedProjectProperty[],
+  warnings: SafeDiagnostic[],
+): readonly GodotInputAction[] {
+  const actions: GodotInputAction[] = [];
+  for (const property of properties) {
+    if (property.section !== "input") {
+      continue;
+    }
+    if (actions.length >= GODOT_LIMITS.maxProjectInputActions) {
+      addScanWarning(
+        warnings,
+        "The number of input actions exceeded the bound (maxProjectInputActions); the input-action list is partial.",
+      );
+      break;
+    }
+    actions.push(interpretInputAction(property.key, property.rawValue));
+  }
+  return actions;
+}
+
+function interpretInputAction(name: string, raw: string): GodotInputAction {
+  const parsed = parseGodotVariant(raw);
+  if (parsed.value.kind === "dictionary") {
+    let deadzone: number | null = null;
+    let eventCount = 0;
+    const eventTypes: string[] = [];
+    for (const entry of parsed.value.entries) {
+      if (
+        entry.key.kind === "string" &&
+        entry.key.value === "deadzone" &&
+        entry.value.kind === "float"
+      ) {
+        deadzone = entry.value.value;
+      } else if (
+        entry.key.kind === "string" &&
+        entry.key.value === "events" &&
+        entry.value.kind === "array"
+      ) {
+        for (const event of entry.value.items) {
+          if (eventCount >= GODOT_LIMITS.maxInputActionEventTypes) {
+            break;
+          }
+          if (event.kind === "opaque" && event.typeName.startsWith("InputEvent")) {
+            eventCount += 1;
+            if (eventTypes.length < GODOT_LIMITS.maxInputActionEventTypes) {
+              eventTypes.push(event.typeName);
+            }
+          }
+        }
+      }
+    }
+    return { name, deadzone, eventCount, eventTypes };
+  }
+  // Fallback: bounded structural count of `Object(InputEvent...)` markers
+  // without inventing event data.
+  const eventTypes: string[] = [];
+  const markerPattern = /Object\(\s*([A-Za-z_][A-Za-z0-9_]*)/g;
+  let match: RegExpExecArray | null;
+  while (
+    (match = markerPattern.exec(raw)) !== null &&
+    eventTypes.length < GODOT_LIMITS.maxInputActionEventTypes
+  ) {
+    const typeName = match[1] as string;
+    if (typeName.startsWith("InputEvent") && !eventTypes.includes(typeName)) {
+      eventTypes.push(typeName);
+    }
+  }
+  return { name, deadzone: null, eventCount: eventTypes.length, eventTypes };
 }
 
 function warnUnknown(warnings: SafeDiagnostic[], property: ScannedProjectProperty): void {

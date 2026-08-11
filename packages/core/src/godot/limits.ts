@@ -48,6 +48,10 @@ export const GODOT_LIMITS = {
   maxProjectPlugins: 256,
   /** Maximum autoload declarations retained per project. */
   maxProjectAutoloads: 256,
+  /** Maximum input-action declarations retained per project. */
+  maxProjectInputActions: 512,
+  /** Maximum event types retained per input action. */
+  maxInputActionEventTypes: 16,
   /** Maximum GDExtension library targets assessed per descriptor. */
   maxGDExtensionTargetsPerDescriptor: 512,
   /** Maximum UTF-8 byte length of a project-provided res:// path reference. */
