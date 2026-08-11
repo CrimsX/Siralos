@@ -1,7 +1,7 @@
 import { isCancellationError } from "../domain/cancellation.js";
-import { validateConversationItems, type ConversationItem } from "../domain/conversation.js";
+import type { ConversationItem } from "../domain/conversation.js";
 import type { JsonObject, JsonValue } from "../domain/json.js";
-import type { ModelEvent, ModelProvider, ModelRequest } from "../ports/provider.js";
+import type { ModelProvider } from "../ports/provider.js";
 import { evaluatePermission } from "../security/permission-evaluator.js";
 import type { ApprovalDecision, ApprovalRequest, ApprovalReviewer } from "../security/approval.js";
 import type { CapabilityPolicy } from "../security/capability.js";
@@ -9,7 +9,7 @@ import { createDefaultPolicy } from "../security/default-policy.js";
 import { INSPECT_PROFILE, type SandboxProfile } from "../security/profile.js";
 import type { ProcessOutputEvent } from "../security/sandbox-backend.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult } from "../tools/tool.js";
+import type { ToolExecutionContext, ToolExecutionResult } from "../tools/tool.js";
 import type { PreparedGodotProbe, GodotProbePreview } from "../godot/probe.js";
 import type { GodotDiagnosticPreview, PreparedGDScriptCheck } from "../godot/gdscript.js";
 import type { GDScriptLSPSessionPreview, PreparedGDScriptSession } from "../godot/lsp.js";
@@ -29,12 +29,18 @@ import {
 } from "../tools/prepared-lsp-session-tool.js";
 import type { PreparedProjectProbeTool } from "../tools/prepared-probe-tool.js";
 import type { PreparedCommandTool } from "../commands/command-tool.js";
-import type { CommandAuditRecord, CommandApplicationEvent } from "../commands/command-events.js";
+import type { CommandAuditRecord } from "../commands/command-events.js";
 import { MAX_RETAINED_COMMAND_AUDIT_RECORDS } from "../commands/command-events.js";
 import type { CommandPreview, PreparedCommand } from "../commands/command-runners.js";
 import type { PermissionEvaluation } from "../security/permission-evaluator.js";
 import { PROCESS_RUN_TOOL_NAME } from "../commands/command-tool.js";
 import type { ProjectionMode, ProjectionService } from "../projection/projection-service.js";
+import type { ApplicationEvent } from "./application-events.js";
+import { collectProviderTurn, type TurnToolCall } from "./provider-turn.js";
+import { executeToolRound } from "./tool-round.js";
+
+export type { ApplicationEvent } from "./application-events.js";
+export { PROVIDER_TURN_LIMITS } from "./provider-turn.js";
 
 /**
  * Shared shape of the one-time approval protocol for reviewable Godot
@@ -68,83 +74,6 @@ interface ApprovedToolAdapter<THandle, TPreview> {
   readonly deniedMessage: string;
   readonly cancelledMessage: string;
 }
-
-export type ApplicationEvent =
-  | {
-      readonly type: "response_started";
-    }
-  | {
-      readonly type: "text_delta";
-      readonly text: string;
-    }
-  | {
-      readonly type: "response_completed";
-    }
-  | {
-      readonly type: "response_cancelled";
-    }
-  | {
-      readonly type: "response_failed";
-      readonly message: string;
-    }
-  | {
-      readonly type: "tool_started";
-      readonly callId: string;
-      readonly toolName: string;
-      readonly displayInput: string;
-    }
-  | {
-      readonly type: "tool_awaiting_approval";
-      readonly callId: string;
-      readonly toolName: string;
-      readonly requestId: string;
-    }
-  | {
-      readonly type: "tool_completed";
-      readonly callId: string;
-      readonly toolName: string;
-      readonly summary: string;
-    }
-  | {
-      readonly type: "tool_failed";
-      readonly callId: string;
-      readonly toolName: string;
-      readonly message: string;
-    }
-  | {
-      readonly type: "tool_cancelled";
-      readonly callId: string;
-      readonly toolName: string;
-    }
-  | {
-      readonly type: "approval_requested";
-      readonly requestId: string;
-      readonly toolName: string;
-      readonly capability:
-        | "workspace.write"
-        | "process.execute"
-        | "godot.probe_project"
-        | "godot.diagnose"
-        | "godot.lsp";
-      readonly summary: string;
-    }
-  | {
-      readonly type: "approval_resolved";
-      readonly requestId: string;
-      readonly decision: "approved" | "denied" | "cancelled";
-    }
-  | {
-      readonly type: "checkpoint_applied";
-      readonly checkpointId: string;
-      readonly path: string;
-    }
-  | {
-      readonly type: "context_pressure";
-      readonly state: "normal" | "warn" | "auto" | "hard";
-      readonly estimatedTokens: number;
-      readonly workingMaximum: number;
-    }
-  | CommandApplicationEvent;
 
 export interface SessionStatus {
   readonly providerId: string;
@@ -182,28 +111,6 @@ export interface SolarisApplicationDependencies {
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
 const MAX_TOOL_ROUNDS = 32;
 
-/**
- * Per-turn provider stream bounds. Every bound is enforced on UTF-8 byte
- * counts, not JavaScript character counts, and exceeding any bound fails the
- * turn without committing partial output as a successful response.
- */
-export const PROVIDER_TURN_LIMITS = {
-  /** Total assistant text bytes across all deltas of one turn. */
-  maxAssistantTextBytes: 64 * 1024,
-  /** Number of text_delta events in one turn. */
-  maxTextEvents: 4096,
-  /** Number of tool_call events in one turn. */
-  maxToolCallsPerTurn: 32,
-  /** UTF-8 bytes of one tool-call correlation id. */
-  maxCallIdBytes: 256,
-  /** UTF-8 bytes of one tool name. */
-  maxToolNameBytes: 256,
-  /** UTF-8 bytes of one tool-call argument payload. */
-  maxToolArgumentBytes: 128 * 1024,
-  /** Aggregate UTF-8 bytes (text + ids + tool names + arguments) of one turn. */
-  maxTurnBytes: 256 * 1024,
-} as const;
-
 export interface SolarisApplication {
   sendPrompt(
     text: string,
@@ -220,106 +127,13 @@ export interface SolarisApplication {
   getLastCommandExitCode(): number | null;
 }
 
-type TurnToolCall =
-  | {
-      readonly kind: "execute";
-      readonly callId: string;
-      readonly toolName: string;
-      readonly input: unknown;
-    }
-  | {
-      readonly kind: "invalid";
-      readonly callId: string;
-      readonly toolName: string;
-      readonly message: string;
-    };
-
-type TurnOutcome =
-  | {
-      readonly kind: "turn";
-      readonly assistantText: string;
-      readonly toolCalls: readonly TurnToolCall[];
-    }
-  | {
-      readonly kind: "cancelled";
-    }
-  | {
-      readonly kind: "failed";
-      readonly message: string;
-    };
-
 const MAX_DISPLAY_INPUT_LENGTH = 200;
-
-const textEncoder = new TextEncoder();
-
-function utf8ByteLength(text: string): number {
-  return textEncoder.encode(text).length;
-}
 
 function normalizeMaxToolRounds(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) {
     return DEFAULT_MAX_TOOL_ROUNDS;
   }
   return Math.min(MAX_TOOL_ROUNDS, Math.max(0, Math.floor(value)));
-}
-
-type ProviderIteratorRead =
-  | { readonly kind: "next"; readonly result: IteratorResult<ModelEvent> }
-  | { readonly kind: "cancelled" };
-
-/**
- * Await one provider event without allowing an iterator that ignores its
- * AbortSignal to hold the application open forever after caller
- * cancellation. The abandoned `next()` remains handled to avoid an
- * unhandled rejection, but its eventual value is never consumed.
- */
-function nextProviderEvent(
-  iterator: AsyncIterator<ModelEvent>,
-  signal: AbortSignal | undefined,
-): Promise<ProviderIteratorRead> {
-  if (signal?.aborted === true) {
-    return Promise.resolve({ kind: "cancelled" });
-  }
-  if (signal === undefined) {
-    return iterator.next().then((result) => ({ kind: "next", result }));
-  }
-  return new Promise<ProviderIteratorRead>((resolve, reject) => {
-    let settled = false;
-    const finish = (value: ProviderIteratorRead): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      resolve(value);
-    };
-    const fail = (error: unknown): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      reject(error instanceof Error ? error : new Error(describeError(error)));
-    };
-    const onAbort = (): void => finish({ kind: "cancelled" });
-    signal.addEventListener("abort", onAbort, { once: true });
-    iterator.next().then(
-      (result) => finish({ kind: "next", result }),
-      (error: unknown) => fail(error),
-    );
-  });
-}
-
-function closeProviderIterator(iterator: AsyncIterator<ModelEvent> | undefined): void {
-  try {
-    const closing = iterator?.return?.();
-    if (closing !== undefined) {
-      void closing.catch(() => undefined);
-    }
-  } catch {
-    // Best-effort close only: the already-selected application outcome is
-    // authoritative, and a provider cleanup failure cannot replace it.
-  }
 }
 
 export function createSolarisApplication(
@@ -334,6 +148,13 @@ export function createSolarisApplication(
     .definitions()
     .filter((info) => evaluatePermission(info.capability, policy, profile).decision !== "deny")
     .map((info) => info.definition);
+  const providerTurnContext = {
+    provider: dependencies.provider,
+    tools: dependencies.tools,
+    toolDefinitions,
+    history,
+    ...(dependencies.projection === undefined ? {} : { projection: dependencies.projection }),
+  };
   let state: "idle" | "responding" = "idle";
   let pendingApproval = false;
   let approvalCounter = 0;
@@ -359,7 +180,7 @@ export function createSolarisApplication(
           yield { type: "response_cancelled" };
           return;
         }
-        const turn = yield* collectProviderTurn(signal, options?.mode);
+        const turn = yield* collectProviderTurn(providerTurnContext, signal, options?.mode);
         if (turn.kind === "cancelled") {
           yield { type: "response_cancelled" };
           return;
@@ -384,272 +205,24 @@ export function createSolarisApplication(
           return;
         }
         toolRounds += 1;
-        const executed: ConversationItem[] = [];
-        for (const call of turn.toolCalls) {
-          executed.push({
-            type: "assistant_tool_call",
-            callId: call.callId,
-            toolName: call.toolName,
-            input: call.kind === "invalid" ? undefined : call.input,
-          });
-        }
-        let cancelledIndex = -1;
-        let abortedBeforeExecution = false;
-        for (let index = 0; index < turn.toolCalls.length; index += 1) {
-          const call = turn.toolCalls[index] as TurnToolCall;
-          if (signal?.aborted) {
-            cancelledIndex = index;
-            abortedBeforeExecution = true;
-            break;
-          }
-          if (call.kind === "invalid") {
-            yield {
-              type: "tool_failed",
-              callId: call.callId,
-              toolName: call.toolName,
-              message: call.message,
-            };
-            executed.push({
-              type: "tool_result",
-              callId: call.callId,
-              toolName: call.toolName,
-              result: { status: "failed", message: call.message },
-            });
-            continue;
-          }
-          const result = yield* runToolCall(call, signal);
-          executed.push({
-            type: "tool_result",
-            callId: call.callId,
-            toolName: call.toolName,
-            result,
-          });
-          if (result.status === "cancelled") {
-            cancelledIndex = index;
-            break;
-          }
-        }
-        if (cancelledIndex >= 0) {
-          const start = cancelledIndex + (abortedBeforeExecution ? 0 : 1);
-          for (let index = start; index < turn.toolCalls.length; index += 1) {
-            const call = turn.toolCalls[index] as TurnToolCall;
-            executed.push({
-              type: "tool_result",
-              callId: call.callId,
-              toolName: call.toolName,
-              result: {
-                status: "cancelled",
-                message: "The tool call was cancelled before it executed.",
-              },
-            });
-          }
-          for (const item of executed) {
-            history.push(item);
-          }
+        const round = yield* executeToolRound({
+          toolCalls: turn.toolCalls,
+          execute: runToolCall,
+          ...(signal === undefined ? {} : { signal }),
+        });
+        if (round.kind === "cancelled") {
+          history.push(...round.transcript);
           yield { type: "response_cancelled" };
           return;
         }
         if (turn.assistantText.length > 0) {
           history.push({ type: "assistant_message", content: turn.assistantText });
         }
-        for (const item of executed) {
-          history.push(item);
-        }
+        history.push(...round.transcript);
       }
     } finally {
       state = "idle";
     }
-  }
-
-  async function* collectProviderTurn(
-    signal?: AbortSignal,
-    mode?: ProjectionMode,
-  ): AsyncGenerator<ApplicationEvent, TurnOutcome, void> {
-    const transcriptError = validateConversationItems(history);
-    if (transcriptError !== null) {
-      return {
-        kind: "failed",
-        message: `The conversation transcript is structurally invalid; the provider request was blocked: ${transcriptError}`,
-      };
-    }
-    let requestMessages: readonly ConversationItem[] = history;
-    let requestTools: readonly ToolDefinition[] = toolDefinitions;
-    let requestSystem: string | undefined;
-    if (dependencies.projection !== undefined) {
-      const projected = dependencies.projection.projectRequest({
-        mode: mode ?? "generic",
-        messages: [...history],
-        tools: dependencies.tools.definitions(),
-        providerToolCalling: dependencies.provider.toolCalling !== false,
-      });
-      if (projected.pressure.state !== "normal") {
-        yield {
-          type: "context_pressure",
-          state: projected.pressure.state,
-          estimatedTokens: projected.estimatedTokens,
-          workingMaximum: projected.pressure.workingMaximum,
-        };
-      }
-      if (projected.blocked !== null) {
-        yield {
-          type: "response_failed",
-          message: projected.blocked.reason,
-        };
-        return { kind: "failed", message: projected.blocked.reason };
-      }
-      requestMessages = projected.messages;
-      requestTools = projected.tools.map((info) => info.definition);
-      requestSystem = projected.system ?? undefined;
-    }
-    const request: ModelRequest = {
-      messages: [...requestMessages],
-      tools: requestTools,
-      ...(requestSystem === undefined ? {} : { system: requestSystem }),
-      ...(signal === undefined ? {} : { signal }),
-    };
-    let assistantText = "";
-    let assistantTextBytes = 0;
-    let textEvents = 0;
-    let turnBytes = 0;
-    const toolCalls: TurnToolCall[] = [];
-    const seenCallIds = new Set<string>();
-    let invalidCallIndex = 0;
-    let completionSeen = false;
-    let exceeded: string | null = null;
-    let iterator: AsyncIterator<ModelEvent> | undefined;
-    let iteratorDone = false;
-    try {
-      iterator = dependencies.provider.stream(request)[Symbol.asyncIterator]();
-      for (;;) {
-        const read = await nextProviderEvent(iterator, signal);
-        if (read.kind === "cancelled") {
-          break;
-        }
-        if (read.result.done === true) {
-          iteratorDone = true;
-          break;
-        }
-        const event = read.result.value;
-        if (completionSeen) {
-          exceeded = "an event after completion";
-          break;
-        }
-        if (event.type === "completed") {
-          completionSeen = true;
-          continue;
-        }
-        if (event.type === "text_delta") {
-          const bytes = utf8ByteLength(event.text);
-          textEvents += 1;
-          if (textEvents > PROVIDER_TURN_LIMITS.maxTextEvents) {
-            exceeded = "the text-event count";
-            break;
-          }
-          // The assistant-text limit is cumulative across all deltas of the
-          // turn, not a per-delta cap: individually legal deltas cannot
-          // accumulate beyond the documented total.
-          assistantTextBytes += bytes;
-          if (assistantTextBytes > PROVIDER_TURN_LIMITS.maxAssistantTextBytes) {
-            exceeded = "the assistant-text byte limit";
-            break;
-          }
-          turnBytes += bytes;
-          if (turnBytes > PROVIDER_TURN_LIMITS.maxTurnBytes) {
-            exceeded = "the aggregate turn byte limit";
-            break;
-          }
-          assistantText += event.text;
-          yield { type: "text_delta", text: event.text };
-          continue;
-        }
-        const callIdBytes = utf8ByteLength(event.callId);
-        const nameBytes = utf8ByteLength(event.toolName);
-        let serializedInput: string;
-        try {
-          const serialized = JSON.stringify(event.input);
-          if (serialized === undefined) {
-            exceeded = "the tool-argument JSON validity";
-            break;
-          }
-          serializedInput = serialized;
-        } catch {
-          exceeded = "the tool-argument JSON validity";
-          break;
-        }
-        const argumentBytes = utf8ByteLength(serializedInput);
-        if (callIdBytes > PROVIDER_TURN_LIMITS.maxCallIdBytes) {
-          exceeded = "the tool-call id byte limit";
-          break;
-        }
-        if (nameBytes > PROVIDER_TURN_LIMITS.maxToolNameBytes) {
-          exceeded = "the tool-name byte limit";
-          break;
-        }
-        if (argumentBytes > PROVIDER_TURN_LIMITS.maxToolArgumentBytes) {
-          exceeded = "the tool-argument byte limit";
-          break;
-        }
-        turnBytes += callIdBytes + nameBytes + argumentBytes;
-        if (turnBytes > PROVIDER_TURN_LIMITS.maxTurnBytes) {
-          exceeded = "the aggregate turn byte limit";
-          break;
-        }
-        if (toolCalls.length >= PROVIDER_TURN_LIMITS.maxToolCallsPerTurn) {
-          exceeded = "the tool-call count";
-          break;
-        }
-        if (event.callId.length === 0 || event.toolName.length === 0) {
-          invalidCallIndex += 1;
-          toolCalls.push({
-            kind: "invalid",
-            callId: `invalid-call-${invalidCallIndex}`,
-            toolName: event.toolName.length === 0 ? "<empty>" : event.toolName,
-            message: "Provider emitted a tool call with an empty call id or tool name.",
-          });
-        } else if (seenCallIds.has(event.callId)) {
-          invalidCallIndex += 1;
-          toolCalls.push({
-            kind: "invalid",
-            callId: `invalid-call-${invalidCallIndex}`,
-            toolName: event.toolName,
-            message: `Duplicate tool call id: ${event.callId}.`,
-          });
-        } else {
-          seenCallIds.add(event.callId);
-          toolCalls.push({
-            kind: "execute",
-            callId: event.callId,
-            toolName: event.toolName,
-            input: JSON.parse(serializedInput) as unknown,
-          });
-        }
-      }
-    } catch (error: unknown) {
-      if (signal?.aborted || isCancellationError(error)) {
-        return { kind: "cancelled" };
-      }
-      return { kind: "failed", message: describeError(error) };
-    } finally {
-      if (!iteratorDone) {
-        closeProviderIterator(iterator);
-      }
-    }
-    if (signal?.aborted) {
-      return { kind: "cancelled" };
-    }
-    if (exceeded !== null) {
-      return {
-        kind: "failed",
-        message: `The provider exceeded ${exceeded} limit; the response was rejected.`,
-      };
-    }
-    if (!completionSeen) {
-      return {
-        kind: "failed",
-        message: "The provider stream ended without a completion event; the response was rejected.",
-      };
-    }
-    return { kind: "turn", assistantText, toolCalls };
   }
 
   async function* runToolCall(
