@@ -655,6 +655,7 @@ export {
 } from "./executor/milestone-manifest.js";
 export { S3M8_MILESTONE_MANIFEST } from "./executor/s3m8-manifest.js";
 export { S3M9_MILESTONE_MANIFEST } from "./executor/s3m9-manifest.js";
+export { S3M10_MILESTONE_MANIFEST } from "./executor/s3m10-manifest.js";
 export {
   STANDARD_ACCEPTANCE_DEFINITIONS,
   STANDARD_ACCEPTANCE_IDS,
@@ -1202,6 +1203,45 @@ export {
   type ImpactRelationshipSource,
   type ImpactSignalConnection,
 } from "./godot/impact/impact-analyzer.js";
+export {
+  MUTATION_LIMITS,
+  expectedSemanticEffect,
+  validateMutationOperation,
+  validateMutationOperations,
+  validateNodePath,
+  type MutationOperation,
+  type MutationValue,
+  type ResourceMutationOperation,
+  type SceneMutationOperation,
+  type SemanticExpectation,
+} from "./godot/scene-mutation/operations.js";
+export {
+  applyResourceOperations,
+  applySceneOperations,
+  buildNodePathIndex,
+  findNodeByPath,
+  isDescendantOf,
+  type NodePathIndex,
+} from "./godot/scene-mutation/model-apply.js";
+export {
+  serializeResource,
+  serializeScene,
+  serializeVariantValue,
+} from "./godot/scene-mutation/serializer.js";
+export {
+  verifyResourceSemanticEffect,
+  verifySceneSemanticEffect,
+  type SemanticVerification,
+  type VerificationCheck,
+  type VerificationStatus,
+} from "./godot/scene-mutation/verify.js";
+export {
+  computeMutationFingerprint,
+  createPreparedGodotMutation,
+  type CreatePreparedGodotMutationInput,
+  type GodotMutationPreview,
+  type PreparedGodotMutation,
+} from "./godot/scene-mutation/prepared.js";
 export { parseGodotResource, type ParseResourceOptions } from "./godot/scene/resource-parser.js";
 export {
   parseGodotVariant,
