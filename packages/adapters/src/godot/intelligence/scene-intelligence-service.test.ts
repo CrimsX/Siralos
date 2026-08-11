@@ -246,3 +246,198 @@ describe("createGodotSceneIntelligence", () => {
     expect(denied.status).toBe("denied");
   });
 });
+
+describe("createGodotSceneIntelligence — review context (Stage 3 milestone 9)", () => {
+  async function makeIntelligence(root: string) {
+    const revisions = createWorkspaceRevisionRegistry({
+      workspaceFingerprint: sha256Hex(canonicalizeJson({ workspaceRoot: root })),
+    });
+    const intelligence = createGodotSceneIntelligence({ workspaceRoot: root, revisions });
+    // The relationship index is fed by inspection (S3.8): parse the
+    // fixture scenes/resources before deriving impact.
+    await intelligence.inspectScene({ path: "scenes/player.tscn" });
+    await intelligence.inspectScene({ path: "scenes/base_player.tscn" });
+    await intelligence.inspectScene({ path: "scenes/weapon.tscn" });
+    await intelligence.inspectResource({ path: "resources/player_stats.tres" });
+    return { revisions, intelligence };
+  }
+
+  function readScriptRevision(
+    revisions: ReturnType<typeof createWorkspaceRevisionRegistry>,
+    path: string,
+    content: string,
+  ): void {
+    revisions.issue(path, sha256Hex(content));
+  }
+
+  it("derives a bounded manifest for a changed script: attachments, signals, candidate tests", async () => {
+    const root = await withWorkspace();
+    await writeFiles(root, { ...FIXTURE_PROJECT, "tests/player_test.gd": "extends SceneTree\n" });
+    const { revisions, intelligence } = await makeIntelligence(root);
+    readScriptRevision(revisions, "scripts/player.gd", FIXTURE_PROJECT["scripts/player.gd"]);
+    const result = await intelligence.reviewContext({
+      taskId: "task-impact",
+      taskContractRevision: 1,
+      changedPaths: ["scripts/player.gd"],
+    });
+    expect(result.status).toBe("ok");
+    const manifest = result.manifest!;
+    expect(manifest.primaryChanges).toHaveLength(1);
+    expect(manifest.primaryChanges[0]!.path).toBe("scripts/player.gd");
+    expect(manifest.primaryChanges[0]!.revision).toMatch(/^rev_/);
+    // Script attachment: base_player.tscn directly attaches the changed
+    // script; player.tscn reaches it through inheritance at second order.
+    expect(
+      manifest.relatedSurfaces.some(
+        (relation) =>
+          relation.kind === "script_attachment" &&
+          relation.targetPath === "scenes/base_player.tscn",
+      ),
+    ).toBe(true);
+    expect(
+      manifest.relatedSurfaces.some(
+        (relation) =>
+          relation.kind === "scene_inheritance" && relation.targetPath === "scenes/player.tscn",
+      ),
+    ).toBe(true);
+    // Serialized signal connection is surfaced honestly (scene-local).
+    const signals = manifest.relatedSurfaces.filter(
+      (relation) => relation.kind === "signal_connection",
+    );
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals[0]!.note).toContain("died");
+    // Candidate test surface by convention, never verified.
+    const tests = manifest.relatedSurfaces.filter((relation) => relation.kind === "test_covers");
+    expect(tests.length).toBe(1);
+    expect(tests[0]!.confidence).toBe("candidate");
+    expect(tests[0]!.targetPath).toBe("tests/player_test.gd");
+    // Regression areas and validation reflect the observed impact.
+    expect(manifest.regressionAreas.some((area) => area.id === "REGRESSION.SCRIPT_BEHAVIOR")).toBe(
+      true,
+    );
+    expect(
+      manifest.validation.some(
+        (recommendation) =>
+          recommendation.kind === "gdscript_check_only" &&
+          recommendation.priority === "required_now",
+      ),
+    ).toBe(true);
+    expect(
+      manifest.validation.some((recommendation) => recommendation.kind === "runtime_validation"),
+    ).toBe(true);
+  });
+
+  it("keeps inheritance impact distinct from instancing impact", async () => {
+    const root = await withWorkspace();
+    await writeFiles(root, FIXTURE_PROJECT);
+    const { intelligence } = await makeIntelligence(root);
+    const result = await intelligence.reviewContext({
+      taskId: "task-impact",
+      taskContractRevision: 1,
+      changedPaths: ["scenes/base_player.tscn"],
+    });
+    const manifest = result.manifest!;
+    const kinds = manifest.relatedSurfaces.map((relation) => relation.kind);
+    expect(kinds).toContain("scene_inheritance");
+    expect(kinds).toContain("scene_instancing");
+    expect(
+      manifest.relatedSurfaces.find((relation) => relation.kind === "scene_inheritance")
+        ?.targetPath,
+    ).toBe("scenes/player.tscn");
+    // The base scene is instanced by player.tscn (direct) and weapon.tscn
+    // is reached through it at second order — inheritance and instancing
+    // stay distinct kinds with distinct neighborhoods.
+    const instancingTargets = manifest.relatedSurfaces
+      .filter((relation) => relation.kind === "scene_instancing")
+      .map((relation) => relation.targetPath);
+    expect(instancingTargets).toContain("scenes/player.tscn");
+    expect(instancingTargets).toContain("scenes/weapon.tscn");
+    expect(
+      manifest.regressionAreas.some((area) => area.id === "REGRESSION.SCENE_INHERITANCE"),
+    ).toBe(true);
+    expect(
+      manifest.regressionAreas.some((area) => area.id === "REGRESSION.SCENE_INSTANTIATION"),
+    ).toBe(true);
+  });
+
+  it("surfaces autoload reach conservatively for a changed autoload script", async () => {
+    const root = await withWorkspace();
+    await writeFiles(root, FIXTURE_PROJECT);
+    const { intelligence } = await makeIntelligence(root);
+    const result = await intelligence.reviewContext({
+      taskId: "task-impact",
+      taskContractRevision: 1,
+      changedPaths: ["scripts/game_state.gd"],
+    });
+    const manifest = result.manifest!;
+    expect(manifest.primaryChanges[0]!.kind).toBe("autoload");
+    expect(manifest.primaryChanges[0]!.note).toContain("GameState");
+    expect(
+      manifest.diagnostics.some((diagnostic) => diagnostic.code === "IMPACT.AUTOLOAD_GLOBAL"),
+    ).toBe(true);
+    expect(
+      manifest.validation.some(
+        (recommendation) => recommendation.kind === "broader_repo_validation",
+      ),
+    ).toBe(true);
+    // Global reach is a risk signal, never verified impact on every scene.
+    expect(
+      manifest.relatedSurfaces.some((relation) => relation.targetPath === "scenes/weapon.tscn"),
+    ).toBe(false);
+    expect(manifest.completeness).toBe("partial");
+  });
+
+  it("never presents stale relationships as current impact", async () => {
+    const root = await withWorkspace();
+    await writeFiles(root, FIXTURE_PROJECT);
+    const { revisions, intelligence } = await makeIntelligence(root);
+    // The scene that attached the script changes to rev_B after parsing.
+    await writeFile(
+      join(root, "scenes/player.tscn"),
+      FIXTURE_PROJECT["scenes/player.tscn"].replace("uid://player1", "uid://player2"),
+      "utf8",
+    );
+    revisions.invalidatePath("scenes/player.tscn");
+    const result = await intelligence.reviewContext({
+      taskId: "task-impact",
+      taskContractRevision: 1,
+      changedPaths: ["scripts/player.gd"],
+    });
+    const manifest = result.manifest!;
+    // The stale scene->script edge is excluded from current impact and
+    // surfaced as a diagnostic.
+    expect(
+      manifest.relatedSurfaces.some(
+        (relation) =>
+          relation.kind === "script_attachment" && relation.targetPath === "scenes/player.tscn",
+      ),
+    ).toBe(false);
+    expect(
+      manifest.diagnostics.some((diagnostic) => diagnostic.code === "IMPACT.STALE_RELATIONSHIP"),
+    ).toBe(true);
+    expect(manifest.completeness).toBe("partial");
+  });
+
+  it("keeps unrelated project surfaces out of the impact neighborhood", async () => {
+    const root = await withWorkspace();
+    await writeFiles(root, {
+      ...FIXTURE_PROJECT,
+      "scenes/unrelated_a.tscn": `[gd_scene format=3]\n\n[node name="A" type="Node2D"]\n`,
+      "scenes/unrelated_b.tscn": `[gd_scene format=3]\n\n[node name="B" type="Node2D"]\n`,
+    });
+    const { intelligence } = await makeIntelligence(root);
+    const result = await intelligence.reviewContext({
+      taskId: "task-impact",
+      taskContractRevision: 1,
+      changedPaths: ["scripts/player.gd"],
+    });
+    const manifest = result.manifest!;
+    const allPaths = [
+      ...manifest.primaryChanges.map((surface) => surface.path),
+      ...manifest.relatedSurfaces.flatMap((relation) => [relation.sourcePath, relation.targetPath]),
+    ];
+    expect(allPaths).toContain("scenes/player.tscn");
+    expect(allPaths).not.toContain("scenes/unrelated_a.tscn");
+    expect(allPaths).not.toContain("scenes/unrelated_b.tscn");
+  });
+});

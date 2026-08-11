@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import {
   GODOT_SCENE_LIMITS,
+  REVIEW_CONTEXT_LIMITS,
+  analyzeImpact,
   buildSceneNodeTree,
   createGodotRelationshipIndex,
   parseGodotResource,
@@ -9,6 +12,8 @@ import {
   resolveResPath,
   type GodotDependencyEdge,
   type GodotDependencyResult,
+  type GodotImpactRequest,
+  type GodotImpactResult,
   type GodotProjectRelationshipResult,
   type GodotRelationshipEntry,
   type GodotRelationshipIndex,
@@ -20,6 +25,10 @@ import {
   type GodotSceneIntelligence,
   type GodotSceneIntelligenceSupport,
   type GodotSceneModel,
+  type ImpactEdge,
+  type ImpactRelationKind,
+  type ImpactRelationshipSource,
+  type ImpactSignalConnection,
   type WorkspaceRevisionHandle,
   type WorkspaceRevisionRegistry,
 } from "@solaris/core";
@@ -629,15 +638,161 @@ export function createGodotSceneIntelligence(
     index.record(model.path, entries);
   }
 
+  async function impactSignalConnections(path: string): Promise<readonly ImpactSignalConnection[]> {
+    if (!path.toLowerCase().endsWith(".tscn")) {
+      return [];
+    }
+    const read = await readDocument(path);
+    if (read.status !== "ok" || read.content === null || read.relativePath === null) {
+      return [];
+    }
+    const parsed = parseGodotScene(read.content, read.relativePath, { revision: read.revision });
+    if (parsed.document === null) {
+      return [];
+    }
+    return parsed.document.connections.map((connection) => ({
+      signal: connection.signal,
+      sourceNode: connection.from,
+      targetNode: connection.to,
+      targetMethod: connection.method,
+    }));
+  }
+
+  function impactEdgesOf(entries: readonly GodotRelationshipEntry[]): readonly ImpactEdge[] {
+    const edges: ImpactEdge[] = [];
+    for (const entry of entries) {
+      const kind = IMPACT_KIND_BY_INDEX_KIND[entry.kind];
+      if (kind === undefined) {
+        continue;
+      }
+      edges.push({
+        kind,
+        fromPath: entry.sourcePath,
+        toPath: entry.targetPath,
+        stale: index.isStale(entry, revisions.currentRevision(entry.sourcePath)),
+      });
+    }
+    return edges;
+  }
+
+  async function reviewContext(request: GodotImpactRequest): Promise<GodotImpactResult> {
+    const project = await projectRelationships();
+    const autoloads = project.status === "ok" ? project.autoloads : [];
+    const mainScene = project.status === "ok" ? (project.mainScene?.path ?? null) : null;
+    const source: ImpactRelationshipSource = {
+      outgoing: (path) => impactEdgesOf(index.dependenciesOf(path)),
+      incoming: (path) => impactEdgesOf(index.referrersOf(path)),
+      signalConnections: impactSignalConnections,
+      autoloadName: (path) => autoloads.find((autoload) => autoload.path === path)?.name ?? null,
+      mainScene: () => mainScene,
+      currentRevision: (path) => revisions.currentRevision(path),
+      candidateTests: (path) => enumerateCandidateTestFiles(workspaceRoot, path),
+    };
+    try {
+      const manifest = await analyzeImpact({
+        taskId: request.taskId,
+        taskContractRevision: request.taskContractRevision,
+        changedPaths: request.changedPaths,
+        source,
+      });
+      return { status: "ok", message: null, manifest };
+    } catch (error: unknown) {
+      return {
+        status: "failed",
+        message: `Impact analysis failed: ${describeFsError(error)}`,
+        manifest: null,
+      };
+    }
+  }
+
   return {
     inspectScene,
     inspectResource,
     dependencies: dependenciesFor,
     projectRelationships,
+    reviewContext,
     support(): GodotSceneIntelligenceSupport {
       return { state: "ready" };
     },
   };
+}
+
+const IMPACT_KIND_BY_INDEX_KIND: Readonly<
+  Partial<Record<GodotRelationshipKind, ImpactRelationKind>>
+> = {
+  scene_inherits: "scene_inheritance",
+  scene_instances: "scene_instancing",
+  scene_uses_script: "script_attachment",
+  resource_references: "resource_dependency",
+};
+
+/**
+ * Bounded candidate-test enumeration (Stage 3 milestone 9 §11): a
+ * deterministic, capped workspace walk for `.gd` files whose path matches
+ * test conventions (a `tests`/`test` directory segment, or `.test.` /
+ * `.spec.` names). Candidates share the changed file's directory or live
+ * under a `tests` tree. These are CANDIDATE surfaces by convention — never
+ * verified coverage.
+ */
+async function enumerateCandidateTestFiles(
+  workspaceRoot: string,
+  changedPath: string,
+): Promise<readonly string[]> {
+  const changedDirectory = changedPath.includes("/")
+    ? changedPath.slice(0, changedPath.lastIndexOf("/"))
+    : ".";
+  const changedStem = changedPath.includes("/")
+    ? changedPath.slice(changedPath.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "")
+    : changedPath.replace(/\.[^.]+$/, "");
+  const candidates: string[] = [];
+  const stack: Array<{ readonly directory: string; readonly depth: number }> = [
+    { directory: ".", depth: 0 },
+  ];
+  const MAX_DEPTH = 6;
+  let inspected = 0;
+  while (stack.length > 0) {
+    const { directory, depth } = stack.pop()!;
+    if (depth > MAX_DEPTH || inspected >= 512) {
+      break;
+    }
+    let entries;
+    try {
+      entries = await readdir(join(workspaceRoot, directory), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    inspected += 1;
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (candidates.length >= REVIEW_CONTEXT_LIMITS.maxCandidateTests) {
+        break;
+      }
+      const relative = directory === "." ? entry.name : `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (EXCLUDED_DIRECTORIES.includes(entry.name)) {
+          continue;
+        }
+        stack.push({ directory: relative, depth: depth + 1 });
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".gd")) {
+        continue;
+      }
+      const isTestName = /\.(test|spec)\.gd$/i.test(entry.name);
+      const inTestsTree = /(^|\/)tests?(\/|$)/.test(relative);
+      // Colocated test-convention file, or a test-tree file whose name
+      // carries the changed surface's stem (path/module ownership + naming
+      // conventions). Always CANDIDATE by convention — never verified.
+      const colocated = directory === changedDirectory && isTestName;
+      const stemMatch = inTestsTree && changedStem.length > 0 && relative.includes(changedStem);
+      if (!colocated && !stemMatch) {
+        continue;
+      }
+      if (relative !== changedPath && !candidates.includes(relative)) {
+        candidates.push(relative);
+      }
+    }
+  }
+  return candidates.sort((a, b) => a.localeCompare(b));
 }
 
 function summarizeScene(model: GodotSceneModel | null): string {

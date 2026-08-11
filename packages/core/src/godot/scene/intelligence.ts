@@ -8,6 +8,7 @@ import type {
 } from "./models.js";
 import type { GodotRelationshipEntry, GodotRelationshipKind } from "./relationship-index.js";
 import type { GodotSceneNodeTree } from "./scene-tree.js";
+import type { ReviewContextManifest } from "../impact/review-context.js";
 
 /**
  * Godot scene/resource intelligence port (Stage 3 milestone 8).
@@ -148,7 +149,28 @@ export interface GodotSceneIntelligence {
   dependencies(request: { readonly path: string }): Promise<GodotDependencyResult>;
   /** Structured project relationships: main scene, autoloads, input actions. */
   projectRelationships(): Promise<GodotProjectRelationshipResult>;
+  /**
+   * Bounded, revision-aware impact analysis (Stage 3 milestone 9): derive
+   * a ReviewContextManifest for the changed surfaces from the existing
+   * relationship index. Static, read-only, no Godot process, no mutation.
+   */
+  reviewContext(request: GodotImpactRequest): Promise<GodotImpactResult>;
   support(): GodotSceneIntelligenceSupport;
+}
+
+/** One impact-analysis request (Stage 3 milestone 9). */
+export interface GodotImpactRequest {
+  readonly taskId: string;
+  readonly taskContractRevision: number;
+  /** Workspace-relative changed surfaces (bounded; overflow is truncated honestly). */
+  readonly changedPaths: readonly string[];
+}
+
+export interface GodotImpactResult {
+  readonly status: "ok" | "failed";
+  readonly message: string | null;
+  /** Derived review/validation context; null on failure. */
+  readonly manifest: ReviewContextManifest | null;
 }
 
 export interface GodotRelationshipIndexPort {

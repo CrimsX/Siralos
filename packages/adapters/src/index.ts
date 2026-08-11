@@ -161,6 +161,7 @@ export { createGodotInspectProjectTool } from "./godot/tools/godot-inspect-proje
 export { createGodotInspectSceneTool } from "./godot/tools/godot-inspect-scene-tool.js";
 export { createGodotInspectResourceTool } from "./godot/tools/godot-inspect-resource-tool.js";
 export { createGodotDependenciesTool } from "./godot/tools/godot-dependencies-tool.js";
+export { createGodotReviewContextTool } from "./godot/tools/godot-review-context-tool.js";
 export { createGodotSceneIntelligence } from "./godot/intelligence/scene-intelligence-service.js";
 export { createGodotApiSearchTool } from "./godot/tools/godot-api-search-tool.js";
 export { createGodotApiLookupTool } from "./godot/tools/godot-api-lookup-tool.js";

@@ -919,7 +919,7 @@ describe("runInteractiveSession tool activity", () => {
     // self-reference adds self.read and self.search (Stage 3 milestone 6);
     // read-only scene/resource intelligence adds godot.inspect_scene,
     // godot.inspect_resource, and godot.dependencies (Stage 3 milestone 8).
-    expect(io.text).toContain("Tools: 30");
+    expect(io.text).toContain("Tools: 31");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
