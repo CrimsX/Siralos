@@ -616,6 +616,105 @@ export {
   type PlanningFlowOptions,
 } from "./planning/planning-flow.js";
 export {
+  DEFAULT_EXECUTION_CONTRACT,
+  EXECUTION_CONTRACT_LIMITS,
+  computeExecutionContractDigest,
+  createExecutionContract,
+  executionContractRef,
+  reviseExecutionContract,
+  validateExecutionContract,
+  type CreateExecutionContractInput,
+  type ExecutionContract,
+  type ExecutionContractId,
+  type ExecutionContractRef,
+  type ExecutionRule,
+  type ExecutionRuleId,
+  type ExecutionRuleKind,
+  type ReportingRequirement,
+  type ReviseExecutionContractInput,
+} from "./executor/execution-contract.js";
+export {
+  MILESTONE_MANIFEST_LIMITS,
+  computeMilestoneManifestDigest,
+  createMilestoneManifest,
+  milestoneManifestRef,
+  reviseMilestoneManifest,
+  validateMilestoneManifest,
+  type AcceptanceRequirement,
+  type ArchitectureConcern,
+  type CreateMilestoneManifestInput,
+  type MilestoneDeliverable,
+  type MilestoneId,
+  type MilestoneInvariant,
+  type MilestoneManifest,
+  type MilestoneManifestRef,
+  type MilestoneRef,
+  type MilestoneRequirement,
+  type ReviseMilestoneManifestInput,
+  type TestRequirement,
+} from "./executor/milestone-manifest.js";
+export { S3M8_MILESTONE_MANIFEST } from "./executor/s3m8-manifest.js";
+export {
+  STANDARD_ACCEPTANCE_DEFINITIONS,
+  STANDARD_ACCEPTANCE_IDS,
+  resolveAcceptanceEvidenceKinds,
+  type StandardAcceptanceDefinition,
+  type StandardAcceptanceId,
+} from "./executor/standard-acceptance.js";
+export {
+  createAcceptanceEvaluator,
+  type AcceptanceEvaluationInput,
+  type AcceptanceEvaluator,
+  type AcceptanceRequirementStatus,
+  type MilestoneAcceptanceCounts,
+  type MilestoneAcceptanceReport,
+  type MilestoneRequirementResult,
+} from "./executor/acceptance.js";
+export {
+  STANDARD_REPO_VALIDATION,
+  VALIDATION_PROFILE_LIMITS,
+  createValidationProfile,
+  summarizeValidationProfile,
+  validateValidationProfile,
+  type ValidationCheckRef,
+  type ValidationProfile,
+  type ValidationProfileRef,
+} from "./executor/validation-profile.js";
+export {
+  ARCHITECTURE_INDEX,
+  selectArchitectureContext,
+  type ArchitectureContextEntry,
+  type ArchitectureContextRef,
+  type SelectArchitectureContextInput,
+} from "./executor/architecture-context.js";
+export {
+  EXECUTOR_CONTEXT_PACK_LIMITS,
+  buildExecutorContextPack,
+  type AcceptanceRequirementRef,
+  type BuildExecutorContextPackInput,
+  type CapabilityRef,
+  type ExecutorContextPack,
+  type InstructionRef,
+  type TaskContractRef,
+  type TaskPlanRef,
+  type TouchpointRef,
+} from "./executor/context-pack.js";
+export {
+  EXECUTOR_BRIEF_LIMITS,
+  EXECUTOR_BRIEF_SCHEMA_VERSION,
+  compileExecutorBrief,
+  computeExecutorBriefFingerprint,
+  renderExecutorBrief,
+  summarizeExecutorBrief,
+  type CompileExecutorBriefInput,
+  type ExecutorBrief,
+} from "./executor/brief-compiler.js";
+export {
+  createExecutorBriefing,
+  type ExecutorBriefing,
+  type ExecutorBriefingOptions,
+} from "./executor/briefing-service.js";
+export {
   DEFAULT_CONTEXT_MAX_OUTPUT_TOKENS,
   DEFAULT_CONTEXT_WORKING_MAXIMUM,
   createRouteContextCapacity,
