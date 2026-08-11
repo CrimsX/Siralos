@@ -162,6 +162,11 @@ export { createGodotInspectSceneTool } from "./godot/tools/godot-inspect-scene-t
 export { createGodotInspectResourceTool } from "./godot/tools/godot-inspect-resource-tool.js";
 export { createGodotDependenciesTool } from "./godot/tools/godot-dependencies-tool.js";
 export { createGodotReviewContextTool } from "./godot/tools/godot-review-context-tool.js";
+export {
+  createGodotPrepareResourceChangeTool,
+  createGodotPrepareSceneChangeTool,
+} from "./godot/tools/godot-prepare-change-tools.js";
+export { createGodotSceneMutationService } from "./godot/scene-mutation/scene-mutation-service.js";
 export { createGodotSceneIntelligence } from "./godot/intelligence/scene-intelligence-service.js";
 export { createGodotApiSearchTool } from "./godot/tools/godot-api-search-tool.js";
 export { createGodotApiLookupTool } from "./godot/tools/godot-api-lookup-tool.js";

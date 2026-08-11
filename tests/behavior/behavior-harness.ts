@@ -68,6 +68,9 @@ import {
   createGodotDevelopmentStatusTool,
   createGodotDependenciesTool,
   createGodotReviewContextTool,
+  createGodotPrepareSceneChangeTool,
+  createGodotPrepareResourceChangeTool,
+  createGodotSceneMutationService,
   createGodotInspectResourceTool,
   createGodotInspectSceneTool,
   createGodotSceneIntelligence,
@@ -192,6 +195,13 @@ export interface BehaviorLoopHarnessOptions {
    */
   readonly intelligence?: boolean;
   /**
+   * Wire approved scene/resource mutation (Stage 3 milestone 10) into the
+   * harness: the mutation service with in-memory primitives (identity-bound
+   * apply enabled) plus the prepare-only `godot.prepare_scene_change` /
+   * `godot.prepare_resource_change` tools. Requires `intelligence: true`.
+   */
+  readonly mutation?: boolean;
+  /**
    * Wire the executor briefing foundation into the harness: compiles the
    * bounded executor brief for the current task and feeds the
    * `[Executor brief]` projection section (requires `projection: true`).
@@ -245,6 +255,8 @@ export interface BehaviorLoopHarness {
   readonly tools: () => readonly RegisteredToolInfo[];
   /** Read-only Godot scene/resource intelligence (when `intelligence: true`). */
   readonly intelligence: GodotSceneIntelligence | null;
+  /** Approved scene/resource mutation service (when `mutation: true`); null otherwise. */
+  readonly mutation: ReturnType<typeof createGodotSceneMutationService> | null;
   /** Compiled executor brief for the current task (when `briefing` wired). */
   readonly briefing: () => ExecutorBrief | null;
   /** Fingerprint of the compiled executor brief; null when none. */
@@ -393,6 +405,27 @@ export async function createBehaviorLoopHarness(
           createGodotDependenciesTool(intelligence),
           createGodotReviewContextTool(intelligence),
         ];
+  // Stage 3 milestone 10: approved scene/resource mutation service with
+  // in-memory primitives (identity-bound apply enabled for tests) plus
+  // the prepare-only tools. Production wiring keeps the fail-closed gate.
+  const mutationService =
+    options.mutation === true && intelligence !== null
+      ? createGodotSceneMutationService({
+          workspaceRoot: workspace.root,
+          revisions,
+          store,
+          lock: { acquire: () => Promise.resolve(() => undefined) },
+          canApplyIdentityBound: true,
+          primitives: createWorkspaceFilePrimitives(workspace.root),
+        })
+      : null;
+  const mutationTools =
+    mutationService === null
+      ? []
+      : [
+          createGodotPrepareSceneChangeTool(mutationService),
+          createGodotPrepareResourceChangeTool(mutationService),
+        ];
   // Reference services (Stage 3 milestone 5): register the read-only
   // reference tools and record every successful access call as a
   // ReferenceEvidenceView — the composition root's job in production — so
@@ -469,6 +502,7 @@ export async function createBehaviorLoopHarness(
     createWorkspaceApplyTextChangesetTool(development),
     createGodotDevelopmentStatusTool(development),
     ...sceneTools,
+    ...mutationTools,
     ...referenceTools,
     ...(options.extraTools ?? []),
   ]);
@@ -620,6 +654,7 @@ export async function createBehaviorLoopHarness(
     revisions,
     tools: () => tools.definitions(),
     intelligence,
+    mutation: mutationService,
     briefing: () => (briefingService === null ? null : briefingService.latestOrCompile()),
     briefingFingerprint: () => (briefingService === null ? null : briefingService.fingerprint()),
     sceneObservations: () => [...sceneObservations],
