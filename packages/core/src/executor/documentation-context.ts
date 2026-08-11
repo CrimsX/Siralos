@@ -249,6 +249,15 @@ export function validateAdrMetadata(input: AdrMetadata): AdrMetadata {
  */
 export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFreeze([
   {
+    id: "adr:0001",
+    path: "docs/adr/0001-modular-monolith.md",
+    kind: "adr",
+    concerns: ["architecture"],
+    status: "accepted",
+    domains: ["architecture"],
+    paths: ["packages/**"],
+  },
+  {
     id: "adr:0002",
     path: "docs/adr/0002-provider-neutral-tool-loop.md",
     kind: "adr",
@@ -265,6 +274,87 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     status: "accepted",
     domains: ["security", "sandbox"],
     paths: ["packages/core/src/security/**"],
+  },
+  {
+    id: "adr:0005",
+    path: "docs/adr/0005-approved-workspace-mutations.md",
+    kind: "adr",
+    concerns: ["workspace", "mutations"],
+    status: "accepted",
+    domains: ["workspace", "mutations"],
+    paths: ["packages/core/src/workspace/**", "packages/adapters/src/tools/workspace/**"],
+  },
+  {
+    id: "adr:0006",
+    path: "docs/adr/0006-git-inspection-and-file-checkpoints.md",
+    kind: "adr",
+    concerns: ["git", "checkpoints"],
+    status: "accepted",
+    domains: ["git", "checkpoints"],
+    paths: ["packages/adapters/src/git/**", "packages/adapters/src/checkpoints/**"],
+  },
+  {
+    id: "adr:0007",
+    path: "docs/adr/0007-sandboxed-validation-command-runners.md",
+    kind: "adr",
+    concerns: ["process", "sandbox"],
+    status: "accepted",
+    domains: ["process", "sandbox"],
+    paths: ["packages/adapters/src/process/**"],
+  },
+  {
+    id: "adr:0008",
+    path: "docs/adr/0008-godot-discovery-and-static-project-profiling.md",
+    kind: "adr",
+    concerns: ["godot", "discovery"],
+    status: "accepted",
+    domains: ["godot", "discovery"],
+    paths: ["packages/adapters/src/godot/**"],
+  },
+  {
+    id: "adr:0009",
+    path: "docs/adr/0009-disposable-recovery-mode-project-probing.md",
+    kind: "adr",
+    concerns: ["godot", "recovery"],
+    status: "accepted",
+    domains: ["godot", "recovery"],
+    paths: ["packages/adapters/src/godot/**"],
+  },
+  {
+    id: "adr:0010",
+    path: "docs/adr/0010-version-matched-godot-knowledge-and-gdscript-diagnostics.md",
+    kind: "adr",
+    concerns: ["godot", "knowledge", "diagnostics"],
+    status: "accepted",
+    domains: ["godot", "knowledge", "diagnostics"],
+    paths: ["packages/core/src/godot/**", "packages/adapters/src/godot/**"],
+  },
+  {
+    id: "adr:0011",
+    path: "docs/adr/0011-bounded-godot-gdscript-lsp-client.md",
+    kind: "adr",
+    concerns: ["godot", "lsp"],
+    status: "accepted",
+    domains: ["godot", "lsp"],
+    paths: ["packages/adapters/src/godot/**"],
+  },
+  {
+    id: "adr:0012",
+    path: "docs/adr/0012-gdscript-development-and-repair-loop.md",
+    kind: "adr",
+    concerns: ["godot", "development"],
+    status: "accepted",
+    domains: ["godot", "development"],
+    paths: ["packages/core/src/godot/**", "packages/adapters/src/godot/**"],
+  },
+  {
+    id: "adr:0013",
+    path: "docs/adr/0013-gdscript-quality-gates-and-independent-review.md",
+    kind: "adr",
+    concerns: ["godot", "quality", "review"],
+    status: "accepted",
+    domains: ["godot", "quality", "review"],
+    paths: ["packages/core/src/godot/**"],
   },
   {
     id: "adr:0014",
@@ -345,6 +435,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     concerns: ["executor-briefing", "context"],
     status: "accepted",
     domains: ["executor-briefing", "context"],
+    paths: ["packages/core/src/executor/**"],
+  },
+  {
+    id: "adr:0023",
+    path: "docs/adr/0023-workspace-scope-and-documentation-context-discipline.md",
+    kind: "adr",
+    concerns: ["executor-briefing", "context", "workspace-scope", "documentation"],
+    status: "accepted",
+    domains: ["executor-briefing", "context", "workspace-scope", "documentation"],
     paths: ["packages/core/src/executor/**"],
   },
 ]);
@@ -470,7 +569,23 @@ export function selectDocumentationContext(
     );
   });
   const architectureDocs = collect("architecture", true);
-  const adrs = collect("adr", true);
+  // ADR candidates are ordered by concern overlap with the requested
+  // concerns (most-specific first); ties keep the canonical index order.
+  // The documentation budget then keeps the most relevant current ADRs.
+  const adrCandidates = index.filter(
+    (entry) =>
+      entry.kind === "adr" &&
+      entry.status === "accepted" &&
+      !isArchivedDocumentationPath(entry.path) &&
+      entry.concerns.some((concern) => wanted.has(concern)),
+  );
+  const adrOrdered = [...adrCandidates]
+    .map((entry) => ({
+      path: entry.path,
+      overlap: entry.concerns.filter((concern) => wanted.has(concern)).length,
+    }))
+    .sort((a, b) => b.overlap - a.overlap)
+    .map((entry) => entry.path);
   const developmentDocs = collect("development", true);
   const dropped: string[] = [];
   const drop = (list: string[], max: number, listName: string): string[] => {
@@ -486,7 +601,7 @@ export function selectDocumentationContext(
     DOCUMENTATION_BUDGET.maxArchitectureDocs,
     "architecture",
   );
-  const boundedAdrs = drop(adrs, DOCUMENTATION_BUDGET.maxAdrs, "adr");
+  const boundedAdrs = drop(adrOrdered, DOCUMENTATION_BUDGET.maxAdrs, "adr");
   const boundedDevelopment = drop(
     developmentDocs,
     DOCUMENTATION_BUDGET.maxDevelopmentDocs,

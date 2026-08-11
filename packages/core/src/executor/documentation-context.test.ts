@@ -206,6 +206,23 @@ describe("documentation context selection", () => {
     expect(selection.dropped.length).toBe(8 - DOCUMENTATION_BUDGET.maxAdrs);
   });
 
+  it("keeps the most specific ADR over generic same-domain ADRs (overlap ordering)", () => {
+    // A godot-domain task matches seven godot ADRs; the most specific one
+    // (0021, which also covers godot-static-inspection) must survive the
+    // budget ahead of generic discovery/recovery ADRs.
+    const selection = selectDocumentationContext({
+      concerns: ["godot", "godot-static-inspection"],
+    });
+    expect(selection.adrs[0]).toBe("docs/adr/0021-read-only-godot-scene-resource-intelligence.md");
+    expect(selection.adrs).toContain(
+      "docs/adr/0008-godot-discovery-and-static-project-profiling.md",
+    );
+    expect(selection.adrs).not.toContain(
+      "docs/adr/0013-gdscript-quality-gates-and-independent-review.md",
+    );
+    expect(selection.dropped.some((entry) => entry.includes("0013"))).toBe(true);
+  });
+
   it("is deterministic: identical inputs produce identical selections", () => {
     const a = selectDocumentationContext({
       concerns: ["security", "sandbox"],
