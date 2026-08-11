@@ -404,6 +404,46 @@ const PLANNER_FORBIDDEN_IMPORT_ROOTS = [
 ];
 
 /**
+ * Stage 3 milestone 8: the scene/resource intelligence adapter directory.
+ * Static, read-only, process-free: it may never import mutation, process,
+ * checkpoint, sandbox, environment, provider, or Godot engine-execution
+ * machinery, and it never owns source-of-truth file contents (parsed
+ * semantic models and the relationship index are derived state only).
+ */
+const SCENE_INTELLIGENCE_ADAPTER_DIRECTORY = join("src", "godot", "intelligence");
+
+function isSceneIntelligenceAdapterModule(packageRelativeFile, file) {
+  if (isTestSupportFile(file)) {
+    return false;
+  }
+  return packageRelativeFile.startsWith(SCENE_INTELLIGENCE_ADAPTER_DIRECTORY + sep);
+}
+
+const SCENE_INTELLIGENCE_FORBIDDEN_IMPORT_ROOTS = [
+  { root: join("src", "tools", "workspace", "mutations"), label: "workspace mutation adapters" },
+  { root: join("src", "process"), label: "process adapters" },
+  { root: join("src", "checkpoints"), label: "checkpoint adapters" },
+  { root: join("src", "sandbox"), label: "sandbox adapters" },
+  { root: join("src", "environment"), label: "child-environment adapters" },
+  { root: join("src", "providers"), label: "provider adapters" },
+  { root: join("src", "godot", "process"), label: "Godot process runners" },
+  { root: join("src", "godot", "mirror"), label: "Godot mirror adapters" },
+  { root: join("src", "godot", "probe"), label: "Godot recovery-probe adapters" },
+  { root: join("src", "godot", "diagnostics"), label: "Godot check-only adapters" },
+  { root: join("src", "godot", "lsp"), label: "Godot LSP adapters" },
+  { root: join("src", "godot", "knowledge"), label: "Godot knowledge adapters" },
+  { root: join("src", "godot", "development"), label: "Godot development adapters" },
+  { root: join("src", "godot", "quality"), label: "Godot quality adapters" },
+];
+
+/** Stage 3 milestone 8: core scene/resource semantic modules (src/godot/scene). */
+const SCENE_DIRECTORY = join("src", "godot", "scene");
+
+function isCoreSceneModule(packageRelativeFile) {
+  return packageRelativeFile.startsWith(SCENE_DIRECTORY + sep);
+}
+
+/**
  * Stage 3 milestone 7: core planning modules (src/planning). The host owns
  * planning: the deterministic policy, the immutable plan model, the
  * validation boundary, and the host planning flow. They never depend on
@@ -1620,7 +1660,14 @@ export function runChecks(root) {
                 `${location}: projection modules must not depend on sandbox implementations; projectors classify tool visibility from the capability policy and profile identifiers only`,
               );
             }
-            if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
+            if (
+              specifier.startsWith("../godot/") &&
+              specifier !== "../godot/digest.js" &&
+              // Stage 3 milestone 8: ContextProjector consumes bounded
+              // scene/resource semantic-model views (project evidence/data,
+              // never instructions); raw parser internals stay excluded.
+              !specifier.startsWith("../godot/scene/")
+            ) {
               errors.push(
                 `${location}: projection modules must not depend on Godot modules (the generic digest utility is allowed)`,
               );
@@ -1736,6 +1783,24 @@ export function runChecks(root) {
             if (specifier.startsWith("../godot/") && specifier !== "../godot/digest.js") {
               errors.push(
                 `${location}: planning modules must not depend on Godot modules (the generic digest utility is allowed); planning is Godot-agnostic and does not depend on future scene/multi-agent modules`,
+              );
+            }
+          }
+          if (pkg.name === "@solaris/core" && isCoreSceneModule(packageRelativeFile)) {
+            if (specifier.startsWith("../ports/")) {
+              errors.push(
+                `${location}: scene/resource semantic modules must not depend on provider ports; parsing and models are provider-neutral derived state`,
+              );
+            }
+            if (
+              specifier.startsWith("../security/") ||
+              specifier.startsWith("../tasks/") ||
+              specifier.startsWith("../checkpoints/") ||
+              specifier.startsWith("../projection/") ||
+              specifier.startsWith("../tools/")
+            ) {
+              errors.push(
+                `${location}: scene/resource semantic modules must not import security/task/checkpoint/projection/tool machinery; parsed models are derived read-only domain state that never grants capability or mutates the workspace`,
               );
             }
           }
@@ -1948,6 +2013,16 @@ export function runChecks(root) {
                 errors.push(
                   `${location}: the planner adapter must not import planning policy/flow surfaces; the host decides planning depth and owns plan state`,
                 );
+              }
+            }
+
+            if (isSceneIntelligenceAdapterModule(packageRelativeFile, file)) {
+              for (const forbidden of SCENE_INTELLIGENCE_FORBIDDEN_IMPORT_ROOTS) {
+                if (isUnder(target, join(pkg.path, forbidden.root))) {
+                  errors.push(
+                    `${location}: the scene/resource intelligence adapter must not import ${forbidden.label}; inspection is static, read-only, and process-free and never mutates, checkpoints, executes, or owns source-of-truth file contents`,
+                  );
+                }
               }
             }
 
