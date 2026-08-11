@@ -139,6 +139,29 @@ describe("documentation context selection", () => {
     expect(forCli.nestedAgents).toEqual(["apps/cli/AGENTS.md"]);
   });
 
+  it("selects real scoped AGENTS.md files by task path from the repository index", () => {
+    const coreTask = selectDocumentationContext({
+      concerns: ["task-runtime"],
+      paths: ["packages/core/src/executor/context-pack.ts"],
+    });
+    expect(coreTask.nestedAgents).toEqual(["packages/core/AGENTS.md"]);
+    const godotTask = selectDocumentationContext({
+      concerns: ["godot-static-inspection"],
+      paths: ["packages/adapters/src/godot/scene/scene-intelligence.ts"],
+    });
+    expect(godotTask.nestedAgents).toContain("packages/adapters/AGENTS.md");
+    expect(godotTask.nestedAgents).toContain("packages/adapters/src/godot/AGENTS.md");
+    const cliTask = selectDocumentationContext({
+      concerns: ["executor-briefing"],
+      paths: ["apps/cli/src/index.ts"],
+    });
+    expect(cliTask.nestedAgents).toEqual(["apps/cli/AGENTS.md"]);
+    // Out-of-scope nested guidance never enters: a core task does not
+    // pull in CLI or Godot scoped guidance.
+    expect(coreTask.nestedAgents).not.toContain("apps/cli/AGENTS.md");
+    expect(coreTask.nestedAgents).not.toContain("packages/adapters/src/godot/AGENTS.md");
+  });
+
   it("excludes superseded and archived documentation by default", () => {
     const index: readonly DocumentationEntry[] = [
       {

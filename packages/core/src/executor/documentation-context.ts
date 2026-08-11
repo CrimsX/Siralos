@@ -446,6 +446,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["executor-briefing", "context", "workspace-scope", "documentation"],
     paths: ["packages/core/src/executor/**"],
   },
+  {
+    id: "adr:0024",
+    path: "docs/adr/0024-scoped-documentation-and-progressive-context.md",
+    kind: "adr",
+    concerns: ["documentation", "context", "executor-briefing"],
+    status: "accepted",
+    domains: ["documentation", "context", "executor-briefing"],
+    paths: ["packages/core/src/executor/**", "docs/architecture/**", "AGENTS.md"],
+  },
 ]);
 
 /**
@@ -460,6 +469,46 @@ export const DOCUMENTATION_INDEX: readonly DocumentationEntry[] = deepFreeze([
     kind: "root-agents",
     concerns: [],
     status: "accepted",
+  },
+  {
+    id: "agents:core",
+    path: "packages/core/AGENTS.md",
+    kind: "nested-agents",
+    concerns: ["task-runtime", "workspace", "projection", "planning", "executor-briefing"],
+    status: "accepted",
+    paths: ["packages/core/**"],
+  },
+  {
+    id: "agents:adapters",
+    path: "packages/adapters/AGENTS.md",
+    kind: "nested-agents",
+    concerns: ["provider", "sandbox", "workspace", "git", "checkpoints", "references", "research"],
+    status: "accepted",
+    paths: ["packages/adapters/**"],
+  },
+  {
+    id: "agents:godot",
+    path: "packages/adapters/src/godot/AGENTS.md",
+    kind: "nested-agents",
+    concerns: [
+      "godot",
+      "godot-static-inspection",
+      "discovery",
+      "knowledge",
+      "lsp",
+      "development",
+      "recovery",
+    ],
+    status: "accepted",
+    paths: ["packages/adapters/src/godot/**"],
+  },
+  {
+    id: "agents:cli",
+    path: "apps/cli/AGENTS.md",
+    kind: "nested-agents",
+    concerns: ["cli", "composition-root"],
+    status: "accepted",
+    paths: ["apps/cli/**"],
   },
   {
     id: "arch:architecture",
