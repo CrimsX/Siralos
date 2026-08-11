@@ -3,13 +3,14 @@
 Solaris is an independent, provider-neutral, interactive agent harness for programming and developing games with the Godot Engine.
 
 This repository contains the provider-neutral harness foundations through
-**Stage 3 milestone 7 (Host-Controlled Planning)**: an executable interactive
-CLI, deterministic fake provider, bounded tool and projection pipelines,
-read-only workspace/Godot inspection, structured task state, references and
-research contracts, capability diagnostics, and revision-bound planning. It
-does not yet develop Godot games end to end: every operation that would require
-an identity-bound filesystem or process primitive still fails closed as
-`unavailable`.
+**Stage 3 milestone 8 (Read-Only Godot Scene and Resource Intelligence)**: an
+executable interactive CLI, deterministic fake provider, bounded tool and
+projection pipelines, read-only workspace/Godot inspection, structured task
+state, references and research contracts, capability diagnostics, revision-bound
+planning, and static `.tscn`/`.tres` parsing with scene/resource inspection
+tools. It does not yet develop Godot games end to end: every operation that
+would require an identity-bound filesystem or process primitive still fails
+closed as `unavailable`.
 
 ## Current status
 
@@ -28,6 +29,7 @@ Working today:
 - Prompt submission with incrementally streamed responses
 - A bounded provider/tool loop with the workspace-mutation tools `workspace.create_file`, `workspace.edit_file` (exact text replacements), and `workspace.delete_file` — **intentionally unavailable**: every entry point fails closed as `unavailable` before any write, approval, or checkpoint, because Node offers no directory-relative (openat/renameat) primitive and a same-user process can swap a parent or target at any instruction boundary. What remains is the core contracts (prepared-command/digest/approval ports) plus reusable tested primitives (path validation, diffing, hashing, the mutation lock, safe-replacement helpers) and the filesystem checkpoint store with its startup reconciliation (automatic retention pruning is disabled: storage pressure fails closed with a typed storage-limit refusal and deletes nothing — the byte limit measures actual regular-file bytes beneath the checkpoint directory including metadata and preimages (allocation overhead is outside the logical byte limit), the proposed checkpoint's exact serialized metadata and preimage bytes are counted before any write, declared preimages are content-verified against the metadata SHA-256 through a handle-bound bounded read loop with a pre-read/final stability snapshot (identity plus size and mtime/ctime nanoseconds, so a same-size corrupted preimage, a same-content hard-link/rename/symlink/junction substitution, or a same-inode in-place rewrite during verification makes capacity unverifiable), preimage limits are capped at 64 MiB with larger configurations rejected at store creation, operations are bound to their before/after existence states (create: absent→present; update: present→present; delete: present→absent), and any content beyond the exact `cp_<valid-id>/metadata.json` + `cp_<valid-id>/preimage.bin` layout — unknown files, nested directories, temporary files, links, special files, or entries that cannot be inspected — makes capacity unverifiable and blocks new checkpoints, with unexpected content never repaired or deleted — and existing checkpoints are preserved for manual inspection); the former preview/approval/application logic was largely deleted, the identity-bound commit design is documented as future work but not offered, no approval for mutations is ever requested, and no new checkpoint is ever created at this stage (historical checkpoint data from earlier sessions, if any, may still be listed).
 - Read-only workspace tools: `workspace.list`, `workspace.read` (with complete-file SHA-256), `workspace.search` — all paths are canonicalized and contained within the launch directory
+- Read-only Godot scene/resource intelligence (Stage 3 milestone 8): `godot.inspect_scene`, `godot.inspect_resource`, `godot.dependencies` — static `.tscn`/`.tres` parsing with revision-bound semantic models, node trees, inheritance/instancing, ownership, scripts, signals, groups, UIDs, bounded dependency traversal with cycle detection, project main-scene/autoload/input-action relationships, and `[Scene evidence]` context — no Godot process, no project code execution, no mutation (scene/resource mutation remains refused at the change-set boundary)
 - Read-only Git inspection (`git.status`, `git.diff`) through a trusted, allowlisted Git adapter — **intentionally unavailable at this stage**: the adapter requires verified Solaris-owned private run directories for every sandboxed Git process, and private run-directory creation and cleanup fail closed because Node offers no directory-relative (openat/mkdirat-style) or delete-by-handle primitive. Nothing Git-related executes. The adapter's design is mechanically sound for when that primitive exists: Git can only ever execute inside an enforcing sandbox backend (network denied, writes limited to the exact private run directory, host reads limited to the repository root and Git runtime roots, confined process tree), fixed argument arrays with no shell, command-line overrides as defense in depth (the enumerable mechanisms — fsmonitor, aliases, pagers, external diff, textconv, credential helpers, prompts — are disabled; repository-selected helpers such as clean/smudge/process filters are NOT disabled from the command line and their only containment is the sandbox), repository-redirecting and config-injecting environment variables stripped at the process boundary, bounded byte-counted output with a streaming UTF-8 decoder, timeouts, cancellation, and the resolved executable re-verified immediately before every launch request; structured summaries come from NUL-delimited machine-readable data with exact paths; the repository root must equal the workspace root. When the backend cannot enforce, the adapter reports Git unavailable and never spawns Git; the adapter itself never spawns processes (architecture-enforced).
 - Safe user-invoked undo (`/undo`) — **intentionally unavailable**: restoring a checkpoint requires pathname-based displacement and replacement, and Node offers no directory-relative (openat/renameat) primitive, so `/undo` fails closed as `unavailable` before any write, approval, or restore. The undo service is an unavailable stub; the former reverse-diff/approval/restore machinery was largely deleted and is documented as future work rather than presented as shipped capability.
 - A sandbox and permission foundation: capability policy, built-in `inspect` and `develop-offline` profiles, a pure permission evaluator, an Anthropic Sandbox Runtime backend behind a core-owned port with an enforced host-read allowlist (deny-root with re-allow on Linux/macOS; reported unavailable and refused on Windows), allowlist-based child environments with the wrapper's runtime-required environment merged under strict rules, fixed conformance probes (`npm run test:sandbox`), `/sandbox` and `/permissions` diagnostics, and a `--sandbox-doctor` CLI command with trustworthy exit codes (0 passed, 1 probe failure, 3 probes unavailable)
@@ -261,11 +263,14 @@ instead of model memory:
 
 ## Next planned milestone
 
-The next narrow milestone is **Stage 3 milestone 8: Read-Only Godot Scene and
-Resource Intelligence**. It adds deterministic, bounded parsing and structured
-inspection for `.tscn`, `.tres`, UID/resource relationships, scene inheritance,
-node ownership, script attachments, signals, project settings, and autoloads.
-It remains strictly read-only: no scene/resource mutation, project import, or
-Godot launch is part of that milestone. The existing engine, mutation, command,
-and development execution surfaces remain intentionally unavailable until an
-identity-bound host primitive can enforce them. See `ROADMAP.md`.
+The next narrow milestone is **Stage 3 milestone 9: Godot Review Context and
+Impact Intelligence**. It uses the script/scene/resource relationships to
+determine changed surfaces, related scripts/scenes/resources,
+inherited/instantiated impact, signal consumers/producers, test surfaces,
+autoload dependencies, regression areas, and recommended validation behind a
+bounded evidence-backed `ReviewContextManifest` for planning and independent
+review. Read-only scene/resource intelligence (milestone 8) is complete: it
+stays strictly read-only — no scene/resource mutation, project import, or
+Godot launch is part of this stage's surface. The existing engine, mutation,
+command, and development execution surfaces remain intentionally unavailable
+until an identity-bound host primitive can enforce them. See `ROADMAP.md`.

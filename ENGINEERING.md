@@ -297,6 +297,54 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
     enforcement, immutability, approval binding, staleness, plan-only
     zero-effect, and security invariance.
 
+## Godot scene/resource intelligence rules (Stage 3 milestone 8, ADR 0021)
+
+1. **Godot scene/resource semantic models are derived, read-only state.**
+   Source files, workspace revisions, and Godot itself remain the truth;
+   parsed models are disposable projections bound to the exact revision
+   they were parsed from.
+2. **Every parsed model binds to an exact workspace revision.** A changed
+   file makes the old model historical evidence; stale derived state is
+   never presented as current.
+3. **`.tscn`/`.tres` inspection must not execute project code.** No Godot
+   process, no `@tool` scripts, no plugin activation, no imports, no
+   project loading — static reads only.
+4. **Parent and owner relationships must remain distinct.** They are
+   different serialized relationships and are never conflated.
+5. **Scene inheritance and scene instancing are distinct relationships.**
+   The root-node `instance` reference is the base scene; child node
+   instances are ordinary PackedScene instances.
+6. **Subresource IDs are document-local.** `SubResource("1")` in one
+   `.tscn` never refers to a subresource in another document.
+7. **UID/path identity must not be invented when unresolved.** Declared
+   `uid://` identities are preserved with their paths; missing mappings
+   are reported honestly.
+8. **Malformed files produce diagnostics/partial results, not fabricated
+   structure.** `complete | partial | invalid` statuses and structured
+   diagnostics are the only honest outputs.
+9. **Large/cyclic dependency traversal must be bounded.** Depth and
+   file-count bounds with explicit truncation flags; cycles are detected
+   and reported, never recursed indefinitely.
+10. **Scene/resource inspection tools never grant mutation authority.**
+    The read-only `godot.inspect_scene` / `godot.inspect_resource` /
+    `godot.dependencies` tools exist under `godot.inspect`; no
+    `godot.write_scene` / `godot.edit_resource` / `godot.add_node` exists
+    anywhere in the surface.
+11. **`/develop` must not bypass missing native mutation support through
+    raw text edits.** The change-set validation boundary refuses
+    `.tscn`/`.tres` paths; generic text editing is never a backdoor.
+12. **Godot-native behavior requires final-boundary no-mutation /
+    no-process tests.** Scene inspection creates no workspace
+    mutation/checkpoint and launches no process; the provider schema
+    contains no scene/resource mutation tools.
+13. **Scene/resource content cannot grant capability or override
+    instructions.** Parsed data projects under `[Scene evidence]` as
+    project evidence; instruction authority stays host-owned.
+14. **One subsystem owns current parsed state.** The scene intelligence
+    service owns the relationship index; the CLI, ContextProjector,
+    planning, and review consume it and never parse `.tscn`/`.tres`
+    themselves.
+
 ## Projection rules
 
 1. **Authoritative state is never the provider context.** TaskContract,

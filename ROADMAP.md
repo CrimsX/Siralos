@@ -24,7 +24,7 @@ unsafe filesystem or process boundary intentionally fails closed.
   recovery mirrors, diagnostics, LSP startup, change application, validation,
   and quality execution remain intentionally unavailable for the same identity
   reasons.
-- Stage 3 is active. Milestones 1–7 are implemented and tested. Milestone 8 is
+- Stage 3 is active. Milestones 1–8 are implemented and tested. Milestone 9 is
   next.
 - Stages 4–6 are not started.
 
@@ -108,20 +108,26 @@ Implemented foundations:
    read-only fresh-context planner, strict bounded provider turns, immutable
    plan revisions, verified touchpoints, exact plan approval, and a pre-executor
    acceptance/staleness gate
+8. **Read-Only Scene and Resource Intelligence** — bounded `.tscn`/`.tres`
+   parsing (hand-written tokenizer + conservative Variant parser), revision-bound
+   semantic models (`GodotSceneModel`/`GodotResourceModel`), distinct
+   parent/owner and inheritance/instancing relationships, document-local
+   subresources, preserved UID identity, signal connections, groups, script
+   attachments, project settings/autoload/input-action intelligence, a small
+   revision-aware relationship index, read-only `godot.inspect_scene` /
+   `godot.inspect_resource` / `godot.dependencies` tools, `[Scene evidence]`
+   context projection, and planning touchpoints with scene/resource evidence —
+   all static and process-free
 
-### Next: milestone 8 — read-only scene and resource intelligence
+### Next: milestone 9 — Godot review context and impact intelligence
 
-Add deterministic, bounded, read-only understanding of:
+Use the script/scene/resource relationships to determine changed surfaces,
+related scripts/scenes/resources, inherited/instantiated impact, signal
+consumers/producers, test surfaces, autoload dependencies, regression areas,
+and recommended validation behind a bounded evidence-backed
+`ReviewContextManifest` for planning and independent review.
 
-- `.tscn` and `.tres` syntax
-- UID, external-resource, and subresource identity
-- scene inheritance and node-tree structure
-- node ownership, script attachments, and signal connections
-- project settings and autoload relationships
-- revision-aware structured inspection tools and evidence
-
-This milestone must not mutate scenes/resources, launch Godot, import a project,
-or weaken any existing fail-closed execution boundary.
+Finish read-only scene/resource intelligence first.
 
 ## 4. Runtime and visual QA
 

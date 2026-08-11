@@ -1013,3 +1013,94 @@ Provider adapters never import planning policy/flow identifiers —
 providers never choose depth. TaskState remains the execution authority;
 the approval subsystem remains the authorization authority; ToolProjector
 remains the model-visible tool authority.
+
+## Read-only Godot scene and resource intelligence (Stage 3 milestone 8, ADR 0021)
+
+Godot project files become derived, read-only, revision-bound semantic
+state — never a new source of truth:
+
+```text
+Godot source text (.tscn / .tres / project.godot)
+    ↓
+revision-aware parser (static, process-free)
+    ↓
+derived semantic model (GodotSceneModel / GodotResourceModel)
+    ↓
+relationship index + inspection/query tools
+    ↓
+EvidenceProjector → ContextProjector ([Scene evidence]) → planner / developer / reviewer
+```
+
+Explicitly stated:
+
+- **semantic model ≠ source of truth** — source files, workspace
+  revisions, and Godot itself remain authoritative; models are disposable
+  derived projections bound to the exact revision they were parsed from.
+- **inspection ≠ execution** — no Godot process, no `@tool` scripts, no
+  plugin activation, no imports, no project loading.
+- **inspection ≠ mutation** — `godot.inspect_scene` / `godot.inspect_resource`
+  / `godot.dependencies` are read-only under the `godot.inspect`
+  capability; no scene/resource mutation tools exist, and `/develop`
+  refuses `.tscn`/`.tres` change sets at the validation boundary.
+- **scene relationship ≠ runtime state** — serialized parent/owner,
+  inheritance/instancing, groups, and connections are serialized facts;
+  no runtime state is implied.
+- **serialized signal connection ≠ verified runtime behavior** — missing
+  endpoints are structural diagnostics; semantic validity is never
+  claimed without Godot/script evidence.
+
+### Ownership
+
+- **Parsers + models** (`packages/core/src/godot/scene/`) — pure
+  Node-free domain: `text.ts` (bounded lexer), `variant.ts` (conservative
+  Variant values), `scene-parser.ts`, `resource-parser.ts`,
+  `scene-tree.ts`, `models.ts`, `limits.ts`, `resolution.ts`,
+  `relationship-index.ts`, `intelligence.ts` (port). Nothing here imports
+  adapters, providers, security, tasks, projection, or tool machinery.
+- **Intelligence service** (`packages/adapters/src/godot/intelligence/`) —
+  the single application-owned subsystem for current parsed state: bounded
+  workspace reads, revision issuance, parse binding, index recording,
+  bounded cycle-safe dependency traversal, and project relationship
+  resolution. It never imports mutation, process, checkpoint, sandbox,
+  environment, provider, or Godot engine-execution machinery.
+- **Tools** (`packages/adapters/src/godot/tools/`) — read-only tool
+  surfaces bound to the service; ToolProjector stays the model-visible
+  tool authority (tools added to the development/review/inspection/
+  planning mode surfaces under `godot.inspect`).
+- **Projection** — `[Scene evidence]` is a contextual, bounded,
+  project-data section (never instructions); evidence views carry
+  path + revision + parse status + a bounded structural summary.
+- **Planning** — verified scene/resource touchpoints carry the exact
+  revision and `scene:`/`resource:` evidence references; scene/resource
+  involvement is a deterministic complexity signal (never an automatic
+  full-plan trigger).
+
+### Supported format scope
+
+Supported: Godot 4 text scene/resource syntax as listed in ADR 0021 —
+headers (`format`, `load_steps`, `uid`), ext/sub resources, nodes
+(name/type/parent/owner/instance/groups), connections, `[editable]`,
+ordinary properties, conservative Variant forms (null, booleans,
+integers, floats, strings, StringName, NodePath, arrays, dictionaries,
+bounded vectors/colors, packed arrays, `ExtResource`/`SubResource`/
+`Resource` references).
+
+Not supported / honest limits: unknown Variant forms are preserved as
+bounded opaque/raw data; partial parses are labeled `partial` with
+diagnostics; UID resolution is limited to identity preserved in project
+files (no editor-mode UID cache loading); binary `.res`/`.scn` are not
+supported; parser bounds (nodes, resources, connections, nesting depth,
+raw length, dependency depth/files, diagnostics) truncate explicitly and
+never crash.
+
+### Dependency direction
+
+Core scene modules never import provider ports, security/task/checkpoint/
+projection/tool machinery, or adapters. The intelligence adapter never
+imports workspace-mutation, process, checkpoint, sandbox, environment,
+provider, or Godot engine-execution adapters (runners, mirror, probe,
+diagnostics, LSP, knowledge, development, quality). ContextProjector
+consumes bounded semantic-model views, not raw parser internals. The
+relationship index is application-owned and never holds source-of-truth
+file contents. No scene/resource mutation API exists anywhere in the
+milestone surface.
