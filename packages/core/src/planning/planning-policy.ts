@@ -19,6 +19,7 @@ export type PlanningDecisionReason =
   | "multi-subsystem"
   | "research-required"
   | "capability-uncertainty"
+  | "scene-resource-relationships"
   | "narrow-repair-known-surface"
   | "unknown-surface-bounded"
   | "broad-surface-or-many-criteria"
@@ -60,6 +61,13 @@ export interface PlanningDecisionInput {
   readonly narrowRepair: boolean;
   /** How many likely touched files are already known (0 = unknown surface). */
   readonly knownTouchpoints: number;
+  /**
+   * The task explicitly involves Godot scene/resource relationships
+   * (`.tscn`/`.tres` references, scene inheritance/instancing, signal
+   * connections). Complexity evidence only: a simple one-property scene
+   * request can still stay light.
+   */
+  readonly involvesGodotSceneOrResource?: boolean;
 }
 
 /** Deterministic marker check for protected behavioral-config references. */
@@ -69,6 +77,23 @@ export function containsProtectedConfigReference(text: string): boolean {
     /(^|[\s/"])(AGENTS\.md)([\s/"]|$)/i.test(normalized) ||
     /(^|[\s/"])(\.solaris)(\/|[\s"]|$)/i.test(normalized) ||
     /behaviou?ral config/i.test(normalized)
+  );
+}
+
+/**
+ * Deterministic marker check for explicit Godot scene/resource references
+ * in task text: `.tscn`/`.tres` paths, scene inheritance/instancing
+ * phrases, or signal-connection phrasing. Ordinary prose containing the
+ * words "scene" or "resource" alone does not match.
+ */
+export function containsGodotSceneOrResourceReference(text: string): boolean {
+  const normalized = text.replace(/\\/g, "/");
+  return (
+    /\.(tscn|tres)\b/i.test(normalized) ||
+    /\b(?:scene|resource)\s+(?:file|tree|inherits?|instance|instanced|signal|connection)s?\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:inherited|instanced)\s+scene\b/i.test(normalized)
   );
 }
 
@@ -101,20 +126,29 @@ export function createPlanningPolicy(): PlanningPolicy {
       if (input.capabilityUncertainty) {
         return { depth: "full", reason: "capability-uncertainty" };
       }
-      // 4. A narrow repair on a known surface stays plan-free.
+      // 4. Explicit scene/resource relationship work beyond a trivial
+      //    surface warrants full planning; a simple one-property scene
+      //    request stays light (the signal is complexity evidence only).
+      if (
+        input.involvesGodotSceneOrResource === true &&
+        (input.knownTouchpoints > 2 || input.acceptanceCriterionCount >= 3)
+      ) {
+        return { depth: "full", reason: "scene-resource-relationships" };
+      }
+      // 5. A narrow repair on a known surface stays plan-free.
       if (input.narrowRepair && input.knownTouchpoints > 0 && input.knownTouchpoints <= 2) {
         return { depth: "none", reason: "narrow-repair-known-surface" };
       }
-      // 5. An unknown implementation surface is conservatively bounded:
+      // 6. An unknown implementation surface is conservatively bounded:
       //    light, never none (ambiguity prefers light over none).
       if (input.knownTouchpoints === 0) {
         return { depth: "light", reason: "unknown-surface-bounded" };
       }
-      // 6. Broad surface or many independent criteria warrant full planning.
+      // 7. Broad surface or many independent criteria warrant full planning.
       if (input.acceptanceCriterionCount >= 4 || input.knownTouchpoints > 4) {
         return { depth: "full", reason: "broad-surface-or-many-criteria" };
       }
-      // 7. Everything else is bounded but non-trivial: light.
+      // 8. Everything else is bounded but non-trivial: light.
       return { depth: "light", reason: "bounded-non-trivial" };
     },
   };

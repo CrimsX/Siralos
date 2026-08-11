@@ -2,13 +2,17 @@ import {
   createToolRegistry,
   type GodotInspector,
   type GodotKnowledge,
+  type GodotSceneIntelligence,
   type Tool,
   type ToolRegistry,
 } from "@solaris/core";
 import { createGodotApiLookupTool } from "../godot/tools/godot-api-lookup-tool.js";
 import { createGodotApiSearchTool } from "../godot/tools/godot-api-search-tool.js";
+import { createGodotDependenciesTool } from "../godot/tools/godot-dependencies-tool.js";
 import { createGodotInspectEngineTool } from "../godot/tools/godot-inspect-engine-tool.js";
 import { createGodotInspectProjectTool } from "../godot/tools/godot-inspect-project-tool.js";
+import { createGodotInspectResourceTool } from "../godot/tools/godot-inspect-resource-tool.js";
+import { createGodotInspectSceneTool } from "../godot/tools/godot-inspect-scene-tool.js";
 import { createWorkspaceListTool } from "../tools/workspace/workspace-list-tool.js";
 import { createWorkspaceReadTool } from "../tools/workspace/workspace-read-tool.js";
 import { createWorkspaceSearchTool } from "../tools/workspace/workspace-search-tool.js";
@@ -31,6 +35,11 @@ export interface PlannerToolDependencies {
   readonly workspaceRoot: string;
   readonly godot: GodotInspector;
   readonly knowledge: GodotKnowledge;
+  /**
+   * Read-only Godot scene/resource intelligence (Stage 3 milestone 8):
+   * `godot.inspect_scene` / `godot.inspect_resource` / `godot.dependencies`.
+   */
+  readonly intelligence?: GodotSceneIntelligence;
   /** Read-only reference tools (`reference.list`/`reference.read`/`reference.search`). */
   readonly referenceTools?: readonly Tool[];
   /** Research tools (`research.repository`/`research.godot_docs`; policy-gated). */
@@ -48,6 +57,13 @@ export function createPlannerToolRegistry(dependencies: PlannerToolDependencies)
     createGodotInspectProjectTool(dependencies.godot),
     createGodotApiSearchTool(dependencies.knowledge),
     createGodotApiLookupTool(dependencies.knowledge),
+    ...(dependencies.intelligence === undefined
+      ? []
+      : [
+          createGodotInspectSceneTool(dependencies.intelligence),
+          createGodotInspectResourceTool(dependencies.intelligence),
+          createGodotDependenciesTool(dependencies.intelligence),
+        ]),
     ...(dependencies.referenceTools ?? []),
     ...(dependencies.researchTools ?? []),
     ...(dependencies.selfTools ?? []),

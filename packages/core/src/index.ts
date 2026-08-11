@@ -589,6 +589,7 @@ export {
   type TouchpointConfidence,
 } from "./planning/planning-model.js";
 export {
+  containsGodotSceneOrResourceReference,
   containsProtectedConfigReference,
   createPlanningPolicy,
   type PlanningDecision,
@@ -1017,3 +1018,70 @@ export {
   type SafeDoctorErrorCategory,
   type SafeDoctorReport,
 } from "./doctor/safe-report.js";
+// Stage 3 milestone 8: read-only Godot scene and resource intelligence.
+export { GODOT_SCENE_LIMITS } from "./godot/scene/limits.js";
+export { parseGodotScene, type ParseSceneOptions } from "./godot/scene/scene-parser.js";
+export { parseGodotResource, type ParseResourceOptions } from "./godot/scene/resource-parser.js";
+export {
+  parseGodotVariant,
+  parseQuotedString,
+  splitTopLevelArguments,
+  type VariantParseResult,
+} from "./godot/scene/variant.js";
+export {
+  buildSceneNodeTree,
+  nodesInGroup,
+  renderSceneTreeText,
+  type GodotSceneNodeTree,
+  type GodotSceneTreeNode,
+} from "./godot/scene/scene-tree.js";
+export {
+  isBalancedText,
+  parseHeaderAttributes,
+  scanBalanced,
+  splitKeyValue,
+  type BalancedScan,
+  type HeaderAttribute,
+} from "./godot/scene/text.js";
+export { nodePaths } from "./godot/scene/scene-parser.js";
+export {
+  createGodotRelationshipIndex,
+  type GodotRelationshipEntry,
+  type GodotRelationshipIndex,
+  type GodotRelationshipKind,
+} from "./godot/scene/relationship-index.js";
+export { isGodotUid, resolveResPath, type ResPathResolution } from "./godot/scene/resolution.js";
+export type {
+  ExternalResourceRef,
+  GodotDiagnosticCode,
+  GodotDiagnosticSeverity,
+  GodotParseStatus,
+  GodotProperty,
+  GodotRawValue,
+  GodotResourceModel,
+  GodotSceneModel,
+  GodotSceneNode,
+  GodotSignalConnection,
+  GodotTextDiagnostic,
+  GodotTextDocument,
+  GodotVariantValue,
+  ResourceReference,
+  SceneReference,
+  SourceRange,
+  SubResourceRef,
+} from "./godot/scene/models.js";
+export type {
+  GodotAutoload,
+  GodotDependencyEdge,
+  GodotDependencyResult,
+  GodotInspectionOutcome,
+  GodotInputAction,
+  GodotIntelligenceStatus,
+  GodotMainSceneReference,
+  GodotProjectRelationshipResult,
+  GodotResourceInspectionResult,
+  GodotSceneEvidenceView,
+  GodotSceneInspectionResult,
+  GodotSceneIntelligence,
+  GodotSceneIntelligenceSupport,
+} from "./godot/scene/intelligence.js";

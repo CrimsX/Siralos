@@ -136,6 +136,10 @@ const EVIDENCE_KINDS = new Set([
   "research",
   "knowledge",
   "instruction",
+  // Godot-native inspection evidence (Stage 3 milestone 8):
+  // `scene:scenes/player.tscn` / `resource:resources/stats.tres`.
+  "scene",
+  "resource",
 ]);
 
 function isEvidenceReference(value: string): boolean {

@@ -1,6 +1,7 @@
 import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
 import {
   computePlanRevisionDigest,
+  containsGodotSceneOrResourceReference,
   containsProtectedConfigReference,
   createAdHocTaskContract,
   createDevelopmentTaskFlow,
@@ -120,6 +121,7 @@ export async function runDevelopCommand(
       capabilityUncertainty: false,
       narrowRepair: false,
       knownTouchpoints: 0,
+      involvesGodotSceneOrResource: containsGodotSceneOrResourceReference(request),
     };
     const handle = sessionInfo.tasks.getTask(task.taskId);
     if (handle === null) {
@@ -252,6 +254,7 @@ export async function runPlanCommand(
       capabilityUncertainty: false,
       narrowRepair: false,
       knownTouchpoints: 0,
+      involvesGodotSceneOrResource: containsGodotSceneOrResourceReference(request),
     });
     io.write(`Planning: ${decision.depth} (${decision.reason})\n`);
     const result = await planningFlow.run(controller.signal);

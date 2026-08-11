@@ -53,6 +53,7 @@ import {
 import type { Reference } from "../reference/reference-model.js";
 import type { ReferenceEvidenceView } from "../reference/reference-evidence.js";
 import { formatReferenceEvidenceLine } from "../reference/reference-evidence.js";
+import type { GodotSceneEvidenceView } from "../godot/scene/intelligence.js";
 import type { ResearchEvidence } from "../research/research-service.js";
 import { formatResearchEvidenceView } from "../research/research-service.js";
 import { truncateText } from "./evidence-projector.js";
@@ -126,6 +127,15 @@ export interface ProjectionServiceOptions {
   readonly research?: {
     /** Bounded recent research evidence, oldest first. */
     latestEvidence: () => readonly ResearchEvidence[];
+  };
+  /**
+   * Host-owned Godot scene/resource evidence projection (Stage 3 milestone
+   * 8). Bounded inspection observations recorded by the composition root;
+   * the scene intelligence service stays the single owner of parsed state.
+   */
+  readonly scenes?: {
+    /** Bounded recent scene/resource inspection observations, oldest first. */
+    latestEvidence: () => readonly GodotSceneEvidenceView[];
   };
   readonly contextProjector?: ContextProjector;
   readonly toolProjector?: ToolProjector;
@@ -313,23 +323,25 @@ function volatileTaskSegments(snapshot: TaskState | null): Array<{
   ];
 }
 
-/** Combined volatile budget for the reference + research evidence sections. */
+/** Combined volatile budget for the reference + research + scene evidence sections. */
 export const REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES = 12 * 1024;
 /** Most recent reference observations rendered per turn. */
 export const MAX_REFERENCE_EVIDENCE_VIEWS = 4;
 /** Most recent research evidence entries rendered per turn. */
 export const MAX_RESEARCH_EVIDENCE_VIEWS = 4;
+/** Most recent scene/resource inspection observations rendered per turn. */
+export const MAX_SCENE_EVIDENCE_VIEWS = 4;
 
 /**
- * Contextual `[Reference evidence]` + `[Research evidence]` sections, always
- * composed AFTER `[Latest evidence]` and last in the segment list. Content
- * is bounded (4 most recent views/entries each, combined 12 KiB budget
- * with explicit `… [truncated]`); never includes absolute cache paths, and
- * never enters instruction/knowledge sections. Both sections are
- * CONTEXTUAL (not stable): they reach the provider's system prefix — the
- * milestone requires the model to see reference/research evidence under
- * data/evidence sections — while the stable fingerprint (stable segments
- * only) is unaffected by their content.
+ * Contextual `[Reference evidence]` + `[Research evidence]` + `[Scene
+ * evidence]` sections, always composed AFTER `[Latest evidence]` and last
+ * in the segment list. Content is bounded (4 most recent views/entries
+ * each, combined 12 KiB budget with explicit `… [truncated]`); never
+ * includes absolute cache paths, and never enters instruction/knowledge
+ * sections. All three sections are CONTEXTUAL (not stable): they reach the
+ * provider's system prefix — the milestone requires the model to see
+ * evidence under data/evidence sections — while the stable fingerprint
+ * (stable segments only) is unaffected by their content.
  */
 function referenceResearchSegments(options: {
   readonly references?: {
@@ -337,6 +349,7 @@ function referenceResearchSegments(options: {
     latestEvidence: () => readonly ReferenceEvidenceView[];
   };
   readonly research?: { latestEvidence: () => readonly ResearchEvidence[] };
+  readonly scenes?: { latestEvidence: () => readonly GodotSceneEvidenceView[] };
 }): Array<{
   readonly id: string;
   readonly stability: ContextStability;
@@ -352,6 +365,7 @@ function referenceResearchSegments(options: {
   const encoder = new TextEncoder();
   let referenceContent = "";
   let researchContent = "";
+  let sceneContent = "";
   if (options.references !== undefined) {
     const views = options.references.latestEvidence().slice(-MAX_REFERENCE_EVIDENCE_VIEWS);
     referenceContent = views.map((view) => formatReferenceEvidenceLine(view)).join("\n");
@@ -362,19 +376,39 @@ function referenceResearchSegments(options: {
       .map((entry) => formatResearchEvidenceView(entry, { maxBytes: 4 * 1024 }))
       .join("\n\n");
   }
+  if (options.scenes !== undefined) {
+    const views = options.scenes.latestEvidence().slice(-MAX_SCENE_EVIDENCE_VIEWS);
+    sceneContent = views
+      .map((view) => {
+        const revision = view.revision === null ? "<no revision>" : view.revision;
+        return `${view.path} @ ${revision} [${view.status}] ${view.summary}`;
+      })
+      .join("\n");
+  }
   const referenceBytes = encoder.encode(referenceContent).length;
   const researchBytes = encoder.encode(researchContent).length;
-  if (referenceBytes + researchBytes > REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES) {
-    const remainingForResearch = REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES - referenceBytes;
-    if (remainingForResearch > 0) {
-      researchContent = truncateText(researchContent, remainingForResearch).text;
+  const sceneBytes = encoder.encode(sceneContent).length;
+  if (referenceBytes + researchBytes + sceneBytes > REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES) {
+    // Deterministic reduction order: research, then scene, then reference.
+    let remaining = REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES - referenceBytes;
+    if (remaining > 0) {
+      researchContent = truncateText(researchContent, remaining).text;
     } else {
       researchContent = "";
-      referenceContent = truncateText(
-        referenceContent,
-        REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES,
-      ).text;
     }
+    remaining =
+      REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES -
+      referenceBytes -
+      encoder.encode(researchContent).length;
+    if (remaining > 0) {
+      sceneContent = truncateText(sceneContent, remaining).text;
+    } else {
+      sceneContent = "";
+    }
+    referenceContent = truncateText(
+      referenceContent,
+      REFERENCE_RESEARCH_VOLATILE_BUDGET_BYTES,
+    ).text;
   }
   if (referenceContent.length > 0) {
     segments.push({
@@ -390,6 +424,14 @@ function referenceResearchSegments(options: {
       stability: "contextual",
       title: "Research evidence",
       content: researchContent,
+    });
+  }
+  if (sceneContent.length > 0) {
+    segments.push({
+      id: "scene-evidence",
+      stability: "contextual",
+      title: "Scene evidence",
+      content: sceneContent,
     });
   }
   return segments;

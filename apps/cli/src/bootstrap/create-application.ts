@@ -22,8 +22,11 @@ import {
   createGodotHoverTool,
   createGodotLSPDiagnosticsTool,
   createGodotLSPSessionTool,
+  createGodotDependenciesTool,
   createGodotInspectEngineTool,
   createGodotInspectProjectTool,
+  createGodotInspectResourceTool,
+  createGodotInspectSceneTool,
   createGodotInspector,
   createGodotKnowledgeCache,
   createGodotKnowledgeService,
@@ -31,6 +34,7 @@ import {
   createGodotProbeRunner,
   createGodotProjectProbeService,
   createGitHubResearchSource,
+  createGodotSceneIntelligence,
   createSelfReferenceTools,
   SELF_REFERENCE_TOOL_METADATA,
   createGodotDocsResearchSource,
@@ -96,6 +100,8 @@ import {
   type GDScriptDevelopmentService,
   type GitInspector,
   type GodotInspector,
+  type GodotSceneEvidenceView,
+  type GodotSceneIntelligence,
   type GodotProjectProbe,
   type GDScriptLanguageService,
   type GodotKnowledge,
@@ -165,6 +171,8 @@ export interface CliApplication {
   readonly git: GitInspector;
   readonly godot: GodotInspector;
   readonly godotProbe: GodotProjectProbe;
+  /** Stage 3 milestone 8: read-only scene/resource intelligence (single owner). */
+  readonly intelligence: GodotSceneIntelligence;
   readonly knowledge: GodotKnowledge;
   readonly diagnostics: GodotDiagnostics;
   readonly language: GDScriptLanguageService;
@@ -423,6 +431,19 @@ export async function createCliApplication(
   const revisions = createWorkspaceRevisionRegistry({
     workspaceFingerprint: sha256Hex(canonicalizeJson({ workspaceRoot })),
   });
+  // Stage 3 milestone 8: the single application-owned Godot semantic
+  // model/index subsystem. Static, revision-bound, read-only.
+  const sceneEvidenceRing: GodotSceneEvidenceView[] = [];
+  const intelligence = createGodotSceneIntelligence({
+    workspaceRoot,
+    revisions,
+    onInspection: (view) => {
+      sceneEvidenceRing.push(view);
+      while (sceneEvidenceRing.length > 64) {
+        sceneEvidenceRing.shift();
+      }
+    },
+  });
   const instructions = createProjectInstructionService({ workspaceRoot, revisions });
   await instructions.load();
   const projectKnowledge = createKnowledgeCoordinator();
@@ -471,6 +492,9 @@ export async function createCliApplication(
     createWorkspaceApplyTextChangesetTool(development),
     createGodotInspectEngineTool(godot),
     createGodotInspectProjectTool(godot),
+    createGodotInspectSceneTool(intelligence),
+    createGodotInspectResourceTool(intelligence),
+    createGodotDependenciesTool(intelligence),
     createGodotProbeProjectTool(godotProbe),
     createGodotApiSearchTool(knowledge),
     createGodotApiLookupTool(knowledge),
@@ -530,6 +554,7 @@ export async function createCliApplication(
       workspaceRoot,
       godot,
       knowledge,
+      intelligence,
       ...(readyReferenceCount > 0 ? { referenceTools } : {}),
       researchTools,
       selfTools,
@@ -579,6 +604,9 @@ export async function createCliApplication(
     research: {
       latestEvidence: () => research.latestEvidence(),
     },
+    scenes: {
+      latestEvidence: () => [...sceneEvidenceRing],
+    },
   });
   const application = createSolarisApplication({
     provider,
@@ -612,6 +640,7 @@ export async function createCliApplication(
     git,
     godot,
     godotProbe,
+    intelligence,
     knowledge,
     diagnostics,
     language,

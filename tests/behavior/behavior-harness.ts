@@ -37,8 +37,11 @@ import {
   type ModelRequest,
   type ProjectionService,
   type GDScriptDevelopmentService,
+  type GodotSceneEvidenceView,
+  type GodotSceneIntelligence,
   type ReferenceAccessPort,
   type RegisteredTool,
+  type RegisteredToolInfo,
   type ReferenceEvidenceView,
   type ResearchService,
   type SolarisApplication,
@@ -57,6 +60,10 @@ import {
   createFilesystemCheckpointStore,
   createGDScriptDevelopmentService,
   createGodotDevelopmentStatusTool,
+  createGodotDependenciesTool,
+  createGodotInspectResourceTool,
+  createGodotInspectSceneTool,
+  createGodotSceneIntelligence,
   createReferenceTools,
   createWorkspaceApplyTextChangesetTool,
   createWorkspaceFilePrimitives,
@@ -170,6 +177,13 @@ export interface BehaviorLoopHarnessOptions {
   readonly extraTools?: readonly RegisteredTool[];
   /** Wrap the application provider in a recording provider for request assertions. */
   readonly recording?: boolean;
+  /**
+   * Wire read-only Godot scene/resource intelligence (Stage 3 milestone 8)
+   * into the harness: registers `godot.inspect_scene` /
+   * `godot.inspect_resource` / `godot.dependencies` against the harness
+   * workspace and feeds `[Scene evidence]` projections.
+   */
+  readonly intelligence?: boolean;
   /** Replace the application provider entirely (scripted provider scenarios). */
   readonly providerOverride?: ModelProvider;
   /** Reviewer scenario for the quality stage (fake-change-reviewer). */
@@ -193,6 +207,8 @@ export interface BehaviorLoopHarness {
   readonly store: CheckpointStore;
   readonly application: SolarisApplication;
   readonly runtime: TaskRuntime;
+  /** Projection service (when `projection: true`); null otherwise. */
+  readonly projection: ProjectionService | null;
   readonly approvals: () => number;
   readonly status: () => GDScriptDevelopmentStatus;
   readonly development: GDScriptDevelopmentService;
@@ -201,6 +217,12 @@ export interface BehaviorLoopHarness {
   readonly languageControl: ReturnType<typeof createFakeLanguageService>["control"];
   /** Session revision registry (workspace-scoped, opaque handles). */
   readonly revisions: WorkspaceRevisionRegistry;
+  /** Registered tool definitions (final boundary surface). */
+  readonly tools: () => readonly RegisteredToolInfo[];
+  /** Read-only Godot scene/resource intelligence (when `intelligence: true`). */
+  readonly intelligence: GodotSceneIntelligence | null;
+  /** Recorded scene/resource inspection observations feeding `[Scene evidence]`. */
+  readonly sceneObservations: () => readonly GodotSceneEvidenceView[];
   /** Recorded provider requests (when `recording: true`). */
   readonly requests: () => readonly ModelRequest[];
   /** Reference tools registered when `references` was provided (read-only list/read/search). */
@@ -300,6 +322,31 @@ export async function createBehaviorLoopHarness(
     settling: { hardTimeoutMs: 1000, pollIntervalMs: 1 },
   });
   const workspaceReadTool = createWorkspaceReadTool(workspace.root, { revisions });
+  // Stage 3 milestone 8: read-only scene/resource intelligence (single
+  // application-owned subsystem). Composition-root style wiring: the
+  // service records bounded observations and the projection consumes them.
+  const sceneObservations: GodotSceneEvidenceView[] = [];
+  const intelligence =
+    options.intelligence === true
+      ? createGodotSceneIntelligence({
+          workspaceRoot: workspace.root,
+          revisions,
+          onInspection: (view) => {
+            sceneObservations.push(view);
+            while (sceneObservations.length > 64) {
+              sceneObservations.shift();
+            }
+          },
+        })
+      : null;
+  const sceneTools =
+    intelligence === null
+      ? []
+      : [
+          createGodotInspectSceneTool(intelligence),
+          createGodotInspectResourceTool(intelligence),
+          createGodotDependenciesTool(intelligence),
+        ];
   // Reference services (Stage 3 milestone 5): register the read-only
   // reference tools and record every successful access call as a
   // ReferenceEvidenceView — the composition root's job in production — so
@@ -375,6 +422,7 @@ export async function createBehaviorLoopHarness(
     workspaceReadTool,
     createWorkspaceApplyTextChangesetTool(development),
     createGodotDevelopmentStatusTool(development),
+    ...sceneTools,
     ...referenceTools,
     ...(options.extraTools ?? []),
   ]);
@@ -426,6 +474,13 @@ export async function createBehaviorLoopHarness(
                   latestEvidence: () => options.research!.latestEvidence(),
                 },
               }),
+          ...(intelligence === null
+            ? {}
+            : {
+                scenes: {
+                  latestEvidence: () => [...sceneObservations],
+                },
+              }),
         })
       : undefined;
   const application = createSolarisApplication({
@@ -447,11 +502,15 @@ export async function createBehaviorLoopHarness(
     store,
     application,
     runtime,
+    projection: projection ?? null,
     approvals: () => approvals,
     status: () => development.status(),
     parserControl: parser.control,
     languageControl: language.control,
     revisions,
+    tools: () => tools.definitions(),
+    intelligence,
+    sceneObservations: () => [...sceneObservations],
     development,
     workspaceRead: workspaceReadTool,
     requests: () => (recording === null ? [] : [...recording.requests]),

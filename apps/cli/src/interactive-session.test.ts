@@ -865,8 +865,10 @@ describe("runInteractiveSession tool activity", () => {
     // availability (unavailable backends never execute Git). The
     // development workflow adds workspace.apply_text_changeset and
     // godot.development_status to the registered tool count; the
-    // self-reference adds self.read and self.search (Stage 3 milestone 6).
-    expect(io.text).toContain("Tools: 27");
+    // self-reference adds self.read and self.search (Stage 3 milestone 6);
+    // read-only scene/resource intelligence adds godot.inspect_scene,
+    // godot.inspect_resource, and godot.dependencies (Stage 3 milestone 8).
+    expect(io.text).toContain("Tools: 30");
     expect(io.text).toContain("Provider tools:");
     expect(io.text).toContain("Pending approval: no");
     expect(io.text).toContain("Process execution: denied");
