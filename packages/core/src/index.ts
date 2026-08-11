@@ -654,6 +654,7 @@ export {
   type TestRequirement,
 } from "./executor/milestone-manifest.js";
 export { S3M8_MILESTONE_MANIFEST } from "./executor/s3m8-manifest.js";
+export { S3M9_MILESTONE_MANIFEST } from "./executor/s3m9-manifest.js";
 export {
   STANDARD_ACCEPTANCE_DEFINITIONS,
   STANDARD_ACCEPTANCE_IDS,
@@ -1178,6 +1179,29 @@ export {
 // Stage 3 milestone 8: read-only Godot scene and resource intelligence.
 export { GODOT_SCENE_LIMITS } from "./godot/scene/limits.js";
 export { parseGodotScene, type ParseSceneOptions } from "./godot/scene/scene-parser.js";
+export {
+  REVIEW_CONTEXT_LIMITS,
+  validateReviewContextManifest,
+  type ImpactConfidence,
+  type ImpactDiagnostic,
+  type ImpactRegressionArea,
+  type ImpactRelation,
+  type ImpactRelationKind,
+  type ImpactSurface,
+  type ImpactSurfaceKind,
+  type ImpactValidationRecommendation,
+  type ImpactCompleteness,
+  type ReviewContextManifest,
+  type ValidationKind,
+  type ValidationPriority,
+} from "./godot/impact/review-context.js";
+export {
+  analyzeImpact,
+  type AnalyzeImpactInput,
+  type ImpactEdge,
+  type ImpactRelationshipSource,
+  type ImpactSignalConnection,
+} from "./godot/impact/impact-analyzer.js";
 export { parseGodotResource, type ParseResourceOptions } from "./godot/scene/resource-parser.js";
 export {
   parseGodotVariant,
@@ -1231,6 +1255,8 @@ export type {
   GodotAutoload,
   GodotDependencyEdge,
   GodotDependencyResult,
+  GodotImpactRequest,
+  GodotImpactResult,
   GodotInspectionOutcome,
   GodotInputAction,
   GodotIntelligenceStatus,
