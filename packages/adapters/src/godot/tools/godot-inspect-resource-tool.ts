@@ -56,7 +56,11 @@ export function createGodotInspectResourceTool(intelligence: GodotSceneIntellige
       const document = result.document;
       const model = document?.document ?? null;
       const maxPropertiesShown = 128;
+      const maxListItems = 128;
       const properties = model === null ? [] : model.properties.slice(0, maxPropertiesShown);
+      const externalResources = model?.externalResources ?? [];
+      const subResources = model?.subResources ?? [];
+      const diagnostics = document?.diagnostics ?? [];
       return {
         status: "success",
         output: {
@@ -76,17 +80,19 @@ export function createGodotInspectResourceTool(intelligence: GodotSceneIntellige
                   uid: model.script.resource.uid ?? null,
                   resolvedPath: model.script.resolvedPath ?? null,
                 },
-          externalResources: (model?.externalResources ?? []).map((resource) => ({
+          externalResources: externalResources.slice(0, maxListItems).map((resource) => ({
             id: resource.id,
             ...(resource.type === undefined ? {} : { type: resource.type }),
             ...(resource.path === undefined ? {} : { path: resource.path }),
             ...(resource.uid === undefined ? {} : { uid: resource.uid }),
           })),
-          subResources: (model?.subResources ?? []).map((resource) => ({
+          externalResourcesTruncated: externalResources.length > maxListItems,
+          subResources: subResources.slice(0, maxListItems).map((resource) => ({
             id: resource.id,
             type: resource.type,
             propertyCount: resource.properties.length,
           })),
+          subResourcesTruncated: subResources.length > maxListItems,
           propertyCount: model?.properties.length ?? 0,
           properties: properties.map((property) => ({
             name: property.name,
@@ -94,12 +100,13 @@ export function createGodotInspectResourceTool(intelligence: GodotSceneIntellige
             value: summarizeVariant(property.value),
           })),
           propertiesTruncated: model !== null && model.properties.length > maxPropertiesShown,
-          diagnostics: (document?.diagnostics ?? []).map((diagnostic) => ({
+          diagnostics: diagnostics.slice(0, maxListItems).map((diagnostic) => ({
             code: diagnostic.code,
             severity: diagnostic.severity,
             message: diagnostic.message,
             ...(diagnostic.line === undefined ? {} : { line: diagnostic.line }),
           })),
+          diagnosticsTruncated: diagnostics.length > maxListItems,
         } as never,
         summary: `${result.path} @ ${result.revision ?? "?"}: ${model?.type ?? "unknown"}, ${model?.properties.length ?? 0} properties`,
       };

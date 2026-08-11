@@ -53,6 +53,9 @@ export function createGodotDependenciesTool(intelligence: GodotSceneIntelligence
           message: result.message ?? `Dependency query failed (${result.status}).`,
         };
       }
+      const maxListItems = 128;
+      const edges = result.edges.slice(0, maxListItems);
+      const referrers = result.referrers.slice(0, maxListItems);
       return {
         status: "success",
         output: {
@@ -63,19 +66,21 @@ export function createGodotDependenciesTool(intelligence: GodotSceneIntelligence
           truncatedFiles: result.truncatedFiles,
           cycleDetected: result.cycleDetected,
           ...(result.cyclePath === undefined ? {} : { cyclePath: result.cyclePath }),
-          edges: result.edges.map((edge) => ({
+          edges: edges.map((edge) => ({
             kind: edge.kind,
             sourcePath: edge.sourcePath,
             targetPath: edge.targetPath,
             ...(edge.targetUid === undefined ? {} : { targetUid: edge.targetUid }),
             depth: edge.depth,
           })),
-          referrers: result.referrers.map((referrer) => ({
+          edgesTruncated: result.edges.length > maxListItems,
+          referrers: referrers.map((referrer) => ({
             sourcePath: referrer.sourcePath,
             kind: referrer.kind,
             sourceRevision: referrer.sourceRevision,
             stale: referrer.stale,
           })),
+          referrersTruncated: result.referrers.length > maxListItems,
         } as never,
         summary: `${result.rootPath}: ${result.edges.length} edges, ${result.filesVisited} files visited${result.cycleDetected ? " (cycle)" : ""}`,
       };

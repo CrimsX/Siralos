@@ -75,6 +75,16 @@ export function createGodotInspectSceneTool(intelligence: GodotSceneIntelligence
       const document = result.document;
       const model = document?.document ?? null;
       const tree = result.tree;
+      // Bounded tool output: arrays are sliced to a fixed cap with explicit
+      // truncation flags; a large scene is never dumped wholesale.
+      const maxListItems = 128;
+      const scripts = model?.nodes.filter((node) => node.script !== undefined) ?? [];
+      const externalResources = model?.externalResources ?? [];
+      const subResources = model?.subResources ?? [];
+      const connections = model?.connections ?? [];
+      const groups = model === null ? [] : [...new Set(model.nodes.flatMap((node) => node.groups))];
+      const editableInstances = model?.editableInstances ?? [];
+      const instances = model?.nodes.filter((node) => node.instance !== undefined) ?? [];
       const output: Record<string, unknown> = {
         path: result.path,
         revision: result.revision,
@@ -86,13 +96,42 @@ export function createGodotInspectSceneTool(intelligence: GodotSceneIntelligence
         nodeCount: model?.nodes.length ?? 0,
         baseScene: null,
         rootNode: null,
-        scripts: [],
-        externalResources: [],
-        subResources: [],
-        connections: [],
-        groups: [],
-        editableInstances: model?.editableInstances ?? [],
-        diagnostics: (document?.diagnostics ?? []).map((diagnostic) => ({
+        scripts: scripts.slice(0, maxListItems).map((node) => ({
+          node: node.name,
+          path: node.script?.resource.path ?? null,
+          uid: node.script?.resource.uid ?? null,
+          resolvedPath: node.script?.resolvedPath ?? null,
+        })),
+        scriptsTruncated: scripts.length > maxListItems,
+        externalResources: externalResources.slice(0, maxListItems).map((resource) => ({
+          id: resource.id,
+          ...(resource.type === undefined ? {} : { type: resource.type }),
+          ...(resource.path === undefined ? {} : { path: resource.path }),
+          ...(resource.uid === undefined ? {} : { uid: resource.uid }),
+        })),
+        externalResourcesTruncated: externalResources.length > maxListItems,
+        subResources: subResources.slice(0, maxListItems).map((resource) => ({
+          id: resource.id,
+          type: resource.type,
+          propertyCount: resource.properties.length,
+        })),
+        subResourcesTruncated: subResources.length > maxListItems,
+        connections: connections.slice(0, maxListItems).map((connection) => ({
+          signal: connection.signal,
+          from: connection.from,
+          to: connection.to,
+          method: connection.method,
+          ...(connection.flags === undefined ? {} : { flags: connection.flags }),
+          ...(connection.binds === undefined
+            ? {}
+            : { binds: connection.binds.map((bind) => summarizeVariant(bind)) }),
+        })),
+        connectionsTruncated: connections.length > maxListItems,
+        groups: groups.slice(0, maxListItems),
+        groupsTruncated: groups.length > maxListItems,
+        editableInstances: editableInstances.slice(0, maxListItems),
+        editableInstancesTruncated: editableInstances.length > maxListItems,
+        diagnostics: (document?.diagnostics ?? []).slice(0, maxListItems).map((diagnostic) => ({
           code: diagnostic.code,
           severity: diagnostic.severity,
           message: diagnostic.message,
@@ -116,50 +155,18 @@ export function createGodotInspectSceneTool(intelligence: GodotSceneIntelligence
                 type: tree?.root?.node.type ?? null,
                 path: tree?.root?.path ?? null,
               };
-        output["scripts"] = model.nodes
-          .filter((node) => node.script !== undefined)
-          .map((node) => ({
-            node: node.name,
-            path: node.script?.resource.path ?? null,
-            uid: node.script?.resource.uid ?? null,
-            resolvedPath: node.script?.resolvedPath ?? null,
-          }));
-        output["externalResources"] = model.externalResources.map((resource) => ({
-          id: resource.id,
-          ...(resource.type === undefined ? {} : { type: resource.type }),
-          ...(resource.path === undefined ? {} : { path: resource.path }),
-          ...(resource.uid === undefined ? {} : { uid: resource.uid }),
-        }));
-        output["subResources"] = model.subResources.map((resource) => ({
-          id: resource.id,
-          type: resource.type,
-          propertyCount: resource.properties.length,
-        }));
-        output["connections"] = model.connections.map((connection) => ({
-          signal: connection.signal,
-          from: connection.from,
-          to: connection.to,
-          method: connection.method,
-          ...(connection.flags === undefined ? {} : { flags: connection.flags }),
-          ...(connection.binds === undefined
-            ? {}
-            : { binds: connection.binds.map((bind) => summarizeVariant(bind)) }),
-        }));
-        output["groups"] = [...new Set(model.nodes.flatMap((node) => node.groups))];
       }
       if (view === "tree" && tree !== null) {
         output["tree"] = renderTree(tree);
       } else if (view === "full" && tree !== null) {
         output["tree"] = renderTree(tree);
-        output["instances"] =
-          model?.nodes
-            .filter((node) => node.instance !== undefined)
-            .map((node) => ({
-              node: node.name,
-              path: node.instance?.resource.path ?? null,
-              uid: node.instance?.resource.uid ?? null,
-              resolvedPath: node.instance?.resolvedPath ?? null,
-            })) ?? [];
+        output["instances"] = instances.slice(0, maxListItems).map((node) => ({
+          node: node.name,
+          path: node.instance?.resource.path ?? null,
+          uid: node.instance?.resource.uid ?? null,
+          resolvedPath: node.instance?.resolvedPath ?? null,
+        }));
+        output["instancesTruncated"] = instances.length > maxListItems;
       }
       return {
         status: "success",

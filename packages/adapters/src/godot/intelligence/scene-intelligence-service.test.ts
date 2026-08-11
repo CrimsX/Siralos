@@ -231,4 +231,18 @@ describe("createGodotSceneIntelligence", () => {
     expect(result.status).toBe("not_found");
     expect(result.document).toBeNull();
   });
+
+  it("surfaces a root read failure in the dependency query instead of an empty ok", async () => {
+    const root = await withWorkspace();
+    await writeFiles(root, FIXTURE_PROJECT);
+    const revisions = createWorkspaceRevisionRegistry({
+      workspaceFingerprint: sha256Hex(canonicalizeJson({ workspaceRoot: root })),
+    });
+    const intelligence = createGodotSceneIntelligence({ workspaceRoot: root, revisions });
+    const missing = await intelligence.dependencies({ path: "scenes/does_not_exist.tscn" });
+    expect(missing.status).toBe("not_found");
+    expect(missing.edges).toHaveLength(0);
+    const denied = await intelligence.dependencies({ path: "../outside.tscn" });
+    expect(denied.status).toBe("denied");
+  });
 });

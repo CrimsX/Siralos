@@ -85,6 +85,10 @@ export function parseGodotScene(
   let currentNode: MutableSceneNode | null = null;
   let seenSceneHeader = false;
   let truncated = false;
+  let limitReached = false;
+  let sectionCount = 0;
+  let resourceCount = 0;
+  let propertyCount = 0;
 
   const lines = content.split(/\r?\n/);
   const lineCount = Math.min(lines.length, GODOT_SCENE_LIMITS.maxLines);
@@ -97,13 +101,24 @@ export function parseGodotScene(
     );
   }
 
-  for (let index = 0; index < lineCount; index += 1) {
+  for (let index = 0; index < lineCount && !limitReached; index += 1) {
     const rawLine = lines[index] ?? "";
     const trimmed = rawLine.trim();
     if (trimmed.length === 0 || isCommentLine(trimmed)) {
       continue;
     }
     if (trimmed.startsWith("[")) {
+      sectionCount += 1;
+      if (sectionCount > GODOT_SCENE_LIMITS.maxSections) {
+        truncated = true;
+        limitReached = true;
+        addDiagnostic(
+          "scene.document_truncated",
+          "error",
+          `The section count exceeded the bound (${GODOT_SCENE_LIMITS.maxSections}); parsing stopped.`,
+        );
+        break;
+      }
       // The section's closing bracket is the LAST "]" on the line: header
       // values may themselves contain "]" (e.g. `binds=[1, "x"]` or
       // `groups=["a"]`), so the first "]" is never a safe split point.
@@ -167,8 +182,19 @@ export function parseGodotScene(
           currentSection = "ext_resource";
           currentSubResource = null;
           currentNode = null;
+          if (resourceCount >= GODOT_SCENE_LIMITS.maxResources) {
+            truncated = true;
+            addDiagnostic(
+              "scene.document_truncated",
+              "error",
+              `The resource count exceeded the bound (${GODOT_SCENE_LIMITS.maxResources}); remaining resources are ignored.`,
+              index + 1,
+            );
+            break;
+          }
           const ref = parseExtResource(attributes, index + 1, addDiagnostic);
           if (ref !== null) {
+            resourceCount += 1;
             if (extIds.has(ref.id)) {
               addDiagnostic(
                 "scene.duplicate_resource_id",
@@ -186,6 +212,18 @@ export function parseGodotScene(
         case "sub_resource": {
           currentSection = "sub_resource";
           currentNode = null;
+          if (resourceCount >= GODOT_SCENE_LIMITS.maxResources) {
+            truncated = true;
+            addDiagnostic(
+              "scene.document_truncated",
+              "error",
+              `The resource count exceeded the bound (${GODOT_SCENE_LIMITS.maxResources}); remaining resources are ignored.`,
+              index + 1,
+            );
+            currentSubResource = null;
+            break;
+          }
+          resourceCount += 1;
           const type = readStringAttribute(attributes, "type") ?? "";
           const id = readStringAttribute(attributes, "id");
           if (id === null) {
@@ -292,10 +330,32 @@ export function parseGodotScene(
       continue;
     }
     if (currentSection === "node" && currentNode !== null) {
+      if (propertyCount >= GODOT_SCENE_LIMITS.maxProperties) {
+        truncated = true;
+        addDiagnostic(
+          "scene.document_truncated",
+          "error",
+          `The property count exceeded the bound (${GODOT_SCENE_LIMITS.maxProperties}); remaining properties are ignored.`,
+          record.line,
+        );
+        continue;
+      }
+      propertyCount += 1;
       currentNode.properties.push(
         makeProperty(record.key, record.valueText, record.line, addDiagnostic, "scene"),
       );
     } else if (currentSection === "sub_resource" && currentSubResource !== null) {
+      if (propertyCount >= GODOT_SCENE_LIMITS.maxProperties) {
+        truncated = true;
+        addDiagnostic(
+          "scene.document_truncated",
+          "error",
+          `The property count exceeded the bound (${GODOT_SCENE_LIMITS.maxProperties}); remaining properties are ignored.`,
+          record.line,
+        );
+        continue;
+      }
+      propertyCount += 1;
       currentSubResource.properties.push(
         makeProperty(record.key, record.valueText, record.line, addDiagnostic, "scene"),
       );

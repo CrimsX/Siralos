@@ -348,20 +348,20 @@ export function createGodotSceneIntelligence(
       path: string,
       depth: number,
       kind: "scene" | "resource",
-    ): Promise<void> => {
+    ): Promise<{ readonly status: ReadStatus; readonly message: string | null } | null> => {
       if (filesVisited >= GODOT_SCENE_LIMITS.maxDependencyFiles) {
         truncatedFiles = true;
-        return;
+        return null;
       }
       if (stack.includes(path)) {
         // A path already on the current walk stack is a cycle; stop this
         // branch safely and report the cycle path.
         cycleDetected = true;
         cyclePath = [...stack.slice(stack.indexOf(path)), path];
-        return;
+        return null;
       }
       if (visited.has(path)) {
-        return;
+        return null;
       }
       visited.add(path);
       stack.push(path);
@@ -369,7 +369,12 @@ export function createGodotSceneIntelligence(
       const read = await readDocument(path);
       if (read.status !== "ok" || read.content === null || read.relativePath === null) {
         stack.pop();
-        return;
+        if (depth === 0) {
+          // The root document itself could not be read: surface the real
+          // failure instead of an empty "ok" result.
+          return { status: read.status, message: read.message };
+        }
+        return null;
       }
       if (depth === 0) {
         rootRevision = read.revision;
@@ -442,7 +447,11 @@ export function createGodotSceneIntelligence(
           const targetKind = lower.endsWith(".tscn") ? "scene" : "resource";
           if (targetKind === "scene" || lower.endsWith(".tres") || lower.endsWith(".theme")) {
             if (depth + 1 <= GODOT_SCENE_LIMITS.maxDependencyDepth) {
-              await visit(target.path, depth + 1, targetKind);
+              const failure = await visit(target.path, depth + 1, targetKind);
+              if (failure !== null) {
+                stack.pop();
+                return failure;
+              }
             } else {
               truncatedDepth = true;
             }
@@ -450,9 +459,24 @@ export function createGodotSceneIntelligence(
         }
       }
       stack.pop();
+      return null;
     };
 
-    await visit(request.path, 0, gate.kind);
+    const failure = await visit(request.path, 0, gate.kind);
+    if (failure !== null) {
+      return {
+        status: failure.status,
+        message: failure.message,
+        rootPath: request.path,
+        revision: null,
+        edges: [],
+        referrers: [],
+        filesVisited: 0,
+        truncatedDepth: false,
+        truncatedFiles: false,
+        cycleDetected: false,
+      };
+    }
     const referrers = index.referrersOf(request.path).map((entry) => ({
       sourcePath: entry.sourcePath,
       kind: entry.kind,
