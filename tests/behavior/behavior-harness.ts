@@ -200,6 +200,12 @@ export interface BehaviorLoopHarnessOptions {
     readonly milestone?: MilestoneManifest | null;
     readonly selectMilestone?: (request: string) => MilestoneManifest | null;
     readonly capabilitySnapshot?: CapabilitySnapshot | null;
+    readonly workspaceScope?: import("@solaris/core").WorkspaceScope | null;
+    readonly activeWorkingSet?: import("@solaris/core").ActiveWorkingSet | null;
+    readonly documentationIndex?: readonly import("@solaris/core").DocumentationEntry[];
+    readonly scopeSignals?: readonly import("@solaris/core").ScopeSignalRef[];
+    readonly newFiles?: readonly import("@solaris/core").NewFileRationale[];
+    readonly capabilityAreas?: readonly string[];
   };
   /** Replace the application provider entirely (scripted provider scenarios). */
   readonly providerOverride?: ModelProvider;
@@ -481,6 +487,24 @@ export async function createBehaviorLoopHarness(
             : {
                 getCapabilitySnapshot: () => options.briefing!.capabilitySnapshot ?? null,
               }),
+          ...(options.briefing.workspaceScope === undefined
+            ? {}
+            : { workspaceScope: options.briefing.workspaceScope }),
+          ...(options.briefing.activeWorkingSet === undefined
+            ? {}
+            : { activeWorkingSet: options.briefing.activeWorkingSet }),
+          ...(options.briefing.documentationIndex === undefined
+            ? {}
+            : { documentationIndex: options.briefing.documentationIndex }),
+          ...(options.briefing.scopeSignals === undefined
+            ? {}
+            : { scopeSignals: options.briefing.scopeSignals }),
+          ...(options.briefing.newFiles === undefined
+            ? {}
+            : { newFiles: options.briefing.newFiles }),
+          ...(options.briefing.capabilityAreas === undefined
+            ? {}
+            : { capabilityAreas: options.briefing.capabilityAreas }),
         });
   if (briefingService !== null && options.briefing !== undefined) {
     sources = {
