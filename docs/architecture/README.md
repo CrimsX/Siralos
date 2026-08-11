@@ -23,6 +23,19 @@ accepted ADRs. Superseded/deprecated and `docs/archive/` material is
 excluded unless historical reasoning is explicitly requested. Never
 recursively ingest `docs/`.
 
+## Scoped guidance
+
+Path-scoped `AGENTS.md` files exist only where a directory has
+meaningful domain-specific guidance; the runtime documentation index
+maps them by source-path globs:
+
+| Scoped file                             | Covers                                             |
+| --------------------------------------- | -------------------------------------------------- |
+| `packages/core/AGENTS.md`               | core domain contracts, executor-context discipline |
+| `packages/adapters/AGENTS.md`           | adapter fail-closed discipline, port ownership     |
+| `packages/adapters/src/godot/AGENTS.md` | Godot static-inspection domain rules               |
+| `apps/cli/AGENTS.md`                    | CLI composition-root and terminal-boundary rules   |
+
 ## Domain map
 
 | Domain                                                                   | Source paths                                                                                                                                 | Architecture                                                          | ADRs                                                       |
