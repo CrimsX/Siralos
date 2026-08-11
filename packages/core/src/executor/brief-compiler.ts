@@ -1,5 +1,6 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import { deepFreeze } from "../domain/deep-freeze.js";
+import { sanitizeSecretsOnly } from "../doctor/safe-report.js";
 import type { TaskContract } from "../tasks/task-contract.js";
 import type { ExecutionContract, ExecutionContractRef } from "./execution-contract.js";
 import type { MilestoneManifest, MilestoneManifestRef } from "./milestone-manifest.js";
@@ -27,7 +28,7 @@ import type { CapabilityRef, ExecutorContextPack } from "./context-pack.js";
  * the compiler; the host owns briefing semantics.
  */
 
-export const EXECUTOR_BRIEF_SCHEMA_VERSION = 1;
+export const EXECUTOR_BRIEF_SCHEMA_VERSION = 2;
 
 export interface ExecutorBrief {
   readonly format: "solaris-executor-brief";
@@ -52,6 +53,16 @@ export interface ExecutorBrief {
   readonly testRequirements: readonly string[];
   /** Relevant architecture references (doc paths). */
   readonly architectureReferences: readonly string[];
+  /** Deterministically selected documentation (root/nested/architecture/ADRs). */
+  readonly documentationSources: readonly string[];
+  /** Current-step working-set files with their inclusion reasons. */
+  readonly workingSetFiles: readonly string[];
+  /** Verified workspace-scope files (exact/structural references). */
+  readonly workspaceVerifiedFiles: readonly string[];
+  /** Deterministic review signals (proliferation / unexplained expansion). */
+  readonly scopeWarnings: readonly string[];
+  /** New production files with their recorded rationales. */
+  readonly newFileRationales: readonly string[];
   /**
    * Capability limits relevant to the current task: omitted for
    * capabilities that are available; listed as prohibitions/limits for
@@ -82,6 +93,11 @@ export const EXECUTOR_BRIEF_LIMITS = Object.freeze({
   maxCapabilityLimits: 8,
   maxInstructionSources: 8,
   maxRenderedBytes: 8 * 1024,
+  maxDocumentationSources: 12,
+  maxWorkingSetFiles: 8,
+  maxWorkspaceVerifiedFiles: 12,
+  maxScopeWarnings: 8,
+  maxNewFileRationales: 8,
 });
 
 export interface CompileExecutorBriefInput {
@@ -195,6 +211,40 @@ export function compileExecutorBrief(input: CompileExecutorBriefInput): Executor
       EXECUTOR_BRIEF_LIMITS.maxArchitectureReferences,
       512,
     ),
+    documentationSources: boundedStrings(
+      [
+        ...(input.pack.documentation?.rootAgents ?? []),
+        ...(input.pack.documentation?.nestedAgents ?? []),
+        ...(input.pack.documentation?.architectureDocs ?? []),
+        ...(input.pack.documentation?.adrs ?? []),
+        ...(input.pack.documentation?.developmentDocs ?? []),
+      ],
+      EXECUTOR_BRIEF_LIMITS.maxDocumentationSources,
+      512,
+    ),
+    workingSetFiles: boundedStrings(
+      (input.pack.activeWorkingSet?.files ?? []).map((file) => `${file.path} (${file.reason})`),
+      EXECUTOR_BRIEF_LIMITS.maxWorkingSetFiles,
+      512,
+    ),
+    workspaceVerifiedFiles: boundedStrings(
+      (input.pack.workspaceScope?.verifiedFiles ?? []).map((file) => file.path),
+      EXECUTOR_BRIEF_LIMITS.maxWorkspaceVerifiedFiles,
+      512,
+    ),
+    scopeWarnings: boundedStrings(
+      (input.pack.scopeSignals ?? []).map((signal) => `${signal.id}: ${signal.message}`),
+      EXECUTOR_BRIEF_LIMITS.maxScopeWarnings,
+      512,
+    ),
+    newFileRationales: boundedStrings(
+      (input.pack.newFiles ?? []).map(
+        (file) =>
+          `${file.path} — ${file.reason} (owners: ${file.existingOwnersInspected.join(", ") || "none"})`,
+      ),
+      EXECUTOR_BRIEF_LIMITS.maxNewFileRationales,
+      512,
+    ),
     capabilityLimits: capabilityLimitLines(input.pack.capabilities),
     plan:
       input.pack.plan === undefined
@@ -274,6 +324,20 @@ export function renderExecutorBrief(
       priority: 1,
     });
   }
+  if (brief.workspaceVerifiedFiles.length > 0) {
+    sections.push({
+      title: "VERIFIED WORKSPACE FILES",
+      content: bullet(brief.workspaceVerifiedFiles),
+      priority: 1,
+    });
+  }
+  if (brief.workingSetFiles.length > 0) {
+    sections.push({
+      title: "WORKING SET (CURRENT STEP)",
+      content: bullet(brief.workingSetFiles),
+      priority: 3,
+    });
+  }
   if (brief.deliverables.length > 0) {
     sections.push({ title: "DELIVERABLES", content: bullet(brief.deliverables), priority: 2 });
   }
@@ -294,6 +358,20 @@ export function renderExecutorBrief(
       priority: 5,
     });
   }
+  if (brief.documentationSources.length > 0) {
+    sections.push({
+      title: "DOCUMENTATION",
+      content: bullet(brief.documentationSources),
+      priority: 5,
+    });
+  }
+  if (brief.newFileRationales.length > 0) {
+    sections.push({
+      title: "NEW FILES (RATIONALE)",
+      content: bullet(brief.newFileRationales),
+      priority: 6,
+    });
+  }
   if (brief.testRequirements.length > 0) {
     sections.push({
       title: "MILESTONE-SPECIFIC TESTS",
@@ -308,9 +386,21 @@ export function renderExecutorBrief(
       priority: 7,
     });
   }
+  if (brief.scopeWarnings.length > 0) {
+    sections.push({
+      title: "SCOPE WARNINGS",
+      content: bullet(brief.scopeWarnings),
+      priority: 7,
+    });
+  }
   const joined = sections.map(({ title, content }) => `${title}\n${content}`).join("\n\n");
-  if (textEncoder.encode(joined).length <= maxBytes) {
-    return joined;
+  // The rendered brief is the provider/terminal boundary: known
+  // credential-shaped tokens are redacted before projection (secrets
+  // never enter brief/docs projection; the structured brief stays
+  // host-internal).
+  const sanitized = sanitizeSecretsOnly(joined);
+  if (textEncoder.encode(sanitized).length <= maxBytes) {
+    return sanitized;
   }
   // Drop whole low-priority sections from the end first, then truncate.
   let kept = sections.filter((section) => section.priority === 0);
@@ -325,7 +415,7 @@ export function renderExecutorBrief(
     }
   }
   const rendered = kept.map(({ title, content }) => `${title}\n${content}`).join("\n\n");
-  return trimRendered(rendered, maxBytes);
+  return sanitizeSecretsOnly(trimRendered(rendered, maxBytes));
 }
 
 function renderedBytes(sections: readonly { title: string; content: string }[]): number {

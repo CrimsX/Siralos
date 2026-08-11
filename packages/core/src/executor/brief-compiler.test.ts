@@ -12,6 +12,7 @@ import { S3M8_MILESTONE_MANIFEST } from "./s3m8-manifest.js";
 import { createTaskContract, type TaskContract } from "../tasks/task-contract.js";
 import { createTaskPlan, type TaskPlan } from "../planning/planning-model.js";
 import { ARCHITECTURE_INDEX } from "./architecture-context.js";
+import { createWorkspaceScope, createActiveWorkingSet } from "./workspace-scope.js";
 import { resolveInstructionSet } from "../instructions/instruction-resolver.js";
 import type { ResolvedInstructionSet } from "../instructions/instruction-model.js";
 import type { CapabilitySnapshot } from "../doctor/doctor-model.js";
@@ -449,5 +450,238 @@ describe("executor brief compiler", () => {
     expect(brief.deliverables).toEqual([]);
     expect(brief.acceptanceIds).toEqual([]);
     expect(renderExecutorBrief(brief)).not.toContain("Milestone Manifest:");
+  });
+});
+
+describe("executor brief compiler — context-scope integration", () => {
+  it("renders the derived workspace scope and current-step working set, bounded", () => {
+    const task = contract();
+    const workspaceScope = createWorkspaceScope({
+      verifiedFiles: [
+        {
+          path: "packages/core/src/godot/scene/scene-parser.ts",
+          confidence: "verified",
+          view: "exact",
+          revision: "rev_".padEnd(36, "a"),
+          evidence: "read:packages/core/src/godot/scene/scene-parser.ts",
+        },
+      ],
+      candidateFiles: [
+        {
+          path: "packages/core/src/godot/scene/scene-model.ts",
+          confidence: "candidate",
+          view: "none",
+        },
+        {
+          path: "packages/core/src/godot/scene/relationship-index.ts",
+          confidence: "candidate",
+          view: "none",
+        },
+      ],
+    });
+    const activeWorkingSet = createActiveWorkingSet({
+      stepId: "s1",
+      files: [
+        {
+          path: "packages/core/src/godot/scene/scene-parser.ts",
+          reason: "direct task target",
+          view: "exact",
+        },
+      ],
+    });
+    const pack = buildExecutorContextPack({
+      contract: task,
+      plan: plan(task),
+      executionContract: { id: DEFAULT_EXECUTION_CONTRACT.id, revision: 1 },
+      milestone: S3M8_MILESTONE_MANIFEST,
+      workspaceScope,
+      activeWorkingSet,
+    });
+    const brief = compileExecutorBrief({
+      contract: task,
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      pack,
+      milestone: S3M8_MILESTONE_MANIFEST,
+    });
+    expect(brief.workspaceVerifiedFiles).toEqual(["packages/core/src/godot/scene/scene-parser.ts"]);
+    expect(brief.workingSetFiles).toEqual([
+      "packages/core/src/godot/scene/scene-parser.ts (direct task target)",
+    ]);
+    const rendered = renderExecutorBrief(brief);
+    expect(rendered).toContain("VERIFIED WORKSPACE FILES");
+    expect(rendered).toContain("WORKING SET (CURRENT STEP)");
+    // Candidate paths appear, but never candidate contents (views are none).
+    expect(rendered).not.toContain("scene-model.ts");
+  });
+
+  it("is capability-aware: irrelevant unavailable capability guidance is omitted", () => {
+    const task = contract();
+    const snapshot: CapabilitySnapshot = {
+      runtime: { version: "0", nodeMajor: 24, platform: "linux" },
+      providers: [
+        {
+          profileId: "p",
+          supported: true,
+          configured: true,
+          toolCalling: true,
+          state: "available",
+          reason: null,
+        },
+      ],
+      sandbox: {
+        backendId: "b",
+        backendState: "unavailable",
+        selectedProfileId: "develop-offline",
+        enforcement: {
+          filesystemReadRestriction: true,
+          filesystemWriteRestriction: true,
+          networkRestriction: true,
+          processTreeRestriction: true,
+        },
+        unrestrictedFallback: false,
+        state: "unavailable",
+        reason: "windows",
+      },
+      workspace: {
+        root: "/tmp/w",
+        readable: true,
+        protectedPathsActive: true,
+        gitAvailable: true,
+        checkpointStoreAccessible: true,
+        revisionRegistryOperational: true,
+        state: "available",
+        reason: null,
+      },
+      godot: {
+        detected: true,
+        selected: true,
+        version: "4.4",
+        edition: "standard",
+        fingerprint: "fp",
+        support: "yes",
+        engineProfileAvailable: true,
+        apiCacheStale: false,
+        recoveryProbeState: "never",
+        lspState: "unavailable",
+        state: "available",
+        reason: null,
+      },
+      references: {
+        configuredCount: 1,
+        readyCount: 1,
+        failedCount: 0,
+        state: "available",
+        reason: null,
+      },
+      research: {
+        sourceKinds: [],
+        policyRule: "deny",
+        gate: "blocked_by_policy",
+        state: "blocked_by_policy",
+        reason: "denied",
+      },
+      tools: {
+        projectedAvailable: 10,
+        projectedGated: 0,
+        projectedHidden: 0,
+        state: "available",
+        reason: null,
+      },
+    };
+    const brief = compileExecutorBrief({
+      contract: task,
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      pack: packFor(task, S3M8_MILESTONE_MANIFEST, {
+        capabilitySnapshot: snapshot,
+        capabilityAreas: ["godot"],
+      }),
+      milestone: S3M8_MILESTONE_MANIFEST,
+    });
+    expect(brief.capabilityLimits).toEqual([]);
+    // Restricting to the godot area drops guidance about unrelated
+    // unavailable capabilities (research/sandbox) entirely.
+    const briefAll = compileExecutorBrief({
+      contract: task,
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      pack: packFor(task, S3M8_MILESTONE_MANIFEST, { capabilitySnapshot: snapshot }),
+      milestone: S3M8_MILESTONE_MANIFEST,
+    });
+    expect(briefAll.capabilityLimits).toContain("sandbox: unavailable");
+    expect(briefAll.capabilityLimits).toContain("research: denied by policy");
+  });
+
+  it("redacts known secret-shaped tokens from the rendered brief", () => {
+    const task = contract("Implement read-only inspection using token sk-abcdefgh12345678.");
+    const brief = compileExecutorBrief({
+      contract: task,
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      pack: packFor(task),
+      milestone: S3M8_MILESTONE_MANIFEST,
+    });
+    const rendered = renderExecutorBrief(brief);
+    expect(rendered).not.toContain("sk-abcdefgh12345678");
+    expect(rendered).toContain("<secret>");
+  });
+
+  it("never carries private continuation or reasoning content into the pack or brief", () => {
+    const task = contract();
+    const privatePlan = createTaskPlan({
+      id: "plan-1",
+      taskId: task.id,
+      taskContractRevision: task.revision,
+      depth: "light",
+      content: {
+        objective: task.request,
+        scope: { inScope: ["parsing"], outOfScope: [] },
+        nonGoals: [],
+        touchpoints: [
+          {
+            id: "t1",
+            path: "packages/core/src/godot/scene/scene-parser.ts",
+            confidence: "verified",
+            revision: "rev_".padEnd(36, "a"),
+          },
+        ],
+        constraints: [],
+        risks: [],
+        steps: [{ id: "s1", title: "Parse", expectedTouchpoints: ["t1"] }],
+        validation: { checks: ["tests"] },
+        rationale: "PRIVATE-CONTINUATION-MARKER: step s2 follows the parser.",
+      },
+      createdAt: 1,
+    });
+    const pack = buildExecutorContextPack({
+      contract: task,
+      plan: privatePlan,
+      executionContract: { id: DEFAULT_EXECUTION_CONTRACT.id, revision: 1 },
+      milestone: S3M8_MILESTONE_MANIFEST,
+    });
+    expect(JSON.stringify(pack)).not.toContain("PRIVATE-CONTINUATION-MARKER");
+    const brief = compileExecutorBrief({
+      contract: task,
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      pack,
+      milestone: S3M8_MILESTONE_MANIFEST,
+    });
+    expect(JSON.stringify(brief)).not.toContain("PRIVATE-CONTINUATION-MARKER");
+  });
+
+  it("S3M8 brief is materially smaller than a standalone milestone prompt while preserving unique requirements", () => {
+    const task = contract("Stage 3 / Milestone 8: Read-Only Godot Scene and Resource Intelligence");
+    const brief = compileExecutorBrief({
+      contract: task,
+      executionContract: DEFAULT_EXECUTION_CONTRACT,
+      pack: packFor(task),
+      milestone: S3M8_MILESTONE_MANIFEST,
+    });
+    const rendered = renderExecutorBrief(brief);
+    // The standalone S3M8 prompt was ~1500 lines / tens of KB; the compiled
+    // brief is a compact delta artifact (hard bound well below that).
+    expect(rendered.length).toBeLessThan(4096);
+    // Unique requirements survive: milestone identity, invariants, acceptance ids.
+    expect(rendered).toContain("Milestone Manifest: S3M8 rev 1");
+    expect(rendered).toContain("S3M8.PARSE.TSCN");
+    expect(rendered).toContain("S3M8.SECURITY.NO_PROCESS");
+    expect(rendered).toContain("S3M8.SECURITY.NO_MUTATION");
   });
 });

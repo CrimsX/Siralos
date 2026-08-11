@@ -92,6 +92,19 @@ export function sanitizeSafeDoctorText(text: string): string {
   return sanitized;
 }
 
+/**
+ * Secret-only redaction (no path rewriting): used at output boundaries
+ * that legitimately carry repository-relative paths, such as the
+ * rendered executor brief. Shares the single SECRET_PATTERNS owner.
+ */
+export function sanitizeSecretsOnly(text: string): string {
+  let sanitized = text;
+  for (const pattern of SECRET_PATTERNS) {
+    sanitized = sanitized.replace(pattern, "<secret>");
+  }
+  return sanitized;
+}
+
 export function toSafeReport(report: DoctorReport): SafeDoctorReport {
   const errorCategories: SafeDoctorErrorCategory[] = [];
   for (const area of report.requestedAreas) {

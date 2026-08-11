@@ -7,7 +7,10 @@ import type { CapabilitySnapshot } from "../doctor/doctor-model.js";
 import type { ExecutionContract } from "./execution-contract.js";
 import type { MilestoneManifest } from "./milestone-manifest.js";
 import type { ArchitectureContextEntry } from "./architecture-context.js";
-import type { ExecutorContextPack } from "./context-pack.js";
+import type { DocumentationEntry } from "./documentation-context.js";
+import type { WorkspaceScope, ActiveWorkingSet } from "./workspace-scope.js";
+import type { NewFileRationale } from "./new-file-discipline.js";
+import type { ExecutorContextPack, ScopeSignalRef } from "./context-pack.js";
 import { buildExecutorContextPack } from "./context-pack.js";
 import type { ExecutorBrief } from "./brief-compiler.js";
 import { compileExecutorBrief, computeExecutorBriefFingerprint } from "./brief-compiler.js";
@@ -41,6 +44,18 @@ export interface ExecutorBriefingOptions {
   readonly getCapabilitySnapshot?: () => CapabilitySnapshot | null;
   /** Deterministic architecture index (defaults to the built-in index). */
   readonly architectureIndex?: readonly ArchitectureContextEntry[];
+  /** Derived task workspace scope (verified/candidate files, budgets). */
+  readonly workspaceScope?: WorkspaceScope | null;
+  /** Current plan-step working set. */
+  readonly activeWorkingSet?: ActiveWorkingSet | null;
+  /** Documentation index override (behavior fixtures inject doc trees). */
+  readonly documentationIndex?: readonly DocumentationEntry[];
+  /** Deterministic review signals (proliferation / scope expansion). */
+  readonly scopeSignals?: readonly ScopeSignalRef[];
+  /** Recorded new-production-file rationales. */
+  readonly newFiles?: readonly NewFileRationale[];
+  /** Restrict capability guidance to these areas (capability-aware). */
+  readonly capabilityAreas?: readonly string[];
 }
 
 export interface ExecutorBriefing {
@@ -138,6 +153,18 @@ export function createExecutorBriefing(options: ExecutorBriefingOptions): Execut
       capabilitySnapshot: options.getCapabilitySnapshot?.() ?? null,
       findings: snapshot?.currentFindings ?? [],
       ...(snapshot === null ? {} : { planApproval: snapshot.plan.approval }),
+      ...(options.workspaceScope === undefined ? {} : { workspaceScope: options.workspaceScope }),
+      ...(options.activeWorkingSet === undefined
+        ? {}
+        : { activeWorkingSet: options.activeWorkingSet }),
+      ...(options.documentationIndex === undefined
+        ? {}
+        : { documentationIndex: options.documentationIndex }),
+      ...(options.scopeSignals === undefined ? {} : { scopeSignals: options.scopeSignals }),
+      ...(options.newFiles === undefined ? {} : { newFiles: options.newFiles }),
+      ...(options.capabilityAreas === undefined
+        ? {}
+        : { capabilityAreas: options.capabilityAreas }),
     });
     return compileExecutorBrief({
       contract,
