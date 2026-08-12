@@ -293,7 +293,7 @@ describe("S3M11 effect — review repair requires fresh artifacts", () => {
       developmentId: "unified",
       status: "blocking_findings",
     });
-    let current = harness.runtime.getTask(harness.runtime.latestTask()!.taskId)!.snapshot();
+    const current = harness.runtime.getTask(harness.runtime.latestTask()!.taskId)!.snapshot();
     expect(current.reviewStatus).toBe("findings");
 
     // The reviewer never mutated: prior changes stay on disk, and no

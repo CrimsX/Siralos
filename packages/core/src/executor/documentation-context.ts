@@ -480,7 +480,7 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     id: "adr:0027",
     path: "docs/adr/0027-unified-godot-native-development-workflow.md",
     kind: "adr",
-    concerns: ["godot", "godot-static-inspection", "workspace", "task-runtime", "security"],
+    concerns: ["godot", "workflow", "task-runtime", "security"],
     status: "accepted",
     domains: ["godot", "workflow", "mutation", "task-runtime", "security"],
     paths: [

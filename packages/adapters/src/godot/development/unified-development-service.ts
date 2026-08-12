@@ -271,7 +271,15 @@ export function createUnifiedDevelopmentService(
           }
           break;
         }
-        default:
+        case "set_property":
+        case "remove_property":
+        case "add_node":
+        case "remove_node":
+        case "add_signal_connection":
+        case "remove_signal_connection":
+        case "create_subresource":
+        case "update_subresource":
+        case "remove_subresource":
           break;
       }
     }
@@ -1080,13 +1088,15 @@ export function createUnifiedDevelopmentService(
     },
     prepareUnified,
     applyUnified,
-    async cancel() {
+    cancel(): Promise<void> {
       changeSet = null;
       preparedFilesByTarget = new Map();
+      return Promise.resolve();
     },
-    async close() {
+    close(): Promise<void> {
       changeSet = null;
       preparedFilesByTarget = new Map();
+      return Promise.resolve();
     },
     get onEvent(): ((event: DevelopmentEvent) => void) | undefined {
       return eventSlot;

@@ -90,9 +90,9 @@ async function makeService(root: string) {
     native: mutation,
     diagnostics: parser.service,
     language: language.service,
-    impact: async (input) => {
+    impact: (input) => {
       impactCalls.push(input);
-      return null;
+      return Promise.resolve(null);
     },
   });
   return { revisions, store, service, language, parser, impactCalls };
