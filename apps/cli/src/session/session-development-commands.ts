@@ -231,9 +231,15 @@ export async function runDevelopCommand(
         brief?.documentationSources ?? [],
         sessionInfo.workspaceRoot,
       );
+      // Iteration identity: subsequent develop runs append another
+      // execution-input record, so the iteration derives from the prior
+      // count (chronological identity, ADR 0028).
+      const priorRecords = inputHandle
+        .activityLog()
+        .filter((event) => event.type === "execution_input_recorded").length;
       const manifest = createExecutionInputManifest({
         taskId: task.taskId,
-        iteration: 1,
+        iteration: priorRecords + 1,
         inputs: [
           { id: "taskContract", revision: inputHandle.contract().revision, digest: contractDigest },
           ...(currentPlan === null

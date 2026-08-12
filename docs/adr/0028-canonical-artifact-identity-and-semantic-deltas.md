@@ -162,3 +162,11 @@ authorized`. Capability policy, approvals, provenance, sandbox, and
   agent handoffs, and `/evolve` provenance.
 - Existing revisions, approvals, evidence, and sandbox authority are
   unchanged; Stage 3 workflows remain green.
+- **Enforcement staging**: the staleness rules and the review-input /
+  acceptance-evidence / tool-surface / capability manifests are
+  implemented as the derived identity vocabulary with unit and effect
+  tests; production enforcement is wired where existing policy already
+  invalidates (contract revision → plan invalidation, digest-bound plan
+  approval, execution-input recording in `/develop`). The remaining
+  rules are advisory derived context until their consumers adopt them —
+  they never grant or weaken authority in the meantime.
