@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
 import {
@@ -633,7 +633,19 @@ function buildGuidanceManifest(
         if (!handleStats.isFile() || handleStats.size > maxGuidanceBytes) {
           continue;
         }
-        const bytes = readFileSync(fd);
+        // Read exactly the fstat-sized bytes into a bounded buffer: a
+        // same-user append between fstat and read cannot grow the read
+        // beyond the cap.
+        const buffer = Buffer.alloc(handleStats.size);
+        let readTotal = 0;
+        while (readTotal < handleStats.size) {
+          const readNow = readSync(fd, buffer, readTotal, handleStats.size - readTotal, readTotal);
+          if (readNow <= 0) {
+            break;
+          }
+          readTotal += readNow;
+        }
+        const bytes = buffer.subarray(0, readTotal);
         const kind = relativePath.endsWith("AGENTS.md")
           ? relativePath === "AGENTS.md"
             ? "root-agents"
