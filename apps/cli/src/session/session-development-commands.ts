@@ -233,7 +233,8 @@ export async function runDevelopCommand(
       );
       // Iteration identity: subsequent develop runs append another
       // execution-input record, so the iteration derives from the prior
-      // count (chronological identity, ADR 0028).
+      // count (chronological identity, ADR 0028). Iteration restarts at 1
+      // for a new session (no persistence across sessions at this stage).
       const priorRecords = inputHandle
         .activityLog()
         .filter((event) => event.type === "execution_input_recorded").length;

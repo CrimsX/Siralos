@@ -80,7 +80,7 @@ export interface ResearchDocument {
    * evidence identity.
    */
   readonly contentDigest: string;
-  /** SHA-256 of the exact raw artifact bytes when available; null otherwise. */
+  /** SHA-256 of the raw fetched text (as decoded by the transport); null when unavailable. */
   readonly rawArtifactDigest: string | null;
 }
 

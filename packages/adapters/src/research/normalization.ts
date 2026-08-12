@@ -536,7 +536,8 @@ export function buildResearchDocument(options: BuildResearchDocumentOptions): Re
     }
   }
   // Content identity (ADR 0028): recompute the digest over the exact
-  // FINAL normalized content (raw digest is content-independent).
+  // FINAL normalized content (the raw digest covers the fetched text as
+  // decoded by the transport, which is what the rawText carries).
   return {
     ...document,
     contentDigest: computeResearchDocumentContentDigest(document),
