@@ -46,7 +46,7 @@ delta    → what materially changed
 
 - **Canonical digest primitive** (`identity/artifact-digest.ts`): typed
   `ArtifactDigest { algorithm: "sha256", artifactType, schemaVersion,
-  value }` over a domain-separated canonical payload:
+value }` over a domain-separated canonical payload:
 
   ```text
   SHA-256("solaris:<ArtifactType>:v<SchemaVersion>\0" + canonical JSON)
@@ -59,7 +59,7 @@ delta    → what materially changed
   source bytes are never normalized before those hashes.
 
 - **Digests are not authority**: `digest match ≠ trusted ≠ approved ≠
-  authorized`. Capability policy, approvals, provenance, sandbox, and
+authorized`. Capability policy, approvals, provenance, sandbox, and
   evidence confidence remain authoritative. The plan-approval gate still
   requires the runtime approval record; a matching digest alone grants
   nothing (effect test 24).

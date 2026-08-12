@@ -30,7 +30,7 @@ function plan(task: TaskContract): TaskPlan {
     id: "plan-1",
     taskId: task.id,
     taskContractDigest: "a".repeat(64),
-      taskContractRevision: task.revision,
+    taskContractRevision: task.revision,
     depth: "light",
     content: {
       objective: task.request,
