@@ -64,6 +64,17 @@ export interface TaskRuntimeSnapshot {
   readonly milestoneManifest: { readonly id: string; readonly version: number } | null;
   /** Fingerprint of the executor brief compiled at task start, when any. */
   readonly executorBriefFingerprint: string | null;
+  /**
+   * Digest of the exact execution-input environment at task start (ADR
+   * 0028), when the host recorded it.
+   */
+  readonly executionInputDigest: string | null;
+  /** Digest of the exact guidance manifest at task start (ADR 0028). */
+  readonly guidanceManifestDigest: string | null;
+  /** Digest of the projected tool-surface manifest at task start (ADR 0028). */
+  readonly toolSurfaceManifestDigest: string | null;
+  /** Digest of the effective capability snapshot at task start (ADR 0028). */
+  readonly capabilitySnapshotDigest: string | null;
 }
 
 export interface TaskRuntimeSnapshotSources {
@@ -80,6 +91,14 @@ export interface TaskRuntimeSnapshotSources {
   readonly executionContract?: { readonly id: string; readonly revision: number } | null;
   readonly milestoneManifest?: { readonly id: string; readonly version: number } | null;
   readonly executorBriefFingerprint?: string | null;
+  /** Exact execution-input digest at task start (ADR 0028). */
+  readonly executionInputDigest?: string | null;
+  /** Guidance-manifest digest at task start (ADR 0028). */
+  readonly guidanceManifestDigest?: string | null;
+  /** Tool-surface-manifest digest at task start (ADR 0028). */
+  readonly toolSurfaceManifestDigest?: string | null;
+  /** Capability-snapshot digest at task start (ADR 0028). */
+  readonly capabilitySnapshotDigest?: string | null;
 }
 
 /** Deterministic revision identity for a capability policy. */
@@ -114,6 +133,10 @@ export function createTaskRuntimeSnapshot(
         ? null
         : { id: sources.milestoneManifest.id, version: sources.milestoneManifest.version },
     executorBriefFingerprint: sources.executorBriefFingerprint ?? null,
+    executionInputDigest: sources.executionInputDigest ?? null,
+    guidanceManifestDigest: sources.guidanceManifestDigest ?? null,
+    toolSurfaceManifestDigest: sources.toolSurfaceManifestDigest ?? null,
+    capabilitySnapshotDigest: sources.capabilitySnapshotDigest ?? null,
   };
   return deepFreeze(snapshot);
 }

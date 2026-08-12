@@ -86,6 +86,13 @@ export interface ChangeReviewResult {
   readonly status: ChangeReviewResultStatus;
   readonly findings: readonly ChangeReviewFinding[];
   readonly message: string | null;
+  /**
+   * Exact review-input identity (ADR 0028): the digest of the
+   * ReviewInputManifest this verdict was produced under. A changed
+   * source/change/evidence set yields a different digest, so an old
+   * review can never silently apply to materially changed content.
+   */
+  readonly reviewedInputDigest?: string | null;
 }
 
 /**

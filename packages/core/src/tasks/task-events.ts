@@ -24,6 +24,14 @@ export type TaskActivityEvent =
       readonly atMs: number;
     }
   | {
+      readonly type: "execution_input_recorded";
+      readonly sequence: number;
+      readonly taskId: TaskId;
+      /** Exact ExecutionInputManifest digest of this execution iteration. */
+      readonly inputManifestDigest: string;
+      readonly atMs: number;
+    }
+  | {
       readonly type: "task_phase_changed";
       readonly sequence: number;
       readonly taskId: TaskId;

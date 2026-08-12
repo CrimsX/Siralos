@@ -210,6 +210,17 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
       activityLog(): readonly TaskActivityEvent[] {
         return record.activity.map((event) => structuredClone(event));
       },
+      recordExecutionInputManifest(inputManifestDigest: string): void {
+        if (!/^[0-9a-f]{64}$/.test(inputManifestDigest)) {
+          throw new Error(
+            "An execution-input manifest digest must be 64 lowercase hex characters.",
+          );
+        }
+        appendActivity(record, {
+          type: "execution_input_recorded",
+          inputManifestDigest,
+        });
+      },
 
       transitionPhase(phase: TaskPhase): StepOpResult {
         return transitionTaskPhase(record, phase, hooks);

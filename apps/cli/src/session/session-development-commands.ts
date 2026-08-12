@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
 import {
   classifyDevelopmentSurface,
@@ -7,9 +10,12 @@ import {
   containsProtectedConfigReference,
   createAdHocTaskContract,
   createDevelopmentTaskFlow,
+  createExecutionInputManifest,
+  createGuidanceManifest,
   createPlanningFlow,
   createTaskRuntimeSnapshot,
   planTouchpointStaleness,
+  type GuidanceManifest,
 } from "@solaris/core";
 import {
   formatCancelReport,
@@ -114,9 +120,16 @@ export async function runDevelopCommand(
       // the manifest identity and the initial brief fingerprint.
       snapshotExtras: ({ taskId, contract }) => {
         const brief = sessionInfo.briefing.compileForRequest(taskId, contract.request);
+        // Content identity (ADR 0028): the exact guidance selected for the
+        // task, digest-backed; read bounded, never the whole repository.
+        const guidance = buildGuidanceManifest(
+          brief?.documentationSources ?? [],
+          sessionInfo.workspaceRoot,
+        );
         return {
           milestoneManifest: brief?.milestone ?? null,
           executorBriefFingerprint: brief === null ? null : computeExecutorBriefFingerprint(brief),
+          ...(guidance === null ? {} : { guidanceManifestDigest: guidance.aggregateDigest }),
         };
       },
     });
@@ -206,6 +219,53 @@ export async function runDevelopCommand(
       io.write(`  \u2715 ${blocked}\n`);
       await cancelActiveDevelopment(io, sessionInfo);
       return;
+    }
+    // Content identity (ADR 0028): record the exact execution-input
+    // environment of this iteration in the task activity log.
+    const inputHandle = sessionInfo.tasks.getTask(task.taskId);
+    const currentPlan = inputHandle?.currentPlan() ?? null;
+    const contractDigest = inputHandle?.contract().digest.value ?? null;
+    if (inputHandle !== null && contractDigest !== null) {
+      const brief = sessionInfo.briefing.compileForRequest(task.taskId, request);
+      const guidance = buildGuidanceManifest(
+        brief?.documentationSources ?? [],
+        sessionInfo.workspaceRoot,
+      );
+      const manifest = createExecutionInputManifest({
+        taskId: task.taskId,
+        iteration: 1,
+        inputs: [
+          { id: "taskContract", revision: inputHandle.contract().revision, digest: contractDigest },
+          ...(currentPlan === null
+            ? [{ id: "taskPlan", revision: null, digest: null }]
+            : [
+                {
+                  id: "taskPlan",
+                  revision: currentPlan.revision,
+                  digest: currentPlan.digest.value,
+                },
+              ]),
+          {
+            id: "executionContract",
+            revision: sessionInfo.taskSources.executionContract?.revision ?? null,
+            digest: null,
+          },
+          ...(brief?.milestone === null || brief?.milestone === undefined
+            ? []
+            : [
+                {
+                  id: "milestone",
+                  revision: brief.milestone.version,
+                  digest: null,
+                },
+              ]),
+          ...(guidance === null
+            ? []
+            : [{ id: "guidance", revision: null, digest: guidance.aggregateDigest }]),
+          { id: "capability", revision: null, digest: null },
+        ],
+      });
+      inputHandle.recordExecutionInputManifest(manifest.digest);
     }
   } catch (error: unknown) {
     io.write(
@@ -514,4 +574,56 @@ function planOnlyBlockedReason(status: string): string {
     default:
       return "plan-only mode — planning failed";
   }
+}
+
+/**
+ * Digest-backed guidance manifest (ADR 0028): the exact documentation
+ * selected for the task, each with its content digest. Reads are bounded
+ * per document; a document that cannot be read is omitted (the manifest
+ * covers only exactly-representable guidance).
+ */
+function buildGuidanceManifest(
+  documentationSources: readonly string[],
+  workspaceRoot: string,
+): GuidanceManifest | null {
+  if (documentationSources.length === 0) {
+    return null;
+  }
+  const entries: {
+    id: string;
+    kind: "root-agents" | "nested-agents" | "architecture" | "adr" | "development";
+    path: string;
+    digest: string;
+  }[] = [];
+  for (const source of documentationSources.slice(0, 16)) {
+    const relative = source.replace(/^\.\//, "");
+    if (relative.includes("..")) {
+      continue;
+    }
+    try {
+      const absolute = join(workspaceRoot, ...relative.split("/"));
+      const bytes = readFileSync(absolute);
+      if (bytes.length > 512 * 1024) {
+        continue;
+      }
+      const kind = relative.endsWith("AGENTS.md")
+        ? relative === "AGENTS.md"
+          ? "root-agents"
+          : "nested-agents"
+        : relative.startsWith("docs/adr/")
+          ? "adr"
+          : relative.startsWith("docs/architecture/")
+            ? "architecture"
+            : "development";
+      entries.push({
+        id: kind === "adr" ? `adr:${relative.slice(9, 13)}` : `doc:${relative}`,
+        kind,
+        path: relative,
+        digest: createHash("sha256").update(bytes).digest("hex"),
+      });
+    } catch {
+      // Unreadable guidance is omitted; the manifest stays exact.
+    }
+  }
+  return entries.length === 0 ? null : createGuidanceManifest(entries);
 }

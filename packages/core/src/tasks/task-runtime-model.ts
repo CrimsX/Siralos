@@ -89,6 +89,12 @@ export interface TaskHandle {
   runtimeSnapshot(): TaskRuntimeSnapshot;
   /** Append-only activity records (fresh copies). */
   activityLog(): readonly TaskActivityEvent[];
+  /**
+   * Record the exact execution-input manifest digest of an execution
+   * iteration (ADR 0028). Digest references only — the full manifest
+   * stays with the host.
+   */
+  recordExecutionInputManifest(inputManifestDigest: string): void;
 
   /** Host-controlled phase transition; validated against the transition table. */
   transitionPhase(phase: TaskPhase): StepOpResult;
