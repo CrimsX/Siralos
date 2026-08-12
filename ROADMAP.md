@@ -1,6 +1,6 @@
-# Solaris roadmap
+# Siralos roadmap
 
-Solaris keeps six public product stages. A stage can have its contracts and
+Siralos keeps six public product stages. A stage can have its contracts and
 adapters implemented while still being operationally incomplete because an
 unsafe filesystem or process boundary intentionally fails closed.
 
@@ -24,7 +24,7 @@ unsafe filesystem or process boundary intentionally fails closed.
   recovery mirrors, diagnostics, LSP startup, change application, validation,
   and quality execution remain intentionally unavailable for the same identity
   reasons.
-- Stage 3 is active. Milestones 1–11 are implemented and tested. The
+- Stage 3 is complete: milestones 1–11 are implemented and tested. The
   cross-cutting Content Identity & Delta Verification milestone (ADR 0028)
   is implemented: typed canonical artifact digests, digest-bound
   TaskContract/TaskPlan identity and plan approvals, execution-input /
@@ -52,6 +52,16 @@ unsafe filesystem or process boundary intentionally fails closed.
   acceptance, the Executor Context Pack, the deterministic Executor Brief
   Compiler, and the `/brief` / `/milestone` inspection commands. It is not
   a roadmap stage.
+- **Stage 3R is active.** R1 (Siralos rename + Rust engineering standard +
+  domain-neutral Rust foundation, ADR 0032) is complete: the project is
+  renamed to Siralos everywhere (identity ratchet enforced), the
+  TypeScript implementation is documented as the Siralos behavioral
+  reference/migration oracle, a canonical Rust Engineering Guide exists
+  (`docs/development/RUST_STYLE.md`), and the Rust workspace
+  (`siralos-core` / `siralos-adapters` / `siralos-cli`, edition 2024,
+  pinned toolchain, rustfmt/clippy gates, domain-neutral core, no Godot
+  package) builds and tests green with no Godot domain present. R2
+  (Differential Behavioral Harness) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -71,7 +81,7 @@ Implemented surface:
 - mutation/checkpoint/undo, process, and Git inspection contracts plus their
   truthful diagnostics and fail-closed adapters
 
-Operational exit remains blocked until Solaris can bind create, replace, delete,
+Operational exit remains blocked until Siralos can bind create, replace, delete,
 cleanup, and executable launch to the exact objects validated and approved. The
 current runtime must not re-enable pathname-based approximations.
 
@@ -167,6 +177,45 @@ Implemented foundations:
     validation, read-only independent review, bounded repair with fresh
     artifacts only, host-observed acceptance, and structured blocked
     dispositions (ADR 0027)
+
+## 3R. Rust migration
+
+Goal: migrate the Siralos product to an idiomatic Rust implementation
+while the TypeScript implementation remains the behavioral reference
+(migration oracle) until later 3R milestones retire it.
+
+Implemented (R1 — Siralos Rename + Rust Engineering Standard +
+Domain-Neutral Foundation, ADR 0032):
+
+- The project identity is **Siralos** everywhere (CLI `siralos`,
+  environment prefix `SIRALOS_`, state directory `~/.siralos`, npm scope
+  `@siralos`); an identity ratchet (`npm run check:identity`) prevents
+  regressions, with narrow documented exclusions only for the
+  verification mechanism itself.
+- The TypeScript implementation is preserved and renamed; it is the
+  Siralos behavioral reference. Behavioral parity is explicitly
+  distinguished from structural parity; refactoring during porting and
+  evidence-driven optimization are required policies.
+- The authoritative **Siralos Rust Style & Engineering Guide**
+  (`docs/development/RUST_STYLE.md`) governs all Rust code: edition
+  2024, rustfmt (max_width 79) and Clippy (`-D warnings`) as required
+  gates, typed errors, deterministic ordering, no-UTF-8-assumption path
+  handling, `#![forbid(unsafe_code)]`, and explicit dependency/async/
+  concurrency policy.
+- The domain-neutral Rust workspace exists: `siralos-core`
+  (domain-neutral host semantics; compiles with no Godot domain present,
+  enforced by `npm run check:rust`), `siralos-adapters` (infrastructure
+  ownership), `siralos-cli` (the `siralos` binary). Dependency direction
+  `cli → adapters → core` is machine-enforced; no placeholder or
+  hypothetical domain crates exist.
+- Optional-domain product policy: Godot is not installed, enabled,
+  auto-detected, auto-recommended, or auto-downloaded by default; the
+  user must explicitly request it. No marketplace or plugin ecosystem is
+  implemented.
+
+Next: Stage 3R — R2 (Differential Behavioral Harness): differential
+verification of Rust candidate behavior against the TypeScript
+reference.
 
 ### Next: Stage 4 — Runtime and visual QA
 

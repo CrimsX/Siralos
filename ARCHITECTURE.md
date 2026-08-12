@@ -2,46 +2,46 @@
 
 ## Overview
 
-Solaris is a modular monolith: one repository, one npm workspace, one process, and clearly separated layers. See `docs/adr/0001-modular-monolith.md` for the decision record.
+Siralos is a modular monolith: one repository, one npm workspace, one process, and clearly separated layers. See `docs/adr/0001-modular-monolith.md` for the decision record.
 
 ```text
-@Solaris CLI (apps/cli)
+@Siralos CLI (apps/cli)
     │  input parsing, rendering, process lifecycle
     │
-    ├──→ @solaris/core  (provider port + application)
+    ├──→ @siralos/core  (provider port + application)
     │
     └──→ composition root (bootstrap/)
              │
-             └──→ @solaris/adapters (concrete provider)
+             └──→ @siralos/adapters (concrete provider)
                        │
-                       └──→ @solaris/core ports
+                       └──→ @siralos/core ports
 ```
 
 ## Core (`packages/core`)
 
-Core owns Solaris application behaviour and its external contracts:
+Core owns Siralos application behaviour and its external contracts:
 
 - Conversation model (`ConversationItem` union)
 - Provider request/event contracts and the `ModelProvider` port
 - Tool contracts and the immutable tool registry
 - Application events and the bounded provider/tool loop
-- The security model: `Capability`/`CapabilityPolicy`, built-in `SandboxProfile`s (`inspect`, `develop-offline`, plus the internal `validation-offline` used only for commands and `godot-probe-offline` used only for engine probes), the pure `evaluatePermission` function, the `SandboxBackend` port, classified `SandboxError` codes, and the `SolarisSecurity` facade (`evaluateCapability`, `checkSandbox`)
+- The security model: `Capability`/`CapabilityPolicy`, built-in `SandboxProfile`s (`inspect`, `develop-offline`, plus the internal `validation-offline` used only for commands and `godot-probe-offline` used only for engine probes), the pure `evaluatePermission` function, the `SandboxBackend` port, classified `SandboxError` codes, and the `SiralosSecurity` facade (`evaluateCapability`, `checkSandbox`)
 - The provider-neutral development-command contracts: `CommandRunner` preparation/execution contracts, the immutable `CommandRunnerRegistry`, `COMMAND_LIMITS`, the canonical command digest, the opaque single-use `PreparedCommand`, the `PreparedCommandTool` contract for `process.run`, and the `CommandApplicationEvent`/audit model
 
 Core imports no Node infrastructure modules, no adapters, no CLI code, no terminal libraries, and no OS sandbox runtime. It never inspects the parent environment and never spawns processes. Architecture checks enforce all of this.
 
 ## Application layer
 
-`createSolarisApplication({ provider, tools, maxToolRounds? })` returns the application: `sendPrompt(text, signal?)` streams `ApplicationEvent`s and `getStatus()` reports provider, state, and item count. State is private; only immutable views are exposed. The application owns conversation history, which providers must not.
+`createSiralosApplication({ provider, tools, maxToolRounds? })` returns the application: `sendPrompt(text, signal?)` streams `ApplicationEvent`s and `getStatus()` reports provider, state, and item count. State is private; only immutable views are exposed. The application owns conversation history, which providers must not.
 
-The security facade (`createSolarisSecurity({ backend, policy, profile })`) sits beside the application in the composition root: `evaluateCapability` applies the pure permission evaluator, and `checkSandbox()` streams `sandbox_check_started` / `sandbox_check_completed` events from the backend's `inspect()`. The facade is consumed today by CLI diagnostics; future process and write tools will be gated through it before any backend call.
+The security facade (`createSiralosSecurity({ backend, policy, profile })`) sits beside the application in the composition root: `evaluateCapability` applies the pure permission evaluator, and `checkSandbox()` streams `sandbox_check_started` / `sandbox_check_completed` events from the backend's `inspect()`. The facade is consumed today by CLI diagnostics; future process and write tools will be gated through it before any backend call.
 
 ## Security model
 
 - **Capability policy** (`CapabilityPolicy`) maps `workspace.read`, `workspace.write`, `process.execute`, and `network.outbound` to `allow` / `ask` / `deny`. Missing rules fail closed; explicit denies win; a profile can never broaden a denied policy; no built-in profile enables network.
 - **Profiles**: `inspect` (read-only, no processes, no network — the default), `develop-offline` (workspace writes and process execution both require one-time approval, network denied, protected metadata paths, minimal environment, timeouts, output limits), `validation-offline` (internal: command execution is bound to a read-only workspace regardless of the user profile — no command can execute at this stage because both runners fail closed as unavailable), and `godot-probe-offline` (internal: the effective profile for engine probes — workspace excluded from readable roots, never writable — though engine probing is intentionally unavailable at this stage).
 - **Backend port** (`SandboxBackend`): `inspect()` reports truthful per-platform status and capabilities; `execute(request)` runs a trusted `SandboxedProcessRequest` (executable + arguments, never a raw shell string; optional bounded output streaming, explicit timeout, and per-stream hard limits) and returns a bounded `SandboxedProcessResult` with violations; `close()` resets backend state and is idempotent. Errors normalize into `SandboxError` codes.
-- **User configuration**: `~/.solaris/config.json` selects the profile and backend (defaults: `inspect`, `auto`). Unknown profiles/backends fail validation; project repositories cannot broaden these settings; `validation-offline` is not selectable.
+- **User configuration**: `~/.siralos/config.json` selects the profile and backend (defaults: `inspect`, `auto`). Unknown profiles/backends fail validation; project repositories cannot broaden these settings; `validation-offline` is not selectable.
 - **Conformance**: `npm run test:sandbox` runs fixed internal probes (workspace read/write, outside-write denial, secret denial, network denial, descendant confinement, output limits, timeout, cancellation) plus validation-command probes (read-only workspace enforcement for root/child/grandchild/npm scripts, network and loopback denial, credential and `NODE_OPTIONS` absence, disabled npm pre/post hooks, closed stdin, output-limit termination, descendant termination on timeout and cancellation, no workspace artifacts, run-directory cleanup) against the real backend using temporary directories and fake secrets. Unavailable backends are reported loudly and never treated as secure. At this stage private run-directory creation and cleanup fail closed, so the suite cannot construct verified per-run directories and every probe reports skipped loudly with that reason — skipped is never treated as passed.
 
 ## Command execution
@@ -90,7 +90,7 @@ lock released
 
 - Runners are prepared/executed through the immutable runner registry; the concrete plans are opaque single-use objects that only their creating runner can translate back into an executable request (revalidated and rehashed). The digest covers runner id, executable identity and version, script path and complete SHA-256, arguments, working directory, profile, environment policy, timeout, output limits, stdin and network policy.
 - Command execution never spawns a process from core, the CLI, providers, the runners, or the Git adapter; only the sandbox adapter uses process APIs (Git always executes through the sandbox backend), and the architecture check rejects `shell: true`/`exec`/`execSync`/`spawnSync` in runtime code.
-- Private run directories are **unavailable at this stage**: the design (each run lives under `~/.solaris/runs/<workspace-fingerprint>/<run-id>/` with private `home/`, `tmp/`, `npm-cache/`, and a script cache; every path component verified with no-follow semantics before anything is created beneath it, exclusive creation, the runs root outside the workspace, and the sandbox granted exactly the current run directory) is not offered because Node offers no directory-relative (openat/mkdirat-style) or delete-by-handle primitive. The provider performs zero filesystem operations: creation reports `unavailable` before creating anything, and cleanup reports a truthful failure while preserving anything that exists; cleanup failures are always observed and reported.
+- Private run directories are **unavailable at this stage**: the design (each run lives under `~/.siralos/runs/<workspace-fingerprint>/<run-id>/` with private `home/`, `tmp/`, `npm-cache/`, and a script cache; every path component verified with no-follow semantics before anything is created beneath it, exclusive creation, the runs root outside the workspace, and the sandbox granted exactly the current run directory) is not offered because Node offers no directory-relative (openat/mkdirat-style) or delete-by-handle primitive. The provider performs zero filesystem operations: creation reports `unavailable` before creating anything, and cleanup reports a truthful failure while preserving anything that exists; cleanup failures are always observed and reported.
 - Git structured status before/after execution is a verification signal: a workspace change detected despite read-only enforcement marks `workspace_violation` and disables further commands for the session.
 - See `SECURITY.md` and ADR 0007 for the full model.
 
@@ -148,14 +148,14 @@ Adapters implement core-owned ports. Providers, concrete tools, configuration, e
 - `DeterministicFakeProvider` (id `deterministic-fake`): streams text responses in chunks, supports cancellation, and has synthetic tool scenarios (`list files`, `read README.md`, `search <text>`) that request registered tools and respond truthfully to their results. It never touches the filesystem or executes tools.
 - Read-only workspace tools: `workspace.list`, `workspace.read`, `workspace.search`. All three share one canonical containment implementation (`resolveWorkspacePath`), the explicit exclusion list (`node_modules`, `.git`, `dist`, `coverage`), and the `WORKSPACE_LIMITS` output limits. `workspace.read` returns the complete-file SHA-256.
 - Approved mutation tools: `workspace.create_file`, `workspace.edit_file`, `workspace.delete_file` — **all fail closed as `unavailable` before any write, approval, or checkpoint** (Node offers no directory-relative primitive; the tools are unavailable entry points). Their former preview/approval/application logic was largely deleted; what remains is the core contracts (prepared-command/digest/approval ports) and reusable tested primitives: write-path safety and protected-path enforcement (`mutation-paths.ts`, still used by the Git adapter for diff-path validation), the serialized mutation lock, exclusive temp-file staging (`mutation-temp.ts`), hash-based conflict detection (`mutation-hash.ts`), deterministic bounded diffs (`diff.ts`), and the identity-bound safe-replacement helpers (`safe-replacement.ts`) — the identity-bound commit design is documented as future work, not offered.
-- User configuration (`loadUserConfig`): reads `~/.solaris/config.json`, defaults to `inspect`/`auto`, and rejects unknown profiles or backends.
+- User configuration (`loadUserConfig`): reads `~/.siralos/config.json`, defaults to `inspect`/`auto`, and rejects unknown profiles or backends.
 - Child environments (`buildChildEnvironment`, `buildCommandEnvironment`): allowlist-based construction with denied credential patterns and fixed safe command values; the only sanctioned way to build a child environment.
 - Command layer (`src/process`): trusted npm CLI resolution (used by the conformance suite), the `node-script` and `npm-script` runners (both fail closed as unavailable: `isAvailable()` returns false for both, because the pinned Node runtime cannot bind execution to the approved script bytes — the script can reach internal surfaces such as `process.binding` (e.g. `spawn_sync`) to spawn an unconstrained interpreter, and the staged private copy can be substituted by a same-user process in the verify-to-launch window), the private run-directory provider (creation and cleanup both fail closed as `unavailable`: Node offers no directory-relative (openat/mkdirat-style) or delete-by-handle primitive, so a same-user process could substitute a verified parent between identity verification and a pathname-based create, and cleanup could delete a substituted object — the provider performs zero filesystem operations and nothing is ever created or deleted), and the `process.run` tool that would execute approved plans through the `SandboxBackend` under `validation-offline`, granting the sandbox exactly the current run directory when identity-bound run directories exist. No module in this layer spawns processes.
 - `AnthropicSandboxRuntimeBackend`: the first concrete `SandboxBackend`, wrapping `@anthropic-ai/sandbox-runtime@0.0.70` (pinned exactly). Only this module may import the runtime package. It enforces a deny-by-default host-read allowlist (deny `/` and re-allow the current run directory, the workspace when the profile allows it, the trusted runner executables, and the minimum system runtime paths on Linux/macOS; never reported generally available on Windows), gives every request its own per-execution filesystem/network configuration for its exact profile and run directory so no request can inherit a broader earlier profile and no request sees a shared sandbox home/temp or another run (requests with an explicit read-roots list receive exactly those identity-bound paths), serializes the complete global sandbox lifecycle (config selection, reset, initialize, wrap, spawn, execute, violations, cleanup) one request at a time with `close()` draining the queue, resets and reinitializes the shared manager when the effective configuration changes, streams bounded decoded output accounted on raw bytes with the hard limit enforced inside the crossing chunk, terminates the process tree on timeout/cancellation/output-limit, runs cleanup in `finally` on every path, and isolates failing output callbacks.
 - Conformance runner (`runSandboxConformance`): writes fixed fixture programs into a temporary workspace and executes them through the backend, reporting pass/fail per probe. Host-read probes use existing regular files in representative unapproved locations selected independently of the deny surface, plus cross-run isolation and bidirectional profile-isolation probes.
 - Godot adapters (`src/godot`): discovery (configured user installations — absolute paths only, edition hints — plus fixed-name PATH search with safe PATHEXT handling and macOS `.app` bundle resolution), the fail-closed probe runner (reports `unavailable` for every probe and never spawns the executable — the backend re-opens the staged copy's pathname at spawn time and a same-user process can substitute bytes between final verification and launch; no exec-by-handle primitive — so no engine profile can be produced), the engine-profile cache as an explicitly unavailable no-op component (never initialized, created, read, or written: `load()` is always a miss, `store()` returns a typed unavailable result, `count()` is 0, and the doctor reports it disabled — the earlier storage implementation was removed rather than retained as an unsafe surface), executable fingerprinting/version parsing/edition classification/selection ranking (designed to consume probe results), static project detection and profiling (rescans the complete bounded project on every inspection — no profile cache), and the `godot.inspect_engine` / `godot.inspect_project` tools. Only this adapter could ever invoke the engine, always through the sandbox backend; at this stage nothing spawns Godot, and providers never run Godot.
 
-The workspace root is the canonicalized directory Solaris was launched from; it is stored privately by the tools and displayed in `/status`. Provider adapters never import sandbox, environment, tool, checkpoint, git, or process modules — the architecture check enforces that boundary.
+The workspace root is the canonicalized directory Siralos was launched from; it is stored privately by the tools and displayed in `/status`. Provider adapters never import sandbox, environment, tool, checkpoint, git, or process modules — the architecture check enforces that boundary.
 
 ## CLI (`apps/cli`)
 
@@ -165,7 +165,7 @@ The CLI is an input/output adapter:
 - Parses every command in `COMMAND_CATALOG` (the `SlashCommand` union derives from it, and the session switch is exhaustiveness-checked against it) in a pure module separate from rendering
 - Renders application events incrementally
 - Handles process startup, EOF, `Ctrl+C`, and shutdown
-- Exposes the `solaris` binary and the composition root
+- Exposes the `siralos` binary and the composition root
 
 The CLI does not own conversation state, provider behaviour, or application policy. It never imports a concrete provider outside the composition root.
 
@@ -180,9 +180,9 @@ export async function createCliApplication(): Promise<CliApplication> {
   const policy = createDefaultPolicy(config.sandbox.profile);
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const sandbox = createAnthropicSandboxRuntimeBackend({ workspaceRoot, ... });
-  const security = createSolarisSecurity({ backend: sandbox, policy, profile });
+  const security = createSiralosSecurity({ backend: sandbox, policy, profile });
   const workspaceTools = [createWorkspaceListTool(workspaceRoot), /* ... */];
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider: createDeterministicFakeProvider(),
     tools: createToolRegistry(workspaceTools),
   });
@@ -203,16 +203,47 @@ CLI ───────────────→ Core
 - Core imports nothing from the workspace and no OS sandbox runtime.
 - Adapters import only core contracts; adapter providers never import adapter tools, sandbox, environment, checkpoint, git, or process modules; sandbox adapters never import providers.
 - The CLI imports core anywhere, and concrete adapters only in the composition root (tests may import adapters directly).
-- `process.env` is never inspected in package source; child environments are built from an explicit allowlist, and the sandbox wrapper's runtime-required environment is merged under strict rules (wrapper-only variables added, Solaris-controlled values win collisions, denied patterns fail closed, Windows keys normalized case-insensitively).
+- `process.env` is never inspected in package source; child environments are built from an explicit allowlist, and the sandbox wrapper's runtime-required environment is merged under strict rules (wrapper-only variables added, Siralos-controlled values win collisions, denied patterns fail closed, Windows keys normalized case-insensitively).
 - Direct `node:child_process` usage is limited to the sandbox backend module, the conformance runner, and test files (the `node:` prefix and the bare `child_process` spelling normalize to one rule); command runners and the Git adapter never spawn processes — Git executes through the sandbox backend.
 - Raw process execution (`shell: true`, `exec(`, `execSync(`, `spawnSync(`) is prohibited in runtime code, with documented exemptions only for test fixtures and the embedded conformance probe sources; the checks are a developer guardrail using structural TypeScript parsing (imports, re-exports, static dynamic imports, aliases, and call sites) plus regex/text checks for constructs parsing cannot represent.
 - Destructive filesystem APIs (`writeFile`, `unlink`, `rename`, `appendFile`, `createWriteStream`, `rm`, `rmSync`, and friends, including aliased and namespace forms) are limited to the workspace mutation modules, the conformance runner, the process adapter (run directories), and tests. Path-based recursive deletion (`rm`/`rmSync` with `recursive: true`) is prohibited in all production code even inside approved mutation directories: the rule resolves import bindings structurally, so direct, aliased, and namespace imports of `fs`, `node:fs`, `fs/promises`, and `node:fs/promises` are all caught, and the only exemptions are the exact host-side conformance runner file and test-support files — never a whole directory: Node offers no directory-handle-relative deletion primitive, so recursive removal cannot be identity-bound and is never offered. Non-recursive `rm` stays governed by the destructive-API location rule.
 - Git mutation commands are rejected in runtime code both as string tokens and structurally in spawn argument lists.
 - `npm run check:architecture` (see `scripts/check-architecture.mjs`) enforces these rules mechanically: prohibited imports, prohibited package dependencies, provider/sandbox isolation, process, environment, and write boundaries, and workspace dependency cycles all fail the check. It is a developer guardrail, not an OS security boundary; the checks use structural TypeScript parsing plus regex/text checks, and runtime-constructed module specifiers and string contents are documented limitations.
 
+## Rust candidate workspace (Stage 3R, ADR 0032)
+
+The Rust candidate implementation follows the same inward pattern with
+its own dependency direction, enforced by `npm run check:rust`:
+
+```text
+siralos-cli ─────────→ siralos-adapters ─→ siralos-core
+```
+
+- `siralos-core` owns domain-neutral host semantics and types. It must
+  not depend on adapters, on infrastructure, or on any optional domain
+  (Godot), and it compiles with the Godot domain completely absent.
+  Domain neutrality is enforced by a forbidden-symbol scan over core
+  sources plus Cargo.toml dependency rules (`scripts/check-rust-architecture.mjs`).
+- `siralos-adapters` owns infrastructure/adapters; it may depend only on
+  core.
+- `siralos-cli` is the composition boundary and the `siralos` binary; it
+  may depend only on core and adapters.
+- Exactly three crates exist; no placeholder or hypothetical domain
+  crates, no marketplace/plugin infrastructure.
+- `unsafe` Rust is forbidden by workspace lint
+  (`unsafe_code = "forbid"`) and by the architecture check; edition 2024,
+  a pinned toolchain, and rustfmt/clippy gates are enforced.
+- The authoritative engineering rules live in
+  `docs/development/RUST_STYLE.md`.
+
+The TypeScript implementation remains the behavioral reference
+(migration oracle) until later Stage 3R milestones retire it; behavior
+is preserved across migration, structure is deliberately redesigned
+(ADR 0032).
+
 ## Why a modular monolith
 
-One process with explicit module boundaries is the smallest structure that keeps UI, application logic, and infrastructure separable without introducing distributed orchestration, message buses, or deployment complexity. Solaris can grow its later stages inside this boundary and can extract packages later if a real need appears.
+One process with explicit module boundaries is the smallest structure that keeps UI, application logic, and infrastructure separable without introducing distributed orchestration, message buses, or deployment complexity. Siralos can grow its later stages inside this boundary and can extract packages later if a real need appears.
 
 ## Why the fake provider is an adapter
 
@@ -224,7 +255,7 @@ The application must remain usable without a terminal (headless tests, future Go
 
 ## Godot engine discovery and profiling
 
-Godot discovery and profiling follow the same inward pattern as the other capabilities: neutral contracts in core, a single implementation in adapters, thin commands in the CLI. The CLI never runs Godot itself; only the Godot probe adapter in `@solaris/adapters` invokes the engine, always through the sandbox backend. Providers never run Godot. Core remains Node-free and process-independent.
+Godot discovery and profiling follow the same inward pattern as the other capabilities: neutral contracts in core, a single implementation in adapters, thin commands in the CLI. The CLI never runs Godot itself; only the Godot probe adapter in `@siralos/adapters` invokes the engine, always through the sandbox backend. Providers never run Godot. Core remains Node-free and process-independent.
 
 ```text
 packages/core/src/godot/                 Godot models, classification, selection
@@ -247,8 +278,8 @@ packages/adapters/src/godot/
 apps/cli/                                Godot commands (/godot, /godot-installations,
                                          /godot-project, /godot-doctor), godot doctor,
                                          --godot-path / --godot-installation startup
-                                         flags, SOLARIS_GODOT /
-                                         SOLARIS_GODOT_INSTALLATION overrides
+                                         flags, SIRALOS_GODOT /
+                                         SIRALOS_GODOT_INSTALLATION overrides
 ```
 
 - **Core owns**: the Godot models (engine profile, version and release channel, edition, capability sets, support classification), classification rules, the deterministic selection policy with recorded rationale, compatibility assessment, the `GodotProbeRunner` and `GodotInspector` ports, and probe/selection events. Core never discovers, invokes, parses, or stores anything itself.
@@ -259,7 +290,7 @@ apps/cli/                                Godot commands (/godot, /godot-installa
 
 ## Godot API knowledge and GDScript diagnostics
 
-The knowledge and diagnostic layers follow the same inward pattern: neutral contracts in core, adapters own every process/filesystem/parse concern, the CLI renders. Providers and the CLI never spawn Godot; only the fixed runners in `@solaris/adapters` could, and at this stage they fail closed (ADR 0010).
+The knowledge and diagnostic layers follow the same inward pattern: neutral contracts in core, adapters own every process/filesystem/parse concern, the CLI renders. Providers and the CLI never spawn Godot; only the fixed runners in `@siralos/adapters` could, and at this stage they fail closed (ADR 0010).
 
 ```text
 packages/core/src/godot/
@@ -327,7 +358,7 @@ apps/cli/                                 /gdscript-lsp, -stop, -hover,
 - **Adapters own**: framing, JSON-RPC correlation, URI mapping, normalization, port allocation, the fixed runner (fail-closed), and session orchestration. Only `src/godot/lsp` and `src/sandbox` may import `node:net` (architecture-enforced).
 - **CLI owns**: command parsing, rendering, and composition.
 - **Approval protocol**: `godot.lsp_session` is a `prepared_lsp_session` tool sharing the one-time approval flow; `godot.lsp` is `ask` in every user-facing profile (no public `allow`); query tools require an active session. While startup is unavailable, preparation returns typed `unavailable` results before any approval is requested.
-- **LSP runner discipline (architecture-enforced)**: `--lsp-port` is legitimate only inside the LSP runner structurally paired with `--headless --editor --recovery-mode --path <mirror>`; DAP/debug/scene/import/quit options never appear; path and port values come from Solaris-owned inputs; `workspace/applyEdit`/`workspace/executeCommand` are never implemented in runtime adapter code.
+- **LSP runner discipline (architecture-enforced)**: `--lsp-port` is legitimate only inside the LSP runner structurally paired with `--headless --editor --recovery-mode --path <mirror>`; DAP/debug/scene/import/quit options never appear; path and port values come from Siralos-owned inputs; `workspace/applyEdit`/`workspace/executeCommand` are never implemented in runtime adapter code.
 
 ## GDScript development workflow
 
@@ -428,12 +459,12 @@ packages/core/src/tasks/
 tests/behavior/         deterministic behavior fixtures (behaviors 1-15)
 ```
 
-- **Single-owner state rule**: every authoritative mutable Solaris domain has exactly one runtime owner. `TaskState` is owned exclusively by the `TaskRuntime` created in the CLI composition root; CLI, providers, adapters, and the UI receive immutable snapshots, projections, or events. The runtime's mutable state is closure-private; task contracts, runtime snapshots, step specifications, plan revisions, evidence sources, and returned snapshots are detached from caller-owned objects, and revisioned artifacts are deeply frozen. Duplicate task ids are rejected rather than replacing history, and terminal tasks refuse further authoritative mutation. Provider adapters cannot import the task runtime surface at all (architecture-enforced); the CLI is a read-only renderer of snapshots plus the completion-gate evaluation.
+- **Single-owner state rule**: every authoritative mutable Siralos domain has exactly one runtime owner. `TaskState` is owned exclusively by the `TaskRuntime` created in the CLI composition root; CLI, providers, adapters, and the UI receive immutable snapshots, projections, or events. The runtime's mutable state is closure-private; task contracts, runtime snapshots, step specifications, plan revisions, evidence sources, and returned snapshots are detached from caller-owned objects, and revisioned artifacts are deeply frozen. Duplicate task ids are rejected rather than replacing history, and terminal tasks refuse further authoritative mutation. Provider adapters cannot import the task runtime surface at all (architecture-enforced); the CLI is a read-only renderer of snapshots plus the completion-gate evaluation.
 - **TaskContract** distinguishes what the user requested, constraints, individually addressable acceptance criteria (`deterministic` / `review` / `user`), and the pause policy. Contracts are bounded, deeply immutable, and revisioned: a material change produces revision N+1 with the same task id, never a mutation of revision N. Later milestones bind plan/mutation approvals and workflow continuation to contract revisions.
 - **TaskState** is a materialized, serializable object: phase (`prepared | working | validating | reviewing | blocked | completed | cancelled | failed`), bounded steps with evidence references, acceptance states, evidence-backed findings, validation/review status, iteration, host-observed progress, and terminal timestamps. It never stores private chain-of-thought, provider continuation internals, secrets, or raw adapter output — evidence references point at already-owned artifacts (change-set ids, checkpoint ids, counts, digests) with a 4 KiB source bound.
 - **Evidence-backed completion**: a step completes only through `completeStep(stepId, evidenceRefs)` with refs that exist, belong to the task, and match the step's declared evidence kinds (`research` steps accept read/lookup evidence; review steps accept reviewer results; no hard-coded "every step needs a mutation"). Evidence count/id/source bytes are bounded, and every declared evidence kind is runtime-bound to its corresponding source shape (for example, `review_result` cannot carry a `workspace_read` source). `WorkflowDisposition` is a structured _request_: a model-issued `complete` is a completion request that still passes the host completion gate (steps completed, criteria satisfied, validation/review clean, no unresolved critical/high findings). A model asserting "done" in text never reaches the runtime.
 - **Progress**: the host feeds typed observations (`action` + canonical result fingerprint); identical repeated actions with identical results do not repeatedly count as progress. The bounded window surfaces `healthy / degraded / stalled` deterministically; the runtime never swaps models, spawns advisors, or hands off — those are future milestones.
-- **TaskRuntimeSnapshot** is captured once at task start (runtime version, provider profile id, sandbox profile id, capability-policy fingerprint, workspace identity, Godot engine fingerprint, workflow identity + prepared-operation digest). Ordinary global configuration changes affect future tasks, never a running task's snapshot; a security revocation terminates/restricts existing work only where existing Solaris policy already requires it.
+- **TaskRuntimeSnapshot** is captured once at task start (runtime version, provider profile id, sandbox profile id, capability-policy fingerprint, workspace identity, Godot engine fingerprint, workflow identity + prepared-operation digest). Ordinary global configuration changes affect future tasks, never a running task's snapshot; a security revocation terminates/restricts existing work only where existing Siralos policy already requires it.
 - **Activity log**: typed append-only `TaskActivityEvent` records (deterministic per-task sequence, host timestamps) for auditability/debugging/future persistence/UI projection — not event sourcing, not a competing state, and never a generic event bus. Events carry no provider-private continuation state (allowlisted field types).
 - **/develop integration**: the CLI's `/develop` handler creates the task through the development bridge (`createDevelopmentTaskFlow`): request → revisioned `TaskContract` (user approval, applied mutation, workspace scope, parser, fresh-LSP, independent review criteria) → `TaskState` → the existing Stage 2 development workflow → the existing validation/review gates → the host completion gate. The Stage 2 quality gates remain authoritative; the task gate references the same deterministic results instead of duplicating them, and infrastructure failures stay `validation_incomplete` (never criterion failure, never success).
 - **CLI**: `/task <request>` starts a host-owned ad-hoc task (completion honestly requires host verification — with no integrated workflow the gate refuses completion), `/task-status` renders task id, phase, contract revision, criteria status, active step, progress state, and whether completion is currently allowed; `/develop` prints the task status at start and after the workflow terminalizes, and `/cancel` finalizes the task as cancelled. The CLI feeds host-observed tool outcomes into progress.
@@ -443,7 +474,7 @@ The milestone does not implement planning, ContextProjector/ToolProjector/Eviden
 ## Context, tool, and evidence projection
 
 The projection layer (Stage 3 milestone 2, ADR 0015) is the application-owned
-boundary between authoritative Solaris state and what a model sees, calls,
+boundary between authoritative Siralos state and what a model sees, calls,
 and consumes. It lives in core (`packages/core/src/projection/`) and is
 provider-neutral, Node-free, and mutation-free (architecture-enforced: no
 provider ports, no task-runtime mutation surface, no sandbox implementations,
@@ -525,7 +556,7 @@ packages/core/src/projection/
 
 ## Workspace revision and structural reads
 
-The workspace revision layer (Stage 3 milestone 3, ADR 0016) gives Solaris a
+The workspace revision layer (Stage 3 milestone 3, ADR 0016) gives Siralos a
 stronger model-facing file identity system and cheaper structural
 exploration. Identity logic and GDScript structural extraction live in core
 (`packages/core/src/workspace/`) — provider-neutral, Node-free, and
@@ -621,11 +652,11 @@ packages/adapters/src/instructions/
   preserved, never silently dropped). The adapter service discovers
   `AGENTS.md` files with the same containment as workspace reads (canonical
   root, symbolic links never traversed, bounded depth/files/bytes,
-  `node_modules`/`.git`/`.solaris` excluded); URLs in instruction content
+  `node_modules`/`.git`/`.siralos` excluded); URLs in instruction content
   are plain text — no remote instructions are ever fetched. The resolver
   is architecture-enforced to stay provider-neutral and mutation-free.
 - **Protected behavioral configuration**: `AGENTS.md` (any depth) and
-  `.solaris/**` are classified by one core predicate shared by the pure
+  `.siralos/**` are classified by one core predicate shared by the pure
   change-set validator and the adapter write-path guards. Ordinary
   `workspace.write` never covers them: a change set touching a protected
   path is rejected before any write, approval, or checkpoint with a typed
@@ -658,7 +689,7 @@ packages/adapters/src/instructions/
   in the retrieval trace. The trace is for debugging, tests, user
   inspection, and future `/evolve` — never model authority.
 - **ContextProjector integration**: the projected context carries distinct
-  titled sections — `[Solaris instructions]`, `[Project instructions]`,
+  titled sections — `[Siralos instructions]`, `[Project instructions]`,
   `[Project knowledge]` (pinned), `[Task-relevant knowledge]` (retrieved,
   task-stable basis), `[Task contract]`, `[Task state]`, `[Latest
 evidence]` — with knowledge framed as factual context that never grants
@@ -682,7 +713,7 @@ evidence]` — with knowledge framed as factual context that never grants
 ## Workspace, reference, and research resource classes
 
 The external-reference and research layer (Stage 3 milestone 5, ADR 0018)
-gives Solaris first-class, read-only access to upstream material — local
+gives Siralos first-class, read-only access to upstream material — local
 directories outside the workspace and remote repositories pinned to
 immutable commits — plus bounded, host-coordinated fetching of external
 evidence (repository files, Godot documentation). Three resource classes
@@ -720,8 +751,8 @@ Namespace separation is structural, not advisory:
   paths are rejected before any write, approval, or checkpoint, and there
   is no reference mutation surface at all (behavior fixture 51).
 - **Managed cache paths are never model-facing.** Repository
-  materialization would live in Solaris-owned private storage outside the
-  workspace (`~/.solaris/references/<fingerprint>/`); no absolute cache
+  materialization would live in Siralos-owned private storage outside the
+  workspace (`~/.siralos/references/<fingerprint>/`); no absolute cache
   path ever reaches the model, and cache content is never presented as
   workspace material. At this stage repository materialization is
   `unavailable` (it requires sandboxed Git execution, which does not
@@ -822,25 +853,25 @@ The current workflow is one interactive primary agent. Multi-agent review, agent
 
 ## Deferred: process and write tools
 
-The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; the workspace-mutation entry points (`workspace.create_file`/`workspace.edit_file`/`workspace.delete_file` and `/undo`) fail closed as `unavailable` before any write, approval, or checkpoint, and what remains is the core contracts, reusable tested primitives (path validation, diffing, hashing, the mutation lock, safe-replacement helpers), and the filesystem checkpoint store with startup reconciliation — Node offers no directory-relative (openat/renameat) primitive, so no approval for mutations is ever requested and no new checkpoint is ever created at this stage (historical checkpoint data from earlier sessions, if any, may still be listed; the former preview/approval/application logic was largely deleted and the identity-bound commit design is documented as future work). Read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) is unavailable at this stage: the adapter requires verified Solaris-owned private run directories for every sandboxed Git process, and run-directory creation and cleanup fail closed (no directory-relative or delete-by-handle primitive); Git can only ever execute inside an enforcing sandbox backend and is never spawned outside it. The sandboxed validation-command surface (`process.run`, `/commands`, `/cancel` — structured arguments only, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation) exists, but no command can execute at this stage: both the `node-script` and `npm-script` runners fail closed as unavailable — the pinned Node runtime cannot mechanically bind execution to the approved script bytes (the script can reach internal surfaces such as `process.binding` (e.g. `spawn_sync`) to spawn an unconstrained interpreter, and the staged private copy can be substituted by a same-user process in the verify-to-launch window) — and private run-directory creation is unavailable. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or normal Godot project execution exists; Solaris does not open, import, execute, or run any Godot project (the recovery-mode project-probe surface — ADR 0009 — is restored as contracts, bounded static preparation, a one-time approval protocol with expiring single-use prepared probes, diagnostics, CLI reporting, and structural architecture enforcement of the fixed recovery invocation, but execution fails closed as unavailable on every platform: the disposable mirror and the recovery runner are fail-closed no-ops that never create, delete, or launch anything, because Node offers no exec-by-handle, no directory-relative create, and no delete-by-handle primitive), and Godot engine probing is itself intentionally unavailable at this stage; those remain deferred and, when added, must execute under the same enforcement.
+The sandbox boundary, profiles, policy evaluator, environment filtering, and conformance suite exist; the workspace-mutation entry points (`workspace.create_file`/`workspace.edit_file`/`workspace.delete_file` and `/undo`) fail closed as `unavailable` before any write, approval, or checkpoint, and what remains is the core contracts, reusable tested primitives (path validation, diffing, hashing, the mutation lock, safe-replacement helpers), and the filesystem checkpoint store with startup reconciliation — Node offers no directory-relative (openat/renameat) primitive, so no approval for mutations is ever requested and no new checkpoint is ever created at this stage (historical checkpoint data from earlier sessions, if any, may still be listed; the former preview/approval/application logic was largely deleted and the identity-bound commit design is documented as future work). Read-only Git inspection (`git.status`, `git.diff` through a trusted allowlisted adapter) is unavailable at this stage: the adapter requires verified Siralos-owned private run directories for every sandboxed Git process, and run-directory creation and cleanup fail closed (no directory-relative or delete-by-handle primitive); Git can only ever execute inside an enforcing sandbox backend and is never spawned outside it. The sandboxed validation-command surface (`process.run`, `/commands`, `/cancel` — structured arguments only, read-only workspace, denied network, minimal environment, closed stdin, bounded streamed output, digest-bound one-time approval, timeouts, and process-tree cancellation) exists, but no command can execute at this stage: both the `node-script` and `npm-script` runners fail closed as unavailable — the pinned Node runtime cannot mechanically bind execution to the approved script bytes (the script can reach internal surfaces such as `process.binding` (e.g. `spawn_sync`) to spawn an unconstrained interpreter, and the staged private copy can be substituted by a same-user process in the verify-to-launch window) — and private run-directory creation is unavailable. No general shell, arbitrary executable runner, writable command execution, package installation, interactive stdin, background process, or normal Godot project execution exists; Siralos does not open, import, execute, or run any Godot project (the recovery-mode project-probe surface — ADR 0009 — is restored as contracts, bounded static preparation, a one-time approval protocol with expiring single-use prepared probes, diagnostics, CLI reporting, and structural architecture enforcement of the fixed recovery invocation, but execution fails closed as unavailable on every platform: the disposable mirror and the recovery runner are fail-closed no-ops that never create, delete, or launch anything, because Node offers no exec-by-handle, no directory-relative create, and no delete-by-handle primitive), and Godot engine probing is itself intentionally unavailable at this stage; those remain deferred and, when added, must execute under the same enforcement.
 
 ## Git inspection
 
-Core owns the Git-neutral contracts (`GitInspector` port, status/diff models, `GitError` categories) and knows nothing about processes or Git syntax. The Git adapter (`packages/adapters/src/git/cli`) owns exact invocation: a fixed allowlist of subcommands (`version`, `rev-parse`, `status`, `diff`), fixed argument arrays with no shell, a sanitized environment with Git safety variables, independent output bounds, timeouts, cancellation, and launch-time re-verification of the resolved executable (canonical identity, regular non-link file). **Git can only ever execute inside the sandbox backend under `validation-offline`** (network denied, writes limited to the exact private run directory, host reads limited to the repository root and trusted Git runtime roots, confined process tree — repository-configured helper code such as clean filters could only ever run inside that confinement, never on the host); the command-line overrides are defense in depth (the enumerable mechanisms are disabled; clean/smudge/process filters are not disabled from the command line and their only containment is the sandbox). When the backend cannot enforce the boundary, the adapter reports Git unavailable and never spawns Git. **Git inspection is unavailable at this stage**: the adapter requires verified Solaris-owned private run directories for every invocation, and run-directory creation and cleanup fail closed (no directory-relative or delete-by-handle primitive in Node), so nothing Git-related executes until that primitive exists. The adapter itself never spawns processes (enforced structurally by the architecture check; only the sandbox backend executes the Git process). It parses `--porcelain=v2 -z` status records and unified diff patches into the core models; providers receive only these structured results through the `git.status` and `git.diff` tools, and the CLI renders them without parsing raw Git output. The repository root must equal the workspace root; anything else is a structured failure, and non-Git workspaces remain fully supported.
+Core owns the Git-neutral contracts (`GitInspector` port, status/diff models, `GitError` categories) and knows nothing about processes or Git syntax. The Git adapter (`packages/adapters/src/git/cli`) owns exact invocation: a fixed allowlist of subcommands (`version`, `rev-parse`, `status`, `diff`), fixed argument arrays with no shell, a sanitized environment with Git safety variables, independent output bounds, timeouts, cancellation, and launch-time re-verification of the resolved executable (canonical identity, regular non-link file). **Git can only ever execute inside the sandbox backend under `validation-offline`** (network denied, writes limited to the exact private run directory, host reads limited to the repository root and trusted Git runtime roots, confined process tree — repository-configured helper code such as clean filters could only ever run inside that confinement, never on the host); the command-line overrides are defense in depth (the enumerable mechanisms are disabled; clean/smudge/process filters are not disabled from the command line and their only containment is the sandbox). When the backend cannot enforce the boundary, the adapter reports Git unavailable and never spawns Git. **Git inspection is unavailable at this stage**: the adapter requires verified Siralos-owned private run directories for every invocation, and run-directory creation and cleanup fail closed (no directory-relative or delete-by-handle primitive in Node), so nothing Git-related executes until that primitive exists. The adapter itself never spawns processes (enforced structurally by the architecture check; only the sandbox backend executes the Git process). It parses `--porcelain=v2 -z` status records and unified diff patches into the core models; providers receive only these structured results through the `git.status` and `git.diff` tools, and the CLI renders them without parsing raw Git output. The repository root must equal the workspace root; anything else is a structured failure, and non-Git workspaces remain fully supported.
 
 ## Recovery checkpoints
 
-Core owns the checkpoint model, lifecycle rules, the `CheckpointStore` port, undo planning, and undo conflict rules; it never touches the filesystem. The filesystem checkpoint store (`packages/adapters/src/checkpoints/filesystem`) owns storage at `~/.solaris/checkpoints/<workspace-fingerprint>/<checkpoint-id>/`: atomic metadata replacement, preimage persistence, hash validation, symlink rejection, fail-closed retention limits (no automatic pruning: reaching the count or byte limit — or failing to prove capacity because any checkpoint's metadata or preimage is unreadable, invalid, oversized, linked, or size-inconsistent, or because content beyond the exact `metadata.json`/`preimage.bin` layout (unknown files, nested directories, temporary files, case-variant duplicates, links, special files) is present — refuses new checkpoints with a typed storage-limit error before any write and deletes nothing; the byte limit measures actual regular-file bytes beneath the checkpoint directory including metadata and preimages, declared preimages are content-verified through a shared handle-bound bounded verifier (exact bytes read must match the metadata byte length and SHA-256 via an explicit-offset read loop — a short read is never treated as EOF — with the opened handle and pathname identity proven against the pre-open lstat snapshot and a pre-read/final stability snapshot (identity, size, and mtime/ctime nanoseconds) captured from the handle before reading and re-verified after it, so a same-size corrupted preimage, a same-content hard-link/rename/symlink/junction substitution, or a same-inode in-place rewrite during verification is a refusal; `O_NOFOLLOW` is applied on POSIX while Windows carries the binding through the identity/stability comparisons, and unusable identity or stability fields fail closed), configured preimage limits are capped at 64 MiB with larger values rejected at store creation, checkpoint operations are bound to their before/after existence states (create: absent→present; update: present→present; delete: present→absent) by one shared validator for prepared and stored records, with the proposed checkpoint's exact serialized metadata and preimage bytes counted before any write, and unexpected content is never repaired, renamed, truncated, or quarantined; no checkpoint entry is skipped during retention; existing checkpoints are preserved), and the `reconcileWorkspaceCheckpoints` startup pass. **No new checkpoint is ever created at this stage** — every mutation fails closed as `unavailable` before recording — and `/checkpoints` may still list historical checkpoint data from earlier sessions if any exists. The undo service fails closed as `unavailable` (restoring requires pathname-based displacement, and Node offers no directory-relative primitive); the former reverse-diff/approval/restore machinery was largely deleted and the identity-bound design is documented as future work, while the store itself is tested internal code. The CLI's `/git-status`, `/diff`, `/checkpoints`, and `/undo` commands are thin renderers over these core-owned ports; the CLI never parses Git output and never restores files directly.
+Core owns the checkpoint model, lifecycle rules, the `CheckpointStore` port, undo planning, and undo conflict rules; it never touches the filesystem. The filesystem checkpoint store (`packages/adapters/src/checkpoints/filesystem`) owns storage at `~/.siralos/checkpoints/<workspace-fingerprint>/<checkpoint-id>/`: atomic metadata replacement, preimage persistence, hash validation, symlink rejection, fail-closed retention limits (no automatic pruning: reaching the count or byte limit — or failing to prove capacity because any checkpoint's metadata or preimage is unreadable, invalid, oversized, linked, or size-inconsistent, or because content beyond the exact `metadata.json`/`preimage.bin` layout (unknown files, nested directories, temporary files, case-variant duplicates, links, special files) is present — refuses new checkpoints with a typed storage-limit error before any write and deletes nothing; the byte limit measures actual regular-file bytes beneath the checkpoint directory including metadata and preimages, declared preimages are content-verified through a shared handle-bound bounded verifier (exact bytes read must match the metadata byte length and SHA-256 via an explicit-offset read loop — a short read is never treated as EOF — with the opened handle and pathname identity proven against the pre-open lstat snapshot and a pre-read/final stability snapshot (identity, size, and mtime/ctime nanoseconds) captured from the handle before reading and re-verified after it, so a same-size corrupted preimage, a same-content hard-link/rename/symlink/junction substitution, or a same-inode in-place rewrite during verification is a refusal; `O_NOFOLLOW` is applied on POSIX while Windows carries the binding through the identity/stability comparisons, and unusable identity or stability fields fail closed), configured preimage limits are capped at 64 MiB with larger values rejected at store creation, checkpoint operations are bound to their before/after existence states (create: absent→present; update: present→present; delete: present→absent) by one shared validator for prepared and stored records, with the proposed checkpoint's exact serialized metadata and preimage bytes counted before any write, and unexpected content is never repaired, renamed, truncated, or quarantined; no checkpoint entry is skipped during retention; existing checkpoints are preserved), and the `reconcileWorkspaceCheckpoints` startup pass. **No new checkpoint is ever created at this stage** — every mutation fails closed as `unavailable` before recording — and `/checkpoints` may still list historical checkpoint data from earlier sessions if any exists. The undo service fails closed as `unavailable` (restoring requires pathname-based displacement, and Node offers no directory-relative primitive); the former reverse-diff/approval/restore machinery was largely deleted and the identity-bound design is documented as future work, while the store itself is tested internal code. The CLI's `/git-status`, `/diff`, `/checkpoints`, and `/undo` commands are thin renderers over these core-owned ports; the CLI never parses Git output and never restores files directly.
 
 ## Self-reference and capability diagnostics (Stage 3 milestone 6, ADR 0019)
 
-Solaris explains its own installed behavior through host-owned surfaces
+Siralos explains its own installed behavior through host-owned surfaces
 instead of model memory:
 
 ```text
-Installed Solaris Runtime
+Installed Siralos Runtime
         │
-        ├── SelfReference (@solaris)
+        ├── SelfReference (@siralos)
         │       ↓
         │   exact current docs/config/capabilities
         │
@@ -912,8 +943,8 @@ undo / checkpoint machinery, default-policy construction, or projection
 internals; projection never imports the doctor; safe-report rendering is
 separate from diagnostic collection; self-reference tool adapters carry
 only the fixed `self.inspect` capability. The CLI composition root wires
-everything: `solaris --doctor [area] [--json] [--report-safe]`, `--self`,
-`/doctor [area]`, `/solaris`.
+everything: `siralos --doctor [area] [--json] [--report-safe]`, `--self`,
+`/doctor [area]`, `/siralos`.
 
 ## Host-controlled planning (Stage 3 milestone 7, ADR 0020)
 

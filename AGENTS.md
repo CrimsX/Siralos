@@ -3,15 +3,16 @@
 ## Repository
 
 - npm workspace monorepo using ESM, strict TypeScript, and project references.
-- `@solaris/core` owns application policy and domain contracts. It must not import adapters.
-- `@solaris/adapters` implements provider, workspace, sandbox, Git, Godot, reference, research, and planning ports.
-- `@solaris/cli` is the composition root and the only interactive terminal surface.
+- `@siralos/core` owns application policy and domain contracts. It must not import adapters.
+- `@siralos/adapters` implements provider, workspace, sandbox, Git, Godot, reference, research, and planning ports.
+- `@siralos/cli` is the composition root and the only interactive terminal surface.
+- Stage 3R adds the Rust candidate implementation: a Cargo workspace (`Cargo.toml`, `rust-toolchain.toml`, `rustfmt.toml`) with `crates/siralos-core` (domain-neutral host semantics), `crates/siralos-adapters` (infrastructure), and `crates/siralos-cli` (the `siralos` binary). Dependency direction: cli → adapters → core; core must never depend on infrastructure or a domain. All Rust code follows [docs/development/RUST_STYLE.md](docs/development/RUST_STYLE.md) (authoritative; do not restate it). The TypeScript implementation is the behavioral reference/migration oracle (ADR 0032) — do not delete or redesign it.
 - Treat [README.md](README.md) as the user-facing status, [ROADMAP.md](ROADMAP.md) as milestone status, [ARCHITECTURE.md](ARCHITECTURE.md) as dependency ownership, [SECURITY.md](SECURITY.md) as the security contract, and `docs/adr/` as the decision history. Do not duplicate those documents here. Use [docs/architecture/README.md](docs/architecture/README.md) as the architecture index; ADR metadata (id/status/domains/paths/supersedes) lives in each ADR's frontmatter.
 
 ## Current implementation
 
-- Stage 3 milestones 1–8 are implemented: task runtime, projections, workspace revisions and structural reads, project instructions and knowledge, references and research, self-reference and capability diagnostics, host-controlled planning, and read-only Godot scene/resource intelligence.
-- The next narrow milestone is Stage 3 milestone 9. Do not start scene/resource mutation.
+- Stage 3 is complete through milestone 11: task runtime, projections, workspace revisions and structural reads, project instructions and knowledge, references and research, self-reference and capability diagnostics, host-controlled planning, read-only Godot scene/resource intelligence, review context and impact intelligence, approved scene/resource mutation, and the unified `/develop` workflow (ADRs 0025–0027).
+- Stage 3R R1 is complete: project renamed to Siralos, Rust engineering guide established, domain-neutral Rust workspace skeleton (see Repository above). The next milestone is Stage 3R R2 (Differential Behavioral Harness). Do not port major subsystems ahead of R2, and do not add a Godot package, placeholder domains, or a marketplace/plugin ecosystem.
 - The cross-cutting executor briefing and context discipline (ADRs 0022–0023) is implemented: a versioned Execution Contract, milestone manifests with stable acceptance IDs (S3M8 has a real manifest), an evidence-backed AcceptanceEvaluator, the Executor Context Pack, the deterministic Executor Brief Compiler, `/brief` / `/milestone` inspection, task `WorkspaceScope` with verified/candidate files and budgets, current-step `ActiveWorkingSet` with inclusion reasons, new-file rationale/proliferation signals, and deterministic documentation selection (root + scoped AGENTS.md, architecture index, accepted ADRs; archive/superseded excluded). Briefs reference the execution contract by revision and never restate permanent rules; milestone acceptance is satisfied only by host-observed evidence, never executor claims; workspace scope and documentation selection are derived context that never grants capability.
 - Working read-only surfaces include the deterministic fake provider, bounded workspace list/read/search, static Godot installation and project inspection, local-directory references, denied-by-default bounded research adapters, self-reference, capability diagnostics, and the interactive CLI.
 - Task contracts, snapshots, plans, evidence, provider requests, tool definitions, and public result values must be detached from caller-owned mutable data. Task state is host-owned; model completion is only a request evaluated by host gates.
@@ -42,7 +43,7 @@ The Anthropic Sandbox Runtime backend is pinned. Linux/macOS availability requir
 ## Workspace and security rules
 
 - Canonicalize the launch workspace once and contain every model-facing path within it. Never follow workspace symlinks for traversal.
-- Behavioral configuration (`AGENTS.md` at any depth and `.solaris/**`) is protected and cannot be changed through ordinary workspace mutation capability.
+- Behavioral configuration (`AGENTS.md` at any depth and `.siralos/**`) is protected and cannot be changed through ordinary workspace mutation capability.
 - Capability policy, one-time digest-bound approval, sandbox enforcement, checkpointing, and stale-state checks are independent gates. Success at one gate never implies another.
 - Keep external references outside the workspace namespace. `@reference/<alias>` is not a filesystem path.
 - Research is disabled by built-in profiles unless explicitly authorized. `ask` is refused where no approval protocol exists.
@@ -54,18 +55,21 @@ The Anthropic Sandbox Runtime backend is pinned. Linux/macOS availability requir
 
 ## Verification
 
-- `npm run check` — format check, lint, typecheck, unit/integration tests, and architecture checks.
-- `npm run check:architecture` — dependency and source guardrails.
+- `npm run check` — format check, lint, typecheck, unit/integration tests, architecture checks, identity ratchet, Rust architecture check, and the full Rust gate (fmt, clippy with warnings denied, tests).
+- `npm run check:architecture` — TypeScript dependency and source guardrails.
+- `npm run check:identity` — no project-owned file may use the former identity (narrow documented exclusions only).
+- `npm run check:rust` — Rust crate shape, dependency direction, binary identity, edition/toolchain/formatting policy, core domain neutrality, unsafe backstop.
+- `npm run check:rust-format` / `npm run check:rust-clippy` / `npm run test:rust` — `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`.
 - `npm run test:sandbox` — live sandbox conformance; unavailable setup skips loudly and is never a pass.
-- `SOLARIS_TEST_GODOT="<absolute-path>" npm run test:godot` — opt-in live Godot probe conformance.
-- `SOLARIS_TEST_GODOT="<absolute-path>" npm run test:godot-recovery` — verifies truthful fail-closed recovery behavior; execution and isolation probes remain unavailable/skipped.
-- `npm run solaris` — build and launch the CLI.
+- `SIRALOS_TEST_GODOT="<absolute-path>" npm run test:godot` — opt-in live Godot probe conformance.
+- `SIRALOS_TEST_GODOT="<absolute-path>" npm run test:godot-recovery` — verifies truthful fail-closed recovery behavior; execution and isolation probes remain unavailable/skipped.
+- `npm run siralos` — build and launch the (TypeScript) CLI; the Rust binary is built with `cargo build` and run as `siralos --version` / `siralos --help`.
 
 Run checks relevant to each cohesive change before committing, then run `npm run check` before handoff. Use small Conventional Commit-style commits; do not put an entire multi-boundary task in one commit.
 
 ## Intended direction
 
-- Solaris is an independent provider-neutral agent harness for Godot development.
-- Prefer real Godot projects when project scaffolding begins and record new verification commands here when they become usable.
-- Next: read-only `.tscn`/`.tres` parsing, UID and resource relationships, scene inheritance, node ownership, script attachments, signals, autoloads, project settings, structured inspection tools, and revision-aware evidence.
-- Do not add real provider integrations, persistence, multi-agent functionality, or `/evolve` as part of that milestone.
+- Siralos is a deterministic, security-first, context-efficient software-development and QA harness with a domain-neutral core and explicitly installed optional domain intelligence (Godot is the first and only optional domain).
+- The TypeScript implementation is the behavioral reference; later Stage 3R milestones port subsystems to idiomatic Rust under behavioral parity, refactoring-during-port, and evidence-driven optimization rules (ADR 0032, `docs/development/RUST_STYLE.md`).
+- Next: Stage 3R R2 (Differential Behavioral Harness). Do not implement R2 or later porting work in the current milestone.
+- Do not add real provider integrations, persistence, multi-agent functionality, or `/evolve` outside their planned milestones.
