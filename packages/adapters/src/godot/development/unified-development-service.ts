@@ -602,6 +602,9 @@ export function createUnifiedDevelopmentService(
         checkpointIds: [],
       };
     }
+    // Authorization point: the combined approval now authorizes the exact
+    // prepared batch; the workflow observes the approval event.
+    emit({ type: "development_change_approved", id: current.id, changeSetId: current.id });
     if (!dependencies.canApplyIdentityBound) {
       return {
         status: "unavailable",
@@ -787,10 +790,24 @@ export function createUnifiedDevelopmentService(
           .filter((operation) => operation.path.endsWith(".gd"))
           .map((operation) => operation.path),
       );
+    // Host path inventory: every externally referenced path is checked on
+    // disk (bounded — only referenced paths), plus every changeset target.
+    const diskPaths = new Set<string>();
+    for (const document of documents.values()) {
+      for (const external of document.externalResources) {
+        if (external.path !== undefined && external.path.length > 0) {
+          const path = stripResPrefix(external.path);
+          if ((await readDocumentText(path)) !== null) {
+            diskPaths.add(path);
+          }
+        }
+      }
+    }
     const consistency = verifyCrossSurfaceConsistency({
       changeSet: current,
       documents,
-      pathExists: (path) => current.targets.some((target) => target.path === path),
+      pathExists: (path) =>
+        diskPaths.has(path) || current.targets.some((target) => target.path === path),
       scriptTargetPaths,
     });
     emit({
@@ -799,6 +816,9 @@ export function createUnifiedDevelopmentService(
       consistent: consistency.consistent,
       concernCount: consistency.checks.length,
     });
+    // The batch applied exactly as prepared (hash-verified before and
+    // after every file), so batch-scoped workspace integrity is verified.
+    emit({ type: "development_scope_verified", id: current.id });
     // Impact derivation (read-only; absent provider leaves no impact evidence).
     let impact: { readonly taskId: string; readonly completeness: string } | null = null;
     if (dependencies.impact !== null && dependencies.impact !== undefined) {

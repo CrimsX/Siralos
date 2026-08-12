@@ -167,6 +167,7 @@ export {
   createGodotPrepareSceneChangeTool,
 } from "./godot/tools/godot-prepare-change-tools.js";
 export { createGodotSceneMutationService } from "./godot/scene-mutation/scene-mutation-service.js";
+export { createUnifiedDevelopmentService } from "./godot/development/unified-development-service.js";
 export { createGodotSceneIntelligence } from "./godot/intelligence/scene-intelligence-service.js";
 export { createGodotApiSearchTool } from "./godot/tools/godot-api-search-tool.js";
 export { createGodotApiLookupTool } from "./godot/tools/godot-api-lookup-tool.js";

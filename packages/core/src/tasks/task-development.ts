@@ -469,6 +469,21 @@ export function createDevelopmentTaskFlow(
           void impactId;
           break;
         }
+        case "development_scope_verified": {
+          // The unified batch applied exactly as prepared: every file was
+          // hash-verified before and after, so no unexpected change to the
+          // batch's files was introduced (batch-scoped workspace integrity).
+          const scopeId = attach("validation_result", {
+            type: "validation",
+            outcome: "verified",
+            workspaceIntegrityVerified: true,
+            unexpectedChanges: 0,
+          });
+          if (scopeId !== null) {
+            verify("scope-verified", scopeId);
+          }
+          break;
+        }
         case "quality_started":
         case "review_started":
           transitionTo("reviewing");

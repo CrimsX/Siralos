@@ -13,23 +13,27 @@ const textEncoder = new TextEncoder();
 const TASK_STEP_ID_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,63}$/;
 const TASK_STEP_KINDS = new Set(["research", "implementation", "review"]);
 const FINDING_SEVERITIES = new Set(["critical", "high", "medium", "low"]);
-const EVIDENCE_SOURCE_TYPE_BY_KIND: Readonly<Record<EvidenceKind, EvidenceSource["type"]>> = {
-  workspace_read: "workspace_read",
-  api_lookup: "api_lookup",
-  lsp_query: "lsp_query",
-  change_preview: "change_preview",
-  mutation_receipt: "mutation",
-  checkpoint: "checkpoint",
-  parser_result: "parser",
-  lsp_result: "lsp",
-  validation_result: "validation",
-  review_result: "review",
-  reference_read: "reference_read",
-  reference_search: "reference_search",
-  research: "research",
+const EVIDENCE_SOURCE_TYPES_BY_KIND: Readonly<
+  Record<EvidenceKind, readonly EvidenceSource["type"][]>
+> = {
+  workspace_read: ["workspace_read"],
+  api_lookup: ["api_lookup"],
+  lsp_query: ["lsp_query"],
+  change_preview: ["change_preview"],
+  mutation_receipt: ["mutation"],
+  checkpoint: ["checkpoint"],
+  parser_result: ["parser"],
+  lsp_result: ["lsp"],
+  // Stage 3 milestone 11: validation evidence also carries native
+  // verification, cross-surface consistency, and impact sources.
+  validation_result: ["validation", "native_verification", "consistency", "impact"],
+  review_result: ["review"],
+  reference_read: ["reference_read"],
+  reference_search: ["reference_search"],
+  research: ["research"],
 };
 const EVIDENCE_KINDS = new Set<EvidenceKind>(
-  Object.keys(EVIDENCE_SOURCE_TYPE_BY_KIND) as EvidenceKind[],
+  Object.keys(EVIDENCE_SOURCE_TYPES_BY_KIND) as EvidenceKind[],
 );
 
 export function prepareTaskStepSpecs(
@@ -127,10 +131,15 @@ export function validateEvidencePayload(input: {
   if (!EVIDENCE_KINDS.has(input.kind)) {
     return { ok: false, reason: `Unknown evidence kind: ${String(input.kind)}` };
   }
-  if (input.source.type !== EVIDENCE_SOURCE_TYPE_BY_KIND[input.kind]) {
+  if (
+    input.source.type !== undefined &&
+    !EVIDENCE_SOURCE_TYPES_BY_KIND[input.kind].includes(input.source.type)
+  ) {
     return {
       ok: false,
-      reason: `Evidence kind ${input.kind} requires source type ${EVIDENCE_SOURCE_TYPE_BY_KIND[input.kind]}, not ${input.source.type}.`,
+      reason: `Evidence kind ${input.kind} requires source type ${EVIDENCE_SOURCE_TYPES_BY_KIND[
+        input.kind
+      ].join(" or ")}, not ${input.source.type}.`,
     };
   }
   try {

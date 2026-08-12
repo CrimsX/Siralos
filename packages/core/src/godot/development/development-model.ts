@@ -289,6 +289,10 @@ export type DevelopmentEvent =
       readonly completeness: "complete" | "bounded" | "partial";
     }
   | {
+      readonly type: "development_scope_verified";
+      readonly id: string;
+    }
+  | {
       readonly type: "development_completed";
       readonly id: string;
       readonly status: DevelopmentStatus;

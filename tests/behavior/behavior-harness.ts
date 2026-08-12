@@ -75,6 +75,7 @@ import {
   createGodotInspectSceneTool,
   createGodotSceneIntelligence,
   createReferenceTools,
+  createUnifiedDevelopmentService,
   createWorkspaceApplyTextChangesetTool,
   createWorkspaceFilePrimitives,
   createWorkspaceReadTool,
@@ -202,6 +203,13 @@ export interface BehaviorLoopHarnessOptions {
    */
   readonly mutation?: boolean;
   /**
+   * Wire the unified script/native development service (Stage 3 milestone
+   * 11) into the harness: one checkpoint-then-apply batch over mixed
+   * targets with per-surface verification, consistency, and impact.
+   * Requires `mutation: true` (and therefore `intelligence: true`).
+   */
+  readonly unified?: boolean;
+  /**
    * Wire the executor briefing foundation into the harness: compiles the
    * bounded executor brief for the current task and feeds the
    * `[Executor brief]` projection section (requires `projection: true`).
@@ -257,6 +265,8 @@ export interface BehaviorLoopHarness {
   readonly intelligence: GodotSceneIntelligence | null;
   /** Approved scene/resource mutation service (when `mutation: true`); null otherwise. */
   readonly mutation: ReturnType<typeof createGodotSceneMutationService> | null;
+  /** Unified script/native development service (when `unified: true`); null otherwise. */
+  readonly unified: ReturnType<typeof createUnifiedDevelopmentService> | null;
   /** Compiled executor brief for the current task (when `briefing` wired). */
   readonly briefing: () => ExecutorBrief | null;
   /** Fingerprint of the compiled executor brief; null when none. */
@@ -267,6 +277,24 @@ export interface BehaviorLoopHarness {
   readonly requests: () => readonly ModelRequest[];
   /** Reference tools registered when `references` was provided (read-only list/read/search). */
   readonly referenceTools: () => readonly ReferenceTool[];
+  /** Start a host-owned unified task and wire the unified service events into it. */
+  readonly startUnifiedTask: (
+    request: string,
+    surface: "script_only" | "native_only" | "mixed" | "none",
+  ) => TaskState;
+  /** Host evaluation of the unified task at a terminal workflow status. */
+  readonly finishUnifiedTask: (
+    status:
+      | "completed"
+      | "completed_with_blocking_findings"
+      | "validation_failed"
+      | "apply_failed"
+      | "denied"
+      | "unavailable"
+      | "cancelled",
+  ) => TaskState | null;
+  /** Feed a host-observed event into the unified task flow. */
+  readonly unifiedEmit: (event: import("@solaris/core").DevelopmentEvent) => void;
   /** Recorded reference observations feeding the `[Reference evidence]` projection section. */
   readonly referenceObservations: () => readonly ReferenceEvidenceView[];
   /** Prepare + approve + start the workflow and create the task. */
@@ -426,6 +454,34 @@ export async function createBehaviorLoopHarness(
           createGodotPrepareSceneChangeTool(mutationService),
           createGodotPrepareResourceChangeTool(mutationService),
         ];
+  // Stage 3 milestone 11: unified script/native development service.
+  const unifiedService =
+    options.unified === true && mutationService !== null
+      ? createUnifiedDevelopmentService({
+          workspaceRoot: workspace.root,
+          store,
+          lock: { acquire: () => Promise.resolve(() => undefined) },
+          revisions,
+          canApplyIdentityBound: true,
+          primitives: createWorkspaceFilePrimitives(workspace.root),
+          native: mutationService,
+          diagnostics: parser.service,
+          language: language.service,
+          impact: async (input) => {
+            const current = intelligenceHolder.current;
+            if (current === null) {
+              return null;
+            }
+            const contract = runtime.latestTask()?.contract() ?? null;
+            const result = await current.reviewContext({
+              taskId: contract?.id ?? "unified-review",
+              taskContractRevision: contract?.revision ?? 1,
+              changedPaths: input.primaryChanges.map((change) => change.path),
+            });
+            return result.status === "ok" ? result.manifest : null;
+          },
+        })
+      : null;
   // Reference services (Stage 3 milestone 5): register the read-only
   // reference tools and record every successful access call as a
   // ReferenceEvidenceView — the composition root's job in production — so
@@ -641,6 +697,7 @@ export async function createBehaviorLoopHarness(
   // One flow per workflow run, like the CLI's /develop handler; the
   // service's onEvent slot is reassigned for each run.
   let flow: ReturnType<typeof createDevelopmentTaskFlow> | null = null;
+  let unifiedFlow: ReturnType<typeof createDevelopmentTaskFlow> | null = null;
   return {
     workspace,
     store,
@@ -655,6 +712,96 @@ export async function createBehaviorLoopHarness(
     tools: () => tools.definitions(),
     intelligence,
     mutation: mutationService,
+    unified: unifiedService,
+    /** Start a host-owned unified task and wire the service events into it. */
+    startUnifiedTask: (
+      request: string,
+      surface: "script_only" | "native_only" | "mixed" | "none",
+    ) => {
+      if (unifiedService === null) {
+        throw new Error("Unified wiring is not enabled (unified: true).");
+      }
+      unifiedFlow = createDevelopmentTaskFlow({
+        runtime,
+        sources,
+        surface,
+        now,
+      });
+      unifiedService.onEvent = (event) => {
+        unifiedFlow?.handleEvent(event);
+      };
+      const preview: GDScriptDevelopmentPreview = {
+        request,
+        projectName: "fixture",
+        projectFingerprint: "f".repeat(64),
+        engineVersion: null,
+        engineFingerprint: null,
+        limits: {
+          maxIterations: 4,
+          maxRepairProposals: 3,
+          maxFilesPerChangeSet: 16,
+          maxReviewRounds: 2,
+        },
+        authorization: {
+          sourceWrites: "each change set approved separately",
+          languageSession: "read-only; recreated after approved edits under this approval",
+          checkOnlyParsing: "covered",
+          apiLookup: "covered",
+          workspaceInspection: "covered",
+          gitInspection: "covered",
+          projectValidationCommands: "each command approved separately",
+          independentReview: "read-only; fresh provider context",
+          network: "denied",
+          gameExecution: "disabled",
+        },
+      };
+      return unifiedFlow.start(request, preview, null);
+    },
+    /** Host evaluation of the unified task at a terminal workflow status. */
+    finishUnifiedTask: (
+      status:
+        | "completed"
+        | "completed_with_blocking_findings"
+        | "validation_failed"
+        | "apply_failed"
+        | "denied"
+        | "unavailable"
+        | "cancelled",
+    ): TaskState | null => {
+      if (unifiedFlow === null) {
+        return null;
+      }
+      const sessionStatus: GDScriptDevelopmentStatus = {
+        support: { available: true, reason: null, platform: "test" },
+        session: {
+          id: "unified",
+          request: "unified",
+          state: { kind: "terminal", status },
+          iteration: 1,
+          maxIterations: 4,
+          repairProposalsRemaining: 3,
+          validation: "clean",
+          appliedChangeSets: 1,
+          errors: 0,
+          warnings: 0,
+          quality: {
+            status: null,
+            report: null,
+            blockingFindings: 0,
+            advisories: 0,
+            reviewRoundsUsed: 0,
+            maxReviewRounds: 2,
+            repairRoundsUsed: 0,
+            maxRepairRounds: 3,
+          },
+        },
+      };
+      return unifiedFlow.finish(sessionStatus, null);
+    },
+    /** Feed a host-observed event into the unified task flow. */
+    unifiedEmit: (event: import("@solaris/core").DevelopmentEvent) => {
+      unifiedFlow?.handleEvent(event);
+    },
     briefing: () => (briefingService === null ? null : briefingService.latestOrCompile()),
     briefingFingerprint: () => (briefingService === null ? null : briefingService.fingerprint()),
     sceneObservations: () => [...sceneObservations],
