@@ -1,5 +1,6 @@
 import {
   canonicalizeJson,
+  computeResearchDocumentContentDigest,
   computeResearchDocumentId,
   sha256Hex,
   type ResearchBounds,
@@ -469,23 +470,32 @@ export function buildResearchDocument(options: BuildResearchDocumentOptions): Re
     truncated,
     truncationReason,
     byteLength: computeByteLength(sections, links.length),
+    // Content identity (ADR 0028), recomputed over the final content at
+    // the end; the derived fields are inside the measured document cap.
+    contentDigest: computeResearchDocumentContentDigest({
+      title,
+      contentType,
+      sections,
+    }),
+    rawArtifactDigest: sha256Hex(rawText),
   };
 
   // Final `maxDocumentBytes` cap on the SERIALIZED document: drop trailing
   // sections until it fits, then trim the first section's text (with the
   // explicit marker) until it fits. Bounded: the drop loop runs at most
   // maxSections times; the trim loop shrinks 64 bytes at a time (guarded).
-  if (JSON.stringify(document).length > bounds.maxDocumentBytes) {
+  // The byte cap governs CONTENT bytes (matching `byteLength` semantics);
+  // the derived identity fields are bounded metadata and are excluded from
+  // the measurement, consistent with how the evidence store accounts
+  // content bytes.
+  if (measuredBytes(document) > bounds.maxDocumentBytes) {
     const withSections = (next: readonly ResearchSection[]): ResearchDocument => ({
       ...document,
       sections: next,
       byteLength: computeByteLength(next, document.links.length),
     });
     let dropped = 0;
-    while (
-      document.sections.length > 1 &&
-      JSON.stringify(document).length > bounds.maxDocumentBytes
-    ) {
+    while (document.sections.length > 1 && measuredBytes(document) > bounds.maxDocumentBytes) {
       document = withSections(document.sections.slice(0, -1));
       dropped += 1;
     }
@@ -496,7 +506,7 @@ export function buildResearchDocument(options: BuildResearchDocumentOptions): Re
         truncationReason: "the document exceeds the byte limit; trailing sections were dropped",
       };
     }
-    if (JSON.stringify(document).length > bounds.maxDocumentBytes) {
+    if (measuredBytes(document) > bounds.maxDocumentBytes) {
       const first = document.sections[0];
       if (first !== undefined && first.text.length > 0) {
         const reason = "the document exceeds the byte limit; the section text was truncated";
@@ -511,7 +521,7 @@ export function buildResearchDocument(options: BuildResearchDocumentOptions): Re
         let text = first.text;
         let guard = 0;
         while (
-          JSON.stringify(candidateFinal(text)).length > bounds.maxDocumentBytes &&
+          measuredBytes(candidateFinal(text)) > bounds.maxDocumentBytes &&
           text.length > 0 &&
           guard < 4096
         ) {
@@ -520,12 +530,27 @@ export function buildResearchDocument(options: BuildResearchDocumentOptions): Re
         }
         const marked = `${text}${TRUNCATION_MARKER}`;
         document = candidateFinal(
-          JSON.stringify(candidateFinal(marked)).length <= bounds.maxDocumentBytes ? marked : text,
+          measuredBytes(candidateFinal(marked)) <= bounds.maxDocumentBytes ? marked : text,
         );
       }
     }
   }
-  return document;
+  // Content identity (ADR 0028): recompute the digest over the exact
+  // FINAL normalized content (raw digest is content-independent).
+  return {
+    ...document,
+    contentDigest: computeResearchDocumentContentDigest(document),
+  };
+}
+
+/** Serialized content bytes of a document, excluding derived identity fields. */
+function measuredBytes(document: ResearchDocument): number {
+  const {
+    contentDigest: _contentDigest,
+    rawArtifactDigest: _rawArtifactDigest,
+    ...content
+  } = document;
+  return JSON.stringify(content).length;
 }
 
 /**

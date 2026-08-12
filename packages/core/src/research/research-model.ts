@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
+import { computeArtifactDigest } from "../identity/artifact-digest.js";
 
 /**
  * Research source model (Stage 3 milestone 5).
@@ -73,6 +74,14 @@ export interface ResearchDocument {
   readonly truncated: boolean;
   readonly truncationReason: string | null;
   readonly byteLength: number;
+  /**
+   * Canonical digest of the normalized content (ADR 0028): the exact
+   * sections/title/content-type as observed. A URL alone is never stable
+   * evidence identity.
+   */
+  readonly contentDigest: string;
+  /** SHA-256 of the exact raw artifact bytes when available; null otherwise. */
+  readonly rawArtifactDigest: string | null;
 }
 
 /**
@@ -86,6 +95,27 @@ export function computeResearchDocumentId(
 ): ResearchDocumentId {
   const digest = sha256Hex(canonicalizeJson({ sourceId, requestDigest }));
   return `rd_${digest.slice(0, 24)}` as ResearchDocumentId;
+}
+
+/**
+ * Canonical digest of the normalized research content (ADR 0028): the
+ * exact observed sections/title/content-type. Computed AFTER final
+ * truncation so the digest always matches the document as stored.
+ */
+export function computeResearchDocumentContentDigest(document: {
+  readonly title: string | null;
+  readonly contentType: ResearchContentType;
+  readonly sections: readonly ResearchSection[];
+}): string {
+  return computeArtifactDigest({
+    artifactType: "ResearchDocument",
+    schemaVersion: 1,
+    payload: {
+      title: document.title,
+      contentType: document.contentType,
+      sections: document.sections,
+    },
+  }).value;
 }
 
 export interface ResearchRequest {

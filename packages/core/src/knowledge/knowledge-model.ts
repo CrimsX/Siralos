@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
+import { computeArtifactDigest } from "../identity/artifact-digest.js";
 import type { EvidenceKind } from "../tasks/task-model.js";
 import type { ResearchSourceRef } from "../research/research-model.js";
 
@@ -56,6 +57,12 @@ export interface ProjectKnowledgeFact {
   readonly subjectKey: string | null;
   readonly type: KnowledgeFactType;
   readonly content: string;
+  /**
+   * Canonical content digest of this revision (ADR 0028). Content only —
+   * provenance, confidence, freshness, and volatility are NEVER collapsed
+   * into this hash equality; they remain separate authoritative fields.
+   */
+  readonly contentDigest: string;
   /** Immutable revision number (1-based). Subject-less facts are revision 1. */
   readonly revision: number;
   readonly provenance: readonly KnowledgeProvenanceRef[];
@@ -185,6 +192,18 @@ export function computeKnowledgeFactId(input: {
 /** Structural normalization used for the no-churn comparison. */
 export function normalizeFactContent(content: string): string {
   return content.replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Canonical content digest of a knowledge fact revision (ADR 0028).
+ * Content only; provenance/confidence/freshness/volatility stay separate.
+ */
+export function computeKnowledgeFactContentDigest(content: string): string {
+  return computeArtifactDigest({
+    artifactType: "KnowledgeFact",
+    schemaVersion: 1,
+    payload: { content },
+  }).value;
 }
 
 /** Deterministic knowledge-state digest (task-snapshot identity). */

@@ -87,6 +87,14 @@ export function formatTaskStatus(
   const completionLine = completion.allowed
     ? "Completion: allowed"
     : `Completion: NOT allowed (${completion.missing.length} reason${completion.missing.length === 1 ? "" : "s"})`;
+  const identityLine =
+    task.contractDigest === null
+      ? `Identity: contract rev ${task.contractRevision}`
+      : `Identity: contract rev ${task.contractRevision} / ${task.contractDigest.slice(0, 8)}\u2026${
+          task.plan.planDigest === null
+            ? ""
+            : ` \u00B7 plan rev ${task.plan.planRevision} / ${task.plan.planDigest.slice(0, 8)}\u2026`
+        }`;
   const planLines =
     task.plan.state === "none"
       ? []
@@ -96,6 +104,7 @@ export function formatTaskStatus(
           `Plan approval: ${task.plan.approval}`,
         ];
   return `Task ${task.taskId} (contract revision ${task.contractRevision})
+${identityLine}
 ${taskPhaseMark(task.phase)} Phase: ${task.phase}${phaseNote}
 ${planLines.join("\n")}${planLines.length === 0 ? "" : "\n"}Steps: ${task.steps.length - pendingSteps.length}/${task.steps.length} completed${
     activeStep === undefined ? "" : ` \u2014 active: ${activeStep.id}`

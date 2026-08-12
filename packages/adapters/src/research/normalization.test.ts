@@ -309,7 +309,16 @@ describe("buildResearchDocument", () => {
       "the document exceeds the byte limit; trailing sections were dropped",
     );
     expect(document.sections.length).toBeLessThan(4);
-    expect(JSON.stringify(document).length).toBeLessThanOrEqual(900);
+    // The byte cap governs content bytes; the derived identity fields are
+    // bounded metadata outside the content measurement (ADR 0028).
+    const {
+      contentDigest: _contentDigest,
+      rawArtifactDigest: _rawArtifactDigest,
+      ...contentOnly
+    } = document;
+    expect(JSON.stringify(contentOnly).length).toBeLessThanOrEqual(900);
+    expect(document.contentDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(document.rawArtifactDigest).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("trims the remaining section text when a single section still exceeds the cap", () => {
@@ -328,7 +337,12 @@ describe("buildResearchDocument", () => {
       "the document exceeds the byte limit; the section text was truncated",
     );
     expect(document.sections).toHaveLength(1);
-    expect(JSON.stringify(document).length).toBeLessThanOrEqual(700);
+    const {
+      contentDigest: _contentDigest,
+      rawArtifactDigest: _rawArtifactDigest,
+      ...contentOnly
+    } = document;
+    expect(JSON.stringify(contentOnly).length).toBeLessThanOrEqual(700);
     expect(document.sections[0]?.text.endsWith(TRUNCATION_MARKER)).toBe(true);
   });
 

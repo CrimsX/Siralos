@@ -1146,6 +1146,7 @@ export {
 export {
   RESEARCH_LIMITS,
   computeResearchDocumentId,
+  computeResearchDocumentContentDigest,
   defaultResearchBounds,
   isResearchSourceKind,
   isValidResearchSourceRef,

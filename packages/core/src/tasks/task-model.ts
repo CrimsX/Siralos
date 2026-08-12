@@ -230,6 +230,8 @@ export interface ProgressState {
 export interface TaskState {
   readonly taskId: TaskId;
   readonly contractRevision: number;
+  /** Exact content digest of the current TaskContract revision (ADR 0028). */
+  readonly contractDigest: string | null;
   readonly phase: TaskPhase;
   /**
    * Bounded current-plan reference (Stage 3 milestone 7). The full

@@ -196,6 +196,7 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         record.contractRevisions.push(revision);
         record.contract = revision;
         record.state.contractRevision = revision.revision;
+        record.state.contractDigest = revision.digest.value;
         reconcileTaskAcceptance(record, revision);
         invalidatePlanForContractRevision(record, hooks);
         appendActivity(record, {

@@ -3,6 +3,7 @@ import type { CapabilityPolicy } from "../security/capability.js";
 import { createDefaultPolicy } from "../security/default-policy.js";
 import { INSPECT_PROFILE } from "../security/profile.js";
 import {
+  computeResearchDocumentContentDigest,
   computeResearchDocumentId,
   type ResearchDocument,
   type ResearchOutcome,
@@ -54,6 +55,12 @@ function makeDocument(overrides: Partial<ResearchDocument> = {}): ResearchDocume
     truncated: false,
     truncationReason: null,
     byteLength: 24,
+    contentDigest: computeResearchDocumentContentDigest({
+      title: "Fake doc",
+      contentType: "text/markdown",
+      sections: [{ heading: "Intro", text: "Signals connect objects.", byteLength: 24 }],
+    }),
+    rawArtifactDigest: "0".repeat(64),
     ...overrides,
   };
 }

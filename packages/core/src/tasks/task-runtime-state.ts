@@ -56,6 +56,7 @@ export function buildInitialTaskState(
   return {
     taskId: record.id,
     contractRevision: record.contract.revision,
+    contractDigest: record.contract.digest.value,
     phase: "prepared",
     plan: { ...NO_TASK_PLAN },
     steps,

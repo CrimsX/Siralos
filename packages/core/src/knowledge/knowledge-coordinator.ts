@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
+import { computeKnowledgeFactContentDigest } from "./knowledge-model.js";
 import { isValidResearchSourceRef } from "../research/research-model.js";
 import {
   KNOWLEDGE_LIMITS,
@@ -236,6 +237,7 @@ export function createKnowledgeCoordinator(
       subjectKey,
       type: candidate.type ?? "fact",
       content: candidate.content,
+      contentDigest: computeKnowledgeFactContentDigest(candidate.content),
       revision,
       provenance: Object.freeze([...(candidate.provenance ?? [])]),
       confidence: confidenceFor(candidate),
