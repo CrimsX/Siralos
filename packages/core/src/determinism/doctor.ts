@@ -31,7 +31,7 @@ export function buildRuntimeEnvironmentManifest(input: {
   readonly solarisVersion: string | null;
   readonly nodeVersion: string | null;
   readonly npmVersion: string | null;
-  readonly platform: NodeJS.Platform | string | null;
+  readonly platform: string | null;
   readonly arch: string | null;
   readonly osRelease: string | null;
   readonly godotExecutableFingerprint?: string | null;

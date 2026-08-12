@@ -243,7 +243,7 @@ export function classifyRetry(
           "Validation failed: the result is reported failed; repairs require fresh preparation.",
         nextBackoffMs: null,
       };
-    default:
+    case "unknown":
       return {
         decision: "no_retry",
         reason: "Unclassified failure: no automatic retry.",
