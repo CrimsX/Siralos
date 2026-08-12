@@ -56,6 +56,10 @@ export function classifyDevelopmentSurfacePath(path: string): "script" | "native
 const SCENE_OR_RESOURCE_SIGNAL =
   /\b(?:\.tscn|\.tres|scene|resource|node|property|signal|autoload|project\.godot)\b/i;
 
+// Conservative: ordinary prose containing "script" alone does not match
+// (mirrors the scene/resource signal discipline).
+const SCRIPT_SIGNAL = /\b(?:[A-Za-z0-9_/-]+\.gd|gdscript|@export|export\s+var)\b/i;
+
 /**
  * Deterministic host-owned surface classification.
  *
@@ -87,6 +91,10 @@ export function classifyDevelopmentSurface(
   if (requestMentionsNative) {
     evidence.push("request references scene/resource terminology");
   }
+  const requestMentionsScript = SCRIPT_SIGNAL.test(input.request);
+  if (requestMentionsScript) {
+    evidence.push("request references GDScript terminology");
+  }
   const projectHasNative =
     (input.projectSurfaces?.hasScenes ?? false) || (input.projectSurfaces?.hasResources ?? false);
   if (projectHasNative) {
@@ -98,7 +106,7 @@ export function classifyDevelopmentSurface(
   }
 
   const native = touchesNative || requestMentionsNative || projectHasNative;
-  const script = touchesScript || projectHasScripts;
+  const script = touchesScript || requestMentionsScript || projectHasScripts;
 
   if (native && script) {
     return {

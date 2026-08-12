@@ -84,7 +84,7 @@ import {
   DEFAULT_EXECUTION_CONTRACT,
   resolveInstructionSet,
   sha256Hex,
-  S3M8_MILESTONE_MANIFEST,
+  S3M11_MILESTONE_MANIFEST,
   createDefaultPolicy,
   createProjectionService,
   createRouteContextCapacity,
@@ -593,13 +593,14 @@ export async function createCliApplication(
   const provider = createDeterministicFakeProvider();
   // Executor briefing foundation: the host owns briefing semantics. The
   // milestone manifest is selected deterministically by request — the
-  // current S3M8 manifest applies to tasks that reference Godot
+  // current Stage 3 milestone 11 manifest (unified Godot-native
+  // development workflow) applies to tasks that reference Godot
   // scene/resource concerns; everything else gets no milestone manifest.
   const briefing = createExecutorBriefing({
     executionContract: DEFAULT_EXECUTION_CONTRACT,
     milestone: null,
     selectMilestone: (request) =>
-      containsGodotSceneOrResourceReference(request) ? S3M8_MILESTONE_MANIFEST : null,
+      containsGodotSceneOrResourceReference(request) ? S3M11_MILESTONE_MANIFEST : null,
     getTaskContract: () => tasks.latestTask()?.contract() ?? null,
     getTaskSnapshot: () => tasks.latestTask()?.snapshot() ?? null,
     getCurrentPlan: () => tasks.latestTask()?.currentPlan() ?? null,
@@ -713,7 +714,7 @@ export async function createCliApplication(
     researchSources,
     planner,
     briefing,
-    milestoneManifest: S3M8_MILESTONE_MANIFEST,
+    milestoneManifest: S3M11_MILESTONE_MANIFEST,
     close(): void {
       referenceServices.close();
     },

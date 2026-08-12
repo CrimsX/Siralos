@@ -838,9 +838,9 @@ describe("runInteractiveSession", () => {
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Executor brief (solaris-execution-contract rev 1)");
     expect(io.text).toContain("TASK\nInspect the main scene file read-only");
-    expect(io.text).toContain("Milestone: S3M8 rev 1");
+    expect(io.text).toContain("Milestone: S3M11 rev 1");
     expect(io.text).toContain("Fingerprint:");
-    expect(io.text).toContain("S3M8.PARSE.TSCN");
+    expect(io.text).toContain("S3M11.ROUTING.SURFACE");
   });
 
   it("renders no brief when no task is tracked yet", async () => {
@@ -856,10 +856,8 @@ describe("runInteractiveSession", () => {
       "/exit",
     ]);
     await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain(
-      "Milestone S3M8 rev 1 — Read-Only Godot Scene and Resource Intelligence",
-    );
-    expect(io.text).toContain("S3M8.PARSE.TSCN [incomplete]");
+    expect(io.text).toContain("Milestone S3M11 rev 1 — Unified Godot-Native Development Workflow");
+    expect(io.text).toContain("S3M11.ROUTING.SURFACE [incomplete]");
     expect(io.text).toContain("Result: 0 pass, 0 fail");
     // A task about health has no scene/resource request, so the brief
     // carries no milestone — but the /milestone command still renders the

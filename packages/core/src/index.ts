@@ -697,6 +697,7 @@ export {
 export { S3M8_MILESTONE_MANIFEST } from "./executor/s3m8-manifest.js";
 export { S3M9_MILESTONE_MANIFEST } from "./executor/s3m9-manifest.js";
 export { S3M10_MILESTONE_MANIFEST } from "./executor/s3m10-manifest.js";
+export { S3M11_MILESTONE_MANIFEST } from "./executor/s3m11-manifest.js";
 export {
   STANDARD_ACCEPTANCE_DEFINITIONS,
   STANDARD_ACCEPTANCE_IDS,

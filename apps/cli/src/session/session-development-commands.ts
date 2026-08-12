@@ -1,5 +1,6 @@
 import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
 import {
+  classifyDevelopmentSurface,
   computeExecutorBriefFingerprint,
   computePlanRevisionDigest,
   containsGodotSceneOrResourceReference,
@@ -95,6 +96,12 @@ export async function runDevelopCommand(
       return;
     }
     io.write(`Development workflow ${started.session.id} started: investigating the request.\n`);
+    // Stage 3 milestone 11: host-owned surface routing. The preliminary
+    // classification uses request signals only (no touchpoints exist
+    // before inspection); the authoritative surface is re-derived from
+    // the actual prepared target paths at change-set preparation time.
+    const surfaceDecision = classifyDevelopmentSurface({ request, touchpoints: [] });
+    io.write(`Surface: ${surfaceDecision.kind} (${surfaceDecision.rationale})\n`);
     activeDevelopmentTaskFlow = createDevelopmentTaskFlow({
       runtime: sessionInfo.tasks,
       sources: {
@@ -102,6 +109,7 @@ export async function runDevelopCommand(
         instructionSetRevision: sessionInfo.instructions.revision(),
         knowledgeStateRevision: sessionInfo.projectKnowledge.revision(),
       },
+      surface: surfaceDecision.kind,
       // Executor briefing foundation: the immutable task snapshot records
       // the manifest identity and the initial brief fingerprint.
       snapshotExtras: ({ taskId, contract }) => {
@@ -132,6 +140,7 @@ export async function runDevelopCommand(
       narrowRepair: false,
       knownTouchpoints: 0,
       involvesGodotSceneOrResource: containsGodotSceneOrResourceReference(request),
+      surface: surfaceDecision.kind,
     };
     const handle = sessionInfo.tasks.getTask(task.taskId);
     if (handle === null) {
