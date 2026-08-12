@@ -353,14 +353,14 @@ export type RunActivityEvent =
 
 export function createRunActivityLog(): {
   readonly events: readonly RunActivityEvent[];
-  readonly record: (event: Omit<RunActivityEvent, "atMs"> & { readonly atMs?: number }) => void;
+  /** Records with an explicit timestamp (host passes the controlled clock). */
+  readonly record: (event: Omit<RunActivityEvent, "atMs"> & { readonly atMs: number }) => void;
 } {
   const events: RunActivityEvent[] = [];
   return {
     events,
     record(event) {
-      const atMs = event.atMs ?? Date.now();
-      events.push({ ...event, atMs } as RunActivityEvent);
+      events.push({ ...event, atMs: event.atMs } as RunActivityEvent);
     },
   };
 }

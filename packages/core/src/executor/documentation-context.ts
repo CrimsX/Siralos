@@ -531,6 +531,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["context", "task-runtime", "security"],
     paths: ["packages/core/src/context/**", "apps/cli/src/output/context.ts"],
   },
+  {
+    id: "adr:0031",
+    path: "docs/adr/0031-runtime-readiness-and-operational-resilience.md",
+    kind: "adr",
+    concerns: ["runtime", "security", "task-runtime"],
+    status: "accepted",
+    domains: ["runtime", "security", "task-runtime"],
+    paths: ["packages/core/src/runtime/**", "packages/core/src/doctor/capability-doctor.ts"],
+  },
 ]);
 
 /**

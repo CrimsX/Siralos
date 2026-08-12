@@ -39,7 +39,13 @@ unsafe filesystem or process boundary intentionally fails closed.
   classes, typed PhaseContracts with narrowing-only authority, digest-bound
   artifact envelopes and dependency manifests, targeted incremental staleness,
   provenance with deterministic why-diagnostics, phase-driven projection, and
-  recording-only source-integrity signals.
+  recording-only source-integrity signals. The Runtime
+  Readiness & Operational Resilience milestone (ADR 0031) is implemented:
+  causal run identity, RunManifest, side-effect policy and run-owned
+  boundaries, artifact budgets/retention, the failure taxonomy, process
+  supervision, cancellation/reconciliation, the fail-closed readiness
+  manifest, the deterministic fault-injection harness, and doctor
+  readiness reporting — stopping at the Stage 4 execution boundary.
 - The cross-cutting executor briefing foundation (ADR 0022) is implemented:
   a versioned Execution Contract, milestone manifests (S3M8, S3M9, S3M10,
   and S3M11 have real validated manifests), evidence-backed milestone

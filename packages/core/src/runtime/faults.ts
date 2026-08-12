@@ -201,7 +201,8 @@ export function expectedFailureKind(script: FaultScript): RuntimeFailureKind | n
       // cleanup_failed is the INDEPENDENT cleanup status, never a
       // terminal execution disposition.
       return null;
-    default:
+    case "normal":
+    case "restart_incomplete":
       return null;
   }
 }
