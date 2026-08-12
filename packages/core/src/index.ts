@@ -824,6 +824,75 @@ export {
   type OwnershipEntry,
 } from "./determinism/discovery.js";
 export {
+  CONTEXT_CLASSES,
+  CONTEXT_CLASS_ARTIFACT_KINDS,
+  PHASE_CONTRACTS,
+  classArtifactKinds,
+  contextClassesForPhase,
+  createPhaseContract,
+  validateAuthorityProfile,
+  type ContextClass,
+  type PhaseAuthorityProfile,
+  type PhaseContract,
+  type PhaseContractId,
+  type PhaseInputRequirement,
+  type PhaseOperation,
+  type PhaseOutputRequirement,
+  type PhaseVerificationRequirement,
+} from "./context/phase-contract.js";
+export {
+  buildDependencyManifest,
+  computeArtifactLineage,
+  createArtifactDependencyManifest,
+  createWorkflowArtifactIdentity,
+  HIGH_VALUE_DEPENDENCIES,
+  renderArtifactIdentity,
+  renderLineage,
+  type ArtifactDependency,
+  type ArtifactDependencyManifest,
+  type LineageLink,
+  type WorkflowArtifactIdentity,
+} from "./context/artifacts.js";
+export {
+  computeStalenessDigest,
+  deriveArtifactStaleness,
+  isPreparedMutationStale,
+  type ArtifactStalenessInput,
+  type ArtifactStalenessResult,
+} from "./context/staleness.js";
+export {
+  computeProvenanceDigest,
+  createContextProvenanceRef,
+  renderWhyAcceptanceFailed,
+  renderWhyBlocked,
+  renderWhyStale,
+  renderWhyValidationRequired,
+  whyValidationRequired,
+  type ContextProvenanceRef,
+  type ProvenanceSourceKind,
+  type WhyAcceptanceFailed,
+  type WhyBlocked,
+  type WhyStale,
+  type WhyValidationRequired,
+} from "./context/provenance.js";
+export {
+  accumulateCorrectionPattern,
+  computeSourceProblemCandidateDigest,
+  createSourceProblemCandidate,
+  recordCorrectionPattern,
+  renderSourceProblemCandidate,
+  type CorrectionPattern,
+  type CorrectionPatternKind,
+  type SourceProblemCandidate,
+  type SourceProblemClass,
+} from "./context/source-integrity.js";
+export {
+  phaseRequiresRepositoryWideContext,
+  projectPhaseContext,
+  toolSurfaceForPhase,
+  type PhaseContextSources,
+} from "./context/projection.js";
+export {
   STANDARD_ACCEPTANCE_DEFINITIONS,
   STANDARD_ACCEPTANCE_IDS,
   resolveAcceptanceEvidenceKinds,

@@ -1,4 +1,5 @@
 import {
+  PHASE_CONTRACTS,
   describeInstructionScope,
   formatReferenceAlias,
   type ProjectionService,
@@ -84,6 +85,27 @@ export function formatTaskStatus(
     const by = criterion.verifiedBy === null ? "" : ` [${criterion.verifiedBy}]`;
     return `  ${mark} ${criterion.criterionId} ${criterion.status}${by}`;
   });
+  const phaseLine = (() => {
+    // Interpretable context: the active workflow phase contract (ADR 0030).
+    const active = task.steps.find((step) => step.status === "active");
+    if (active === undefined) {
+      return null;
+    }
+    const mapping: Record<string, string> = {
+      investigate: "inspection",
+      propose: "preparation",
+      apply: "mutation",
+      validate: "validation",
+      review: "review",
+    };
+    const phaseId = mapping[active.id] ?? "working";
+    const contract = PHASE_CONTRACTS[phaseId as keyof typeof PHASE_CONTRACTS];
+    return contract === undefined
+      ? null
+      : `PhaseContract: ${contract.id} v${contract.version} / ${contract.digest.value.slice(0, 8)}… authority: ${
+          contract.authority.readOnly ? "read-only" : "prepared-only mutation"
+        }${contract.authority.approvalGrant ? " + approval grant" : ""}`;
+  })();
   const completionLine = completion.allowed
     ? "Completion: allowed"
     : `Completion: NOT allowed (${completion.missing.length} reason${completion.missing.length === 1 ? "" : "s"})`;
@@ -105,7 +127,12 @@ export function formatTaskStatus(
         ];
   return `Task ${task.taskId} (contract revision ${task.contractRevision})
 ${identityLine}
-${taskPhaseMark(task.phase)} Phase: ${task.phase}${phaseNote}
+${
+  phaseLine === null
+    ? ""
+    : `${phaseLine}
+`
+}${taskPhaseMark(task.phase)} Phase: ${task.phase}${phaseNote}
 ${planLines.join("\n")}${planLines.length === 0 ? "" : "\n"}Steps: ${task.steps.length - pendingSteps.length}/${task.steps.length} completed${
     activeStep === undefined ? "" : ` \u2014 active: ${activeStep.id}`
   }
