@@ -3,12 +3,14 @@
 Solaris is an independent, provider-neutral, interactive agent harness for programming and developing games with the Godot Engine.
 
 This repository contains the provider-neutral harness foundations through
-**Stage 3 milestone 8 (Read-Only Godot Scene and Resource Intelligence)**: an
+**Stage 3 milestone 11 (Unified Godot-Native Development Workflow)**: an
 executable interactive CLI, deterministic fake provider, bounded tool and
 projection pipelines, read-only workspace/Godot inspection, structured task
 state, references and research contracts, capability diagnostics, revision-bound
-planning, and static `.tscn`/`.tres` parsing with scene/resource inspection
-tools. It does not yet develop Godot games end to end: every operation that
+planning, static `.tscn`/`.tres` parsing with scene/resource inspection tools,
+impact intelligence, approved scene/resource mutation, and the complete
+host-owned development loop for script-only, native-only, and bounded mixed
+tasks. It does not yet develop Godot games end to end: every operation that
 would require an identity-bound filesystem or process primitive still fails
 closed as `unavailable`.
 
@@ -263,14 +265,15 @@ instead of model memory:
 
 ## Next planned milestone
 
-The next narrow milestone is **Stage 3 milestone 9: Godot Review Context and
-Impact Intelligence**. It uses the script/scene/resource relationships to
-determine changed surfaces, related scripts/scenes/resources,
-inherited/instantiated impact, signal consumers/producers, test surfaces,
-autoload dependencies, regression areas, and recommended validation behind a
-bounded evidence-backed `ReviewContextManifest` for planning and independent
-review. Read-only scene/resource intelligence (milestone 8) is complete: it
-stays strictly read-only — no scene/resource mutation, project import, or
-Godot launch is part of this stage's surface. The existing engine, mutation,
-command, and development execution surfaces remain intentionally unavailable
-until an identity-bound host primitive can enforce them. See `ROADMAP.md`.
+The next narrow milestone is **Stage 4 milestone 1: Controlled Godot
+Execution** — sandboxed, bounded project/runtime execution that produces
+structured runtime evidence without granting unrestricted desktop or
+network access. Stage 3 is complete: the unified Godot-native development
+loop (`/develop`) routes script-only, native-only, and bounded mixed tasks
+through planning, surface discovery, unified change sets with per-target
+revision/approval binding, checkpoint-then-apply batches, per-surface
+verification, cross-surface consistency, impact-driven validation,
+read-only independent review, bounded repair, and host-observed acceptance
+(ADR 0027). The existing engine, mutation, command, and development
+execution surfaces remain intentionally unavailable until an identity-bound
+host primitive can enforce them. See `ROADMAP.md`.

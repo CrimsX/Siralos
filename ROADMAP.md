@@ -24,13 +24,13 @@ unsafe filesystem or process boundary intentionally fails closed.
   recovery mirrors, diagnostics, LSP startup, change application, validation,
   and quality execution remain intentionally unavailable for the same identity
   reasons.
-- Stage 3 is active. Milestones 1–8 are implemented and tested. Milestone 9 is
-  next.
+- Stage 3 is active. Milestones 1–11 are implemented and tested.
 - The cross-cutting executor briefing foundation (ADR 0022) is implemented:
-  a versioned Execution Contract, milestone manifests (S3M8 has a real
-  validated manifest), evidence-backed milestone acceptance, the Executor
-  Context Pack, the deterministic Executor Brief Compiler, and the
-  `/brief` / `/milestone` inspection commands. It is not a roadmap stage.
+  a versioned Execution Contract, milestone manifests (S3M8, S3M9, S3M10,
+  and S3M11 have real validated manifests), evidence-backed milestone
+  acceptance, the Executor Context Pack, the deterministic Executor Brief
+  Compiler, and the `/brief` / `/milestone` inspection commands. It is not
+  a roadmap stage.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -123,16 +123,36 @@ Implemented foundations:
    `godot.inspect_resource` / `godot.dependencies` tools, `[Scene evidence]`
    context projection, and planning touchpoints with scene/resource evidence —
    all static and process-free
+9. **Review Context and Impact Intelligence** — bounded evidence-backed
+   `ReviewContextManifest` derivation (primary changes, related surfaces,
+   inherited/instantiated impact, signal consumers/producers, test surfaces,
+   autoload dependencies, regression areas, recommended validation with honest
+   `runtime_evidence_unavailable` classification) feeding planning and
+   independent review context (ADR 0025)
+10. **Approved Scene and Resource Mutation** — typed scene/resource mutation
+    operations, immutable prepared mutations bound to the exact source
+    revision, complete previews, revision-bound one-time approval, checkpoints
+    before mutation, deterministic structural serialization, post-apply
+    reparse and semantic verification, prepare-only provider tools, and no raw
+    `.tscn`/`.tres` text-edit fallback (ADR 0026)
+11. **Unified Godot-Native Development Workflow** — one host-owned
+    `/develop` loop for script-only, native-only, and bounded mixed tasks:
+    deterministic surface routing, unified multi-target change sets with
+    per-target revision/fingerprint/approval/verification retention, derived
+    dependency-based apply ordering, one checkpoint-then-apply batch
+    revalidating every target before any write, per-surface verification
+    (GDScript parser/fresh-LSP; native reparse/semantic), cross-surface
+    consistency with honest runtime-only disclosures, impact-driven
+    validation, read-only independent review, bounded repair with fresh
+    artifacts only, host-observed acceptance, and structured blocked
+    dispositions (ADR 0027)
 
-### Next: milestone 9 — Godot review context and impact intelligence
+### Next: Stage 4 — Runtime and visual QA
 
-Use the script/scene/resource relationships to determine changed surfaces,
-related scripts/scenes/resources, inherited/instantiated impact, signal
-consumers/producers, test surfaces, autoload dependencies, regression areas,
-and recommended validation behind a bounded evidence-backed
-`ReviewContextManifest` for planning and independent review.
-
-Finish read-only scene/resource intelligence first.
+Not started. The Stage 3 loop is complete; the first Stage 4 milestone is
+Controlled Godot Execution: sandboxed, bounded project/runtime execution
+that produces structured runtime evidence without granting unrestricted
+desktop or network access. It is not implemented here.
 
 ## 4. Runtime and visual QA
 

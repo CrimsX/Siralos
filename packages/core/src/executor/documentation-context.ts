@@ -476,6 +476,23 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
       "packages/adapters/src/godot/scene-mutation/**",
     ],
   },
+  {
+    id: "adr:0027",
+    path: "docs/adr/0027-unified-godot-native-development-workflow.md",
+    kind: "adr",
+    concerns: ["godot", "godot-static-inspection", "workspace", "task-runtime", "security"],
+    status: "accepted",
+    domains: ["godot", "workflow", "mutation", "task-runtime", "security"],
+    paths: [
+      "packages/core/src/godot/development/development-surface.ts",
+      "packages/core/src/godot/development/unified-change-set.ts",
+      "packages/core/src/godot/development/unified-order.ts",
+      "packages/core/src/godot/development/cross-surface-consistency.ts",
+      "packages/core/src/godot/development/blocked-disposition.ts",
+      "packages/adapters/src/godot/development/unified-development-service.ts",
+      "packages/core/src/executor/s3m11-manifest.ts",
+    ],
+  },
 ]);
 
 /**
