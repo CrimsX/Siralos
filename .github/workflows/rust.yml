@@ -10,13 +10,45 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  rust-gates:
+    name: Rust gates (fmt, clippy, build, test)
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml is the single source of truth for the exact
+      # channel (currently 1.97.1) and its components; rustup installs
+      # them on the first cargo invocation, so the action only ensures
+      # rustup exists. Do not hardcode the channel here.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy (warnings denied)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Test
+        run: cargo test --workspace
+
+      # Repository-level ratchets from the Siralos engineering standard
+      # (docs/development/RUST_STYLE.md, ADR 0032): the Rust architecture
+      # check (crate shape, dependency direction, binary identity, core
+      # domain neutrality, unsafe backstop) and the identity check (no
+      # stale former project identity). Both are dependency-free Node
+      # scripts and need no npm install.
+      - name: Rust architecture ratchet
+        run: node scripts/check-rust-architecture.mjs
+
+      - name: Identity ratchet
+        run: node scripts/check-siralos-identity.mjs
