@@ -4,6 +4,7 @@ import type {
   GDScriptDevelopmentStatus,
   DevelopmentEvent,
 } from "../godot/development/development-model.js";
+import type { DevelopmentSurfaceKind } from "../godot/development/development-surface.js";
 import type { QualityStatus } from "../godot/quality/quality-model.js";
 import type { AcceptanceCriterion, TaskContract } from "./task-contract.js";
 import { createTaskContract } from "./task-contract.js";
@@ -111,9 +112,18 @@ const DEVELOPMENT_CONSTRAINTS = [
   },
 ];
 
-/** Explicit, individually trackable acceptance criteria (§25). */
-export function createDevelopmentAcceptanceCriteria(): readonly AcceptanceCriterion[] {
-  return [
+/**
+ * Explicit, individually trackable acceptance criteria (§25). Native
+ * criteria are included only when the host-derived surface requires
+ * scene/resource work (Stage 3 milestone 11, ADR 0027): a script-only
+ * task must not be blocked by native verification criteria.
+ */
+export function createDevelopmentAcceptanceCriteria(options?: {
+  readonly surface?: DevelopmentSurfaceKind;
+}): readonly AcceptanceCriterion[] {
+  const surface = options?.surface;
+  const nativeInvolved = surface === "native_only" || surface === "mixed";
+  const criteria: AcceptanceCriterion[] = [
     {
       id: "user-approval",
       description: "Proposed change sets are approved by the user.",
@@ -145,14 +155,34 @@ export function createDevelopmentAcceptanceCriteria(): readonly AcceptanceCriter
       verificationKind: "review",
     },
   ];
+  if (nativeInvolved) {
+    criteria.push(
+      {
+        id: "native-verified",
+        description: "Every native scene/resource target passed reparse and semantic verification.",
+        verificationKind: "deterministic",
+      },
+      {
+        id: "cross-surface-consistent",
+        description:
+          "Script/scene/resource relationships are coherent where statically supportable.",
+        verificationKind: "deterministic",
+      },
+    );
+  }
+  return criteria;
 }
 
-export function createDevelopmentTaskContract(id: TaskId, request: string): TaskContract {
+export function createDevelopmentTaskContract(
+  id: TaskId,
+  request: string,
+  options?: { readonly surface?: DevelopmentSurfaceKind },
+): TaskContract {
   return createTaskContract({
     id,
     request,
     constraints: DEVELOPMENT_CONSTRAINTS,
-    acceptanceCriteria: createDevelopmentAcceptanceCriteria(),
+    acceptanceCriteria: createDevelopmentAcceptanceCriteria(options),
     pausePolicy: "on_approval",
   });
 }
@@ -161,6 +191,12 @@ export interface DevelopmentTaskFlowOptions {
   readonly runtime: TaskRuntime;
   /** Base snapshot sources (provider, sandbox, policy, workspace). */
   readonly sources: TaskRuntimeSnapshotSources;
+  /**
+   * Host-derived development surface (Stage 3 milestone 11, ADR 0027).
+   * Drives native acceptance criteria: script-only tasks never carry
+   * native verification criteria.
+   */
+  readonly surface?: DevelopmentSurfaceKind;
   readonly now?: () => number;
   readonly idFactory?: () => string;
   /**
@@ -280,7 +316,10 @@ export function createDevelopmentTaskFlow(
       }
       evidenceCounter = 0;
       const taskId = nextTaskId();
-      const contract = createDevelopmentTaskContract(taskId, request);
+      const contract =
+        options.surface === undefined
+          ? createDevelopmentTaskContract(taskId, request)
+          : createDevelopmentTaskContract(taskId, request, { surface: options.surface });
       const snapshot = createTaskRuntimeSnapshot(
         {
           ...options.sources,
@@ -398,6 +437,38 @@ export function createDevelopmentTaskFlow(
         case "development_repair_requested":
           transitionTo("working");
           break;
+        case "development_native_verified": {
+          transitionTo("validating");
+          const nativeId = attach("validation_result", {
+            type: "native_verification",
+            targetPath: event.targetPath,
+            status: event.status,
+          });
+          if (nativeId !== null && event.status === "verified") {
+            verify("native-verified", nativeId);
+          }
+          break;
+        }
+        case "development_consistency_completed": {
+          transitionTo("validating");
+          const consistencyId = attach("validation_result", {
+            type: "consistency",
+            consistent: event.consistent,
+            concernCount: event.concernCount,
+          });
+          if (consistencyId !== null && event.consistent) {
+            verify("cross-surface-consistent", consistencyId);
+          }
+          break;
+        }
+        case "development_impact_derived": {
+          const impactId = attach("validation_result", {
+            type: "impact",
+            completeness: event.completeness,
+          });
+          void impactId;
+          break;
+        }
         case "quality_started":
         case "review_started":
           transitionTo("reviewing");

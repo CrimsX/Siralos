@@ -44,6 +44,13 @@ export interface ToolProjectionInput {
   readonly registeredTools: readonly RegisteredToolInfo[];
   /** Provider capability metadata; undefined means tool calling is supported. */
   readonly providerToolCalling?: boolean;
+  /**
+   * Host-derived development surface (Stage 3 milestone 11, ADR 0027):
+   * native prepare tools are projected in development mode only when the
+   * task actually requires scene/resource work. Undefined (or script-only)
+   * fails closed: native prepare tools stay absent from the schema.
+   */
+  readonly surface?: "script_only" | "native_only" | "mixed" | "none";
 }
 
 /**
@@ -131,6 +138,10 @@ const MODE_TOOL_ALLOWLIST: Readonly<Record<ProjectionMode, readonly string[]>> =
     "workspace.read",
     "workspace.search",
     "workspace.apply_text_changeset",
+    // Native prepare tools are additionally gated on the host-derived
+    // surface (see modeAllows): projected only for native/mixed tasks.
+    "godot.prepare_scene_change",
+    "godot.prepare_resource_change",
     "godot.development_status",
     "godot.inspect_engine",
     "godot.inspect_project",
@@ -238,9 +249,22 @@ export interface ToolProjector {
 }
 
 /** A tool that fails the mode allowlist is hidden regardless of policy. */
-function modeAllows(mode: ProjectionMode, info: RegisteredToolInfo): boolean {
+function modeAllows(
+  mode: ProjectionMode,
+  info: RegisteredToolInfo,
+  surface: ToolProjectionInput["surface"],
+): boolean {
   const exact = MODE_TOOL_ALLOWLIST[mode];
   if (exact.length > 0) {
+    if (
+      mode === "development" &&
+      (info.definition.name === "godot.prepare_scene_change" ||
+        info.definition.name === "godot.prepare_resource_change")
+    ) {
+      // Native prepare tools are phase/task relevant only when the
+      // host-derived surface requires scene/resource work.
+      return surface === "native_only" || surface === "mixed";
+    }
     return exact.includes(info.definition.name);
   }
   return MODE_CAPABILITY_ALLOWLIST[mode].includes(info.capability);
@@ -252,7 +276,7 @@ export function createToolProjector(options: ToolProjectorOptions): ToolProjecto
       const projected: ProjectedTool[] = [];
       for (const info of input.registeredTools) {
         let visibility: ToolVisibility;
-        if (!modeAllows(input.mode, info)) {
+        if (!modeAllows(input.mode, info, input.surface)) {
           visibility = "hidden";
         } else {
           const permission = evaluatePermission(info.capability, options.policy, options.profile);

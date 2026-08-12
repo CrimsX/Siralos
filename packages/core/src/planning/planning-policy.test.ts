@@ -107,6 +107,23 @@ describe("createPlanningPolicy", () => {
     }
   });
 
+  it("routes a mixed script/native surface to full (S3M11)", () => {
+    const policy = createPlanningPolicy();
+    const decision = policy.decide(
+      input({ surface: "mixed", knownTouchpoints: 2, acceptanceCriterionCount: 2 }),
+    );
+    expect(decision.depth).toBe("full");
+    expect(decision.reason).toBe("mixed-surface-relationships");
+  });
+
+  it("keeps a script-only surface on the normal depth ladder (S3M11)", () => {
+    const policy = createPlanningPolicy();
+    const decision = policy.decide(
+      input({ surface: "script_only", knownTouchpoints: 3, acceptanceCriterionCount: 2 }),
+    );
+    expect(decision.depth).toBe("light");
+  });
+
   it("detects protected config references deterministically", () => {
     expect(containsProtectedConfigReference("Update AGENTS.md rules")).toBe(true);
     expect(containsProtectedConfigReference("touch .solaris/config.json")).toBe(true);

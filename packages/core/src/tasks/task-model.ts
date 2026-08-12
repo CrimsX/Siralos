@@ -90,6 +90,20 @@ export type EvidenceSource =
       readonly workspaceIntegrityVerified: boolean;
       readonly unexpectedChanges: number;
     }
+  | {
+      readonly type: "native_verification";
+      readonly targetPath: string;
+      readonly status: "verified" | "failed";
+    }
+  | {
+      readonly type: "consistency";
+      readonly consistent: boolean;
+      readonly concernCount: number;
+    }
+  | {
+      readonly type: "impact";
+      readonly completeness: "complete" | "bounded" | "partial";
+    }
   | { readonly type: "review"; readonly status: string; readonly blockingFindings: number }
   | { readonly type: "change_preview"; readonly changeSetId: string }
   | {

@@ -148,6 +148,51 @@ describe("tool projector", () => {
     const second = projector.project({ mode: "generic", registeredTools: tools });
     expect(first.fingerprint).toBe(second.fingerprint);
   });
+
+  it("projects native prepare tools only for native/mixed development surfaces (S3M11)", () => {
+    const tools = [
+      tool("workspace.apply_text_changeset", "workspace.write"),
+      tool("godot.prepare_scene_change", "godot.inspect"),
+      tool("godot.prepare_resource_change", "godot.inspect"),
+      tool("godot.inspect_scene", "godot.inspect"),
+    ];
+    // Script-only: native prepare tools are absent from the schema.
+    const scriptOnly = projector.project({
+      mode: "development",
+      registeredTools: tools,
+      surface: "script_only",
+    });
+    const scriptOnlyNames = scriptOnly.requestTools.map((t) => t.name);
+    expect(scriptOnlyNames).not.toContain("godot.prepare_scene_change");
+    expect(scriptOnlyNames).not.toContain("godot.prepare_resource_change");
+    expect(scriptOnlyNames).toContain("workspace.apply_text_changeset");
+    // Undefined surface fails closed the same way.
+    const untyped = projector.project({ mode: "development", registeredTools: tools });
+    expect(untyped.requestTools.map((t) => t.name)).not.toContain("godot.prepare_scene_change");
+    // Mixed: native prepare tools are projected.
+    const mixed = projector.project({
+      mode: "development",
+      registeredTools: tools,
+      surface: "mixed",
+    });
+    const mixedNames = mixed.requestTools.map((t) => t.name);
+    expect(mixedNames).toContain("godot.prepare_scene_change");
+    expect(mixedNames).toContain("godot.prepare_resource_change");
+    // Native-only projects them too.
+    const nativeOnly = projector.project({
+      mode: "development",
+      registeredTools: tools,
+      surface: "native_only",
+    });
+    expect(nativeOnly.requestTools.map((t) => t.name)).toContain("godot.prepare_scene_change");
+    // Review mode never projects them regardless of surface.
+    const review = projector.project({
+      mode: "review",
+      registeredTools: tools,
+      surface: "mixed",
+    });
+    expect(review.requestTools.map((t) => t.name)).not.toContain("godot.prepare_scene_change");
+  });
 });
 
 describe("evidence projector", () => {

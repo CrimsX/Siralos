@@ -20,6 +20,7 @@ export type PlanningDecisionReason =
   | "research-required"
   | "capability-uncertainty"
   | "scene-resource-relationships"
+  | "mixed-surface-relationships"
   | "narrow-repair-known-surface"
   | "unknown-surface-bounded"
   | "broad-surface-or-many-criteria"
@@ -68,6 +69,13 @@ export interface PlanningDecisionInput {
    * request can still stay light.
    */
   readonly involvesGodotSceneOrResource?: boolean;
+  /**
+   * Host-derived development surface classification (Stage 3 milestone
+   * 11, ADR 0027): script-only, native-only, mixed, or none. A mixed
+   * script/native task is multi-surface by construction and warrants
+   * full planning.
+   */
+  readonly surface?: "script_only" | "native_only" | "mixed" | "none";
 }
 
 /** Deterministic marker check for protected behavioral-config references. */
@@ -135,20 +143,26 @@ export function createPlanningPolicy(): PlanningPolicy {
       ) {
         return { depth: "full", reason: "scene-resource-relationships" };
       }
-      // 5. A narrow repair on a known surface stays plan-free.
+      // 5. A mixed script/native task is multi-surface by construction:
+      //    the unified path must order, approve, checkpoint, and verify
+      //    across both surfaces, so full planning is warranted.
+      if (input.surface === "mixed") {
+        return { depth: "full", reason: "mixed-surface-relationships" };
+      }
+      // 6. A narrow repair on a known surface stays plan-free.
       if (input.narrowRepair && input.knownTouchpoints > 0 && input.knownTouchpoints <= 2) {
         return { depth: "none", reason: "narrow-repair-known-surface" };
       }
-      // 6. An unknown implementation surface is conservatively bounded:
+      // 7. An unknown implementation surface is conservatively bounded:
       //    light, never none (ambiguity prefers light over none).
       if (input.knownTouchpoints === 0) {
         return { depth: "light", reason: "unknown-surface-bounded" };
       }
-      // 7. Broad surface or many independent criteria warrant full planning.
+      // 8. Broad surface or many independent criteria warrant full planning.
       if (input.acceptanceCriterionCount >= 4 || input.knownTouchpoints > 4) {
         return { depth: "full", reason: "broad-surface-or-many-criteria" };
       }
-      // 8. Everything else is bounded but non-trivial: light.
+      // 9. Everything else is bounded but non-trivial: light.
       return { depth: "light", reason: "bounded-non-trivial" };
     },
   };

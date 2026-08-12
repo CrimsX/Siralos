@@ -272,6 +272,23 @@ export type DevelopmentEvent =
       readonly iteration: number;
     }
   | {
+      readonly type: "development_native_verified";
+      readonly id: string;
+      readonly targetPath: string;
+      readonly status: "verified" | "failed";
+    }
+  | {
+      readonly type: "development_consistency_completed";
+      readonly id: string;
+      readonly consistent: boolean;
+      readonly concernCount: number;
+    }
+  | {
+      readonly type: "development_impact_derived";
+      readonly id: string;
+      readonly completeness: "complete" | "bounded" | "partial";
+    }
+  | {
       readonly type: "development_completed";
       readonly id: string;
       readonly status: DevelopmentStatus;
