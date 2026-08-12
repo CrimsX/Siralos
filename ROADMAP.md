@@ -34,7 +34,12 @@ unsafe filesystem or process boundary intentionally fails closed.
   implemented: explicit clock/randomness/ordering ports, environment and
   reproducibility manifests, deterministic validation/acceptance/retry
   decisions, concurrency normalization, deterministic discovery with an
-  ownership index, a nondeterminism audit, and a determinism doctor area.
+  ownership index, a nondeterminism audit, and a determinism doctor area. The Interpretable
+  Context Architecture extension (ADR 0030) is implemented: formal context
+  classes, typed PhaseContracts with narrowing-only authority, digest-bound
+  artifact envelopes and dependency manifests, targeted incremental staleness,
+  provenance with deterministic why-diagnostics, phase-driven projection, and
+  recording-only source-integrity signals.
 - The cross-cutting executor briefing foundation (ADR 0022) is implemented:
   a versioned Execution Contract, milestone manifests (S3M8, S3M9, S3M10,
   and S3M11 have real validated manifests), evidence-backed milestone

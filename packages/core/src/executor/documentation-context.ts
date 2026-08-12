@@ -522,6 +522,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
       "packages/core/src/doctor/capability-doctor.ts",
     ],
   },
+  {
+    id: "adr:0030",
+    path: "docs/adr/0030-interpretable-context-architecture.md",
+    kind: "adr",
+    concerns: ["context", "task-runtime", "security"],
+    status: "accepted",
+    domains: ["context", "task-runtime", "security"],
+    paths: ["packages/core/src/context/**", "apps/cli/src/output/context.ts"],
+  },
 ]);
 
 /**
