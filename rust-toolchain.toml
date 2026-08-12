@@ -1,0 +1,13 @@
+# Explicit, reproducible Rust toolchain for Siralos.
+#
+# The channel is pinned to the exact stable release the workspace was
+# validated with (see docs/development/RUST_STYLE.md). Do not bump it
+# casually: every bump must be verified with the full Rust gate
+# (fmt, clippy with warnings denied, build, test).
+#
+# MSRV policy: edition 2024 requires Rust >= 1.85; the declared MSRV
+# lives in Cargo.toml ([workspace.package] rust-version).
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

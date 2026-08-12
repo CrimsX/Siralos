@@ -1,0 +1,18 @@
+[package]
+name = "siralos-cli"
+description = "Siralos command-line entry point"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+siralos-core = { workspace = true }
+siralos-adapters = { workspace = true }
+
+[[bin]]
+name = "siralos"
+path = "src/main.rs"
+
+[lints]
+workspace = true

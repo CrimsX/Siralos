@@ -1,0 +1,10 @@
+[package]
+name = "siralos-core"
+description = "Domain-neutral host semantics and types for Siralos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true

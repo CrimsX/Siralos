@@ -1,0 +1,13 @@
+[package]
+name = "siralos-adapters"
+description = "Infrastructure and adapter ownership for Siralos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+siralos-core = { workspace = true }
+
+[lints]
+workspace = true

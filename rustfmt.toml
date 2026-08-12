@@ -1,0 +1,6 @@
+# Siralos formatting standard (authoritative; see
+# docs/development/RUST_STYLE.md). Do not fight rustfmt: formatting must be
+# deterministic and machine-enforced (`cargo fmt --all --check`).
+max_width = 79
+use_small_heuristics = "max"
+edition = "2024"

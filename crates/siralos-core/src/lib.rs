@@ -1,0 +1,16 @@
+//! Domain-neutral core of the Siralos harness.
+//!
+//! `siralos-core` owns host semantics and types that are independent of
+//! infrastructure implementations and of any optional domain. It must
+//! never depend on adapter infrastructure or on a domain implementation;
+//! the architecture check (`npm run check:rust`) enforces that boundary
+//! mechanically, and the crate compiles with every optional domain
+//! absent.
+//!
+//! The TypeScript implementation is the behavioral migration oracle;
+//! see `docs/development/RUST_STYLE.md` and ADR 0032 for the engineering
+//! rules this crate follows.
+
+pub mod version;
+
+pub use version::Version;

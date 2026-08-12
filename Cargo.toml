@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/siralos-core",
+    "crates/siralos-adapters",
+    "crates/siralos-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[workspace.dependencies]
+siralos-core = { path = "crates/siralos-core", version = "0.0.0" }
+siralos-adapters = { path = "crates/siralos-adapters", version = "0.0.0" }
