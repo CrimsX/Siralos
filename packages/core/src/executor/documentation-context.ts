@@ -508,6 +508,20 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
       "packages/core/src/research/research-model.ts",
     ],
   },
+  {
+    id: "adr:0029",
+    path: "docs/adr/0029-deterministic-execution-and-reproducibility.md",
+    kind: "adr",
+    concerns: ["determinism", "task-runtime", "security"],
+    status: "accepted",
+    domains: ["determinism", "task-runtime", "security"],
+    paths: [
+      "packages/core/src/determinism/**",
+      "scripts/check-nondeterminism.mjs",
+      "packages/core/src/doctor/doctor-model.ts",
+      "packages/core/src/doctor/capability-doctor.ts",
+    ],
+  },
 ]);
 
 /**

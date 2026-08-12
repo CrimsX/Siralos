@@ -29,7 +29,12 @@ unsafe filesystem or process boundary intentionally fails closed.
   is implemented: typed canonical artifact digests, digest-bound
   TaskContract/TaskPlan identity and plan approvals, execution-input /
   guidance / tool-surface / review-input / acceptance-evidence manifests,
-  semantic deltas, and explicit staleness rules.
+  semantic deltas, and explicit staleness rules. The cross-cutting
+  Deterministic Execution & Reproducibility milestone (ADR 0029) is
+  implemented: explicit clock/randomness/ordering ports, environment and
+  reproducibility manifests, deterministic validation/acceptance/retry
+  decisions, concurrency normalization, deterministic discovery with an
+  ownership index, a nondeterminism audit, and a determinism doctor area.
 - The cross-cutting executor briefing foundation (ADR 0022) is implemented:
   a versioned Execution Contract, milestone manifests (S3M8, S3M9, S3M10,
   and S3M11 have real validated manifests), evidence-backed milestone
