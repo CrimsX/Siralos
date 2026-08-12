@@ -342,7 +342,11 @@ export function computeValidationDelta(
   for (const [id, resultItem] of resultById) {
     const baseItem = baseById.get(id);
     if (baseItem === undefined) {
-      if (!resultItem.passed) {
+      // A result item that did not exist before: passing items are
+      // newly passing; failing items are new failures.
+      if (resultItem.passed) {
+        newlyPassing.push(id);
+      } else {
         newFailures.push(id);
       }
       continue;

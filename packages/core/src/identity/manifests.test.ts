@@ -293,6 +293,18 @@ describe("review and acceptance binding", () => {
     expect(delta.newFailures).toEqual([]);
     expect(delta.baseIdentity).toBe(first.resultDigest);
     expect(delta.resultIdentity).toBe(second.resultDigest);
+    // New result items are classified: passing -> newly passing,
+    // failing -> new failures.
+    const addedDelta = computeValidationDelta(
+      [{ id: "a", passed: true }],
+      [
+        { id: "a", passed: true },
+        { id: "new-passing", passed: true },
+        { id: "new-failing", passed: false },
+      ],
+    );
+    expect(addedDelta.newlyPassing).toEqual(["new-passing"]);
+    expect(addedDelta.newFailures).toEqual(["new-failing"]);
   });
 
   it("canonicalizes the exact change under review", () => {
