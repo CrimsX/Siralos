@@ -132,6 +132,7 @@ describe("S3M8 milestone manifest", () => {
     const plan = createTaskPlan({
       id: "plan-s3m8",
       taskId: contract.id,
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: contract.revision,
       depth: "light",
       content: {

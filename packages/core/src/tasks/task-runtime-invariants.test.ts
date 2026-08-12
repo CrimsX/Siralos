@@ -56,6 +56,7 @@ function createMutablePlan(taskId: string): TaskPlan {
     createTaskPlan({
       id: `plan-${taskId}`,
       taskId,
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: 1,
       depth: "full",
       content: {

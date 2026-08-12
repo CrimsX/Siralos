@@ -6,6 +6,7 @@ import {
   type TaskPlanId,
 } from "../planning/planning-model.js";
 import { validatePlanCandidate } from "../planning/planning-validation.js";
+import { computeTaskPlanContentDigest } from "../identity/contract-plan-identity.js";
 import type { StepOpResult } from "./task-runtime-model.js";
 import type { TaskRecord, TaskRuntimeHooks } from "./task-runtime-record.js";
 import { terminalTaskMutationReason } from "./task-runtime-state.js";
@@ -111,8 +112,10 @@ export function setTaskPlan(
   const storedPlan: TaskPlan = deepFreeze({
     id: plan.id,
     revision: plan.revision,
+    digest: plan.digest,
     taskId: plan.taskId,
     taskContractRevision: plan.taskContractRevision,
+    taskContractDigest: plan.taskContractDigest,
     depth: plan.depth,
     ...structuredClone(validated.content),
     createdAt: plan.createdAt,
@@ -120,6 +123,7 @@ export function setTaskPlan(
   record.plans.push(storedPlan);
   record.state.plan.planId = storedPlan.id;
   record.state.plan.planRevision = storedPlan.revision;
+  record.state.plan.planDigest = storedPlan.digest.value;
   record.state.plan.depth = storedPlan.depth;
   record.state.plan.state = "current";
   record.state.plan.staleReason = null;
@@ -178,13 +182,27 @@ export function approveTaskPlan(
       reason: `Plan ${planId} binds to TaskContract revision ${current.taskContractRevision}, which is no longer current; the approval is refused.`,
     };
   }
+  if (current.taskContractDigest !== record.contract.digest.value) {
+    return {
+      status: "rejected",
+      reason: `Plan ${planId} binds to a different TaskContract content digest; the approval is refused.`,
+    };
+  }
+  if (current.digest.value !== computeTaskPlanContentDigest(current)) {
+    return {
+      status: "rejected",
+      reason: `Plan ${planId} content does not match its own identity digest; the approval is refused.`,
+    };
+  }
   if (record.state.plan.state === "stale") {
     return { status: "rejected", reason: "The current plan is stale and cannot be approved." };
   }
   record.planApproval = {
     planId: current.id,
     planRevision: current.revision,
+    planDigest: current.digest.value,
     taskContractRevision: current.taskContractRevision,
+    taskContractDigest: current.taskContractDigest,
     approvedAt: hooks.now(),
   };
   record.state.plan.approval = "approved";
@@ -192,6 +210,7 @@ export function approveTaskPlan(
     type: "plan_approved",
     planId: current.id,
     revision: current.revision,
+    digest: current.digest.value,
   });
   return { status: "ok" };
 }

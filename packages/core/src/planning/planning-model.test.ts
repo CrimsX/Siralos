@@ -254,6 +254,7 @@ describe("TaskPlan immutability and revision semantics", () => {
     const plan = createTaskPlan({
       id: "plan-task-1",
       taskId: "task-1",
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: 1,
       depth: "full",
       content: makeContent(),
@@ -277,6 +278,7 @@ describe("TaskPlan immutability and revision semantics", () => {
     const rev1 = createTaskPlan({
       id: "plan-task-1",
       taskId: "task-1",
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: 1,
       depth: "full",
       content: makeContent(),
@@ -294,6 +296,7 @@ describe("TaskPlan immutability and revision semantics", () => {
     const plan = createTaskPlan({
       id: "plan-task-1",
       taskId: "task-1",
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: 3,
       depth: "light",
       content: makeContent(),
@@ -307,7 +310,8 @@ describe("TaskPlan immutability and revision semantics", () => {
       createTaskPlan({
         id: "plan-task-1",
         taskId: "task-1",
-        taskContractRevision: Number.NaN,
+        taskContractDigest: "a".repeat(64),
+      taskContractRevision: Number.NaN,
         depth: "full",
         content: makeContent(),
         createdAt: 1000,
@@ -317,7 +321,8 @@ describe("TaskPlan immutability and revision semantics", () => {
       createTaskPlan({
         id: "plan-task-1",
         taskId: "task-1",
-        taskContractRevision: 1,
+        taskContractDigest: "a".repeat(64),
+      taskContractRevision: 1,
         depth: "full",
         content: makeContent(),
         createdAt: Number.POSITIVE_INFINITY,
@@ -328,7 +333,8 @@ describe("TaskPlan immutability and revision semantics", () => {
       createTaskPlan({
         id: "plan-task-1",
         taskId: "task-1",
-        taskContractRevision: 1,
+        taskContractDigest: "a".repeat(64),
+      taskContractRevision: 1,
         depth: "full",
         content: makeContent(),
         createdAt: 1000,
@@ -355,6 +361,7 @@ describe("TaskPlan immutability and revision semantics", () => {
     const plan = createTaskPlan({
       id: "plan-task-1",
       taskId: "task-1",
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: 1,
       depth: "full",
       content: makeContent(),

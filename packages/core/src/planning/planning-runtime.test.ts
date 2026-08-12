@@ -101,6 +101,7 @@ describe("task runtime plan integration", () => {
     const plan = createTaskPlan({
       id: "plan-task-plan-1",
       taskId: "task-plan-1",
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: 99,
       depth: "full",
       content: makeContent(),
@@ -139,6 +140,7 @@ describe("task runtime plan integration", () => {
     const skip = createTaskPlan({
       id: "plan-task-plan-1",
       taskId: "task-plan-1",
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: 1,
       depth: "full",
       content: makeContent("skipped"),

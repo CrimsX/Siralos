@@ -42,7 +42,8 @@ function planFor(contract: TaskContract): TaskPlan {
   return createTaskPlan({
     id: "plan-1",
     taskId: contract.id,
-    taskContractRevision: contract.revision,
+    taskContractDigest: "a".repeat(64),
+      taskContractRevision: contract.revision,
     depth: "light",
     content: {
       objective: contract.request,

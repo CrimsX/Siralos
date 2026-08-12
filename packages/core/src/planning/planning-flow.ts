@@ -1,4 +1,5 @@
 import type { TaskContract } from "../tasks/task-contract.js";
+import { computeTaskContractDigest } from "../tasks/task-contract.js";
 import type { TaskHandle } from "../tasks/task-runtime.js";
 import { isTerminalPhase } from "../tasks/task-model.js";
 import type { TaskPlan, TaskPlanContent } from "./planning-model.js";
@@ -161,13 +162,18 @@ export function createPlanningFlow(options: PlanningFlowOptions): PlanningFlow {
       }
       const previous = handle.currentPlan();
       const planId = `plan-${handle.taskId}`;
+      const taskContractDigest = computeTaskContractDigest(contract);
       const plan: TaskPlan =
         previous !== null && previous.id === planId
-          ? reviseTaskPlan(previous, { content: validated.content })
+          ? reviseTaskPlan(previous, {
+              content: validated.content,
+              taskContractDigest,
+            })
           : createTaskPlan({
               id: planId,
               taskId: handle.taskId,
               taskContractRevision: contract.revision,
+              taskContractDigest,
               depth: routed.depth,
               content: validated.content,
               createdAt: now(),

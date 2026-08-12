@@ -29,7 +29,8 @@ function plan(task: TaskContract): TaskPlan {
   return createTaskPlan({
     id: "plan-1",
     taskId: task.id,
-    taskContractRevision: task.revision,
+    taskContractDigest: "a".repeat(64),
+      taskContractRevision: task.revision,
     depth: "light",
     content: {
       objective: task.request,
@@ -355,6 +356,7 @@ describe("executor brief compiler", () => {
     const bigPlan = createTaskPlan({
       id: "plan-big",
       taskId: task.id,
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: task.revision,
       depth: "full",
       content: {
@@ -628,6 +630,7 @@ describe("executor brief compiler — context-scope integration", () => {
     const privatePlan = createTaskPlan({
       id: "plan-1",
       taskId: task.id,
+      taskContractDigest: "a".repeat(64),
       taskContractRevision: task.revision,
       depth: "light",
       content: {

@@ -47,7 +47,11 @@ export interface TaskRecord {
   planApproval: {
     readonly planId: TaskPlanId;
     readonly planRevision: number;
+    /** Exact content digest of the approved plan revision. */
+    readonly planDigest: string;
     readonly taskContractRevision: number;
+    /** Exact content digest of the bound TaskContract revision. */
+    readonly taskContractDigest: string;
     readonly approvedAt: number;
   } | null;
   readonly activity: TaskActivityEvent[];

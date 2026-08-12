@@ -1,7 +1,8 @@
-import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import { deepFreeze } from "../domain/deep-freeze.js";
 import type { AcceptanceCriterionId, TaskContract } from "../tasks/task-contract.js";
 import type { TaskId } from "../tasks/task-model.js";
+import type { ArtifactDigest } from "../identity/artifact-digest.js";
+import { computeTaskPlanArtifactDigest } from "../identity/contract-plan-identity.js";
 
 /**
  * Host-owned structured planning model (Stage 3 milestone 7, ADR 0020).
@@ -116,9 +117,17 @@ export interface TaskPlan {
   readonly id: TaskPlanId;
   /** Immutable revision identity; starts at 1 and only ever increases. */
   readonly revision: number;
+  /**
+   * Exact content identity of this revision (identity fields excluded):
+   * typed canonical digest over the plan content (ADR 0028). Any
+   * material content change produces a new digest.
+   */
+  readonly digest: ArtifactDigest;
   readonly taskId: TaskId;
   /** The exact TaskContract revision this plan was created against. */
   readonly taskContractRevision: number;
+  /** Exact content digest of the TaskContract this plan binds to. */
+  readonly taskContractDigest: string;
   readonly depth: "light" | "full";
   readonly objective: string;
   readonly scope: PlanScope;
@@ -134,28 +143,35 @@ export interface TaskPlan {
 }
 
 /**
- * Plan approval record. Approval binds to the EXACT plan revision and the
- * EXACT TaskContract revision; either advancing invalidates it. Plan
- * approval authorizes nothing but the plan's acceptance as the execution
- * reference — never source edits, commands, or capabilities.
+ * Plan approval record. Approval binds to the EXACT plan content digest
+ * and the EXACT TaskContract content digest (plus revision identities);
+ * any content change invalidates it. Plan approval authorizes nothing
+ * but the plan's acceptance as the execution reference — never source
+ * edits, commands, or capabilities.
  */
 export interface PlanApproval {
   readonly planId: TaskPlanId;
   readonly planRevision: number;
+  /** Exact content digest of the approved plan revision. */
+  readonly planDigest: string;
   readonly taskContractRevision: number;
+  /** Exact content digest of the bound TaskContract revision. */
+  readonly taskContractDigest: string;
   readonly approvedAt: number;
 }
 
 /**
  * Bounded plan reference embedded in TaskState. TaskState never embeds
  * giant plan text — the full immutable plan lives in the runtime's plan
- * history and TaskState carries identity, depth, staleness, and approval
+ * history and TaskState carries identity, digest, staleness, and approval
  * state only.
  */
 export interface TaskPlanState {
   readonly planId: TaskPlanId | null;
   /** 0 when no plan exists. */
   readonly planRevision: number;
+  /** Exact content digest of the current plan; null when none. */
+  readonly planDigest: string | null;
   readonly depth: PlanningDepth;
   readonly state: "none" | "current" | "stale";
   readonly approval: "none" | "approved" | "invalidated";
@@ -165,6 +181,7 @@ export interface TaskPlanState {
 export const NO_TASK_PLAN: TaskPlanState = Object.freeze({
   planId: null,
   planRevision: 0,
+  planDigest: null,
   depth: "none",
   state: "none",
   approval: "none",
@@ -217,6 +234,8 @@ export interface CreateTaskPlanInput {
   readonly id: TaskPlanId;
   readonly taskId: TaskId;
   readonly taskContractRevision: number;
+  /** Exact content digest of the TaskContract this plan binds to. */
+  readonly taskContractDigest: string;
   readonly depth: "light" | "full";
   readonly content: TaskPlanContent;
   readonly createdAt: number;
@@ -281,26 +300,35 @@ export function createTaskPlan(input: CreateTaskPlanInput): TaskPlan {
   if (!Number.isSafeInteger(input.taskContractRevision) || input.taskContractRevision < 1) {
     throw new Error("A plan requires a positive safe-integer task contract revision.");
   }
+  if (!/^[0-9a-f]{64}$/.test(input.taskContractDigest)) {
+    throw new Error("A plan requires the exact 64-hex TaskContract content digest it binds to.");
+  }
   if (input.depth !== "light" && input.depth !== "full") {
     throw new Error("A plan requires depth light or full.");
   }
   if (!Number.isSafeInteger(input.createdAt) || input.createdAt < 0) {
     throw new Error("A plan requires a non-negative safe-integer createdAt timestamp.");
   }
-  const plan: TaskPlan = {
+  const plan: Omit<TaskPlan, "digest"> = {
     id: input.id,
     revision: 1,
     taskId: input.taskId,
     taskContractRevision: input.taskContractRevision,
+    taskContractDigest: input.taskContractDigest,
     depth: input.depth,
     ...buildContent(input.content),
     createdAt: input.createdAt,
   };
-  return deepFreeze(plan);
+  return deepFreeze({
+    ...plan,
+    digest: computeTaskPlanArtifactDigest(plan),
+  });
 }
 
 export interface ReviseTaskPlanInput {
   readonly content: TaskPlanContent;
+  /** Exact TaskContract content digest; defaults to the previous binding. */
+  readonly taskContractDigest?: string;
 }
 
 /**
@@ -329,17 +357,25 @@ export function reviseTaskPlan(previous: TaskPlan, changes: ReviseTaskPlanInput)
   if (previous.depth !== "light" && previous.depth !== "full") {
     throw new Error("A previous plan requires depth light or full.");
   }
+  const taskContractDigest = changes.taskContractDigest ?? previous.taskContractDigest;
+  if (!/^[0-9a-f]{64}$/.test(taskContractDigest)) {
+    throw new Error("A plan requires the exact 64-hex TaskContract content digest it binds to.");
+  }
   const plan: TaskPlan = {
     ...previous,
     revision: previous.revision + 1,
+    taskContractDigest,
     ...buildContent(changes.content),
   };
-  return deepFreeze(plan);
+  return deepFreeze({
+    ...plan,
+    digest: computeTaskPlanArtifactDigest(plan),
+  });
 }
 
-/** Deterministic digest over a plan revision (approval binding identity). */
+/** Hex content digest of a plan revision (typed canonical identity). */
 export function computePlanRevisionDigest(plan: TaskPlan): string {
-  return sha256Hex(canonicalizeJson(plan));
+  return computeTaskPlanArtifactDigest(plan).value;
 }
 
 /** Compact deterministic description of a plan's public shape (for activity records). */

@@ -1,5 +1,6 @@
-import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 import { deepFreeze } from "../domain/deep-freeze.js";
+import type { ArtifactDigest } from "../identity/artifact-digest.js";
+import { computeTaskContractArtifactDigest } from "../identity/contract-plan-identity.js";
 
 /**
  * Provider-neutral structured task contract (Stage 3 milestone 1).
@@ -51,6 +52,13 @@ export interface TaskContract {
   readonly id: TaskContractId;
   /** Immutable revision identity; starts at 1 and only ever increases. */
   readonly revision: number;
+  /**
+   * Exact content identity of this revision (revision excluded): the
+   * typed canonical digest over request/context/constraints/criteria/
+   * policy. Content-identical revisions share a digest; any material
+   * content change produces a new digest (ADR 0028).
+   */
+  readonly digest: ArtifactDigest;
   readonly request: string;
   readonly context?: string;
   readonly constraints: readonly TaskConstraint[];
@@ -168,7 +176,7 @@ function validateContractShape(input: ContractShape): TaskContract {
       `A task contract context exceeds ${TASK_CONTRACT_LIMITS.maxContextBytes} UTF-8 bytes.`,
     );
   }
-  return deepFreeze({
+  const contract: Omit<TaskContract, "digest"> = {
     id: input.id,
     revision: input.revision,
     request,
@@ -182,6 +190,10 @@ function validateContractShape(input: ContractShape): TaskContract {
       description: criterion.description.trim(),
     })),
     pausePolicy: input.pausePolicy,
+  };
+  return deepFreeze({
+    ...contract,
+    digest: computeTaskContractArtifactDigest(contract),
   });
 }
 
@@ -295,7 +307,7 @@ export function createAdHocTaskContract(id: TaskContractId, request: string): Ta
   });
 }
 
-/** Deterministic digest over a contract revision (canonical JSON). */
+/** Hex content digest of a contract revision (typed canonical identity). */
 export function computeTaskContractDigest(contract: TaskContract): string {
-  return sha256Hex(canonicalizeJson(contract));
+  return computeTaskContractArtifactDigest(contract).value;
 }

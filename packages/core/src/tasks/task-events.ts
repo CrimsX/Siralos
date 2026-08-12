@@ -146,6 +146,8 @@ export type TaskActivityEvent =
       readonly taskId: TaskId;
       readonly planId: TaskPlanId;
       readonly revision: number;
+      /** Exact content digest of the approved plan revision. */
+      readonly digest: string;
       readonly atMs: number;
     }
   | {

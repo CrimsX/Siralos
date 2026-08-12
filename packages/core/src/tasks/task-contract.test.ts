@@ -136,6 +136,7 @@ describe("task contract model", () => {
       revision: contract.revision,
       id: contract.id,
       constraints: contract.constraints,
+      digest: contract.digest,
     };
     expect(computeTaskContractDigest(reordered)).toBe(computeTaskContractDigest(contract));
   });
