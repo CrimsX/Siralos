@@ -222,6 +222,15 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
           inputManifestDigest,
         });
       },
+      recordReproducibilityManifest(reproducibilityDigest: string): void {
+        if (!/^[0-9a-f]{64}$/.test(reproducibilityDigest)) {
+          throw new Error("A reproducibility manifest digest must be 64 lowercase hex characters.");
+        }
+        appendActivity(record, {
+          type: "reproducibility_recorded",
+          reproducibilityDigest,
+        });
+      },
 
       transitionPhase(phase: TaskPhase): StepOpResult {
         return transitionTaskPhase(record, phase, hooks);

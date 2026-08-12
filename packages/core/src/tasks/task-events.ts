@@ -32,6 +32,14 @@ export type TaskActivityEvent =
       readonly atMs: number;
     }
   | {
+      readonly type: "reproducibility_recorded";
+      readonly sequence: number;
+      readonly taskId: TaskId;
+      /** Exact ReproducibilityManifest digest of this execution (ADR 0029). */
+      readonly reproducibilityDigest: string;
+      readonly atMs: number;
+    }
+  | {
       readonly type: "task_phase_changed";
       readonly sequence: number;
       readonly taskId: TaskId;

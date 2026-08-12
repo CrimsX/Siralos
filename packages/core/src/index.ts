@@ -768,6 +768,62 @@ export {
   type IdentityStalenessInput,
 } from "./identity/staleness.js";
 export {
+  createFixedClock,
+  createOrderingPolicy,
+  createSeededRandomSource,
+  createSystemClock,
+  createSystemRandomSource,
+  normalizeKeyedResults,
+  type Clock,
+  type OrderingPolicy,
+  type RandomSource,
+} from "./determinism/context.js";
+export {
+  computeEnvironmentDelta,
+  createEnvironmentManifest,
+  type EnvironmentDelta,
+  type EnvironmentManifest,
+  type EnvironmentManifestInput,
+} from "./determinism/environment.js";
+export {
+  computeProviderInputIdentityDigest,
+  computeReproducibilityDelta,
+  createReproducibilityManifest,
+  type ProviderInputIdentity,
+  type ReproducibilityDelta,
+  type ReproducibilityManifest,
+  type ReproducibilityManifestInput,
+  type ReproducibilitySection,
+} from "./determinism/reproducibility.js";
+export {
+  classifyRetry,
+  deriveValidationPlan,
+  evaluateAcceptance,
+  normalizeConcurrentResults,
+  DEFAULT_RETRY_POLICY,
+  type AcceptanceInput,
+  type AcceptanceOutcome,
+  type AcceptanceResult,
+  type RetryCategory,
+  type RetryDecision,
+  type RetryPolicy,
+  type ValidationItem,
+  type ValidationPlan,
+  type ValidationPlanInput,
+  type ValidationRequirementClass,
+} from "./determinism/decisions.js";
+export {
+  discoverRepository,
+  listOwnership,
+  OWNERSHIP_INDEX,
+  resolveOwner,
+  type DiscoveryCandidate,
+  type DiscoveryInput,
+  type DiscoveryRelevance,
+  type DiscoveryResult,
+  type OwnershipEntry,
+} from "./determinism/discovery.js";
+export {
   STANDARD_ACCEPTANCE_DEFINITIONS,
   STANDARD_ACCEPTANCE_IDS,
   resolveAcceptanceEvidenceKinds,

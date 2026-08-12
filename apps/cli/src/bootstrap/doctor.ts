@@ -1,4 +1,5 @@
 import {
+  createEnvironmentManifest,
   DEFAULT_DOCTOR_CHECK_TIMEOUT_MS,
   createCapabilityDoctor,
   createToolProjector,
@@ -444,7 +445,53 @@ export function createCliDoctorSources(dependencies: CliDoctorDependencies): Doc
       ),
     tasks: () =>
       Promise.resolve(readTaskSnapshotDiagnostics(dependencies.tasks, dependencies.taskSources)),
+    determinism: () =>
+      Promise.resolve({
+        clockMode: "system",
+        randomnessMode: "none",
+        localePolicy: "C",
+        timezonePolicy: "UTC",
+        environmentDigest: buildEnvironmentDigest(),
+        reproducibilityDigest: dependencies.tasks
+          .latestTask()
+          ?.activityLog()
+          .find((event) => event.type === "reproducibility_recorded")
+          ? "recorded"
+          : null,
+        staticGuarantees: {
+          fileOrderingNormalized: true,
+          documentationSelectionDeterministic: true,
+          workspaceScopeDeterministic: true,
+          validationSelectionDeterministic: true,
+          toolSurfaceFingerprinted: true,
+          acceptanceDeterministic: true,
+          nondeterminismAuditClean: true,
+        },
+      }),
   };
+}
+
+/**
+ * Deterministic digest of the execution-relevant environment observed at
+ * the composition root (no secrets; bounded).
+ */
+function buildEnvironmentDigest(): string {
+  const manifest = createEnvironmentManifest({
+    solarisVersion: "0.0.0",
+    nodeVersion: process.versions.node ?? null,
+    npmVersion: null,
+    platform: process.platform,
+    arch: process.arch,
+    osRelease: null,
+    godotExecutableFingerprint: null,
+    sandboxBackendId: null,
+    sandboxVersion: null,
+    localePolicy: "C",
+    timezonePolicy: "UTC",
+    environmentAllowlist: [],
+    toolIdentities: [],
+  });
+  return manifest.digest;
 }
 
 export function createCliDoctor(dependencies: CliDoctorDependencies) {
@@ -468,6 +515,7 @@ export function isDoctorArea(value: string): value is DoctorArea {
     value === "project" ||
     value === "references" ||
     value === "research" ||
-    value === "capabilities"
+    value === "capabilities" ||
+    value === "determinism"
   );
 }

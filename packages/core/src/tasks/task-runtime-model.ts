@@ -95,6 +95,12 @@ export interface TaskHandle {
    * stays with the host.
    */
   recordExecutionInputManifest(inputManifestDigest: string): void;
+  /**
+   * Record the exact reproducibility manifest digest of an execution
+   * (ADR 0029). Digest references only — the full manifest stays with
+   * the host.
+   */
+  recordReproducibilityManifest(reproducibilityDigest: string): void;
 
   /** Host-controlled phase transition; validated against the transition table. */
   transitionPhase(phase: TaskPhase): StepOpResult;

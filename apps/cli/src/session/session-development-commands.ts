@@ -10,9 +10,11 @@ import {
   containsProtectedConfigReference,
   createAdHocTaskContract,
   createDevelopmentTaskFlow,
+  createEnvironmentManifest,
   createExecutionInputManifest,
   createGuidanceManifest,
   createPlanningFlow,
+  createReproducibilityManifest,
   createTaskRuntimeSnapshot,
   planTouchpointStaleness,
   type GuidanceManifest,
@@ -273,6 +275,39 @@ export async function runDevelopCommand(
         ],
       });
       inputHandle.recordExecutionInputManifest(manifest.digest);
+      // Reproducibility identity (ADR 0029): the exact environment and
+      // provider/model inputs of this execution, referenced (never copied).
+      const environment = createEnvironmentManifest({
+        solarisVersion: "0.0.0",
+        nodeVersion: process.versions.node ?? null,
+        npmVersion: null,
+        platform: process.platform,
+        arch: process.arch,
+        osRelease: null,
+        godotExecutableFingerprint: null,
+        sandboxBackendId: null,
+        sandboxVersion: null,
+        localePolicy: "C",
+        timezonePolicy: "UTC",
+        environmentAllowlist: [],
+        toolIdentities: [],
+      });
+      const reproducibility = createReproducibilityManifest({
+        taskId: task.taskId,
+        executionInputDigest: manifest.digest,
+        environmentDigest: environment.digest,
+        taskContractDigest: contractDigest,
+        taskPlanDigest: currentPlan?.digest.value ?? null,
+        guidanceDigest: guidance?.aggregateDigest ?? null,
+        toolSurfaceDigest: null,
+        capabilityDigest: null,
+        sourceRevisionSet: [],
+        validationProfile: null,
+        providerInput: null,
+        clockPolicy: { mode: "system", fixedMs: null },
+        rngPolicy: { mode: "none", seed: null },
+      });
+      inputHandle.recordReproducibilityManifest(reproducibility.digest);
     }
   } catch (error: unknown) {
     io.write(

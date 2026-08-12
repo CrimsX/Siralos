@@ -891,6 +891,7 @@ const AREA_METHODS: Record<DoctorArea, keyof DoctorSources> = {
   references: "references",
   research: "research",
   capabilities: "capabilities",
+  determinism: "determinism",
 };
 
 export function createCapabilityDoctor(
@@ -902,6 +903,12 @@ export function createCapabilityDoctor(
   async function inspect(request: DoctorRequest, signal?: AbortSignal): Promise<DoctorReport> {
     const areas = normalizeDoctorRequest(request);
     const probeAreas: readonly DoctorArea[] = areas.includes("capabilities") ? DOCTOR_AREAS : areas;
+    const probeSources = new Set<keyof DoctorSources>(
+      Object.keys(AREA_METHODS) as (keyof DoctorSources)[],
+    );
+    if (sources.determinism === undefined || sources.determinism === null) {
+      probeSources.delete("determinism");
+    }
 
     // Start each authoritative source once. Independent probes run in
     // parallel, while the report below consumes their outcomes in canonical
@@ -909,6 +916,9 @@ export function createCapabilityDoctor(
     // Godot and project areas and is intentionally shared.
     const sourceMethods = new Set<keyof DoctorSources>(["runtime"]);
     for (const area of probeAreas) {
+      if (AREA_METHODS[area] === "determinism" && !probeSources.has("determinism")) {
+        continue;
+      }
       sourceMethods.add(AREA_METHODS[area]);
     }
     if (areas.includes("capabilities")) {
@@ -940,6 +950,9 @@ export function createCapabilityDoctor(
     // The capabilities area reports the FULL capability snapshot, so it
     // probes every area; checks are still emitted only for requested areas.
     for (const area of probeAreas) {
+      if (AREA_METHODS[area] === "determinism" && !probeSources.has("determinism")) {
+        continue;
+      }
       const outcome = await sourceProbes.get(AREA_METHODS[area])!;
       if (outcome.kind === "timeout") {
         if (areas.includes(area)) {
@@ -1107,6 +1120,10 @@ function buildAreaChecks(
       return referenceChecks(value as ReferenceDiagnosticResult);
     case "research":
       return researchChecks(value as ResearchDiagnosticResult);
+    case "determinism":
+      return determinismChecks(
+        value as import("../determinism/doctor.js").DeterminismDiagnosticResult,
+      );
     // The capabilities area checks (projection/trace/task snapshot) are
     // emitted by the inspect loop itself, which owns the task probe;
     // buildAreaChecks never runs for the capabilities area.
@@ -1115,4 +1132,88 @@ function buildAreaChecks(
     default:
       return [];
   }
+}
+
+/** Determinism area checks (ADR 0029): read-only, offline, no mutation. */
+function determinismChecks(
+  result: import("../determinism/doctor.js").DeterminismDiagnosticResult,
+): DoctorCheckResult[] {
+  const guarantee = (
+    id: string,
+    summary: string,
+    enabled: boolean,
+    details?: readonly { readonly label: string; readonly value: string }[],
+  ): DoctorCheckResult =>
+    check(
+      id,
+      "determinism",
+      enabled ? "pass" : "warn",
+      enabled ? summary : `${summary}: degraded/uncontrolled`,
+      details,
+    );
+  return [
+    guarantee("determinism.clock", "Clock: explicit policy", true, [
+      { label: "mode", value: result.clockMode },
+    ]),
+    guarantee("determinism.randomness", "Randomness: explicit policy", true, [
+      { label: "mode", value: result.randomnessMode },
+    ]),
+    guarantee("determinism.locale", "Locale: explicit policy", result.localePolicy !== null, [
+      { label: "locale", value: result.localePolicy ?? "unset" },
+    ]),
+    guarantee("determinism.timezone", "Timezone: explicit policy", result.timezonePolicy !== null, [
+      { label: "timezone", value: result.timezonePolicy ?? "unset" },
+    ]),
+    guarantee(
+      "determinism.environment",
+      "Environment: snapshotted",
+      result.environmentDigest !== null,
+      result.environmentDigest === null
+        ? [{ label: "digest", value: "unavailable" }]
+        : [{ label: "digest", value: result.environmentDigest.slice(0, 12) }],
+    ),
+    guarantee(
+      "determinism.reproducibility",
+      "Reproducibility manifest: available",
+      result.reproducibilityDigest !== null,
+      result.reproducibilityDigest === null
+        ? [{ label: "digest", value: "not recorded yet" }]
+        : [{ label: "digest", value: result.reproducibilityDigest.slice(0, 12) }],
+    ),
+    guarantee(
+      "determinism.file_ordering",
+      "File ordering: normalized",
+      result.staticGuarantees.fileOrderingNormalized,
+    ),
+    guarantee(
+      "determinism.documentation_selection",
+      "Documentation selection: deterministic",
+      result.staticGuarantees.documentationSelectionDeterministic,
+    ),
+    guarantee(
+      "determinism.workspace_scope",
+      "WorkspaceScope: deterministic",
+      result.staticGuarantees.workspaceScopeDeterministic,
+    ),
+    guarantee(
+      "determinism.validation_selection",
+      "Validation selection: deterministic",
+      result.staticGuarantees.validationSelectionDeterministic,
+    ),
+    guarantee(
+      "determinism.tool_surface",
+      "Tool surface: fingerprinted",
+      result.staticGuarantees.toolSurfaceFingerprinted,
+    ),
+    guarantee(
+      "determinism.acceptance",
+      "Acceptance: deterministic",
+      result.staticGuarantees.acceptanceDeterministic,
+    ),
+    guarantee(
+      "determinism.audit",
+      "Nondeterminism audit: clean",
+      result.staticGuarantees.nondeterminismAuditClean,
+    ),
+  ];
 }

@@ -200,4 +200,7 @@ export interface DoctorSources {
   readonly capabilities: () => Promise<CapabilityDiagnosticResult>;
   /** Current-task immutable-snapshot comparison (Part J §33). */
   readonly tasks: () => Promise<TaskSnapshotDiagnosticResult>;
+  /** Determinism diagnostics (ADR 0029); null when the host did not wire it. */
+  readonly determinism?:
+    (() => Promise<import("../determinism/doctor.js").DeterminismDiagnosticResult>) | null;
 }
