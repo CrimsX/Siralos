@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
 import {
@@ -579,8 +579,10 @@ function planOnlyBlockedReason(status: string): string {
 /**
  * Digest-backed guidance manifest (ADR 0028): the exact documentation
  * selected for the task, each with its content digest. Reads are bounded
- * per document; a document that cannot be read is omitted (the manifest
- * covers only exactly-representable guidance).
+ * per document (stat before read, 512 KiB cap) and containment-checked
+ * (realpath must stay under the workspace root; symlinks cannot pull
+ * external files into the manifest). A document that cannot be read is
+ * omitted (the manifest covers only exactly-representable guidance).
  */
 function buildGuidanceManifest(
   documentationSources: readonly string[],
@@ -595,17 +597,37 @@ function buildGuidanceManifest(
     path: string;
     digest: string;
   }[] = [];
+  let workspaceReal: string | null = null;
+  try {
+    workspaceReal = realpathSync(workspaceRoot);
+  } catch {
+    return null;
+  }
+  const maxGuidanceBytes = 512 * 1024;
   for (const source of documentationSources.slice(0, 16)) {
     const relative = source.replace(/^\.\//, "");
-    if (relative.includes("..")) {
+    if (relative.includes("..") || relative.startsWith("/") || /^[A-Za-z]:/.test(relative)) {
       continue;
     }
     try {
       const absolute = join(workspaceRoot, ...relative.split("/"));
-      const bytes = readFileSync(absolute);
-      if (bytes.length > 512 * 1024) {
+      // Containment: the real path must stay under the workspace root.
+      const real = realpathSync(absolute);
+      if (
+        real !== workspaceReal &&
+        !real.startsWith(
+          workspaceReal.endsWith("/") || workspaceReal.endsWith("\\")
+            ? workspaceReal
+            : `${workspaceReal}/`,
+        )
+      ) {
         continue;
       }
+      const stats = statSync(real);
+      if (!stats.isFile() || stats.size > maxGuidanceBytes) {
+        continue;
+      }
+      const bytes = readFileSync(real);
       const kind = relative.endsWith("AGENTS.md")
         ? relative === "AGENTS.md"
           ? "root-agents"

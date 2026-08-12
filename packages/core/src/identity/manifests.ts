@@ -1,5 +1,10 @@
 import { computeArtifactDigest } from "./artifact-digest.js";
 
+/** Deterministic code-unit comparison (locale-independent; stable across hosts). */
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /**
  * Digest-backed manifests (Stage 3 — Content Identity & Delta
  * Verification, ADR 0028).
@@ -27,7 +32,7 @@ export interface GuidanceManifest {
 export function createGuidanceManifest(
   entries: readonly GuidanceManifestEntry[],
 ): GuidanceManifest {
-  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path));
+  const sorted = [...entries].sort((a, b) => compareCodeUnits(a.path, b.path));
   const digest = computeArtifactDigest({
     artifactType: "GuidanceManifest",
     schemaVersion: 1,
@@ -123,7 +128,7 @@ export function createToolSurfaceManifest(input: {
     readonly description: string;
   }[];
 }): ToolSurfaceManifest {
-  const sorted = [...input.tools].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...input.tools].sort((a, b) => compareCodeUnits(a.name, b.name));
   const entries: ToolSurfaceEntry[] = sorted.map((tool) => ({
     name: tool.name,
     schemaDigest: computeArtifactDigest({
@@ -225,7 +230,7 @@ export function createExecutionInputManifest(input: {
   /** Id-keyed input references: taskContract, taskPlan, executionContract, milestone, guidance, toolSurface, capability, workspaceScope, sourceRevisions. */
   readonly inputs: readonly ExecutionInputReference[];
 }): ExecutionInputManifest {
-  const sorted = [...input.inputs].sort((a, b) => a.id.localeCompare(b.id));
+  const sorted = [...input.inputs].sort((a, b) => compareCodeUnits(a.id, b.id));
   const digest = computeArtifactDigest({
     artifactType: "ExecutionInputManifest",
     schemaVersion: 1,
@@ -418,7 +423,7 @@ export function createAcceptanceEvidenceManifest(input: {
     readonly digest: string;
   }[];
 }): AcceptanceEvidenceManifest {
-  const sorted = [...input.evidence].sort((a, b) => a.evidenceId.localeCompare(b.evidenceId));
+  const sorted = [...input.evidence].sort((a, b) => compareCodeUnits(a.evidenceId, b.evidenceId));
   const digest = computeArtifactDigest({
     artifactType: "AcceptanceEvidenceManifest",
     schemaVersion: 1,
