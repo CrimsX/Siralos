@@ -382,6 +382,47 @@ export {
   type PreparedChangeSetFile,
 } from "./godot/development/development-change-set.js";
 export {
+  classifyDevelopmentSurface,
+  classifyDevelopmentSurfacePath,
+  type DevelopmentSurfaceDecision,
+  type DevelopmentSurfaceInput,
+  type DevelopmentSurfaceKind,
+  type DevelopmentSurfaceTouchpoint,
+} from "./godot/development/development-surface.js";
+export {
+  approveUnifiedTarget,
+  computeTextTargetDigest,
+  computeUnifiedChangeSetDigest,
+  createUnifiedChangeSet,
+  unifiedChangeSetReadyToApply,
+  unifiedPreStateMap,
+  type CreateUnifiedChangeSetInput,
+  type UnifiedChangeSet,
+  type UnifiedChangeSetTargetEntry,
+  type UnifiedTarget,
+  type UnifiedTargetApprovalState,
+} from "./godot/development/unified-change-set.js";
+export {
+  deriveUnifiedApplyOrder,
+  deriveUnifiedOrderEdges,
+  type UnifiedApplyOrder,
+  type UnifiedOrderEdge,
+  type UnifiedOrderTarget,
+} from "./godot/development/unified-order.js";
+export {
+  verifyCrossSurfaceConsistency,
+  type ConsistencyCheck,
+  type ConsistencyCheckStatus,
+  type CrossSurfaceConsistencyInput,
+  type CrossSurfaceConsistencyResult,
+} from "./godot/development/cross-surface-consistency.js";
+export {
+  blockedReasonText,
+  createBlockedDisposition,
+  type BlockedDisposition,
+  type BlockedReasonKind,
+} from "./godot/development/blocked-disposition.js";
+export {
   type ChangeSetApplyFileRequest,
   type ChangeSetApplyOutcome,
   type ChangeSetApplyRequest,
