@@ -96,13 +96,18 @@ export function computeItemListDelta(
   return { added, removed, changed, unchanged };
 }
 
+/** Deterministic code-unit comparison (locale-independent; stable across hosts). */
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** Digest of an id-keyed item list (canonical, order-insensitive). */
 export function digestItemList(items: readonly { readonly id: string }[]): string {
   return sha256Hex(
     canonicalizeJson(
       [...items]
         .map((item) => ({ id: item.id, value: canonicalizeJson(item) }))
-        .sort((a, b) => a.id.localeCompare(b.id)),
+        .sort((a, b) => compareCodeUnits(a.id, b.id)),
     ),
   );
 }
