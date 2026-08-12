@@ -892,6 +892,7 @@ const AREA_METHODS: Record<DoctorArea, keyof DoctorSources> = {
   research: "research",
   capabilities: "capabilities",
   determinism: "determinism",
+  readiness: "readiness",
 };
 
 export function createCapabilityDoctor(
@@ -909,6 +910,9 @@ export function createCapabilityDoctor(
     if (sources.determinism === undefined || sources.determinism === null) {
       probeSources.delete("determinism");
     }
+    if (sources.readiness === undefined || sources.readiness === null) {
+      probeSources.delete("readiness");
+    }
 
     // Start each authoritative source once. Independent probes run in
     // parallel, while the report below consumes their outcomes in canonical
@@ -917,6 +921,9 @@ export function createCapabilityDoctor(
     const sourceMethods = new Set<keyof DoctorSources>(["runtime"]);
     for (const area of probeAreas) {
       if (AREA_METHODS[area] === "determinism" && !probeSources.has("determinism")) {
+        continue;
+      }
+      if (AREA_METHODS[area] === "readiness" && !probeSources.has("readiness")) {
         continue;
       }
       sourceMethods.add(AREA_METHODS[area]);
@@ -951,6 +958,9 @@ export function createCapabilityDoctor(
     // probes every area; checks are still emitted only for requested areas.
     for (const area of probeAreas) {
       if (AREA_METHODS[area] === "determinism" && !probeSources.has("determinism")) {
+        continue;
+      }
+      if (AREA_METHODS[area] === "readiness" && !probeSources.has("readiness")) {
         continue;
       }
       const outcome = await sourceProbes.get(AREA_METHODS[area])!;
@@ -1124,6 +1134,10 @@ function buildAreaChecks(
       return determinismChecks(
         value as import("../determinism/doctor.js").DeterminismDiagnosticResult,
       );
+    case "readiness":
+      return runtimeReadinessChecks(
+        value as import("../runtime/doctor.js").RuntimeReadinessDiagnosticResult,
+      );
     // The capabilities area checks (projection/trace/task snapshot) are
     // emitted by the inspect loop itself, which owns the task probe;
     // buildAreaChecks never runs for the capabilities area.
@@ -1214,6 +1228,47 @@ function determinismChecks(
       "determinism.audit",
       "Nondeterminism audit: clean",
       result.staticGuarantees.nondeterminismAuditClean,
+    ),
+  ];
+}
+
+/** Runtime readiness checks (ADR 0031): read-only, offline, no launch. */
+function runtimeReadinessChecks(
+  result: import("../runtime/doctor.js").RuntimeReadinessDiagnosticResult,
+): DoctorCheckResult[] {
+  const modeCheck = (
+    id: string,
+    mode: "headless" | "visual",
+    manifest: import("../runtime/readiness.js").RuntimeReadinessManifest,
+  ): DoctorCheckResult =>
+    check(
+      id,
+      "readiness",
+      manifest.ready ? "pass" : "fail",
+      manifest.ready
+        ? `Godot runtime ${mode}: available`
+        : `Godot runtime ${mode}: blocked — ${manifest.blockedReasons.slice(0, 3).join("; ")}`,
+      manifest.blockedReasons.map((reason) => ({ label: "blocked", value: reason })),
+    );
+  return [
+    modeCheck("readiness.headless", "headless", result.headless),
+    modeCheck("readiness.visual", "visual", result.visual),
+    check(
+      "readiness.supervision",
+      "readiness",
+      result.headless.items.find((entry) => entry.id === "process_supervision")?.state ===
+        "available"
+        ? "pass"
+        : "fail",
+      "Process supervision: available when the sandbox backend supports process-tree ownership; otherwise blocked",
+    ),
+    check(
+      "readiness.artifacts",
+      "readiness",
+      result.headless.items.find((entry) => entry.id === "artifact_storage")?.state === "available"
+        ? "pass"
+        : "fail",
+      "Artifact capture: available when artifact storage is provisioned",
     ),
   ];
 }

@@ -203,4 +203,7 @@ export interface DoctorSources {
   /** Determinism diagnostics (ADR 0029); null when the host did not wire it. */
   readonly determinism?:
     (() => Promise<import("../determinism/doctor.js").DeterminismDiagnosticResult>) | null;
+  /** Runtime readiness diagnostics (ADR 0031); null when the host did not wire it. */
+  readonly readiness?:
+    (() => Promise<import("../runtime/doctor.js").RuntimeReadinessDiagnosticResult>) | null;
 }

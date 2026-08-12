@@ -22,7 +22,8 @@ export type DoctorArea =
   | "references"
   | "research"
   | "capabilities"
-  | "determinism";
+  | "determinism"
+  | "readiness";
 
 export const DOCTOR_AREAS: readonly DoctorArea[] = [
   "runtime",
@@ -36,6 +37,7 @@ export const DOCTOR_AREAS: readonly DoctorArea[] = [
   "research",
   "capabilities",
   "determinism",
+  "readiness",
 ] as const;
 
 export type DoctorStatus = "pass" | "warn" | "fail" | "skip";

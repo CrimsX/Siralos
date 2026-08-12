@@ -1,4 +1,5 @@
 import {
+  buildRuntimeReadinessDiagnostic,
   createEnvironmentManifest,
   DEFAULT_DOCTOR_CHECK_TIMEOUT_MS,
   createCapabilityDoctor,
@@ -445,6 +446,27 @@ export function createCliDoctorSources(dependencies: CliDoctorDependencies): Doc
       ),
     tasks: () =>
       Promise.resolve(readTaskSnapshotDiagnostics(dependencies.tasks, dependencies.taskSources)),
+    readiness: async () => {
+      const backend = await dependencies.sandbox.inspect();
+      const boundaryEnforced =
+        backend.state === "available" &&
+        backend.capabilities.filesystemReadRestriction &&
+        backend.capabilities.filesystemWriteRestriction &&
+        backend.capabilities.networkRestriction &&
+        backend.capabilities.processTreeRestriction;
+      return buildRuntimeReadinessDiagnostic({
+        godotAvailable: false,
+        godotFingerprint: null,
+        projectIdentity: null,
+        sandboxAvailable: boundaryEnforced,
+        processSupervisionSupported: backend.capabilities.processTreeRestriction,
+        filesystemIsolationAvailable: backend.capabilities.filesystemWriteRestriction,
+        userDataRedirectAvailable: backend.capabilities.filesystemWriteRestriction,
+        networkPolicyResolvable: backend.capabilities.networkRestriction,
+        artifactStorageAvailable: true,
+        displayAvailable: null,
+      });
+    },
     determinism: () =>
       Promise.resolve({
         clockMode: "system",
@@ -516,6 +538,7 @@ export function isDoctorArea(value: string): value is DoctorArea {
     value === "references" ||
     value === "research" ||
     value === "capabilities" ||
-    value === "determinism"
+    value === "determinism" ||
+    value === "readiness"
   );
 }
