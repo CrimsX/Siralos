@@ -24,7 +24,12 @@ unsafe filesystem or process boundary intentionally fails closed.
   recovery mirrors, diagnostics, LSP startup, change application, validation,
   and quality execution remain intentionally unavailable for the same identity
   reasons.
-- Stage 3 is active. Milestones 1–11 are implemented and tested.
+- Stage 3 is active. Milestones 1–11 are implemented and tested. The
+  cross-cutting Content Identity & Delta Verification milestone (ADR 0028)
+  is implemented: typed canonical artifact digests, digest-bound
+  TaskContract/TaskPlan identity and plan approvals, execution-input /
+  guidance / tool-surface / review-input / acceptance-evidence manifests,
+  semantic deltas, and explicit staleness rules.
 - The cross-cutting executor briefing foundation (ADR 0022) is implemented:
   a versioned Execution Contract, milestone manifests (S3M8, S3M9, S3M10,
   and S3M11 have real validated manifests), evidence-backed milestone

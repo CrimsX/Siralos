@@ -493,6 +493,21 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
       "packages/core/src/executor/s3m11-manifest.ts",
     ],
   },
+  {
+    id: "adr:0028",
+    path: "docs/adr/0028-canonical-artifact-identity-and-semantic-deltas.md",
+    kind: "adr",
+    concerns: ["identity", "task-runtime", "security", "evidence"],
+    status: "accepted",
+    domains: ["identity", "task-runtime", "security"],
+    paths: [
+      "packages/core/src/identity/**",
+      "packages/core/src/tasks/task-contract.ts",
+      "packages/core/src/planning/planning-model.ts",
+      "packages/core/src/knowledge/knowledge-model.ts",
+      "packages/core/src/research/research-model.ts",
+    ],
+  },
 ]);
 
 /**
