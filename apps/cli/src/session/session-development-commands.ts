@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync, realpathSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
 import {
   classifyDevelopmentSurface,
@@ -605,44 +605,55 @@ function buildGuidanceManifest(
   }
   const maxGuidanceBytes = 512 * 1024;
   for (const source of documentationSources.slice(0, 16)) {
-    const relative = source.replace(/^\.\//, "");
-    if (relative.includes("..") || relative.startsWith("/") || /^[A-Za-z]:/.test(relative)) {
+    const relativePath = source.replace(/^\.\//, "");
+    if (
+      relativePath.includes("..") ||
+      relativePath.startsWith("/") ||
+      /^[A-Za-z]:/.test(relativePath)
+    ) {
       continue;
     }
     try {
-      const absolute = join(workspaceRoot, ...relative.split("/"));
-      // Containment: the real path must stay under the workspace root.
+      const absolute = join(workspaceRoot, ...relativePath.split("/"));
+      // Containment: the real path must stay under the workspace root
+      // (portable: path.relative rejects .. and absolute results on both
+      // POSIX and Windows separator conventions).
       const real = realpathSync(absolute);
-      if (
-        real !== workspaceReal &&
-        !real.startsWith(
-          workspaceReal.endsWith("/") || workspaceReal.endsWith("\\")
-            ? workspaceReal
-            : `${workspaceReal}/`,
-        )
-      ) {
+      const containment = relative(workspaceReal, real);
+      if (containment === ".." || containment.startsWith(`..${sep}`) || isAbsolute(containment)) {
         continue;
       }
-      const stats = statSync(real);
-      if (!stats.isFile() || stats.size > maxGuidanceBytes) {
-        continue;
+      // Bound the read at the FILE HANDLE level: fstat on the opened fd
+      // sizes the exact file that will be read, so a same-user swap
+      // between stat and read cannot pull unbounded bytes into memory.
+      let fd: number | null = null;
+      try {
+        fd = openSync(real, "r");
+        const handleStats = fstatSync(fd);
+        if (!handleStats.isFile() || handleStats.size > maxGuidanceBytes) {
+          continue;
+        }
+        const bytes = readFileSync(fd);
+        const kind = relativePath.endsWith("AGENTS.md")
+          ? relativePath === "AGENTS.md"
+            ? "root-agents"
+            : "nested-agents"
+          : relativePath.startsWith("docs/adr/")
+            ? "adr"
+            : relativePath.startsWith("docs/architecture/")
+              ? "architecture"
+              : "development";
+        entries.push({
+          id: kind === "adr" ? `adr:${relativePath.slice(9, 13)}` : `doc:${relativePath}`,
+          kind,
+          path: relativePath,
+          digest: createHash("sha256").update(bytes).digest("hex"),
+        });
+      } finally {
+        if (fd !== null) {
+          closeSync(fd);
+        }
       }
-      const bytes = readFileSync(real);
-      const kind = relative.endsWith("AGENTS.md")
-        ? relative === "AGENTS.md"
-          ? "root-agents"
-          : "nested-agents"
-        : relative.startsWith("docs/adr/")
-          ? "adr"
-          : relative.startsWith("docs/architecture/")
-            ? "architecture"
-            : "development";
-      entries.push({
-        id: kind === "adr" ? `adr:${relative.slice(9, 13)}` : `doc:${relative}`,
-        kind,
-        path: relative,
-        digest: createHash("sha256").update(bytes).digest("hex"),
-      });
     } catch {
       // Unreadable guidance is omitted; the manifest stays exact.
     }
