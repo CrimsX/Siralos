@@ -16,7 +16,7 @@ Stage 2 (Godot script-development MVP) needs two programming-intelligence
 capabilities before any project execution:
 
 1. **Exact-engine API knowledge.** The selected Godot executable is the
-   highest authority for API availability. Solaris must be able to answer
+   highest authority for API availability. Siralos must be able to answer
    "what does `Node.owner` do in THIS engine?" without consulting a
    possibly-mismatched internet manual. Godot can emit its own API
    documentation: `--dump-extension-api-with-docs` writes an
@@ -32,7 +32,7 @@ Three knowledge sources must never be conflated: the ENGINE API (exact
 selected executable; highest authority for API availability), the PROJECT
 (actual source, configuration, plugins, diagnostics; highest authority for
 project-specific behavior), and the MANUAL DOCUMENTATION (explanatory,
-version-matched where possible, not yet synchronized by Solaris). This
+version-matched where possible, not yet synchronized by Siralos). This
 milestone implements engine API + project diagnostics only.
 
 Engine console output is not a formally versioned machine protocol, so
@@ -46,14 +46,14 @@ fabricated.
 
 ### Exact-engine API knowledge
 
-- **The engine-generated with-docs dump is the API authority.** Solaris
+- **The engine-generated with-docs dump is the API authority.** Siralos
   uses `--dump-extension-api-with-docs`, never an ordinary
   `--dump-extension-api` result (which lacks documentation), and never an
   internet manual. `latest` docs must never silently guide a stable
   project: stable engines map to their exact `<major>.<minor>` manual
   channel, and prerelease/custom builds map to `unverified`.
 - **The knowledge profile is bound to three identities**: the exact
-  executable SHA-256, the exact API dump SHA-256, and the Solaris
+  executable SHA-256, the exact API dump SHA-256, and the Siralos
   knowledge schema version. Any mismatch invalidates the profile; a
   profile must never silently survive an executable fingerprint change.
   The profile is immutable after creation, provider-neutral, and contains
@@ -71,7 +71,7 @@ fabricated.
   fuzzy dependency.
 - **Generation is project-independent**: the fixed
   `--dump-extension-api-with-docs` runner runs outside any project
-  context, in a Solaris-private probe directory, with the workspace
+  context, in a Siralos-private probe directory, with the workspace
   excluded from readable roots, network denied, credentials absent, stdin
   closed, output bounded, and the generated file required to be exactly
   `extension_api.json`. The dump is parsed only after successful
@@ -79,7 +79,7 @@ fabricated.
   `--dump-extension-api` result is never substituted.
 - **The knowledge cache is treated as local generated data, not trust
   data.** Cached documentation is never executed, never interpreted as
-  Solaris instructions, cannot affect permissions, cannot register tools,
+  Siralos instructions, cannot affect permissions, cannot register tools,
   and is delivered to the provider only as bounded tool-result data.
   Provider input can never request raw index files or the raw dump and can
   never change the engine profile. The provider receives bounded search
@@ -88,7 +88,7 @@ fabricated.
 ### GDScript check-only diagnostics
 
 - **`--check-only` is the security-relevant invariant.** The only
-  legitimate `--script` invocation in Solaris is
+  legitimate `--script` invocation in Siralos is
   `--headless --path <disposable-mirror> --script <mirror-script>
 --check-only`, structurally enforced by the architecture check: `--path`
   may only reference the disposable mirror, `--scene`/`--editor`/
@@ -177,7 +177,7 @@ applies). No LSP abstractions are introduced in this milestone.
   bounded, deterministic, and never raw dumps or raw index files.
 - Diagnostics are honest about their source: engine-generated API docs
   are distinguished from official manual/tutorial documentation, which
-  Solaris does not yet synchronize.
+  Siralos does not yet synchronize.
 - Every execution surface fails closed with typed `unavailable` outcomes;
   nothing is created, deleted, or launched at this stage, and no approval
   is requested for capabilities that cannot execute.

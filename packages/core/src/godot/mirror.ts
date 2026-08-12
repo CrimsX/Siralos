@@ -2,7 +2,7 @@
  * Disposable Godot project mirror port. Core owns the contract; the adapter
  * owns every filesystem operation. The provider cannot choose the mirror
  * location or its contents, and the project cannot influence the copy
- * policy: the request and the limits are Solaris-generated and fixed.
+ * policy: the request and the limits are Siralos-generated and fixed.
  *
  * The mirror may execute only when the adapter can mechanically guarantee
  * that no file or directory can be created outside the verified private
@@ -19,7 +19,7 @@ export interface ProjectMirrorRequest {
   /** The source workspace root; never passed to the engine. */
   readonly workspaceRoot: string;
   /**
-   * Solaris-generated verified parent directory in which the mirror is
+   * Siralos-generated verified parent directory in which the mirror is
    * created. Must not resolve inside the workspace or any forbidden root.
    */
   readonly parentDirectory: string;
@@ -36,7 +36,7 @@ export interface ProjectMirrorFileEntry {
 }
 
 export interface PreparedProjectMirror {
-  /** Absolute mirror project path (Solaris-generated; never provider-visible). */
+  /** Absolute mirror project path (Siralos-generated; never provider-visible). */
   readonly projectPath: string;
   readonly sourceRoot: string;
   readonly parentDirectory: string;

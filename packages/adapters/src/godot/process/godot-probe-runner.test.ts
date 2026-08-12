@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createGodotProbeRunner, GODOT_PROBING_UNAVAILABLE_MESSAGE } from "./godot-probe-runner.js";
-import type { GodotInstallation } from "@solaris/core";
+import type { GodotInstallation } from "@siralos/core";
 
 function validInstallation(): GodotInstallation {
   return {

@@ -4,7 +4,7 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   readJsonObject,
   readOptionalString,
@@ -14,7 +14,7 @@ import {
 
 /**
  * `self.read` / `self.search` tools (Stage 3 milestone 6): read-only
- * inspection of the built-in `@solaris` self-reference — the host-owned
+ * inspection of the built-in `@siralos` self-reference — the host-owned
  * description of the EXACT installed runtime (version, commands,
  * configuration surface, capabilities, sandbox profiles, tool surface,
  * Godot capability status, references/research configuration, Task
@@ -36,7 +36,7 @@ const MAX_SEARCH_LINES_PER_SECTION = 20;
 const SELF_READ_DEFINITION: ToolDefinition = {
   name: "self.read",
   description:
-    "Read one section of the built-in @solaris self-reference (installed runtime documentation): runtime, commands, configuration, capabilities, sandbox, workspace-tools, godot, references, research, tasks, doctor. Read-only; contains no secrets.",
+    "Read one section of the built-in @siralos self-reference (installed runtime documentation): runtime, commands, configuration, capabilities, sandbox, workspace-tools, godot, references, research, tasks, doctor. Read-only; contains no secrets.",
   inputSchema: {
     type: "object",
     properties: {
@@ -53,7 +53,7 @@ const SELF_READ_DEFINITION: ToolDefinition = {
 const SELF_SEARCH_DEFINITION: ToolDefinition = {
   name: "self.search",
   description:
-    "Search the built-in @solaris self-reference (installed runtime documentation) for a topic such as 'commands', 'sandbox profile', 'Godot LSP', or 'checkpoints'. Read-only; bounded results.",
+    "Search the built-in @siralos self-reference (installed runtime documentation) for a topic such as 'commands', 'sandbox profile', 'Godot LSP', or 'checkpoints'. Read-only; bounded results.",
   inputSchema: {
     type: "object",
     properties: {

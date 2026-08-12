@@ -1,5 +1,5 @@
-import type { SandboxBackendStatus, SolarisApplication, SolarisSecurity } from "@solaris/core";
-import { GitError } from "@solaris/core";
+import type { SandboxBackendStatus, SiralosApplication, SiralosSecurity } from "@siralos/core";
+import { GitError } from "@siralos/core";
 import {
   describeError,
   formatCommands,
@@ -16,7 +16,7 @@ import type { SessionIO, SessionInfo } from "./session-types.js";
 
 export async function runCommandsCommand(
   io: SessionIO,
-  application: SolarisApplication,
+  application: SiralosApplication,
   sessionInfo: SessionInfo,
 ): Promise<void> {
   const [availabilityEntries, backendStatus] = await Promise.all([
@@ -85,7 +85,7 @@ export async function runUndoCommand(
   io.write(formatUndoOutcome(outcome));
 }
 
-export async function runSandboxCheck(io: SessionIO, security: SolarisSecurity): Promise<void> {
+export async function runSandboxCheck(io: SessionIO, security: SiralosSecurity): Promise<void> {
   for await (const event of security.checkSandbox()) {
     switch (event.type) {
       case "sandbox_check_started":

@@ -13,7 +13,7 @@ import type {
   CheckpointTerminalState,
   FileCheckpoint,
   PreparedCheckpoint,
-} from "@solaris/core";
+} from "@siralos/core";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
 import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
 import { createErrorDescriber } from "../../support/error-message.js";
@@ -48,7 +48,7 @@ export interface FilesystemCheckpointStoreOptions {
   readonly preimageReadSeam?: PreimageReadFunction | undefined;
 }
 
-export const DEFAULT_CHECKPOINT_ROOT = join(homedir(), ".solaris", "checkpoints");
+export const DEFAULT_CHECKPOINT_ROOT = join(homedir(), ".siralos", "checkpoints");
 export const DEFAULT_MAX_CHECKPOINTS = 100;
 export const DEFAULT_MAX_CHECKPOINT_STORAGE_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_MAX_PREIMAGE_BYTES = 1024 * 1024;
@@ -786,7 +786,7 @@ export async function createFilesystemCheckpointStore(
   }
 
   /**
-   * No-follow validation of a path under the Solaris-owned checkpoint root.
+   * No-follow validation of a path under the Siralos-owned checkpoint root.
    * Every component is lstat-checked (rejecting symlinks), the leaf must
    * resolve canonically to its logical location (rejecting junctions and
    * reparse points on Windows and any inserted link on POSIX), and the root

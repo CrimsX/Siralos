@@ -1,4 +1,4 @@
-import { GitError, type GitDiffFileSummary } from "@solaris/core";
+import { GitError, type GitDiffFileSummary } from "@siralos/core";
 
 export interface ParsedDiff {
   readonly files: readonly GitDiffFileSummary[];

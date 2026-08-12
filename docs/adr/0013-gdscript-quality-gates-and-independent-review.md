@@ -63,7 +63,7 @@ cancelled.
 
 ### Warning policy respects actual Godot/project behavior
 
-Solaris does not invent "all warnings are errors". A warning that Godot or
+Siralos does not invent "all warnings are errors". A warning that Godot or
 the project surfaces as an error is a hard error. A normal Godot warning
 is advisory unless project configuration promotes it to error or
 repository guidance explicitly requires it to block. Before applying a
@@ -74,7 +74,7 @@ message ordering), with conservative line-movement tolerance. Entries are
 classified `introduced`, `resolved`, `unchanged`, or `uncertain`; a newly
 introduced warning is advisory by default, a newly introduced error
 blocks, and an unavailable baseline makes attribution uncertain rather
-than falsely attributed. Solaris never inserts `@warning_ignore`
+than falsely attributed. Siralos never inserts `@warning_ignore`
 annotations and never modifies project warning configuration.
 
 ### Project conventions take precedence over fallback style guidance
@@ -224,7 +224,7 @@ raise any of them.
   repairs) is never flagged as unrelated because of the workflow's own
   earlier approved change sets.
 - Repository-guidance discovery is deferred: there is no instruction
-  mechanism in Solaris yet, so `repositoryGuidance` is always null and
+  mechanism in Siralos yet, so `repositoryGuidance` is always null and
   no convention rule is repository-mandatory by default. The plumbing
   (the reviewer prompt injection and the analyzer's mandatory-rule
   promotion) is real and tested; wiring a bounded instruction mechanism

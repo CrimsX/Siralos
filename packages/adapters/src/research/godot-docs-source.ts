@@ -4,7 +4,7 @@ import {
   type ResearchRequest,
   type ResearchSourcePort,
   type ResearchTransportPort,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   boundedErrorMessage,
   researchDocumentOutcome,

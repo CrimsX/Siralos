@@ -6,13 +6,13 @@ import type { SandboxBackend, SandboxBackendStatus } from "./sandbox-backend.js"
 import type { SandboxProfile } from "./profile.js";
 import type { SandboxEvent } from "./sandbox-events.js";
 
-export interface SolarisSecurityDependencies {
+export interface SiralosSecurityDependencies {
   readonly backend: SandboxBackend;
   readonly policy: CapabilityPolicy;
   readonly profile: SandboxProfile;
 }
 
-export interface SolarisSecurity {
+export interface SiralosSecurity {
   readonly profile: SandboxProfile;
   readonly policy: CapabilityPolicy;
 
@@ -21,7 +21,7 @@ export interface SolarisSecurity {
   checkSandbox(signal?: AbortSignal): AsyncIterable<SandboxEvent>;
 }
 
-export function createSolarisSecurity(dependencies: SolarisSecurityDependencies): SolarisSecurity {
+export function createSiralosSecurity(dependencies: SiralosSecurityDependencies): SiralosSecurity {
   async function* checkSandbox(signal?: AbortSignal): AsyncIterable<SandboxEvent> {
     if (signal?.aborted) {
       yield {

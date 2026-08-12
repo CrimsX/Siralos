@@ -1,6 +1,6 @@
 import { lstat, stat } from "node:fs/promises";
 import path from "node:path";
-import type { Tool, ToolExecutionContext, ToolExecutionResult, JsonValue } from "@solaris/core";
+import type { Tool, ToolExecutionContext, ToolExecutionResult, JsonValue } from "@siralos/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
 import { MUTATION_TEMP_PREFIX } from "./mutations/mutation-temp.js";
 import {

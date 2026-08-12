@@ -4,7 +4,7 @@ import type { SafeDiagnostic } from "./diagnostics.js";
 import type {
   GodotEdition,
   GodotEditionConfidence,
-  SolarisGodotSupport,
+  SiralosGodotSupport,
 } from "./engine-profile.js";
 import type { GodotInstallationSource } from "./installations.js";
 import type { GodotProjectProfile } from "./project.js";
@@ -25,7 +25,7 @@ export interface GodotInstallationOverview {
   readonly releaseChannel: GodotReleaseChannel | null;
   readonly sourceLabel: string;
   readonly source: GodotInstallationSource;
-  readonly support: SolarisGodotSupport | null;
+  readonly support: SiralosGodotSupport | null;
   /** Bounded error for invalid candidates; null when the candidate is valid. */
   readonly invalid: string | null;
   readonly isDuplicate: boolean;
@@ -61,7 +61,7 @@ export interface GodotSelectedInstallation {
   readonly edition: GodotEdition;
   readonly editionConfidence: GodotEditionConfidence;
   readonly releaseChannel: GodotReleaseChannel;
-  readonly support: SolarisGodotSupport;
+  readonly support: SiralosGodotSupport;
   readonly capabilities: GodotCommandCapabilities;
   readonly verifiedCapabilities: readonly string[];
   readonly degradedCapabilities: readonly string[];

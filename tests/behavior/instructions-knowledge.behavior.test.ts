@@ -17,8 +17,8 @@ import {
   DEVELOP_OFFLINE_PROFILE,
   type KnowledgeCoordinator,
   type ProjectInstructionService,
-} from "@solaris/core";
-import { createProjectInstructionService } from "@solaris/adapters";
+} from "@siralos/core";
+import { createProjectInstructionService } from "@siralos/adapters";
 import {
   createBehaviorLoopHarness,
   createBehaviorRuntime,
@@ -440,7 +440,7 @@ describe("Final-boundary effect tests (21–24, 49–51) — authority separatio
     expect(system).toContain("project.godot.version");
     expect(system).toContain("Factual context about the project");
     // The knowledge block sits after the instructions and never inside them.
-    const instructionsIndex = system.indexOf("[Solaris instructions]");
+    const instructionsIndex = system.indexOf("[Siralos instructions]");
     const knowledgeIndex = system.indexOf("[Project knowledge]");
     expect(knowledgeIndex).toBeGreaterThan(instructionsIndex);
     const instructionsBlock = system.slice(instructionsIndex, knowledgeIndex);
@@ -597,7 +597,7 @@ describe("Context authority effect (50) — distinct sections in the actual prov
     await harness.startWorkflow("develop fixture");
     await harness.runPrompt("develop fixture");
     const system = harness.requests()[0]?.system ?? "";
-    expect(system).toContain("[Solaris instructions]");
+    expect(system).toContain("[Siralos instructions]");
     expect(system).toContain("[Project instructions]");
     expect(system).toContain("[Task contract]");
     expect(system).toContain("[Project knowledge]");

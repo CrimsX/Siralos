@@ -14,10 +14,10 @@ import {
   DEFAULT_CHECKPOINT_ROOT,
   DEFAULT_USER_CONFIG,
   validateExecutable,
-} from "@solaris/adapters";
-import { createAnthropicSandboxRuntimeBackend } from "@solaris/adapters";
+} from "@siralos/adapters";
+import { createAnthropicSandboxRuntimeBackend } from "@siralos/adapters";
 
-const godotPath = process.env["SOLARIS_TEST_GODOT"];
+const godotPath = process.env["SIRALOS_TEST_GODOT"];
 const passed = [];
 const failed = [];
 const skipped = [];
@@ -69,15 +69,15 @@ async function main() {
   if (!godotPath || godotPath.trim().length === 0) {
     skip(
       "setup",
-      "SOLARIS_TEST_GODOT is not set; live quality-stage conformance requires an explicit Godot editor executable.",
+      "SIRALOS_TEST_GODOT is not set; live quality-stage conformance requires an explicit Godot editor executable.",
     );
     return;
   }
   if (!isAbsolute(godotPath.trim())) {
-    skip("setup", "SOLARIS_TEST_GODOT must be an absolute path.");
+    skip("setup", "SIRALOS_TEST_GODOT must be an absolute path.");
     return;
   }
-  const workRoot = await mkdtemp(join(tmpdir(), "solaris-quality-conformance-"));
+  const workRoot = await mkdtemp(join(tmpdir(), "siralos-quality-conformance-"));
   const fixtureWorkspace = join(workRoot, "fixture");
   const runsRoot = join(workRoot, "runs");
   const cacheRoot = join(workRoot, "cache");

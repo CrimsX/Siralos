@@ -3,7 +3,7 @@ import {
   validateReviewContextManifest,
   type GodotSceneIntelligence,
   type ReviewContextManifest,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGodotReviewContextTool } from "./godot-review-context-tool.js";
 
 const REV = "rev_".padEnd(36, "a");

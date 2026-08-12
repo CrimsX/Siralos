@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 
 /**
  * Normalized, bounded representation of an engine-generated

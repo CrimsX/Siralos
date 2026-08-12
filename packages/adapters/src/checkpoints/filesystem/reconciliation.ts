@@ -1,4 +1,4 @@
-import type { CheckpointStore, WorkspaceFileState } from "@solaris/core";
+import type { CheckpointStore, WorkspaceFileState } from "@siralos/core";
 import { readWorkspaceFileState } from "./checkpoint-file-state.js";
 
 export interface ReconciliationReport {

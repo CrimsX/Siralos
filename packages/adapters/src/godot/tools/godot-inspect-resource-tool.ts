@@ -3,7 +3,7 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { readJsonObject, readRequiredString } from "../../tools/workspace/validation.js";
 
 /**
@@ -115,7 +115,7 @@ export function createGodotInspectResourceTool(intelligence: GodotSceneIntellige
 }
 
 function summarizeVariant(
-  value: import("@solaris/core").GodotVariantValue,
+  value: import("@siralos/core").GodotVariantValue,
 ): string | number | boolean | null {
   switch (value.kind) {
     case "null":

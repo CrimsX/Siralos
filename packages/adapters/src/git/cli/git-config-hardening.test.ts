@@ -20,7 +20,7 @@ afterEach(async () => {
  * configuration that executes external code (fsmonitor, aliases, pagers,
  * external diff, textconv, credential helpers) points at this script; the
  * script writes a marker file when it runs. The repo root is disposable and
- * malicious configuration never touches the Solaris repository.
+ * malicious configuration never touches the Siralos repository.
  */
 async function installMarker(repo: TempRepo): Promise<string> {
   const markerPath = join(repo.root, "marker-ran.txt");
@@ -162,7 +162,7 @@ describe("git executable-helper hardening", () => {
     const sanitized = sanitizeGitEnvironment(hostileEnvironment);
     for (const [name, hostileValue] of Object.entries(hostileEnvironment)) {
       // Hostile values are never carried: either the variable is stripped
-      // or it is re-pinned to the Solaris-controlled safety value.
+      // or it is re-pinned to the Siralos-controlled safety value.
       expect(sanitized[name]).not.toBe(hostileValue);
     }
     const git = createHostGitBackend({ workspaceRoot: repo.root });
@@ -323,13 +323,13 @@ describe("git special filenames", () => {
 });
 
 describe("git configuration isolation", () => {
-  it("never reads configuration from the Solaris repository", async () => {
+  it("never reads configuration from the Siralos repository", async () => {
     const repo = await createTempRepo();
     await repo.write("a.txt", "hello\n");
     repo.git("add", "a.txt");
     repo.commit("initial");
     const markerPath = await installMarker(repo);
-    const outside = await mkdtemp(join(tmpdir(), "solaris-git-config-"));
+    const outside = await mkdtemp(join(tmpdir(), "siralos-git-config-"));
     try {
       const { adapter } = createTestGitAdapter(repo.root);
       await adapter.getStatus({});

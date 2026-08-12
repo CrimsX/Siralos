@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import { samePathIdentity } from "../../fs-path-identity.js";
 import { enclosingAppBundle } from "./macos-bundle.js";
 

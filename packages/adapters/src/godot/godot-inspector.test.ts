@@ -8,7 +8,7 @@ import {
   type GodotProbeRunner,
   type GodotVersionProbe,
   type SandboxBackend,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGodotInspector } from "./godot-inspector.js";
 import { createEngineProfileCache } from "./cache/engine-profile-cache.js";
 import { createFakeGodotProbeRunner } from "./testing/fake-godot-probe-runner.js";
@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 async function withTemp(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-godot-inspector-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-godot-inspector-"));
   tempDirectories.push(directory);
   return directory;
 }

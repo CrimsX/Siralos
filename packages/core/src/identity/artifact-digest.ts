@@ -4,9 +4,9 @@ import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
  * Canonical artifact digest primitive (Stage 3 — Content Identity &
  * Delta Verification, ADR 0028).
  *
- * One shared typed digest for structured Solaris artifacts:
+ * One shared typed digest for structured Siralos artifacts:
  *
- *   SHA-256("solaris:<ArtifactType>:v<SchemaVersion>\0" + canonicalPayload)
+ *   SHA-256("siralos:<ArtifactType>:v<SchemaVersion>\0" + canonicalPayload)
  *
  * The domain separator guarantees that two artifact types can never
  * collide by representation reuse, and the canonical JSON payload makes
@@ -50,7 +50,7 @@ export function canonicalArtifactPayload(
   if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 1) {
     throw new Error("An artifact schema version must be a positive safe integer.");
   }
-  return `solaris:${artifactType}:v${schemaVersion}\0${canonicalizeJson(payload)}`;
+  return `siralos:${artifactType}:v${schemaVersion}\0${canonicalizeJson(payload)}`;
 }
 
 /** Hex digest of a domain-separated artifact (canonical JSON payload). */

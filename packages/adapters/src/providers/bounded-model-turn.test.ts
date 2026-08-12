@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelEvent, ModelProvider } from "@solaris/core";
+import type { ModelEvent, ModelProvider } from "@siralos/core";
 import {
   collectBoundedModelTurn,
   detachBoundedToolResult,

@@ -3,7 +3,7 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 
 /**
  * `godot.development_status` — read-only bounded status of the active

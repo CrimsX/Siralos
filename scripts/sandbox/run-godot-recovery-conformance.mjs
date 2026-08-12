@@ -12,9 +12,9 @@ import {
   DEFAULT_CHECKPOINT_ROOT,
   DEFAULT_USER_CONFIG,
   validateExecutable,
-} from "@solaris/adapters";
+} from "@siralos/adapters";
 
-const godotPath = process.env["SOLARIS_TEST_GODOT"];
+const godotPath = process.env["SIRALOS_TEST_GODOT"];
 const passed = [];
 const failed = [];
 const skipped = [];
@@ -62,7 +62,7 @@ const RECOVERY_FIXTURE_FILES = {
     "[plugin]",
     'name="Side Effect"',
     'description="Writes a marker file when the plugin enters the editor tree."',
-    'author="Solaris conformance"',
+    'author="Siralos conformance"',
     'version="1.0"',
     'script="plugin.gd"',
     "",
@@ -94,15 +94,15 @@ async function main() {
   if (!godotPath || godotPath.trim().length === 0) {
     skip(
       "setup",
-      "SOLARIS_TEST_GODOT is not set; live recovery conformance requires an explicit Godot editor executable.",
+      "SIRALOS_TEST_GODOT is not set; live recovery conformance requires an explicit Godot editor executable.",
     );
     return;
   }
   if (!isAbsolute(godotPath.trim())) {
-    skip("setup", "SOLARIS_TEST_GODOT must be an absolute path.");
+    skip("setup", "SIRALOS_TEST_GODOT must be an absolute path.");
     return;
   }
-  const workRoot = await mkdtemp(join(tmpdir(), "solaris-recovery-conformance-"));
+  const workRoot = await mkdtemp(join(tmpdir(), "siralos-recovery-conformance-"));
   const fixtureWorkspace = join(workRoot, "fixture");
   const runsRoot = join(workRoot, "runs");
   const cacheRoot = join(workRoot, "cache");

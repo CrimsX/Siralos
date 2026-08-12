@@ -5,7 +5,7 @@ import type {
   PreparedLSPSessionTool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { LanguageQueryGate } from "./godot-lsp-query-tools.js";
 import { errorMessage } from "../../support/error-message.js";
 
@@ -14,7 +14,7 @@ import { errorMessage } from "../../support/error-message.js";
  * of the bounded Godot GDScript language session. The provider cannot
  * approve the session, select the port or host, send raw LSP methods, or
  * request workspace edits; the session runs a recovery-mode editor against
- * the disposable mirror over a Solaris-allocated loopback port. When
+ * the disposable mirror over a Siralos-allocated loopback port. When
  * session startup is unavailable on this platform, preparation returns a
  * typed `unavailable` result before any approval is requested. While an
  * active development workflow owns the session lifecycle (its approval
@@ -120,7 +120,7 @@ function isEmptyObject(value: unknown): boolean {
   );
 }
 
-type GodotLSPSessionStartResult = import("@solaris/core").GDScriptSessionStartResult;
+type GodotLSPSessionStartResult = import("@siralos/core").GDScriptSessionStartResult;
 
 function mapStartResult(result: GodotLSPSessionStartResult): ToolExecutionResult {
   if (result.status === "ready") {

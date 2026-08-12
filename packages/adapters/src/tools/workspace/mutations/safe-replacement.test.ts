@@ -14,7 +14,7 @@ import {
 const tempDirectories: string[] = [];
 
 async function withDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-replace-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-replace-"));
   tempDirectories.push(directory);
   return directory;
 }
@@ -328,7 +328,7 @@ describe("safe replacement state machine", () => {
     const ops = recordingOps({
       failReadFileCalls: [1],
       beforeLink: async (from, _to, callIndex) => {
-        if (callIndex === 1 && from.includes(".solaris-quarantine-")) {
+        if (callIndex === 1 && from.includes(".siralos-quarantine-")) {
           await writeFile(target, "appeared before rollback\n");
         }
       },

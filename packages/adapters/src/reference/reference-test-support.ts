@@ -8,7 +8,7 @@ import {
   type ReferenceId,
   type ReferenceMaterializerPort,
   type ResolvedReferenceIdentity,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { FakeRepositoryFixture } from "./reference-resolver.js";
 
 /**
@@ -55,7 +55,7 @@ export function createFakeRepositoryMaterializer(
       return options.baseDir;
     }
     if (createdBaseDir === null) {
-      createdBaseDir = await mkdtemp(join(tmpdir(), "solaris-reference-"));
+      createdBaseDir = await mkdtemp(join(tmpdir(), "siralos-reference-"));
     }
     return createdBaseDir;
   }

@@ -13,7 +13,7 @@ export type GodotInstallationSource =
 /**
  * A validated Godot executable candidate.
  *
- * The canonical path is private to Solaris: it must never enter
+ * The canonical path is private to Siralos: it must never enter
  * provider-visible results. Provider results use installation ids and
  * executable fingerprints instead.
  */

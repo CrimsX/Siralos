@@ -1,6 +1,6 @@
 import https from "node:https";
 import { URL } from "node:url";
-import type { ResearchTransportPort, TransportOutcome } from "@solaris/core";
+import type { ResearchTransportPort, TransportOutcome } from "@siralos/core";
 import { boundedErrorMessage, classifyContentType } from "./normalization.js";
 
 /**
@@ -16,7 +16,7 @@ import { boundedErrorMessage, classifyContentType } from "./normalization.js";
  * maxBytes/redirects/timeout/signal semantics.
  */
 
-const USER_AGENT = "solaris-research/0.1";
+const USER_AGENT = "siralos-research/0.1";
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_TRANSPORT_BYTES = 2 * 1024 * 1024;
 const MAX_TRANSPORT_REDIRECTS = 4;

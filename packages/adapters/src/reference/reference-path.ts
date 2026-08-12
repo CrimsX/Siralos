@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import { isPathWithin } from "@solaris/core";
+import { isPathWithin } from "@siralos/core";
 import { describeFsError } from "../tools/workspace/workspace-path.js";
 
 /**

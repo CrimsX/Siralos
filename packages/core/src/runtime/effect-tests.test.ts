@@ -244,7 +244,7 @@ describe("effect — cleanup containment", () => {
 describe("effect — restart reconciliation", () => {
   it("a persisted non-terminal run reconciles to interrupted/unknown/cleanup_required, never success", () => {
     const clock = createFixedClock(10_000);
-    // Persisted record recreated after a Solaris restart.
+    // Persisted record recreated after a Siralos restart.
     const record = { runId: RUN_ID, lastKnownState: "running", lastObservedAtMs: 2_000 };
     const withState = classifyIncompleteRun(record, true);
     expect(withState.classification).toBe("cleanup_required");

@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createToolProjector, parseReferenceDeclarationsSection } from "@solaris/core";
-import { createReferenceServices } from "@solaris/adapters";
+import { createToolProjector, parseReferenceDeclarationsSection } from "@siralos/core";
+import { createReferenceServices } from "@siralos/adapters";
 import { createCliApplication } from "./create-application.js";
 import { createReferenceEvidenceRing, observeReferenceTools } from "./reference-research.js";
 import { formatReferences } from "../output.js";
@@ -11,7 +11,7 @@ import { formatReferences } from "../output.js";
 const tempDirectories: string[] = [];
 
 async function makeTempDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-cli-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-cli-test-"));
   tempDirectories.push(directory);
   return directory;
 }

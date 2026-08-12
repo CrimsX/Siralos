@@ -127,7 +127,7 @@ export type ReferenceStatus = "ready" | "resolution-failed" | "unavailable" | "d
  * Materialization status (managed cache state). Materialization is
  * INTERNAL — the managed-cache root is never model-facing. Local
  * directories need no materialization; repositories are materialized by
- * the adapter into a Solaris-owned cache.
+ * the adapter into a Siralos-owned cache.
  */
 export type MaterializationStatus =
   "not-required" | "not-materialized" | "materialized" | "unavailable" | "failed";

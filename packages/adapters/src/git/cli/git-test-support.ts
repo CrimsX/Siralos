@@ -8,7 +8,7 @@ import type {
   SandboxBackendStatus,
   SandboxedProcessRequest,
   SandboxedProcessResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { buildGitInvocation } from "./git-process.js";
 import { createGitCliAdapter } from "./git-cli-adapter.js";
 
@@ -33,12 +33,12 @@ export async function cleanupTempDirs(): Promise<void> {
 }
 
 export async function createTempRepo(initialBranch = "main"): Promise<TempRepo> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-git-test-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-git-test-"));
   registerTempDir(root);
   const git = (...args: string[]): { status: number; stdout: string; stderr: string } => {
     const result = spawnSync(
       "git",
-      ["-c", "user.name=Solaris Test", "-c", "user.email=test@solaris.dev", ...args],
+      ["-c", "user.name=Siralos Test", "-c", "user.email=test@siralos.dev", ...args],
       {
         cwd: root,
         encoding: "utf8",
@@ -81,7 +81,7 @@ export async function createTempRepo(initialBranch = "main"): Promise<TempRepo> 
 }
 
 export async function createNonGitDir(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-nongit-test-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-nongit-test-"));
   registerTempDir(root);
   return root;
 }
@@ -244,7 +244,7 @@ export function createTestGitAdapter(
  * execution. When `resultArchivePath` is given, remove() copies the
  * sandbox-private clean-filter result file (`home/clean-filter-result.json`
  * inside the run root, written by the confined filter through its
- * Solaris-controlled HOME) to that host-side path before deleting the run
+ * Siralos-controlled HOME) to that host-side path before deleting the run
  * directory, so tests can observe the filter's outcomes after cleanup.
  */
 export function createTestRunDirectories(
@@ -281,7 +281,7 @@ export function createTestRunDirectories(
   return {
     provider: {
       async create() {
-        const root = await mkdtemp(join(tmpdir(), "solaris-git-run-"));
+        const root = await mkdtemp(join(tmpdir(), "siralos-git-run-"));
         created.push(root);
         const home = join(root, "home");
         const temp = join(root, "tmp");

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { chmod, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ReferenceSource, RepositoryRef } from "@solaris/core";
+import type { ReferenceSource, RepositoryRef } from "@siralos/core";
 import {
   createFakeRepositoryBackend,
   createLocalDirectoryResolver,

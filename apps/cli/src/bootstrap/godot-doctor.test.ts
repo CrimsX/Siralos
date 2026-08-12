@@ -6,7 +6,7 @@ import {
   type GodotDoctorReport,
   type GodotInstallationOverview,
   type GodotInspector,
-} from "@solaris/core";
+} from "@siralos/core";
 
 function overview(overrides: Partial<GodotInstallationOverview> = {}): GodotInstallationOverview {
   return {

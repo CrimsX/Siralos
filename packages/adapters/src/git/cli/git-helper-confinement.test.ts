@@ -34,7 +34,7 @@ afterEach(async () => {
  */
 
 /** Distinct bounded outcomes the confined filter records into the
- * sandbox-private result channel (its Solaris-controlled HOME inside the
+ * sandbox-private result channel (its Siralos-controlled HOME inside the
  * private run directory, which the sandbox profile permits it to write):
  *   - `filter-ran`:                 the helper executed inside the sandbox
  *   - `repo-write-denied`:          a workspace write attempt was refused
@@ -159,7 +159,7 @@ async function readResultOutcomes(archivePath: string): Promise<readonly string[
 
 /** Creates a host-side archive path for the sandbox-private result channel. */
 async function createResultArchivePath(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-git-live-result-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-git-live-result-"));
   registerTempDir(directory);
   return join(directory, RESULT_FILE_NAME);
 }
@@ -404,7 +404,7 @@ describe("git inspection helper-execution confinement", () => {
 
 describe("git inspection live confinement (real enforcing sandbox only)", () => {
   const liveBackend = createAnthropicSandboxRuntimeBackend({
-    workspaceRoot: join(tmpdir(), "solaris-git-live-probe"),
+    workspaceRoot: join(tmpdir(), "siralos-git-live-probe"),
   });
 
   it("proves the clean filter ran inside the sandbox, wrote only to the permitted result channel, and had its network denied", async (context) => {

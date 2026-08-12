@@ -83,7 +83,7 @@ export interface SessionStatus {
   readonly activeCommandId: string | null;
 }
 
-export interface SolarisApplicationDependencies {
+export interface SiralosApplicationDependencies {
   readonly provider: ModelProvider;
   readonly tools: ToolRegistry;
   readonly policy?: CapabilityPolicy;
@@ -111,7 +111,7 @@ export interface SolarisApplicationDependencies {
 export const DEFAULT_MAX_TOOL_ROUNDS = 8;
 const MAX_TOOL_ROUNDS = 32;
 
-export interface SolarisApplication {
+export interface SiralosApplication {
   sendPrompt(
     text: string,
     signal?: AbortSignal,
@@ -136,9 +136,9 @@ function normalizeMaxToolRounds(value: number | undefined): number {
   return Math.min(MAX_TOOL_ROUNDS, Math.max(0, Math.floor(value)));
 }
 
-export function createSolarisApplication(
-  dependencies: SolarisApplicationDependencies,
-): SolarisApplication {
+export function createSiralosApplication(
+  dependencies: SiralosApplicationDependencies,
+): SiralosApplication {
   const history: ConversationItem[] = [];
   const policy = dependencies.policy ?? createDefaultPolicy("inspect");
   const profile = dependencies.profile ?? INSPECT_PROFILE;
@@ -168,7 +168,7 @@ export function createSolarisApplication(
     options?: { readonly mode?: ProjectionMode },
   ): AsyncIterable<ApplicationEvent> {
     if (state === "responding") {
-      throw new Error("Solaris is already responding to a prompt.");
+      throw new Error("Siralos is already responding to a prompt.");
     }
     state = "responding";
     history.push({ type: "user_message", content: text });
@@ -200,7 +200,7 @@ export function createSolarisApplication(
         if (toolRounds >= maxToolRounds) {
           yield {
             type: "response_failed",
-            message: `Solaris reached the maximum of ${maxToolRounds} tool rounds; the requested tool round was not executed.`,
+            message: `Siralos reached the maximum of ${maxToolRounds} tool rounds; the requested tool round was not executed.`,
           };
           return;
         }

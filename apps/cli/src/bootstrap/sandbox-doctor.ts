@@ -6,13 +6,13 @@ import {
   runSandboxConformance,
   resolveWorkspaceRoot,
   type ConformanceReport,
-} from "@solaris/adapters";
+} from "@siralos/adapters";
 import {
   DEVELOP_OFFLINE_PROFILE,
   getBuiltInProfile,
   type SandboxBackend,
   type SandboxBackendStatus,
-} from "@solaris/core";
+} from "@siralos/core";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,7 +62,7 @@ export async function runSandboxDoctor(
   try {
     let workspaceRoot: string;
     if (options.includeProbes) {
-      probeWorkspace = await mkdtemp(join(tmpdir(), "solaris-doctor-probes-"));
+      probeWorkspace = await mkdtemp(join(tmpdir(), "siralos-doctor-probes-"));
       workspaceRoot = probeWorkspace;
     } else {
       workspaceRoot = await resolveWorkspaceRoot(options.workspaceRoot ?? process.cwd());

@@ -130,7 +130,7 @@ export const GODOT_LIMITS = {
   maxApiLookupResultBytes: 512 * 1024,
   /** Knowledge profile schema version (immutable; mismatch rebuilds the cache). */
   knowledgeSchemaVersion: 1,
-  /** With-docs API dump probe timeout (fixed Solaris probe). */
+  /** With-docs API dump probe timeout (fixed Siralos probe). */
   apiDocsDumpTimeoutMs: 180_000,
 
   // --- GDScript check-only diagnostics ---

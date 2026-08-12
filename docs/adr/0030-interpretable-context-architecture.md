@@ -18,7 +18,7 @@ supersedes: []
 
 ## Problem
 
-Major Solaris workflow phases communicated partly through accumulated
+Major Siralos workflow phases communicated partly through accumulated
 conversation history rather than typed, inspectable, hash-bound
 artifacts, and per-phase context/authority were implicit (projection
 modes, stability classes) rather than declared. The system should rely
@@ -30,7 +30,7 @@ verified, and what downstream artifacts depend on it.
 ## Decision
 
 Adapt the useful principles of Interpretable Context Methodology (ICM)
-to Solaris's typed, host-controlled architecture — never literally:
+to Siralos's typed, host-controlled architecture — never literally:
 
 - **Formal context classes** (`context/phase-contract.ts`): `global`,
   `routing`, `phase_contract`, `stable_reference`, `working` with a
@@ -86,7 +86,7 @@ to Solaris's typed, host-controlled architecture — never literally:
   `SourceProblemCandidate` with a likely source class — **no automatic
   source-guidance modification** (controlled self-improvement belongs to
   Stage 6 `/evolve`).
-- **Solaris-development context**: scoped Solaris implementation tasks
+- **Siralos-development context**: scoped Siralos implementation tasks
   resolve global guidance → scoped AGENTS → architecture domain →
   applicable ADRs → TaskContract/TaskPlan → WorkspaceScope → current
   PhaseContract → active working set via the existing deterministic

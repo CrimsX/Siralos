@@ -4,7 +4,7 @@ import type {
   GodotEngineProfile,
   GodotInstallation,
   GodotVersion,
-} from "@solaris/core";
+} from "@siralos/core";
 import { invalidInstallation } from "../discovery/path-discovery.js";
 import {
   createGodotLSPServerRunner,
@@ -90,7 +90,7 @@ function request(overrides: Partial<GodotLSPServerStartRequest> = {}): GodotLSPS
   return {
     installation: installation(),
     engineProfile: profile(),
-    mirrorProjectPath: "/tmp/solaris-mirror-1",
+    mirrorProjectPath: "/tmp/siralos-mirror-1",
     allocatedPort: 65000,
     ...overrides,
   };
@@ -126,7 +126,7 @@ describe("godotLSPArguments", () => {
     }
   });
 
-  it("resolves the mirror path and allocated port only from Solaris-owned values", () => {
+  it("resolves the mirror path and allocated port only from Siralos-owned values", () => {
     expect(godotLSPArguments("/mirror/project", 6005)).toEqual([
       "--headless",
       "--editor",

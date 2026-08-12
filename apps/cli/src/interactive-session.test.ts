@@ -12,8 +12,8 @@ import {
   DEFAULT_EXECUTION_CONTRACT,
   createPreparedCommand,
   createSelfReference,
-  createSolarisApplication,
-  createSolarisSecurity,
+  createSiralosApplication,
+  createSiralosSecurity,
   createAdHocTaskContract,
   createTaskRuntime,
   createTaskRuntimeSnapshot,
@@ -58,8 +58,8 @@ import {
   type PreparedGodotProbe,
   type SandboxBackend,
   type SandboxBackendStatus,
-  type SolarisApplication,
-  type SolarisSecurity,
+  type SiralosApplication,
+  type SiralosSecurity,
   type UndoOutcome,
   type UndoService,
   type ApprovalReviewer,
@@ -67,7 +67,7 @@ import {
   type ReferenceMaterializerPort,
   type ReferenceRegistry,
   type ResearchService,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createCliApplication } from "./bootstrap/create-application.js";
 import { createInteractiveApprovalReviewer } from "./approval/approval-reviewer.js";
 import { createInputQueue, type InputQueue } from "./input/input-queue.js";
@@ -652,7 +652,7 @@ function createStubGodotProbe(): GodotProjectProbe {
         message: "stub: recovery-mode project probing is unavailable",
       });
     },
-    execute(): Promise<import("@solaris/core").GodotRecoveryProbeResult> {
+    execute(): Promise<import("@siralos/core").GodotRecoveryProbeResult> {
       return Promise.resolve({
         status: "unavailable",
         engine: { installationId: "", version: "", executableFingerprint: "" },
@@ -701,7 +701,7 @@ function createStubBackend(status: SandboxBackendStatus): SandboxBackend {
   };
 }
 
-function createFakeSecurity(status?: SandboxBackendStatus): SolarisSecurity {
+function createFakeSecurity(status?: SandboxBackendStatus): SiralosSecurity {
   const resolvedStatus: SandboxBackendStatus = status ?? {
     backendId: "fake-backend",
     state: "available",
@@ -715,7 +715,7 @@ function createFakeSecurity(status?: SandboxBackendStatus): SolarisSecurity {
       violationReporting: true,
     },
   };
-  return createSolarisSecurity({
+  return createSiralosSecurity({
     backend: createStubBackend(resolvedStatus),
     policy: createDefaultPolicy("inspect"),
     profile: INSPECT_PROFILE,
@@ -727,7 +727,7 @@ describe("runInteractiveSession", () => {
     const { io, application, sessionInfo } = await createComposedSession(["hello", "/exit"]);
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
-    expect(io.text).toContain("Solaris received: hello");
+    expect(io.text).toContain("Siralos received: hello");
   });
 
   it("/plan runs plan-only planning and stops without executing", async () => {
@@ -754,22 +754,22 @@ describe("runInteractiveSession", () => {
       "/exit",
     ]);
     await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Solaris received: first");
-    expect(io.text).toContain("Solaris received: second");
+    expect(io.text).toContain("Siralos received: first");
+    expect(io.text).toContain("Siralos received: second");
   });
 
   it("ignores empty input", async () => {
     const { io, application, sessionInfo } = await createComposedSession(["", "   ", "/exit"]);
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
-    expect(io.text).not.toContain("Solaris received: ");
+    expect(io.text).not.toContain("Siralos received: ");
   });
 
   it("reports an invalid slash command", async () => {
     const { io, application, sessionInfo } = await createComposedSession(["/bogus", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain("Unknown command: /bogus");
-    expect(io.text).not.toContain("Solaris received:");
+    expect(io.text).not.toContain("Siralos received:");
   });
 
   it("exits cleanly on end of input", async () => {
@@ -836,7 +836,7 @@ describe("runInteractiveSession", () => {
       "/exit",
     ]);
     await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Executor brief (solaris-execution-contract rev 1)");
+    expect(io.text).toContain("Executor brief (siralos-execution-contract rev 1)");
     expect(io.text).toContain("TASK\nInspect the main scene file read-only");
     expect(io.text).toContain("Milestone: S3M11 rev 1");
     expect(io.text).toContain("Fingerprint:");
@@ -883,7 +883,7 @@ describe("runInteractiveSession", () => {
         throw new Error("provider exploded");
       },
     };
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: failingProvider,
       tools: createToolRegistry([]),
     });
@@ -931,7 +931,7 @@ describe("runInteractiveSession tool activity", () => {
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain('\u25CF workspace.list {"path":"."}');
     expect(io.text).toMatch(/^\s+\d+ entries/m);
-    expect(io.text).toMatch(/Solaris inspected \d+ workspace entries\./);
+    expect(io.text).toMatch(/Siralos inspected \d+ workspace entries\./);
   });
 
   it("renders read activity without exposing raw file contents", async () => {
@@ -941,18 +941,18 @@ describe("runInteractiveSession tool activity", () => {
     ]);
     await runInteractiveSession(io, application, sessionInfo);
     expect(io.text).toContain('\u25CF workspace.read {"path":"README.md"}');
-    expect(io.text).toContain("Solaris read README.md.");
+    expect(io.text).toContain("Siralos read README.md.");
     expect(io.text).not.toContain("interactive agent harness for programming");
   });
 
   it("renders search activity with the match count", async () => {
     const { io, application, sessionInfo } = await createComposedSession([
-      "search Solaris",
+      "search Siralos",
       "/exit",
     ]);
     await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain('\u25CF workspace.search {"query":"Solaris","path":"."}');
-    expect(io.text).toMatch(/Solaris found \d+ matching lines\./);
+    expect(io.text).toContain('\u25CF workspace.search {"query":"Siralos","path":"."}');
+    expect(io.text).toMatch(/Siralos found \d+ matching lines\./);
   });
 
   it("renders a tool failure and returns to the prompt", async () => {
@@ -982,11 +982,11 @@ describe("runInteractiveSession tool activity", () => {
       execute(): Promise<ToolExecutionResult> {
         return Promise.resolve({
           status: "denied",
-          message: "Path is outside the Solaris workspace.",
+          message: "Path is outside the Siralos workspace.",
         });
       },
     };
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });
@@ -996,7 +996,7 @@ describe("runInteractiveSession tool activity", () => {
     });
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
-    expect(io.text).toContain("\u2715 Path is outside the Solaris workspace.");
+    expect(io.text).toContain("\u2715 Path is outside the Siralos workspace.");
     expect(io.text).toContain("recovered");
     expect(io.text).toContain("Messages: 4");
   });
@@ -1057,7 +1057,7 @@ describe("runInteractiveSession sandbox diagnostics", () => {
 });
 
 function createTestApplication() {
-  return createSolarisApplication({
+  return createSiralosApplication({
     provider: {
       id: "session-test-provider",
       async *stream(): AsyncIterable<ModelEvent> {
@@ -1106,7 +1106,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     const io = new ScriptedIO(["/godot-doctor", "/exit"]);
     const sessionInfo: SessionInfo = buildSessionInfo();
     await runInteractiveSession(io, createTestApplication(), sessionInfo);
-    expect(io.text).toContain("Solaris Godot doctor");
+    expect(io.text).toContain("Siralos Godot doctor");
     expect(io.text).toContain("Recovery-mode project probe: unavailable");
     expect(io.text).toContain("No project code was executed.");
   });
@@ -1172,7 +1172,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
           digest: "d".repeat(64),
         });
       },
-      execute(): Promise<import("@solaris/core").GodotRecoveryProbeResult> {
+      execute(): Promise<import("@siralos/core").GodotRecoveryProbeResult> {
         return Promise.resolve({
           status: "unavailable",
           engine: {
@@ -1597,7 +1597,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     );
     expect(exitCode).toBe(0);
     expect(text()).toContain("denied");
-    expect(text()).toContain("Solaris received: hello world");
+    expect(text()).toContain("Siralos received: hello world");
   });
 });
 
@@ -1641,7 +1641,7 @@ function createStubCommandTool(options: StubCommandToolOptions = {}) {
     kind: "prepared_command",
     definition: {
       name: "process.run",
-      description: "Run a validated Solaris development command.",
+      description: "Run a validated Siralos development command.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     capability: "process.execute",
@@ -1699,7 +1699,7 @@ function createCommandSession(options: {
     (text) => io.write(text),
   );
   const provider = createScriptedProvider(options.turns);
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider,
     tools: createToolRegistry([options.tool]),
     policy: createDefaultPolicy("develop-offline"),
@@ -1709,7 +1709,7 @@ function createCommandSession(options: {
   const sessionInfo: SessionInfo = buildSessionInfo({
     runners: createCommandRunnerRegistry([]),
     tools: createToolRegistry([options.tool]).definitions(),
-    security: createSolarisSecurity({
+    security: createSiralosSecurity({
       backend: createStubBackend({
         backendId: "stub-backend",
         state: "available",
@@ -1732,7 +1732,7 @@ function createCommandSession(options: {
 
 function createTimedOutApprovalSession(): {
   io: SessionIO;
-  application: SolarisApplication;
+  application: SiralosApplication;
   sessionInfo: SessionInfo;
   inputQueue: InputQueue;
   text: () => string;
@@ -1792,7 +1792,7 @@ function createTimedOutApprovalSession(): {
               .find((item) => item.type === "user_message");
             yield {
               type: "text_delta",
-              text: `Solaris received: ${lastUser?.content ?? "?"}`,
+              text: `Siralos received: ${lastUser?.content ?? "?"}`,
             };
             yield { type: "completed" };
           };
@@ -1802,7 +1802,7 @@ function createTimedOutApprovalSession(): {
       return generator;
     },
   };
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider,
     tools: createToolRegistry([tool]),
     policy: createDefaultPolicy("develop-offline"),
@@ -2255,7 +2255,7 @@ describe("runInteractiveSession development workflow commands", () => {
           },
         }),
     };
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: {
         id: "must-not-run",
         async *stream(): AsyncIterable<ModelEvent> {
@@ -2666,11 +2666,11 @@ describe("runInteractiveSession quality commands", () => {
 });
 
 describe("runInteractiveSession self-reference and doctor commands", () => {
-  it("renders the installed-runtime identity for /solaris", async () => {
-    const { io, application, sessionInfo } = await createComposedSession(["/solaris", "/exit"]);
+  it("renders the installed-runtime identity for /siralos", async () => {
+    const { io, application, sessionInfo } = await createComposedSession(["/siralos", "/exit"]);
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
-    expect(io.text).toContain("@solaris — installed Solaris runtime");
+    expect(io.text).toContain("@siralos — installed Siralos runtime");
     expect(io.text).toContain("Version: 0.0.0");
     expect(io.text).toContain("Self-reference revision:");
     expect(io.text).toContain("Sections (self.read <section>):");
@@ -2680,7 +2680,7 @@ describe("runInteractiveSession self-reference and doctor commands", () => {
     const { io, application, sessionInfo } = await createComposedSession(["/doctor", "/exit"]);
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
     expect(exitCode).toBe(0);
-    expect(io.text).toContain("Solaris Doctor");
+    expect(io.text).toContain("Siralos Doctor");
     expect(io.text).toContain("runtime");
     expect(io.text).toContain(
       "Exit codes: 0 = no failures, 1 = one or more failures, 2 = invocation error.",
@@ -2693,7 +2693,7 @@ describe("runInteractiveSession self-reference and doctor commands", () => {
       "/exit",
     ]);
     await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Solaris Doctor");
+    expect(io.text).toContain("Siralos Doctor");
     expect(io.text).toContain("providers");
     expect(io.text).not.toContain("runtime         PASS");
   });

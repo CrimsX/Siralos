@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDefaultPolicy,
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   INSPECT_PROFILE,
@@ -158,7 +158,7 @@ function createApplication(options: {
     ],
   );
   const { tool } = createStubMutationTool("write.tool");
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider,
     tools: createToolRegistry(options.tools ?? [tool]),
     policy: options.policy ?? createDefaultPolicy(options.profile?.id ?? "inspect"),

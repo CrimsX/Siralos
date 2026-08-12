@@ -1,5 +1,5 @@
 {
-  "name": "@solaris/cli",
+  "name": "@siralos/cli",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "solaris": "./dist/index.js"
+    "siralos": "./dist/index.js"
   },
   "exports": {
     ".": {
@@ -21,8 +21,8 @@
     "dist"
   ],
   "dependencies": {
-    "@solaris/adapters": "0.0.0",
-    "@solaris/core": "0.0.0"
+    "@siralos/adapters": "0.0.0",
+    "@siralos/core": "0.0.0"
   },
   "scripts": {
     "build": "tsc -b",

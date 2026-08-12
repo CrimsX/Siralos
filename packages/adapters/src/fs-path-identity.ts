@@ -6,7 +6,7 @@ import { isCaseInsensitivePlatform } from "./fs-case.js";
  * Filesystem identity is not string equality: on Windows the same object
  * can be spelled with different case, with either separator, with or
  * without an extended-length prefix, and drive letters may differ in case.
- * Every "is this the same canonical path" comparison in Solaris funnels
+ * Every "is this the same canonical path" comparison in Siralos funnels
  * through this module so a raw `realpath(a) === b` comparison can never
  * reject a valid canonical spelling or accept a different object.
  *

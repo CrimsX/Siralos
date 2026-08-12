@@ -31,7 +31,7 @@ describe("createReferenceCacheStore (real store)", () => {
   });
 
   it("performs zero filesystem operations", async () => {
-    const root = await mkdtemp(join(tmpdir(), "solaris-cache-test-"));
+    const root = await mkdtemp(join(tmpdir(), "siralos-cache-test-"));
     try {
       const store = createReferenceCacheStore({ root });
       await store.store(sampleMetadata());

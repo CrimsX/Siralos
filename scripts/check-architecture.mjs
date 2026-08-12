@@ -325,7 +325,7 @@ function isCoreResearchModule(packageRelativeFile) {
 
 /**
  * Stage 3 milestone 6: self-reference and doctor modules. The built-in
- * @solaris self-reference is host-owned installed-runtime documentation;
+ * @siralos self-reference is host-owned installed-runtime documentation;
  * the CapabilityDoctor is a deterministic read-only orchestrator. Both
  * are pure core domain surfaces: they must never reach the network, never
  * touch files, never import mutation/checkpoint/undo machinery, never
@@ -612,7 +612,7 @@ const APPROVED_MUTATION_DIRECTORIES = [
   join("src", "checkpoints", "filesystem"),
   join("src", "process"),
   // the probe executable-copy staging writes only the verified private
-  // executable copy inside the Solaris-created run directory
+  // executable copy inside the Siralos-created run directory
   join("src", "godot", "process", "executable-copy.ts"),
 ];
 
@@ -690,7 +690,7 @@ function containsForbiddenGitMutationToken(source) {
 }
 
 /**
- * Godot probe invocation guardrail. Solaris Godot probes pass exactly one
+ * Godot probe invocation guardrail. Siralos Godot probes pass exactly one
  * fixed argument (`--version`, `--help`, or `--dump-extension-api`); the
  * probe invocation module must never carry project-affecting option tokens.
  * The check is scoped to the invocation module (runtime files under
@@ -737,7 +737,7 @@ function isGodotProbeInvocationModule(packageRelativeFile, file) {
   return true;
 }
 
-/** The only argument tuples a Solaris Godot probe may pass. */
+/** The only argument tuples a Siralos Godot probe may pass. */
 const ALLOWED_GODOT_PROBE_ARGUMENTS = ["--version", "--help", "--dump-extension-api"];
 
 const GODOT_PROBE_RUNNER_FILE = join("src", "godot", "process", "godot-probe-runner.ts");
@@ -982,7 +982,7 @@ const GODOT_RECOVERY_APPROVED_USERS = [
 
 /**
  * The GDScript check-only runner is the ONLY legitimate `--script`
- * invocation in Solaris. The module must pair `--script` with
+ * invocation in Siralos. The module must pair `--script` with
  * `--check-only` (the security-relevant invariant), `--path` (only to the
  * disposable mirror), and `--headless`; must never carry scene, editor,
  * import, LSP/DAP, recovery, export, or quit options; must take the path
@@ -1093,9 +1093,9 @@ function checkGodotCheckOnlyRunner(packageRelativeFile, file, source, location, 
  * The Godot LSP session runner is the only runtime module that may pair
  * `--lsp-port` with `--recovery-mode`. The module must pass the full fixed
  * headless recovery editor tuple with the mirror project path and the
- * Solaris-allocated loopback port; must never carry scene, script, import,
+ * Siralos-allocated loopback port; must never carry scene, script, import,
  * DAP/debug-server, export, or quit options; must take the path and port
- * values from Solaris-owned inputs (never literals and never the source
+ * values from Siralos-owned inputs (never literals and never the source
  * workspace root); and must never construct argument arrays by string
  * concatenation or import them from another module.
  */
@@ -1184,7 +1184,7 @@ function checkGodotLSPServerRunner(packageRelativeFile, file, source, location, 
         if (value !== null) {
           if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) {
             errors.push(
-              `${location}: the Godot LSP --path and --lsp-port values must come from the disposable mirror and the Solaris allocator, never from literal values`,
+              `${location}: the Godot LSP --path and --lsp-port values must come from the disposable mirror and the Siralos allocator, never from literal values`,
             );
           } else {
             const valueText = value.getText(parsed);
@@ -1585,7 +1585,7 @@ export function runChecks(root) {
           checkGodotKnowledgeRunner(packageRelativeFile, file, source, location, analysis, errors);
           checkGodotLSPServerRunner(packageRelativeFile, file, source, location, analysis, errors);
           if (
-            pkg.name === "@solaris/adapters" &&
+            pkg.name === "@siralos/adapters" &&
             !isTestSupportFile(file) &&
             packageRelativeFile.startsWith(join("src", "providers") + sep)
           ) {
@@ -1598,13 +1598,13 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/adapters" &&
+            pkg.name === "@siralos/adapters" &&
             !isTestSupportFile(file) &&
             isCoreTaskModule(packageRelativeFile) === false
           ) {
             for (const binding of analysis.importedNames) {
               if (
-                binding.module === "@solaris/core" &&
+                binding.module === "@siralos/core" &&
                 TASK_RUNTIME_BANNED_IDENTIFIERS.has(binding.originalName)
               ) {
                 errors.push(
@@ -1614,13 +1614,13 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/adapters" &&
+            pkg.name === "@siralos/adapters" &&
             !isTestSupportFile(file) &&
             isReferenceAdapterModule(packageRelativeFile)
           ) {
             for (const binding of analysis.importedNames) {
               if (
-                binding.module === "@solaris/core" &&
+                binding.module === "@siralos/core" &&
                 REFERENCE_CAPABILITY_BANNED_IDENTIFIERS.has(binding.originalName)
               ) {
                 errors.push(
@@ -1630,7 +1630,7 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/core" &&
+            pkg.name === "@siralos/core" &&
             !isTestSupportFile(file) &&
             (isCoreDoctorModule(packageRelativeFile) || isCoreSelfModule(packageRelativeFile))
           ) {
@@ -1643,13 +1643,13 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/adapters" &&
+            pkg.name === "@siralos/adapters" &&
             !isTestSupportFile(file) &&
             isSelfToolAdapterModule(packageRelativeFile)
           ) {
             for (const binding of analysis.importedNames) {
               if (
-                binding.module === "@solaris/core" &&
+                binding.module === "@siralos/core" &&
                 DOCTOR_CAPABILITY_BANNED_IDENTIFIERS.has(binding.originalName)
               ) {
                 errors.push(
@@ -1659,13 +1659,13 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/adapters" &&
+            pkg.name === "@siralos/adapters" &&
             !isTestSupportFile(file) &&
             isResearchAdapterModule(packageRelativeFile)
           ) {
             for (const binding of analysis.importedNames) {
               if (
-                binding.module === "@solaris/core" &&
+                binding.module === "@siralos/core" &&
                 KNOWLEDGE_SURFACE_IDENTIFIERS.has(binding.originalName)
               ) {
                 errors.push(
@@ -1675,13 +1675,13 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/adapters" &&
+            pkg.name === "@siralos/adapters" &&
             !isTestSupportFile(file) &&
             packageRelativeFile.startsWith(join("src", "providers") + sep)
           ) {
             for (const binding of analysis.importedNames) {
               if (
-                binding.module === "@solaris/core" &&
+                binding.module === "@siralos/core" &&
                 RESEARCH_SERVICE_IDENTIFIERS.has(binding.originalName)
               ) {
                 errors.push(
@@ -1698,7 +1698,7 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/adapters" &&
+            pkg.name === "@siralos/adapters" &&
             !isTestSupportFile(file) &&
             packageRelativeFile.startsWith(join("src", "godot", "lsp") + sep) &&
             (source.includes("workspace/applyEdit") || source.includes("workspace/executeCommand"))
@@ -1708,7 +1708,7 @@ export function runChecks(root) {
             );
           }
           if (
-            pkg.name === "@solaris/core" &&
+            pkg.name === "@siralos/core" &&
             isCoreProjectionModule(packageRelativeFile) &&
             !isTestSupportFile(file) &&
             /\bfetch\s*\(/.test(source)
@@ -1718,7 +1718,7 @@ export function runChecks(root) {
             );
           }
           if (
-            pkg.name === "@solaris/core" &&
+            pkg.name === "@siralos/core" &&
             !isTestSupportFile(file) &&
             isCoreBriefingModule(packageRelativeFile) &&
             /\bfetch\s*\(/.test(source)
@@ -1728,7 +1728,7 @@ export function runChecks(root) {
             );
           }
           if (
-            pkg.name === "@solaris/core" &&
+            pkg.name === "@siralos/core" &&
             (isCoreDoctorModule(packageRelativeFile) || isCoreSelfModule(packageRelativeFile)) &&
             !isTestSupportFile(file) &&
             /\bfetch\s*\(/.test(source)
@@ -1821,8 +1821,8 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core") {
-            if (specifier.startsWith("@solaris/")) {
+          if (pkg.name === "@siralos/core") {
+            if (specifier.startsWith("@siralos/")) {
               errors.push(`${location}: core must not import workspace package ${specifier}`);
             }
             if (specifier.startsWith("node:")) {
@@ -1838,7 +1838,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreWorkspaceModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreWorkspaceModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: workspace revision modules must not depend on provider ports; revision identity is provider-neutral`,
@@ -1869,7 +1869,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreProjectionModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreProjectionModule(packageRelativeFile)) {
             if (NETWORK_IO_MODULES.has(normalized)) {
               errors.push(
                 `${location}: projection modules must not import network modules (${specifier}); ContextProjector performs no network calls`,
@@ -1923,7 +1923,7 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/core" &&
+            pkg.name === "@siralos/core" &&
             (isCoreDoctorModule(packageRelativeFile) || isCoreSelfModule(packageRelativeFile))
           ) {
             if (NETWORK_IO_MODULES.has(normalized)) {
@@ -1964,7 +1964,7 @@ export function runChecks(root) {
               specifier !== "../self/self-reference.js"
             ) {
               errors.push(
-                `${location}: doctor modules must not import the self-reference surface (${specifier}); the doctor and the self-reference stay separable surfaces (the shared SolarisRuntimeIdentity type is allowed)`,
+                `${location}: doctor modules must not import the self-reference surface (${specifier}); the doctor and the self-reference stay separable surfaces (the shared SiralosRuntimeIdentity type is allowed)`,
               );
             }
             if (isCoreSelfModule(packageRelativeFile) && specifier.startsWith("../doctor/")) {
@@ -1982,7 +1982,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreTaskModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreTaskModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: task runtime modules must not depend on provider ports; the runtime observes typed host facts only`,
@@ -2003,7 +2003,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCorePlanningModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCorePlanningModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: planning modules must not depend on provider ports; the planner is provider-neutral and the host owns planning`,
@@ -2036,7 +2036,7 @@ export function runChecks(root) {
             }
           }
           if (
-            pkg.name === "@solaris/core" &&
+            pkg.name === "@siralos/core" &&
             !isTestSupportFile(file) &&
             isCoreBriefingModule(packageRelativeFile)
           ) {
@@ -2095,7 +2095,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreSceneModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreSceneModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: scene/resource semantic modules must not depend on provider ports; parsing and models are provider-neutral derived state`,
@@ -2113,7 +2113,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreImpactModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreImpactModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: impact modules must not depend on provider ports; impact analysis is provider-neutral derived context`,
@@ -2133,7 +2133,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreSceneMutationModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreSceneMutationModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: mutation model modules must not depend on provider ports; mutation models are provider-neutral derived state`,
@@ -2153,7 +2153,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreInstructionModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreInstructionModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: instruction modules must not depend on provider ports; instruction resolution is provider-neutral`,
@@ -2179,7 +2179,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreKnowledgeModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreKnowledgeModule(packageRelativeFile)) {
             if (specifier.startsWith("../ports/")) {
               errors.push(
                 `${location}: knowledge modules must not depend on provider ports; knowledge is provider-neutral factual context`,
@@ -2211,7 +2211,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/core" && isCoreProjectionModule(packageRelativeFile)) {
+          if (pkg.name === "@siralos/core" && isCoreProjectionModule(packageRelativeFile)) {
             if (
               packageRelativeFile !== join(PROJECTION_DIRECTORY, "projection-service.ts") &&
               packageRelativeFile !== join(PROJECTION_DIRECTORY, "projection-service.test.ts") &&
@@ -2230,7 +2230,7 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/adapters" && isTestSupportFile(file) === false) {
+          if (pkg.name === "@siralos/adapters" && isTestSupportFile(file) === false) {
             if (
               specifier.startsWith("../instructions/") &&
               packageRelativeFile.startsWith(INSTRUCTIONS_DIRECTORY + sep) === false
@@ -2241,7 +2241,7 @@ export function runChecks(root) {
             }
           }
 
-          if (pkg.name === "@solaris/adapters" && specifier === "node:net") {
+          if (pkg.name === "@siralos/adapters" && specifier === "node:net") {
             const socketApproved =
               packageRelativeFile.startsWith(join("src", "godot", "lsp") + sep) ||
               packageRelativeFile.startsWith(join("src", "sandbox") + sep) ||
@@ -2252,15 +2252,15 @@ export function runChecks(root) {
               );
             }
           }
-          if (pkg.name === "@solaris/cli" && specifier === "node:net") {
+          if (pkg.name === "@siralos/cli" && specifier === "node:net") {
             errors.push(
               `${location}: the CLI must not open sockets; only the LSP adapter owns TCP`,
             );
           }
-          if (pkg.name === "@solaris/adapters" && specifier.startsWith("@solaris/cli")) {
+          if (pkg.name === "@siralos/adapters" && specifier.startsWith("@siralos/cli")) {
             errors.push(`${location}: adapters must not import CLI code`);
           }
-          if (pkg.name === "@solaris/adapters" && specifier.startsWith(".")) {
+          if (pkg.name === "@siralos/adapters" && specifier.startsWith(".")) {
             const inProviders = packageRelativeFile.startsWith(join("src", "providers"));
             const inSandbox = packageRelativeFile.startsWith(join("src", "sandbox"));
             const target = resolve(dirname(file), specifier);
@@ -2287,13 +2287,13 @@ export function runChecks(root) {
               }
             }
             if (
-              pkg.name === "@solaris/adapters" &&
+              pkg.name === "@siralos/adapters" &&
               !isTestSupportFile(file) &&
               packageRelativeFile.startsWith(join("src", "providers") + sep)
             ) {
               for (const binding of analysis.importedNames) {
                 if (
-                  binding.module === "@solaris/core" &&
+                  binding.module === "@siralos/core" &&
                   PLANNING_POLICY_BANNED_IDENTIFIERS.has(binding.originalName)
                 ) {
                   errors.push(
@@ -2453,7 +2453,7 @@ export function runChecks(root) {
               }
             }
           }
-          if (pkg.name === "@solaris/cli" && specifier.startsWith("@solaris/adapters")) {
+          if (pkg.name === "@siralos/cli" && specifier.startsWith("@siralos/adapters")) {
             if (!packageRelativeFile.startsWith(join("src", "bootstrap"))) {
               errors.push(`${location}: only the composition root may import concrete adapters`);
             }
@@ -2463,15 +2463,15 @@ export function runChecks(root) {
     }
 
     const declaredDependencies = Object.keys(pkg.packageJson.dependencies ?? {});
-    if (pkg.name === "@solaris/core") {
+    if (pkg.name === "@siralos/core") {
       for (const dependency of declaredDependencies) {
-        if (dependency.startsWith("@solaris/")) {
+        if (dependency.startsWith("@siralos/")) {
           errors.push(`package.json: core must not depend on workspace package ${dependency}`);
         }
       }
     }
-    if (pkg.name === "@solaris/adapters" && declaredDependencies.includes("@solaris/cli")) {
-      errors.push("package.json: adapters must not depend on @solaris/cli");
+    if (pkg.name === "@siralos/adapters" && declaredDependencies.includes("@siralos/cli")) {
+      errors.push("package.json: adapters must not depend on @siralos/cli");
     }
   }
 

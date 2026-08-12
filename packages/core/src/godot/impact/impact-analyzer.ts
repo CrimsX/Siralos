@@ -57,7 +57,7 @@ export interface ImpactSignalConnection {
  * The relationship evidence source. Implemented by the adapter over the
  * Stage 3.8 relationship index, the workspace revision registry, the
  * static project scan, and bounded scene parsing — never over runtime
- * entities Solaris cannot prove.
+ * entities Siralos cannot prove.
  */
 export interface ImpactRelationshipSource {
   /** Relationships the surface participates in as the source (from-path). */

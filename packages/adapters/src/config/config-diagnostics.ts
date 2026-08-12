@@ -1,4 +1,4 @@
-import type { ConfigurationDiagnosticResult } from "@solaris/core";
+import type { ConfigurationDiagnosticResult } from "@siralos/core";
 import { readFile, lstat } from "node:fs/promises";
 import { loadUserConfig } from "./user-config.js";
 

@@ -4,7 +4,7 @@ import {
   TASK_ACTIVITY_EVENT_TYPES,
   capabilityPolicyFingerprint,
   createDefaultPolicy,
-  createSolarisApplication,
+  createSiralosApplication,
   createTaskContract,
   createTaskRuntime,
   createTaskRuntimeSnapshot,
@@ -13,8 +13,8 @@ import {
   type TaskRuntimeSnapshot,
   type TaskRuntimeSnapshotSources,
   type TaskStepSpec,
-} from "@solaris/core";
-import { createScriptedProvider } from "@solaris/core";
+} from "@siralos/core";
+import { createScriptedProvider } from "@siralos/core";
 import { createBehaviorRuntime, makeSnapshot } from "./behavior-harness.js";
 
 /**
@@ -125,7 +125,7 @@ describe("Behavior 1 — the model cannot declare success without evidence", () 
     const { provider } = createScriptedProvider([
       [{ type: "text_delta", text: "The task is complete!" }, { type: "completed" }],
     ]);
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
       policy: createDefaultPolicy("inspect"),

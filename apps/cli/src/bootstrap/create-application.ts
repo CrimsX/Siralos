@@ -70,7 +70,7 @@ import {
   reconcileWorkspaceCheckpoints,
   resolveGodotSelection,
   resolveWorkspaceRoot,
-} from "@solaris/adapters";
+} from "@siralos/adapters";
 import {
   TASK_RUNTIME_VERSION,
   buildGodotProjectKnowledgeCandidates,
@@ -88,8 +88,8 @@ import {
   createDefaultPolicy,
   createProjectionService,
   createRouteContextCapacity,
-  createSolarisApplication,
-  createSolarisSecurity,
+  createSiralosApplication,
+  createSiralosSecurity,
   createTaskRuntime,
   createToolProjector,
   createToolRegistry,
@@ -126,15 +126,15 @@ import {
   type SandboxProfile,
   type ProjectionService,
   type SelfReference,
-  type SolarisApplication,
-  type SolarisSecurity,
+  type SiralosApplication,
+  type SiralosSecurity,
   type TaskRuntime,
   type TaskRuntimeSnapshotSources,
   type Tool,
   type UndoService,
   type WorkspaceRevisionRegistry,
-} from "@solaris/core";
-import { GodotSelectionError } from "@solaris/adapters";
+} from "@siralos/core";
+import { GodotSelectionError } from "@siralos/adapters";
 import { resolveReviewProviderId } from "./review-provider.js";
 import {
   createReferenceEvidenceRing,
@@ -158,7 +158,7 @@ export interface CreateCliApplicationOptions {
 
 export interface CliApplication {
   readonly providerId: string;
-  readonly application: SolarisApplication;
+  readonly application: SiralosApplication;
   readonly workspaceRoot: string;
   /** Absolute path of the user configuration file. */
   readonly configPath: string;
@@ -172,7 +172,7 @@ export interface CliApplication {
   readonly revisions: WorkspaceRevisionRegistry;
   readonly workspaceRead: Tool;
   readonly tools: readonly RegisteredToolInfo[];
-  readonly security: SolarisSecurity;
+  readonly security: SiralosSecurity;
   readonly sandbox: SandboxBackend;
   readonly checkpoints: CheckpointStore;
   readonly git: GitInspector;
@@ -216,9 +216,9 @@ export async function createCliApplication(
   const policy = createDefaultPolicy(config.sandbox.profile);
   const tasks = createTaskRuntime();
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
-  const runsRoot = join(homedir(), ".solaris", "runs");
+  const runsRoot = join(homedir(), ".siralos", "runs");
   const sandbox = createAnthropicSandboxRuntimeBackend({ workspaceRoot });
-  const security = createSolarisSecurity({ backend: sandbox, policy, profile });
+  const security = createSiralosSecurity({ backend: sandbox, policy, profile });
   // References (Stage 3 milestone 5): a config parse failure NEVER crashes
   // startup — the precise reason is surfaced by /references while the
   // registry stays empty (fail closed, nothing half-configured).
@@ -557,7 +557,7 @@ export async function createCliApplication(
     ...(readyReferenceCount > 0 ? referenceTools : []),
     ...researchTools,
   ];
-  // Self-reference (Stage 3 milestone 6): the built-in @solaris surface is
+  // Self-reference (Stage 3 milestone 6): the built-in @siralos surface is
   // built from the ACTUAL registered tool metadata (including the self
   // tools themselves), then the executable self tools wrap it. Read-only.
   const selfToolMetadata = SELF_REFERENCE_TOOL_METADATA as readonly RegisteredToolInfo[];
@@ -666,7 +666,7 @@ export async function createCliApplication(
     },
     getExecutorBrief: () => briefing.latestOrCompile(),
   });
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider,
     tools: registry,
     policy,
@@ -807,9 +807,9 @@ function buildQualityStage(options: {
   readonly knowledge: GodotKnowledge;
   readonly language: GDScriptLanguageService;
   readonly reviewer: ApprovalReviewer;
-  readonly processTool: import("@solaris/core").PreparedCommandTool;
+  readonly processTool: import("@siralos/core").PreparedCommandTool;
   readonly reviewProviderId: string | null;
-  readonly toolProjector: import("@solaris/core").ToolProjector;
+  readonly toolProjector: import("@siralos/core").ToolProjector;
   readonly languageQueryGate: () => { readonly blocked: boolean; readonly message: string | null };
 }): NonNullable<Parameters<typeof createGDScriptDevelopmentService>[0]["qualityStage"]> {
   const resolved = resolveReviewProviderId({

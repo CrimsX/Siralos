@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
-import type { GodotEditionHint, GodotInstallation } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
+import type { GodotEditionHint, GodotInstallation } from "@siralos/core";
 import { godotCandidateNames, pathListSeparator } from "./candidate-names.js";
 import { validateExecutable, type ExecutableIdentity } from "./executable-validation.js";
 

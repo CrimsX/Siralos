@@ -5,7 +5,7 @@ import {
   type GodotSceneIntelligence,
   type Tool,
   type ToolRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGodotApiLookupTool } from "../godot/tools/godot-api-lookup-tool.js";
 import { createGodotApiSearchTool } from "../godot/tools/godot-api-search-tool.js";
 import { createGodotDependenciesTool } from "../godot/tools/godot-dependencies-tool.js";

@@ -32,7 +32,7 @@ import {
   renderExecutorBrief,
   type DocumentationEntry,
   type WorkspaceScope,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createBehaviorLoopHarness, type BehaviorLoopHarness } from "./behavior-harness.js";
 
 const REV = "rev_".padEnd(36, "a");
@@ -414,12 +414,12 @@ describe("Behavior — context scope and documentation discipline", () => {
     // The brief schema has no field for private reasoning or
     // continuation; a hostile plan rationale cannot leak through the pack.
     const brief = renderExecutorBrief({
-      format: "solaris-executor-brief",
+      format: "siralos-executor-brief",
       version: 2,
       taskId: "task-1",
       contractRevision: 1,
       request: "Inspect the main scene file read-only",
-      executionContract: { id: "solaris-execution-contract", revision: 1 },
+      executionContract: { id: "siralos-execution-contract", revision: 1 },
       milestone: { id: "S3M8", version: 1 },
       deliverables: [],
       verifiedTouchpoints: [],

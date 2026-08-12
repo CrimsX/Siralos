@@ -1,4 +1,4 @@
-import type { SolarisRuntimeIdentity } from "../self/self-reference.js";
+import type { SiralosRuntimeIdentity } from "../self/self-reference.js";
 
 /**
  * CapabilityDoctor domain model (Stage 3 milestone 6).
@@ -101,7 +101,7 @@ export type CapabilityState =
 
 /**
  * Host-owned CapabilitySnapshot (Part B §9): a structured snapshot of
- * what the current Solaris runtime can actually do. The snapshot is
+ * what the current Siralos runtime can actually do. The snapshot is
  * OBSERVATION, not policy — it grants nothing; existing runtime policy
  * (SandboxBackend, ToolProjector, security layer) remains authoritative.
  */
@@ -180,7 +180,7 @@ export interface ToolCapabilityStatus {
 }
 
 export interface CapabilitySnapshot {
-  readonly runtime: SolarisRuntimeIdentity;
+  readonly runtime: SiralosRuntimeIdentity;
   readonly providers: readonly ProviderCapabilityStatus[];
   readonly sandbox: SandboxCapabilityStatus;
   readonly workspace: WorkspaceCapabilityStatus;
@@ -193,7 +193,7 @@ export interface CapabilitySnapshot {
 export interface DoctorReport {
   readonly schemaVersion: number;
   readonly generatedAtMs: number;
-  readonly runtime: SolarisRuntimeIdentity;
+  readonly runtime: SiralosRuntimeIdentity;
   readonly requestedAreas: readonly DoctorArea[];
   readonly checks: readonly DoctorCheckResult[];
   readonly counts: DoctorReportCounts;

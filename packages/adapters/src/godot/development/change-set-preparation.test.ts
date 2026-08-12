@@ -188,7 +188,7 @@ describe("prepareChangeSet", () => {
       "AGENTS.md": "Root guidance.\n",
       "src/player/player.gd": "extends Node\n",
     });
-    for (const path of ["AGENTS.md", "src/AGENTS.md", ".solaris/config.json"]) {
+    for (const path of ["AGENTS.md", "src/AGENTS.md", ".siralos/config.json"]) {
       const result = await prepareChangeSet(
         {
           changes: [

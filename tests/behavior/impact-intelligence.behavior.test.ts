@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createGodotReviewContextTool } from "@solaris/adapters";
+import { createGodotReviewContextTool } from "@siralos/adapters";
 import { createBehaviorLoopHarness, type BehaviorLoopHarness } from "./behavior-harness.js";
 
 async function writeWorkspaceFile(

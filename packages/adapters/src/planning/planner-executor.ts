@@ -10,15 +10,15 @@ import type {
   ToolExecutionResult,
   ToolProjector,
   ToolRegistry,
-} from "@solaris/core";
-import { extractPlanCandidateJson, validatePlanCandidate } from "@solaris/core";
+} from "@siralos/core";
+import { extractPlanCandidateJson, validatePlanCandidate } from "@siralos/core";
 import {
   isPreparedCommandTool,
   isPreparedDiagnosticTool,
   isPreparedLSPSessionTool,
   isPreparedMutationTool,
   isPreparedProbeTool,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   collectBoundedModelTurn,
   detachBoundedToolResult,
@@ -370,7 +370,7 @@ function buildPlannerPrompt(input: PlannerRequest, previousFailure: string | nul
           "rollback/recovery considerations. Keep it bounded — no essays.",
         ].join("\n");
   const prompt = [
-    "You are the Solaris planner. You produce a structured plan ONLY; you",
+    "You are the Siralos planner. You produce a structured plan ONLY; you",
     "never modify files, never request approval, and never claim capability",
     "authority. Plans are descriptive; capability, sandbox, and approval",
     "policy are outside your reach.",
@@ -433,10 +433,10 @@ const READ_ONLY_PLANNER_CAPABILITIES = new Set([
 
 function isPlainPlannerTool(tool: RegisteredTool): tool is {
   readonly definition: ToolDefinition;
-  readonly capability?: import("@solaris/core").Capability;
+  readonly capability?: import("@siralos/core").Capability;
   readonly execute: (
     input: unknown,
-    context: import("@solaris/core").ToolExecutionContext,
+    context: import("@siralos/core").ToolExecutionContext,
   ) => Promise<ToolExecutionResult>;
 } {
   if (

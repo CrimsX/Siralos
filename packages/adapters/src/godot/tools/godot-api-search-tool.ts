@@ -4,7 +4,7 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { errorMessage } from "../../support/error-message.js";
 
 /**

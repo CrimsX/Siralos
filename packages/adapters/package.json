@@ -1,5 +1,5 @@
 {
-  "name": "@solaris/adapters",
+  "name": "@siralos/adapters",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
     "dist"
   ],
   "dependencies": {
-    "@solaris/core": "0.0.0",
+    "@siralos/core": "0.0.0",
     "diff": "9.0.0"
   },
   "scripts": {

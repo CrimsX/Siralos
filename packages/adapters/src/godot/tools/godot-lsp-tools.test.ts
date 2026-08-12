@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GDScriptLanguageService } from "@solaris/core";
+import type { GDScriptLanguageService } from "@siralos/core";
 import { createGodotLSPSessionTool } from "./godot-lsp-session-tool.js";
 import {
   createGodotCompleteTool,

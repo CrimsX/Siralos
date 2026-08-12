@@ -7,7 +7,7 @@ import type {
   ModelRequest,
   ToolDefinition,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export const DETERMINISTIC_FAKE_PROVIDER_ID = "deterministic-fake";
 
@@ -71,16 +71,16 @@ function gitScenarioInput(scenario: GitScenario): unknown {
 
 function formatGitFinalText(scenario: GitScenario, result: ToolExecutionResult): string {
   if (result.status !== "success") {
-    return `Solaris could not inspect Git: ${result.message}`;
+    return `Siralos could not inspect Git: ${result.message}`;
   }
   const record = result.output as JsonObject;
   if (scenario === "git-status") {
     const changes = Array.isArray(record["changes"]) ? record["changes"] : [];
     const untracked = Array.isArray(record["untracked"]) ? record["untracked"] : [];
-    return `Solaris found ${changes.length} modified files and ${untracked.length} untracked file${untracked.length === 1 ? "" : "s"}.`;
+    return `Siralos found ${changes.length} modified files and ${untracked.length} untracked file${untracked.length === 1 ? "" : "s"}.`;
   }
   const files = Array.isArray(record["files"]) ? record["files"] : [];
-  return `Solaris inspected a ${scenario === "diff-working" ? "working" : scenario === "diff-staged" ? "staged" : "HEAD"} diff of ${files.length} file${files.length === 1 ? "" : "s"}.`;
+  return `Siralos inspected a ${scenario === "diff-working" ? "working" : scenario === "diff-staged" ? "staged" : "HEAD"} diff of ${files.length} file${files.length === 1 ? "" : "s"}.`;
 }
 
 type GodotScenario =
@@ -214,12 +214,12 @@ function formatGodotFinalText(scenario: GodotScenario, result: ToolExecutionResu
     return formatApiSearchFinalText(result);
   }
   if (result.status !== "success") {
-    return `Solaris could not complete the Godot inspection: ${result.message}`;
+    return `Siralos could not complete the Godot inspection: ${result.message}`;
   }
   const record = result.output as JsonObject;
   if (scenario === "inspect-engine") {
     if (record["selected"] === false) {
-      return "No Godot installation is selected, so Solaris could not profile an engine.";
+      return "No Godot installation is selected, so Siralos could not profile an engine.";
     }
     const version = typeof record["version"] === "string" ? record["version"] : "unknown";
     const edition = typeof record["edition"] === "string" ? record["edition"] : "unknown";
@@ -227,7 +227,7 @@ function formatGodotFinalText(scenario: GodotScenario, result: ToolExecutionResu
     const verified = Array.isArray(record["verifiedCapabilities"])
       ? (record["verifiedCapabilities"] as readonly unknown[]).length
       : 0;
-    return `Solaris inspected the selected Godot installation: ${version} (${edition}, ${support}) with ${verified} operationally verified capabilities.`;
+    return `Siralos inspected the selected Godot installation: ${version} (${edition}, ${support}) with ${verified} operationally verified capabilities.`;
   }
   const detected = record["detected"] === true;
   const name = typeof record["name"] === "string" ? record["name"] : null;
@@ -240,10 +240,10 @@ function formatGodotFinalText(scenario: GodotScenario, result: ToolExecutionResu
       ? statusRecord["status"]
       : "unknown";
   if (!detected) {
-    return "Solaris found no Godot project at the workspace root; the static inspection reported nothing to assess.";
+    return "Siralos found no Godot project at the workspace root; the static inspection reported nothing to assess.";
   }
   const namePart = name === null ? "an unnamed project" : `the project ${name}`;
-  return `Solaris statically inspected ${namePart}: the assessment is ${status}. No project code was executed and no import was performed.`;
+  return `Siralos statically inspected ${namePart}: the assessment is ${status}. No project code was executed and no import was performed.`;
 }
 
 async function* streamGodotScenario(
@@ -263,13 +263,13 @@ async function* streamGodotScenario(
     }
     if (scenario === "probe-project") {
       yield* streamTextChunks(
-        "Solaris cannot probe the Godot project in this profile (godot.probe_project is unavailable).",
+        "Siralos cannot probe the Godot project in this profile (godot.probe_project is unavailable).",
         signal,
       );
       return;
     }
     yield* streamTextChunks(
-      "Solaris cannot inspect Godot in this profile (Godot inspection tools are unavailable).",
+      "Siralos cannot inspect Godot in this profile (Godot inspection tools are unavailable).",
       signal,
     );
     return;
@@ -282,12 +282,12 @@ function formatLSPSessionFinalText(result: ToolExecutionResult): string {
     case "success": {
       const record = result.output as JsonObject;
       const sessionId = typeof record["sessionId"] === "string" ? record["sessionId"] : "unknown";
-      return `Solaris started a bounded Godot GDScript language session (${sessionId}): a headless recovery editor serves the disposable mirror over loopback-only LSP. Source writes and LSP mutations are disabled; the session expires automatically.`;
+      return `Siralos started a bounded Godot GDScript language session (${sessionId}): a headless recovery editor serves the disposable mirror over loopback-only LSP. Source writes and LSP mutations are disabled; the session expires automatically.`;
     }
     case "denied":
-      return `The Godot language session was not approved, so Solaris did not start it.`;
+      return `The Godot language session was not approved, so Siralos did not start it.`;
     case "conflict":
-      return `The project or engine changed after approval, so Solaris did not start the language session. Approve the session again.`;
+      return `The project or engine changed after approval, so Siralos did not start the language session. Approve the session again.`;
     case "unavailable":
     case "failed":
     case "cancelled":
@@ -297,7 +297,7 @@ function formatLSPSessionFinalText(result: ToolExecutionResult): string {
     case "sandbox_denied":
     case "sandbox_unavailable":
     case "workspace_violation":
-      return `Solaris could not start the Godot language session: ${result.message}`;
+      return `Siralos could not start the Godot language session: ${result.message}`;
   }
 }
 
@@ -310,30 +310,30 @@ function formatLSPQueryFinalText(result: ToolExecutionResult): string {
     ) {
       return `No Godot language session is active; start and approve one with godot.lsp_session first.`;
     }
-    return `Solaris could not complete the language query: ${result.message}`;
+    return `Siralos could not complete the language query: ${result.message}`;
   }
   const record = result.output as JsonObject;
   if (Array.isArray(record["diagnostics"])) {
-    return `Solaris received ${(record["diagnostics"] as readonly unknown[]).length} normalized diagnostics from the language session.`;
+    return `Siralos received ${(record["diagnostics"] as readonly unknown[]).length} normalized diagnostics from the language session.`;
   }
   if (Array.isArray(record["items"])) {
-    return `Solaris received ${(record["items"] as readonly unknown[]).length} bounded completion candidates (never applied).`;
+    return `Siralos received ${(record["items"] as readonly unknown[]).length} bounded completion candidates (never applied).`;
   }
   if (Array.isArray(record["locations"])) {
-    return `Solaris resolved ${(record["locations"] as readonly unknown[]).length} definition location(s).`;
+    return `Siralos resolved ${(record["locations"] as readonly unknown[]).length} definition location(s).`;
   }
   if (typeof record["contents"] === "object" && record["contents"] !== null) {
-    return `Solaris returned bounded hover information from the language session.`;
+    return `Siralos returned bounded hover information from the language session.`;
   }
-  return `Solaris completed the language query.`;
+  return `Siralos completed the language query.`;
 }
 
 function formatApiSearchFinalText(result: ToolExecutionResult): string {
   if (result.status !== "success") {
     if (result.status === "unavailable") {
-      return `Solaris cannot search the Godot API right now: ${result.message}`;
+      return `Siralos cannot search the Godot API right now: ${result.message}`;
     }
-    return `Solaris could not search the Godot API: ${result.message}`;
+    return `Siralos could not search the Godot API: ${result.message}`;
   }
   const record = result.output as JsonObject;
   const results = Array.isArray(record["results"]) ? (record["results"] as readonly unknown[]) : [];
@@ -349,7 +349,7 @@ function formatApiSearchFinalText(result: ToolExecutionResult): string {
     })
     .join(", ");
   const suffix = truncated ? " (results truncated)" : "";
-  return `Solaris found ${results.length} API result${results.length === 1 ? "" : "s"} for the selected Godot ${version}: ${names}.${suffix}`;
+  return `Siralos found ${results.length} API result${results.length === 1 ? "" : "s"} for the selected Godot ${version}: ${names}.${suffix}`;
 }
 
 function formatCheckFinalText(result: ToolExecutionResult): string {
@@ -362,14 +362,14 @@ function formatCheckFinalText(result: ToolExecutionResult): string {
         ? (record["diagnostics"] as readonly unknown[])
         : [];
       if (valid) {
-        return "Solaris checked the GDScript with the selected engine's parser (--check-only): it is valid. No game code was executed.";
+        return "Siralos checked the GDScript with the selected engine's parser (--check-only): it is valid. No game code was executed.";
       }
-      return `Solaris checked the GDScript with the selected engine's parser (--check-only): it has ${invalidCount} invalid script${invalidCount === 1 ? "" : "s"} and ${diagnostics.length} normalized diagnostic${diagnostics.length === 1 ? "" : "s"}. No game code was executed.`;
+      return `Siralos checked the GDScript with the selected engine's parser (--check-only): it has ${invalidCount} invalid script${invalidCount === 1 ? "" : "s"} and ${diagnostics.length} normalized diagnostic${diagnostics.length === 1 ? "" : "s"}. No game code was executed.`;
     }
     case "denied":
-      return `The GDScript check was not approved, so Solaris did not run it.`;
+      return `The GDScript check was not approved, so Siralos did not run it.`;
     case "conflict":
-      return `The project, engine, or script changed after approval, so Solaris did not run the check. Approve the check again.`;
+      return `The project, engine, or script changed after approval, so Siralos did not run the check. Approve the check again.`;
     case "cancelled":
       return `The GDScript check was cancelled before completion.`;
     case "timed_out":
@@ -377,12 +377,12 @@ function formatCheckFinalText(result: ToolExecutionResult): string {
     case "unavailable":
     case "sandbox_denied":
     case "sandbox_unavailable":
-      return `Solaris could not run the GDScript check: ${result.message}`;
+      return `Siralos could not run the GDScript check: ${result.message}`;
     case "invalid_input":
     case "failed":
     case "workspace_violation":
     case "output_limit":
-      return `Solaris could not complete the GDScript check: ${result.message}`;
+      return `Siralos could not complete the GDScript check: ${result.message}`;
   }
 }
 
@@ -418,12 +418,12 @@ function formatProbeFinalText(result: ToolExecutionResult): string {
           ? (record["engine"] as JsonObject)
           : null;
       const version = typeof engine?.["version"] === "string" ? engine["version"] : "unknown";
-      return `Solaris ran a recovery-mode Godot project probe with ${version}: ${status} with ${errors} error${errors === 1 ? "" : "s"} and ${warnings} warning${warnings === 1 ? "" : "s"}. Recovery mode was used, the source workspace was not loaded${unchanged ? " and was unchanged" : ""}, and the disposable mirror was ${cleaned ? "removed" : "not removed"}.`;
+      return `Siralos ran a recovery-mode Godot project probe with ${version}: ${status} with ${errors} error${errors === 1 ? "" : "s"} and ${warnings} warning${warnings === 1 ? "" : "s"}. Recovery mode was used, the source workspace was not loaded${unchanged ? " and was unchanged" : ""}, and the disposable mirror was ${cleaned ? "removed" : "not removed"}.`;
     }
     case "denied":
-      return `The Godot project probe was not approved, so Solaris did not run it.`;
+      return `The Godot project probe was not approved, so Siralos did not run it.`;
     case "conflict":
-      return `The project or engine changed after approval, so Solaris did not run the probe. Approve the probe again.`;
+      return `The project or engine changed after approval, so Siralos did not run the probe. Approve the probe again.`;
     case "cancelled":
       return `The Godot project probe was cancelled before completion.`;
     case "timed_out":
@@ -432,13 +432,13 @@ function formatProbeFinalText(result: ToolExecutionResult): string {
     case "sandbox_unavailable":
       return `The sandbox could not enforce the probe boundaries, so the probe did not run.`;
     case "workspace_violation":
-      return `Solaris detected unexpected source workspace changes during the probe; nothing was reverted.`;
+      return `Siralos detected unexpected source workspace changes during the probe; nothing was reverted.`;
     case "output_limit":
       return `The Godot project probe exceeded its output limit and was terminated.`;
     case "invalid_input":
     case "unavailable":
     case "failed":
-      return `Solaris could not probe the Godot project: ${result.message}`;
+      return `Siralos could not probe the Godot project: ${result.message}`;
   }
 }
 
@@ -511,7 +511,7 @@ async function* stream(request: ModelRequest): AsyncIterable<ModelEvent> {
       return;
     }
     yield* streamTextChunks(
-      `Solaris cannot run development commands in this profile (process.run is unavailable).`,
+      `Siralos cannot run development commands in this profile (process.run is unavailable).`,
       signal,
     );
     return;
@@ -600,7 +600,7 @@ async function* streamPlanningScenario(
 function findPlanningPrompt(messages: readonly ConversationItem[]): boolean {
   return messages.some(
     (message) =>
-      message.type === "user_message" && message.content.startsWith("You are the Solaris planner."),
+      message.type === "user_message" && message.content.startsWith("You are the Siralos planner."),
   );
 }
 
@@ -617,18 +617,18 @@ function extractPlanningRequest(prompt: string): string {
 
 type WriteScenario = "create" | "edit" | "delete";
 
-const WRITE_TEST_FILE = "solaris-write-test.txt";
-const WRITE_TEST_CONTENT = "Created by the deterministic Solaris test provider.\n";
+const WRITE_TEST_FILE = "siralos-write-test.txt";
+const WRITE_TEST_CONTENT = "Created by the deterministic Siralos test provider.\n";
 
 function findWriteScenario(messages: readonly ConversationItem[]): WriteScenario | null {
   const latestUserPrompt = findLatestUserPrompt(messages);
-  if (latestUserPrompt === "create solaris-write-test") {
+  if (latestUserPrompt === "create siralos-write-test") {
     return "create";
   }
-  if (latestUserPrompt === "edit solaris-write-test") {
+  if (latestUserPrompt === "edit siralos-write-test") {
     return "edit";
   }
-  if (latestUserPrompt === "delete solaris-write-test") {
+  if (latestUserPrompt === "delete siralos-write-test") {
     return "delete";
   }
   return null;
@@ -696,7 +696,7 @@ function buildWriteScenarioTurn(
         if (hash === null) {
           return {
             kind: "text",
-            text: `Solaris could not read ${WRITE_TEST_FILE}, so it did not modify it.`,
+            text: `Siralos could not read ${WRITE_TEST_FILE}, so it did not modify it.`,
           };
         }
         return {
@@ -734,7 +734,7 @@ function buildWriteScenarioTurn(
         if (hash === null) {
           return {
             kind: "text",
-            text: `Solaris could not read ${WRITE_TEST_FILE}, so it did not delete it.`,
+            text: `Siralos could not read ${WRITE_TEST_FILE}, so it did not delete it.`,
           };
         }
         return {
@@ -759,13 +759,13 @@ function formatWriteFinalText(
   const verb = operation === "create" ? "create" : operation === "edit" ? "modify" : "delete";
   switch (result.status) {
     case "success":
-      return `Solaris ${operation === "create" ? "created" : operation === "edit" ? "updated" : "deleted"} ${WRITE_TEST_FILE}.`;
+      return `Siralos ${operation === "create" ? "created" : operation === "edit" ? "updated" : "deleted"} ${WRITE_TEST_FILE}.`;
     case "denied":
-      return `The workspace change was denied, so Solaris did not ${verb} ${WRITE_TEST_FILE}.`;
+      return `The workspace change was denied, so Siralos did not ${verb} ${WRITE_TEST_FILE}.`;
     case "conflict":
-      return `The file changed, so Solaris did not ${verb} ${WRITE_TEST_FILE}. Reread the file to continue.`;
+      return `The file changed, so Siralos did not ${verb} ${WRITE_TEST_FILE}. Reread the file to continue.`;
     case "cancelled":
-      return `The workspace change was cancelled, so Solaris did not ${verb} ${WRITE_TEST_FILE}.`;
+      return `The workspace change was cancelled, so Siralos did not ${verb} ${WRITE_TEST_FILE}.`;
     case "invalid_input":
     case "failed":
     case "unavailable":
@@ -774,7 +774,7 @@ function formatWriteFinalText(
     case "sandbox_denied":
     case "sandbox_unavailable":
     case "workspace_violation":
-      return `Solaris could not ${verb} ${WRITE_TEST_FILE}: ${result.message}`;
+      return `Siralos could not ${verb} ${WRITE_TEST_FILE}: ${result.message}`;
   }
 }
 
@@ -840,14 +840,14 @@ function formatCommandFinalText(scenario: CommandScenario, result: ToolExecution
     case "success": {
       const exitCodeValue = readExitCode(result.output);
       if (exitCodeValue !== null && exitCodeValue !== 0) {
-        return `Solaris ran \`${display}\`, but it exited with code ${exitCodeValue}.`;
+        return `Siralos ran \`${display}\`, but it exited with code ${exitCodeValue}.`;
       }
-      return `Solaris ran \`${display}\` and it exited with code 0.`;
+      return `Siralos ran \`${display}\` and it exited with code 0.`;
     }
     case "denied":
-      return `The command was not approved, so Solaris did not run it.`;
+      return `The command was not approved, so Siralos did not run it.`;
     case "conflict":
-      return `The command plan changed, so Solaris did not run it. Request the command again.`;
+      return `The command plan changed, so Siralos did not run it. Request the command again.`;
     case "cancelled":
       return `The command was cancelled before it completed.`;
     case "timed_out":
@@ -857,13 +857,13 @@ function formatCommandFinalText(scenario: CommandScenario, result: ToolExecution
     case "sandbox_unavailable":
       return `The sandbox is unavailable, so the command did not run.`;
     case "workspace_violation":
-      return `Solaris detected unexpected workspace changes; command execution is disabled for this session.`;
+      return `Siralos detected unexpected workspace changes; command execution is disabled for this session.`;
     case "output_limit":
       return `The command exceeded its output limit and was terminated.`;
     case "unavailable":
     case "invalid_input":
     case "failed":
-      return `Solaris could not run the command: ${result.message}`;
+      return `Siralos could not run the command: ${result.message}`;
   }
 }
 
@@ -978,25 +978,25 @@ function formatScenarioResponse(
   result: ToolExecutionResult | undefined,
 ): string {
   if (result === undefined) {
-    return "Solaris has no tool result available.";
+    return "Siralos has no tool result available.";
   }
   if (result.status !== "success") {
-    return `Solaris could not complete the workspace operation: ${result.message}`;
+    return `Siralos could not complete the workspace operation: ${result.message}`;
   }
   switch (scenario.kind) {
     case "list": {
       const count = countArrayField(result.output, "entries");
       return count === null
-        ? "Solaris inspected the workspace entries."
-        : `Solaris inspected ${count} workspace entries.`;
+        ? "Siralos inspected the workspace entries."
+        : `Siralos inspected ${count} workspace entries.`;
     }
     case "read":
-      return `Solaris read ${scenario.input.path}.`;
+      return `Siralos read ${scenario.input.path}.`;
     case "search": {
       const count = countArrayField(result.output, "matches");
       return count === null
-        ? "Solaris searched the workspace."
-        : `Solaris found ${count} matching lines.`;
+        ? "Siralos searched the workspace."
+        : `Siralos found ${count} matching lines.`;
     }
   }
 }
@@ -1049,7 +1049,7 @@ async function* streamDevelopScenario(
   const readResult = findLatestResult(stepItems, "workspace.read");
   if (!isToolAvailable(request.tools, changesetTool)) {
     yield* streamTextChunks(
-      "Solaris cannot propose source changes in this profile (workspace.apply_text_changeset is unavailable).",
+      "Siralos cannot propose source changes in this profile (workspace.apply_text_changeset is unavailable).",
       signal,
     );
     return;
@@ -1070,7 +1070,7 @@ async function* streamDevelopScenario(
       const hash = readResultSha256(readResult);
       if (hash === null) {
         yield* streamTextChunks(
-          `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+          `Siralos could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
           signal,
         );
         return;
@@ -1116,7 +1116,7 @@ async function* streamDevelopScenario(
         const hash = readResultSha256(readResult);
         if (hash === null) {
           yield* streamTextChunks(
-            `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+            `Siralos could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
             signal,
           );
           return;
@@ -1143,7 +1143,7 @@ async function* streamDevelopScenario(
       const currentHash = firstResultSha256(firstResult);
       if (currentHash === null) {
         yield* streamTextChunks(
-          "Solaris could not determine the applied fixture content for the repair, so it did not propose one.",
+          "Siralos could not determine the applied fixture content for the repair, so it did not propose one.",
           signal,
         );
         return;
@@ -1205,7 +1205,7 @@ async function* streamDevelopScenario(
     const hash = readResultSha256(readResult);
     if (hash === null) {
       yield* streamTextChunks(
-        `Solaris could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
+        `Siralos could not read ${DEV_FIXTURE_PATH}, so it did not propose a change.`,
         signal,
       );
       return;
@@ -1237,7 +1237,7 @@ async function* streamDevelopScenario(
     const currentHash = firstResultSha256(firstResult);
     if (currentHash === null) {
       yield* streamTextChunks(
-        "Solaris could not determine the applied fixture content for the review repair, so it did not propose one.",
+        "Siralos could not determine the applied fixture content for the review repair, so it did not propose one.",
         signal,
       );
       return;
@@ -1269,7 +1269,7 @@ async function* streamDevelopScenario(
     const currentHash = firstResultSha256(repairResult);
     if (currentHash === null) {
       yield* streamTextChunks(
-        "Solaris could not determine the repaired fixture content for the second review repair, so it did not propose one.",
+        "Siralos could not determine the repaired fixture content for the second review repair, so it did not propose one.",
         signal,
       );
       return;
@@ -1346,30 +1346,30 @@ function formatDevelopmentFinalText(result: ToolExecutionResult): string {
         qualityStatus === null
           ? ""
           : ` Quality: ${qualityStatus}${qualityStatus === "blocking_findings" ? " (blocking findings remain; a focused repair may be proposed)" : qualityStatus === "validation_incomplete" ? " (validation incomplete; approved changes remain)" : ""}.`;
-      return `Solaris applied the approved change set to ${files}: parser ${parser ? "passed" : "failed"}, fresh language session ${lsp ? "started" : "failed"}, ${errors} error(s), ${warnings} warning(s).${qualityPart}`;
+      return `Siralos applied the approved change set to ${files}: parser ${parser ? "passed" : "failed"}, fresh language session ${lsp ? "started" : "failed"}, ${errors} error(s), ${warnings} warning(s).${qualityPart}`;
     }
     case "denied":
-      return "The source change was not approved, so Solaris did not apply it.";
+      return "The source change was not approved, so Siralos did not apply it.";
     case "conflict":
-      return "The workspace changed, so Solaris did not apply the change set. Reread the files to continue.";
+      return "The workspace changed, so Siralos did not apply the change set. Reread the files to continue.";
     case "cancelled":
       return "The development workflow was cancelled; approved changes (if any) remain.";
     case "unavailable":
-      return `Solaris cannot apply source changes yet: ${result.message}`;
+      return `Siralos cannot apply source changes yet: ${result.message}`;
     case "invalid_input":
     case "failed":
-      return `Solaris could not apply the change set: ${result.message}`;
+      return `Siralos could not apply the change set: ${result.message}`;
     case "timed_out":
     case "output_limit":
     case "sandbox_denied":
     case "sandbox_unavailable":
     case "workspace_violation":
-      return `Solaris could not complete the development change: ${result.message}`;
+      return `Siralos could not complete the development change: ${result.message}`;
   }
 }
 
 function formatResponse(messages: readonly ConversationItem[]): string {
-  return `Solaris received: ${findLatestUserPrompt(messages)}`;
+  return `Siralos received: ${findLatestUserPrompt(messages)}`;
 }
 
 function findLatestUserPrompt(messages: readonly ConversationItem[]): string {

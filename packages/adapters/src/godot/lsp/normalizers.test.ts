@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import {
   normalizeCompletion,
   normalizeDefinition,
@@ -8,7 +8,7 @@ import {
 } from "./normalizers.js";
 import { pathToFileUri } from "./file-uri.js";
 
-const MIRROR = process.platform === "win32" ? "C:\\solaris\\mirror-1" : "/tmp/solaris/mirror-1";
+const MIRROR = process.platform === "win32" ? "C:\\siralos\\mirror-1" : "/tmp/siralos/mirror-1";
 
 function uri(relativePath: string): string {
   return pathToFileUri(`${MIRROR}/${relativePath}`);

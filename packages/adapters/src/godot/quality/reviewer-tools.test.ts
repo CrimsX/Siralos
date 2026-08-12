@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFakeSandboxBackend, createRunDirectoryProvider } from "@solaris/adapters";
+import { createFakeSandboxBackend, createRunDirectoryProvider } from "@siralos/adapters";
 import {
   createGDScriptDevelopmentService,
   createGodotInspector,
@@ -14,14 +14,14 @@ import {
   createMutationLock,
   createFilesystemCheckpointStore,
   DEFAULT_CHECKPOINT_ROOT,
-} from "@solaris/adapters";
+} from "@siralos/adapters";
 import {
   type GDScriptLanguageService,
   type GitInspector,
   type GodotInspector,
   type GodotKnowledge,
   type ToolRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +51,7 @@ async function buildReviewerRegistry(): Promise<{
   readonly registry: ToolRegistry;
   readonly cleanup: () => Promise<void>;
 }> {
-  const parent = await mkdtemp(join(tmpdir(), "solaris-reviewer-tools-"));
+  const parent = await mkdtemp(join(tmpdir(), "siralos-reviewer-tools-"));
   const root = join(parent, "workspace");
   await import("node:fs/promises").then((fs) => fs.mkdir(root, { recursive: true }));
   await writeFile(join(root, "project.godot"), '[application]\nconfig/name="fixture"\n');

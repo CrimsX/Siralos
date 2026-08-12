@@ -7,13 +7,13 @@ import {
   createWorkspaceRevisionRegistry,
   sha256Hex,
   type GodotSceneEvidenceView,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGodotSceneIntelligence } from "./scene-intelligence-service.js";
 
 const tempDirectories: string[] = [];
 
 async function withWorkspace(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-scene-intel-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-scene-intel-"));
   tempDirectories.push(directory);
   return directory;
 }

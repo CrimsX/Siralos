@@ -5,7 +5,7 @@ import {
   createWorkspaceRevisionRegistry,
   type GDScriptStructure,
   type ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createBehaviorLoopHarness,
   FIXTURE_PATH,

@@ -1,6 +1,6 @@
 import type { CommandApplicationEvent } from "../commands/command-events.js";
 
-/** UI-neutral events emitted while Solaris handles one prompt. */
+/** UI-neutral events emitted while Siralos handles one prompt. */
 export type ApplicationEvent =
   | {
       readonly type: "response_started";

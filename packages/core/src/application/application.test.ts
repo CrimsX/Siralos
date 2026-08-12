@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   type ApplicationEvent,
   type ModelEvent,
@@ -73,14 +73,14 @@ async function collectEvents(events: AsyncIterable<ApplicationEvent>): Promise<A
   return collected;
 }
 
-describe("createSolarisApplication", () => {
+describe("createSiralosApplication", () => {
   it("streams a prompt response through the application", async () => {
     const provider = createStreamingProvider([
       { type: "text_delta", text: "one" },
       { type: "text_delta", text: "two" },
       { type: "completed" },
     ]);
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });
@@ -95,7 +95,7 @@ describe("createSolarisApplication", () => {
 
   it("passes the full conversation history to the provider", async () => {
     const { provider, requests } = createRecordingProvider();
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });
@@ -117,7 +117,7 @@ describe("createSolarisApplication", () => {
 
   it("reports message count for the stored conversation", async () => {
     const { provider } = createRecordingProvider();
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });
@@ -133,7 +133,7 @@ describe("createSolarisApplication", () => {
   });
 
   it("reports a failed provider response without storing an assistant message", async () => {
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: createFailingProvider(),
       tools: createToolRegistry([]),
     });
@@ -149,7 +149,7 @@ describe("createSolarisApplication", () => {
   it("emits response_cancelled for a pre-aborted request", async () => {
     const controller = new AbortController();
     controller.abort();
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: createStreamingProvider([{ type: "completed" }]),
       tools: createToolRegistry([]),
     });
@@ -173,7 +173,7 @@ describe("createSolarisApplication", () => {
         yield { type: "completed" };
       },
     };
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });
@@ -194,7 +194,7 @@ describe("createSolarisApplication", () => {
 
   it("reports the responding state while a response streams", async () => {
     const { provider, release } = createGateProvider();
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });
@@ -209,7 +209,7 @@ describe("createSolarisApplication", () => {
 
   it("rejects a second prompt while one is responding", async () => {
     const { provider, release } = createGateProvider();
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });

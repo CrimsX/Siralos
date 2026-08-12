@@ -2,7 +2,7 @@ import { lstat, open, readdir, realpath } from "node:fs/promises";
 import type { Dirent, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { GodotScanTruncationReason } from "@solaris/core";
+import type { GodotScanTruncationReason } from "@siralos/core";
 import { isWithinPathIdentity, samePathIdentity } from "../../fs-path-identity.js";
 
 /**

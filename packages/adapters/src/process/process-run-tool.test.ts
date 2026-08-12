@@ -21,7 +21,7 @@ import {
   type SandboxBackend,
   type SandboxedProcessRequest,
   type SandboxedProcessResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createSha256CommandDigestService } from "./command-digest.js";
 import {
   createRunDirectoryProvider,
@@ -37,7 +37,7 @@ import { createFakeSandboxBackend, completedResult } from "../sandbox/fake-sandb
 import { createMutationLock } from "../tools/workspace/mutations/mutation-lock.js";
 import { createTempWorkspace, writeFixtureFiles } from "../tools/workspace/workspace-fixtures.js";
 
-const RUNS_ROOT = join(process.cwd(), "node_modules", ".solaris-test-runs");
+const RUNS_ROOT = join(process.cwd(), "node_modules", ".siralos-test-runs");
 
 /**
  * TEST-ONLY run-directory provider: creates a unique directory beneath a

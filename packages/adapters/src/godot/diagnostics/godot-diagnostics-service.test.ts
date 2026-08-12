@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import type {
   GitInspector,
   GodotDiagnostics,
   SandboxBackend,
   SandboxBackendStatus,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createFakeGodotProbeRunner } from "../testing/fake-godot-probe-runner.js";
 import { createProjectMirror } from "../mirror/project-mirror.js";
 import { createRunDirectoryProvider } from "../../process/run-directories.js";
@@ -18,7 +18,7 @@ import type { UserGodotConfig } from "../../config/user-config.js";
 const tempRoots: string[] = [];
 
 async function withTempRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "solaris-check-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "siralos-check-test-"));
   tempRoots.push(root);
   return root;
 }
@@ -189,7 +189,7 @@ describe("createGodotDiagnosticsService", () => {
     expect(prepared.digest).toMatch(/^[0-9a-f]{64}$/);
     // The preview never contains absolute paths or the workspace root.
     expect(JSON.stringify(prepared.preview)).not.toMatch(/[a-z]:[\\/]/i);
-    expect(JSON.stringify(prepared.preview)).not.toContain("/tmp/solaris");
+    expect(JSON.stringify(prepared.preview)).not.toContain("/tmp/siralos");
   });
 
   it("prepares a project-wide check with deterministic enumeration", async () => {

@@ -4,7 +4,7 @@ import {
   type ResearchBounds,
   type ResearchRequest,
   type ResearchSourceRef,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createFakeGodotDocsSource,
   createFakeRepositorySource,

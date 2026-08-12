@@ -746,13 +746,13 @@ describe("safe report", () => {
   it("excludes absolute paths from summaries", async () => {
     const report = await createCapabilityDoctor(
       fakeDoctorSources({
-        workspace: { root: "C:\\Users\\secret-user\\projects\\solaris-demo" },
+        workspace: { root: "C:\\Users\\secret-user\\projects\\siralos-demo" },
       }),
     ).inspect({ areas: ["workspace"] });
     const safe = toSafeReport(report);
     const text = JSON.stringify(safe);
     expect(text).not.toContain("secret-user");
-    expect(text).not.toContain("solaris-demo");
+    expect(text).not.toContain("siralos-demo");
   });
 
   it("excludes provider secret values", async () => {
@@ -773,7 +773,7 @@ describe("safe report", () => {
     );
     expect(sanitizeSafeDoctorText("token sk-abc123XYZ78900")).not.toMatch(/sk-/);
     expect(sanitizeSafeDoctorText("path C:\\Users\\me\\x")).toContain("<path>");
-    expect(sanitizeSafeDoctorText("/home/alice/.solaris/config.json")).toContain("<path>");
+    expect(sanitizeSafeDoctorText("/home/alice/.siralos/config.json")).toContain("<path>");
     expect(sanitizeSafeDoctorText("/workspaces/demo/project.godot")).toContain("<path>");
     expect(sanitizeSafeDoctorText("/app/data/secret.txt")).toContain("<path>");
     expect(sanitizeSafeDoctorText("Godot project detected")).not.toContain("<path>");

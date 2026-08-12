@@ -10,7 +10,7 @@ import {
 import { createTempWorkspace, SYMLINKS_SUPPORTED } from "../tools/workspace/workspace-fixtures.js";
 
 function uniqueRunsRoot(): string {
-  return join(tmpdir(), `solaris-runs-${Date.now()}-${Math.random()}`);
+  return join(tmpdir(), `siralos-runs-${Date.now()}-${Math.random()}`);
 }
 
 /**
@@ -49,7 +49,7 @@ describe("createRunDirectoryProvider (fail-closed contract)", () => {
     }
     const workspace = await createTempWorkspace();
     const runsRoot = uniqueRunsRoot();
-    const outside = join(tmpdir(), `solaris-runs-outside-${Date.now()}-${Math.random()}`);
+    const outside = join(tmpdir(), `siralos-runs-outside-${Date.now()}-${Math.random()}`);
     try {
       // Deterministic race at the verification-to-create boundary: a
       // same-user process plants a link at the runs root. Because creation

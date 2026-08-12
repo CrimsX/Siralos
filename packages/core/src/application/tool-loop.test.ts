@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   type ApplicationEvent,
   type ModelEvent,
@@ -75,7 +75,7 @@ describe("provider/tool loop", () => {
   it("sends the available tool definitions to the provider", async () => {
     const { provider, requests } = createScriptedProvider([[{ type: "completed" }]]);
     const { tool } = createStubTool("a.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });
@@ -90,7 +90,7 @@ describe("provider/tool loop", () => {
       [{ type: "text_delta", text: "done" }, { type: "completed" }],
     ]);
     const { tool, calls } = createStubTool("a.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });
@@ -117,7 +117,7 @@ describe("provider/tool loop", () => {
     ]);
     const { tool: toolA, calls: callsA } = createStubTool("a.tool");
     const { tool: toolB, calls: callsB } = createStubTool("b.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([toolA, toolB]),
     });
@@ -133,7 +133,7 @@ describe("provider/tool loop", () => {
       [toolCall("c1", "mystery.tool", {}), { type: "completed" }],
       [{ type: "text_delta", text: "recovered" }, { type: "completed" }],
     ]);
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });
@@ -165,7 +165,7 @@ describe("provider/tool loop", () => {
         return Promise.resolve({ status: "success", output: {}, summary: "ok" });
       },
     };
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });
@@ -186,7 +186,7 @@ describe("provider/tool loop", () => {
       [{ type: "completed" }],
     ]);
     const { tool, calls } = createStubTool("a.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });
@@ -205,7 +205,7 @@ describe("provider/tool loop", () => {
       [{ type: "completed" }],
     ]);
     const { tool, calls } = createStubTool("a.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
       maxToolRounds: 2,
@@ -216,7 +216,7 @@ describe("provider/tool loop", () => {
     expect(failed).toMatchObject({
       type: "response_failed",
       message:
-        "Solaris reached the maximum of 2 tool rounds; the requested tool round was not executed.",
+        "Siralos reached the maximum of 2 tool rounds; the requested tool round was not executed.",
     });
     expect(events.some((event) => event.type === "response_completed")).toBe(false);
     expect(requests).toHaveLength(3);
@@ -228,7 +228,7 @@ describe("provider/tool loop", () => {
       [{ type: "text_delta", text: "final answer" }, { type: "completed" }],
     ]);
     const { tool } = createStubTool("a.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
       maxToolRounds: 1,
@@ -249,7 +249,7 @@ describe("provider/tool loop", () => {
       [toolCall("c2", "a.tool", {}), { type: "completed" }],
     ]);
     const { tool, calls } = createStubTool("a.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
       maxToolRounds: 1,
@@ -264,7 +264,7 @@ describe("provider/tool loop", () => {
 
   it("accepts an empty valid completion", async () => {
     const { provider } = createScriptedProvider([[{ type: "completed" }]]);
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([]),
     });
@@ -289,7 +289,7 @@ describe("provider/tool loop", () => {
       },
     };
     const { tool } = createStubTool("a.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });
@@ -329,7 +329,7 @@ describe("provider/tool loop", () => {
         return { status: "cancelled", message: "Cancelled." };
       },
     };
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });
@@ -351,7 +351,7 @@ describe("provider/tool loop", () => {
     ]);
     const { tool: toolA } = createStubTool("a.tool");
     const { tool: toolB, calls: callsB } = createStubTool("b.tool");
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([toolA, toolB]),
     });

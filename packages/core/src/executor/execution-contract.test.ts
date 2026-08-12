@@ -114,7 +114,7 @@ describe("execution contract", () => {
   it("default contract: permanent rules exist once and reference enforcement", () => {
     const contract = DEFAULT_EXECUTION_CONTRACT;
     expect(contract.revision).toBe(1);
-    expect(contract.id).toBe("solaris-execution-contract");
+    expect(contract.id).toBe("siralos-execution-contract");
     const ids = [
       ...contract.gitRules,
       ...contract.securityRules,
@@ -147,7 +147,7 @@ describe("execution contract", () => {
 
   it("default contract validates at the runtime boundary", () => {
     expect(validateExecutionContract(DEFAULT_EXECUTION_CONTRACT).id).toBe(
-      "solaris-execution-contract",
+      "siralos-execution-contract",
     );
   });
 });

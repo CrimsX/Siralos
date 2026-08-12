@@ -1,6 +1,6 @@
 import { lstat, stat } from "node:fs/promises";
 import path from "node:path";
-import { COMMAND_LIMITS } from "@solaris/core";
+import { COMMAND_LIMITS } from "@siralos/core";
 import type { ParsedValue } from "../tools/workspace/validation.js";
 import { readJsonObject } from "../tools/workspace/validation.js";
 import { resolveWorkspacePath } from "../tools/workspace/workspace-path.js";

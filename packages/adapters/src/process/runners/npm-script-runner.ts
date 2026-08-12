@@ -6,7 +6,7 @@
   CommandPreparationResult,
   CommandRunner,
   PreparedCommand,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { NpmCliResolution } from "../trusted-executables.js";
 
 export interface NpmScriptRunnerOptions {
@@ -21,7 +21,7 @@ const NPM_SCRIPT_UNAVAILABLE_MESSAGE =
 /**
  * The npm-script runner fails closed. `npm run` executes whatever script body
  * is present in the workspace package.json at npm's own read time, which
- * happens after Solaris's final revalidation; the pinned sandbox runtime
+ * happens after Siralos's final revalidation; the pinned sandbox runtime
  * cannot substitute the approved package bytes at that read (content
  * override binds are Linux-only internals that degrade to read-denial on
  * macOS and are unsupported on Windows, and private-directory execution

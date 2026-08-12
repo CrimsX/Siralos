@@ -25,7 +25,7 @@ import {
   createDevelopmentTaskFlow,
   createProjectionService,
   createRouteContextCapacity,
-  createSolarisApplication,
+  createSiralosApplication,
   createTaskRuntime,
   createTaskRuntimeSnapshot,
   createToolRegistry,
@@ -50,13 +50,13 @@ import {
   type RegisteredToolInfo,
   type ReferenceEvidenceView,
   type ResearchService,
-  type SolarisApplication,
+  type SiralosApplication,
   type TaskRuntime,
   type TaskRuntimeSnapshotSources,
   type TaskState,
   type Tool,
   type WorkspaceRevisionRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createDeterministicFakeProvider,
   createFakeChangeReviewer,
@@ -81,7 +81,7 @@ import {
   createWorkspaceReadTool,
   type ReferenceServices,
   type ReferenceTool,
-} from "@solaris/adapters";
+} from "@siralos/adapters";
 
 export const FIXTURE_PATH = "scripts/player/player.gd";
 export const FIXTURE_CONTENT =
@@ -124,7 +124,7 @@ export interface TempWorkspace {
 }
 
 export async function createTempWorkspace(): Promise<TempWorkspace> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-behavior-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-behavior-"));
   return {
     root,
     cleanup: () => rm(root, { recursive: true, force: true }),
@@ -144,7 +144,7 @@ export function createRecordingProvider(
   return {
     provider: {
       ...inner,
-      stream(request: ModelRequest): AsyncIterable<import("@solaris/core").ModelEvent> {
+      stream(request: ModelRequest): AsyncIterable<import("@siralos/core").ModelEvent> {
         requests.push(request);
         return inner.stream(request);
       },
@@ -166,9 +166,9 @@ export interface BehaviorLoopHarnessOptions {
    * Wire a project-instruction service into the projection (requires
    * `projection: true`).
    */
-  readonly instructions?: import("@solaris/core").ProjectInstructionService;
+  readonly instructions?: import("@siralos/core").ProjectInstructionService;
   /** Wire a KnowledgeCoordinator into the projection (requires `projection: true`). */
-  readonly knowledge?: import("@solaris/core").KnowledgeCoordinator;
+  readonly knowledge?: import("@siralos/core").KnowledgeCoordinator;
   /**
    * Wire reference services (registry + access + tools) into the harness.
    * The read-only `reference.*` tools are registered and every successful
@@ -219,11 +219,11 @@ export interface BehaviorLoopHarnessOptions {
     readonly milestone?: MilestoneManifest | null;
     readonly selectMilestone?: (request: string) => MilestoneManifest | null;
     readonly capabilitySnapshot?: CapabilitySnapshot | null;
-    readonly workspaceScope?: import("@solaris/core").WorkspaceScope | null;
-    readonly activeWorkingSet?: import("@solaris/core").ActiveWorkingSet | null;
-    readonly documentationIndex?: readonly import("@solaris/core").DocumentationEntry[];
-    readonly scopeSignals?: readonly import("@solaris/core").ScopeSignalRef[];
-    readonly newFiles?: readonly import("@solaris/core").NewFileRationale[];
+    readonly workspaceScope?: import("@siralos/core").WorkspaceScope | null;
+    readonly activeWorkingSet?: import("@siralos/core").ActiveWorkingSet | null;
+    readonly documentationIndex?: readonly import("@siralos/core").DocumentationEntry[];
+    readonly scopeSignals?: readonly import("@siralos/core").ScopeSignalRef[];
+    readonly newFiles?: readonly import("@siralos/core").NewFileRationale[];
     readonly capabilityAreas?: readonly string[];
   };
   /** Replace the application provider entirely (scripted provider scenarios). */
@@ -247,7 +247,7 @@ export interface BehaviorLoopHarnessOptions {
 export interface BehaviorLoopHarness {
   readonly workspace: TempWorkspace;
   readonly store: CheckpointStore;
-  readonly application: SolarisApplication;
+  readonly application: SiralosApplication;
   readonly runtime: TaskRuntime;
   /** Projection service (when `projection: true`); null otherwise. */
   readonly projection: ProjectionService | null;
@@ -294,7 +294,7 @@ export interface BehaviorLoopHarness {
       | "cancelled",
   ) => TaskState | null;
   /** Feed a host-observed event into the unified task flow. */
-  readonly unifiedEmit: (event: import("@solaris/core").DevelopmentEvent) => void;
+  readonly unifiedEmit: (event: import("@siralos/core").DevelopmentEvent) => void;
   /** Recorded reference observations feeding the `[Reference evidence]` projection section. */
   readonly referenceObservations: () => readonly ReferenceEvidenceView[];
   /** Prepare + approve + start the workflow and create the task. */
@@ -314,7 +314,7 @@ export interface BehaviorLoopHarness {
 const checkpointRoots: string[] = [];
 
 async function createTempCheckpointStore(workspaceRoot: string): Promise<CheckpointStore> {
-  const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-behavior-cp-"));
+  const rootDirectory = await mkdtemp(join(tmpdir(), "siralos-behavior-cp-"));
   checkpointRoots.push(rootDirectory);
   return createFilesystemCheckpointStore({ workspaceRoot, rootDirectory });
 }
@@ -683,7 +683,7 @@ export async function createBehaviorLoopHarness(
             : { getExecutorBrief: () => briefingService.latestOrCompile() }),
         })
       : undefined;
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider: options.providerOverride ?? recording?.provider ?? createDeterministicFakeProvider(),
     tools,
     policy: createDefaultPolicy("develop-offline"),
@@ -799,7 +799,7 @@ export async function createBehaviorLoopHarness(
       return unifiedFlow.finish(sessionStatus, null);
     },
     /** Feed a host-observed event into the unified task flow. */
-    unifiedEmit: (event: import("@solaris/core").DevelopmentEvent) => {
+    unifiedEmit: (event: import("@siralos/core").DevelopmentEvent) => {
       unifiedFlow?.handleEvent(event);
     },
     briefing: () => (briefingService === null ? null : briefingService.latestOrCompile()),

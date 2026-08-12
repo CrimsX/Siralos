@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalizeJson, createWorkspaceRevisionRegistry, sha256Hex } from "@solaris/core";
+import { canonicalizeJson, createWorkspaceRevisionRegistry, sha256Hex } from "@siralos/core";
 import { SYMLINKS_SUPPORTED } from "../tools/workspace/workspace-fixtures.js";
 import {
   createProjectInstructionService,
@@ -12,7 +12,7 @@ import {
 const tempRoots: string[] = [];
 
 async function createFixture(files: Record<string, string>): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-instructions-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-instructions-"));
   tempRoots.push(root);
   for (const [relative, content] of Object.entries(files)) {
     const absolute = join(root, relative);
@@ -118,12 +118,12 @@ describe("instruction discovery", () => {
     expect(escaped.instructions).toEqual([]);
   });
 
-  it("skips excluded directories including .solaris", async () => {
+  it("skips excluded directories including .siralos", async () => {
     const root = await createFixture({
       "AGENTS.md": "root.",
       "node_modules/AGENTS.md": "excluded",
       ".git/AGENTS.md": "excluded",
-      ".solaris/AGENTS.md": "future user-level guidance, not project instructions",
+      ".siralos/AGENTS.md": "future user-level guidance, not project instructions",
       "dist/AGENTS.md": "excluded",
     });
     const outcome = await discoverProjectInstructions({ workspaceRoot: root });

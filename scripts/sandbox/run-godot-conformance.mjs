@@ -17,9 +17,9 @@ import { isAbsolute } from "node:path";
  * The user-supplied Godot executable is never read or modified here.
  */
 async function main() {
-  const godotPath = process.env["SOLARIS_TEST_GODOT"];
+  const godotPath = process.env["SIRALOS_TEST_GODOT"];
   if (godotPath === undefined || godotPath.trim().length === 0) {
-    console.log("GODOT CONFORMANCE: SKIPPED - SOLARIS_TEST_GODOT is not set.");
+    console.log("GODOT CONFORMANCE: SKIPPED - SIRALOS_TEST_GODOT is not set.");
     console.log(
       "No live Godot probes ran; skipped or unavailable is never treated as a live security pass.",
     );
@@ -27,9 +27,9 @@ async function main() {
   }
   if (!isAbsolute(godotPath.trim())) {
     console.log(
-      "GODOT CONFORMANCE: SKIPPED - SOLARIS_TEST_GODOT must be an absolute path to a Godot executable, for example:",
+      "GODOT CONFORMANCE: SKIPPED - SIRALOS_TEST_GODOT must be an absolute path to a Godot executable, for example:",
     );
-    console.log('  $env:SOLARIS_TEST_GODOT = "C:\\absolute\\path\\to\\godot.exe"');
+    console.log('  $env:SIRALOS_TEST_GODOT = "C:\\absolute\\path\\to\\godot.exe"');
     console.log("  npm run test:godot");
     console.log(
       "No live Godot probes ran; skipped or unavailable is never treated as a live security pass.",
@@ -56,7 +56,7 @@ async function main() {
     "probes cannot be verified at this stage; this is never treated as a live security pass.",
   );
   console.log(
-    `SOLARIS_TEST_GODOT was set (${godotPath.trim().length} characters) but was not executed or modified.`,
+    `SIRALOS_TEST_GODOT was set (${godotPath.trim().length} characters) but was not executed or modified.`,
   );
   return 0;
 }

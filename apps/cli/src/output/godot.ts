@@ -18,7 +18,7 @@ import type {
   GodotProbePreview,
   GodotRecoveryProbeResult,
   GodotSelectedInstallation,
-} from "@solaris/core";
+} from "@siralos/core";
 import { formatBytes, formatDuration, formatFileCount, yesNo } from "./format-utils.js";
 import { sanitizeForDisplay } from "./sanitize.js";
 
@@ -34,7 +34,7 @@ export function formatGodotDiagnosticPreview(preview: GodotDiagnosticPreview): s
     "Engine:",
     `  ${preview.engineVersion}`,
     `  ${preview.engineEdition} edition`,
-    `  Solaris support: ${preview.support}`,
+    `  Siralos support: ${preview.support}`,
     `  Static compatibility: ${preview.compatibility}`,
     "",
     "Project:",
@@ -84,7 +84,7 @@ export function formatGodotDiagnosticApprovalPrompt(
     "Engine:",
     `  ${preview.engineVersion}`,
     `  ${preview.engineEdition} edition`,
-    `  Solaris support: ${preview.support}`,
+    `  Siralos support: ${preview.support}`,
     `  Static compatibility: ${preview.compatibility}`,
     "",
     "Project:",
@@ -256,7 +256,7 @@ export function formatGodotLSPSessionPreview(preview: GDScriptLSPSessionPreview)
     "Engine:",
     `  ${preview.engineVersion}`,
     `  ${preview.engineEdition} edition`,
-    `  Solaris support: ${preview.support}`,
+    `  Siralos support: ${preview.support}`,
     `  Static compatibility: ${preview.compatibility}`,
     "",
     "Project intelligence:",
@@ -355,7 +355,7 @@ export function formatGodotSummary(
     lines.push(`  Version: ${selected.version.raw}`);
     lines.push(`  Edition: ${selected.edition}`);
     lines.push(`  Release channel: ${selected.releaseChannel}`);
-    lines.push(`  Solaris support: ${selected.support}`);
+    lines.push(`  Siralos support: ${selected.support}`);
   }
   lines.push(`  Project detected: ${projectDetected ? "yes" : "no"}`);
   if (projectDetected) {
@@ -460,7 +460,7 @@ export function formatGodotProbePreview(preview: GodotProbePreview): string {
     "Engine:",
     `  ${preview.engineVersion}`,
     `  ${preview.engineEdition} edition`,
-    `  Solaris support: ${preview.support}`,
+    `  Siralos support: ${preview.support}`,
     `  Static compatibility: ${preview.compatibility}`,
     "",
     "Static risk inventory:",
@@ -555,7 +555,7 @@ export function formatGodotProbeStatus(status: GodotProjectProbeStatus): string 
 export function formatGodotDoctor(report: GodotDoctorReport): string {
   const discovery = report.discovery;
   const lines: string[] = [
-    "Solaris Godot doctor",
+    "Siralos Godot doctor",
     "",
     "Configuration:",
     `  Active installation: ${discovery.configuration.activeInstallation ?? "none"}`,

@@ -3,7 +3,7 @@ import type {
   ModelProvider,
   ToolDefinition,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { errorMessage } from "../support/error-message.js";
 
 /**
@@ -134,7 +134,7 @@ export function detachBoundedToolResult(
       ok: true,
       result: {
         status: "success",
-        output: record["output"] as import("@solaris/core").JsonValue,
+        output: record["output"] as import("@siralos/core").JsonValue,
         summary: record["summary"],
       },
       byteLength,

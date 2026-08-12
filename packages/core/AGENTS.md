@@ -1,4 +1,4 @@
-# Core domain (`@solaris/core`)
+# Core domain (`@siralos/core`)
 
 ## Owner
 

@@ -3,7 +3,7 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   readJsonObject,
   readRequiredString,
@@ -179,10 +179,10 @@ export function createGodotInspectSceneTool(intelligence: GodotSceneIntelligence
 }
 
 function renderTree(
-  tree: NonNullable<import("@solaris/core").GodotSceneInspectionResult["tree"]>,
+  tree: NonNullable<import("@siralos/core").GodotSceneInspectionResult["tree"]>,
 ): { readonly text: string; readonly truncated: boolean } {
   const lines: string[] = [];
-  const visit = (node: import("@solaris/core").GodotSceneTreeNode, depth: number): void => {
+  const visit = (node: import("@siralos/core").GodotSceneTreeNode, depth: number): void => {
     if (lines.length >= 200) {
       return;
     }
@@ -202,7 +202,7 @@ function renderTree(
   return { text: lines.join("\n"), truncated: lines.length >= 200 };
 }
 
-function summarizeVariant(value: import("@solaris/core").GodotVariantValue): {
+function summarizeVariant(value: import("@siralos/core").GodotVariantValue): {
   readonly kind: string;
   readonly value: unknown;
 } {

@@ -10,7 +10,7 @@ import {
   type ReferenceResolverPort,
   type ReferenceSource,
   type RepositoryRef,
-} from "@solaris/core";
+} from "@siralos/core";
 import { describeFsError } from "../tools/workspace/workspace-path.js";
 
 /**

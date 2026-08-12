@@ -5,7 +5,7 @@ import {
   type GodotAutoloadSummary,
   type GodotInputAction,
   type SafeDiagnostic,
-} from "@solaris/core";
+} from "@siralos/core";
 import { validateProjectRelativePath } from "./traversal-limits.js";
 
 /** Bounded structural record of one project.godot property. */

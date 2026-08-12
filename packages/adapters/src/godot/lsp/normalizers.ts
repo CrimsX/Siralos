@@ -8,7 +8,7 @@ import {
   type GDScriptHoverSection,
   type GDScriptSourceRange,
   type GodotGDScriptDiagnostic,
-} from "@solaris/core";
+} from "@siralos/core";
 import { sanitizeControlCharacters } from "../diagnostics/diagnostic-normalizer.js";
 import { truncateUtf8Bytes } from "../knowledge/api-dump-with-docs.js";
 import { mirrorUriToWorkspaceRelative } from "./file-uri.js";
@@ -19,7 +19,7 @@ import { mirrorUriToWorkspaceRelative } from "./file-uri.js";
  * are rejected or represented conservatively; every field is bounded;
  * control characters are sanitized; markup is data (never executed or
  * rendered); and malformed items are skipped safely. LSP line/character
- * positions are 0-based and converted to the 1-based Solaris convention
+ * positions are 0-based and converted to the 1-based Siralos convention
  * explicitly at this boundary.
  */
 

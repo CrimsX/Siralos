@@ -10,7 +10,7 @@ import type { RunId } from "./identity.js";
  * capability state, never pretended enforced. Cancellation is
  * deterministic and idempotent — repeated requests never create
  * competing cleanup flows. Restart reconciliation classifies incomplete
- * runs conservatively; Solaris restart never implies the external
+ * runs conservatively; Siralos restart never implies the external
  * process is gone.
  */
 
@@ -129,9 +129,9 @@ export interface IncompleteRunRecord {
 }
 
 /**
- * Conservative classification of a run left non-terminal by a Solaris
+ * Conservative classification of a run left non-terminal by a Siralos
  * restart. We never assume the external process is gone solely because
- * Solaris restarted; without a reliable process observation the record
+ * Siralos restarted; without a reliable process observation the record
  * is `unknown`, with cleanup required when run-owned state may exist.
  */
 export function classifyIncompleteRun(

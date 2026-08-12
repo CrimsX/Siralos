@@ -25,7 +25,7 @@ import { isWithinPathIdentity, samePathIdentity } from "../../fs-path-identity.j
 const tempDirectories: string[] = [];
 
 async function withWorkspace(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-godot-project-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-godot-project-"));
   tempDirectories.push(directory);
   return directory;
 }
@@ -68,7 +68,7 @@ function recordingFsOps(touched: string[]): GodotProjectFsOps {
 
 /** Asserts no recorded filesystem path ever points outside the workspace. */
 function assertNoOutsideAccess(touched: readonly string[], workspace: string): void {
-  const outsideDirectory = join(workspace, "..", "solaris-outside-sentinel");
+  const outsideDirectory = join(workspace, "..", "siralos-outside-sentinel");
   for (const path of touched) {
     expect(isWithinPathIdentity(outsideDirectory, path)).toBe(false);
     expect(path.split(/[\\/]/).includes("..")).toBe(false);
@@ -197,7 +197,7 @@ describe("createGodotProjectInspector", () => {
       "src/tool.gd": "@tool\nextends Node\n",
       "src/plain.gd": "extends Node\n# @tool is commented\n",
       "addons/example/plugin.cfg":
-        '[plugin]\nname="Example"\ndescription="Example plugin"\nauthor="Solaris"\nversion="1.0"\nscript="example.gd"\n',
+        '[plugin]\nname="Example"\ndescription="Example plugin"\nauthor="Siralos"\nversion="1.0"\nscript="example.gd"\n',
       "addons/example/example.gd": "@tool\nextends EditorPlugin\n",
       "addons/importer/plugin.cfg": '[plugin]\nname="Importer"\nscript="importer.gd"\n',
       "addons/importer/importer.gd": "@tool\nextends EditorImportPlugin\n",
@@ -300,7 +300,7 @@ describe("project path containment", () => {
       "project.godot": [
         "config_version=5",
         "[application]",
-        'run/main_scene="res://../../solaris-outside-sentinel/main.tscn"',
+        'run/main_scene="res://../../siralos-outside-sentinel/main.tscn"',
       ].join("\n"),
     });
     const touched: string[] = [];
@@ -312,7 +312,7 @@ describe("project path containment", () => {
     expect(profile.mainSceneExists).toBe(false);
     expect(
       profile.warnings.some((warning) =>
-        warning.message.includes("res://../../solaris-outside-sentinel/main.tscn"),
+        warning.message.includes("res://../../siralos-outside-sentinel/main.tscn"),
       ),
     ).toBe(true);
     assertNoOutsideAccess(touched, workspace);
@@ -344,7 +344,7 @@ describe("project path containment", () => {
     await writeFiles(workspace, {
       "project.godot": "config_version=5\n",
       "addons/escape/plugin.cfg":
-        '[plugin]\nname="Escape"\nscript="..\\..\\..\\solaris-outside-sentinel\\escape.gd"\n',
+        '[plugin]\nname="Escape"\nscript="..\\..\\..\\siralos-outside-sentinel\\escape.gd"\n',
       "addons/absolute/plugin.cfg": '[plugin]\nname="Absolute"\nscript="C:\\outside\\evil.gd"\n',
       "addons/unc/plugin.cfg": '[plugin]\nname="Unc"\nscript="\\\\server\\share\\evil.gd"\n',
       "addons/clean/plugin.cfg": '[plugin]\nname="Clean"\nscript="clean.gd"\n',
@@ -369,7 +369,7 @@ describe("project path containment", () => {
       true,
     );
     expect(profile.warnings.some((warning) => warning.message.includes("addons/unc"))).toBe(true);
-    const resolvedOutside = join(workspace, "..", "solaris-outside-sentinel");
+    const resolvedOutside = join(workspace, "..", "siralos-outside-sentinel");
     expect(profile.warnings.some((warning) => warning.message.includes(resolvedOutside))).toBe(
       false,
     );
@@ -381,7 +381,7 @@ describe("project path containment", () => {
     await writeFiles(workspace, {
       "project.godot": "config_version=5\n",
       "lib/escape.gdextension":
-        '[configuration]\ncompatibility_minimum="4.3"\n[entry]\nWindows.64="..\\..\\solaris-outside-sentinel\\evil.dll"\n',
+        '[configuration]\ncompatibility_minimum="4.3"\n[entry]\nWindows.64="..\\..\\siralos-outside-sentinel\\evil.dll"\n',
       "lib/absolute.gdextension":
         '[entry]\nWindows.64="C:\\outside\\evil.dll"\nLinux.64="\\\\server\\share\\evil.dll"\n',
       "lib/ok.gdextension": '[entry]\nWindows.64="bin/godot_ext.dll"\n',
@@ -408,7 +408,7 @@ describe("project path containment", () => {
     expect(ok?.libraryFilesExist).toBe(true);
     expect(ok?.escapesThroughSymlinks).toBe(false);
     expect(profile.warnings.some((warning) => warning.message.includes("evil.dll"))).toBe(true);
-    const resolvedOutside = join(workspace, "..", "solaris-outside-sentinel");
+    const resolvedOutside = join(workspace, "..", "siralos-outside-sentinel");
     expect(profile.warnings.some((warning) => warning.message.includes(resolvedOutside))).toBe(
       false,
     );
@@ -471,7 +471,7 @@ describe("project path containment", () => {
       "src/tool.gd": "@tool\nextends Node\n",
     });
     const targetFile = join(workspace, "src", "tool.gd");
-    const outsideSentinel = join(workspace, "..", "solaris-swap-sentinel.gd");
+    const outsideSentinel = join(workspace, "..", "siralos-swap-sentinel.gd");
     const base = recordingFsOps([]);
     const fsOps: GodotProjectFsOps = {
       ...base,

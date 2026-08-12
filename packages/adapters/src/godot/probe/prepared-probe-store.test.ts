@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPreparedProbeStore, type PreparedProbePlan } from "./prepared-probe-store.js";
-import type { GodotProbePreview, GodotProjectRiskManifest } from "@solaris/core";
+import type { GodotProbePreview, GodotProjectRiskManifest } from "@siralos/core";
 
 function samplePlan(): PreparedProbePlan {
   const preview: GodotProbePreview = {

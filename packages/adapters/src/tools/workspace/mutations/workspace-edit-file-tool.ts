@@ -4,8 +4,8 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
   ToolPreparationResult,
-} from "@solaris/core";
-import type { CheckpointStore } from "@solaris/core";
+} from "@siralos/core";
+import type { CheckpointStore } from "@siralos/core";
 import type { MutationLock } from "./mutation-lock.js";
 
 export const WORKSPACE_EDIT_UNAVAILABLE_MESSAGE =

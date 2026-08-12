@@ -7,11 +7,11 @@ import type {
   GodotProjectProfile,
   GodotSelectedInstallation,
   GodotVersion,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGodotInspectEngineTool } from "./godot-inspect-engine-tool.js";
 import { createGodotInspectProjectTool } from "./godot-inspect-project-tool.js";
-import { createEmptyGodotProjectProfile } from "@solaris/core";
-import { createEmptyGodotCommandCapabilities } from "@solaris/core";
+import { createEmptyGodotProjectProfile } from "@siralos/core";
+import { createEmptyGodotCommandCapabilities } from "@siralos/core";
 
 function version(overrides: Partial<GodotVersion> = {}): GodotVersion {
   return {

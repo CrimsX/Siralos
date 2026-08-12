@@ -175,7 +175,7 @@ function runtimeChecks(result: RuntimeDiagnosticResult): DoctorCheckResult[] {
         : [
             {
               title: "Use a supported Node.js major",
-              steps: ["Install Node.js 24 or newer and relaunch Solaris."],
+              steps: ["Install Node.js 24 or newer and relaunch Siralos."],
             },
           ],
     ),
@@ -184,8 +184,8 @@ function runtimeChecks(result: RuntimeDiagnosticResult): DoctorCheckResult[] {
       "runtime",
       result.version.length > 0 ? "pass" : "fail",
       result.version.length > 0
-        ? `Installed Solaris runtime version ${result.version}`
-        : "Installed Solaris runtime version is unknown",
+        ? `Installed Siralos runtime version ${result.version}`
+        : "Installed Siralos runtime version is unknown",
       [{ label: "version", value: result.version }],
     ),
     check(
@@ -249,7 +249,7 @@ function configurationChecks(result: ConfigurationDiagnosticResult): DoctorCheck
         ? [
             {
               title: "Fix the configuration file",
-              steps: ["Correct the reported validation errors and relaunch Solaris."],
+              steps: ["Correct the reported validation errors and relaunch Siralos."],
             },
           ]
         : undefined,
@@ -488,7 +488,7 @@ function sandboxChecks(result: SandboxDiagnosticResult): DoctorCheckResult[] {
             {
               title: "Restore required enforcement",
               steps: [
-                `The backend reports missing enforcement: ${result.requiredCapabilitiesMissing.join(", ")}. Solaris fails closed until enforcement is available.`,
+                `The backend reports missing enforcement: ${result.requiredCapabilitiesMissing.join(", ")}. Siralos fails closed until enforcement is available.`,
               ],
             },
           ],
@@ -545,7 +545,7 @@ function workspaceChecks(result: WorkspaceDiagnosticResult): DoctorCheckResult[]
       "workspace",
       result.protectedPathsActive ? "pass" : "fail",
       result.protectedPathsActive
-        ? "Behavioral configuration (AGENTS.md, .solaris/**) is protected from mutation"
+        ? "Behavioral configuration (AGENTS.md, .siralos/**) is protected from mutation"
         : "Behavioral configuration protection is not active",
     ),
     check(

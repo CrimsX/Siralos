@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { GODOT_LIMITS, type GodotEngineProfile, type GodotInstallation } from "@solaris/core";
+import { GODOT_LIMITS, type GodotEngineProfile, type GodotInstallation } from "@siralos/core";
 
 /**
- * Fixed Solaris-owned recovery-mode editor invocation. The editor is always
+ * Fixed Siralos-owned recovery-mode editor invocation. The editor is always
  * launched headless in recovery mode against the disposable mirror project;
  * the mirror path is the only variable argument and it is always
- * Solaris-generated. The architecture check enforces that this module is the
+ * Siralos-generated. The architecture check enforces that this module is the
  * only runtime module that may carry the project path option and that it
  * never carries script, scene, import, export, LSP/DAP, or debug options.
  */
@@ -15,7 +15,7 @@ export const GODOT_RECOVERY_BASE_ARGUMENTS: readonly string[] = [
   "--recovery-mode",
 ];
 
-/** Canonical placeholder for the Solaris-generated mirror path in digests. */
+/** Canonical placeholder for the Siralos-generated mirror path in digests. */
 export const GODOT_RECOVERY_MIRROR_PATH_MARKER = "<disposable-mirror>";
 
 export function godotRecoveryArguments(mirrorProjectPath: string): readonly string[] {
@@ -55,7 +55,7 @@ export interface GodotRecoveryCommandDigestParts {
 /**
  * Deterministic digest over the fixed recovery command. The mirror path is
  * canonicalized to the marker so the digest is stable between approval and
- * execution while still binding every Solaris-chosen aspect of the command.
+ * execution while still binding every Siralos-chosen aspect of the command.
  */
 export function computeGodotRecoveryCommandDigest(parts: GodotRecoveryCommandDigestParts): string {
   const canonical = JSON.stringify(sortDeep(parts));
@@ -65,7 +65,7 @@ export function computeGodotRecoveryCommandDigest(parts: GodotRecoveryCommandDig
 export interface GodotRecoveryRunRequest {
   readonly installation: GodotInstallation;
   readonly engineProfile: GodotEngineProfile;
-  /** The prepared disposable mirror project path (Solaris-generated). */
+  /** The prepared disposable mirror project path (Siralos-generated). */
   readonly mirrorProjectPath: string;
   readonly runPaths: {
     readonly root: string;
@@ -78,7 +78,7 @@ export interface GodotRecoveryRunRequest {
 export type GodotRecoveryRunOutcome =
   | {
       readonly status: "completed";
-      readonly result: import("@solaris/core").SandboxedProcessResult;
+      readonly result: import("@siralos/core").SandboxedProcessResult;
     }
   | {
       readonly status: "unsupported";
@@ -97,7 +97,7 @@ export type GodotRecoveryRunOutcome =
         | "output-limit"
         | "failed";
       readonly message: string;
-      readonly result: import("@solaris/core").SandboxedProcessResult;
+      readonly result: import("@siralos/core").SandboxedProcessResult;
     };
 
 export interface GodotRecoveryRunnerDependencies {

@@ -1,11 +1,11 @@
 import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 
 /**
- * Authoritative Solaris slash-command catalog (Stage 3 milestone 6).
+ * Authoritative Siralos slash-command catalog (Stage 3 milestone 6).
  *
  * This is the SINGLE source of truth for the interactive command surface:
  * the CLI parser derives its `SlashCommand` union and lookup list from it,
- * `/help` renders its descriptions, and the built-in `@solaris`
+ * `/help` renders its descriptions, and the built-in `@siralos`
  * self-reference documents it. A command cannot exist in the interactive
  * session without appearing here (the exhaustive switch would not compile
  * for an id the parser cannot produce), and it cannot appear here without
@@ -37,7 +37,7 @@ export const COMMAND_CATALOG = [
   { id: "help", description: "Show this help", group: "session" },
   { id: "status", description: "Show provider, session, and workspace status", group: "session" },
   { id: "clear", description: "Clear the terminal (conversation is kept)", group: "session" },
-  { id: "exit", description: "Close Solaris", group: "session" },
+  { id: "exit", description: "Close Siralos", group: "session" },
   // --- inspection ---
   { id: "tools", description: "List the available tools", group: "inspection" },
   { id: "sandbox", description: "Show the sandbox backend status", group: "inspection" },
@@ -103,7 +103,7 @@ export const COMMAND_CATALOG = [
   { id: "checkpoints", description: "List recorded recovery checkpoints", group: "workspace" },
   {
     id: "undo",
-    description: "Undo the latest Solaris mutation (or /undo <checkpoint-id>)",
+    description: "Undo the latest Siralos mutation (or /undo <checkpoint-id>)",
     group: "workspace",
   },
   // --- workflow ---
@@ -228,12 +228,12 @@ export const COMMAND_CATALOG = [
   {
     id: "doctor",
     description:
-      "Run read-only Solaris capability diagnostics (areas: runtime, configuration, providers, sandbox, workspace, godot, project, references, research, capabilities)",
+      "Run read-only Siralos capability diagnostics (areas: runtime, configuration, providers, sandbox, workspace, godot, project, references, research, capabilities)",
     group: "doctor",
   },
   {
-    id: "solaris",
-    description: "Show the installed Solaris runtime identity and self-reference revision",
+    id: "siralos",
+    description: "Show the installed Siralos runtime identity and self-reference revision",
     group: "doctor",
   },
 ] as const satisfies readonly CommandCatalogEntry[];

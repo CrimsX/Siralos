@@ -14,7 +14,7 @@ import {
   type GodotSelectionPreference,
   type SafeDiagnostic,
   type SandboxBackend,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { UserGodotConfig } from "../../config/user-config.js";
 import { samePathIdentity } from "../../fs-path-identity.js";
 import {
@@ -217,7 +217,7 @@ export function createGodotEngineProfiler(
             invalidInstallation(
               "explicit",
               dependencies.overrideSource === "cli" ? "cli-path" : "environment-path",
-              dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SOLARIS_GODOT",
+              dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SIRALOS_GODOT",
               "The configured Godot application bundle is invalid.",
             ),
           );
@@ -235,7 +235,7 @@ export function createGodotEngineProfiler(
           installationFromIdentity(
             "explicit",
             dependencies.overrideSource === "cli" ? "cli-path" : "environment-path",
-            dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SOLARIS_GODOT",
+            dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SIRALOS_GODOT",
             validated.identity,
             "unknown",
           ),
@@ -245,7 +245,7 @@ export function createGodotEngineProfiler(
           invalidInstallation(
             "explicit",
             dependencies.overrideSource === "cli" ? "cli-path" : "environment-path",
-            dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SOLARIS_GODOT",
+            dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SIRALOS_GODOT",
             validated.error,
           ),
         );
@@ -253,7 +253,7 @@ export function createGodotEngineProfiler(
       emit({
         type: "godot_candidate_found",
         installationId: "explicit",
-        source: dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SOLARIS_GODOT",
+        source: dependencies.overrideSource === "cli" ? "CLI --godot-path" : "SIRALOS_GODOT",
       });
       return { candidates, duplicates: new Set() };
     }

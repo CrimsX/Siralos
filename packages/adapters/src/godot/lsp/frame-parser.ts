@@ -1,4 +1,4 @@
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 
 /**
  * Deterministic incremental LSP frame parser (JSON-RPC over
@@ -8,7 +8,7 @@ import { GODOT_LIMITS } from "@solaris/core";
  * Content-Length values; and requires valid UTF-8 JSON. Newline-delimited
  * JSON assumptions are never made. A protocol error fails the stream
  * deterministically: the parser reports the error once and ignores all
- * subsequent input, so Solaris never mis-parses a hostile stream.
+ * subsequent input, so Siralos never mis-parses a hostile stream.
  */
 
 export interface LSPFrameParseError {

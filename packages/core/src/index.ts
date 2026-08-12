@@ -59,13 +59,13 @@ export {
   type PreparedCommand,
 } from "./commands/command-runners.js";
 export {
-  createSolarisApplication,
+  createSiralosApplication,
   DEFAULT_MAX_TOOL_ROUNDS,
   PROVIDER_TURN_LIMITS,
   type ApplicationEvent,
   type SessionStatus,
-  type SolarisApplication,
-  type SolarisApplicationDependencies,
+  type SiralosApplication,
+  type SiralosApplicationDependencies,
 } from "./application/application.js";
 export {
   createScriptedProvider,
@@ -163,9 +163,9 @@ export {
 } from "./security/sandbox-error.js";
 export type { SandboxEvent } from "./security/sandbox-events.js";
 export {
-  createSolarisSecurity,
-  type SolarisSecurity,
-  type SolarisSecurityDependencies,
+  createSiralosSecurity,
+  type SiralosSecurity,
+  type SiralosSecurityDependencies,
 } from "./security/sandbox-service.js";
 export { GODOT_LIMITS } from "./godot/limits.js";
 export type { SafeDiagnostic } from "./godot/diagnostics.js";
@@ -198,7 +198,7 @@ export {
   type GodotEditionEvidence,
   type GodotEngineProfile,
   type GodotSupportClassificationInput,
-  type SolarisGodotSupport,
+  type SiralosGodotSupport,
 } from "./godot/engine-profile.js";
 export type {
   GodotApiDumpProbe,
@@ -1138,7 +1138,7 @@ export {
   type TokenEstimate,
 } from "./projection/context-estimator.js";
 export {
-  SOLARIS_SYSTEM_INSTRUCTIONS,
+  SIRALOS_SYSTEM_INSTRUCTIONS,
   createContextProjector,
   serializeContextPrefix,
   serializeSegments,
@@ -1450,7 +1450,7 @@ export {
   type SelfReferenceSearchMatch,
   type SelfReferenceSection,
   type SelfReferenceSectionId,
-  type SolarisRuntimeIdentity,
+  type SiralosRuntimeIdentity,
 } from "./self/self-reference.js";
 
 // --- Stage 3 milestone 6: capability doctor (read-only diagnostics) ---

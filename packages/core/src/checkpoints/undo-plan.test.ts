@@ -83,7 +83,7 @@ describe("planUndo", () => {
     });
   });
 
-  it("conflicts when an updated file changed after Solaris", () => {
+  it("conflicts when an updated file changed after Siralos", () => {
     expect(planUndo(checkpoint(), state(true, "C"))).toMatchObject({ decision: "conflict" });
   });
 

@@ -2,15 +2,15 @@ import type {
   GDScriptDevelopmentStatus,
   GodotProjectProbeStatus,
   ResearchService,
-  SolarisApplication,
-  SolarisSecurity,
+  SiralosApplication,
+  SiralosSecurity,
   GodotStatusSnapshot,
-} from "@solaris/core";
+} from "@siralos/core";
 import { formatQualitySummary, type StatusView } from "../output.js";
 import type { SessionInfo } from "./session-types.js";
 
 export async function buildSessionStatusView(
-  application: SolarisApplication,
+  application: SiralosApplication,
   sessionInfo: SessionInfo,
 ): Promise<StatusView> {
   const inspectionPromise = sessionInfo.git.inspectRepository().catch(() => null);
@@ -88,7 +88,7 @@ async function readGodotStatusSnapshot(
 
 function describeResearch(
   service: ResearchService,
-  decision: ReturnType<SolarisSecurity["evaluateCapability"]>,
+  decision: ReturnType<SiralosSecurity["evaluateCapability"]>,
 ): string {
   const state = decision.decision === "allow" ? "enabled" : "disabled";
   const count = service.sourceKinds().length;

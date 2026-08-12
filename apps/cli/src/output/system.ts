@@ -8,7 +8,7 @@ import {
   type GitWorkspaceStatus,
   type SandboxBackendStatus,
   type UndoOutcome,
-} from "@solaris/core";
+} from "@siralos/core";
 import { formatBytes, formatDuration, formatTimeoutSeconds } from "./format-utils.js";
 import { sanitizeForDisplay, sanitizePathForDisplay } from "./sanitize.js";
 

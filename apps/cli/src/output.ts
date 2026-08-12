@@ -6,9 +6,9 @@ import type {
   SandboxBackendStatus,
   SandboxProfile,
   SessionStatus,
-  SolarisSecurity,
-} from "@solaris/core";
-import { renderExecutorBrief } from "@solaris/core";
+  SiralosSecurity,
+} from "@siralos/core";
+import { renderExecutorBrief } from "@siralos/core";
 import type { SandboxDoctorReport } from "./bootstrap/sandbox-doctor.js";
 import { sanitizeForDisplay, sanitizePathForDisplay } from "./output/sanitize.js";
 import {
@@ -86,7 +86,7 @@ export {
   formatStructuralRead,
 } from "./output/context.js";
 export {
-  formatSolarisDoctorReport,
+  formatSiralosDoctorReport,
   formatSafeDoctorReport,
   formatSelfReference,
 } from "./output/doctor.js";
@@ -103,7 +103,7 @@ const CAPABILITIES: readonly Capability[] = [
 ];
 
 export function formatHeader(providerId: string): string {
-  return `Solaris
+  return `Siralos
 Interactive Godot development harness
 Provider: ${providerId}
 `;
@@ -128,7 +128,7 @@ export function formatHelp(): string {
   /git-status        Show Git availability and repository status
   /diff              Show a bounded Git diff (working, staged, or head)
   /checkpoints       List recorded recovery checkpoints
-  /undo              Undo the latest Solaris mutation (or /undo <checkpoint-id>)
+  /undo              Undo the latest Siralos mutation (or /undo <checkpoint-id>)
   /task <request>    Start a host-owned ad-hoc task (completion requires host verification)
   /task-status       Show the current task: phase, contract revision, criteria, steps, progress
   /godot             Show the selected Godot installation and project compatibility
@@ -151,7 +151,7 @@ export function formatHelp(): string {
   /development-status  Show the active development workflow's bounded status
   /quality           Show the current or final development quality report
   /review-change     Run a fresh read-only independent review of the current development change (no approval, no modifications)
-  /exit              Close Solaris
+  /exit              Close Siralos
 `;
 }
 
@@ -256,7 +256,7 @@ export function formatSandbox(status: SandboxBackendStatus, profile: SandboxProf
   }
   if (status.platform === "windows") {
     lines.push(
-      "Warning: the native Windows backend is alpha; do not treat it as secure until Solaris conformance passes.",
+      "Warning: the native Windows backend is alpha; do not treat it as secure until Siralos conformance passes.",
     );
   }
   return `${lines.join("\n")}\n`;
@@ -268,7 +268,7 @@ export function formatSandboxViolation(category: string, summary: string): strin
 
 export function formatDoctor(report: SandboxDoctorReport): string {
   const lines = [
-    "Solaris sandbox doctor",
+    "Siralos sandbox doctor",
     `Profile: ${report.profileId}`,
     `Backend: ${report.backendId}`,
     `Backend version: ${report.backendVersion}`,
@@ -310,7 +310,7 @@ export function formatDoctor(report: SandboxDoctorReport): string {
 
 export function formatTools(
   tools: readonly RegisteredToolInfo[],
-  security: SolarisSecurity,
+  security: SiralosSecurity,
 ): string {
   if (tools.length === 0) {
     return "Available tools:\n  (none)\n";
@@ -363,9 +363,9 @@ export function formatApprovalPrompt(request: ApprovalRequest): string {
     `Change: +${request.preview.totalAddedLines} -${request.preview.totalRemovedLines}`,
     "",
   ];
-  if (request.toolName === "solaris.undo") {
+  if (request.toolName === "siralos.undo") {
     lines.push(`Note: ${request.summary}`);
-    lines.push("This restores only the state recorded before the Solaris operation.");
+    lines.push("This restores only the state recorded before the Siralos operation.");
     lines.push("Any later file change will cause a conflict.");
     lines.push("");
   }
@@ -409,8 +409,8 @@ function formatPlanApprovalPrompt(
  * rendered, and plans are compact by validation bounds.
  */
 export function formatPlan(
-  plan: import("@solaris/core").TaskPlan,
-  state: import("@solaris/core").TaskPlanState | null,
+  plan: import("@siralos/core").TaskPlan,
+  state: import("@siralos/core").TaskPlanState | null,
 ): string {
   const lines = [
     `Plan rev ${plan.revision} \u2014 ${plan.depth === "full" ? "Full" : "Light"}`,
@@ -491,7 +491,7 @@ export function formatPlan(
 }
 
 /** Compact planning status block appended to /development-status and /status. */
-export function formatPlanningStatus(task: import("@solaris/core").TaskState | null): string {
+export function formatPlanningStatus(task: import("@siralos/core").TaskState | null): string {
   if (task === null || task.plan.state === "none") {
     return "Planning: none\n";
   }
@@ -506,7 +506,7 @@ export function formatPlanningStatus(task: import("@solaris/core").TaskState | n
 
 /** Rendered executor brief with its identity and fingerprint (dry-run surface). */
 export function formatExecutorBrief(
-  brief: import("@solaris/core").ExecutorBrief,
+  brief: import("@siralos/core").ExecutorBrief,
   fingerprint: string | null,
 ): string {
   const identity = [
@@ -524,8 +524,8 @@ export function formatExecutorBrief(
 
 /** Milestone manifest summary plus its evidence-backed acceptance status. */
 export function formatMilestoneManifest(
-  manifest: import("@solaris/core").MilestoneManifest,
-  report: import("@solaris/core").MilestoneAcceptanceReport | null,
+  manifest: import("@siralos/core").MilestoneManifest,
+  report: import("@siralos/core").MilestoneAcceptanceReport | null,
 ): string {
   const lines = [
     `Milestone ${manifest.id} rev ${manifest.version} \u2014 ${manifest.title}`,
@@ -569,7 +569,7 @@ function formatGodotProbeApprovalPrompt(
     "Engine:",
     `  ${preview.engineVersion}`,
     `  ${preview.engineEdition} edition`,
-    `  Solaris support: ${preview.support}`,
+    `  Siralos support: ${preview.support}`,
     `  Static compatibility: ${preview.compatibility}`,
     "",
     "Static risk inventory:",
@@ -614,7 +614,7 @@ function formatGodotLSPSessionApprovalPrompt(
     "Engine:",
     `  ${preview.engineVersion}`,
     `  ${preview.engineEdition} edition`,
-    `  Solaris support: ${preview.support}`,
+    `  Siralos support: ${preview.support}`,
     `  Static compatibility: ${preview.compatibility}`,
     "",
     "Project intelligence:",

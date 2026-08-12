@@ -17,7 +17,7 @@ supersedes: []
 
 ## Context
 
-Solaris executor prompts repeatedly restate permanent requirements in
+Siralos executor prompts repeatedly restate permanent requirements in
 prose: architecture boundaries, Git discipline, security posture,
 validation commands, testing expectations, and reporting rules. Each
 milestone brief is therefore a large hand-maintained document that
@@ -29,7 +29,7 @@ milestone brief is therefore a large hand-maintained document that
 - makes milestone maintenance manual and error-prone, and
 - gives completion claims no shared, evidence-backed vocabulary.
 
-Solaris already owns the authoritative pieces: the revisioned
+Siralos already owns the authoritative pieces: the revisioned
 TaskContract and host-owned TaskState (ADR 0014), the bounded projection
 boundaries (ADR 0015), path-scoped instructions and project knowledge
 (ADR 0017), host-controlled planning with verified/candidate
@@ -40,7 +40,7 @@ acceptance mechanism.
 
 ## Decision
 
-Introduce a Solaris-owned structured execution model with seven distinct
+Introduce a Siralos-owned structured execution model with seven distinct
 artifacts:
 
 1. **Execution Contract** — the versioned, immutable repository-owned

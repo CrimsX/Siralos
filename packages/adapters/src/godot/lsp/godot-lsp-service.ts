@@ -18,7 +18,7 @@ import {
   type PreparedGDScriptSession,
   type ProjectMirror,
   type SandboxBackend,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { RunDirectoryProvider } from "../../process/run-directories.js";
 import type { GodotEngineProfileCache } from "../cache/engine-profile-cache.js";
 import type { UserGodotConfig } from "../../config/user-config.js";
@@ -279,13 +279,13 @@ export function createGDScriptLanguageService(
     );
   }
 
-  function activeSession(): import("@solaris/core").GDScriptLanguageSession | null {
+  function activeSession(): import("@siralos/core").GDScriptLanguageSession | null {
     return null;
   }
 
   async function selectedEngine(
     signal?: AbortSignal,
-  ): Promise<import("@solaris/core").GodotSelectedEngine | null> {
+  ): Promise<import("@siralos/core").GodotSelectedEngine | null> {
     const selection = await profiler.selectedProfile(signal);
     if (selection === null || selection.installation.status !== "valid") {
       return null;

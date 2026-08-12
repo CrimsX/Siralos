@@ -6,7 +6,7 @@ import {
 } from "./reference-resolver.js";
 import { createFakeRepositoryMaterializer } from "./reference-test-support.js";
 import { createReferenceServices } from "./reference-services.js";
-import type { ReferenceAlias } from "@solaris/core";
+import type { ReferenceAlias } from "@siralos/core";
 import {
   createTempWorkspace,
   writeFixtureFiles,

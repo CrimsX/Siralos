@@ -8,7 +8,7 @@ import type {
   ToolExecutionResult,
   ToolProjector,
   ToolRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   DEFAULT_MAX_TOOL_ROUNDS,
   QUALITY_LIMITS,
@@ -18,7 +18,7 @@ import {
   isPreparedMutationTool,
   isPreparedProbeTool,
   normalizeReviewFindings,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   collectBoundedModelTurn,
   detachBoundedToolResult,
@@ -321,11 +321,11 @@ const READ_ONLY_REVIEWER_CAPABILITIES = new Set([
 ]);
 
 function isPlainReviewerTool(tool: RegisteredTool): tool is {
-  readonly definition: import("@solaris/core").ToolDefinition;
-  readonly capability?: import("@solaris/core").Capability;
+  readonly definition: import("@siralos/core").ToolDefinition;
+  readonly capability?: import("@siralos/core").Capability;
   readonly execute: (
     input: unknown,
-    context: import("@solaris/core").ToolExecutionContext,
+    context: import("@siralos/core").ToolExecutionContext,
   ) => Promise<ToolExecutionResult>;
 } {
   if (

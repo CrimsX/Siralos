@@ -5,7 +5,7 @@ import {
   type CapabilityPolicy,
   type SelfReference,
   type RegisteredToolInfo,
-} from "@solaris/core";
+} from "@siralos/core";
 
 /**
  * Composition-root self-reference builder (Stage 3 milestone 6).
@@ -17,7 +17,7 @@ import {
  * No Git/build metadata is invented when unavailable.
  */
 
-export function readInstalledSolarisVersion(): string {
+export function readInstalledSiralosVersion(): string {
   try {
     // The module lives at <package>/bootstrap/self-reference.js, so the
     // installed package.json is two levels up (src and dist both keep the
@@ -42,7 +42,7 @@ export function createRuntimeSelfReference(input: {
 }): SelfReference {
   return createSelfReference({
     runtime: {
-      version: readInstalledSolarisVersion(),
+      version: readInstalledSiralosVersion(),
       nodeMajor: runningNodeMajor(),
       platform: process.platform,
     },

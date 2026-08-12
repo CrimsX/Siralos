@@ -1,4 +1,4 @@
-import { GitError, type SandboxedProcessResult } from "@solaris/core";
+import { GitError, type SandboxedProcessResult } from "@siralos/core";
 
 export const GIT_ALLOWED_SUBCOMMANDS: readonly string[] = [
   "version",
@@ -8,7 +8,7 @@ export const GIT_ALLOWED_SUBCOMMANDS: readonly string[] = [
 ];
 
 /**
- * Environment variables Solaris pins for every Git invocation. Caller
+ * Environment variables Siralos pins for every Git invocation. Caller
  * values for these names are always discarded; only the pinned values reach
  * the child. `GIT_CONFIG_NOSYSTEM=1` keeps a compromised or malicious
  * machine-wide system Git config from being read at all.
@@ -66,7 +66,7 @@ const GIT_STRIPPED_ENVIRONMENT_PATTERNS: readonly RegExp[] = [
  * Command-line configuration overrides applied before every Git subcommand.
  * Command-line `-c` settings take precedence over repository, user, and
  * system configuration, so repository-local configuration cannot re-enable a
- * disabled behavior, and later arguments cannot override them (Solaris
+ * disabled behavior, and later arguments cannot override them (Siralos
  * builds the argument array itself; providers only select high-level options).
  *
  * The override set neutralizes every configuration mechanism that can
@@ -134,7 +134,7 @@ export function buildGitInvocation(subcommand: string, args: readonly string[]):
   if (!GIT_ALLOWED_SUBCOMMANDS.includes(subcommand)) {
     throw new GitError(
       "git_status_failed",
-      `Git subcommand "${subcommand}" is not allowed by Solaris.`,
+      `Git subcommand "${subcommand}" is not allowed by Siralos.`,
     );
   }
   return [...GIT_DISABLING_CONFIG, "--no-pager", "--literal-pathspecs", subcommand, ...args];

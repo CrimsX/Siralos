@@ -7,7 +7,7 @@ import {
   type GodotPluginSummary,
   type GodotScanTruncationReason,
   type SafeDiagnostic,
-} from "@solaris/core";
+} from "@siralos/core";
 import { containsCodeToken } from "./lexical.js";
 import { scanProjectFiles, type BoundedScanResult } from "./bounded-scan.js";
 import {

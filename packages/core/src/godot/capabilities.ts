@@ -82,7 +82,7 @@ export const GODOT_KNOWN_OPTIONS: readonly {
 
 /**
  * Option tokens that must never be passed to a Godot probe executable.
- * Fixed Solaris probes pass only `--version`, `--help`, or
+ * Fixed Siralos probes pass only `--version`, `--help`, or
  * `--dump-extension-api`; these project-affecting tokens are prohibited in
  * probe invocation code and used by the architecture guardrail.
  */

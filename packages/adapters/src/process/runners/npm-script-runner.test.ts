@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CommandPreparationResult } from "@solaris/core";
+import type { CommandPreparationResult } from "@siralos/core";
 import { createSha256CommandDigestService } from "../command-digest.js";
 import { createNpmScriptRunner } from "./npm-script-runner.js";
 

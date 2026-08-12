@@ -10,7 +10,7 @@ import {
 } from "./authored-files.js";
 
 async function fixture(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-authored-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-authored-"));
   await mkdir(join(root, "scripts"), { recursive: true });
   await writeFile(join(root, "project.godot"), '[application]\nconfig/name="Test"\n');
   await writeFile(join(root, "scripts", "tool.gd"), "extends Node\n");
@@ -26,7 +26,7 @@ function probeSymlinkSupport(): boolean {
   let supported = false;
   let probeDir: string | undefined;
   try {
-    probeDir = mkdtempSync(join(tmpdir(), "solaris-authored-symlink-probe-"));
+    probeDir = mkdtempSync(join(tmpdir(), "siralos-authored-symlink-probe-"));
     const target = join(probeDir, "target.txt");
     writeFileSync(target, "x");
     symlinkSync(target, join(probeDir, "link.txt"));
@@ -91,7 +91,7 @@ describe("scanAuthoredFiles", () => {
 
   it("skips symbolic links without following them", { skip: !SYMLINKS_SUPPORTED }, async () => {
     const root = await fixture();
-    const outside = await mkdtemp(join(tmpdir(), "solaris-authored-outside-"));
+    const outside = await mkdtemp(join(tmpdir(), "siralos-authored-outside-"));
     try {
       await writeFile(join(outside, "secret.txt"), "outside content");
       await symlink(join(outside, "secret.txt"), join(root, "link.txt"));
@@ -129,7 +129,7 @@ describe("scanAuthoredFiles", () => {
   });
 
   it("truncates at the directory-entry bound without materializing fanout", async () => {
-    const root = await mkdtemp(join(tmpdir(), "solaris-authored-fanout-"));
+    const root = await mkdtemp(join(tmpdir(), "siralos-authored-fanout-"));
     try {
       for (let index = 0; index < 500; index += 1) {
         await writeFile(join(root, `f${String(index).padStart(4, "0")}.txt`), "x");

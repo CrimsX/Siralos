@@ -66,7 +66,7 @@ describe("workspace.create_file fail-closed availability", () => {
   });
 
   it("exposes an honest definition and capability", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-create-tool-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-create-tool-"));
     const tool = createWorkspaceCreateFileTool(workspaceRoot, createMutationLock(), {
       prepare(): Promise<never> {
         return Promise.reject(new Error("checkpoint store must not be reached"));

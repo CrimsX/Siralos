@@ -21,7 +21,7 @@ security policy would all look like equally binding instructions. That
 makes context unreliable (the model cannot tell what it must obey, what it
 may trust, and what merely happened) and unsafe (a crafted fact or
 instruction could masquerade as policy, grant itself capabilities, or
-rewrite the rules governing future work). Solaris already separates
+rewrite the rules governing future work). Siralos already separates
 authoritative state (tasks, approvals, sandboxing, checkpoints) from
 model-facing projections (ADR 0014, ADR 0015) and binds reads to exact file
 revisions (ADR 0016); this milestone extends the same discipline to
@@ -33,7 +33,7 @@ scene/resource intelligence is built.
 Separate four authority classes explicitly:
 
 ```text
-INSTRUCTIONS  tell Solaris/model how work should be performed
+INSTRUCTIONS  tell Siralos/model how work should be performed
 KNOWLEDGE     records factual claims about the project
 HISTORY       records what happened or was observed
 SECURITY      hard host policy (outside both instruction and knowledge)
@@ -52,7 +52,7 @@ SECURITY      hard host policy (outside both instruction and knowledge)
   links never traversed, bounded walk) and never fetches remote
   instructions.
 - **Protected behavioral configuration**: `AGENTS.md` at any workspace
-  depth and `.solaris/**` are classified by one shared core predicate.
+  depth and `.siralos/**` are classified by one shared core predicate.
   Ordinary `workspace.write` capability never covers them; the pure
   change-set validator and the adapter write-path guards reject
   behavioral-configuration mutations before any write, approval, or

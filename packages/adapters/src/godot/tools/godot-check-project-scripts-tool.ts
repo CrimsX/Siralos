@@ -5,7 +5,7 @@ import type {
   PreparedGDScriptCheck,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { errorMessage } from "../../support/error-message.js";
 
 /**
@@ -111,7 +111,7 @@ function parseInput(
 }
 
 function mapPreparation(
-  prepared: import("@solaris/core").GodotCheckPreparationResult,
+  prepared: import("@siralos/core").GodotCheckPreparationResult,
 ): GodotDiagnosticToolPreparationResult {
   if (prepared.status === "ready") {
     return {
@@ -127,7 +127,7 @@ function mapPreparation(
   return { status: prepared.status, message: prepared.message };
 }
 
-function toJsonDiagnostic(diagnostic: import("@solaris/core").GodotGDScriptDiagnostic): {
+function toJsonDiagnostic(diagnostic: import("@siralos/core").GodotGDScriptDiagnostic): {
   readonly source: string;
   readonly severity: string;
   readonly path: string | null;
@@ -150,7 +150,7 @@ function toJsonDiagnostic(diagnostic: import("@solaris/core").GodotGDScriptDiagn
 }
 
 function mapExecution(
-  result: import("@solaris/core").GodotProjectCheckResult,
+  result: import("@siralos/core").GodotProjectCheckResult,
 ): ToolExecutionResult {
   if (result.status === "checked") {
     return { status: "success", output: {}, summary: "Check completed." };

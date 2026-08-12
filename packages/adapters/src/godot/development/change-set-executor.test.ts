@@ -3,7 +3,7 @@ import type {
   ChangeSetApplyRequest,
   ChangeSetFilePrimitives,
   CheckpointStore,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createHash } from "node:crypto";
 import {
   applyChangeSetProtocol,

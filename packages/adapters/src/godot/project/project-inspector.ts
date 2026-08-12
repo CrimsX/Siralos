@@ -4,7 +4,7 @@ import {
   type GodotApplicationEvent,
   type GodotProjectProfile,
   type SafeDiagnostic,
-} from "@solaris/core";
+} from "@siralos/core";
 import { scanProjectFile } from "./project-scanner.js";
 import { readProjectFile } from "./project-files.js";
 import { detectLanguageProfile } from "./language-profile.js";

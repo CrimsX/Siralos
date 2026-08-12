@@ -3,7 +3,7 @@ import {
   createPreparedGDScriptSession,
   type GDScriptLSPSessionPreview,
   type PreparedGDScriptSession,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createPreparedPlanStore, type PreparedPlanStore } from "../probe/prepared-plan-store.js";
 
 export interface PreparedLSPSessionPlan {
@@ -12,8 +12,8 @@ export interface PreparedLSPSessionPlan {
   readonly digest: string;
   readonly manifestDigest: string;
   readonly selection: {
-    readonly installation: import("@solaris/core").GodotInstallation;
-    readonly profile: import("@solaris/core").GodotEngineProfile;
+    readonly installation: import("@siralos/core").GodotInstallation;
+    readonly profile: import("@siralos/core").GodotEngineProfile;
   };
 }
 

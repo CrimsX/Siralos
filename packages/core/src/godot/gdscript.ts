@@ -70,10 +70,10 @@ export interface GodotDiagnosticPreview {
 }
 
 /**
- * Fixed Solaris-owned parts the prepared-check digest binds. The check-only
+ * Fixed Siralos-owned parts the prepared-check digest binds. The check-only
  * command digest is computed by the adapter over the fixed argument
  * template (mirror paths canonicalized to markers); the sandbox profile and
- * check limits are Solaris-fixed constants. Provider input cannot influence
+ * check limits are Siralos-fixed constants. Provider input cannot influence
  * any of them.
  */
 export interface GodotCheckOnlyCommandDigestParts {

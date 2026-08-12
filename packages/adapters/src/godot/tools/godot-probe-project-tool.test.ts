@@ -5,7 +5,7 @@ import type {
   GodotRecoveryProbeResult,
   PreparedGodotProbe,
   ToolExecutionContext,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGodotProbeProjectTool } from "./godot-probe-project-tool.js";
 
 function preview() {

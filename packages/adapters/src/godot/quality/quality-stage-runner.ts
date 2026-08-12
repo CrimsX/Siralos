@@ -23,8 +23,8 @@ import {
   type QualityValidationExecutor,
   type ValidationPlanDiscovery,
   type ValidationRunOutcome,
-} from "@solaris/core";
-import { aggregateReviewResults } from "@solaris/core";
+} from "@siralos/core";
+import { aggregateReviewResults } from "@siralos/core";
 
 /**
  * Deterministic quality-stage runner (ADR 0013 §7–§11, §17–§24).
@@ -78,7 +78,7 @@ export interface QualityStageInput {
     readonly executor: QualityValidationExecutor;
   };
   /** Bounded derived impact context (Stage 3 milestone 9); optional. */
-  readonly reviewContext?: import("@solaris/core").ReviewContextManifest;
+  readonly reviewContext?: import("@siralos/core").ReviewContextManifest;
   readonly previousFindingIds: readonly string[];
   readonly reviewRound: number;
   readonly repairRoundsUsed: number;
@@ -542,7 +542,7 @@ export function buildChangeReviewRequest(input: {
   readonly previousFindingIds: readonly string[];
   readonly reviewRound: number;
   /** Bounded derived impact context (Stage 3 milestone 9); optional. */
-  readonly reviewContext?: import("@solaris/core").ReviewContextManifest;
+  readonly reviewContext?: import("@siralos/core").ReviewContextManifest;
 }): ChangeReviewRequest {
   const metrics = computeMetrics(input.files);
   const evidenceSummary: QualityEvidence[] = [

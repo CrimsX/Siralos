@@ -12,7 +12,7 @@ Status: accepted
 
 ## Context
 
-GDScript intelligence in Solaris is currently per-invocation: `--check-only`
+GDScript intelligence in Siralos is currently per-invocation: `--check-only`
 parser runs (ADR 0010) validate one script at a time against a disposable
 mirror. Real development needs persistent, project-aware language
 intelligence — diagnostics as the project changes, hover, completion, and
@@ -20,7 +20,7 @@ go-to-definition — which only a running language server can provide. Godot
 4.x ships a GDScript LSP server inside its editor, selectable with
 `--lsp-port`.
 
-Running a language server is the most privileged Godot operation Solaris
+Running a language server is the most privileged Godot operation Siralos
 performs so far: a long-lived editor process that reads project source and
 answers protocol requests. The source workspace is untrusted, so the LSP
 session must never run against it. The security boundary is a stack, not a
@@ -49,7 +49,7 @@ alone is never described as the security boundary.
   and quit options are prohibited; the source workspace never becomes the
   project path; no user-supplied Godot arguments exist. The architecture
   check enforces the pairing structurally.
-- **The LSP port is Solaris-generated, loopback-only, and dynamic.** The
+- **The LSP port is Siralos-generated, loopback-only, and dynamic.** The
   allocator binds `127.0.0.1:0`, records the OS-assigned ephemeral port,
   and closes; the OS allocation is the race answer. No fixed shared port,
   no large-range scanning, no UPNP/port forwarding, no provider-controlled
@@ -83,13 +83,13 @@ alone is never described as the security boundary.
   `$/cancelRequest`), late/duplicate responses ignored safely, malformed
   responses reported as protocol errors without crashing, shutdown drains
   pending state, close rejects new requests.
-- Initialization advertises only what Solaris uses: text-document
+- Initialization advertises only what Siralos uses: text-document
   synchronization, diagnostics, hover, completion, definition. Mutation
   capabilities are never advertised.
 - Diagnostics, hover, completion, and definition payloads are normalized
   conservatively into the existing provider-neutral models: mirror URIs →
   workspace-relative paths (out-of-mirror URIs rejected), 0-based LSP
-  positions → 1-based Solaris positions, bounded counts and sizes,
+  positions → 1-based Siralos positions, bounded counts and sizes,
   control characters sanitized, markup treated as data (never executed or
   rendered), malformed items skipped safely, insertText returned but never
   applied, external definition locations represented conservatively
@@ -149,5 +149,5 @@ increase any limit; truncation is explicit.
   next narrow task is the LSP-assisted edit/diagnose/repair loop.
 - The architecture check now enforces: sockets only inside the approved
   LSP and sandbox adapters, the fixed recovery LSP tuple with no
-  DAP/debug/scene/import options, mirror-only paths, Solaris-owned port
+  DAP/debug/scene/import options, mirror-only paths, Siralos-owned port
   values, and the mutation-method prohibition.

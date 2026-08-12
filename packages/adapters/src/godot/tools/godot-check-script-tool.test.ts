@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GodotDiagnostics } from "@solaris/core";
+import type { GodotDiagnostics } from "@siralos/core";
 import { createGodotCheckScriptTool } from "./godot-check-script-tool.js";
 
 function diagnosticsService(

@@ -12,7 +12,7 @@ import { computeArtifactDigest } from "../identity/artifact-digest.js";
  */
 
 export interface EnvironmentManifestInput {
-  readonly solarisVersion: string | null;
+  readonly siralosVersion: string | null;
   readonly nodeVersion: string | null;
   readonly npmVersion: string | null;
   readonly platform: string | null;
@@ -45,7 +45,7 @@ export function createEnvironmentManifest(input: EnvironmentManifestInput): Envi
     artifactType: "EnvironmentManifest",
     schemaVersion: 1,
     payload: {
-      solarisVersion: input.solarisVersion,
+      siralosVersion: input.siralosVersion,
       nodeVersion: input.nodeVersion,
       npmVersion: input.npmVersion,
       platform: input.platform,
@@ -76,7 +76,7 @@ export interface EnvironmentDelta {
 }
 
 const ENVIRONMENT_SECTIONS = [
-  "solarisVersion",
+  "siralosVersion",
   "nodeVersion",
   "npmVersion",
   "platform",

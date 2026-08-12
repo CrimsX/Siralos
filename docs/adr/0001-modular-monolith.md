@@ -12,7 +12,7 @@ Status: accepted
 
 ## Context
 
-Solaris must grow from an interactive foundation into a Godot development harness with UI, application logic, provider integrations, Godot integration, persistence, and optionally multi-agent workflows. Early choices for process topology and module boundaries shape every later stage.
+Siralos must grow from an interactive foundation into a Godot development harness with UI, application logic, provider integrations, Godot integration, persistence, and optionally multi-agent workflows. Early choices for process topology and module boundaries shape every later stage.
 
 Options considered:
 
@@ -22,12 +22,12 @@ Options considered:
 
 ## Decision
 
-Build Solaris as a modular monolith:
+Build Siralos as a modular monolith:
 
 - One npm workspace repository with `apps/*` and `packages/*`.
-- `@solaris/core` owns application behaviour and external contracts (ports), imports no Node infrastructure, adapters, or UI code.
-- `@solaris/adapters` implements core-owned ports.
-- `@solaris/cli` is a terminal input/output adapter.
+- `@siralos/core` owns application behaviour and external contracts (ports), imports no Node infrastructure, adapters, or UI code.
+- `@siralos/adapters` implements core-owned ports.
+- `@siralos/cli` is a terminal input/output adapter.
 - Exactly one composition root creates concrete dependencies by direct manual composition.
 - Package boundaries and dependency direction are enforced by a small custom script (`scripts/check-architecture.mjs`), not by a large framework.
 - TypeScript project references give the workspace real build boundaries and build order.

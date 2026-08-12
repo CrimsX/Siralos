@@ -1,10 +1,10 @@
-import type { ReferenceRevision, ReferenceSource } from "@solaris/core";
+import type { ReferenceRevision, ReferenceSource } from "@siralos/core";
 
 /**
  * Reference managed-cache metadata and store (Stage 3 milestone 5).
  *
- * The managed cache is Solaris-owned private storage OUTSIDE the workspace
- * (documented layout `~/.solaris/references/<fingerprint>/` with a
+ * The managed cache is Siralos-owned private storage OUTSIDE the workspace
+ * (documented layout `~/.siralos/references/<fingerprint>/` with a
  * `metadata.json` and the materialized content beneath it). The cache is
  * never model-facing: no absolute cache path ever reaches the model, and
  * cache content is never presented as workspace material.
@@ -47,7 +47,7 @@ export const REFERENCE_CACHE_UNAVAILABLE_MESSAGE =
 
 export interface CreateReferenceCacheStoreOptions {
   /**
-   * Reserved: the documented cache layout is `~/.solaris/references/`.
+   * Reserved: the documented cache layout is `~/.siralos/references/`.
    * The real store never touches the filesystem, so no root is ever used.
    */
   readonly root?: string;

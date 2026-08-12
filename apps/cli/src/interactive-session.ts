@@ -1,4 +1,4 @@
-import type { SolarisApplication, ProjectionMode, TaskRuntime } from "@solaris/core";
+import type { SiralosApplication, ProjectionMode, TaskRuntime } from "@siralos/core";
 import { parseInput } from "./input/parse-input.js";
 import type { InputQueue } from "./input/input-queue.js";
 import type { SessionControls, SessionIO, SessionInfo } from "./session/session-types.js";
@@ -61,7 +61,7 @@ import {
   formatProviderFailure,
   formatQualityReport,
   formatStatus,
-  formatSolarisDoctorReport,
+  formatSiralosDoctorReport,
   formatSelfReference,
   formatToolCancelled,
   formatToolCompleted,
@@ -99,7 +99,7 @@ export function createSessionControls(): SessionControls {
 
 export async function runInteractiveSession(
   io: SessionIO,
-  application: SolarisApplication,
+  application: SiralosApplication,
   sessionInfo: SessionInfo,
   controls: SessionControls = createSessionControls(),
   inputQueue?: InputQueue,
@@ -281,9 +281,9 @@ export async function runInteractiveSession(
             );
             break;
           case "doctor":
-            await runSolarisDoctorCommand(io, sessionInfo, parsed.args);
+            await runSiralosDoctorCommand(io, sessionInfo, parsed.args);
             break;
-          case "solaris":
+          case "siralos":
             io.write(formatSelfReference(sessionInfo.selfReference));
             break;
           case "knowledge":
@@ -347,7 +347,7 @@ function runReferenceCommand(
   );
 }
 
-async function runSolarisDoctorCommand(
+async function runSiralosDoctorCommand(
   io: SessionIO,
   sessionInfo: SessionInfo,
   args: readonly string[],
@@ -373,7 +373,7 @@ async function runSolarisDoctorCommand(
     if (jsonOutput) {
       io.write(`${JSON.stringify(report, null, 2)}\n`);
     } else {
-      io.write(formatSolarisDoctorReport(report));
+      io.write(formatSiralosDoctorReport(report));
     }
   } catch (error: unknown) {
     io.write(formatProviderFailure(describeError(error)));
@@ -404,7 +404,7 @@ function sessionDoctorDependencies(sessionInfo: SessionInfo, mode: string): CliD
 
 async function runPrompt(
   io: SessionIO,
-  application: SolarisApplication,
+  application: SiralosApplication,
   text: string,
   controls: SessionControls,
   inputBuffer: string[],

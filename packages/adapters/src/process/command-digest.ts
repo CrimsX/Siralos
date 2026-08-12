@@ -3,7 +3,7 @@ import {
   canonicalizeCommandDigest,
   type CommandDigestParts,
   type CommandDigestService,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export function createSha256CommandDigestService(): CommandDigestService {
   return {

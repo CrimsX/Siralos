@@ -11,8 +11,8 @@ import {
   type ModelProvider,
   type ModelRequest,
   type ProjectionMode,
-} from "@solaris/core";
-import { createGodotInspectSceneTool } from "@solaris/adapters";
+} from "@siralos/core";
+import { createGodotInspectSceneTool } from "@siralos/adapters";
 import {
   createBehaviorLoopHarness,
   FIXTURE_CONTENT,
@@ -50,7 +50,7 @@ function createScriptedProvider(
   return {
     id: "scripted-scene-provider",
     toolCalling: true,
-    stream(request: ModelRequest): AsyncIterable<import("@solaris/core").ModelEvent> {
+    stream(request: ModelRequest): AsyncIterable<import("@siralos/core").ModelEvent> {
       onRequest?.(request);
       const step = steps[cursor++];
       return (async function* () {

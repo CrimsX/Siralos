@@ -19,7 +19,7 @@ import { samePathIdentity } from "../../fs-path-identity.js";
  *
  * Assumption (documented, not guaranteed): Linux and macOS Godot binaries
  * are self-contained and run correctly from a private copy for the fixed
- * Solaris probe invocations (`--version`, `--help`, `--dump-extension-api`).
+ * Siralos probe invocations (`--version`, `--help`, `--dump-extension-api`).
  * The copy is byte-verified, so executing it executes exactly the validated
  * bytes; the enclosing `.app` bundle of a macOS installation is never
  * required at probe time.
@@ -27,7 +27,7 @@ import { samePathIdentity } from "../../fs-path-identity.js";
 export interface StageVerifiedExecutableCopyOptions {
   /** Canonical validated source path (never executed directly). */
   readonly sourcePath: string;
-  /** Verified Solaris-owned run root; the copy is created directly inside it. */
+  /** Verified Siralos-owned run root; the copy is created directly inside it. */
   readonly runRoot: string;
   /** Expected SHA-256 of the executed bytes (the validated identity). */
   readonly expectedSha256: string;
@@ -39,7 +39,7 @@ export type StageVerifiedExecutableCopyResult =
   { readonly ok: true; readonly copyPath: string } | { readonly ok: false; readonly error: string };
 
 /** Fixed private copy name inside each probe's run directory. */
-export const PRIVATE_EXECUTABLE_COPY_NAME = "solaris-godot-executable";
+export const PRIVATE_EXECUTABLE_COPY_NAME = "siralos-godot-executable";
 
 const STREAM_CHUNK_BYTES = 64 * 1024;
 

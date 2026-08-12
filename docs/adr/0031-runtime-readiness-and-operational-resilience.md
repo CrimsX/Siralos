@@ -86,7 +86,7 @@ Evidence/Artifact` with deterministic ids and `RunTraceRef` on
   evidence → cleanup run-owned state → terminal cancelled outcome.
 - **Restart reconciliation** (`runtime/budget.ts`):
   `classifyIncompleteRun` conservatively produces
-  interrupted/unknown/cleanup_required; Solaris restart never implies the
+  interrupted/unknown/cleanup_required; Siralos restart never implies the
   external process is gone, and success is never fabricated. No durable
   job system.
 - **Fault-injection harness** (`runtime/faults.ts`): deterministic fake

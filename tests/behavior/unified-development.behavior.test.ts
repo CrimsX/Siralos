@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { DevelopmentEvent, TaskState } from "@solaris/core";
+import type { DevelopmentEvent, TaskState } from "@siralos/core";
 import {
   createBehaviorLoopHarness,
   readWorkspaceFile,

@@ -2,7 +2,7 @@
  * Protected behavioral configuration (Stage 3 milestone 4).
  *
  * Behavioral configuration files receive stricter mutation treatment than
- * ordinary source: they define how Solaris and the model behave, so a
+ * ordinary source: they define how Siralos and the model behave, so a
  * normal `workspace.write` grant must never implicitly cover them.
  * Behavioral modification requires its own host authorization path, which
  * is not offered at this stage — every mutation surface fails closed
@@ -11,14 +11,14 @@
  * Protected surfaces included here map to actual repository conventions:
  *
  *   AGENTS.md        — project instruction files at any workspace depth
- *   .solaris/**      — Solaris behavioral configuration directory
+ *   .siralos/**      — Siralos behavioral configuration directory
  *
  * Future surfaces (workflow definitions, skills, agent definitions,
  * plugin/MCP configuration) slot into the same classifier when they
  * exist; they are deliberately not invented here.
  */
 
-export const BEHAVIORAL_CONFIG_DIRECTORY = ".solaris";
+export const BEHAVIORAL_CONFIG_DIRECTORY = ".siralos";
 export const BEHAVIORAL_INSTRUCTION_FILE = "AGENTS.md";
 
 /**

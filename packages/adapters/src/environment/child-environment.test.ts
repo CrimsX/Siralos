@@ -31,7 +31,7 @@ function sampleParent(): Record<string, string> {
     AZURE_CLIENT_SECRET: "azure-fake",
     GOOGLE_API_KEY: "google-fake",
     SSH_AUTH_SOCK: "/run/user/1000/ssh-agent",
-    SOLARIS_CONFIG: "/home/user/.solaris/config.json",
+    SIRALOS_CONFIG: "/home/user/.siralos/config.json",
     MY_CUSTOM_TOKEN: "custom-fake",
     DATABASE_PASSWORD: "db-fake",
     MY_SECRET_VALUE: "secret-fake",
@@ -88,9 +88,9 @@ describe("buildChildEnvironment", () => {
     expect(environment["MY_SECRET_VALUE"]).toBeUndefined();
   });
 
-  it("removes Solaris configuration overrides", () => {
+  it("removes Siralos configuration overrides", () => {
     const environment = buildChildEnvironment(sampleParent(), PATHS);
-    expect(environment["SOLARIS_CONFIG"]).toBeUndefined();
+    expect(environment["SIRALOS_CONFIG"]).toBeUndefined();
   });
 
   it("drops unrelated user variables that are not on the allowlist", () => {
@@ -172,7 +172,7 @@ describe("buildChildEnvironment", () => {
     ).toHaveLength(1);
   });
 
-  it("never lets Solaris-controlled home and temp values be bypassed through alternate casing", () => {
+  it("never lets Siralos-controlled home and temp values be bypassed through alternate casing", () => {
     const environment = buildChildEnvironment(
       {
         home: "/evil/home",
@@ -184,7 +184,7 @@ describe("buildChildEnvironment", () => {
       PATHS,
       "win32",
     );
-    // Solaris-controlled values always win; alternate-cased parent values
+    // Siralos-controlled values always win; alternate-cased parent values
     // are collapsed into the canonical spellings and overwritten.
     const homeVariables = Object.keys(environment).filter(
       (name) =>
@@ -200,7 +200,7 @@ describe("buildChildEnvironment", () => {
     expect(environment["TMPDIR"]).toBe("/sandbox/temp");
   });
 
-  it("emits BOTH HOME and USERPROFILE with the Solaris-controlled home on Windows", () => {
+  it("emits BOTH HOME and USERPROFILE with the Siralos-controlled home on Windows", () => {
     const environment = buildChildEnvironment(
       { USERPROFILE: "C:\\Users\\host-user" },
       PATHS,
@@ -213,7 +213,7 @@ describe("buildChildEnvironment", () => {
     expect(environment["TMPDIR"]).toBe("/sandbox/temp");
   });
 
-  it("emits HOME only on POSIX, still Solaris-controlled", () => {
+  it("emits HOME only on POSIX, still Siralos-controlled", () => {
     const environment = buildChildEnvironment(
       { HOME: "/home/host-user", USERPROFILE: "C:\\Users\\host-user" },
       PATHS,
@@ -226,7 +226,7 @@ describe("buildChildEnvironment", () => {
     expect(environment["TMPDIR"]).toBe("/sandbox/temp");
   });
 
-  it("every emitted protected key carries exactly the Solaris-controlled path", () => {
+  it("every emitted protected key carries exactly the Siralos-controlled path", () => {
     for (const platform of ["win32", "linux"] as const) {
       const environment = buildChildEnvironment(
         {
@@ -276,7 +276,7 @@ describe("buildChildEnvironment", () => {
     expect(isProtectedEnvironmentKey("temp", "win32")).toBe(true);
     expect(isProtectedEnvironmentKey("TmpDir", "win32")).toBe(true);
     // POSIX keys are case-sensitive: alternate casings are DIFFERENT
-    // variables there and are not Solaris-owned.
+    // variables there and are not Siralos-owned.
     expect(isProtectedEnvironmentKey("home", "linux")).toBe(false);
     expect(isProtectedEnvironmentKey("UserProfile", "linux")).toBe(false);
     expect(isProtectedEnvironmentKey("Temp", "linux")).toBe(false);

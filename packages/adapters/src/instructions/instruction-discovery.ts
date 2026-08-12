@@ -12,7 +12,7 @@ import {
   type ProjectInstructionService,
   type ResolvedInstructionSet,
   type WorkspaceRevisionRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import { foldPathComponent } from "../fs-case.js";
 import { readFileBounded } from "../fs/file-read.js";
 import { decodeUtf8 } from "../tools/workspace/text.js";
@@ -56,7 +56,7 @@ export async function discoverProjectInstructions(
   const platform = options.platform ?? process.platform;
   const limits = { ...INSTRUCTION_DISCOVERY_LIMITS, ...options.limits };
   const excluded = new Set(
-    ["node_modules", ".git", "dist", "coverage", ".solaris"].map((name) =>
+    ["node_modules", ".git", "dist", "coverage", ".siralos"].map((name) =>
       foldPathComponent(name, platform),
     ),
   );

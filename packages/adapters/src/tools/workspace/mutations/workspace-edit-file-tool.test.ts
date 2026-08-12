@@ -73,7 +73,7 @@ describe("workspace.edit_file fail-closed availability", () => {
   });
 
   it("exposes an honest definition and capability", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-edit-tool-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-edit-tool-"));
     const tool = createWorkspaceEditFileTool(workspaceRoot, createMutationLock(), {} as never);
     expect(tool.definition.name).toBe("workspace.edit_file");
     expect(tool.definition.description).toContain("Unavailable");

@@ -1,4 +1,4 @@
-import { GODOT_LIMITS, type GodotGDScriptDiagnostic } from "@solaris/core";
+import { GODOT_LIMITS, type GodotGDScriptDiagnostic } from "@siralos/core";
 import { truncateUtf8Bytes } from "../knowledge/api-dump-with-docs.js";
 
 /**

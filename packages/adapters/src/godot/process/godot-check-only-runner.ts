@@ -1,4 +1,4 @@
-import type { GodotEngineProfile, GodotInstallation, SandboxedProcessResult } from "@solaris/core";
+import type { GodotEngineProfile, GodotInstallation, SandboxedProcessResult } from "@siralos/core";
 
 /** Marker for the disposable mirror project path (never a real path). */
 export const GODOT_CHECK_ONLY_MIRROR_PATH_MARKER = "<disposable-mirror>";
@@ -7,9 +7,9 @@ export const GODOT_CHECK_ONLY_MIRROR_PATH_MARKER = "<disposable-mirror>";
 export const GODOT_CHECK_ONLY_MIRROR_SCRIPT_MARKER = "<mirror-script>";
 
 /**
- * Fixed Solaris-owned GDScript check-only invocation.
+ * Fixed Siralos-owned GDScript check-only invocation.
  *
- * The only legitimate `--script` invocation in Solaris is the check-only
+ * The only legitimate `--script` invocation in Siralos is the check-only
  * diagnostic adapter: `--headless --path <disposable-mirror> --script
  * <mirror-script> --check-only`. The architecture check enforces that this
  * module is the only runtime module that may pair `--script` with

@@ -11,13 +11,13 @@ import type {
   GodotApplicationEvent,
   GodotInstallation,
   GodotSelectionPreference,
-} from "@solaris/core";
-import type { SandboxBackend } from "@solaris/core";
+} from "@siralos/core";
+import type { SandboxBackend } from "@siralos/core";
 
 const tempDirectories: string[] = [];
 
 async function withTemp(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-godot-profiler-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-godot-profiler-"));
   tempDirectories.push(directory);
   return directory;
 }

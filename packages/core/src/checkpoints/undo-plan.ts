@@ -30,7 +30,7 @@ export function planUndo(
     return {
       decision: "conflict",
       reason:
-        "The file changed after Solaris's operation; undo would overwrite newer work. Reread the file.",
+        "The file changed after Siralos's operation; undo would overwrite newer work. Reread the file.",
     };
   }
   if (!current.exists) {
@@ -39,6 +39,6 @@ export function planUndo(
   return {
     decision: "conflict",
     reason:
-      "A file appeared where Solaris deleted one; undo would overwrite newer work. Reread the file.",
+      "A file appeared where Siralos deleted one; undo would overwrite newer work. Reread the file.",
   };
 }

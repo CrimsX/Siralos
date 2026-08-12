@@ -126,7 +126,7 @@ describe("createPlanningPolicy", () => {
 
   it("detects protected config references deterministically", () => {
     expect(containsProtectedConfigReference("Update AGENTS.md rules")).toBe(true);
-    expect(containsProtectedConfigReference("touch .solaris/config.json")).toBe(true);
+    expect(containsProtectedConfigReference("touch .siralos/config.json")).toBe(true);
     expect(containsProtectedConfigReference("adjust behavioural config")).toBe(true);
     expect(containsProtectedConfigReference("Update the player script")).toBe(false);
     expect(containsProtectedConfigReference("AGENTS")).toBe(false);

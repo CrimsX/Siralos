@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GodotKnowledge } from "@solaris/core";
+import type { GodotKnowledge } from "@siralos/core";
 import { createGodotApiSearchTool } from "./godot-api-search-tool.js";
 
 function readyKnowledge(): GodotKnowledge {
@@ -73,7 +73,7 @@ describe("createGodotApiSearchTool", () => {
       ],
       truncated: false,
     });
-    expect(JSON.stringify(result.output)).not.toContain(".solaris");
+    expect(JSON.stringify(result.output)).not.toContain(".siralos");
     expect(JSON.stringify(result.output)).not.toContain("extension_api.json");
   });
 

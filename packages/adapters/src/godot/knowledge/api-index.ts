@@ -9,7 +9,7 @@ import {
   type GodotApiSearchResult,
   type GodotApiSymbol,
   type GodotApiSymbolDetails,
-} from "@solaris/core";
+} from "@siralos/core";
 import { truncateUtf8Bytes } from "./api-dump-with-docs.js";
 import type { GodotApiDumpDocument } from "./api-dump-with-docs.js";
 

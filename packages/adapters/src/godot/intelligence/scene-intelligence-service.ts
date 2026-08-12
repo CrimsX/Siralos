@@ -31,7 +31,7 @@ import {
   type ImpactSignalConnection,
   type WorkspaceRevisionHandle,
   type WorkspaceRevisionRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import { readFileBounded } from "../../fs/file-read.js";
 import {
   describeFsError,

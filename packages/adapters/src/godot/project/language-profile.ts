@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { GodotLanguageProfile } from "@solaris/core";
+import type { GodotLanguageProfile } from "@siralos/core";
 import { scanProjectFiles, type BoundedScanResult } from "./bounded-scan.js";
 
 export interface LanguageProfileResult {

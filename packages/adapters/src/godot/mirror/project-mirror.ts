@@ -4,10 +4,10 @@ import type {
   ProjectMirrorPreparationResult,
   ProjectMirrorRequest,
   ProjectMirrorVerification,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export const PROJECT_MIRROR_UNAVAILABLE_MESSAGE =
-  "Disposable mirror construction is unavailable: Node offers no directory-relative (openat/mkdirat-style) create primitive, so a same-user process can substitute a verified parent between identity verification and the pathname-based create, and no delete-by-handle primitive, so cleanup cannot be bound to the exact created objects. The mirror would not be guaranteed to contain exactly the approved bytes, and its cleanup could delete a substituted object. Solaris never creates or deletes a mirror at this stage; nothing was created and nothing was deleted.";
+  "Disposable mirror construction is unavailable: Node offers no directory-relative (openat/mkdirat-style) create primitive, so a same-user process can substitute a verified parent between identity verification and the pathname-based create, and no delete-by-handle primitive, so cleanup cannot be bound to the exact created objects. The mirror would not be guaranteed to contain exactly the approved bytes, and its cleanup could delete a substituted object. Siralos never creates or deletes a mirror at this stage; nothing was created and nothing was deleted.";
 
 /**
  * Disposable project mirror that fails closed.

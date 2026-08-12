@@ -235,7 +235,7 @@ describe("effect — reproducibility comparison", () => {
     const runC = run("route-1");
     // Change the environment dimension.
     const envA = createEnvironmentManifest({
-      solarisVersion: "0.0.0",
+      siralosVersion: "0.0.0",
       nodeVersion: "v26",
       npmVersion: null,
       platform: null,
@@ -250,7 +250,7 @@ describe("effect — reproducibility comparison", () => {
       toolIdentities: [],
     });
     const envC = createEnvironmentManifest({
-      solarisVersion: "0.0.0",
+      siralosVersion: "0.0.0",
       nodeVersion: "v26.1.0",
       npmVersion: null,
       platform: null,

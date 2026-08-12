@@ -12,7 +12,7 @@ import { DOCTOR_SCHEMA_VERSION, type DoctorReport, type DoctorStatus } from "./d
  * include secret values to begin with).
  *
  * The safe report is NOT anonymous: it keeps machine metadata such as OS
- * family, Node major, and Solaris version by design.
+ * family, Node major, and Siralos version by design.
  */
 
 export interface SafeDoctorCheck {

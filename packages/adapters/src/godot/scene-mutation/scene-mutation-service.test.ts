@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalizeJson, createWorkspaceRevisionRegistry, sha256Hex } from "@solaris/core";
+import { canonicalizeJson, createWorkspaceRevisionRegistry, sha256Hex } from "@siralos/core";
 import {
   cleanupTempCheckpointDirs,
   createTempCheckpointStore,
@@ -13,7 +13,7 @@ import { createGodotSceneMutationService } from "./scene-mutation-service.js";
 const tempDirectories: string[] = [];
 
 async function withWorkspace(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-mutation-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-mutation-"));
   tempDirectories.push(directory);
   return directory;
 }

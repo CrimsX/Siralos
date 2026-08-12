@@ -1,4 +1,4 @@
-import type { GodotKnowledgeBase } from "@solaris/core";
+import type { GodotKnowledgeBase } from "@siralos/core";
 
 export const KNOWLEDGE_CACHE_SCHEMA_VERSION = 1;
 

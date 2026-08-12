@@ -5,8 +5,8 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
   ToolPreparationResult,
-} from "@solaris/core";
-import { createPreparedMutation } from "@solaris/core";
+} from "@siralos/core";
+import { createPreparedMutation } from "@siralos/core";
 
 export const CHANGE_SET_REQUIRES_WORKFLOW_MESSAGE =
   "workspace.apply_text_changeset requires an active development workflow (start one with /develop): outside the workflow every workspace mutation fails closed and no approval for mutations is ever requested.";
@@ -149,7 +149,7 @@ export function createWorkspaceApplyTextChangesetTool(
               diagnostics: record.diagnostics,
               validation: record.validation,
               checkpointIds: record.checkpointIds,
-              quality: record.quality as import("@solaris/core").JsonValue | null,
+              quality: record.quality as import("@siralos/core").JsonValue | null,
             },
             summary: `change set applied: ${record.changes.length} file(s), ${record.diagnostics.errors} errors, ${record.diagnostics.warnings} warnings`,
           };

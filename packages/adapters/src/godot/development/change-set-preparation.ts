@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import type { ChangePreview, FileChangePreview, PreparedChangeSetFile } from "@solaris/core";
+import type { ChangePreview, FileChangePreview, PreparedChangeSetFile } from "@siralos/core";
 import {
   countChangeSetResultBytes,
   DEVELOPMENT_LIMITS,
   computeChangeSetDigest,
   validateChangeSetRequest,
   type ChangeSetOperation,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   resolveCreateTarget,
   resolveMutationTarget,
@@ -57,7 +57,7 @@ export interface ChangeSetPreparationDependencies {
   readonly workspaceRoot: string;
   readonly platform?: NodeJS.Platform;
   /** Session-scoped revision registry for revision-bound changes. */
-  readonly revisions?: import("@solaris/core").WorkspaceRevisionRegistry;
+  readonly revisions?: import("@siralos/core").WorkspaceRevisionRegistry;
 }
 
 type PreparationFailure =

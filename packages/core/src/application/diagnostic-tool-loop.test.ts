@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDefaultPolicy,
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   type ApprovalDecision,
@@ -167,7 +167,7 @@ async function runPrompt(
     prepareResult === undefined ? {} : { prepareResult },
   );
   const registry = createToolRegistry([tool]);
-  const app = createSolarisApplication({
+  const app = createSiralosApplication({
     provider,
     tools: registry,
     policy: createDefaultPolicy("develop-offline"),

@@ -8,15 +8,15 @@ import type { ConfigSchemaSection } from "./config-schema-summary.js";
 import { CONFIG_SCHEMA_REVISION } from "./config-schema-summary.js";
 
 /**
- * Built-in Solaris SelfReference (Stage 3 milestone 6).
+ * Built-in Siralos SelfReference (Stage 3 milestone 6).
  *
- * `@solaris` is a host-generated, read-only description of the EXACT
+ * `@siralos` is a host-generated, read-only description of the EXACT
  * installed runtime: version/build identity, the command catalog, the
  * configuration surface, capability names, sandbox profiles, the
  * registered workspace/Godot/reference/research tool surface, and the
  * Task Runtime concepts. It is deliberately NOT an external Reference
  * (which is untrusted supporting material) and it is NOT model training
- * memory — the model answers "what does this Solaris support?" from this
+ * memory — the model answers "what does this Siralos support?" from this
  * installed-version surface.
  *
  * The self-reference is retrieved on demand (self.read / self.search);
@@ -27,9 +27,9 @@ import { CONFIG_SCHEMA_REVISION } from "./config-schema-summary.js";
  * credentials, and no provider state. There is no mutation tool for it.
  */
 
-export const SELF_REFERENCE_NAME = "@solaris";
+export const SELF_REFERENCE_NAME = "@siralos";
 
-export interface SolarisRuntimeIdentity {
+export interface SiralosRuntimeIdentity {
   /** Installed package version (package.json), authoritative over model memory. */
   readonly version: string;
   /** Running Node.js major version. */
@@ -69,7 +69,7 @@ export interface SelfReferenceSearchMatch {
 }
 
 export interface SelfReferenceInput {
-  readonly runtime: SolarisRuntimeIdentity;
+  readonly runtime: SiralosRuntimeIdentity;
   /** The registered tool surface (definitions + capability bindings). */
   readonly registeredTools: readonly RegisteredToolInfo[];
   /** Active sandbox profile id (the profile the session runs under). */
@@ -140,7 +140,7 @@ export function toolAbiRevision(registeredTools: readonly RegisteredToolInfo[]):
 
 export interface SelfReference {
   readonly name: typeof SELF_REFERENCE_NAME;
-  readonly runtime: SolarisRuntimeIdentity;
+  readonly runtime: SiralosRuntimeIdentity;
   /** Stable runtime revision/fingerprint (see computeSelfReferenceRevision). */
   readonly revision: string;
   readonly sections: readonly SelfReferenceSection[];
@@ -149,10 +149,10 @@ export interface SelfReference {
   search(query: string): readonly SelfReferenceSearchMatch[];
 }
 
-function runtimeSection(runtime: SolarisRuntimeIdentity, revision: string): SelfReferenceSection {
+function runtimeSection(runtime: SiralosRuntimeIdentity, revision: string): SelfReferenceSection {
   return {
     id: "runtime",
-    title: "Installed Solaris runtime",
+    title: "Installed Siralos runtime",
     lines: [
       line("name", SELF_REFERENCE_NAME),
       line("version", runtime.version),
@@ -273,7 +273,7 @@ const GODOT_LINES: readonly SelfReferenceLine[] = [
   ),
   line(
     "no-project-execution",
-    "Solaris does not open, import, execute, or run a project at this stage",
+    "Siralos does not open, import, execute, or run a project at this stage",
   ),
 ];
 

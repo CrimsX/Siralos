@@ -5,8 +5,8 @@ import type {
   ToolExecutionResult,
   ValidationRunOutcome,
   ValidationStep,
-} from "@solaris/core";
-import { PROCESS_RUN_TOOL_NAME } from "@solaris/core";
+} from "@siralos/core";
+import { PROCESS_RUN_TOOL_NAME } from "@siralos/core";
 
 /**
  * Validation executor over the existing sandboxed command machinery

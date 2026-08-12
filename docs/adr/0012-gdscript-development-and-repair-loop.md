@@ -12,14 +12,14 @@ Status: accepted
 
 ## Context
 
-Solaris can inspect a Godot project, look up exact-engine API knowledge
+Siralos can inspect a Godot project, look up exact-engine API knowledge
 (ADR 0010), run `--check-only` parser validation (ADR 0010), and host a
 bounded recovery-mode GDScript language session (ADR 0011) — but it cannot
 yet turn a development request into an approved, checkpointed, validated
 source change. This milestone integrates those primitives into one bounded
 development workflow: the provider investigates with read-only tools,
 proposes an exact text change set, the user approves the exact change
-once, Solaris checkpoints, applies, parses with `--check-only`, recreates
+once, Siralos checkpoints, applies, parses with `--check-only`, recreates
 a fresh language session, collects diagnostics, records validation
 evidence, and — when validation reports errors — runs a bounded repair
 loop where every repair requires its own approval.
@@ -43,7 +43,7 @@ proposal_ready → awaiting_approval → applying → parser_validation →
 language_validation → reviewing` with the terminal statuses `completed`,
 `completed_with_warnings`, `completed_with_errors`, `denied`, `conflict`,
 `cancelled`, `apply_failed`, `validation_failed`, and `unavailable`. One
-active workflow per Solaris session, in-memory only, provider-neutral,
+active workflow per Siralos session, in-memory only, provider-neutral,
 containing no credentials, no mirror host paths, and no raw LSP transport
 data. No generic workflow engine, no event bus.
 
@@ -113,7 +113,7 @@ all before any lock, approval, or checkpoint. Application is serialized
 under the mutation lock: revalidate all preconditions, checkpoint every
 file, verify durability, then apply sequentially with post-state hash
 verification. A partial infrastructure failure triggers internal recovery
-of exactly the files Solaris just changed, each gated on its current hash
+of exactly the files Siralos just changed, each gated on its current hash
 still matching the partially applied result, restored from the
 just-created checkpoint preimages; external changes are preserved and
 reported. Outcomes are `apply_failed_recovered`, `apply_failed_partial_recovery`,
@@ -169,7 +169,7 @@ provider cannot raise any of them.
 
 ## Consequences
 
-- Solaris's first complete GDScript programming cycle exists: inspect →
+- Siralos's first complete GDScript programming cycle exists: inspect →
   propose → approve → checkpoint → apply → parser gate → fresh LSP →
   diagnostics → evidence → repair, with every mutation still explicitly
   approved and checkpointed.

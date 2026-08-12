@@ -1,10 +1,10 @@
-import type { CommandRunPaths } from "@solaris/core";
+import type { CommandRunPaths } from "@siralos/core";
 
 export type { CommandRunPaths };
 
 export interface RunDirectoryProviderOptions {
   readonly workspaceRoot: string;
-  /** Solaris-owned runs root; defaults to `~/.solaris/runs`. */
+  /** Siralos-owned runs root; defaults to `~/.siralos/runs`. */
   readonly runsRoot?: string;
 }
 
@@ -35,7 +35,7 @@ export interface RunDirectoryProvider {
 }
 
 export const RUN_DIRECTORY_CREATION_UNAVAILABLE_MESSAGE =
-  "Private run-directory creation is unavailable: Node offers no directory-relative (openat/mkdirat-style) or handle-relative primitive, so a same-user process can substitute a verified parent between identity verification and the pathname-based create, placing a new entry outside the intended verified root. Solaris never creates run directories at this stage; nothing was created.";
+  "Private run-directory creation is unavailable: Node offers no directory-relative (openat/mkdirat-style) or handle-relative primitive, so a same-user process can substitute a verified parent between identity verification and the pathname-based create, placing a new entry outside the intended verified root. Siralos never creates run directories at this stage; nothing was created.";
 
 export const RUN_DIRECTORY_CLEANUP_UNAVAILABLE_MESSAGE =
   "Run-directory cleanup is unavailable: without a delete-by-handle or directory-relative primitive, removal cannot be bound to the exact objects inspected and accepted in the removal transaction, and a substituted root, child, or leaf could be deleted by pathname. Nothing is deleted; any existing run directory is preserved for manual inspection.";

@@ -3,7 +3,7 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   readArrayField,
   readJsonObject,

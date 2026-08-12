@@ -14,7 +14,7 @@ import type { WorkspaceRevisionHandle } from "../workspace/workspace-revision.js
  *
  *   hard host/security invariants  (outside the resolver entirely)
  *   > TaskContract / user constraints (outside project instruction authority)
- *   > managed/user Solaris guidance  (reserved slots, not yet implemented)
+ *   > managed/user Siralos guidance  (reserved slots, not yet implemented)
  *   > project root instructions      (AGENTS.md at the workspace root)
  *   > directory-scoped instructions  (nested AGENTS.md files)
  *
@@ -27,7 +27,7 @@ import type { WorkspaceRevisionHandle } from "../workspace/workspace-revision.js
 export type InstructionSourceKind =
   /** Future managed/enterprise guidance layer; slot reserved, not offered. */
   | "managed"
-  /** Future user-level Solaris guidance; slot reserved, not offered. */
+  /** Future user-level Siralos guidance; slot reserved, not offered. */
   | "user"
   /** Explicit per-task instructions (TaskContract); never project-owned. */
   | "task"

@@ -12,7 +12,7 @@ Status: accepted
 
 ## Context
 
-Solaris must eventually execute development commands, tests, package managers, Git, and Godot processes. Those operations may run untrusted repository code and must not inherit unrestricted access to the host machine. No model-accessible process or write capability exists yet, but the enforcement boundary must exist before the first such capability lands.
+Siralos must eventually execute development commands, tests, package managers, Git, and Godot processes. Those operations may run untrusted repository code and must not inherit unrestricted access to the host machine. No model-accessible process or write capability exists yet, but the enforcement boundary must exist before the first such capability lands.
 
 ## Decision
 
@@ -22,7 +22,7 @@ Establish a provider-independent security boundary in core with enforcement in a
 - Core owns no OS sandbox, no child-process handling, and no environment inspection. Architecture checks enforce this.
 - The first concrete backend is `@anthropic-ai/sandbox-runtime` (pinned exactly at `0.0.70`), isolated behind the `SandboxBackend` port inside a single adapter module. Its beta API is wrapped; its errors are normalized; its configuration and command-string APIs never leak into core.
 - Child environments are built from an explicit allowlist (`buildChildEnvironment`) with denied credential patterns; `process.env` is never forwarded.
-- User-level configuration (`~/.solaris/config.json`) selects the profile and backend. Project repositories can never broaden it.
+- User-level configuration (`~/.siralos/config.json`) selects the profile and backend. Project repositories can never broaden it.
 - Live conformance probes (`npm run test:sandbox`) prove the backend's enforcement before it is trusted; unavailable backends fail closed.
 
 ## Consequences
@@ -36,7 +36,7 @@ Positive:
 
 Negative:
 
-- The Windows backend requires a one-time elevated install; until then Solaris reports `setup-required` and runs nothing sandboxed.
+- The Windows backend requires a one-time elevated install; until then Siralos reports `setup-required` and runs nothing sandboxed.
 - The Sandbox Runtime API is a beta research preview; the adapter must be re-verified when the pinned version changes.
 - Live conformance takes real time and requires a supported platform; standard tests use a fake backend.
 

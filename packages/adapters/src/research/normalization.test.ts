@@ -4,7 +4,7 @@ import {
   type ResearchBounds,
   type ResearchProvenance,
   type ResearchSourceRef,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   TRUNCATION_MARKER,
   buildResearchDocument,

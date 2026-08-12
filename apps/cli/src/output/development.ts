@@ -5,7 +5,7 @@ import type {
   GDScriptDevelopmentResult,
   GDScriptDevelopmentStatus,
   QualityStatus,
-} from "@solaris/core";
+} from "@siralos/core";
 import { operationMark } from "./format-utils.js";
 
 /** Workflow-start approval preview (§21 shape). */

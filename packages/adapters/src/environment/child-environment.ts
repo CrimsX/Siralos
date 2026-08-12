@@ -33,7 +33,7 @@ const DENIED_PATTERNS: readonly RegExp[] = [
   /^OPENROUTER_API_KEY$/i,
   /^DEEPSEEK_API_KEY$/i,
   /^OPENCODE_API_KEY$/i,
-  /^SOLARIS_CONFIG$/i,
+  /^SIRALOS_CONFIG$/i,
   /^NODE_OPTIONS$/i,
   /^BASH_ENV$/i,
   /^ENV$/i,
@@ -62,8 +62,8 @@ const HOME_VARIABLES: readonly string[] = ["HOME", "USERPROFILE"];
 const TEMP_VARIABLES: readonly string[] = ["TEMP", "TMP", "TMPDIR"];
 
 /**
- * The Solaris-controlled environment keys. These variables are owned by
- * the sandbox boundary: their values are always the Solaris-controlled
+ * The Siralos-controlled environment keys. These variables are owned by
+ * the sandbox boundary: their values are always the Siralos-controlled
  * sandbox home/temp paths, and neither the host parent environment nor the
  * sandbox wrapper may ever replace them or introduce an alternative
  * spelling of them. On Windows the comparison is case-insensitive
@@ -73,7 +73,7 @@ const TEMP_VARIABLES: readonly string[] = ["TEMP", "TMP", "TMPDIR"];
  */
 export const PROTECTED_ENVIRONMENT_KEYS: readonly string[] = [...HOME_VARIABLES, ...TEMP_VARIABLES];
 
-/** True when `name` is a Solaris-controlled environment key. */
+/** True when `name` is a Siralos-controlled environment key. */
 export function isProtectedEnvironmentKey(
   name: string,
   platform: NodeJS.Platform = process.platform,
@@ -119,7 +119,7 @@ function findCaseInsensitive(
  * so `Path`/`PATH`, `ComSpec`/`COMSPEC`, and similar aliases collapse into a
  * single variable and no allowed variable is dropped for an alternate
  * casing. On POSIX matching stays case-sensitive. Denied variables are
- * always excluded regardless of casing, the Solaris-controlled home/temp
+ * always excluded regardless of casing, the Siralos-controlled home/temp
  * keys (HOME, USERPROFILE on Windows, TEMP, TMP, TMPDIR) always carry the
  * sandbox-controlled values under their canonical spellings, and the
  * returned environment never equals the parent verbatim.
@@ -159,7 +159,7 @@ export function buildChildEnvironment(
       environment[name] = value;
     }
   }
-  // Solaris-controlled home: on Windows both HOME and USERPROFILE are
+  // Siralos-controlled home: on Windows both HOME and USERPROFILE are
   // emitted under their canonical spellings with the sandbox-home value
   // (Windows processes and tools may read either), on POSIX HOME is the
   // home variable. The parent can never influence these values.
@@ -167,7 +167,7 @@ export function buildChildEnvironment(
   if (platform === "win32") {
     environment["USERPROFILE"] = paths.home;
   }
-  // Solaris-controlled temp aliases: every supported platform spelling is
+  // Siralos-controlled temp aliases: every supported platform spelling is
   // emitted with the sandbox-temp value; wrapper or parent values can
   // never replace them (enforced again at wrapper-merge time).
   for (const name of TEMP_VARIABLES) {

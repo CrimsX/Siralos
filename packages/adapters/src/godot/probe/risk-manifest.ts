@@ -13,7 +13,7 @@ import {
   type GodotPluginRiskEntry,
   type GodotProjectRiskManifest,
   type SafeDiagnostic,
-} from "@solaris/core";
+} from "@siralos/core";
 import { readProjectFile } from "../project/project-files.js";
 import { scanProjectFile } from "../project/project-scanner.js";
 import { inventoryExecutableContent } from "../project/content-inventory.js";
@@ -49,7 +49,7 @@ export type GodotRiskManifestRefreshResult =
   | {
       readonly ok: true;
       readonly manifest: GodotProjectRiskManifest;
-      readonly projectProfile: import("@solaris/core").GodotProjectProfile;
+      readonly projectProfile: import("@siralos/core").GodotProjectProfile;
     }
   | { readonly ok: false; readonly message: string };
 
@@ -200,7 +200,7 @@ export async function refreshGodotProjectRiskManifest(
     digest: computeGodotRiskManifestDigest(manifestWithoutDigest),
   };
   const declaredEngineVersion = extractDeclaredEngineVersion(scan.declaredFeatures);
-  const projectProfile: import("@solaris/core").GodotProjectProfile = {
+  const projectProfile: import("@siralos/core").GodotProjectProfile = {
     detected: true,
     projectFileSha256: read.sha256,
     configVersion: scan.configVersion,

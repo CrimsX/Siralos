@@ -1,10 +1,10 @@
-# Adapters domain (`@solaris/adapters`)
+# Adapters domain (`@siralos/adapters`)
 
 ## Owner
 
 - `packages/adapters` implements the provider, workspace, sandbox, Git,
   Godot, reference, research, and planning ports. It implements port
-  contracts; it never imports `@solaris/core` internals beyond them.
+  contracts; it never imports `@siralos/core` internals beyond them.
 
 ## Rules
 

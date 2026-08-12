@@ -20,7 +20,7 @@ describe("mergeWrapperEnvironment", () => {
     expect(merged["PATH"]).toBe("C:\\host\\bin");
   });
 
-  it("never lets wrapper values override Solaris-controlled variables", () => {
+  it("never lets wrapper values override Siralos-controlled variables", () => {
     const merged = mergeWrapperEnvironment(BASE, {
       HOME: "/real/host/home",
       TEMP: "/real/host/tmp",
@@ -71,7 +71,7 @@ describe("mergeWrapperEnvironment", () => {
     ).toThrow(/controls/);
   });
 
-  it("keeps every protected key equal to the Solaris-controlled path through the full build+merge pipeline", () => {
+  it("keeps every protected key equal to the Siralos-controlled path through the full build+merge pipeline", () => {
     for (const platform of ["win32", "linux"] as const) {
       const base = buildChildEnvironment(
         { HOME: "/host/home", USERPROFILE: "C:\\host\\profile", TEMP: "/host/tmp" },
@@ -80,7 +80,7 @@ describe("mergeWrapperEnvironment", () => {
       );
       // A base built by buildChildEnvironment contains every protected key,
       // so wrapper attempts to smuggle host values collide with the
-      // Solaris-controlled values and are skipped — never introduced.
+      // Siralos-controlled values and are skipped — never introduced.
       // On POSIX USERPROFILE is not emitted, so a wrapper USERPROFILE
       // cannot be introduced either and fails closed.
       const hostile =
@@ -132,18 +132,18 @@ describe("mergeWrapperEnvironment", () => {
       mergeWrapperEnvironment(BASE, { openrouter_api_key: "sk-secret" }, "win32"),
     ).toThrow(/denies/);
     const merged = mergeWrapperEnvironment(
-      { PATH: "C:\\solaris\\bin", Home: "/sandbox/home" },
+      { PATH: "C:\\siralos\\bin", Home: "/sandbox/home" },
       { path: "/evil/path", HOME: "/evil/home", PathExt: ".COM" },
       "win32",
     );
-    expect(merged["PATH"]).toBe("C:\\solaris\\bin");
+    expect(merged["PATH"]).toBe("C:\\siralos\\bin");
     expect(merged["Home"]).toBe("/sandbox/home");
     expect(merged["PathExt"]).toBe(".COM");
   });
 
   it("emits canonical keys without aliases on Windows", () => {
     const merged = mergeWrapperEnvironment(
-      { PATH: "C:\\solaris\\bin", Path: "C:\\duplicate" },
+      { PATH: "C:\\siralos\\bin", Path: "C:\\duplicate" },
       { path: "C:\\wrapper" },
       "win32",
     );

@@ -5,8 +5,8 @@ import type {
   SandboxedProcessRequest,
   SandboxedProcessResult,
   SandboxViolation,
-} from "@solaris/core";
-import { COMMAND_LIMITS, SandboxError } from "@solaris/core";
+} from "@siralos/core";
+import { COMMAND_LIMITS, SandboxError } from "@siralos/core";
 import {
   SandboxManager,
   VENDORED_SRT_WIN_EXE,
@@ -43,7 +43,7 @@ export interface AnthropicSandboxRuntimeBackendHooks {
 }
 
 export interface AnthropicSandboxRuntimeBackendOptions {
-  /** The active Solaris workspace; granted only when the profile allows it. */
+  /** The active Siralos workspace; granted only when the profile allows it. */
   readonly workspaceRoot: string;
   /**
    * Test-only backend seams. Never used by production callers.
@@ -57,7 +57,7 @@ export interface AnthropicSandboxRuntimeBackendOptions {
  * their installation directories plus the minimum system runtime/library
  * paths the selected trusted runner requires. The workspace and the current
  * run directory are granted separately per profile/per request; shared
- * Solaris-owned sandbox directories no longer exist. Everything else on the
+ * Siralos-owned sandbox directories no longer exist. Everything else on the
  * host is denied.
  *
  * When a request pins `explicitReadRoots`, the caller takes over the
@@ -747,7 +747,7 @@ export function effectiveConfigKey(
   return JSON.stringify({
     workspaceAccess: profile.filesystem.workspaceAccess,
     protectGitMetadata: profile.filesystem.protectGitMetadata,
-    protectSolarisMetadata: profile.filesystem.protectSolarisMetadata,
+    protectSiralosMetadata: profile.filesystem.protectSiralosMetadata,
     denySensitiveProjectFiles: profile.filesystem.denySensitiveProjectFiles,
     excludeWorkspaceRead: profile.filesystem.excludeWorkspaceRead,
     processEnabled: profile.process.enabled,
@@ -813,13 +813,13 @@ export function isWithinHostReadAllowSurface(
 }
 
 /**
- * Merges the sandbox wrapper's runtime-required environment into Solaris's
+ * Merges the sandbox wrapper's runtime-required environment into Siralos's
  * minimal allowlisted environment. The wrapper (Sandbox Runtime) returns the
  * environment its wrapped invocation needs; only that explicit set is
- * merged — never the host environment wholesale. Solaris-controlled keys
+ * merged — never the host environment wholesale. Siralos-controlled keys
  * (HOME, USERPROFILE, TEMP, TMP, TMPDIR, compared case-insensitively on
  * Windows) can never be replaced or introduced by the wrapper: a collision
- * resolves to the Solaris-controlled value, and a protected key absent from
+ * resolves to the Siralos-controlled value, and a protected key absent from
  * the base fails closed. Wrapper-only keys are added, keys matching the
  * credential/proxy/Node-injection deny patterns fail closed, and keys are
  * normalized through the same case-insensitive Windows comparison used by
@@ -849,18 +849,18 @@ export function mergeWrapperEnvironment(
     if (isDeniedVariable(name)) {
       throw new SandboxError(
         "sandbox_configuration_error",
-        `The sandbox wrapper requires environment variable ${name}, which Solaris denies; refusing to execute.`,
+        `The sandbox wrapper requires environment variable ${name}, which Siralos denies; refusing to execute.`,
       );
     }
     if (isProtectedEnvironmentKey(name, platform)) {
       if (baseKeys.has(keyOf(name))) {
-        // The Solaris-controlled value already in the base wins; the
+        // The Siralos-controlled value already in the base wins; the
         // wrapper can never replace it.
         continue;
       }
       throw new SandboxError(
         "sandbox_configuration_error",
-        `The sandbox wrapper requires environment variable ${name}, which Solaris controls; refusing to execute.`,
+        `The sandbox wrapper requires environment variable ${name}, which Siralos controls; refusing to execute.`,
       );
     }
     if (baseKeys.has(keyOf(name))) {
@@ -876,8 +876,8 @@ function protectedPathPatterns(profile: SandboxProfile, workspaceRoot: string): 
   if (profile.filesystem.protectGitMetadata) {
     patterns.push(`${workspaceRoot}${path.sep}.git${path.sep}**`);
   }
-  if (profile.filesystem.protectSolarisMetadata) {
-    patterns.push(`${workspaceRoot}${path.sep}.solaris${path.sep}**`);
+  if (profile.filesystem.protectSiralosMetadata) {
+    patterns.push(`${workspaceRoot}${path.sep}.siralos${path.sep}**`);
   }
   if (profile.filesystem.denySensitiveProjectFiles) {
     patterns.push(`${workspaceRoot}${path.sep}.env`);
@@ -977,7 +977,7 @@ export function emitChunked(
       try {
         onOutput({ type: stream, text: chunk });
       } catch {
-        // A failing output callback must never crash Solaris or leak a
+        // A failing output callback must never crash Siralos or leak a
         // running child; the command continues and the callback is skipped.
       }
     }

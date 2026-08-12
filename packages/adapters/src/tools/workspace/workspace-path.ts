@@ -71,7 +71,7 @@ export async function resolveWorkspacePath(
     ? canonicalRoot
     : `${canonicalRoot}${path.sep}`;
   if (resolved !== canonicalRoot && !resolved.startsWith(rootPrefix)) {
-    return { status: "rejected", message: "Path is outside the Solaris workspace." };
+    return { status: "rejected", message: "Path is outside the Siralos workspace." };
   }
 
   let canonicalTarget: string;
@@ -85,7 +85,7 @@ export async function resolveWorkspacePath(
     ? canonicalRoot
     : `${canonicalRoot}${path.sep}`;
   if (canonicalTarget !== canonicalRoot && !canonicalTarget.startsWith(targetPrefix)) {
-    return { status: "rejected", message: "Path is outside the Solaris workspace." };
+    return { status: "rejected", message: "Path is outside the Siralos workspace." };
   }
 
   const relativePath =

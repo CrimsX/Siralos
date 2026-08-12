@@ -11,13 +11,13 @@ function doctorStatusMark(status: string): string {
   }
 }
 
-export function formatSolarisDoctorReport(report: import("@solaris/core").DoctorReport): string {
+export function formatSiralosDoctorReport(report: import("@siralos/core").DoctorReport): string {
   const lines: string[] = [
-    "Solaris Doctor",
-    `Solaris ${report.runtime.version} on Node ${report.runtime.nodeMajor} (${report.runtime.platform})`,
+    "Siralos Doctor",
+    `Siralos ${report.runtime.version} on Node ${report.runtime.nodeMajor} (${report.runtime.platform})`,
     "",
   ];
-  const byArea = new Map<string, import("@solaris/core").DoctorCheckResult[]>();
+  const byArea = new Map<string, import("@siralos/core").DoctorCheckResult[]>();
   for (const check of report.checks) {
     const area = byArea.get(check.area) ?? [];
     area.push(check);
@@ -62,10 +62,10 @@ export function formatSolarisDoctorReport(report: import("@solaris/core").Doctor
   return `${lines.join("\n")}\n`;
 }
 
-export function formatSafeDoctorReport(report: import("@solaris/core").SafeDoctorReport): string {
+export function formatSafeDoctorReport(report: import("@siralos/core").SafeDoctorReport): string {
   const lines = [
-    "Solaris Doctor (safe report)",
-    `Solaris ${report.runtime.version} on Node ${report.runtime.nodeMajor} (${report.runtime.platform})`,
+    "Siralos Doctor (safe report)",
+    `Siralos ${report.runtime.version} on Node ${report.runtime.nodeMajor} (${report.runtime.platform})`,
     `Schema: ${report.schemaVersion}`,
     `Checks: ${report.counts.pass} passed, ${report.counts.warn} warning${report.counts.warn === 1 ? "" : "s"}, ${report.counts.fail} failed, ${report.counts.skip} skipped.`,
   ];
@@ -81,9 +81,9 @@ export function formatSafeDoctorReport(report: import("@solaris/core").SafeDocto
   return `${lines.join("\n")}\n`;
 }
 
-export function formatSelfReference(self: import("@solaris/core").SelfReference): string {
+export function formatSelfReference(self: import("@siralos/core").SelfReference): string {
   const lines = [
-    `${self.name} — installed Solaris runtime`,
+    `${self.name} — installed Siralos runtime`,
     `Version: ${self.runtime.version}`,
     `Node major: ${self.runtime.nodeMajor}`,
     `Platform: ${self.runtime.platform}`,

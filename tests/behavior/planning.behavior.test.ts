@@ -19,8 +19,8 @@ import {
   type ModelRequest,
   type PlannerPort,
   type PlanningDecisionInput,
-} from "@solaris/core";
-import { createPlannerExecutor, createPlannerToolRegistry } from "@solaris/adapters";
+} from "@siralos/core";
+import { createPlannerExecutor, createPlannerToolRegistry } from "@siralos/adapters";
 import {
   createBehaviorLoopHarness,
   FIXTURE_PATH,
@@ -52,7 +52,7 @@ function createScriptedPlannerProvider(
   return {
     id: "scripted-planner",
     toolCalling: true,
-    stream(request: ModelRequest): AsyncIterable<import("@solaris/core").ModelEvent> {
+    stream(request: ModelRequest): AsyncIterable<import("@siralos/core").ModelEvent> {
       onRequest?.(request);
       return streamStep(steps, cursor++);
     },
@@ -62,7 +62,7 @@ function createScriptedPlannerProvider(
 async function* streamStep(
   steps: readonly ScriptStep[],
   index: number,
-): AsyncIterable<import("@solaris/core").ModelEvent> {
+): AsyncIterable<import("@siralos/core").ModelEvent> {
   const step = steps[index];
   if (step === undefined) {
     yield { type: "text_delta", text: "no further scripted steps" };
@@ -171,8 +171,8 @@ function planningInput(overrides: Partial<PlanningDecisionInput> = {}): Planning
 
 /** Messages after the last user message (mirrors the fake provider). */
 function itemsAfterLastUserMessage(
-  messages: readonly import("@solaris/core").ConversationItem[],
-): readonly import("@solaris/core").ConversationItem[] {
+  messages: readonly import("@siralos/core").ConversationItem[],
+): readonly import("@siralos/core").ConversationItem[] {
   let lastUser = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.type === "user_message") {
@@ -184,9 +184,9 @@ function itemsAfterLastUserMessage(
 }
 
 function lastResult(
-  items: readonly import("@solaris/core").ConversationItem[],
+  items: readonly import("@siralos/core").ConversationItem[],
   toolName: string,
-): import("@solaris/core").ToolExecutionResult | undefined {
+): import("@siralos/core").ToolExecutionResult | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (item?.type === "tool_result" && item.toolName === toolName) {
@@ -197,7 +197,7 @@ function lastResult(
 }
 
 function readSha256(
-  result: import("@solaris/core").ToolExecutionResult | undefined,
+  result: import("@siralos/core").ToolExecutionResult | undefined,
 ): string | null {
   if (result?.status !== "success") {
     return null;
@@ -217,7 +217,7 @@ function createDevelopMutationProvider(): ModelProvider {
   return {
     id: "scripted-develop",
     toolCalling: true,
-    stream(request: ModelRequest): AsyncIterable<import("@solaris/core").ModelEvent> {
+    stream(request: ModelRequest): AsyncIterable<import("@siralos/core").ModelEvent> {
       const items = itemsAfterLastUserMessage(request.messages);
       const changeset = lastResult(items, "workspace.apply_text_changeset");
       const read = lastResult(items, "workspace.read");
@@ -413,7 +413,7 @@ describe("Planning Foundation behavior fixtures", () => {
       "workspace.delete_file",
       "workspace.apply_text_changeset",
       "process.run",
-      "solaris.undo",
+      "siralos.undo",
       "godot.probe_project",
       "godot.check_script",
       "godot.lsp_session",

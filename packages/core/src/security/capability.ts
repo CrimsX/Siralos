@@ -18,7 +18,7 @@ export type Capability =
   // constraint — the policy rule is the gate.
   | "reference.inspect"
   | "research.fetch"
-  // Read-only inspection of the installed Solaris runtime itself (Stage 3
+  // Read-only inspection of the installed Siralos runtime itself (Stage 3
   // milestone 6): the `self.*` self-reference tools are read-only docs and
   // grant no mutation authority. Allowed in every built-in profile.
   | "self.inspect";

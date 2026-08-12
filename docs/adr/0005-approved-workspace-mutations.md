@@ -14,7 +14,7 @@ Status: accepted
 
 ## Context
 
-Solaris can inspect the workspace but not change it. The sandbox and permission foundation (ADR 0004) exists, but no provider-accessible mutation does. This milestone adds the first three: create one UTF-8 text file, apply exact text replacements to one existing UTF-8 text file, and delete one existing UTF-8 text file — each gated by capability policy, a complete preview, and one-time user approval.
+Siralos can inspect the workspace but not change it. The sandbox and permission foundation (ADR 0004) exists, but no provider-accessible mutation does. This milestone adds the first three: create one UTF-8 text file, apply exact text replacements to one existing UTF-8 text file, and delete one existing UTF-8 text file — each gated by capability policy, a complete preview, and one-time user approval.
 
 ## Decision
 
@@ -25,7 +25,7 @@ Solaris can inspect the workspace but not change it. The sandbox and permission 
 - **Exact text replacement is the initial edit model.** Sequential exact `oldText`/`newText` replacements, each matching exactly once; no regex, no replace-all, no line-number editing, no provider-supplied patch parsing.
 - **Raw overwrite and generic patch parsing are deferred.** Every mutation goes through prepare → review → revalidate → apply, and prepared mutations are opaque, single-use objects that expire.
 - **Diffs must be complete before approval; truncated diffs cannot be approved.** If the complete unified diff exceeds the configured preview limit, preparation fails with an actionable message instead of hiding hunks.
-- **Protected paths cannot be overridden by approval.** `.git/`, `.solaris/`, `.env`, `.env.*`, `*.pem`, `*.key`, the user-level Solaris configuration, and anything outside the workspace stay denied regardless of the reviewer's decision.
+- **Protected paths cannot be overridden by approval.** `.git/`, `.siralos/`, `.env`, `.env.*`, `*.pem`, `*.key`, the user-level Siralos configuration, and anything outside the workspace stay denied regardless of the reviewer's decision.
 - **Only UTF-8 text files are supported.** Binary files, directories, and oversized files are rejected; directory and binary mutations are deferred.
 - **Mutations are serialized** by a small in-process lock whose queued waiters respond promptly to cancellation; preconditions (canonical containment and the exact SHA-256) are revalidated after acquiring the lock and immediately before the irreversible commit point (exclusive create, replacement commit, unlink). Cancellation before the commit section prevents mutation; once the commit point is reached, cancellation cannot interrupt verification and checkpoint finalization.
 - **The final replacement is a cautious single-file strategy, identity-bound on every platform**: exclusive creation; temp-file staging with flush and exclusive names for updates; revalidation; a shared safe-replacement primitive that always first moves the target to a same-directory quarantine (an atomic displacement of exactly the object at the target), verifies the displaced object against the expected hash, then commits the staged content or performs the deletion with an exclusive absence-preserving primitive — the commit and every rollback use a hard link that atomically requires the destination to remain absent (failing on `EEXIST`), so a target that appears after the quarantine displacement is never overwritten on any platform, and a successful direct rename is never treated as a compare-and-swap. Rollback conflicts (a newer object occupying the target) return an explicit uncertain-state result that preserves both the quarantine and the later target — never an overwrite, never success — and the only valid copy is never unlinked before replacement is committed. Deletion uses the same displacement-verify-unlink discipline. Exclusive creation verifies every parent component's identity immediately before the open and proves the created object's identity (handle versus path) before any bytes are written, closing the parent-swap window; cleanup removes only the identity-proven object. Post-write byte and hash verification follows, and temporary-file and quarantine cleanup happens only after the new content is verified and the checkpoint lifecycle is durably finalized. Where the filesystem cannot provide the absence-preserving primitive (hard links unsupported), the operation fails closed.
@@ -43,7 +43,7 @@ Positive:
 Negative:
 
 - Every mutation requires interactive approval by default; this is deliberate until a reviewed policy for broader grants exists.
-- The quarantine dance keeps the original in a same-directory `.solaris-quarantine-*` file until the displaced object is verified and the new content is verified and the checkpoint lifecycle is durably finalized; the path is reported in every failure result and never cleaned before verification or finalization.
+- The quarantine dance keeps the original in a same-directory `.siralos-quarantine-*` file until the displaced object is verified and the new content is verified and the checkpoint lifecycle is durably finalized; the path is reported in every failure result and never cleaned before verification or finalization.
 - Exact-text editing is restrictive by design; regex and patch-based editing are deferred.
 
 ## Alternatives rejected

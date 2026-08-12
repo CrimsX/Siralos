@@ -31,7 +31,7 @@ import type { CapabilityRef, ExecutorContextPack } from "./context-pack.js";
 export const EXECUTOR_BRIEF_SCHEMA_VERSION = 2;
 
 export interface ExecutorBrief {
-  readonly format: "solaris-executor-brief";
+  readonly format: "siralos-executor-brief";
   /** Brief schema version (stable identity, not a content revision). */
   readonly version: number;
   readonly taskId: string;
@@ -158,7 +158,7 @@ export function compileExecutorBrief(input: CompileExecutorBriefInput): Executor
   const milestone = input.milestone ?? null;
   const request = input.contract.request.trim();
   const brief: ExecutorBrief = {
-    format: "solaris-executor-brief",
+    format: "siralos-executor-brief",
     version: EXECUTOR_BRIEF_SCHEMA_VERSION,
     taskId: input.contract.id,
     contractRevision: input.contract.revision,

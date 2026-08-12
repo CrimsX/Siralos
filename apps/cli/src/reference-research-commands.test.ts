@@ -8,7 +8,7 @@ import { runInteractiveSession, type SessionIO, type SessionInfo } from "./inter
 const tempDirectories: string[] = [];
 
 async function makeTempDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-session-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-session-test-"));
   tempDirectories.push(directory);
   return directory;
 }

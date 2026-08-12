@@ -45,7 +45,7 @@ describe("context projector", () => {
           title: "Latest diagnostics",
           content: "error at line 4",
         },
-        { id: "s1", stability: "stable", title: "Instructions", content: "You are Solaris." },
+        { id: "s1", stability: "stable", title: "Instructions", content: "You are Siralos." },
         {
           id: "c1",
           stability: "contextual",
@@ -63,7 +63,7 @@ describe("context projector", () => {
   it("volatile changes never change the stable fingerprint or stable bytes", () => {
     const base = projector.project({
       segments: [
-        { id: "s1", stability: "stable", title: "Instructions", content: "You are Solaris." },
+        { id: "s1", stability: "stable", title: "Instructions", content: "You are Siralos." },
         {
           id: "c1",
           stability: "contextual",
@@ -80,7 +80,7 @@ describe("context projector", () => {
     });
     const changed = projector.project({
       segments: [
-        { id: "s1", stability: "stable", title: "Instructions", content: "You are Solaris." },
+        { id: "s1", stability: "stable", title: "Instructions", content: "You are Siralos." },
         {
           id: "c1",
           stability: "contextual",

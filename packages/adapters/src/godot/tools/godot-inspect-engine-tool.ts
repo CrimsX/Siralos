@@ -4,14 +4,14 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { errorMessage } from "../../support/error-message.js";
 
 /**
  * Read-only `godot.inspect_engine` provider tool.
  *
  * Returns only the safe subset: installation id, source, exact version,
- * edition, release channel, Solaris support, advertised and verified
+ * edition, release channel, Siralos support, advertised and verified
  * capabilities, the API dump fingerprint, and bounded diagnostics. Absolute
  * executable paths, raw help output, and the complete API dump never enter
  * provider context. The provider cannot select an executable or trigger
@@ -22,7 +22,7 @@ export function createGodotInspectEngineTool(inspector: GodotInspector): Tool {
     definition: {
       name: "godot.inspect_engine",
       description:
-        "Inspect the selected Godot installation: exact version, edition, release channel, Solaris support classification, advertised and operationally verified capabilities, and the extension API dump fingerprint. Read-only; no project is opened or imported.",
+        "Inspect the selected Godot installation: exact version, edition, release channel, Siralos support classification, advertised and operationally verified capabilities, and the extension API dump fingerprint. Read-only; no project is opened or imported.",
       inputSchema: { type: "object", additionalProperties: false },
     },
     capability: "godot.inspect",

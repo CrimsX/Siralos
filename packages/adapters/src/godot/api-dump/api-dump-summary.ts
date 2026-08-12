@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { GodotApiDumpSummary } from "@solaris/core";
+import type { GodotApiDumpSummary } from "@siralos/core";
 
 export type GodotApiDumpExtraction =
   | { readonly ok: true; readonly summary: GodotApiDumpSummary }

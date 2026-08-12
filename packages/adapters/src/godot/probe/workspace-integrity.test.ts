@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GitStatusResult } from "@solaris/core";
+import type { GitStatusResult } from "@siralos/core";
 import {
   canonicalizeGitStatus,
   compareWorkspaceIntegrity,

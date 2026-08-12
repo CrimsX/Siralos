@@ -15,7 +15,7 @@ import type { ResearchSourceRef } from "../research/research-model.js";
  *
  * Authority classes are distinct (ADR 0017):
  *
- *   instructions tell Solaris how work should be performed
+ *   instructions tell Siralos how work should be performed
  *   knowledge   records factual claims about the project
  *   history     records what happened or was observed
  */

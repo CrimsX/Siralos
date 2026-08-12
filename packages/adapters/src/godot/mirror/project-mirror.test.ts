@@ -10,7 +10,7 @@ describe("createProjectMirror", () => {
   });
 
   it("refuses preparation before creating anything", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "solaris-mirror-parent-"));
+    const parent = await mkdtemp(join(tmpdir(), "siralos-mirror-parent-"));
     try {
       const outcome = await createProjectMirror().prepare({
         workspaceRoot: join(parent, "workspace"),
@@ -43,7 +43,7 @@ describe("createProjectMirror", () => {
   });
 
   it("refuses destruction and preserves any existing tree", async () => {
-    const root = await mkdtemp(join(tmpdir(), "solaris-mirror-tree-"));
+    const root = await mkdtemp(join(tmpdir(), "siralos-mirror-tree-"));
     try {
       await writeFile(join(root, "existing.txt"), "keep me");
       const outcome = await createProjectMirror().destroy({
@@ -70,7 +70,7 @@ describe("createProjectMirror", () => {
   });
 
   it("never creates outside entries across a refused preparation", async () => {
-    const root = await mkdtemp(join(tmpdir(), "solaris-mirror-outside-"));
+    const root = await mkdtemp(join(tmpdir(), "siralos-mirror-outside-"));
     try {
       const workspace = join(root, "workspace");
       await mkdir(workspace);

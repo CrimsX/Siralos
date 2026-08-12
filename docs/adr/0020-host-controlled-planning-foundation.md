@@ -28,7 +28,7 @@ approval needs exact revision semantics: approving "the plan" is
 meaningless unless it is clear WHICH revision of the plan was approved and
 that later revisions do not inherit the approval.
 
-Solaris already has host-owned task state (`TaskContract`, `TaskState`,
+Siralos already has host-owned task state (`TaskContract`, `TaskState`,
 activity log), projection boundaries, evidence, knowledge, references,
 and diagnostics. Planning can now be structured and runtime-controlled:
 the host decides whether planning is needed, the planner is read-only, a

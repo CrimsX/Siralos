@@ -1,4 +1,4 @@
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import { LSPFrameParser, frameMessage } from "./frame-parser.js";
 
 /**
@@ -9,7 +9,7 @@ import { LSPFrameParser, frameMessage } from "./frame-parser.js";
  * never reuse an id while pending; requests time out and are cancellable
  * (cancelled requests also send `$/cancelRequest`); late and duplicate
  * responses for unknown ids are ignored safely; malformed responses are
- * reported to the protocol-error handler without crashing Solaris;
+ * reported to the protocol-error handler without crashing Siralos;
  * notifications never block request handling; and server-initiated
  * requests are dispatched to a single allowlisted handler that returns
  * MethodNotFound for anything unsupported.

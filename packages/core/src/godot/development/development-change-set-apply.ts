@@ -6,7 +6,7 @@
  * checkpoint for every affected existing file (and an absence state for
  * every create), verify all checkpoints durable, then apply prepared
  * files sequentially with post-state hash verification. A partial
- * infrastructure failure triggers internal recovery of the files Solaris
+ * infrastructure failure triggers internal recovery of the files Siralos
  * just changed from their just-created checkpoints (restoring the
  * approved pre-change state, preserving external changes), and the final
  * outcome is never success after partial application.

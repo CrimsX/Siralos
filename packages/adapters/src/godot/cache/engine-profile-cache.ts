@@ -5,8 +5,8 @@ import type {
   GodotReleaseChannel,
   GodotVersion,
   SafeDiagnostic,
-  SolarisGodotSupport,
-} from "@solaris/core";
+  SiralosGodotSupport,
+} from "@siralos/core";
 
 export const ENGINE_PROFILE_CACHE_SCHEMA_VERSION = 1;
 
@@ -28,7 +28,7 @@ export interface CachedEngineProfile {
   readonly verifiedCapabilities: readonly string[];
   readonly degradedCapabilities: readonly string[];
   readonly apiDumpSha256: string | null;
-  readonly support: SolarisGodotSupport;
+  readonly support: SiralosGodotSupport;
   readonly probedAtMs: number;
   readonly diagnostics: readonly SafeDiagnostic[];
 }

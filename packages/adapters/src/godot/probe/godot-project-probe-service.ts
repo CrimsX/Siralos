@@ -19,7 +19,7 @@ import {
   type PreparedGodotProbe,
   type ProjectMirror,
   type SandboxBackend,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { RunDirectoryProvider } from "../../process/run-directories.js";
 import type { GodotEngineProfileCache } from "../cache/engine-profile-cache.js";
 import type { UserGodotConfig } from "../../config/user-config.js";

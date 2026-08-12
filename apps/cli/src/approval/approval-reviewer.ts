@@ -3,7 +3,7 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type ApprovalReviewer,
-} from "@solaris/core";
+} from "@siralos/core";
 import { formatApprovalPrompt } from "../output.js";
 import type { InputQueue } from "../input/input-queue.js";
 

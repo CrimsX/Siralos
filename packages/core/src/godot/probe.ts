@@ -110,11 +110,11 @@ export function computeGodotRiskManifestDigest(
 }
 
 /**
- * Fixed Solaris-owned parts the prepared-probe digest binds. The recovery
+ * Fixed Siralos-owned parts the prepared-probe digest binds. The recovery
  * command digest is computed by the adapter over the fixed argument template
- * (the mirror path is Solaris-generated and canonicalized to a placeholder);
+ * (the mirror path is Siralos-generated and canonicalized to a placeholder);
  * the mirror policy version, sandbox profile, and probe limits are
- * Solaris-fixed constants. Provider input cannot influence any of them.
+ * Siralos-fixed constants. Provider input cannot influence any of them.
  */
 export interface GodotPreparedProbeDigestParts {
   readonly manifestDigest: string;

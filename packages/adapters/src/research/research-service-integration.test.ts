@@ -6,7 +6,7 @@ import {
   type CapabilityPolicy,
   type ResearchRequest,
   type ResearchService,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createFakeGodotDocsSource,
   createFakeRepositorySource,

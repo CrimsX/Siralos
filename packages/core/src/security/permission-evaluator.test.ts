@@ -51,7 +51,7 @@ describe("built-in profiles", () => {
       filesystem: {
         workspaceAccess: "read-only",
         protectGitMetadata: true,
-        protectSolarisMetadata: true,
+        protectSiralosMetadata: true,
         denySensitiveProjectFiles: true,
       },
       process: { enabled: true },
@@ -66,7 +66,7 @@ describe("built-in profiles", () => {
       filesystem: {
         workspaceAccess: "read-only",
         protectGitMetadata: true,
-        protectSolarisMetadata: true,
+        protectSiralosMetadata: true,
         denySensitiveProjectFiles: true,
       },
       process: { enabled: true },

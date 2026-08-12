@@ -14,7 +14,7 @@ supersedes: []
 
 ## Context
 
-Up to Stage 2, Solaris's working state lived in the model conversation plus a
+Up to Stage 2, Siralos's working state lived in the model conversation plus a
 collection of application-owned subsystem states (the development workflow
 session, quality reports, checkpoints, the command registry). That is
 sufficient for a single interactive flow, but it has structural limits:

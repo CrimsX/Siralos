@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { join, sep } from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
-import type { GodotScriptCheckTarget } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
+import type { GodotScriptCheckTarget } from "@siralos/core";
 import { PROJECT_SCAN_EXCLUDED_DIRECTORIES } from "../project/bounded-scan.js";
 import { hashAbsoluteFile, createAbortError } from "../probe/risk-manifest.js";
 import {
@@ -78,8 +78,8 @@ export async function enumerateGDScriptFiles(
       }
       if (
         PROJECT_SCAN_EXCLUDED_DIRECTORIES.includes(entry.name) ||
-        entry.name.startsWith(".solaris-mutation-") ||
-        entry.name.startsWith(".solaris-quarantine-")
+        entry.name.startsWith(".siralos-mutation-") ||
+        entry.name.startsWith(".siralos-quarantine-")
       ) {
         continue;
       }

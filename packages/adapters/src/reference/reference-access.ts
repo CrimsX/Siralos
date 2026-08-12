@@ -15,7 +15,7 @@ import {
   type ReferenceSearchRequest,
   type ReferenceSearchResult,
   type ReferenceAccessPort,
-} from "@solaris/core";
+} from "@siralos/core";
 import { enumerateDirectoryBounded } from "../fs/directory-enumeration.js";
 import { readFileBounded } from "../fs/file-read.js";
 import { decodeUtf8, looksBinary, splitIntoLines } from "../tools/workspace/text.js";

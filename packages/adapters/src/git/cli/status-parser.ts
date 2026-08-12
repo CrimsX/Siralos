@@ -6,7 +6,7 @@ import {
   type GitFileStatus,
   type GitStatusKind,
   type GitStatusResult,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export const MAX_GIT_STATUS_ENTRIES = 10_000;
 

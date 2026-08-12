@@ -50,7 +50,7 @@ export interface PlanningDecisionInput {
   readonly expectedMutation: boolean;
   /** Number of TaskContract acceptance criteria. */
   readonly acceptanceCriterionCount: number;
-  /** Protected behavioral configuration (AGENTS.md / .solaris/**) is involved. */
+  /** Protected behavioral configuration (AGENTS.md / .siralos/**) is involved. */
   readonly protectedConfigInvolved: boolean;
   /** The task demonstrably spans multiple subsystems/architecture domains. */
   readonly spansMultipleSubsystems: boolean;
@@ -83,7 +83,7 @@ export function containsProtectedConfigReference(text: string): boolean {
   const normalized = text.replace(/\\/g, "/");
   return (
     /(^|[\s/"])(AGENTS\.md)([\s/"]|$)/i.test(normalized) ||
-    /(^|[\s/"])(\.solaris)(\/|[\s"]|$)/i.test(normalized) ||
+    /(^|[\s/"])(\.siralos)(\/|[\s"]|$)/i.test(normalized) ||
     /behaviou?ral config/i.test(normalized)
   );
 }

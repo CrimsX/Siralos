@@ -63,7 +63,7 @@ async function main(): Promise<number> {
       readline.close();
       return;
     }
-    stdout.write("\n[cancelled; Solaris stays active]\n");
+    stdout.write("\n[cancelled; Siralos stays active]\n");
   });
   const lines = readline[Symbol.asyncIterator]();
   // All terminal output funnels through this sanitizer: provider deltas,
@@ -196,7 +196,7 @@ main().then(
     process.exitCode = exitCode;
   },
   (error: unknown) => {
-    console.error(`Solaris failed to start: ${describeError(error)}`);
+    console.error(`Siralos failed to start: ${describeError(error)}`);
     process.exitCode = 1;
   },
 );

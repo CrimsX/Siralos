@@ -1,11 +1,11 @@
-import { doctorExitCodeFor, toSafeReport } from "@solaris/core";
+import { doctorExitCodeFor, toSafeReport } from "@siralos/core";
 import { createCliApplication } from "./create-application.js";
 import { createCliDoctor, isDoctorArea } from "./doctor.js";
 import {
   describeError,
   formatSafeDoctorReport,
   formatSelfReference,
-  formatSolarisDoctorReport,
+  formatSiralosDoctorReport,
   TerminalSanitizer,
 } from "../output.js";
 
@@ -90,11 +90,11 @@ export async function runDoctorCli(
     } else if (json) {
       write(sanitizer.push(`${JSON.stringify(report, null, 2)}\n`) + sanitizer.flush());
     } else {
-      write(sanitizer.push(formatSolarisDoctorReport(report)) + sanitizer.flush());
+      write(sanitizer.push(formatSiralosDoctorReport(report)) + sanitizer.flush());
     }
     return doctorExitCodeFor(report);
   } catch (error: unknown) {
-    write(`Solaris doctor failed to run: ${describeError(error)}\n`);
+    write(`Siralos doctor failed to run: ${describeError(error)}\n`);
     return 2;
   } finally {
     cliApp.close();

@@ -6,7 +6,7 @@ import {
   type GodotKnowledge,
   type Tool,
   type ToolRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGitDiffTool } from "../../git/tools/git-diff-tool.js";
 import { createGitStatusTool } from "../../git/tools/git-status-tool.js";
 import { createGodotApiLookupTool } from "../tools/godot-api-lookup-tool.js";

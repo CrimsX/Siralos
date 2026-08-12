@@ -6,7 +6,7 @@ paths: [packages/core/src/self/**, packages/core/src/doctor/**]
 supersedes: []
 ---
 
-# ADR 0019 — Solaris Self-Reference and Capability Diagnostics
+# ADR 0019 — Siralos Self-Reference and Capability Diagnostics
 
 - Status: accepted (Stage 3 milestone 6)
 - Date: current milestone
@@ -16,16 +16,16 @@ supersedes: []
 
 ## Context
 
-Solaris now has many moving parts: providers, sandboxing, Godot
+Siralos now has many moving parts: providers, sandboxing, Godot
 discovery, the Task Runtime, projection, knowledge, references, and
-research. Answering "what does the installed Solaris actually support?"
+research. Answering "what does the installed Siralos actually support?"
 from model training memory is wrong by construction: the model has no
 reliable knowledge of the exact installed build, its version, its
 registered tools, or its current configuration. Scattered CLI status
 commands (`/status`, `/sandbox`, `/permissions`, `/godot-doctor`,
 `/references`, `/research-status`) are not a coherent diagnostic surface,
 and ad hoc environment probing by the model cannot be trusted to be
-read-only, offline, or honest. As Solaris grows more capabilities, it
+read-only, offline, or honest. As Siralos grows more capabilities, it
 needs a host-owned way to explain and diagnose its actual installed
 capabilities.
 
@@ -33,7 +33,7 @@ capabilities.
 
 Introduce three host-owned surfaces plus safe reporting:
 
-1. **Built-in SelfReference (`@solaris`)** — a host-generated, read-only
+1. **Built-in SelfReference (`@siralos`)** — a host-generated, read-only
    documentation surface describing the EXACT installed runtime: version
    and platform identity, the interactive command catalog, the
    configuration surface, capability names, sandbox profiles, the
@@ -79,19 +79,19 @@ Introduce three host-owned surfaces plus safe reporting:
    (`--json`, schema-versioned) are deterministic, bounded, and
    sanitized: absolute user paths, credential values, and source content
    are excluded; the safe report is NOT anonymous (OS family, Node
-   major, Solaris version remain).
+   major, Siralos version remain).
 
-The CLI exposes one implementation behind both surfaces: `solaris
+The CLI exposes one implementation behind both surfaces: `siralos
 --doctor [area] [--json] [--report-safe]` and the interactive `/doctor
-[area]` command, plus `--self` and `/solaris` for the self-reference.
+[area]` command, plus `--self` and `/siralos` for the self-reference.
 Exit codes are documented: 0 = no failures, 1 = one or more failures,
 2 = doctor invocation/config failure; warnings never fail.
 
 ## Alternatives rejected
 
-- **Model answers about Solaris from training knowledge**: wrong by
+- **Model answers about Siralos from training knowledge**: wrong by
   construction; the installed build is authoritative.
-- **Inject the entire Solaris documentation into every system prompt**:
+- **Inject the entire Siralos documentation into every system prompt**:
   destroys prompt-cache stability; self-reference is retrieved on
   demand.
 - **Let each subsystem (provider adapters, sandbox, Godot, CLI,
@@ -116,12 +116,12 @@ Benefits:
 - reproducibility (installed-version identity + self-reference revision),
 - easier support and debugging (safe reports, deterministic JSON,
   documented exit codes),
-- better model grounding ("what commands does Solaris support?" is
+- better model grounding ("what commands does Siralos support?" is
   answered from the installed runtime, not memory),
 - a single authoritative capability-inventory path,
 - foundations for future Agent Hub/runtime compatibility and `/evolve`
   diagnostics,
-- reduced hallucination about Solaris itself.
+- reduced hallucination about Siralos itself.
 
 Costs:
 

@@ -4,7 +4,7 @@ import type {
   GodotEngineProfile,
   GodotInstallation,
   GodotVersion,
-} from "@solaris/core";
+} from "@siralos/core";
 import { invalidInstallation } from "../discovery/path-discovery.js";
 import {
   createGodotKnowledgeRunner,
@@ -87,7 +87,7 @@ function request(overrides: Partial<GodotKnowledgeRunRequest> = {}): GodotKnowle
   return {
     installation: installation(),
     engineProfile: profile(),
-    probeDirectory: "/tmp/solaris-knowledge-probe",
+    probeDirectory: "/tmp/siralos-knowledge-probe",
     ...overrides,
   };
 }

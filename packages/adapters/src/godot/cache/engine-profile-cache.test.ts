@@ -7,12 +7,12 @@ import {
   ENGINE_PROFILE_CACHE_SCHEMA_VERSION,
   type CachedEngineProfile,
 } from "./engine-profile-cache.js";
-import { createEmptyGodotCommandCapabilities } from "@solaris/core";
+import { createEmptyGodotCommandCapabilities } from "@siralos/core";
 
 const tempDirectories: string[] = [];
 
 async function withTemp(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-godot-cache-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-godot-cache-"));
   tempDirectories.push(directory);
   return directory;
 }

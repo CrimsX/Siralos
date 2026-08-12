@@ -1,5 +1,5 @@
-import { GODOT_LIMITS } from "@solaris/core";
-import type { GodotDiagnostic } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
+import type { GodotDiagnostic } from "@siralos/core";
 
 export interface RecoveryDiagnosticSummary {
   readonly errors: readonly GodotDiagnostic[];

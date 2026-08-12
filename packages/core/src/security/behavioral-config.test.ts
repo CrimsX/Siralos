@@ -14,16 +14,16 @@ describe("protected behavioral configuration paths", () => {
     expect(isProtectedBehavioralConfigPath("src/player/AGENTS.md")).toBe(true);
   });
 
-  it("protects the .solaris directory tree", () => {
-    expect(isProtectedBehavioralConfigPath(".solaris/config.json")).toBe(true);
-    expect(isProtectedBehavioralConfigPath("src/.solaris/workflows/dev.json")).toBe(true);
-    expect(isProtectedBehavioralConfigPath(".solaris")).toBe(true);
+  it("protects the .siralos directory tree", () => {
+    expect(isProtectedBehavioralConfigPath(".siralos/config.json")).toBe(true);
+    expect(isProtectedBehavioralConfigPath("src/.siralos/workflows/dev.json")).toBe(true);
+    expect(isProtectedBehavioralConfigPath(".siralos")).toBe(true);
   });
 
   it("matches case-insensitively", () => {
     expect(isProtectedBehavioralConfigPath("agents.md")).toBe(true);
     expect(isProtectedBehavioralConfigPath("src/AgEnTs.MD")).toBe(true);
-    expect(isProtectedBehavioralConfigPath(".SOLARIS/rules")).toBe(true);
+    expect(isProtectedBehavioralConfigPath(".SIRALOS/rules")).toBe(true);
   });
 
   it("does not protect ordinary source paths", () => {
@@ -38,9 +38,9 @@ describe("protected behavioral configuration paths", () => {
       classifyBehavioralConfigPaths([
         "src/player/player.gd",
         "AGENTS.md",
-        ".solaris/config.json",
+        ".siralos/config.json",
         "src/player/AGENTS.md",
       ]),
-    ).toEqual(["AGENTS.md", ".solaris/config.json", "src/player/AGENTS.md"]);
+    ).toEqual(["AGENTS.md", ".siralos/config.json", "src/player/AGENTS.md"]);
   });
 });

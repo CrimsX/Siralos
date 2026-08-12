@@ -1,5 +1,5 @@
-import type { ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
-import { formatReferenceAlias, isWorkspaceReadMode } from "@solaris/core";
+import type { ToolExecutionContext, ToolExecutionResult } from "@siralos/core";
+import { formatReferenceAlias, isWorkspaceReadMode } from "@siralos/core";
 import {
   readJsonObject,
   readOptionalPositiveInteger,
@@ -79,7 +79,7 @@ export function createReferenceReadTool(dependencies: ReferenceToolDependencies)
     definition: {
       name: "reference.read",
       description:
-        "Read one text file inside a declared external reference. Modes: exact (authoritative source, returns the SHA-256), structural (deterministic GDScript declarations), summary (bounded advisory overview). Summaries/structural views are never authoritative source. References are read-only external material outside the Solaris workspace.",
+        "Read one text file inside a declared external reference. Modes: exact (authoritative source, returns the SHA-256), structural (deterministic GDScript declarations), summary (bounded advisory overview). Summaries/structural views are never authoritative source. References are read-only external material outside the Siralos workspace.",
       inputSchema: {
         type: "object",
         properties: {
@@ -162,7 +162,7 @@ export function createReferenceReadTool(dependencies: ReferenceToolDependencies)
           structure:
             result.structure === null
               ? null
-              : (result.structure as unknown as import("@solaris/core").JsonObject),
+              : (result.structure as unknown as import("@siralos/core").JsonObject),
           summary: result.summary as string | null,
           truncated: result.truncated,
           ...(mode === "summary" ? { advisory: true } : {}),

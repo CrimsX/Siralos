@@ -8,8 +8,8 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
-import type { ReferenceTool } from "@solaris/adapters";
+} from "@siralos/core";
+import type { ReferenceTool } from "@siralos/adapters";
 
 /**
  * CLI-owned reference/research composition helpers (Stage 3 milestone 5).

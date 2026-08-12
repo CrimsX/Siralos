@@ -8,8 +8,8 @@ import type {
   SandboxProfile,
   SandboxedProcessRequest,
   SandboxedProcessResult,
-} from "@solaris/core";
-import { COMMAND_LIMITS, VALIDATION_OFFLINE_PROFILE } from "@solaris/core";
+} from "@siralos/core";
+import { COMMAND_LIMITS, VALIDATION_OFFLINE_PROFILE } from "@siralos/core";
 import { buildCommandEnvironment } from "../../environment/command-environment.js";
 import { createRunDirectoryProvider, type CommandRunPaths } from "../../process/run-directories.js";
 import { resolveNpmCli, type NpmCliResolution } from "../../process/trusted-executables.js";
@@ -44,13 +44,13 @@ export interface ConformanceOptions {
   readonly parentEnvironment: Readonly<Record<string, string>>;
 }
 
-const FIXTURE_FILE_NAME = "solaris-conformance-fixture.cjs";
+const FIXTURE_FILE_NAME = "siralos-conformance-fixture.cjs";
 const PROBE_TARGET_FILE_NAME = "probe-target.txt";
 const OUTSIDE_SECRET_FILE_NAME = "secret.txt";
 const NPM_PROBE_DIRECTORY = "npm-probe";
-const NPM_PROBE_FILE_NAME = "solaris-npm-probe.cjs";
-const RUNS_ROOT = join(tmpdir(), "solaris-conformance-runs");
-const HEARTBEAT_FILE_NAME = "solaris-heartbeat.txt";
+const NPM_PROBE_FILE_NAME = "siralos-npm-probe.cjs";
+const RUNS_ROOT = join(tmpdir(), "siralos-conformance-runs");
+const HEARTBEAT_FILE_NAME = "siralos-heartbeat.txt";
 const HEARTBEAT_GRACE_MS = 1500;
 
 interface ProbeContext {
@@ -272,7 +272,7 @@ export async function runSandboxConformance(
       id: "unix-socket",
       description: "Host Unix sockets are unreachable",
       buildRequest: async (_context, runPaths) => {
-        const socketPath = join(probeContext.outsideDirectory, "solaris-probe.sock");
+        const socketPath = join(probeContext.outsideDirectory, "siralos-probe.sock");
         if (!(await tryStartUnixServer(socketPath))) {
           throw new SkipProbeError("Unix sockets are unavailable on this host; probe skipped.");
         }
@@ -280,7 +280,7 @@ export async function runSandboxConformance(
       },
       check: (result) => result.stdout.includes("socket-denied"),
       cleanupAfter: async (context) => {
-        await rm(join(context.outsideDirectory, "solaris-probe.sock"), { force: true });
+        await rm(join(context.outsideDirectory, "siralos-probe.sock"), { force: true });
       },
     },
     {
@@ -379,14 +379,14 @@ export async function runSandboxConformance(
       id: "npm-read",
       description: "npm script reads package files",
       profile: COMMAND_PROFILE,
-      buildRequest: (_context, runPaths) => npmRequest("solaris-read", COMMAND_PROFILE, runPaths),
+      buildRequest: (_context, runPaths) => npmRequest("siralos-read", COMMAND_PROFILE, runPaths),
       check: (result) => result.stdout.includes("read-ok"),
     },
     {
       id: "npm-write-denied",
       description: "npm script cannot write the workspace",
       profile: COMMAND_PROFILE,
-      buildRequest: (_context, runPaths) => npmRequest("solaris-write", COMMAND_PROFILE, runPaths),
+      buildRequest: (_context, runPaths) => npmRequest("siralos-write", COMMAND_PROFILE, runPaths),
       check: (result) => result.stdout.includes("write-denied"),
     },
     {
@@ -394,14 +394,14 @@ export async function runSandboxConformance(
       description: "npm script cannot access network",
       profile: COMMAND_PROFILE,
       buildRequest: (_context, runPaths) =>
-        npmRequest("solaris-network", COMMAND_PROFILE, runPaths),
+        npmRequest("siralos-network", COMMAND_PROFILE, runPaths),
       check: (result) => result.stdout.includes("network-denied"),
     },
     {
       id: "npm-hooks",
       description: "npm pre/post scripts are not executed",
       profile: COMMAND_PROFILE,
-      buildRequest: (_context, runPaths) => npmRequest("solaris-hooks", COMMAND_PROFILE, runPaths),
+      buildRequest: (_context, runPaths) => npmRequest("siralos-hooks", COMMAND_PROFILE, runPaths),
       check: (result) =>
         result.stdout.includes("target-ran") &&
         !result.stdout.includes("prehook-ran") &&
@@ -411,7 +411,7 @@ export async function runSandboxConformance(
       id: "npm-stdin",
       description: "npm script receives no stdin",
       profile: COMMAND_PROFILE,
-      buildRequest: (_context, runPaths) => npmRequest("solaris-stdin", COMMAND_PROFILE, runPaths),
+      buildRequest: (_context, runPaths) => npmRequest("siralos-stdin", COMMAND_PROFILE, runPaths),
       check: (result) => result.stdout.includes("stdin-closed"),
     },
     {
@@ -494,13 +494,13 @@ export async function runSandboxConformance(
   ];
 
   const results: ConformanceProbeResult[] = [];
-  // The suite can only execute when Solaris can create a verified private
+  // The suite can only execute when Siralos can create a verified private
   // run directory for every sandboxed command. Creation fails closed (Node
   // offers no directory-relative primitive), so an unavailable provider
   // skips every probe truthfully: skipped is never treated as passed.
   const availabilityProbe = await runDirectories.create();
   if (!availabilityProbe.ok) {
-    const reason = `Private run directories are unavailable, so no sandboxed command can execute with a verified Solaris-owned run directory: ${availabilityProbe.message}`;
+    const reason = `Private run directories are unavailable, so no sandboxed command can execute with a verified Siralos-owned run directory: ${availabilityProbe.message}`;
     return {
       backendId: backend.id,
       platform: process.platform,
@@ -840,16 +840,16 @@ async function closeLoopbackServer(server: Server): Promise<void> {
 }
 
 const NPM_PACKAGE_JSON = JSON.stringify({
-  name: "solaris-conformance-package",
+  name: "siralos-conformance-package",
   private: true,
   scripts: {
-    "solaris-read": "node solaris-npm-probe.cjs read",
-    "solaris-write": "node solaris-npm-probe.cjs write",
-    "solaris-network": "node solaris-npm-probe.cjs network",
-    "pre-solaris-hooks": "node solaris-npm-probe.cjs prehook",
-    "solaris-hooks": "node solaris-npm-probe.cjs target",
-    "post-solaris-hooks": "node solaris-npm-probe.cjs posthook",
-    "solaris-stdin": "node solaris-npm-probe.cjs stdin",
+    "siralos-read": "node siralos-npm-probe.cjs read",
+    "siralos-write": "node siralos-npm-probe.cjs write",
+    "siralos-network": "node siralos-npm-probe.cjs network",
+    "pre-siralos-hooks": "node siralos-npm-probe.cjs prehook",
+    "siralos-hooks": "node siralos-npm-probe.cjs target",
+    "post-siralos-hooks": "node siralos-npm-probe.cjs posthook",
+    "siralos-stdin": "node siralos-npm-probe.cjs stdin",
   },
 });
 
@@ -1078,7 +1078,7 @@ if (mode === "read-inside" || mode === "node-read") {
     report("network-denied");
   });
 } else if (mode === "dns") {
-  dns.lookup("solaris-conformance.invalid", function (error) {
+  dns.lookup("siralos-conformance.invalid", function (error) {
     report(error ? "dns-denied" : "dns-resolved");
   });
 } else if (mode === "env") {

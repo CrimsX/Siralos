@@ -2,7 +2,7 @@ import {
   GODOT_KNOWN_OPTIONS,
   createEmptyGodotCommandCapabilities,
   type GodotCommandCapabilities,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export interface GodotHelpParseResult {
   readonly capabilities: GodotCommandCapabilities;

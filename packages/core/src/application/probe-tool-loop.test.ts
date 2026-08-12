@@ -1,7 +1,7 @@
 ﻿import { describe, expect, it } from "vitest";
 import {
   createDefaultPolicy,
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   type ApprovalDecision,
@@ -154,7 +154,7 @@ function hasEvent(
 async function runPrompt(provider: ModelProvider, reviewer: ApprovalReviewer | undefined) {
   const { tool, prepareCalls, executeCalls, executedDigests } = createStubProbeTool();
   const registry = createToolRegistry([tool]);
-  const app = createSolarisApplication({
+  const app = createSiralosApplication({
     provider,
     tools: registry,
     policy: createDefaultPolicy("develop-offline"),
@@ -281,7 +281,7 @@ describe("prepared probe tool loop", () => {
       },
     });
     const registry = createToolRegistry([tool]);
-    const app = createSolarisApplication({
+    const app = createSiralosApplication({
       provider,
       tools: registry,
       policy: createDefaultPolicy("develop-offline"),
@@ -339,7 +339,7 @@ describe("prepared probe tool loop", () => {
     ]);
     const { tool, executeCalls } = createStubProbeTool();
     const registry = createToolRegistry([tool]);
-    const app = createSolarisApplication({
+    const app = createSiralosApplication({
       provider,
       tools: registry,
       policy: createDefaultPolicy("validation-offline"),

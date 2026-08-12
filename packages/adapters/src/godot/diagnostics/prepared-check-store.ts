@@ -3,7 +3,7 @@ import {
   createPreparedGDScriptCheck,
   type GodotScriptCheckTarget,
   type PreparedGDScriptCheck,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createPreparedPlanStore,
   type PreparedPlanStore,
@@ -11,14 +11,14 @@ import {
 } from "../probe/prepared-plan-store.js";
 
 export interface PreparedCheckPlan {
-  readonly preview: import("@solaris/core").GodotDiagnosticPreview;
+  readonly preview: import("@siralos/core").GodotDiagnosticPreview;
   /** Full prepared-check digest; approval binds to exactly this. */
   readonly digest: string;
   readonly manifestDigest: string;
   readonly scriptTargets: readonly GodotScriptCheckTarget[];
   readonly selection: {
-    readonly installation: import("@solaris/core").GodotInstallation;
-    readonly profile: import("@solaris/core").GodotEngineProfile;
+    readonly installation: import("@siralos/core").GodotInstallation;
+    readonly profile: import("@siralos/core").GodotEngineProfile;
   };
 }
 

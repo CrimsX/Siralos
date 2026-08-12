@@ -7,7 +7,7 @@ import { DEFAULT_USER_CONFIG, loadUserConfig, parseUserConfig } from "./user-con
 const tempDirectories: string[] = [];
 
 async function withConfigFile(content: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-config-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-config-"));
   tempDirectories.push(directory);
   const path = join(directory, "config.json");
   await writeFile(path, content);
@@ -76,10 +76,10 @@ describe("parseUserConfig", () => {
 
   it("rejects unknown quality keys", () => {
     expect(() => parseUserConfig({ quality: { reviewProviders: ["x"] } })).toThrow(
-      "Unknown Solaris quality configuration key",
+      "Unknown Siralos quality configuration key",
     );
     expect(() => parseUserConfig({ quality: "reviewer" })).toThrow(
-      'Solaris configuration section "quality" must be a JSON object',
+      'Siralos configuration section "quality" must be a JSON object',
     );
   });
 
@@ -91,13 +91,13 @@ describe("parseUserConfig", () => {
 
   it("rejects unknown top-level sections", () => {
     expect(() => parseUserConfig({ permissions: {} })).toThrow(
-      "Unknown Solaris configuration section",
+      "Unknown Siralos configuration section",
     );
   });
 
   it("rejects unknown sandbox keys", () => {
     expect(() => parseUserConfig({ sandbox: { networkAllowlist: [] } })).toThrow(
-      "Unknown Solaris sandbox configuration key",
+      "Unknown Siralos sandbox configuration key",
     );
   });
 
@@ -108,7 +108,7 @@ describe("parseUserConfig", () => {
 
   it("cannot contain credentials", () => {
     expect(() => parseUserConfig({ sandbox: { apiKey: "secret" } })).toThrow(
-      "Unknown Solaris sandbox configuration key",
+      "Unknown Siralos sandbox configuration key",
     );
   });
 });
@@ -168,7 +168,7 @@ describe("parseUserConfig references section", () => {
       parseUserConfig({
         references: { "godot-src": { kind: "local-directory", path: "C:\\x", apiKey: "secret" } },
       }),
-    ).toThrow('Unknown Solaris reference key: apiKey (reference "godot-src").');
+    ).toThrow('Unknown Siralos reference key: apiKey (reference "godot-src").');
   });
 
   it("rejects unknown ref keys", () => {
@@ -182,7 +182,7 @@ describe("parseUserConfig references section", () => {
           },
         },
       }),
-    ).toThrow('Unknown Solaris reference ref key: token (reference "godot-engine").');
+    ).toThrow('Unknown Siralos reference ref key: token (reference "godot-engine").');
   });
 
   it("rejects a ref that pins more than one of commit/tag/branch", () => {
@@ -244,10 +244,10 @@ describe("parseUserConfig references section", () => {
 
   it("rejects a non-object references section", () => {
     expect(() => parseUserConfig({ references: "none" })).toThrow(
-      'Solaris configuration section "references" must be a JSON object',
+      'Siralos configuration section "references" must be a JSON object',
     );
     expect(() => parseUserConfig({ references: [] })).toThrow(
-      'Solaris configuration section "references" must be a JSON object',
+      'Siralos configuration section "references" must be a JSON object',
     );
   });
 
@@ -262,7 +262,7 @@ describe("parseUserConfig references section", () => {
 
 describe("loadUserConfig", () => {
   it("returns defaults when no config file exists", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "solaris-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "siralos-config-"));
     tempDirectories.push(directory);
     const config = await loadUserConfig(join(directory, "missing.json"));
     expect(config).toEqual(DEFAULT_USER_CONFIG);
@@ -287,7 +287,7 @@ describe("loadUserConfig", () => {
   });
 
   it("rejects a config file beyond the byte limit without reading it fully", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "solaris-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "siralos-config-"));
     tempDirectories.push(directory);
     const path = join(directory, "huge.json");
     await writeFile(path, " ".repeat(1024 * 1024 + 1));
@@ -295,7 +295,7 @@ describe("loadUserConfig", () => {
   });
 
   it("rejects a config file that is not a regular file", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "solaris-config-"));
+    const directory = await mkdtemp(join(tmpdir(), "siralos-config-"));
     tempDirectories.push(directory);
     const path = join(directory, "config.json");
     await writeFile(path, "{}");
@@ -350,7 +350,7 @@ describe("parseUserConfig godot section", () => {
 
   it("rejects unknown godot section keys", () => {
     expect(() => parseUserConfig({ godot: { automaticDownload: true } })).toThrow(
-      "Unknown Solaris godot configuration key",
+      "Unknown Siralos godot configuration key",
     );
   });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDefaultPolicy,
-  createSolarisSecurity,
+  createSiralosSecurity,
   INSPECT_PROFILE,
   SandboxError,
   type SandboxBackend,
@@ -53,7 +53,7 @@ async function collectEvents(events: AsyncIterable<SandboxEvent>): Promise<Sandb
   return collected;
 }
 
-describe("createSolarisSecurity", () => {
+describe("createSiralosSecurity", () => {
   it("exposes the profile and policy", () => {
     const policy = createDefaultPolicy("inspect");
     const { backend } = createStubBackend({
@@ -69,7 +69,7 @@ describe("createSolarisSecurity", () => {
         violationReporting: true,
       },
     });
-    const security = createSolarisSecurity({ backend, policy, profile: INSPECT_PROFILE });
+    const security = createSiralosSecurity({ backend, policy, profile: INSPECT_PROFILE });
     expect(security.profile).toBe(INSPECT_PROFILE);
     expect(security.policy).toBe(policy);
   });
@@ -89,7 +89,7 @@ describe("createSolarisSecurity", () => {
         violationReporting: true,
       },
     });
-    const security = createSolarisSecurity({ backend, policy, profile: INSPECT_PROFILE });
+    const security = createSiralosSecurity({ backend, policy, profile: INSPECT_PROFILE });
     expect(security.evaluateCapability("workspace.write")).toMatchObject({ decision: "deny" });
     expect(security.evaluateCapability("workspace.read")).toEqual({ decision: "allow" });
   });
@@ -109,7 +109,7 @@ describe("createSolarisSecurity", () => {
       },
     };
     const { backend, inspectCalls } = createStubBackend(status);
-    const security = createSolarisSecurity({
+    const security = createSiralosSecurity({
       backend,
       policy: createDefaultPolicy("inspect"),
       profile: INSPECT_PROFILE,
@@ -123,7 +123,7 @@ describe("createSolarisSecurity", () => {
   });
 
   it("normalizes backend failures into a failed status", async () => {
-    const security = createSolarisSecurity({
+    const security = createSiralosSecurity({
       backend: createFailingBackend(),
       policy: createDefaultPolicy("inspect"),
       profile: INSPECT_PROFILE,

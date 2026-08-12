@@ -8,8 +8,8 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
-import { formatReferenceAlias } from "@solaris/core";
+} from "@siralos/core";
+import { formatReferenceAlias } from "@siralos/core";
 import {
   readJsonObject,
   readOptionalString,
@@ -22,7 +22,7 @@ import { createReferenceSearchTool } from "./reference-search-tool.js";
 /**
  * `reference.list` tool (Stage 3 milestone 5): list one directory inside a
  * declared external reference. References are read-only external material
- * outside the Solaris workspace — the reference namespace is separate from
+ * outside the Siralos workspace — the reference namespace is separate from
  * the workspace namespace, and this tool never mutates anything.
  */
 
@@ -107,7 +107,7 @@ export function createReferenceListTool(dependencies: ReferenceToolDependencies)
     definition: {
       name: "reference.list",
       description:
-        "List one directory inside a declared external reference. References are read-only external material outside the Solaris workspace; the reference namespace is separate from the workspace namespace.",
+        "List one directory inside a declared external reference. References are read-only external material outside the Siralos workspace; the reference namespace is separate from the workspace namespace.",
       inputSchema: {
         type: "object",
         properties: {

@@ -110,7 +110,7 @@ describe("workspace scope", () => {
 
   it("excludes noisy generated and vendor paths by default", () => {
     for (const path of [
-      "node_modules/@solaris/core/index.js",
+      "node_modules/@siralos/core/index.js",
       "dist/index.js",
       "build/out.js",
       "coverage/lcov.info",

@@ -18,7 +18,7 @@ import type {
   SemanticVerification,
   UnifiedChangeSet,
   WorkspaceRevisionRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   approveUnifiedTarget,
   classifyDevelopmentSurface,
@@ -33,7 +33,7 @@ import {
   verifyCrossSurfaceConsistency,
   verifyResourceSemanticEffect,
   verifySceneSemanticEffect,
-} from "@solaris/core";
+} from "@siralos/core";
 import { prepareChangeSet } from "./change-set-preparation.js";
 import {
   applyChangeSetProtocol,
@@ -324,7 +324,7 @@ export function createUnifiedDevelopmentService(
       readonly path: string;
       readonly fingerprint: string;
       readonly preStates: readonly { readonly path: string; readonly sha256: string }[];
-      readonly target: import("@solaris/core").UnifiedTarget;
+      readonly target: import("@siralos/core").UnifiedTarget;
       readonly references: readonly string[];
     }[] = [];
     const preparedFiles: Map<string, readonly PreparedChangeSetFile[]> = new Map();
@@ -629,7 +629,7 @@ export function createUnifiedDevelopmentService(
     // Build one combined apply request: text files plus serializer-generated
     // native content, in the derived order. Every pre-state is included so
     // the protocol revalidates ALL targets before any checkpoint or write.
-    const files: import("@solaris/core").ChangeSetApplyFileRequest[] = [];
+    const files: import("@siralos/core").ChangeSetApplyFileRequest[] = [];
     for (const target of current.targets) {
       if (target.kind === "text") {
         for (const file of preparedFilesByTarget.get(target.path) ?? []) {
@@ -779,7 +779,7 @@ export function createUnifiedDevelopmentService(
     // Cross-surface consistency over the applied native documents.
     const documents = new Map<
       string,
-      import("@solaris/core").GodotSceneModel | import("@solaris/core").GodotResourceModel
+      import("@siralos/core").GodotSceneModel | import("@siralos/core").GodotResourceModel
     >();
     for (const target of current.targets) {
       if (target.kind === "native") {
@@ -928,7 +928,7 @@ export function createUnifiedDevelopmentService(
   async function readParsedTarget(
     prepared: PreparedGodotMutation,
   ): Promise<
-    import("@solaris/core").GodotSceneModel | import("@solaris/core").GodotResourceModel | null
+    import("@siralos/core").GodotSceneModel | import("@siralos/core").GodotResourceModel | null
   > {
     const resolved = await resolveWorkspacePath(dependencies.workspaceRoot, prepared.targetPath);
     if (resolved.status === "rejected") {

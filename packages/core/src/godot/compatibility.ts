@@ -46,9 +46,9 @@ export function assessGodotCompatibility(
   }
   const reasons: string[] = [];
   if (engine.support === "verified") {
-    reasons.push(`Solaris verified support: ${engine.version.raw} standard editor.`);
+    reasons.push(`Siralos verified support: ${engine.version.raw} standard editor.`);
   } else {
-    reasons.push(`Solaris support: ${engine.support} (${engine.version.raw}).`);
+    reasons.push(`Siralos support: ${engine.support} (${engine.version.raw}).`);
   }
   const declared = project.declaredEngineVersion;
   if (declared === null) {
@@ -96,11 +96,11 @@ export function assessGodotCompatibility(
     engine.support === "invalid" ||
     engine.support === "runtime-only"
   ) {
-    reasons.push("The selected engine is not a supported editor for Solaris.");
+    reasons.push("The selected engine is not a supported editor for Siralos.");
     return { status: "engine-unverified", severity: "error", reasons };
   }
   if (engine.support !== "verified" && engine.support !== "compatible-untested") {
-    reasons.push("The selected engine build is unverified for Solaris.");
+    reasons.push("The selected engine build is unverified for Siralos.");
     return { status: "engine-unverified", severity: "warning", reasons };
   }
   if (project.languageProfile === "dotnet" && engine.edition === "standard") {
@@ -111,7 +111,7 @@ export function assessGodotCompatibility(
   }
   if (project.languageProfile === "gdscript" && engine.edition === "dotnet") {
     reasons.push(
-      "The project appears GDScript-only; a .NET engine is selected and remains unverified for Solaris.",
+      "The project appears GDScript-only; a .NET engine is selected and remains unverified for Siralos.",
     );
     return { status: "likely-compatible", severity: "warning", reasons };
   }

@@ -123,11 +123,11 @@ export function createContextProjector(): ContextProjector {
 }
 
 /**
- * Solaris core behavioral instructions: the stable anchor of every prompt.
+ * Siralos core behavioral instructions: the stable anchor of every prompt.
  * This text must stay free of volatile values (timestamps, iteration
  * counts, paths, tool output) so the provider prefix remains cacheable.
  */
-export const SOLARIS_SYSTEM_INSTRUCTIONS = `You are Solaris, a host-owned AI agent harness for Godot Engine development.
+export const SIRALOS_SYSTEM_INSTRUCTIONS = `You are Siralos, a host-owned AI agent harness for Godot Engine development.
 
 Architecture
 - The host runtime owns all authoritative state: tasks, approvals, sandboxing, checkpoints, and validation gates.

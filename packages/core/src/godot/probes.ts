@@ -9,7 +9,7 @@ import type { GodotVersion } from "./version.js";
  * or working directory is accepted: the adapter chooses every argument and
  * every working directory. Probes always run through the sandbox backend.
  * Provider adapters cannot invoke this runner directly; only the Godot
- * probe adapter implements it and only Solaris composition consumes it.
+ * probe adapter implements it and only Siralos composition consumes it.
  */
 export interface GodotProbeRunner {
   /**

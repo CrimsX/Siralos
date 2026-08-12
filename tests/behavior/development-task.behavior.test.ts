@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { TaskState } from "@solaris/core";
-import { createUndoService } from "@solaris/adapters";
+import type { TaskState } from "@siralos/core";
+import { createUndoService } from "@siralos/adapters";
 import {
   createBehaviorLoopHarness,
   FIXTURE_PATH,

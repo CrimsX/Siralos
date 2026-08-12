@@ -15,7 +15,7 @@ import {
   type GodotProbeRunner,
   type GodotSelectionPreference,
   type SandboxBackend,
-} from "@solaris/core";
+} from "@siralos/core";
 import { join } from "node:path";
 import { stringifyError } from "../../support/error-message.js";
 import { homedir } from "node:os";
@@ -32,7 +32,7 @@ import { parseGodotVersionText } from "../process/version-parser.js";
 import { parseGodotApiDumpWithDocs } from "./api-dump-with-docs.js";
 import { buildGodotApiIndex, searchGodotApiIndex, lookupGodotApiSymbol } from "./api-index.js";
 
-/** Solaris-private probe-directory root for API documentation generation. */
+/** Siralos-private probe-directory root for API documentation generation. */
 export const GODOT_KNOWLEDGE_PROBE_ROOT = "godot-knowledge-probe";
 
 const MAX_QUERY_LENGTH = 4096;
@@ -65,7 +65,7 @@ export interface GodotKnowledgeServiceDependencies {
  * Version-matched Godot API knowledge service.
  *
  * `refresh` regenerates the exact-engine API documentation profile
- * (`--dump-extension-api-with-docs` in a Solaris-private probe directory)
+ * (`--dump-extension-api-with-docs` in a Siralos-private probe directory)
  * and replaces the loaded knowledge base only after a successful complete
  * generation; cancellation leaves any previous base intact. `search` and
  * `lookup` serve bounded structured results from the loaded base and never
@@ -130,7 +130,7 @@ export function createGodotKnowledgeService(
       emit("godot_probe_started", selection.installation.id, "knowledge");
       const probeDirectory = join(
         homedir(),
-        ".solaris",
+        ".siralos",
         "godot",
         GODOT_KNOWLEDGE_PROBE_ROOT,
         selection.installation.sha256.slice(0, 16),
@@ -187,7 +187,7 @@ export function createGodotKnowledgeService(
   }
 
   function search(
-    query: import("@solaris/core").GodotApiSearchQuery,
+    query: import("@siralos/core").GodotApiSearchQuery,
     signal?: AbortSignal,
   ): Promise<GodotKnowledgeQueryResult> {
     if (signal?.aborted) {
@@ -391,7 +391,7 @@ const VALID_API_KINDS: ReadonlySet<string> = new Set([
   "operator",
 ]);
 
-function parseVersion(raw: string): import("@solaris/core").GodotVersion | null {
+function parseVersion(raw: string): import("@siralos/core").GodotVersion | null {
   try {
     const parsed = parseGodotVersionText(raw);
     return parsed.ok ? parsed.version : null;

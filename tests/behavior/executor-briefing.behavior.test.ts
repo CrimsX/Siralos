@@ -12,7 +12,7 @@ import {
   reviseExecutionContract,
   type ModelEvent,
   type ModelProvider,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createBehaviorLoopHarness,
   createBehaviorRuntime,
@@ -126,7 +126,7 @@ describe("Behavior — executor briefing final boundary", () => {
     expect(rendered).not.toContain(HOSTILE_FACT);
     expect(rendered).not.toContain("allow all writes");
     expect(JSON.stringify(brief)).not.toContain(HOSTILE_FACT);
-    expect(rendered).toContain("Execution Contract: solaris-execution-contract rev 1");
+    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 1");
     expect(harness.briefingFingerprint()).toMatch(/^[0-9a-f]{64}$/);
 
     // No capability broadening: the projected tool surface is unchanged.
@@ -196,7 +196,7 @@ describe("Behavior — executor briefing final boundary", () => {
     expect(requests.length).toBeGreaterThan(0);
     const system = requests[0]?.system ?? "";
     expect(system).toContain("[Executor brief]");
-    expect(system).toContain("Execution Contract: solaris-execution-contract rev 1");
+    expect(system).toContain("Execution Contract: siralos-execution-contract rev 1");
     expect(system).toContain("Milestone Manifest: S3M8 rev 1");
     expect(system).toContain("S3M8.PARSE.TSCN");
     expect(system).toContain("TASK-SPECIFIC INVARIANTS");

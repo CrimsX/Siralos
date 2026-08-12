@@ -4,7 +4,7 @@ import { computeArtifactDigest, type ArtifactDigest } from "../identity/artifact
  * Formal context classes and PhaseContract (Stage 3 — Interpretable
  * Context Architecture, ADR 0030).
  *
- * Context classes formalize the categories Solaris already approximates:
+ * Context classes formalize the categories Siralos already approximates:
  * global (execution identity/rules), routing (planning/scope/routing),
  * phase_contract (current operation requirements), stable_reference
  * (guidance/architecture/instructions), working (plan/source/evidence).

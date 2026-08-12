@@ -22,7 +22,7 @@ import type {
   SandboxBackend,
   SandboxBackendStatus,
   SandboxedProcessResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createFakeGodotProbeRunner } from "../testing/fake-godot-probe-runner.js";
 import { createProjectMirror } from "../mirror/project-mirror.js";
 import { createRunDirectoryProvider } from "../../process/run-directories.js";
@@ -35,7 +35,7 @@ import { type UserGodotConfig } from "../../config/user-config.js";
 const tempRoots: string[] = [];
 
 async function withTempRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "solaris-probe-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "siralos-probe-test-"));
   tempRoots.push(root);
   return root;
 }
@@ -44,7 +44,7 @@ function probeSymlinkSupport(): boolean {
   let supported = false;
   let probeDir: string | undefined;
   try {
-    probeDir = mkdtempSync(path.join(tmpdir(), "solaris-probe-symlink-"));
+    probeDir = mkdtempSync(path.join(tmpdir(), "siralos-probe-symlink-"));
     const target = path.join(probeDir, "target.txt");
     writeFileSync(target, "x");
     symlinkSync(target, path.join(probeDir, "link.txt"));
@@ -137,7 +137,7 @@ interface ProbeHarnessOptions {
   readonly probeRunnerAvailable?: boolean;
   readonly versionText?: string;
   readonly backendStatus?: SandboxBackendStatus;
-  readonly preference?: import("@solaris/core").GodotSelectionPreference;
+  readonly preference?: import("@siralos/core").GodotSelectionPreference;
   readonly preparedStoreConfig?: {
     readonly maxProbes?: number;
     readonly maxStateBytes?: number;
@@ -226,9 +226,9 @@ async function createHarness(options: ProbeHarnessOptions = {}): Promise<ProbeHa
 }
 
 async function prepareReady(service: GodotProjectProbe): Promise<{
-  readonly probe: import("@solaris/core").PreparedGodotProbe;
+  readonly probe: import("@siralos/core").PreparedGodotProbe;
   readonly digest: string;
-  readonly preview: import("@solaris/core").GodotProbePreview;
+  readonly preview: import("@siralos/core").GodotProbePreview;
 }> {
   const prepared = await service.prepare();
   if (prepared.status !== "ready") {

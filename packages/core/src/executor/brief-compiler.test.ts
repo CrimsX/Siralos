@@ -127,7 +127,7 @@ describe("executor brief compiler", () => {
     });
     expect(brief.executionContract.revision).toBe(1);
     const rendered = renderExecutorBrief(brief);
-    expect(rendered).toContain("Execution Contract: solaris-execution-contract rev 1");
+    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 1");
     expect(rendered).not.toMatch(/no push|rebase|rewrite history/i);
     expect(rendered).not.toMatch(/npm run|format:check|typecheck/i);
     expect(rendered).not.toMatch(/untrusted/i);

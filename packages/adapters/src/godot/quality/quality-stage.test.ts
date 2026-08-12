@@ -2,16 +2,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEVELOP_OFFLINE_PROFILE,
   createDefaultPolicy,
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   QUALITY_LIMITS,
   type ApprovalReviewer,
   type CheckpointStore,
   type QualityValidationExecutor,
-  type SolarisApplication,
+  type SiralosApplication,
   type ValidationPlanDiscovery,
   type ValidationRunOutcome,
-} from "@solaris/core";
+} from "@siralos/core";
 import { readFile } from "node:fs/promises";
 import {
   cleanupTempCheckpointDirs,
@@ -36,7 +36,7 @@ import type {
   GDScriptDevelopmentStatus,
   GodotGDScriptDiagnostic,
   QualityGateResult,
-} from "@solaris/core";
+} from "@siralos/core";
 
 const FIXTURE_PATH = "scripts/player/player.gd";
 const FIXTURE_CONTENT =
@@ -86,7 +86,7 @@ function createScriptedValidation(control: ScriptedValidationControl): {
 interface LoopHarness {
   readonly workspace: TempWorkspace;
   readonly store: CheckpointStore;
-  readonly application: SolarisApplication;
+  readonly application: SiralosApplication;
   readonly approvals: () => number;
   readonly status: () => GDScriptDevelopmentStatus;
   readonly startWorkflow: (request: string) => Promise<void>;
@@ -125,7 +125,7 @@ async function createLoopHarness(options: {
   );
   let approvals = 0;
   const reviewer: ApprovalReviewer = {
-    review(): Promise<import("@solaris/core").ApprovalDecision> {
+    review(): Promise<import("@siralos/core").ApprovalDecision> {
       approvals += 1;
       if (options.denyApprovalFrom !== undefined && approvals >= options.denyApprovalFrom) {
         return Promise.resolve({ type: "deny", reason: "the user denied the repair" });
@@ -155,7 +155,7 @@ async function createLoopHarness(options: {
     createWorkspaceReadTool(workspace.root),
     createWorkspaceApplyTextChangesetTool(development),
   ]);
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider: createDeterministicFakeProvider(),
     tools,
     policy: createDefaultPolicy("develop-offline"),
@@ -877,11 +877,11 @@ describe("development review context (Stage 3 milestone 9)", () => {
       runs: [],
     });
     const fakeReviewer = createFakeChangeReviewer({ scenario: "clean" });
-    const captured: Array<import("@solaris/core").ChangeReviewRequest> = [];
+    const captured: Array<import("@siralos/core").ChangeReviewRequest> = [];
     const reviewer = {
       ...fakeReviewer.reviewer,
       review: async (
-        request: import("@solaris/core").ChangeReviewRequest,
+        request: import("@siralos/core").ChangeReviewRequest,
         signal?: AbortSignal,
       ) => {
         captured.push(request);
@@ -905,7 +905,7 @@ describe("development review context (Stage 3 milestone 9)", () => {
       },
       // Stage 3 milestone 9: bounded impact context for the reviewer.
       reviewContextProvider: async (changedPaths) => {
-        const manifest = await import("@solaris/core").then((core) =>
+        const manifest = await import("@siralos/core").then((core) =>
           core.validateReviewContextManifest({
             taskId: "task-review",
             taskContractRevision: 1,
@@ -933,7 +933,7 @@ describe("development review context (Stage 3 milestone 9)", () => {
       createWorkspaceReadTool(workspace.root),
       createWorkspaceApplyTextChangesetTool(development),
     ]);
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: createDeterministicFakeProvider(),
       tools,
       policy: createDefaultPolicy("develop-offline"),

@@ -8,7 +8,7 @@ supersedes: []
 
 # ADR 0024 — Scoped Documentation and Progressive Context
 
-- Status: accepted (Stage 3 milestone 3.7B, Solaris documentation
+- Status: accepted (Stage 3 milestone 3.7B, Siralos documentation
   context optimization)
 - Date: current milestone
 - Related: ADR 0017 (project instructions and knowledge), ADR 0022
@@ -17,7 +17,7 @@ supersedes: []
 
 ## Problem
 
-Coding executors working on Solaris can accumulate excessive context
+Coding executors working on Siralos can accumulate excessive context
 from: large root guidance, broad architecture documents, milestone
 history mixed into current architecture, duplicated security and
 development rules, all ADRs, handoff/current-state documents, and

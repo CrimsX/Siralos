@@ -71,7 +71,7 @@ describe("ordering policy", () => {
 describe("environment manifest", () => {
   it("is deterministic regardless of allowlist/tool order", () => {
     const first = createEnvironmentManifest({
-      solarisVersion: "0.0.0",
+      siralosVersion: "0.0.0",
       nodeVersion: "v26",
       npmVersion: "11",
       platform: "win32",
@@ -89,7 +89,7 @@ describe("environment manifest", () => {
       ],
     });
     const second = createEnvironmentManifest({
-      solarisVersion: "0.0.0",
+      siralosVersion: "0.0.0",
       nodeVersion: "v26",
       npmVersion: "11",
       platform: "win32",
@@ -111,7 +111,7 @@ describe("environment manifest", () => {
 
   it("surfaces only the changed environment dimension in its delta", () => {
     const base = createEnvironmentManifest({
-      solarisVersion: "0.0.0",
+      siralosVersion: "0.0.0",
       nodeVersion: "v26",
       npmVersion: null,
       platform: null,
@@ -126,7 +126,7 @@ describe("environment manifest", () => {
       toolIdentities: [],
     });
     const changed = createEnvironmentManifest({
-      solarisVersion: "0.0.0",
+      siralosVersion: "0.0.0",
       nodeVersion: "v26.1.0",
       npmVersion: null,
       platform: null,

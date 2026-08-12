@@ -109,7 +109,7 @@ describe("resolveGodotSelection", () => {
     });
     expect(result).toEqual({
       ok: false,
-      message: "SOLARIS_GODOT and SOLARIS_GODOT_INSTALLATION are mutually exclusive.",
+      message: "SIRALOS_GODOT and SIRALOS_GODOT_INSTALLATION are mutually exclusive.",
     });
   });
 });

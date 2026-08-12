@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import { normalizeGodotCheckOutput } from "./diagnostic-normalizer.js";
 
 function fixture(name: string): string {
@@ -10,7 +10,7 @@ function fixture(name: string): string {
   return readFileSync(fixturePath, "utf8");
 }
 
-const MIRROR = path.join(process.platform === "win32" ? "C:\\" : "/", "tmp", "solaris-mirror-1");
+const MIRROR = path.join(process.platform === "win32" ? "C:\\" : "/", "tmp", "siralos-mirror-1");
 
 describe("normalizeGodotCheckOutput (engine-version fixtures)", () => {
   it("normalizes parser errors with their locations", () => {

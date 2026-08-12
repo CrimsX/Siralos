@@ -9,7 +9,7 @@ import { estimateConversationTokens } from "./conversation-trim.js";
 import {
   createContextProjector,
   serializeContextPrefix,
-  SOLARIS_SYSTEM_INSTRUCTIONS,
+  SIRALOS_SYSTEM_INSTRUCTIONS,
   type ContextProjection,
   type ContextProjector,
   type ContextStability,
@@ -110,7 +110,7 @@ export interface ProjectionServiceOptions {
     pinned: () => readonly ProjectKnowledgeFact[];
     /** Deterministic bounded retrieval for the current turn. */
     retrieve: (query: KnowledgeRetrievalQuery) => KnowledgeRetrievalResult;
-  }; /** Deterministic stable instructions; defaults to SOLARIS_SYSTEM_INSTRUCTIONS. */
+  }; /** Deterministic stable instructions; defaults to SIRALOS_SYSTEM_INSTRUCTIONS. */
   readonly stableInstructions?: string;
   /**
    * Host-owned reference projection (Stage 3 milestone 5). The service
@@ -475,7 +475,7 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
   const contextProjector = options.contextProjector ?? createContextProjector();
   const toolProjector = options.toolProjector ?? createToolProjector({ policy, profile });
   const evidenceProjector = options.evidenceProjector ?? createEvidenceProjector(options.evidence);
-  const stableInstructions = options.stableInstructions ?? SOLARIS_SYSTEM_INSTRUCTIONS;
+  const stableInstructions = options.stableInstructions ?? SIRALOS_SYSTEM_INSTRUCTIONS;
   const getTaskSnapshot = options.getTaskSnapshot ?? (() => null);
   const getTaskRequest = options.getTaskRequest ?? (() => null);
   const getCurrentPlan = options.getCurrentPlan ?? (() => null);
@@ -638,9 +638,9 @@ export function createProjectionService(options: ProjectionServiceOptions): Proj
     const request = getTaskRequest();
     const segments = [
       {
-        id: "solaris-core-instructions",
+        id: "siralos-core-instructions",
         stability: "stable" as const,
-        title: "Solaris instructions",
+        title: "Siralos instructions",
         content: stableInstructions,
       },
       ...(options.instructions === undefined

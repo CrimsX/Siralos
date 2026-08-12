@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
-import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@solaris/core";
+import type { DevelopmentTaskFlow, PlanningDecisionInput, TaskRuntime } from "@siralos/core";
 import {
   classifyDevelopmentSurface,
   computeExecutorBriefFingerprint,
@@ -18,7 +18,7 @@ import {
   createTaskRuntimeSnapshot,
   planTouchpointStaleness,
   type GuidanceManifest,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   formatCancelReport,
   formatChangeReviewResult,
@@ -278,7 +278,7 @@ export async function runDevelopCommand(
       // Reproducibility identity (ADR 0029): the exact environment and
       // provider/model inputs of this execution, referenced (never copied).
       const environment = createEnvironmentManifest({
-        solarisVersion: "0.0.0",
+        siralosVersion: "0.0.0",
         nodeVersion: process.versions.node ?? null,
         npmVersion: null,
         platform: process.platform,

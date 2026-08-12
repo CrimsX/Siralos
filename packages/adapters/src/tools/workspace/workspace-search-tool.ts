@@ -1,6 +1,6 @@
 import { lstat, opendir } from "node:fs/promises";
 import path from "node:path";
-import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
+import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@siralos/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
 import { foldPathComponent } from "../../fs-case.js";
 import { readFileBounded } from "../../fs/file-read.js";

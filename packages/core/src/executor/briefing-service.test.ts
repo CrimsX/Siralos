@@ -195,7 +195,7 @@ describe("executor briefing service", () => {
       steps: [],
     });
     const state = runtime.latestTask()?.runtimeSnapshot();
-    expect(state?.executionContract).toEqual({ id: "solaris-execution-contract", revision: 1 });
+    expect(state?.executionContract).toEqual({ id: "siralos-execution-contract", revision: 1 });
     expect(state?.milestoneManifest).toEqual({ id: "S3M8", version: 1 });
     expect(state?.executorBriefFingerprint).toBe("fp-1");
   });

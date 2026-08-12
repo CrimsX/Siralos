@@ -7,7 +7,7 @@ import {
   type ResearchRequest,
   type ResearchSourcePort,
   type ResearchSourceRef,
-} from "@solaris/core";
+} from "@siralos/core";
 import { validateResearchPath } from "./github-source.js";
 import { buildResearchDocument, classifyContentType } from "./normalization.js";
 

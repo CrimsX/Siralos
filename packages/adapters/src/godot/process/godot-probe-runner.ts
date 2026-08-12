@@ -4,7 +4,7 @@ import type {
   GodotInstallation,
   GodotProbeRunner,
   GodotVersionProbe,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export interface GodotProbeRunnerDependencies {
   // The dependencies are retained for signature compatibility; the

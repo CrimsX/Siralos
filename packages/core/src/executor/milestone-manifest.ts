@@ -15,7 +15,7 @@ import type { ValidationProfileRef } from "./validation-profile.js";
  * policy, standard validation commands, generic security rules, or
  * architecture principles already supplied by the Execution Contract.
  *
- * The manifest is immutable and versioned like every other Solaris
+ * The manifest is immutable and versioned like every other Siralos
  * artifact; revision N is never mutated in place. It grants nothing:
  * there is no capability/policy surface in the model, and acceptance is
  * satisfied only by host-observed evidence through the

@@ -22,7 +22,7 @@ import {
   type SemanticVerification,
   type WorkspaceRevisionHandle,
   type WorkspaceRevisionRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import { readFileBounded } from "../../fs/file-read.js";
 import { resolveWorkspacePath } from "../../tools/workspace/workspace-path.js";
 import { decodeUtf8, looksBinary } from "../../tools/workspace/text.js";

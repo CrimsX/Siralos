@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import { parseGodotApiDumpWithDocs, truncateUtf8Bytes } from "./api-dump-with-docs.js";
 import { buildGodotApiIndex, searchGodotApiIndex, lookupGodotApiSymbol } from "./api-index.js";
 
@@ -341,7 +341,7 @@ describe("searchGodotApiIndex", () => {
     const { index } = buildFixtureIndex();
     const outcome = searchGodotApiIndex(index, "Node");
     const serialized = JSON.stringify(outcome.results);
-    expect(serialized).not.toMatch(/\.solaris|C:\\|knowledge[\\/]/);
+    expect(serialized).not.toMatch(/\.siralos|C:\\|knowledge[\\/]/);
   });
 });
 

@@ -3,7 +3,7 @@ import {
   createGodotKnowledgeCache,
   KNOWLEDGE_CACHE_UNAVAILABLE_MESSAGE,
 } from "./knowledge-cache.js";
-import type { GodotKnowledgeBase } from "@solaris/core";
+import type { GodotKnowledgeBase } from "@siralos/core";
 
 function sampleBase(): GodotKnowledgeBase {
   return {

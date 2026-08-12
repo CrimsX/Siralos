@@ -32,10 +32,10 @@ import {
   type TaskSnapshotDifference,
   type TaskRuntimeSnapshotSources,
   type WorkspaceDiagnosticResult,
-} from "@solaris/core";
-import { readConfigurationDiagnostics, readConfigurationFileState } from "@solaris/adapters";
+} from "@siralos/core";
+import { readConfigurationDiagnostics, readConfigurationFileState } from "@siralos/adapters";
 import { readdir } from "node:fs/promises";
-import { readInstalledSolarisVersion } from "./self-reference.js";
+import { readInstalledSiralosVersion } from "./self-reference.js";
 
 /**
  * Composition-root doctor wiring (Stage 3 milestone 6).
@@ -100,7 +100,7 @@ async function readRuntimeDiagnostics(
 
 function readInstalledVersion(): string {
   // Same installed package.json source as the self-reference bootstrap.
-  return readInstalledSolarisVersion();
+  return readInstalledSiralosVersion();
 }
 
 function readProviderDiagnostics(provider: ModelProvider): ProviderDiagnosticResult {
@@ -499,7 +499,7 @@ export function createCliDoctorSources(dependencies: CliDoctorDependencies): Doc
  */
 function buildEnvironmentDigest(): string {
   const manifest = createEnvironmentManifest({
-    solarisVersion: "0.0.0",
+    siralosVersion: "0.0.0",
     nodeVersion: process.versions.node ?? null,
     npmVersion: null,
     platform: process.platform,

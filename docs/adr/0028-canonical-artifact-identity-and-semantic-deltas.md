@@ -23,7 +23,7 @@ supersedes: []
 
 ## Problem
 
-Solaris bound important decisions to revision numbers (TaskContract
+Siralos bound important decisions to revision numbers (TaskContract
 revisions, TaskPlan revisions, plan approvals) and to ad-hoc
 `JSON.stringify(...) → SHA-256` digests scattered across subsystems.
 Revision numbers are chronological identity — they cannot prove that two
@@ -49,7 +49,7 @@ delta    → what materially changed
 value }` over a domain-separated canonical payload:
 
   ```text
-  SHA-256("solaris:<ArtifactType>:v<SchemaVersion>\0" + canonical JSON)
+  SHA-256("siralos:<ArtifactType>:v<SchemaVersion>\0" + canonical JSON)
   ```
 
   Deterministic canonical JSON makes identical semantic values produce

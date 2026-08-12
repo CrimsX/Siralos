@@ -6,10 +6,10 @@ import {
   type ModelRequest,
   type Tool,
   type ToolProjector,
-} from "@solaris/core";
-import { QUALITY_LIMITS } from "@solaris/core";
+} from "@siralos/core";
+import { QUALITY_LIMITS } from "@siralos/core";
 import { createProviderChangeReviewer } from "./provider-change-reviewer.js";
-import type { ChangeReviewRequest } from "@solaris/core";
+import type { ChangeReviewRequest } from "@siralos/core";
 
 /**
  * Reviewer-isolation tests (ADR 0013 §35–§45, §54, §88–§98). The reviewer
@@ -173,7 +173,7 @@ describe("provider change reviewer isolation", () => {
     expect(content).not.toContain("chain-of-thought");
     expect(content).not.toContain("apiKey");
     expect(content).not.toContain("authorization");
-    expect(content).not.toContain("~/.solaris");
+    expect(content).not.toContain("~/.siralos");
     expect(content).not.toContain("C:\\");
     expect(content).not.toContain("approval");
   });

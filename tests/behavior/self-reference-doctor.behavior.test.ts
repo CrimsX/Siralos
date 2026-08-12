@@ -23,14 +23,14 @@ import {
   type TaskSnapshotDiagnosticResult,
   type ToolDefinition,
   type WorkspaceDiagnosticResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createCapabilityDoctor,
   createResearchService,
   defaultResearchBounds,
   getBuiltInProfile,
   type RegisteredTool,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   createBehaviorLoopHarness,
   createTempWorkspace,
@@ -329,7 +329,7 @@ describe("Self-reference behaviors (1–5)", () => {
     }
     // The new milestone surface is catalogued and documented.
     expect(commands.lines.some((entry) => entry.key === "/doctor")).toBe(true);
-    expect(commands.lines.some((entry) => entry.key === "/solaris")).toBe(true);
+    expect(commands.lines.some((entry) => entry.key === "/siralos")).toBe(true);
   });
 
   it("3. self-reference contains no credential values", () => {
@@ -343,7 +343,7 @@ describe("Self-reference behaviors (1–5)", () => {
   it("4. self-reference cannot be mutated through workspace/reference tools", async () => {
     // The self tools are the ONLY model-facing self surface; they are
     // read-only (capability self.inspect) and there is no self.write.
-    const { createSelfReferenceTools } = await import("@solaris/adapters");
+    const { createSelfReferenceTools } = await import("@siralos/adapters");
     const tools = createSelfReferenceTools(makeSelfReference("0.0.0"));
     expect(tools.map((tool) => tool.definition.name).sort()).toEqual(["self.read", "self.search"]);
     for (const tool of tools) {
@@ -359,7 +359,7 @@ describe("Self-reference behaviors (1–5)", () => {
           changes: [
             {
               operation: "edit",
-              path: "@solaris/commands",
+              path: "@siralos/commands",
               expectedSha256: "0".repeat(64),
               replacements: [{ oldText: "x", newText: "y" }],
             },
@@ -373,8 +373,8 @@ describe("Self-reference behaviors (1–5)", () => {
     }
   });
 
-  it("5. model can retrieve current Solaris capability documentation on demand", async () => {
-    const { createSelfReferenceTools } = await import("@solaris/adapters");
+  it("5. model can retrieve current Siralos capability documentation on demand", async () => {
+    const { createSelfReferenceTools } = await import("@siralos/adapters");
     const self = makeSelfReference("0.0.0", [
       {
         definition: {
@@ -430,7 +430,7 @@ describe("Capability snapshot behaviors (6, 11)", () => {
     // and research service; the doctor consumes the service-derived result,
     // so any fetch in the doctor path would increment the counter.
     const { createFakeTransport, createGodotDocsResearchSource } =
-      await import("@solaris/adapters");
+      await import("@siralos/adapters");
     let fetchCalls = 0;
     const transport = createFakeTransport({});
     const wrapped = {
@@ -722,7 +722,7 @@ describe("Reference/research doctor behaviors (18–20)", () => {
     // a recording materializer: the doctor's reference diagnostics derive
     // from the registry exactly like the composition root does, so any
     // materialize/refresh in the doctor path would increment the counter.
-    const { createReferenceServices } = await import("@solaris/adapters");
+    const { createReferenceServices } = await import("@siralos/adapters");
     let materializeCalls = 0;
     const recordingMaterializer = {
       materialize(): Promise<{ status: "unavailable"; reason: string }> {
@@ -799,7 +799,7 @@ describe("Reference/research doctor behaviors (18–20)", () => {
     // research area: the transport is the only network surface in the
     // graph and the doctor never reaches it.
     const { createFakeTransport, createGodotDocsResearchSource } =
-      await import("@solaris/adapters");
+      await import("@siralos/adapters");
     let fetchCalls = 0;
     const transport = createFakeTransport({});
     const wrapped = {
@@ -986,7 +986,7 @@ describe("Safe report behaviors (25–28)", () => {
         JSON.stringify({ sandbox: { profile: "inspect" }, providerCredential: secret }),
         "utf8",
       );
-      const { readConfigurationDiagnostics } = await import("@solaris/adapters");
+      const { readConfigurationDiagnostics } = await import("@siralos/adapters");
       const configuration = await readConfigurationDiagnostics(join(fixture.root, "config.json"));
       expect(configuration.loaded).toBe(false);
       const report = await doctor({ configuration }).inspect({ areas: ["configuration"] });
@@ -1130,7 +1130,7 @@ describe("Final-boundary effect tests (46–49)", () => {
     // control proves the counter works (a direct source fetch reaches the
     // transport); the full default doctor run must not invoke it.
     const { createFakeTransport, createGodotDocsResearchSource } =
-      await import("@solaris/adapters");
+      await import("@siralos/adapters");
     let fetchCalls = 0;
     const transport = createFakeTransport({});
     const wrapped = {
@@ -1268,7 +1268,7 @@ describe("Final-boundary effect tests (46–49)", () => {
         JSON.stringify({ sandbox: { profile: "inspect" }, providerCredential: secret }),
         "utf8",
       );
-      const { readConfigurationDiagnostics } = await import("@solaris/adapters");
+      const { readConfigurationDiagnostics } = await import("@siralos/adapters");
       const configuration = await readConfigurationDiagnostics(join(fixture.root, "config.json"));
       const report = await doctor({ configuration }).inspect({});
       const human = JSON.stringify(report);

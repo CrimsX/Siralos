@@ -1,5 +1,5 @@
 /**
- * Bounded, expiring, single-use registry for prepared Solaris plans
+ * Bounded, expiring, single-use registry for prepared Siralos plans
  * (recovery probes and GDScript checks).
  *
  * Prepared plans are opaque handles into an in-memory registry with a

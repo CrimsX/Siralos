@@ -7,7 +7,7 @@ import { runChecks } from "./check-architecture.mjs";
 const tempDirectories = [];
 
 function writeFixture(files) {
-  const root = mkdtempSync(join(tmpdir(), "solaris-architecture-"));
+  const root = mkdtempSync(join(tmpdir(), "siralos-architecture-"));
   tempDirectories.push(root);
   for (const [path, content] of Object.entries(files)) {
     const fullPath = join(root, path);
@@ -28,18 +28,18 @@ function cleanWorkspaceFixture() {
       null,
       2,
     ),
-    "packages/core/package.json": packageJson("@solaris/core"),
+    "packages/core/package.json": packageJson("@siralos/core"),
     "packages/core/src/index.ts": "export {};\n",
-    "packages/adapters/package.json": packageJson("@solaris/adapters", {
-      "@solaris/core": "0.0.0",
+    "packages/adapters/package.json": packageJson("@siralos/adapters", {
+      "@siralos/core": "0.0.0",
     }),
     "packages/adapters/src/index.ts": "export {};\n",
-    "apps/cli/package.json": packageJson("@solaris/cli", {
-      "@solaris/adapters": "0.0.0",
-      "@solaris/core": "0.0.0",
+    "apps/cli/package.json": packageJson("@siralos/cli", {
+      "@siralos/adapters": "0.0.0",
+      "@siralos/core": "0.0.0",
     }),
     "apps/cli/src/index.ts": "export {};\n",
-    "apps/cli/src/bootstrap/create-application.ts": 'import "@solaris/adapters";\n',
+    "apps/cli/src/bootstrap/create-application.ts": 'import "@siralos/adapters";\n',
   };
 }
 
@@ -57,7 +57,7 @@ describe("check-architecture", () => {
 
   it("rejects core importing an adapter package", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["packages/core/src/index.ts"] = 'import "@solaris/adapters";\n';
+    fixture["packages/core/src/index.ts"] = 'import "@siralos/adapters";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("core must not import workspace package"))).toBe(
       true,
@@ -73,14 +73,14 @@ describe("check-architecture", () => {
 
   it("rejects adapters importing CLI code", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["packages/adapters/src/index.ts"] = 'import "@solaris/cli";\n';
+    fixture["packages/adapters/src/index.ts"] = 'import "@siralos/cli";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("adapters must not import CLI code"))).toBe(true);
   });
 
   it("rejects CLI code outside the composition root importing adapters", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["apps/cli/src/repl.ts"] = 'import "@solaris/adapters";\n';
+    fixture["apps/cli/src/repl.ts"] = 'import "@siralos/adapters";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(
       errors.some((error) =>
@@ -91,8 +91,8 @@ describe("check-architecture", () => {
 
   it("rejects core declaring a workspace dependency", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["packages/core/package.json"] = packageJson("@solaris/core", {
-      "@solaris/adapters": "0.0.0",
+    fixture["packages/core/package.json"] = packageJson("@siralos/core", {
+      "@siralos/adapters": "0.0.0",
     });
     const errors = runChecks(writeFixture(fixture));
     expect(
@@ -113,7 +113,7 @@ describe("check-architecture", () => {
   it("accepts the fake provider importing core contracts only", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/fake.ts"] =
-      'import type { ModelProvider } from "@solaris/core";\n';
+      'import type { ModelProvider } from "@siralos/core";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -238,18 +238,18 @@ describe("check-architecture", () => {
   it("rejects provider adapters importing CLI approval code", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/fake.ts"] =
-      'import { createInteractiveApprovalReviewer } from "@solaris/cli";\n';
+      'import { createInteractiveApprovalReviewer } from "@siralos/cli";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("adapters must not import CLI code"))).toBe(true);
   });
 
   it("detects workspace dependency cycles", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["packages/core/package.json"] = packageJson("@solaris/core", {
-      "@solaris/adapters": "0.0.0",
+    fixture["packages/core/package.json"] = packageJson("@siralos/core", {
+      "@siralos/adapters": "0.0.0",
     });
-    fixture["packages/adapters/package.json"] = packageJson("@solaris/adapters", {
-      "@solaris/core": "0.0.0",
+    fixture["packages/adapters/package.json"] = packageJson("@siralos/adapters", {
+      "@siralos/core": "0.0.0",
     });
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("workspace dependency cycle detected"))).toBe(
@@ -952,7 +952,7 @@ describe("check-architecture development workflow boundaries", () => {
   it("accepts a clean development workflow orchestrator", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/godot/development/gdscript-development-service.ts"] =
-      'import type { GDScriptDevelopmentService } from "@solaris/core";\nexport const create = (): GDScriptDevelopmentService => ({}) as never;\n';
+      'import type { GDScriptDevelopmentService } from "@siralos/core";\nexport const create = (): GDScriptDevelopmentService => ({}) as never;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1100,7 +1100,7 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
   it("accepts the reviewer implementation itself importing the read-only registry builder", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/godot/quality/provider-change-reviewer.ts"] =
-      'import { createToolRegistry } from "@solaris/core";\nexport const x = createToolRegistry;\n';
+      'import { createToolRegistry } from "@siralos/core";\nexport const x = createToolRegistry;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1158,7 +1158,7 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
   it("rejects provider adapters importing the task runtime surface", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/fake.ts"] =
-      'import { createTaskRuntime } from "@solaris/core";\nexport const x = createTaskRuntime;\n';
+      'import { createTaskRuntime } from "@siralos/core";\nexport const x = createTaskRuntime;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("must not import the task runtime surface"))).toBe(
       true,
@@ -1168,7 +1168,7 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
   it("accepts provider adapters importing unrelated core contracts", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/fake.ts"] =
-      'import { createToolRegistry } from "@solaris/core";\nexport const x = createToolRegistry;\n';
+      'import { createToolRegistry } from "@siralos/core";\nexport const x = createToolRegistry;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1176,7 +1176,7 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
   it("accepts test files importing the task runtime surface", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/fake.test.ts"] =
-      'import { createTaskRuntime } from "@solaris/core";\nexport const x = createTaskRuntime;\n';
+      'import { createTaskRuntime } from "@siralos/core";\nexport const x = createTaskRuntime;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1358,9 +1358,9 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
   it("accepts the adapter instruction-discovery module and its tests", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/instructions/instruction-discovery.ts"] =
-      'import { createProjectInstructionService } from "@solaris/core";\nexport const x = createProjectInstructionService;\n';
+      'import { createProjectInstructionService } from "@siralos/core";\nexport const x = createProjectInstructionService;\n';
     fixture["packages/adapters/src/instructions/instruction-discovery.test.ts"] =
-      'import { createProjectInstructionService } from "@solaris/core";\nexport const x = createProjectInstructionService;\n';
+      'import { createProjectInstructionService } from "@siralos/core";\nexport const x = createProjectInstructionService;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1412,13 +1412,13 @@ describe("quality and reviewer boundaries (ADR 0013)", () => {
 
 describe("check-architecture reference and research boundaries (Part Q #56)", () => {
   // Rules 1 and 5: the package-boundary rule (core must never import
-  // @solaris/* packages) is specifier-based and therefore global — it
+  // @siralos/* packages) is specifier-based and therefore global — it
   // already covers core reference/research and projection modules without
   // a per-directory rule; these fixtures pin that coverage.
   it("rejects reference and research core modules importing adapter packages", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["packages/core/src/reference/reference-model.ts"] = 'import "@solaris/adapters";\n';
-    fixture["packages/core/src/research/research-model.ts"] = 'import "@solaris/adapters";\n';
+    fixture["packages/core/src/reference/reference-model.ts"] = 'import "@siralos/adapters";\n';
+    fixture["packages/core/src/research/research-model.ts"] = 'import "@siralos/adapters";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("core must not import workspace package"))).toBe(
       true,
@@ -1427,7 +1427,7 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
 
   it("rejects projection modules importing adapter packages (reference caches stay adapter-owned)", () => {
     const fixture = cleanWorkspaceFixture();
-    fixture["packages/core/src/projection/evidence-projector.ts"] = 'import "@solaris/adapters";\n';
+    fixture["packages/core/src/projection/evidence-projector.ts"] = 'import "@siralos/adapters";\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors.some((error) => error.includes("core must not import workspace package"))).toBe(
       true,
@@ -1474,7 +1474,7 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
   it("rejects provider adapters importing the research service surface", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/deterministic-fake-provider.ts"] =
-      'import { createResearchService } from "@solaris/core";\nexport const x = createResearchService;\n';
+      'import { createResearchService } from "@siralos/core";\nexport const x = createResearchService;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(
       errors.some((error) => error.includes("must not import the research service surface")),
@@ -1484,7 +1484,7 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
   it("accepts provider adapters importing research model types (contracts only)", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/deterministic-fake-provider.ts"] =
-      'import type { ResearchSourceKind } from "@solaris/core";\nexport type X = ResearchSourceKind;\n';
+      'import type { ResearchSourceKind } from "@siralos/core";\nexport type X = ResearchSourceKind;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1539,9 +1539,9 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
   it("rejects reference adapters importing capability-granting policy", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/reference/reference-access.ts"] =
-      'import { evaluatePermission } from "@solaris/core";\nexport const x = evaluatePermission;\n';
+      'import { evaluatePermission } from "@siralos/core";\nexport const x = evaluatePermission;\n';
     fixture["packages/adapters/src/tools/reference/reference-list-tool.ts"] =
-      'import { createDefaultPolicy } from "@solaris/core";\nexport const x = createDefaultPolicy;\n';
+      'import { createDefaultPolicy } from "@siralos/core";\nexport const x = createDefaultPolicy;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(
       errors.some((error) => error.includes("must not import capability-granting policy")),
@@ -1551,7 +1551,7 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
   it("accepts reference adapters importing reference contracts", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/reference/reference-access.ts"] =
-      'import type { ReferenceAlias } from "@solaris/core";\nexport type X = ReferenceAlias;\n';
+      'import type { ReferenceAlias } from "@siralos/core";\nexport type X = ReferenceAlias;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1560,7 +1560,7 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
   it("rejects research adapters importing the project knowledge surface", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/research/github-source.ts"] =
-      'import { createKnowledgeCoordinator } from "@solaris/core";\nexport const x = createKnowledgeCoordinator;\n';
+      'import { createKnowledgeCoordinator } from "@siralos/core";\nexport const x = createKnowledgeCoordinator;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(
       errors.some((error) => error.includes("must not import the project knowledge surface")),
@@ -1570,7 +1570,7 @@ describe("check-architecture reference and research boundaries (Part Q #56)", ()
   it("accepts research adapters importing research contracts", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/research/github-source.ts"] =
-      'import type { ResearchSourcePort } from "@solaris/core";\nexport type X = ResearchSourcePort;\n';
+      'import type { ResearchSourcePort } from "@siralos/core";\nexport type X = ResearchSourcePort;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1672,7 +1672,7 @@ describe("doctor and self-reference boundaries (milestone 6)", () => {
   it("rejects self-reference tool adapters importing capability-granting policy", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/tools/self/self-reference-tools.ts"] =
-      'import { createDefaultPolicy } from "@solaris/core";\nexport const x = createDefaultPolicy;\n';
+      'import { createDefaultPolicy } from "@siralos/core";\nexport const x = createDefaultPolicy;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(
       errors.some((error) =>
@@ -1684,7 +1684,7 @@ describe("doctor and self-reference boundaries (milestone 6)", () => {
   it("accepts doctor modules importing the shared identity type from self-reference", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/core/src/doctor/doctor-model.ts"] =
-      'import type { SolarisRuntimeIdentity } from "../self/self-reference.js";\nexport type X = SolarisRuntimeIdentity;\n';
+      'import type { SiralosRuntimeIdentity } from "../self/self-reference.js";\nexport type X = SiralosRuntimeIdentity;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });
@@ -1810,7 +1810,7 @@ describe("executor briefing boundaries (cross-cutting foundation)", () => {
   it("rejects provider adapters importing executor-briefing surfaces", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/fake.ts"] =
-      'import { createExecutorBriefing } from "@solaris/core";\nexport const x = createExecutorBriefing;\n';
+      'import { createExecutorBriefing } from "@siralos/core";\nexport const x = createExecutorBriefing;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(
       errors.some((error) =>
@@ -1822,7 +1822,7 @@ describe("executor briefing boundaries (cross-cutting foundation)", () => {
   it("accepts provider adapters importing unrelated core contracts", () => {
     const fixture = cleanWorkspaceFixture();
     fixture["packages/adapters/src/providers/fake.ts"] =
-      'import { createToolRegistry } from "@solaris/core";\nexport const x = createToolRegistry;\n';
+      'import { createToolRegistry } from "@siralos/core";\nexport const x = createToolRegistry;\n';
     const errors = runChecks(writeFixture(fixture));
     expect(errors).toEqual([]);
   });

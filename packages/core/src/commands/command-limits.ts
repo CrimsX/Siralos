@@ -2,7 +2,7 @@
  * Immutable limits for provider-accessible development commands.
  *
  * Providers may request only a timeout within the allowed range; every other
- * limit is fixed by Solaris. No configuration may exceed these values.
+ * limit is fixed by Siralos. No configuration may exceed these values.
  */
 export const COMMAND_LIMITS = {
   /** Maximum number of script arguments. */

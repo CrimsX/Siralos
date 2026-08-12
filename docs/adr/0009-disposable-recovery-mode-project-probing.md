@@ -22,7 +22,7 @@ architecture check enforced that boundary.
 
 Opening a project is the first moment Godot can execute project-authored
 code (`@tool` scripts, editor plugins, GDExtensions) and generate cache
-state. The source workspace is untrusted, so Solaris must not hand it to
+state. The source workspace is untrusted, so Siralos must not hand it to
 Godot as a project. Recovery mode reduces editor-side execution risk, but
 it is not itself a sandbox: project data can still be arbitrary. The
 security boundary for project probing is therefore a combination of user
@@ -51,13 +51,13 @@ or launching Godot.
   variable, editor-data path, or temporary path. The disposable mirror is
   the only project directory visible to the probed engine.
 - **A disposable project mirror is the intended execution mechanism.**
-  Before every probe it would be constructed at a Solaris-generated path
+  Before every probe it would be constructed at a Siralos-generated path
   beneath the verified run root. The provider cannot select the location,
   and the project cannot influence the copy policy. Only regular files and
   regular directories are copied; symbolic links, junctions, and special
   files are rejected (`mirror_unsupported`), never silently dereferenced
   or preserved. Generated and metadata directories (`.git`, `.godot`,
-  `node_modules`, `dist`, `coverage`, `.solaris`, Solaris temp prefixes)
+  `node_modules`, `dist`, `coverage`, `.siralos`, Siralos temp prefixes)
   are never copied; `.gitignore` is never interpreted as a security policy.
   The mirror is bounded (100,000 files, 4 GiB total, 512 MiB per file,
   1024 UTF-8 bytes per relative path, 64 levels of directory depth,
@@ -75,7 +75,7 @@ or launching Godot.
 - **Recovery mode is required, not optional.** The selected engine must
   advertise `--recovery-mode`, `--editor`, `--headless`, and `--path`;
   otherwise the probe is `unsupported` and no weaker mode is ever
-  substituted. The fixed Solaris-owned invocation is
+  substituted. The fixed Siralos-owned invocation is
   `<godot> --headless --editor --recovery-mode --path <mirror>
 --quit-after <bounded-count>`, executed with a separate executable and
   argument array (no shell), an external wall-clock timeout in addition to
@@ -140,7 +140,7 @@ or launching Godot.
   bounded baseline combines Git status (when available) with a
   deterministic authored-file manifest, because Git alone does not cover
   untracked/ignored state. Any unexpected change yields
-  `workspace_changed`; Solaris never auto-reverts external changes. A
+  `workspace_changed`; Siralos never auto-reverts external changes. A
   nonzero engine exit is never classified as successful merely because
   expected output files exist.
 - **The mirror is destroyed after every probe** (success, diagnostics,
@@ -220,7 +220,7 @@ Negative:
   recovery-mode editor startup probe; explicit import-and-quit is a
   separate, later decision.
 - **Letting the provider run Godot or choose the mirror path.** Rejected:
-  provider input is empty and every execution detail is Solaris-fixed.
+  provider input is empty and every execution detail is Siralos-fixed.
 - **Reporting the capability available without enforcement.** Rejected:
   fail-closed reporting is non-negotiable; a capability that cannot be
   mechanically enforced is reported unavailable, never aspirational.

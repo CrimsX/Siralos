@@ -68,7 +68,7 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // offline; no profile constraint applies beyond the policy rule.
       return null;
     case "godot.probe_project":
-      // The recovery probe is a fixed, Solaris-owned workflow: the probe
+      // The recovery probe is a fixed, Siralos-owned workflow: the probe
       // service itself revalidates the sandbox, the disposable mirror, the
       // engine, and the project manifest before anything runs, and refuses
       // as unavailable when the platform cannot bind execution to the
@@ -77,11 +77,11 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       return null;
     case "godot.api":
       // API knowledge is project-independent, offline, and fixed by
-      // Solaris; the knowledge service revalidates the sandbox and the
+      // Siralos; the knowledge service revalidates the sandbox and the
       // selected engine. No additional profile constraint applies.
       return null;
     case "godot.diagnose":
-      // GDScript diagnostics are a fixed, Solaris-owned workflow: the
+      // GDScript diagnostics are a fixed, Siralos-owned workflow: the
       // diagnostics service itself revalidates the sandbox, the disposable
       // mirror, the engine, and the project manifest before anything runs,
       // and refuses as unavailable when the platform cannot bind execution
@@ -90,7 +90,7 @@ function profileConstraintIssue(capability: Capability, profile: SandboxProfile)
       // applies.
       return null;
     case "godot.lsp":
-      // The GDScript language session is a fixed, Solaris-owned workflow:
+      // The GDScript language session is a fixed, Siralos-owned workflow:
       // the language service itself revalidates the sandbox, the loopback
       // LSP channel, the disposable mirror, the engine, and the project
       // manifest before anything runs, and refuses as unavailable when the

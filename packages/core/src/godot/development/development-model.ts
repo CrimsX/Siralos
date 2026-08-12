@@ -178,7 +178,7 @@ export interface GDScriptDevelopmentResult {
  * configuration can never raise them.
  */
 export const DEVELOPMENT_LIMITS = {
-  /** One active development workflow per Solaris session. */
+  /** One active development workflow per Siralos session. */
   maxConcurrentWorkflows: 1,
   /** Maximum files per change set (§19). */
   maxFilesPerChangeSet: 16,

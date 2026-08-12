@@ -6,7 +6,7 @@ import type {
   CommandPreparationResult,
   CommandRunner,
   PreparedCommand,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export interface NodeScriptRunnerOptions {
   readonly digest: CommandDigestService;
@@ -26,7 +26,7 @@ const NODE_SCRIPT_UNAVAILABLE_MESSAGE =
  * Because a changed post-approval file or a re-invoked interpreter could
  * otherwise execute unapproved code, every node-script request is refused
  * before approval instead of claiming a boundary the runtime cannot
- * enforce. Solaris never executes validation commands at this stage.
+ * enforce. Siralos never executes validation commands at this stage.
  */
 export function createNodeScriptRunner(_options: NodeScriptRunnerOptions): CommandRunner {
   return {

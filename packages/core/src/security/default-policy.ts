@@ -82,7 +82,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
     case "godot-probe-offline":
       // Internal execution profile: never user-selectable and never used for
       // tool permission evaluation. Mirrors validation-offline so permission
-      // evaluation is total; probes themselves are Solaris-fixed.
+      // evaluation is total; probes themselves are Siralos-fixed.
       return {
         rules: {
           "workspace.read": "allow",
@@ -104,7 +104,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
     case "godot-recovery-probe-offline":
       // Internal execution profile: never user-selectable and never used for
       // tool permission evaluation. Mirrors validation-offline so permission
-      // evaluation is total; recovery probes are Solaris-fixed.
+      // evaluation is total; recovery probes are Siralos-fixed.
       return {
         rules: {
           "workspace.read": "allow",
@@ -126,7 +126,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
     case "godot-diagnostics-offline":
       // Internal execution profile: never user-selectable and never used for
       // tool permission evaluation. Mirrors validation-offline so permission
-      // evaluation is total; check-only diagnostics are Solaris-fixed.
+      // evaluation is total; check-only diagnostics are Siralos-fixed.
       return {
         rules: {
           "workspace.read": "allow",
@@ -148,7 +148,7 @@ export function createDefaultPolicy(profileId: SandboxProfileId): CapabilityPoli
     case "godot-lsp-local":
       // Internal execution profile: never user-selectable and never used for
       // tool permission evaluation. Mirrors validation-offline so permission
-      // evaluation is total; the LSP session is Solaris-fixed.
+      // evaluation is total; the LSP session is Siralos-fixed.
       return {
         rules: {
           "workspace.read": "allow",

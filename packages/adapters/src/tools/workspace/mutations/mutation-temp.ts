@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
-export const MUTATION_TEMP_PREFIX = ".solaris-mutation-";
+export const MUTATION_TEMP_PREFIX = ".siralos-mutation-";
 
 export function createMutationTempPath(targetDirectory: string): string {
   return join(targetDirectory, `${MUTATION_TEMP_PREFIX}${randomUUID()}.tmp`);

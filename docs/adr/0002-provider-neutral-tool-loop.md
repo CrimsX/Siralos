@@ -12,7 +12,7 @@ Status: accepted
 
 ## Context
 
-Solaris must let its model provider take actions inside the user's workspace while the harness stays provider-neutral and secure. The foundation slice proved a single provider request per prompt; the next step is a bounded loop where the provider can request tool execution and receive results.
+Siralos must let its model provider take actions inside the user's workspace while the harness stays provider-neutral and secure. The foundation slice proved a single provider request per prompt; the next step is a bounded loop where the provider can request tool execution and receive results.
 
 Key constraints:
 
@@ -28,7 +28,7 @@ Core owns the tool model and the execution loop; adapters own concrete tools:
 - Core defines `ToolDefinition`, the `Tool` contract, `ToolExecutionResult`, and an immutable `ToolRegistry` created during composition.
 - Core owns the bounded provider/tool loop inside `sendPrompt`: collect a provider turn, execute requested tools sequentially, append results, request another turn, and finish when a turn completes without tool calls.
 - Tool calls and tool results are distinct `ConversationItem` types (`assistant_tool_call`, `tool_result`); file content stays classified as tool data and never becomes system or developer instructions.
-- Concrete tools live in `@solaris/adapters` behind the core contract. The composition root is the only place that constructs them.
+- Concrete tools live in `@siralos/adapters` behind the core contract. The composition root is the only place that constructs them.
 - The loop is bounded by a maximum tool-round count (default 8). Unknown tools, duplicate call ids, malformed input, and cancellation produce typed, safe failures.
 - The workspace is the canonicalized launch directory; all tool paths resolve relative to it and are canonicalized and containment-checked.
 
@@ -48,7 +48,7 @@ Negative:
 
 ## Alternatives rejected
 
-- A separate `@solaris/tools` workspace package: no independent runtime, release cycle, or dependency boundary justifies it yet.
+- A separate `@siralos/tools` workspace package: no independent runtime, release cycle, or dependency boundary justifies it yet.
 - Dynamic tool discovery or plugin loading: explicit registration in the composition root keeps the capability surface auditable.
 - A full JSON Schema validation engine: the three tools validate their own `unknown` input with small typed parsers.
 - Executing tools in the CLI: the application layer must remain headless-testable and UI-neutral.

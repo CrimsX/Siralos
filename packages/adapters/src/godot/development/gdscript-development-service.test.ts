@@ -3,7 +3,7 @@ import type {
   CheckpointStore,
   GDScriptDevelopmentService,
   GodotGDScriptDiagnostic,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   cleanupTempCheckpointDirs,
   createTempCheckpointStore,

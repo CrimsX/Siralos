@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { GitError } from "@solaris/core";
+import { GitError } from "@siralos/core";
 import { parseNumstatDiff } from "./diff-parser.js";
 import { parseBranchFromTruncatedOutput } from "./status-parser.js";
 import {
@@ -163,7 +163,7 @@ describe("git status inspection", () => {
   });
 
   it("reports ahead and behind against an upstream", async () => {
-    const originDir = join(process.env.TEMP ?? ".", `solaris-git-origin-${Date.now()}`);
+    const originDir = join(process.env.TEMP ?? ".", `siralos-git-origin-${Date.now()}`);
     const { mkdir } = await import("node:fs/promises");
     await mkdir(originDir, { recursive: true });
     const origin = await createTempRepo();

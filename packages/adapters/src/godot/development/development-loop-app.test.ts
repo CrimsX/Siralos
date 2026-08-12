@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEVELOP_OFFLINE_PROFILE,
   createDefaultPolicy,
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   type ApprovalReviewer,
   type CheckpointStore,
-  type SolarisApplication,
-} from "@solaris/core";
+  type SiralosApplication,
+} from "@siralos/core";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
@@ -43,12 +43,12 @@ function sha256Of(text: string): string {
 interface LoopHarness {
   readonly workspace: TempWorkspace;
   readonly store: CheckpointStore;
-  readonly application: SolarisApplication;
+  readonly application: SiralosApplication;
   readonly language: FakeLanguageControl;
   readonly parser: FakeParserControl;
   readonly approvals: () => number;
   readonly events: readonly string[];
-  readonly status: () => import("@solaris/core").GDScriptDevelopmentStatus;
+  readonly status: () => import("@siralos/core").GDScriptDevelopmentStatus;
   readonly startWorkflow: (request: string) => Promise<void>;
 }
 
@@ -120,7 +120,7 @@ async function createLoopHarness(
     createGodotDevelopmentStatusTool(development),
   ]);
   const events: string[] = [];
-  const application = createSolarisApplication({
+  const application = createSiralosApplication({
     provider: createDeterministicFakeProvider(),
     tools,
     policy: createDefaultPolicy("develop-offline"),

@@ -1,9 +1,9 @@
 import { readParentEnvironment } from "./child-environment.js";
 
 export interface GodotEnvironmentOverrides {
-  /** `SOLARIS_GODOT` absolute executable path, when set. */
+  /** `SIRALOS_GODOT` absolute executable path, when set. */
   readonly path: string | null;
-  /** `SOLARIS_GODOT_INSTALLATION` installation id, when set. */
+  /** `SIRALOS_GODOT_INSTALLATION` installation id, when set. */
   readonly installationId: string | null;
 }
 
@@ -16,7 +16,7 @@ export interface GodotEnvironmentOverrides {
 export function readGodotEnvironmentOverrides(): GodotEnvironmentOverrides {
   const parent = readParentEnvironment();
   return {
-    path: parent["SOLARIS_GODOT"] ?? null,
-    installationId: parent["SOLARIS_GODOT_INSTALLATION"] ?? null,
+    path: parent["SIRALOS_GODOT"] ?? null,
+    installationId: parent["SIRALOS_GODOT_INSTALLATION"] ?? null,
   };
 }

@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { doctorExitCode, runSandboxDoctor } from "./sandbox-doctor.js";
-import { createFakeSandboxBackend } from "@solaris/adapters";
-import type { ConformanceReport } from "@solaris/adapters";
+import { createFakeSandboxBackend } from "@siralos/adapters";
+import type { ConformanceReport } from "@siralos/adapters";
 
 const tempDirectories: string[] = [];
 
 async function withTempDirectory(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-doctor-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-doctor-test-"));
   tempDirectories.push(directory);
   return directory;
 }
@@ -158,7 +158,7 @@ describe("runSandboxDoctor", () => {
     expect(backendRoots).toHaveLength(1);
     expect(probeRoots).toHaveLength(1);
     expect(backendRoots[0]).toBe(probeRoots[0]);
-    expect(backendRoots[0]).toMatch(/solaris-doctor-probes-/);
+    expect(backendRoots[0]).toMatch(/siralos-doctor-probes-/);
   });
 
   it("does not run probes when the backend is not available", async () => {

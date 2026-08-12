@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { GODOT_LIMITS, REFERENCE_LIMITS, validateReferenceAlias } from "@solaris/core";
+import { GODOT_LIMITS, REFERENCE_LIMITS, validateReferenceAlias } from "@siralos/core";
 import { readFileBounded } from "../fs/file-read.js";
 import { errorMessage } from "../support/error-message.js";
 
@@ -81,7 +81,7 @@ const SUPPORTED_BACKENDS: readonly string[] = ["auto", "anthropic-runtime"];
 const SUPPORTED_EDITION_HINTS: readonly string[] = ["standard", "dotnet", "unknown"];
 
 export function getDefaultUserConfigPath(): string {
-  return join(homedir(), ".solaris", "config.json");
+  return join(homedir(), ".siralos", "config.json");
 }
 
 /** Maximum user configuration file size (1 MiB). */
@@ -96,21 +96,21 @@ export async function loadUserConfig(configPath: string): Promise<UserConfig> {
       return DEFAULT_USER_CONFIG;
     }
     throw new Error(
-      `Cannot read Solaris configuration at ${configPath}: ${errorMessage(error, "unknown error")}`,
+      `Cannot read Siralos configuration at ${configPath}: ${errorMessage(error, "unknown error")}`,
     );
   }
   if (stats.isSymbolicLink() || !stats.isFile()) {
-    throw new Error(`Solaris configuration at ${configPath} is not a regular file.`);
+    throw new Error(`Siralos configuration at ${configPath} is not a regular file.`);
   }
   if (stats.size > MAX_CONFIG_FILE_BYTES) {
     throw new Error(
-      `Solaris configuration at ${configPath} exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`,
+      `Siralos configuration at ${configPath} exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`,
     );
   }
   const bytes = await readFileBounded(configPath, MAX_CONFIG_FILE_BYTES);
   if (bytes === null) {
     throw new Error(
-      `Solaris configuration at ${configPath} could not be read within the ${MAX_CONFIG_FILE_BYTES}-byte limit.`,
+      `Siralos configuration at ${configPath} could not be read within the ${MAX_CONFIG_FILE_BYTES}-byte limit.`,
     );
   }
   const content = bytes.toString("utf8");
@@ -119,7 +119,7 @@ export async function loadUserConfig(configPath: string): Promise<UserConfig> {
     parsed = JSON.parse(content);
   } catch (error: unknown) {
     throw new Error(
-      `Solaris configuration at ${configPath} is not valid JSON: ${errorMessage(error, "unknown error")}`,
+      `Siralos configuration at ${configPath} is not valid JSON: ${errorMessage(error, "unknown error")}`,
     );
   }
   return parseUserConfig(parsed);
@@ -127,14 +127,14 @@ export async function loadUserConfig(configPath: string): Promise<UserConfig> {
 
 export function parseUserConfig(data: unknown): UserConfig {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    throw new Error("Solaris configuration must be a JSON object.");
+    throw new Error("Siralos configuration must be a JSON object.");
   }
   const record = data as Record<string, unknown>;
   const unknownKeys = Object.keys(record).filter(
     (key) => key !== "sandbox" && key !== "godot" && key !== "quality" && key !== "references",
   );
   if (unknownKeys.length > 0) {
-    throw new Error(`Unknown Solaris configuration section: ${unknownKeys[0]}.`);
+    throw new Error(`Unknown Siralos configuration section: ${unknownKeys[0]}.`);
   }
   const sandboxValue = record["sandbox"];
   if (sandboxValue === undefined) {
@@ -146,12 +146,12 @@ export function parseUserConfig(data: unknown): UserConfig {
     };
   }
   if (typeof sandboxValue !== "object" || sandboxValue === null || Array.isArray(sandboxValue)) {
-    throw new Error('Solaris configuration section "sandbox" must be a JSON object.');
+    throw new Error('Siralos configuration section "sandbox" must be a JSON object.');
   }
   const sandbox = sandboxValue as Record<string, unknown>;
   const sandboxKeys = Object.keys(sandbox).filter((key) => key !== "profile" && key !== "backend");
   if (sandboxKeys.length > 0) {
-    throw new Error(`Unknown Solaris sandbox configuration key: ${sandboxKeys[0]}.`);
+    throw new Error(`Unknown Siralos sandbox configuration key: ${sandboxKeys[0]}.`);
   }
   const profile = sandbox["profile"] ?? "inspect";
   if (typeof profile !== "string" || !SUPPORTED_PROFILES.includes(profile)) {
@@ -183,12 +183,12 @@ function parseQualitySection(value: unknown): UserQualityConfig {
     return DEFAULT_USER_CONFIG.quality;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error('Solaris configuration section "quality" must be a JSON object.');
+    throw new Error('Siralos configuration section "quality" must be a JSON object.');
   }
   const quality = value as Record<string, unknown>;
   const qualityKeys = Object.keys(quality).filter((key) => key !== "reviewProvider");
   if (qualityKeys.length > 0) {
-    throw new Error(`Unknown Solaris quality configuration key: ${qualityKeys[0]}.`);
+    throw new Error(`Unknown Siralos quality configuration key: ${qualityKeys[0]}.`);
   }
   const reviewProvider = parseReviewProvider(quality["reviewProvider"]);
   return { reviewProvider };
@@ -216,14 +216,14 @@ function parseGodotSection(value: unknown): UserGodotConfig {
     return DEFAULT_USER_CONFIG.godot;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error('Solaris configuration section "godot" must be a JSON object.');
+    throw new Error('Siralos configuration section "godot" must be a JSON object.');
   }
   const godot = value as Record<string, unknown>;
   const godotKeys = Object.keys(godot).filter(
     (key) => key !== "activeInstallation" && key !== "installations" && key !== "discoverOnPath",
   );
   if (godotKeys.length > 0) {
-    throw new Error(`Unknown Solaris godot configuration key: ${godotKeys[0]}.`);
+    throw new Error(`Unknown Siralos godot configuration key: ${godotKeys[0]}.`);
   }
   const activeInstallation = parseActiveInstallation(godot["activeInstallation"]);
   const installations = parseInstallations(godot["installations"]);
@@ -262,7 +262,7 @@ function parseInstallations(value: unknown): Readonly<Record<string, UserGodotIn
     return {};
   }
   if (typeof value !== "object" || Array.isArray(value)) {
-    throw new Error('Solaris configuration section "godot.installations" must be a JSON object.');
+    throw new Error('Siralos configuration section "godot.installations" must be a JSON object.');
   }
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length > GODOT_LIMITS.maxConfiguredInstallations) {
@@ -330,7 +330,7 @@ function parseReferencesSection(value: unknown): Readonly<Record<string, unknown
     return {};
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error('Solaris configuration section "references" must be a JSON object.');
+    throw new Error('Siralos configuration section "references" must be a JSON object.');
   }
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length > REFERENCE_LIMITS.maxReferences) {
@@ -351,7 +351,7 @@ function parseReferencesSection(value: unknown): Readonly<Record<string, unknown
     const record = declaration as Record<string, unknown>;
     const unknownKeys = Object.keys(record).filter((key) => !REFERENCE_DECLARATION_KEYS.has(key));
     if (unknownKeys.length > 0) {
-      throw new Error(`Unknown Solaris reference key: ${unknownKeys[0]} (reference "${alias}").`);
+      throw new Error(`Unknown Siralos reference key: ${unknownKeys[0]} (reference "${alias}").`);
     }
     const kind = record["kind"];
     if (kind !== "local-directory" && kind !== "repository") {
@@ -395,7 +395,7 @@ function parseReferenceRef(value: unknown, alias: string): unknown {
   const record = value as Record<string, unknown>;
   const unknownKeys = Object.keys(record).filter((key) => !REFERENCE_REF_KEYS.has(key));
   if (unknownKeys.length > 0) {
-    throw new Error(`Unknown Solaris reference ref key: ${unknownKeys[0]} (reference "${alias}").`);
+    throw new Error(`Unknown Siralos reference ref key: ${unknownKeys[0]} (reference "${alias}").`);
   }
   const kind = record["kind"];
   if (kind !== "commit" && kind !== "tag" && kind !== "branch") {

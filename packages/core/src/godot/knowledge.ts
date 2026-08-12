@@ -8,7 +8,7 @@ import type { GodotApiIndex } from "./api.js";
  * The profile is immutable after creation and bound to three identities:
  * the exact executable fingerprint (SHA-256 of the verified executable),
  * the exact API dump (SHA-256 of the generated `extension_api.json`), and
- * the Solaris knowledge schema version. A profile must never silently
+ * the Siralos knowledge schema version. A profile must never silently
  * survive an executable fingerprint change: any mismatch invalidates the
  * profile and requires regeneration.
  */
@@ -90,7 +90,7 @@ export function validateGodotKnowledgeCache(
 
 /**
  * Official-manual documentation channel matching an exact engine version.
- * Solaris does not synchronize manual documentation yet; the channel is
+ * Siralos does not synchronize manual documentation yet; the channel is
  * safe metadata only and is never silently replaced by `latest` docs for a
  * stable project. Stable versions map to their exact `<major>.<minor>`
  * channel; prerelease and custom builds are `unverified`.
@@ -183,7 +183,7 @@ export interface GodotKnowledge {
 
   /**
    * Regenerate the exact-engine API knowledge profile. Project-independent,
-   * offline, deterministic, fixed Solaris command; requires an enforcing
+   * offline, deterministic, fixed Siralos command; requires an enforcing
    * sandbox and a selected trusted engine. When generation is unavailable
    * on this platform, returns a typed `unavailable` result before creating
    * a probe directory and never launches Godot.

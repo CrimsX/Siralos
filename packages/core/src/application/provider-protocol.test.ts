@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   PROVIDER_TURN_LIMITS,
   validateConversationItems,
@@ -72,7 +72,7 @@ function toolCall(callId: string, toolName: string, input: unknown): ModelEvent 
 }
 
 function makeApplication(provider: ModelProvider, tools: readonly Tool[], maxToolRounds?: number) {
-  return createSolarisApplication({
+  return createSiralosApplication({
     provider,
     tools: createToolRegistry(tools),
     ...(maxToolRounds === undefined ? {} : { maxToolRounds }),
@@ -495,7 +495,7 @@ describe("transcript pairing integrity", () => {
         return Promise.resolve({ status: "denied", message: "denied by policy" });
       },
     };
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
     });

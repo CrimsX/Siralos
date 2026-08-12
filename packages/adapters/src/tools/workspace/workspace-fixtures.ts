@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { CheckpointStore, JsonObject, JsonValue, ToolExecutionResult } from "@solaris/core";
+import type { CheckpointStore, JsonObject, JsonValue, ToolExecutionResult } from "@siralos/core";
 import { expect } from "vitest";
 import { createFilesystemCheckpointStore } from "../../checkpoints/filesystem/checkpoint-store.js";
 
@@ -18,7 +18,7 @@ export async function createTempCheckpointStore(
   workspaceRoot: string,
   options: { maxCheckpoints?: number; maxStorageBytes?: number } = {},
 ): Promise<CheckpointStore> {
-  const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+  const rootDirectory = await mkdtemp(join(tmpdir(), "siralos-cp-store-"));
   checkpointDirectories.push(rootDirectory);
   return createFilesystemCheckpointStore({ workspaceRoot, rootDirectory, ...options });
 }
@@ -75,7 +75,7 @@ export function stringOf(value: JsonValue | undefined): string {
 }
 
 export async function createTempWorkspace(): Promise<TempWorkspace> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-workspace-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-workspace-"));
   return {
     root,
     async cleanup() {
@@ -114,7 +114,7 @@ export function probeSymlinkSupport(): boolean {
   let supported = false;
   let probeDir: string | undefined;
   try {
-    probeDir = mkdtempSync(join(tmpdir(), "solaris-symlink-probe-"));
+    probeDir = mkdtempSync(join(tmpdir(), "siralos-symlink-probe-"));
     const target = join(probeDir, "target.txt");
     writeFileSync(target, "x");
     symlinkSync(target, join(probeDir, "link.txt"));

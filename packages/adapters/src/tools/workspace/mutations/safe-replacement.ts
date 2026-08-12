@@ -133,7 +133,7 @@ export async function replaceFileWithQuarantine(
       };
     }
   }
-  const quarantinePath = join(dirname(options.targetPath), `.solaris-quarantine-${randomUUID()}`);
+  const quarantinePath = join(dirname(options.targetPath), `.siralos-quarantine-${randomUUID()}`);
   // Identity capture immediately before the displacement: the object that
   // sits at the target at this instant is the only object the operation may
   // displace, and its dev+ino is re-verified on the quarantined path after
@@ -315,7 +315,7 @@ export async function unlinkWithIdentityVerification(
       };
     }
   }
-  const quarantinePath = join(dirname(options.targetPath), `.solaris-quarantine-${randomUUID()}`);
+  const quarantinePath = join(dirname(options.targetPath), `.siralos-quarantine-${randomUUID()}`);
   const expectedDevIno = await captureTargetIdentity(ops, options.targetPath);
   if (expectedDevIno === null) {
     return {

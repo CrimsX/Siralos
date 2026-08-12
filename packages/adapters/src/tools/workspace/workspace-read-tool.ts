@@ -6,12 +6,12 @@ import type {
   ToolExecutionResult,
   WorkspaceReadMode,
   WorkspaceRevisionRegistry,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   buildWorkspaceSummary,
   extractGDScriptStructure,
   isWorkspaceReadMode,
-} from "@solaris/core";
+} from "@siralos/core";
 import { WORKSPACE_LIMITS } from "./limits.js";
 import {
   DEFAULT_EXCLUDED_DIRECTORIES,
@@ -199,7 +199,7 @@ export function createWorkspaceReadTool(
               path: resolved.workspaceRelativePath,
               mode: "structural",
               revision,
-              structure: structure as unknown as import("@solaris/core").JsonObject,
+              structure: structure as unknown as import("@siralos/core").JsonObject,
             },
             summary: `structural: ${structure.functions.length} functions, ${structure.properties.length} properties, ${structure.signals.length} signals`,
           };

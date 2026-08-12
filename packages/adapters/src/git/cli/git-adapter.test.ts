@@ -208,7 +208,7 @@ describe("git sandboxed execution", () => {
         completedResult({ stdout: `${repo.root}\ntrue\n` }),
       ],
     });
-    const runsRoot = join(process.cwd(), "node_modules", ".solaris-git-test-runs");
+    const runsRoot = join(process.cwd(), "node_modules", ".siralos-git-test-runs");
     const adapter = createGitCliAdapter({
       workspaceRoot: repo.root,
       backend,

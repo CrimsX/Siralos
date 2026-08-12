@@ -24,7 +24,7 @@ export interface ChangeSetReplacement {
 /**
  * A change against an existing file carries exactly one pre-state
  * identity: either the raw SHA-256 (legacy path) or an opaque revision
- * handle issued by Solaris (preferred model-facing path). The handle is
+ * handle issued by Siralos (preferred model-facing path). The handle is
  * resolved to its SHA-256 by the host and the same revalidation runs.
  * Handles are ergonomic references, never authority.
  */
@@ -160,7 +160,7 @@ export function validateChangeSetRequest(
     if (isProtectedBehavioralConfigPath(normalizedPath)) {
       return {
         ok: false,
-        message: `"${normalizedPath}" is protected behavioral configuration (instructions or Solaris configuration); modifying it requires a dedicated host authorization path that is not available at this stage, so this change set is rejected before any write, approval, or checkpoint.`,
+        message: `"${normalizedPath}" is protected behavioral configuration (instructions or Siralos configuration); modifying it requires a dedicated host authorization path that is not available at this stage, so this change set is rejected before any write, approval, or checkpoint.`,
       };
     }
     if (operation === "create") {
@@ -199,13 +199,13 @@ export function validateChangeSetRequest(
       if (!WORKSPACE_REVISION_HANDLE_PATTERN.test(revisionText)) {
         return {
           ok: false,
-          message: `The ${operation} for "${normalizedPath}" requires a valid Solaris revision handle (rev_...).`,
+          message: `The ${operation} for "${normalizedPath}" requires a valid Siralos revision handle (rev_...).`,
         };
       }
     } else {
       return {
         ok: false,
-        message: `The ${operation} for "${normalizedPath}" requires a pre-state identity: the exact current SHA-256 or a Solaris revision handle.`,
+        message: `The ${operation} for "${normalizedPath}" requires a pre-state identity: the exact current SHA-256 or a Siralos revision handle.`,
       };
     }
     if (operation === "delete") {

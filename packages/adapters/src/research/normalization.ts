@@ -11,8 +11,8 @@ import {
   type ResearchProvenance,
   type ResearchSection,
   type ResearchSourceRef,
-} from "@solaris/core";
-import type { TransportOutcome } from "@solaris/core";
+} from "@siralos/core";
+import type { TransportOutcome } from "@siralos/core";
 
 /**
  * Research normalization (Stage 3 milestone 5).

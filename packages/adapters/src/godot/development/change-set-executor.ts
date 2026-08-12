@@ -4,7 +4,7 @@ import type {
   ChangeSetFilePrimitives,
   CheckpointStore,
   DevelopmentChangeSetApplier,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export const CHANGE_SET_EXECUTION_UNAVAILABLE_MESSAGE =
   "The exact change set cannot be applied on this platform: Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary can redirect pathname-based staging and replacement outside the workspace. The change set fails closed before any write, lock, approval, or checkpoint; it will become available when a mechanically identity-bound commit primitive exists.";
@@ -18,7 +18,7 @@ export const CHANGE_SET_EXECUTION_UNAVAILABLE_MESSAGE =
  * bytes) and an absence state for every create, verify all checkpoints
  * durable, then apply prepared files sequentially with post-state hash
  * verification — the lock is never released between files. A partial
- * infrastructure failure triggers internal recovery of the files Solaris
+ * infrastructure failure triggers internal recovery of the files Siralos
  * just changed from their just-created checkpoint preimages (hash-gated:
  * only files whose current state still matches the partially applied
  * result are restored, external changes are preserved, conflicts are
@@ -43,7 +43,7 @@ export interface ChangeSetExecutorDependencies {
   /** True only when the platform can mechanically bind every write. */
   readonly canApplyIdentityBound: boolean;
   /** Session revision registry; issues post-edit revisions on success. */
-  readonly revisions?: import("@solaris/core").WorkspaceRevisionRegistry;
+  readonly revisions?: import("@siralos/core").WorkspaceRevisionRegistry;
 }
 
 export function createDevelopmentChangeSetApplier(
@@ -214,7 +214,7 @@ export async function applyChangeSetProtocol(
 
 /**
  * Internal recovery of a partially applied change set (§24): restores
- * only the files Solaris just changed, each gated on its current hash
+ * only the files Siralos just changed, each gated on its current hash
  * still matching the partially applied result, using the just-created
  * checkpoint preimages. External changes are preserved and reported; the
  * final state is never success after partial application.
@@ -271,7 +271,7 @@ async function recoverPartialApplication(
   if (restored.length === applied.length && conflicted.length === 0) {
     return {
       status: "apply_failed_recovered",
-      message: `The change-set application failed partway (${failureMessage}); every file Solaris had changed was restored from its checkpoint.`,
+      message: `The change-set application failed partway (${failureMessage}); every file Siralos had changed was restored from its checkpoint.`,
       checkpointIds,
     };
   }

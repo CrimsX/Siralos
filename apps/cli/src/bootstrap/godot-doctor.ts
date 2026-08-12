@@ -1,4 +1,4 @@
-import type { GodotDoctorReport, GodotInspector } from "@solaris/core";
+import type { GodotDoctorReport, GodotInspector } from "@siralos/core";
 
 export interface GodotDoctorOptions {
   /** `--godot-path` override. */

@@ -4,7 +4,7 @@ import {
   type Tool,
   type ToolExecutionContext,
   type ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { truncateUtf8Bytes } from "../knowledge/api-dump-with-docs.js";
 import { errorMessage } from "../../support/error-message.js";
 

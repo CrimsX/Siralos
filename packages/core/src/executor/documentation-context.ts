@@ -540,6 +540,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["runtime", "security", "task-runtime"],
     paths: ["packages/core/src/runtime/**", "packages/core/src/doctor/capability-doctor.ts"],
   },
+  {
+    id: "adr:0032",
+    path: "docs/adr/0032-rust-migration-and-siralos-rename.md",
+    kind: "adr",
+    concerns: ["architecture", "process", "rust"],
+    status: "accepted",
+    domains: ["architecture", "process"],
+    paths: ["crates/**", "docs/development/RUST_STYLE.md"],
+  },
 ]);
 
 /**
@@ -648,6 +657,13 @@ export const DOCUMENTATION_INDEX: readonly DocumentationEntry[] = deepFreeze([
       "godot",
       "security",
     ],
+    status: "accepted",
+  },
+  {
+    id: "dev:rust-style",
+    path: "docs/development/RUST_STYLE.md",
+    kind: "development",
+    concerns: ["rust", "engineering", "architecture", "process"],
     status: "accepted",
   },
   ...ADR_DOCUMENTATION_ENTRIES,

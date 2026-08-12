@@ -10,9 +10,9 @@ import {
   type ReferenceSource,
   type ResearchService,
   type ResearchSourcePort,
-  type SolarisSecurity,
+  type SiralosSecurity,
   type TaskState,
-} from "@solaris/core";
+} from "@siralos/core";
 import { sanitizeForDisplay } from "./sanitize.js";
 
 function taskPhaseMark(phase: TaskState["phase"]): string {
@@ -185,7 +185,7 @@ export function formatToolProjection(projection: ProjectionService): string {
 
 /** Read-only /instructions listing (never exposes absolute host paths). */
 export function formatInstructions(
-  instructions: readonly import("@solaris/core").ProjectInstruction[],
+  instructions: readonly import("@siralos/core").ProjectInstruction[],
   revision: string | null,
 ): string {
   if (instructions.length === 0) {
@@ -209,7 +209,7 @@ export function formatInstructions(
 }
 
 /** Read-only /knowledge listing of current facts (ADR 0017 §36). */
-export function formatKnowledge(coordinator: import("@solaris/core").KnowledgeCoordinator): string {
+export function formatKnowledge(coordinator: import("@siralos/core").KnowledgeCoordinator): string {
   const facts = coordinator.activeFacts();
   const retired = coordinator.retiredSubjects();
   if (facts.length === 0 && retired.length === 0) {
@@ -239,7 +239,7 @@ export function formatKnowledge(coordinator: import("@solaris/core").KnowledgeCo
 
 /** Read-only /knowledge why rendering of the latest retrieval trace. */
 export function formatKnowledgeTrace(
-  trace: import("@solaris/core").KnowledgeRetrievalTrace | null,
+  trace: import("@siralos/core").KnowledgeRetrievalTrace | null,
 ): string {
   if (trace === null) {
     return "Knowledge retrieval: no retrieval has run yet (send a prompt first)\n";
@@ -326,7 +326,7 @@ export function formatReferenceDetail(
 
 export function formatResearchStatus(
   service: ResearchService,
-  security: SolarisSecurity,
+  security: SiralosSecurity,
   sources: readonly ResearchSourcePort[],
 ): string {
   const decision = security.evaluateCapability("research.fetch");
@@ -392,7 +392,7 @@ function describeReferenceStatus(reference: Reference): string {
 }
 
 /** Render a structural read tool result (read-only projection). */
-export function formatStructuralRead(result: import("@solaris/core").ToolExecutionResult): string {
+export function formatStructuralRead(result: import("@siralos/core").ToolExecutionResult): string {
   if (result.status !== "success") {
     return "";
   }

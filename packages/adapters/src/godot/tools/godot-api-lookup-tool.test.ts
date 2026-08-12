@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GodotKnowledge } from "@solaris/core";
+import type { GodotKnowledge } from "@siralos/core";
 import { createGodotApiLookupTool } from "./godot-api-lookup-tool.js";
 
 function readyKnowledge(): GodotKnowledge {

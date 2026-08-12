@@ -5,7 +5,7 @@ import type { WorkspaceRevisionHandle } from "../../workspace/workspace-revision
 /**
  * Review context and impact intelligence (Stage 3 milestone 9, ADR 0025).
  *
- * Given one or more proposed or actual changed surfaces, Solaris derives
+ * Given one or more proposed or actual changed surfaces, Siralos derives
  * a bounded, revision-aware, evidence-backed review/validation context:
  * primary changes, directly related surfaces (with verified vs candidate
  * confidence), regression areas, validation recommendations, and honest

@@ -4,7 +4,7 @@ import type {
   GodotEngineProfile,
   GodotInstallation,
   GodotVersion,
-} from "@solaris/core";
+} from "@siralos/core";
 import { invalidInstallation } from "../discovery/path-discovery.js";
 import {
   createGodotCheckOnlyRunner,
@@ -90,8 +90,8 @@ function request(overrides: Partial<GodotCheckOnlyRunRequest> = {}): GodotCheckO
   return {
     installation: installation(),
     engineProfile: profile(),
-    mirrorProjectPath: "/tmp/solaris-mirror-1",
-    mirrorScriptPath: "/tmp/solaris-mirror-1/src/player/player.gd",
+    mirrorProjectPath: "/tmp/siralos-mirror-1",
+    mirrorScriptPath: "/tmp/siralos-mirror-1/src/player/player.gd",
     ...overrides,
   };
 }

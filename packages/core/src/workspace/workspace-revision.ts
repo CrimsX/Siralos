@@ -57,7 +57,7 @@ export interface WorkspaceRevisionRegistry {
   currentRevision(path: string): WorkspaceRevisionHandle | null;
   /** A handle for an exact (path, sha256) state, or null when unknown. */
   revisionForState(path: string, sha256: string): WorkspaceRevisionHandle | null;
-  /** Invalidate a path (Solaris mutation or external change detected). */
+  /** Invalidate a path (Siralos mutation or external change detected). */
   invalidatePath(path: string): void;
   /** Record that a read observed a specific revision (multi-agent groundwork). */
   observeRead(

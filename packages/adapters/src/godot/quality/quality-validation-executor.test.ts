@@ -8,7 +8,7 @@ import {
   type PreparedCommandTool,
   type ToolExecutionResult,
   type ValidationStep,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createQualityValidationExecutor } from "./quality-validation-executor.js";
 
 /**

@@ -13,7 +13,7 @@ import { resolveMacOsBundle } from "./macos-bundle.js";
 const tempDirectories: string[] = [];
 
 async function withTemp(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-godot-discovery-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-godot-discovery-"));
   tempDirectories.push(directory);
   return directory;
 }

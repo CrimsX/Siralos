@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPlannerToolRegistry } from "@solaris/adapters";
+import { createPlannerToolRegistry } from "@siralos/adapters";
 import {
   createAdHocTaskContract,
   createTaskContract,
@@ -14,8 +14,8 @@ import {
   type PlannerPort,
   type Tool,
   type ToolProjector,
-} from "@solaris/core";
-import type { TaskContract } from "@solaris/core";
+} from "@siralos/core";
+import type { TaskContract } from "@siralos/core";
 import { createPlannerExecutor } from "./planner-executor.js";
 
 /**
@@ -38,7 +38,7 @@ function createScriptedProvider(
   return {
     id: "scripted-planner",
     toolCalling: true,
-    stream(request: ModelRequest): AsyncIterable<import("@solaris/core").ModelEvent> {
+    stream(request: ModelRequest): AsyncIterable<import("@siralos/core").ModelEvent> {
       onRequest?.(request);
       return streamStep(steps, cursor++);
     },
@@ -48,7 +48,7 @@ function createScriptedProvider(
 async function* streamStep(
   steps: readonly ScriptStep[],
   index: number,
-): AsyncIterable<import("@solaris/core").ModelEvent> {
+): AsyncIterable<import("@siralos/core").ModelEvent> {
   const step = steps[index];
   if (step === undefined) {
     yield { type: "text_delta", text: "no further scripted steps" };
@@ -200,7 +200,7 @@ describe("createPlannerExecutor", () => {
       "workspace.delete_file",
       "workspace.apply_text_changeset",
       "process.run",
-      "solaris.undo",
+      "siralos.undo",
       "godot.probe_project",
       "godot.check_script",
       "godot.lsp_session",
@@ -211,7 +211,7 @@ describe("createPlannerExecutor", () => {
   });
 
   it("refuses a mutating tool at the runtime boundary and never writes (fixture 9)", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "solaris-planner-exec-"));
+    const parent = await mkdtemp(join(tmpdir(), "siralos-planner-exec-"));
     const workspace = join(parent, "workspace");
     await mkdir(workspace, { recursive: true });
     await writeFile(join(workspace, "target.gd"), "extends Node\n");
@@ -366,7 +366,7 @@ describe("createPlannerExecutor", () => {
   });
 
   it("fails cleanly when the planner repeats identical reads without progress (fixture 29)", async () => {
-    const parent = await mkdtemp(join(tmpdir(), "solaris-planner-stall-"));
+    const parent = await mkdtemp(join(tmpdir(), "siralos-planner-stall-"));
     const workspace = join(parent, "workspace");
     await mkdir(join(workspace, "src", "player"), { recursive: true });
     await writeFile(join(workspace, "src", "player", "player.gd"), "extends Node\n");

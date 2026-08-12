@@ -6,7 +6,7 @@ import {
   type ModelRequest,
   type ToolDefinition,
   type ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createDeterministicFakeProvider } from "./deterministic-fake-provider.js";
 
 const messages: readonly ConversationItem[] = [{ type: "user_message", content: "hello" }];
@@ -82,7 +82,7 @@ describe("deterministic fake provider unicode chunking", () => {
       });
       expect(error).toBeUndefined();
       const joined = textOf(events);
-      expect(joined).toBe(`Solaris received: ${scenario.text}`);
+      expect(joined).toBe(`Siralos received: ${scenario.text}`);
       const chunks = events
         .filter((event) => event.type === "text_delta")
         .map((event) => (event as { text: string }).text);
@@ -125,7 +125,7 @@ describe("deterministic fake provider unicode chunking", () => {
       merged.set(bytes, all.length);
       return merged;
     }, new Uint8Array(0));
-    expect(decodeUtf8(recombined)).toBe(`Solaris received: ${text}`);
+    expect(decodeUtf8(recombined)).toBe(`Siralos received: ${text}`);
   });
 });
 
@@ -146,7 +146,7 @@ describe("deterministic fake provider", () => {
 
   it("echoes the latest user prompt", async () => {
     const { events } = await collect({ messages, tools });
-    expect(textOf(events)).toBe("Solaris received: hello");
+    expect(textOf(events)).toBe("Siralos received: hello");
   });
 
   it("fails immediately when the signal is already aborted", async () => {
@@ -222,7 +222,7 @@ describe("deterministic fake provider tool scenarios", () => {
       tools: [LIST_TOOL],
     };
     const { events } = await collect(request);
-    expect(textOf(events)).toBe("Solaris inspected 1 workspace entries.");
+    expect(textOf(events)).toBe("Siralos inspected 1 workspace entries.");
   });
 
   it("requests workspace.read for `read README.md`", async () => {
@@ -270,7 +270,7 @@ describe("deterministic fake provider tool scenarios", () => {
       tools: [READ_TOOL],
     };
     const { events } = await collect(request);
-    expect(textOf(events)).toBe("Solaris read README.md.");
+    expect(textOf(events)).toBe("Siralos read README.md.");
   });
 
   it("requests workspace.search for `search <text>`", async () => {
@@ -318,7 +318,7 @@ describe("deterministic fake provider tool scenarios", () => {
       tools: [SEARCH_TOOL],
     };
     const { events } = await collect(request);
-    expect(textOf(events)).toBe("Solaris found 1 matching lines.");
+    expect(textOf(events)).toBe("Siralos found 1 matching lines.");
   });
 
   it("does not request a tool that is not in the request definitions", async () => {
@@ -328,7 +328,7 @@ describe("deterministic fake provider tool scenarios", () => {
     };
     const { events } = await collect(request);
     expect(toolCallEvent(events)).toBeUndefined();
-    expect(textOf(events)).toBe("Solaris received: list files");
+    expect(textOf(events)).toBe("Siralos received: list files");
   });
 
   it("reports failed tool results truthfully", async () => {
@@ -345,14 +345,14 @@ describe("deterministic fake provider tool scenarios", () => {
           type: "tool_result",
           callId: "call-1",
           toolName: "workspace.list",
-          result: { status: "denied", message: "Path is outside the Solaris workspace." },
+          result: { status: "denied", message: "Path is outside the Siralos workspace." },
         },
       ],
       tools: [LIST_TOOL],
     };
     const { events } = await collect(request);
     expect(textOf(events)).toBe(
-      "Solaris could not complete the workspace operation: Path is outside the Solaris workspace.",
+      "Siralos could not complete the workspace operation: Path is outside the Siralos workspace.",
     );
   });
 
@@ -396,7 +396,7 @@ describe("deterministic fake provider tool scenarios", () => {
     };
     const { events } = await collect(request);
     expect(toolCallEvent(events)).toBeUndefined();
-    expect(textOf(events)).toBe("Solaris received: hello there");
+    expect(textOf(events)).toBe("Siralos received: hello there");
   });
 });
 
@@ -425,9 +425,9 @@ describe("deterministic fake provider write scenarios", () => {
       result: {
         status: "success",
         output: {
-          path: "solaris-write-test.txt",
+          path: "siralos-write-test.txt",
           sha256: hash,
-          content: "Created by the deterministic Solaris test provider.\n",
+          content: "Created by the deterministic Siralos test provider.\n",
           startLine: 1,
           endLine: 1,
           totalLines: 1,
@@ -438,9 +438,9 @@ describe("deterministic fake provider write scenarios", () => {
     };
   }
 
-  it("requests the create tool for `create solaris-write-test`", async () => {
+  it("requests the create tool for `create siralos-write-test`", async () => {
     const request: ModelRequest = {
-      messages: [{ type: "user_message", content: "create solaris-write-test" }],
+      messages: [{ type: "user_message", content: "create siralos-write-test" }],
       tools: [CREATE_TOOL],
     };
     const { events } = await collect(request);
@@ -449,8 +449,8 @@ describe("deterministic fake provider write scenarios", () => {
       callId: "call-create",
       toolName: "workspace.create_file",
       input: {
-        path: "solaris-write-test.txt",
-        content: "Created by the deterministic Solaris test provider.\n",
+        path: "siralos-write-test.txt",
+        content: "Created by the deterministic Siralos test provider.\n",
       },
     });
   });
@@ -458,12 +458,12 @@ describe("deterministic fake provider write scenarios", () => {
   it("reports a truthful final text after a denied create", async () => {
     const request: ModelRequest = {
       messages: [
-        { type: "user_message", content: "create solaris-write-test" },
+        { type: "user_message", content: "create siralos-write-test" },
         {
           type: "assistant_tool_call",
           callId: "call-create",
           toolName: "workspace.create_file",
-          input: { path: "solaris-write-test.txt", content: "x\n" },
+          input: { path: "siralos-write-test.txt", content: "x\n" },
         },
         {
           type: "tool_result",
@@ -476,7 +476,7 @@ describe("deterministic fake provider write scenarios", () => {
     };
     const { events } = await collect(request);
     expect(textOf(events)).toBe(
-      "The workspace change was denied, so Solaris did not create solaris-write-test.txt.",
+      "The workspace change was denied, so Siralos did not create siralos-write-test.txt.",
     );
   });
 
@@ -484,7 +484,7 @@ describe("deterministic fake provider write scenarios", () => {
     const hash = "a".repeat(64);
     const request: ModelRequest = {
       messages: [
-        { type: "user_message", content: "edit solaris-write-test" },
+        { type: "user_message", content: "edit siralos-write-test" },
         readResultWithHash(hash),
       ],
       tools: [READ_TOOL, EDIT_TOOL],
@@ -495,7 +495,7 @@ describe("deterministic fake provider write scenarios", () => {
       callId: "call-edit",
       toolName: "workspace.edit_file",
       input: {
-        path: "solaris-write-test.txt",
+        path: "siralos-write-test.txt",
         expectedSha256: hash,
         replacements: [{ oldText: "Created", newText: "Updated" }],
       },
@@ -504,7 +504,7 @@ describe("deterministic fake provider write scenarios", () => {
 
   it("requests the read first when no read result exists", async () => {
     const request: ModelRequest = {
-      messages: [{ type: "user_message", content: "edit solaris-write-test" }],
+      messages: [{ type: "user_message", content: "edit siralos-write-test" }],
       tools: [READ_TOOL, EDIT_TOOL],
     };
     const { events } = await collect(request);
@@ -512,21 +512,21 @@ describe("deterministic fake provider write scenarios", () => {
       type: "tool_call",
       callId: "call-read",
       toolName: "workspace.read",
-      input: { path: "solaris-write-test.txt" },
+      input: { path: "siralos-write-test.txt" },
     });
   });
 
   it("reports a truthful final text after a denied edit", async () => {
     const request: ModelRequest = {
       messages: [
-        { type: "user_message", content: "edit solaris-write-test" },
+        { type: "user_message", content: "edit siralos-write-test" },
         readResultWithHash("a".repeat(64)),
         {
           type: "assistant_tool_call",
           callId: "call-edit",
           toolName: "workspace.edit_file",
           input: {
-            path: "solaris-write-test.txt",
+            path: "siralos-write-test.txt",
             expectedSha256: "a".repeat(64),
             replacements: [],
           },
@@ -542,21 +542,21 @@ describe("deterministic fake provider write scenarios", () => {
     };
     const { events } = await collect(request);
     expect(textOf(events)).toBe(
-      "The workspace change was denied, so Solaris did not modify solaris-write-test.txt.",
+      "The workspace change was denied, so Siralos did not modify siralos-write-test.txt.",
     );
   });
 
   it("reports a truthful final text after an edit conflict", async () => {
     const request: ModelRequest = {
       messages: [
-        { type: "user_message", content: "edit solaris-write-test" },
+        { type: "user_message", content: "edit siralos-write-test" },
         readResultWithHash("a".repeat(64)),
         {
           type: "assistant_tool_call",
           callId: "call-edit",
           toolName: "workspace.edit_file",
           input: {
-            path: "solaris-write-test.txt",
+            path: "siralos-write-test.txt",
             expectedSha256: "a".repeat(64),
             replacements: [],
           },
@@ -572,14 +572,14 @@ describe("deterministic fake provider write scenarios", () => {
     };
     const { events } = await collect(request);
     expect(textOf(events)).toBe(
-      "The file changed, so Solaris did not modify solaris-write-test.txt. Reread the file to continue.",
+      "The file changed, so Siralos did not modify siralos-write-test.txt. Reread the file to continue.",
     );
   });
 
   it("reads before requesting the delete", async () => {
     const request: ModelRequest = {
       messages: [
-        { type: "user_message", content: "delete solaris-write-test" },
+        { type: "user_message", content: "delete siralos-write-test" },
         readResultWithHash("b".repeat(64)),
       ],
       tools: [READ_TOOL, DELETE_TOOL],
@@ -589,18 +589,18 @@ describe("deterministic fake provider write scenarios", () => {
       type: "tool_call",
       callId: "call-delete",
       toolName: "workspace.delete_file",
-      input: { path: "solaris-write-test.txt", expectedSha256: "b".repeat(64) },
+      input: { path: "siralos-write-test.txt", expectedSha256: "b".repeat(64) },
     });
   });
 
   it("does not request write tools that are not in the request definitions", async () => {
     const request: ModelRequest = {
-      messages: [{ type: "user_message", content: "create solaris-write-test" }],
+      messages: [{ type: "user_message", content: "create siralos-write-test" }],
       tools: [READ_TOOL, LIST_TOOL],
     };
     const { events } = await collect(request);
     expect(toolCallEvent(events)).toBeUndefined();
-    expect(textOf(events)).toBe("Solaris received: create solaris-write-test");
+    expect(textOf(events)).toBe("Siralos received: create siralos-write-test");
   });
 });
 
@@ -691,7 +691,7 @@ describe("deterministic fake provider git scenarios", () => {
       tools: [GIT_STATUS_TOOL],
     };
     const { events } = await collect(request);
-    expect(textOf(events)).toBe("Solaris found 1 modified files and 1 untracked file.");
+    expect(textOf(events)).toBe("Siralos found 1 modified files and 1 untracked file.");
   });
 
   it("summarizes failed git results truthfully", async () => {
@@ -715,7 +715,7 @@ describe("deterministic fake provider git scenarios", () => {
     };
     const { events } = await collect(request);
     expect(textOf(events)).toBe(
-      "Solaris could not inspect Git: The workspace is not a Git repository.",
+      "Siralos could not inspect Git: The workspace is not a Git repository.",
     );
   });
 
@@ -726,7 +726,7 @@ describe("deterministic fake provider git scenarios", () => {
     };
     const { events } = await collect(request);
     expect(toolCallEvent(events)).toBeUndefined();
-    expect(textOf(events)).toBe("Solaris received: git status");
+    expect(textOf(events)).toBe("Siralos received: git status");
   });
 });
 
@@ -743,7 +743,7 @@ describe("deterministic fake provider development scenarios", () => {
   };
   const FIXTURE_HASH = "a".repeat(64);
 
-  function applySuccessOutput(): import("@solaris/core").JsonValue {
+  function applySuccessOutput(): import("@siralos/core").JsonValue {
     return {
       status: "completed",
       iterations: 1,
@@ -865,7 +865,7 @@ describe("deterministic fake provider development scenarios", () => {
       ],
       tools: [READ_TOOL, CHANGESET_TOOL],
     });
-    expect(textOf(third.events)).toContain("Solaris applied the approved change set");
+    expect(textOf(third.events)).toContain("Siralos applied the approved change set");
     expect(textOf(third.events)).toContain("parser passed");
   });
 
@@ -978,7 +978,7 @@ describe("deterministic fake provider development scenarios", () => {
 describe("deterministic fake provider command scenarios", () => {
   const PROCESS_TOOL: ToolDefinition = {
     name: "process.run",
-    description: "Run a validated Solaris development command.",
+    description: "Run a validated Siralos development command.",
     inputSchema: {},
   };
 
@@ -1061,7 +1061,7 @@ describe("deterministic fake provider command scenarios", () => {
         summary: "ok",
       }),
     );
-    expect(textOf(events)).toBe("Solaris ran `npm run check` and it exited with code 0.");
+    expect(textOf(events)).toBe("Siralos ran `npm run check` and it exited with code 0.");
   });
 
   it("summarizes a nonzero exit truthfully without treating it as infrastructure failure", async () => {
@@ -1072,14 +1072,14 @@ describe("deterministic fake provider command scenarios", () => {
         summary: "ok",
       }),
     );
-    expect(textOf(events)).toBe("Solaris ran `npm run check`, but it exited with code 2.");
+    expect(textOf(events)).toBe("Siralos ran `npm run check`, but it exited with code 2.");
   });
 
   it("summarizes denial truthfully", async () => {
     const { events } = await collect(
       commandRequest("run npm check", { status: "denied", message: "denied" }),
     );
-    expect(textOf(events)).toBe("The command was not approved, so Solaris did not run it.");
+    expect(textOf(events)).toBe("The command was not approved, so Siralos did not run it.");
   });
 
   it("summarizes cancellation and timeout truthfully", async () => {
@@ -1107,7 +1107,7 @@ describe("deterministic fake provider command scenarios", () => {
       commandRequest("run npm check", { status: "workspace_violation", message: "violation" }),
     );
     expect(textOf(events)).toBe(
-      "Solaris detected unexpected workspace changes; command execution is disabled for this session.",
+      "Siralos detected unexpected workspace changes; command execution is disabled for this session.",
     );
   });
 });

@@ -21,7 +21,7 @@ supersedes: []
 
 ## Problem
 
-Stage 3.8 gave Solaris revision-aware understanding of `.tscn`/`.tres`
+Stage 3.8 gave Siralos revision-aware understanding of `.tscn`/`.tres`
 structure and Stage 3.9 gave it impact intelligence, but every mutation
 request was refused: scene/resource files are not arbitrary text-edit
 targets, and a raw text write would bypass exact-revision binding,
@@ -88,7 +88,7 @@ application-owned surface:
   serialized, preserving untouched raw formatting.
 - **Runtime Godot loading as ordinary mutation verification** — no Godot
   process; runtime validation remains deferred evidence.
-- **Global UID allocation** — Solaris preserves serialized UIDs and never
+- **Global UID allocation** — Siralos preserves serialized UIDs and never
   invents global identities without an authoritative mechanism.
 - **A generic transaction engine** — multi-file apply stays bounded and
   serialized with explicit partial/uncertain recovery evidence.

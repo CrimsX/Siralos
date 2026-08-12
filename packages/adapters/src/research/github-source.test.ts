@@ -4,7 +4,7 @@ import {
   type ResearchBounds,
   type ResearchRequest,
   type ResearchSourceRef,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createGitHubResearchSource } from "./github-source.js";
 import { createFakeTransport, type FakeTransportRoutes } from "./http-transport.js";
 import { TRUNCATION_MARKER } from "./normalization.js";

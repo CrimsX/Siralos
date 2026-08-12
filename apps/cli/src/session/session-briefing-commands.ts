@@ -1,4 +1,4 @@
-import { createAcceptanceEvaluator } from "@solaris/core";
+import { createAcceptanceEvaluator } from "@siralos/core";
 import { formatExecutorBrief, formatMilestoneManifest } from "../output.js";
 import type { SessionIO, SessionInfo } from "./session-types.js";
 

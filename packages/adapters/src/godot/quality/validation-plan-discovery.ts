@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import type { ValidationPlanDiscovery } from "@solaris/core";
+import type { ValidationPlanDiscovery } from "@siralos/core";
 import { readFileBounded } from "../../fs/file-read.js";
 
 /** Maximum root package.json size read for validation-plan discovery. */

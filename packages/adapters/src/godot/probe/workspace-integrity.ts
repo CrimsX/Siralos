@@ -1,4 +1,4 @@
-import type { GitStatusResult } from "@solaris/core";
+import type { GitStatusResult } from "@siralos/core";
 import { scanAuthoredFiles, type AuthoredFileManifest } from "./authored-files.js";
 
 export interface WorkspaceIntegritySnapshot {

@@ -17,10 +17,10 @@ import {
   type SandboxProfile,
   type ToolExecutionContext,
   type ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { MutationLock } from "../tools/workspace/mutations/mutation-lock.js";
 import { errorMessage } from "../support/error-message.js";
-import type { CommandRunPaths } from "@solaris/core";
+import type { CommandRunPaths } from "@siralos/core";
 import type { RunDirectoryProvider } from "./run-directories.js";
 
 export interface ProcessRunToolDependencies {
@@ -159,7 +159,7 @@ export function createProcessRunTool(
     }
     if (!runPaths.ok) {
       // Run-directory creation fails closed: a command never executes
-      // without a verified Solaris-owned private run directory.
+      // without a verified Siralos-owned private run directory.
       return { status: "unavailable", message: runPaths.message };
     }
     let result: ToolExecutionResult;
@@ -268,14 +268,14 @@ export function createProcessRunTool(
     definition: {
       name: "process.run",
       description:
-        "Run a validated Solaris development command (an npm package script or a JavaScript file) inside the OS sandbox with a read-only workspace, denied network, and a minimal environment. Every command requires one-time approval.",
+        "Run a validated Siralos development command (an npm package script or a JavaScript file) inside the OS sandbox with a read-only workspace, denied network, and a minimal environment. Every command requires one-time approval.",
       inputSchema: {
         type: "object",
         properties: {
           runner: {
             type: "string",
             enum: ["npm-script", "node-script"],
-            description: "The Solaris-owned command runner to use.",
+            description: "The Siralos-owned command runner to use.",
           },
           script: {
             type: "string",

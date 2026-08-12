@@ -1,12 +1,12 @@
-import type { CommandId } from "@solaris/core";
-import { COMMAND_CATALOG_IDS } from "@solaris/core";
+import type { CommandId } from "@siralos/core";
+import { COMMAND_CATALOG_IDS } from "@siralos/core";
 
 /**
  * The interactive command vocabulary derives from the core command catalog
  * (Stage 3 milestone 6): a command cannot be typed in this session unless
  * it is catalogued, and the exhaustive switch in the session renderer
  * cannot compile for an id the parser cannot produce. The catalog is also
- * what the built-in @solaris self-reference documents — no hand-maintained
+ * what the built-in @siralos self-reference documents — no hand-maintained
  * command list can drift.
  */
 export type SlashCommand = CommandId;

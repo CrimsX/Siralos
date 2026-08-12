@@ -9,8 +9,8 @@ import {
   computeGodotRecoveryCommandDigest,
   type GodotRecoveryRunRequest,
 } from "./godot-recovery-runner.js";
-import type { GodotEngineProfile, GodotInstallation } from "@solaris/core";
-import { createEmptyGodotCommandCapabilities } from "@solaris/core";
+import type { GodotEngineProfile, GodotInstallation } from "@siralos/core";
+import { createEmptyGodotCommandCapabilities } from "@siralos/core";
 
 function installation(): GodotInstallation {
   return {
@@ -64,11 +64,11 @@ function request(): GodotRecoveryRunRequest {
   return {
     installation: installation(),
     engineProfile: engineProfile(),
-    mirrorProjectPath: "C:\\solaris\\runs\\run-1\\project",
+    mirrorProjectPath: "C:\\siralos\\runs\\run-1\\project",
     runPaths: {
-      root: "C:\\solaris\\runs\\run-1",
-      home: "C:\\solaris\\runs\\run-1\\home",
-      temp: "C:\\solaris\\runs\\run-1\\tmp",
+      root: "C:\\siralos\\runs\\run-1",
+      home: "C:\\siralos\\runs\\run-1\\home",
+      temp: "C:\\siralos\\runs\\run-1\\tmp",
     },
   };
 }

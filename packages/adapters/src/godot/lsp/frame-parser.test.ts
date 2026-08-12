@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import { LSPFrameParser, frameMessage } from "./frame-parser.js";
 
 function payload(text: string): Uint8Array {

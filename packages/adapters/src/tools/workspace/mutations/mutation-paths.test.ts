@@ -59,7 +59,7 @@ describe("resolveCreateTarget", () => {
     expect((await resolveCreateTarget(workspace.root, ".env")).status).toBe("rejected");
     expect((await resolveCreateTarget(workspace.root, ".git/config")).status).toBe("rejected");
     expect((await resolveCreateTarget(workspace.root, "keys.pem")).status).toBe("rejected");
-    expect((await resolveCreateTarget(workspace.root, ".solaris/state.json")).status).toBe(
+    expect((await resolveCreateTarget(workspace.root, ".siralos/state.json")).status).toBe(
       "rejected",
     );
   });
@@ -141,7 +141,7 @@ describe("isProtectedWriteTarget", () => {
     expect(isProtectedWriteTarget("cert.pem")).toBe(true);
     expect(isProtectedWriteTarget("nested/private.key")).toBe(true);
     expect(isProtectedWriteTarget(".git/config")).toBe(true);
-    expect(isProtectedWriteTarget(".solaris/config.json")).toBe(true);
+    expect(isProtectedWriteTarget(".siralos/config.json")).toBe(true);
     expect(isProtectedWriteTarget("packages/pkg/.git/HEAD")).toBe(true);
     expect(isProtectedWriteTarget("README.md")).toBe(false);
     expect(isProtectedWriteTarget("environment.txt")).toBe(false);
@@ -154,7 +154,7 @@ describe("isProtectedWriteTarget", () => {
       expect(isProtectedWriteTarget(".GIT/config", platform)).toBe(true);
       expect(isProtectedWriteTarget(".Git/config", platform)).toBe(true);
       expect(isProtectedWriteTarget(".GIT/HEAD", platform)).toBe(true);
-      expect(isProtectedWriteTarget(".SOLARIS/state.json", platform)).toBe(true);
+      expect(isProtectedWriteTarget(".SIRALOS/state.json", platform)).toBe(true);
       expect(isProtectedWriteTarget(".ENV", platform)).toBe(true);
       expect(isProtectedWriteTarget("Docs/.ENV.LOCAL", platform)).toBe(true);
       expect(isProtectedWriteTarget("CERT.PEM", platform)).toBe(true);
@@ -174,7 +174,7 @@ describe("isProtectedWriteTarget", () => {
     await writeFixtureFiles(workspace.root, { ".git/config": "x\n" });
     expect((await resolveCreateTarget(workspace.root, ".git/new.txt")).status).toBe("rejected");
     expect((await resolveCreateTarget(workspace.root, ".GIT/new.txt")).status).toBe("rejected");
-    expect((await resolveCreateTarget(workspace.root, ".solaris/new.txt")).status).toBe("rejected");
+    expect((await resolveCreateTarget(workspace.root, ".siralos/new.txt")).status).toBe("rejected");
   });
 
   it("rejects case variants addressing a protected directory", async () => {

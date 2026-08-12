@@ -4,7 +4,7 @@ import {
   createEvidenceProjector,
   createProjectionService,
   createRevisionGuard,
-  createSolarisApplication,
+  createSiralosApplication,
   createTaskContract,
   createToolProjector,
   createToolRegistry,
@@ -21,8 +21,8 @@ import {
   type TaskRuntimeSnapshot,
   type Tool,
   type ToolExecutionResult,
-} from "@solaris/core";
-import { createProviderChangeReviewer } from "@solaris/adapters";
+} from "@siralos/core";
+import { createProviderChangeReviewer } from "@siralos/adapters";
 import {
   createBehaviorLoopHarness,
   createBehaviorRuntime,
@@ -187,7 +187,7 @@ describe("Behavior 3 — hard context pressure blocks the provider call", () => 
       profile: DEVELOP_OFFLINE_PROFILE,
       capacity: { ...CAPACITY, workingMaximum: 200 },
     });
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: recorded.provider,
       tools: createToolRegistry([]),
       projection: service,
@@ -291,7 +291,7 @@ describe("Behavior 6 — hidden tools are absent from the actual provider reques
       profile: DEVELOP_OFFLINE_PROFILE,
       capacity: CAPACITY,
     });
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: recorded.provider,
       tools: createToolRegistry([
         plainTool("workspace.read", "workspace.read"),
@@ -330,7 +330,7 @@ describe("Behavior 6 — hidden tools are absent from the actual provider reques
       profile: DEVELOP_OFFLINE_PROFILE,
       capacity: CAPACITY,
     });
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: recorded.provider,
       tools: createToolRegistry([
         plainTool("workspace.read", "workspace.read"),
@@ -375,7 +375,7 @@ describe("Behavior 7 — gated tools stay visible but runtime enforcement still 
       profile: DEVELOP_OFFLINE_PROFILE,
       capacity: CAPACITY,
     });
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: recorded.provider,
       tools: createToolRegistry([gatedTool]),
       projection: service,
@@ -448,7 +448,7 @@ describe("Behavior 9 — an unsupported non-tool model fails clearly for /develo
       profile: DEVELOP_OFFLINE_PROFILE,
       capacity: CAPACITY,
     });
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider: recorded.provider,
       tools: createToolRegistry([]),
       projection: service,

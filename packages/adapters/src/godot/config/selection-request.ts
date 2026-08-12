@@ -1,4 +1,4 @@
-import type { GodotSelectionPreference } from "@solaris/core";
+import type { GodotSelectionPreference } from "@siralos/core";
 import type { UserGodotConfig } from "../../config/user-config.js";
 
 export interface GodotSelectionInput {
@@ -22,13 +22,13 @@ export type GodotSelectionResolution =
 /**
  * Resolves the trusted selection precedence (highest first):
  *
- * `--godot-path`, `--godot-installation`, `SOLARIS_GODOT`,
- * `SOLARIS_GODOT_INSTALLATION`, `godot.activeInstallation`, preferred
+ * `--godot-path`, `--godot-installation`, `SIRALOS_GODOT`,
+ * `SIRALOS_GODOT_INSTALLATION`, `godot.activeInstallation`, preferred
  * compatible PATH candidate, no selection.
  *
  * Path selection and installation-id selection are mutually exclusive at
  * the same precedence level. An explicit higher-precedence selection that
- * later fails (unknown id, invalid executable) is a hard failure: Solaris
+ * later fails (unknown id, invalid executable) is a hard failure: Siralos
  * never silently falls back after an explicit selection.
  */
 export function resolveGodotSelection(input: GodotSelectionInput): GodotSelectionResolution {
@@ -50,7 +50,7 @@ export function resolveGodotSelection(input: GodotSelectionInput): GodotSelectio
   if (input.environmentPath !== null && input.environmentInstallationId !== null) {
     return {
       ok: false,
-      message: "SOLARIS_GODOT and SOLARIS_GODOT_INSTALLATION are mutually exclusive.",
+      message: "SIRALOS_GODOT and SIRALOS_GODOT_INSTALLATION are mutually exclusive.",
     };
   }
   if (input.environmentPath !== null) {

@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { GODOT_LIMITS, type GodotScanTruncationReason, type SafeDiagnostic } from "@solaris/core";
+import { GODOT_LIMITS, type GodotScanTruncationReason, type SafeDiagnostic } from "@siralos/core";
 import { createTraversalBudget, type TraversalBudget } from "./traversal-limits.js";
 import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
 import { foldPathComponent } from "../../fs-case.js";
@@ -11,7 +11,7 @@ export const PROJECT_SCAN_EXCLUDED_DIRECTORIES: readonly string[] = [
   "node_modules",
   "dist",
   "coverage",
-  ".solaris",
+  ".siralos",
 ];
 
 export interface BoundedScanOptions {

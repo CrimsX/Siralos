@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CheckpointStore, GDScriptDevelopmentService } from "@solaris/core";
+import type { CheckpointStore, GDScriptDevelopmentService } from "@siralos/core";
 import {
   cleanupTempCheckpointDirs,
   createTempCheckpointStore,

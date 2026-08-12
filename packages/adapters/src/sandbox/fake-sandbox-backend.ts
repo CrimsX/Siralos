@@ -4,7 +4,7 @@ import type {
   SandboxBackendStatus,
   SandboxedProcessRequest,
   SandboxedProcessResult,
-} from "@solaris/core";
+} from "@siralos/core";
 
 export interface FakeSandboxBackendOptions {
   readonly status?: SandboxBackendStatus;

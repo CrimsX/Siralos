@@ -27,7 +27,7 @@ import {
   type QualityValidationExecutor,
   type ToolExecutionContext,
   type ValidationPlanDiscovery,
-} from "@solaris/core";
+} from "@siralos/core";
 import { randomUUID } from "node:crypto";
 import { createAbortError } from "../probe/risk-manifest.js";
 import { scanAuthoredFiles } from "../probe/authored-files.js";
@@ -43,7 +43,7 @@ import {
   type QualityStageChangeFile,
   type QualityWarningBaseline,
 } from "../quality/quality-stage-runner.js";
-import type { ChangeReviewResult } from "@solaris/core";
+import type { ChangeReviewResult } from "@siralos/core";
 
 export interface GDScriptDevelopmentServiceDependencies {
   readonly workspaceRoot: string;
@@ -51,7 +51,7 @@ export interface GDScriptDevelopmentServiceDependencies {
   readonly store: CheckpointStore;
   readonly lock: { acquire(signal?: AbortSignal): Promise<() => void> };
   /** Session revision registry: read handles, post-edit invalidation. */
-  readonly revisions?: import("@solaris/core").WorkspaceRevisionRegistry;
+  readonly revisions?: import("@siralos/core").WorkspaceRevisionRegistry;
   readonly language: GDScriptLanguageService;
   readonly diagnostics: GodotDiagnostics;
   /** Read-only Git inspector; null when Git inspection is unavailable. */
@@ -88,7 +88,7 @@ export interface GDScriptDevelopmentServiceDependencies {
    */
   readonly reviewContextProvider?: (
     changedPaths: readonly string[],
-  ) => Promise<import("@solaris/core").ReviewContextManifest | null>;
+  ) => Promise<import("@siralos/core").ReviewContextManifest | null>;
   readonly onEvent?: (event: DevelopmentEvent) => void;
   readonly now?: () => number;
   readonly idFactory?: () => string;
@@ -109,7 +109,7 @@ async function deriveReviewContext(
   dependencies: GDScriptDevelopmentServiceDependencies,
   changedPaths: readonly string[],
 ): Promise<
-  { readonly reviewContext: import("@solaris/core").ReviewContextManifest } | Record<string, never>
+  { readonly reviewContext: import("@siralos/core").ReviewContextManifest } | Record<string, never>
 > {
   if (dependencies.reviewContextProvider === undefined) {
     return {};
@@ -130,7 +130,7 @@ interface PendingStart {
 
 interface PreparedChangeSetRecord {
   readonly id: string;
-  readonly files: readonly import("@solaris/core").PreparedChangeSetFile[];
+  readonly files: readonly import("@siralos/core").PreparedChangeSetFile[];
   readonly preview: ChangePreview;
   readonly digest: string;
   readonly repair: boolean;
@@ -148,7 +148,7 @@ interface InternalSession {
   readonly startedAtMs: number;
   /** Git changed/untracked paths at workflow start; null when unavailable. */
   gitBaseline: readonly string[] | null;
-  state: import("@solaris/core").DevelopmentState;
+  state: import("@siralos/core").DevelopmentState;
   iteration: number;
   repairProposalsUsed: number;
   reviewRepairRoundsUsed: number;
@@ -157,14 +157,14 @@ interface InternalSession {
   errorCount: number;
   warningCount: number;
   checkpointIds: string[];
-  changes: import("@solaris/core").DevelopmentChangeRecord[];
+  changes: import("@siralos/core").DevelopmentChangeRecord[];
   prepared: Map<string, PreparedChangeSetRecord>;
   /** Files applied by previous change sets (path -> afterSha256). */
   appliedFiles: Map<string, string>;
   /** Most recent quality report; null before the quality stage ran. */
   qualityReport: DevelopmentQualityReport | null;
   /** Unresolved blocking review findings of the latest quality round. */
-  blockingFindings: readonly import("@solaris/core").ChangeReviewFinding[];
+  blockingFindings: readonly import("@siralos/core").ChangeReviewFinding[];
   /** All review finding ids seen so far, for re-review traceability. */
   reviewFindingIds: string[];
   /** Number of quality-stage review rounds run so far. */
@@ -927,7 +927,7 @@ export function createGDScriptDevelopmentService(
     if (current === null || current.state.kind !== "active") {
       return;
     }
-    let status: import("@solaris/core").DevelopmentStatus | null = null;
+    let status: import("@siralos/core").DevelopmentStatus | null = null;
     if (current.state.phase === "reviewing") {
       if (current.blockingFindings.length > 0) {
         status = "completed_with_blocking_findings";
@@ -999,7 +999,7 @@ export function createGDScriptDevelopmentService(
 
   async function cancel(
     signal?: AbortSignal,
-  ): Promise<import("@solaris/core").DevelopmentCancelResult> {
+  ): Promise<import("@siralos/core").DevelopmentCancelResult> {
     const current = session;
     if (current === null) {
       return { status: "inactive", message: "No development workflow is active." };
@@ -1451,7 +1451,7 @@ export function createGDScriptDevelopmentService(
   }
 
   function finalizeResult(current: InternalSession): GDScriptDevelopmentResult {
-    let status: import("@solaris/core").DevelopmentStatus;
+    let status: import("@siralos/core").DevelopmentStatus;
     if (current.state.kind === "terminal") {
       status = current.state.status;
     } else if (current.qualityReport !== null) {
@@ -1543,8 +1543,8 @@ export function createGDScriptDevelopmentService(
 
 /** Deterministic mapping of a quality status into the workflow vocabulary. */
 function qualityStatusToDevelopmentStatus(
-  status: import("@solaris/core").QualityStatus,
-): import("@solaris/core").DevelopmentStatus {
+  status: import("@siralos/core").QualityStatus,
+): import("@siralos/core").DevelopmentStatus {
   switch (status) {
     case "passed":
       return "completed";
@@ -1564,14 +1564,14 @@ function qualityStatusToDevelopmentStatus(
 /** Fresh read of the session state kind (defeats stale control-flow narrowing). */
 function developmentStateKind(
   current: InternalSession,
-): import("@solaris/core").DevelopmentState["kind"] {
+): import("@siralos/core").DevelopmentState["kind"] {
   return current.state.kind;
 }
 
 function buildApplyRequest(
   changeSetId: string,
   prepared: PreparedChangeSetRecord,
-): import("@solaris/core").ChangeSetApplyRequest {
+): import("@siralos/core").ChangeSetApplyRequest {
   return {
     changeSetId,
     toolName: "workspace.apply_text_changeset",
@@ -1589,7 +1589,7 @@ function buildApplyRequest(
 }
 
 function changedScripts(
-  files: readonly import("@solaris/core").PreparedChangeSetFile[],
+  files: readonly import("@siralos/core").PreparedChangeSetFile[],
 ): readonly string[] {
   return files.filter((file) => file.path.endsWith(".gd")).map((file) => file.path);
 }

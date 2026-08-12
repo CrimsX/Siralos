@@ -23,7 +23,7 @@ export interface GDScriptSourceRange {
   readonly end: GDScriptPosition;
 }
 
-/** Server capabilities Solaris actually intends to use. */
+/** Server capabilities Siralos actually intends to use. */
 export interface GDScriptLSPCapabilities {
   readonly diagnostics: boolean;
   readonly hover: boolean;
@@ -87,7 +87,7 @@ export interface GDScriptLSPSessionPreview {
   readonly manifestDigest: string;
 }
 
-/** Fixed Solaris-owned parts the prepared-session digest binds. */
+/** Fixed Siralos-owned parts the prepared-session digest binds. */
 export interface GDScriptPreparedSessionDigestParts {
   readonly manifestDigest: string;
   readonly executableSha256: string;

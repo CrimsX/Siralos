@@ -1,15 +1,15 @@
-import { GODOT_LIMITS, createPreparedGodotProbe, type PreparedGodotProbe } from "@solaris/core";
+import { GODOT_LIMITS, createPreparedGodotProbe, type PreparedGodotProbe } from "@siralos/core";
 import { createPreparedPlanStore, type PreparedPlanStore } from "./prepared-plan-store.js";
 
 export interface PreparedProbePlan {
-  readonly preview: import("@solaris/core").GodotProbePreview;
+  readonly preview: import("@siralos/core").GodotProbePreview;
   /** Full prepared-probe digest; approval binds to exactly this. */
   readonly digest: string;
   readonly manifestDigest: string;
-  readonly manifest: import("@solaris/core").GodotProjectRiskManifest;
+  readonly manifest: import("@siralos/core").GodotProjectRiskManifest;
   readonly selection: {
-    readonly installation: import("@solaris/core").GodotInstallation;
-    readonly profile: import("@solaris/core").GodotEngineProfile;
+    readonly installation: import("@siralos/core").GodotInstallation;
+    readonly profile: import("@siralos/core").GodotEngineProfile;
   };
 }
 

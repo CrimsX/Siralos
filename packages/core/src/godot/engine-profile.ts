@@ -9,11 +9,11 @@ export type GodotEdition = "standard" | "dotnet" | "editor-unknown" | "runtime-o
 export type GodotEditionConfidence = "high" | "medium" | "low";
 
 /**
- * Solaris's tested support classification for an installation. This reflects
- * Solaris's verified support, not Godot's official support status. It is
+ * Siralos's tested support classification for an installation. This reflects
+ * Siralos's verified support, not Godot's official support status. It is
  * never derived from internet data.
  */
-export type SolarisGodotSupport =
+export type SiralosGodotSupport =
   | "verified"
   | "compatible-untested"
   | "prerelease-untested"
@@ -62,7 +62,7 @@ export interface GodotEngineProfile {
   readonly degradedCapabilities: readonly string[];
   readonly executableSha256: string;
   readonly apiDumpSha256: string | null;
-  readonly support: SolarisGodotSupport;
+  readonly support: SiralosGodotSupport;
   readonly diagnostics: readonly SafeDiagnostic[];
 }
 
@@ -83,7 +83,7 @@ export interface GodotSupportClassificationInput {
  * `compatible-untested`; runtime-only binaries and invalid editions are
  * never selected for editor workflows.
  */
-export function classifyGodotSupport(input: GodotSupportClassificationInput): SolarisGodotSupport {
+export function classifyGodotSupport(input: GodotSupportClassificationInput): SiralosGodotSupport {
   const { version, edition } = input;
   if (edition === "runtime-only") {
     return "runtime-only";

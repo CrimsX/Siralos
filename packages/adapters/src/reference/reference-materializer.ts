@@ -4,7 +4,7 @@ import {
   type ReferenceId,
   type ReferenceMaterializerPort,
   type ResolvedReferenceIdentity,
-} from "@solaris/core";
+} from "@siralos/core";
 
 /**
  * Reference materializers (Stage 3 milestone 5).

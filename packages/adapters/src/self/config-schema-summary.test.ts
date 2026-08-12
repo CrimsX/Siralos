@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CONFIG_SCHEMA_SUMMARY } from "@solaris/core";
+import { CONFIG_SCHEMA_SUMMARY } from "@siralos/core";
 
 /**
  * Drift guard between the authored CONFIG_SCHEMA_SUMMARY (documented in
- * the @solaris self-reference) and the actual trusted configuration
+ * the @siralos self-reference) and the actual trusted configuration
  * schema file (schemas/user-config.schema.json). A schema change without
  * a summary update fails here.
  */
@@ -98,7 +98,7 @@ describe("config schema summary conformance", () => {
   });
 
   it("has a stable revision", async () => {
-    const { CONFIG_SCHEMA_REVISION } = await import("@solaris/core");
+    const { CONFIG_SCHEMA_REVISION } = await import("@siralos/core");
     expect(CONFIG_SCHEMA_REVISION).toMatch(/^[0-9a-f]{64}$/);
   });
 });

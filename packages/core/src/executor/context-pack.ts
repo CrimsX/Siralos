@@ -22,7 +22,7 @@ import type { NewFileRationale } from "./new-file-discipline.js";
  * ExecutorContextPack (executor briefing foundation).
  *
  * The pack gathers ONLY the context relevant to one executor invocation,
- * derived from existing authoritative Solaris subsystems: TaskContract,
+ * derived from existing authoritative Siralos subsystems: TaskContract,
  * TaskPlan, path-scoped instructions, architecture docs/ADRs (via the
  * deterministic concern index), CapabilitySnapshot, and current audit
  * findings. It is DERIVED context — never another source of truth — and

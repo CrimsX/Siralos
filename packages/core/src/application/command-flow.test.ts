@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createDefaultPolicy,
   createPreparedCommand,
-  createSolarisApplication,
+  createSiralosApplication,
   createToolRegistry,
   DEVELOP_OFFLINE_PROFILE,
   INSPECT_PROFILE,
@@ -36,7 +36,7 @@ function createStubCommandTool(options: StubCommandToolOptions = {}): {
   const preview: CommandPreview = {
     runnerId: "npm-script",
     displayName: "npm run check",
-    packageName: "solaris",
+    packageName: "siralos",
     scriptName: "check",
     workingDirectory: ".",
     executableIdentity: "node v26.1.0 + npm 11.13.0",
@@ -57,7 +57,7 @@ function createStubCommandTool(options: StubCommandToolOptions = {}): {
     kind: "prepared_command",
     definition: {
       name: "process.run",
-      description: "Run a validated Solaris development command in the sandbox.",
+      description: "Run a validated Siralos development command in the sandbox.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     capability: "process.execute",
@@ -127,7 +127,7 @@ function scriptedApplication(
 ) {
   const { provider } = createScriptedProvider(turns);
   const reviewer = options.reviewer;
-  return createSolarisApplication({
+  return createSiralosApplication({
     provider,
     tools: createToolRegistry([tool]),
     policy: createDefaultPolicy(options.profile?.id ?? "develop-offline"),
@@ -150,7 +150,7 @@ describe("prepared command tool flow", () => {
         yield { type: "completed" };
       },
     };
-    const hidden = createSolarisApplication({
+    const hidden = createSiralosApplication({
       provider: recordingProvider,
       tools: createToolRegistry([tool]),
       policy: createDefaultPolicy("inspect"),
@@ -159,7 +159,7 @@ describe("prepared command tool flow", () => {
     await collectEvents(hidden.sendPrompt("hello"));
     expect(requests[0]?.tools.map((definition) => definition.name)).not.toContain("process.run");
     requests.length = 0;
-    const visible = createSolarisApplication({
+    const visible = createSiralosApplication({
       provider: recordingProvider,
       tools: createToolRegistry([tool]),
       policy: createDefaultPolicy("develop-offline"),
@@ -258,7 +258,7 @@ describe("prepared command tool flow", () => {
     const { provider } = createScriptedProvider([
       [toolCall("c1", "process.run", {}), { type: "completed" }],
     ]);
-    const application = createSolarisApplication({
+    const application = createSiralosApplication({
       provider,
       tools: createToolRegistry([tool]),
       policy: createDefaultPolicy("develop-offline"),

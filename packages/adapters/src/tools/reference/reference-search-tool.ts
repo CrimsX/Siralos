@@ -1,5 +1,5 @@
-import type { ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
-import { formatReferenceAlias } from "@solaris/core";
+import type { ToolExecutionContext, ToolExecutionResult } from "@siralos/core";
+import { formatReferenceAlias } from "@siralos/core";
 import {
   readJsonObject,
   readOptionalPositiveInteger,
@@ -68,7 +68,7 @@ export function createReferenceSearchTool(dependencies: ReferenceToolDependencie
     definition: {
       name: "reference.search",
       description:
-        "Search text files recursively within a bounded directory of a declared external reference. References are read-only external material outside the Solaris workspace.",
+        "Search text files recursively within a bounded directory of a declared external reference. References are read-only external material outside the Siralos workspace.",
       inputSchema: {
         type: "object",
         properties: {

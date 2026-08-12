@@ -1,4 +1,4 @@
-import type { GodotVersion, GodotVersionStatus } from "@solaris/core";
+import type { GodotVersion, GodotVersionStatus } from "@siralos/core";
 
 export type GodotVersionParseResult =
   | { readonly ok: true; readonly version: GodotVersion }

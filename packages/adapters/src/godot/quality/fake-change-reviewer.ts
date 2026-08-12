@@ -4,7 +4,7 @@ import {
   type ChangeReviewRequest,
   type ChangeReviewResult,
   type ChangeReviewer,
-} from "@solaris/core";
+} from "@siralos/core";
 
 /**
  * Deterministic fake change reviewer for tests (ADR 0013 §65). Scenarios:

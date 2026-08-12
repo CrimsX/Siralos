@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ApprovalRequest, ApprovalReviewer } from "@solaris/core";
+import type { ApprovalRequest, ApprovalReviewer } from "@siralos/core";
 import { createInteractiveApprovalReviewer } from "./approval-reviewer.js";
 import { createInputQueue, type InputQueue } from "../input/input-queue.js";
 import type { SessionIO } from "../interactive-session.js";

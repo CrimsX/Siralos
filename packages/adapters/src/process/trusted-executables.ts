@@ -17,7 +17,7 @@ export type NpmCliResolution =
  * Resolve the npm CLI JavaScript file associated with the current trusted
  * Node installation. The resolved file is invoked through the trusted Node
  * executable with separate arguments; no `npm.cmd` wrapper and no shell is
- * ever used at the Solaris process layer.
+ * ever used at the Siralos process layer.
  */
 export async function resolveNpmCli(): Promise<NpmCliResolution> {
   for (const candidate of buildNpmCliCandidates()) {

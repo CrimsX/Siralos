@@ -5,8 +5,8 @@ import type {
   ReferenceRegistry,
   ReferenceResolverPort,
   ReferenceTrustClass,
-} from "@solaris/core";
-import { createReferenceRegistry } from "@solaris/core";
+} from "@siralos/core";
+import { createReferenceRegistry } from "@siralos/core";
 import { createReferenceAccess } from "./reference-access.js";
 import { createReferenceCacheStore, type ReferenceCacheStore } from "./reference-cache.js";
 import {

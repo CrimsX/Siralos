@@ -6,7 +6,7 @@ import type {
   GodotKnowledgeBase,
   GodotKnowledgeProfileV1,
   SandboxBackendStatus,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { UserGodotConfig } from "../../config/user-config.js";
 import type { GodotEngineProfileCache } from "../cache/engine-profile-cache.js";
 import {
@@ -244,7 +244,7 @@ describe("createGodotKnowledgeService (loaded knowledge base)", () => {
         await service.search({
           query: "Node",
           kinds: ["hologram"],
-        } as unknown as import("@solaris/core").GodotApiSearchQuery)
+        } as unknown as import("@siralos/core").GodotApiSearchQuery)
       ).status,
     ).toBe("invalid_input");
     expect((await service.lookup("")).status).toBe("invalid_input");

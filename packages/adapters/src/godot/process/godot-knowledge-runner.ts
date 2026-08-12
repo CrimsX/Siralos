@@ -1,8 +1,8 @@
-import type { GodotEngineProfile, GodotInstallation, SandboxedProcessResult } from "@solaris/core";
+import type { GodotEngineProfile, GodotInstallation, SandboxedProcessResult } from "@siralos/core";
 
 /**
- * Fixed Solaris-owned API documentation generation invocation. The exact
- * selected engine writes `extension_api.json` into the Solaris-private
+ * Fixed Siralos-owned API documentation generation invocation. The exact
+ * selected engine writes `extension_api.json` into the Siralos-private
  * probe working directory; the executable is the only variable and it is
  * always the verified selected installation. The architecture check enforces
  * that this module is the only runtime module that may carry the
@@ -19,7 +19,7 @@ export function godotKnowledgeArguments(): readonly string[] {
 export interface GodotKnowledgeCommandDigestParts {
   readonly executableSha256: string;
   readonly argumentTemplate: readonly string[];
-  readonly workingDirectoryPolicy: "solaris-private-probe-directory";
+  readonly workingDirectoryPolicy: "siralos-private-probe-directory";
   readonly profileId: string;
   readonly environmentPolicy: "minimal";
   readonly stdinPolicy: "closed";
@@ -32,7 +32,7 @@ export interface GodotKnowledgeCommandDigestParts {
 export interface GodotKnowledgeRunRequest {
   readonly installation: GodotInstallation;
   readonly engineProfile: GodotEngineProfile;
-  /** Solaris-private probe directory; never the workspace. */
+  /** Siralos-private probe directory; never the workspace. */
   readonly probeDirectory: string;
   readonly signal?: AbortSignal;
 }
@@ -76,12 +76,12 @@ export interface GodotKnowledgeRunner {
 }
 
 export const GODOT_KNOWLEDGE_GENERATION_UNAVAILABLE_MESSAGE =
-  "Exact-engine API documentation generation is unavailable: Node and the pinned sandbox runtime offer no exec-by-handle or directory-handle-relative primitive, so the staged executable's pathname is re-opened at spawn time and a same-user process could substitute different bytes between final verification and launch, and the Solaris-private probe directory cannot be created or cleaned up identity-bound. The verified fingerprint could then be attached to bytes that never execute. Generation fails closed and the executable is never spawned; no probe directory is created. It will become available only when a mechanically identity-bound launch and directory-lifecycle primitive exists.";
+  "Exact-engine API documentation generation is unavailable: Node and the pinned sandbox runtime offer no exec-by-handle or directory-handle-relative primitive, so the staged executable's pathname is re-opened at spawn time and a same-user process could substitute different bytes between final verification and launch, and the Siralos-private probe directory cannot be created or cleaned up identity-bound. The verified fingerprint could then be attached to bytes that never execute. Generation fails closed and the executable is never spawned; no probe directory is created. It will become available only when a mechanically identity-bound launch and directory-lifecycle primitive exists.";
 
 /**
  * API documentation generation fails closed and never spawns the
  * executable. The fixed probe would run `--dump-extension-api-with-docs`
- * in a Solaris-private probe directory with network denied and the
+ * in a Siralos-private probe directory with network denied and the
  * workspace excluded from readable roots; until launch can be mechanically
  * bound to the verified executable identity and the probe directory to a
  * verified parent, every generation reports a typed `unavailable` outcome

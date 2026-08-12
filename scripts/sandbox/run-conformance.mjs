@@ -7,8 +7,8 @@ import {
   createAnthropicSandboxRuntimeBackend,
   removeConformanceArtifacts,
   runSandboxConformance,
-} from "@solaris/adapters";
-import { DEVELOP_OFFLINE_PROFILE } from "@solaris/core";
+} from "@siralos/adapters";
+import { DEVELOP_OFFLINE_PROFILE } from "@siralos/core";
 
 const FAKE_PROBE_SECRETS = {
   OPENROUTER_API_KEY: "probe-fake-openrouter-key",
@@ -20,7 +20,7 @@ const FAKE_PROBE_SECRETS = {
 };
 
 async function main() {
-  const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-conformance-"));
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-conformance-"));
   const backend = createAnthropicSandboxRuntimeBackend({ workspaceRoot });
   try {
     const status = await backend.inspect();
@@ -58,7 +58,7 @@ async function main() {
       parentEnvironment: environment,
     });
     if (report.passed === 0 && report.failed === 0 && report.skipped > 0) {
-      // The suite could not execute (for example because Solaris cannot
+      // The suite could not execute (for example because Siralos cannot
       // create verified private run directories at this stage): every probe
       // reports skipped with the truthful reason, and skipped is never
       // treated as passed.

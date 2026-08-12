@@ -9,10 +9,10 @@ import {
   getBuiltInProfile,
   type SandboxBackend,
   type SandboxBackendStatus,
-} from "@solaris/core";
+} from "@siralos/core";
 import { createCliDoctor, createCliDoctorSources } from "./doctor.js";
 import { runDoctorCli } from "./doctor-cli.js";
-import { readInstalledSolarisVersion, runningNodeMajor } from "./self-reference.js";
+import { readInstalledSiralosVersion, runningNodeMajor } from "./self-reference.js";
 
 function fakeBackend(overrides: Partial<SandboxBackendStatus> = {}): SandboxBackend {
   return {
@@ -119,7 +119,7 @@ describe("createCliDoctorSources (composition root wiring)", () => {
   });
 
   it("derives config diagnostics from the real file without ever exposing a secret value", async () => {
-    const root = await mkdtemp(join(tmpdir(), "solaris-doctor-test-"));
+    const root = await mkdtemp(join(tmpdir(), "siralos-doctor-test-"));
     try {
       const secret = "sk-CLISECRETVALUE1234567890";
       const configPath = join(root, "config.json");
@@ -161,7 +161,7 @@ describe("createCliDoctorSources (composition root wiring)", () => {
   });
 
   it("reads the installed version from the CLI package metadata", () => {
-    expect(readInstalledSolarisVersion()).toBe("0.0.0");
+    expect(readInstalledSiralosVersion()).toBe("0.0.0");
     expect(runningNodeMajor()).toBe(Number(process.versions.node.split(".")[0]));
   });
 });
@@ -179,7 +179,7 @@ describe("runDoctorCli argv boundary", () => {
     const exitCode = await runDoctorCli(["--doctor", "runtime"], (text) => writes.push(text));
     expect(exitCode).toBe(0);
     const output = writes.join("");
-    expect(output).toContain("Solaris Doctor");
+    expect(output).toContain("Siralos Doctor");
     expect(output).toContain("runtime");
   });
 

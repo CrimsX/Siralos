@@ -17,7 +17,7 @@ import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { CheckpointOperation, PreparedCheckpoint } from "@solaris/core";
+import type { CheckpointOperation, PreparedCheckpoint } from "@siralos/core";
 import {
   CheckpointStorageLimitError,
   checkedByteTotal,
@@ -47,9 +47,9 @@ interface StoreContext {
 }
 
 async function withStore(overrides: Record<string, unknown> = {}): Promise<StoreContext> {
-  const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-cp-workspace-"));
   registerTempDir(workspaceRoot);
-  const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+  const rootDirectory = await mkdtemp(join(tmpdir(), "siralos-cp-store-"));
   registerTempDir(rootDirectory);
   const store = await createFilesystemCheckpointStore({
     workspaceRoot,
@@ -136,7 +136,7 @@ async function realHandleRead(
 }
 
 async function tempPreimage(content: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "solaris-cp-verify-"));
+  const dir = await mkdtemp(join(tmpdir(), "siralos-cp-verify-"));
   registerTempDir(dir);
   const filePath = join(dir, "preimage.bin");
   await writeFile(filePath, content, "utf8");
@@ -1063,7 +1063,7 @@ describe("capacity preimage content verification", () => {
       const context = await withStore();
       const first = await context.store.prepare(preparedUpdate());
       const preimagePath = preimagePathOf(context, first.id);
-      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-junction-"));
+      const outside = await mkdtemp(join(tmpdir(), "siralos-cp-junction-"));
       registerTempDir(outside);
       await rm(preimagePath, { force: true });
       const { execFileSync } = await import("node:child_process");
@@ -1307,7 +1307,7 @@ describe("preimage identity binding", () => {
         },
       });
       const first = await context.store.prepare(preparedUpdate());
-      const outsideDir = await mkdtemp(join(tmpdir(), "solaris-cp-junction-"));
+      const outsideDir = await mkdtemp(join(tmpdir(), "siralos-cp-junction-"));
       registerTempDir(outsideDir);
       const before = await snapshotTree(context.rootDirectory);
       await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
@@ -1914,9 +1914,9 @@ describe("preimage size cap", () => {
   });
 
   it("rejects one byte over the hard cap", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-cp-workspace-"));
     registerTempDir(workspaceRoot);
-    const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+    const rootDirectory = await mkdtemp(join(tmpdir(), "siralos-cp-store-"));
     registerTempDir(rootDirectory);
     await expect(
       createFilesystemCheckpointStore({
@@ -1928,9 +1928,9 @@ describe("preimage size cap", () => {
   });
 
   it("rejects Number.MAX_SAFE_INTEGER", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-cp-workspace-"));
     registerTempDir(workspaceRoot);
-    const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+    const rootDirectory = await mkdtemp(join(tmpdir(), "siralos-cp-store-"));
     registerTempDir(rootDirectory);
     await expect(
       createFilesystemCheckpointStore({
@@ -1943,9 +1943,9 @@ describe("preimage size cap", () => {
 
   it("rejects negative, fractional, NaN, and Infinity limits", async () => {
     for (const maxPreimageBytes of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+      const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-cp-workspace-"));
       registerTempDir(workspaceRoot);
-      const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+      const rootDirectory = await mkdtemp(join(tmpdir(), "siralos-cp-store-"));
       registerTempDir(rootDirectory);
       await expect(
         createFilesystemCheckpointStore({
@@ -1958,9 +1958,9 @@ describe("preimage size cap", () => {
   });
 
   it("creates no checkpoint directory or file when option validation fails", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-cp-workspace-"));
     registerTempDir(workspaceRoot);
-    const rootDirectory = await mkdtemp(join(tmpdir(), "solaris-cp-store-"));
+    const rootDirectory = await mkdtemp(join(tmpdir(), "siralos-cp-store-"));
     registerTempDir(rootDirectory);
     await expect(
       createFilesystemCheckpointStore({
@@ -1974,7 +1974,7 @@ describe("preimage size cap", () => {
   });
 
   it("refuses an unsupported bound at the verifier itself", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "solaris-cp-verify-"));
+    const dir = await mkdtemp(join(tmpdir(), "siralos-cp-verify-"));
     registerTempDir(dir);
     const filePath = join(dir, "preimage.bin");
     await writeFile(filePath, "x", "utf8");
@@ -2062,7 +2062,7 @@ describe("storage accounting and unexpected entries", () => {
       const context = await withStore();
       const first = await context.store.prepare(preparedUpdate());
       const checkpointDir = checkpointDirOf(context, first.id);
-      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-junction-"));
+      const outside = await mkdtemp(join(tmpdir(), "siralos-cp-junction-"));
       registerTempDir(outside);
       await rm(checkpointDir, { recursive: true });
       const { execFileSync } = await import("node:child_process");
@@ -2145,7 +2145,7 @@ describe("storage accounting and unexpected entries", () => {
       const first = await context.store.prepare(preparedUpdate());
       const checkpointDir = checkpointDirOf(context, first.id);
       const { symlink } = await import("node:fs/promises");
-      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-outside-"));
+      const outside = await mkdtemp(join(tmpdir(), "siralos-cp-outside-"));
       registerTempDir(outside);
       await writeFile(join(outside, "victim.txt"), "keep me");
       await rm(checkpointDir, { recursive: true });
@@ -2302,9 +2302,9 @@ describe("filesystem checkpoint store", () => {
   });
 
   it("rejects a checkpoint root inside the workspace", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-cp-workspace-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-cp-workspace-"));
     registerTempDir(workspaceRoot);
-    const rootDirectory = join(workspaceRoot, ".solaris", "checkpoints");
+    const rootDirectory = join(workspaceRoot, ".siralos", "checkpoints");
     await mkdir(rootDirectory, { recursive: true });
     await expect(
       createFilesystemCheckpointStore({ workspaceRoot, rootDirectory }),
@@ -2326,7 +2326,7 @@ describe("filesystem checkpoint store", () => {
     const dir = checkpointDirOf(context, checkpoint.id);
     const { rm, symlink } = await import("node:fs/promises");
     await rm(dir, { recursive: true, force: true });
-    const outside = await mkdtemp(join(tmpdir(), "solaris-cp-outside-"));
+    const outside = await mkdtemp(join(tmpdir(), "siralos-cp-outside-"));
     registerTempDir(outside);
     await symlink(outside, dir).catch(() => {});
     await expect(context.store.loadPreimage(checkpoint.id)).rejects.toThrow();
@@ -2576,7 +2576,7 @@ describe("checkpoint storage link rejection", () => {
       const checkpoint = await context.store.prepare(preparedUpdate());
       const fingerprintDir = join(context.rootDirectory, context.fingerprint);
       const { rm, symlink, mkdtemp } = await import("node:fs/promises");
-      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-outside-"));
+      const outside = await mkdtemp(join(tmpdir(), "siralos-cp-outside-"));
       registerTempDir(outside);
       await rm(fingerprintDir, { recursive: true });
       await symlink(outside, fingerprintDir);
@@ -2595,7 +2595,7 @@ describe("checkpoint storage link rejection", () => {
       const checkpoint = await context.store.prepare(preparedUpdate());
       const checkpointDir = checkpointDirOf(context, checkpoint.id);
       const { rm, mkdtemp } = await import("node:fs/promises");
-      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-junction-"));
+      const outside = await mkdtemp(join(tmpdir(), "siralos-cp-junction-"));
       registerTempDir(outside);
       await rm(checkpointDir, { recursive: true });
       const { execFileSync } = await import("node:child_process");
@@ -2670,7 +2670,7 @@ describe("checkpoint storage link rejection", () => {
       const first = await context.store.prepare(preparedUpdate());
       const checkpointDir = checkpointDirOf(context, first.id);
       const { rm, symlink, lstat } = await import("node:fs/promises");
-      const outside = await mkdtemp(join(tmpdir(), "solaris-cp-outside-"));
+      const outside = await mkdtemp(join(tmpdir(), "siralos-cp-outside-"));
       registerTempDir(outside);
       await writeFile(join(outside, "victim.txt"), "keep me");
       await rm(checkpointDir, { recursive: true });

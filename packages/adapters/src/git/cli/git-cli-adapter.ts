@@ -11,7 +11,7 @@ import {
   type GitWorkspaceStatus,
   type SandboxBackend,
   type SandboxBackendStatus,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   buildChildEnvironment,
   readParentEnvironment,
@@ -40,7 +40,7 @@ export interface GitCliAdapterOptions {
    * never spawned.
    */
   readonly backend: SandboxBackend;
-  /** Solaris-owned private run directories for the sandboxed Git process. */
+  /** Siralos-owned private run directories for the sandboxed Git process. */
   readonly runDirectories: RunDirectoryProvider;
   /** Test-only override; defaults to a trusted Git resolved from PATH. */
   readonly gitExecutable?: string;
@@ -257,7 +257,7 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
     const created = await options.runDirectories.create();
     if (!created.ok) {
       // Run-directory creation fails closed: Git is never launched without
-      // a verified Solaris-owned private run directory.
+      // a verified Siralos-owned private run directory.
       throw new GitError(
         "git_unavailable",
         `Git inspection is unavailable because a private run directory cannot be prepared safely: ${created.message}`,
@@ -426,7 +426,7 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
         gitVersion,
         repositoryState: "root_mismatch",
         repositoryRoot: canonicalRoot,
-        message: "The Git repository root differs from the Solaris workspace root.",
+        message: "The Git repository root differs from the Siralos workspace root.",
       };
     }
     return inspection;
@@ -442,7 +442,7 @@ export function createGitCliAdapter(options: GitCliAdapterOptions): GitInspector
       case "root_mismatch":
         throw new GitError(
           "git_root_mismatch",
-          "The Git repository root differs from the Solaris workspace root.",
+          "The Git repository root differs from the Siralos workspace root.",
         );
       case "unavailable":
         throw new GitError("git_unavailable", status.message ?? "Git is not available.");

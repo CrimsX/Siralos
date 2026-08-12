@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalizeJson, createWorkspaceRevisionRegistry, sha256Hex } from "@solaris/core";
+import { canonicalizeJson, createWorkspaceRevisionRegistry, sha256Hex } from "@siralos/core";
 import {
   cleanupTempCheckpointDirs,
   createTempCheckpointStore,
@@ -38,7 +38,7 @@ func _physics_process(_delta: float) -> void:
 const tempDirectories: string[] = [];
 
 async function withWorkspace(): Promise<{ root: string; cleanup(): Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-unified-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-unified-"));
   tempDirectories.push(root);
   await writeFile(join(root, "project.godot"), '[application]\nconfig/name="unified"\n', "utf8");
   return {

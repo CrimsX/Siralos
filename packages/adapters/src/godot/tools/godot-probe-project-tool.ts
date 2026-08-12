@@ -5,7 +5,7 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult,
   GodotProbeToolPreparationResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import { errorMessage } from "../../support/error-message.js";
 
 /**
@@ -65,7 +65,7 @@ export function createGodotProbeProjectTool(probe: GodotProjectProbe): PreparedP
       }
     },
     async executePrepared(
-      prepared: import("@solaris/core").PreparedGodotProbe,
+      prepared: import("@siralos/core").PreparedGodotProbe,
       context: ToolExecutionContext,
     ): Promise<ToolExecutionResult> {
       let result: GodotRecoveryProbeResult;

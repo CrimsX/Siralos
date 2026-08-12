@@ -1,5 +1,5 @@
-import type { GitInspector, Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
-import { GitError } from "@solaris/core";
+import type { GitInspector, Tool, ToolExecutionContext, ToolExecutionResult } from "@siralos/core";
+import { GitError } from "@siralos/core";
 import { errorMessage } from "../../support/error-message.js";
 
 export function createGitStatusTool(git: GitInspector): Tool {

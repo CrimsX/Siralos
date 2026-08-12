@@ -28,7 +28,7 @@ export interface DeterminismDiagnosticResult {
 
 /** Build the environment manifest from explicit runtime observations. */
 export function buildRuntimeEnvironmentManifest(input: {
-  readonly solarisVersion: string | null;
+  readonly siralosVersion: string | null;
   readonly nodeVersion: string | null;
   readonly npmVersion: string | null;
   readonly platform: string | null;
@@ -42,7 +42,7 @@ export function buildRuntimeEnvironmentManifest(input: {
   readonly environmentAllowlist?: readonly string[];
 }): EnvironmentManifestInput {
   return {
-    solarisVersion: input.solarisVersion,
+    siralosVersion: input.siralosVersion,
     nodeVersion: input.nodeVersion,
     npmVersion: input.npmVersion,
     platform: input.platform === null ? null : String(input.platform),

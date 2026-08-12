@@ -17,7 +17,7 @@ supersedes: []
 ## Context
 
 Reliable Godot-native reasoning needs more than raw text reads. A `.tscn`
-is not a plain-text file to Solaris: it carries node trees, owners,
+is not a plain-text file to Siralos: it carries node trees, owners,
 instances, inherited scenes, signal connections, groups, scripts, and
 UID identities whose meaning lives in relationships, not in individual
 lines. Reading raw `.tscn` bodies into model context is token-expensive,
@@ -29,7 +29,7 @@ At the same time, mutation must not be introduced before semantics are
 understood. Editing scene/resource text blindly corrupts UID identity,
 ownership, and instance bookkeeping; the current change-set boundary
 already refuses `.tscn`/`.tres` paths (ADR 0005). The fail-closed posture
-(AGENTS.md) requires that Solaris never claims native scene/resource
+(AGENTS.md) requires that Siralos never claims native scene/resource
 editing before the mutation milestone exists, and never bypasses that
 limitation through generic text edits.
 

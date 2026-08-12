@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createGodotPrepareSceneChangeTool } from "@solaris/adapters";
+import { createGodotPrepareSceneChangeTool } from "@siralos/adapters";
 import { createBehaviorLoopHarness, type BehaviorLoopHarness } from "./behavior-harness.js";
 
 const PLAYER_SCENE = `[gd_scene load_steps=3 format=3 uid="uid://player1"]

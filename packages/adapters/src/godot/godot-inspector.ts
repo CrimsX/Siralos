@@ -14,11 +14,11 @@ import {
   type GodotStatusSnapshot,
   type GodotSelectionPreference,
   type SandboxBackend,
-} from "@solaris/core";
+} from "@siralos/core";
 import type { UserGodotConfig } from "../config/user-config.js";
 import type { GodotEngineProfileCache } from "./cache/engine-profile-cache.js";
 import { ENGINE_PROFILE_CACHE_SCHEMA_VERSION } from "./cache/engine-profile-cache.js";
-import type { GodotProbeRunner } from "@solaris/core";
+import type { GodotProbeRunner } from "@siralos/core";
 import { createGodotEngineProfiler, type GodotEngineProfiler } from "./profile/engine-profiler.js";
 import {
   createGodotProjectInspector,

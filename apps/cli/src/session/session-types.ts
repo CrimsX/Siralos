@@ -24,14 +24,14 @@ import type {
   SandboxBackend,
   SandboxProfile,
   SelfReference,
-  SolarisSecurity,
+  SiralosSecurity,
   TaskRuntime,
   TaskRuntimeSnapshotSources,
   Tool,
   UndoService,
   WorkspaceRevisionRegistry,
-} from "@solaris/core";
-import type { ProjectInstructionService } from "@solaris/core";
+} from "@siralos/core";
+import type { ProjectInstructionService } from "@siralos/core";
 
 export interface SessionIO {
   ask(prompt: string): Promise<string | null>;
@@ -47,7 +47,7 @@ export interface SessionInfo {
   readonly provider: ModelProvider;
   readonly selfReference: SelfReference;
   readonly tools: readonly RegisteredToolInfo[];
-  readonly security: SolarisSecurity;
+  readonly security: SiralosSecurity;
   readonly git: GitInspector;
   readonly godot: GodotInspector;
   readonly godotProbe: GodotProjectProbe;

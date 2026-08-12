@@ -6,7 +6,7 @@ import { enumerateDirectoryBounded } from "./directory-enumeration.js";
 import { SYMLINKS_SUPPORTED } from "../tools/workspace/workspace-fixtures.js";
 
 async function withTree(): Promise<{ root: string; cleanup: () => Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), "solaris-enumerate-bounded-"));
+  const root = await mkdtemp(join(tmpdir(), "siralos-enumerate-bounded-"));
   return {
     root,
     cleanup: () => rm(root, { recursive: true, force: true }),
@@ -56,7 +56,7 @@ describe("enumerateDirectoryBounded", () => {
 
   it("reports a missing directory without throwing", async () => {
     const outcome = await enumerateDirectoryBounded({
-      directory: join(tmpdir(), "solaris-enumerate-missing-" + Date.now()),
+      directory: join(tmpdir(), "siralos-enumerate-missing-" + Date.now()),
       maxEntries: 10,
       onEntry: () => {},
     });
@@ -68,7 +68,7 @@ describe("enumerateDirectoryBounded", () => {
       return;
     }
     const { root, cleanup } = await withTree();
-    const outside = await mkdtemp(join(tmpdir(), "solaris-enumerate-outside-"));
+    const outside = await mkdtemp(join(tmpdir(), "siralos-enumerate-outside-"));
     try {
       await writeFile(join(outside, "victim.txt"), "keep me");
       await symlink(outside, join(root, "linked"), "dir");

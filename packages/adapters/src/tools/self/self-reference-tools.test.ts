@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createDefaultPolicy } from "@solaris/core";
-import { createSelfReference } from "@solaris/core";
-import type { SelfReferencePort } from "@solaris/core";
+import { createDefaultPolicy } from "@siralos/core";
+import { createSelfReference } from "@siralos/core";
+import type { SelfReferencePort } from "@siralos/core";
 import {
   createSelfReferenceReadTool,
   createSelfReferenceSearchTool,
@@ -29,7 +29,7 @@ describe("self.read tool", () => {
     const output = result.output as { sectionId: string; lines: { key: string; value: string }[] };
     expect(output.sectionId).toBe("commands");
     expect(output.lines.some((entry) => entry.key === "/doctor")).toBe(true);
-    expect(output.lines.some((entry) => entry.key === "/solaris")).toBe(true);
+    expect(output.lines.some((entry) => entry.key === "/siralos")).toBe(true);
     expect(result.summary).toContain("commands");
   });
 

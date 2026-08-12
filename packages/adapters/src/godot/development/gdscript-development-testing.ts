@@ -19,7 +19,7 @@ import {
   type GodotProjectCheckResult,
   type PreparedGDScriptCheck,
   type PreparedGDScriptSession,
-} from "@solaris/core";
+} from "@siralos/core";
 
 /**
  * Test doubles for the GDScript development workflow: a scripted language

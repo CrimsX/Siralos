@@ -6,29 +6,29 @@ import {
   workspaceRelativeToMirrorUri,
 } from "./file-uri.js";
 
-const MIRROR = process.platform === "win32" ? "C:\\solaris\\mirror-1" : "/tmp/solaris/mirror-1";
+const MIRROR = process.platform === "win32" ? "C:\\siralos\\mirror-1" : "/tmp/siralos/mirror-1";
 
 describe("file-uri conversion", () => {
   it("converts POSIX paths to file URIs and back", () => {
-    const uri = pathToFileUri("/tmp/solaris/mirror-1/src/player.gd");
-    expect(uri).toBe("file:///tmp/solaris/mirror-1/src/player.gd");
-    expect(fileUriToPath(uri)).toBe("/tmp/solaris/mirror-1/src/player.gd");
+    const uri = pathToFileUri("/tmp/siralos/mirror-1/src/player.gd");
+    expect(uri).toBe("file:///tmp/siralos/mirror-1/src/player.gd");
+    expect(fileUriToPath(uri)).toBe("/tmp/siralos/mirror-1/src/player.gd");
   });
 
   it("handles Windows drive paths", () => {
     if (process.platform !== "win32") {
       return;
     }
-    const uri = pathToFileUri("C:\\solaris\\mirror-1\\player.gd");
-    expect(fileUriToPath(uri)).toBe("C:\\solaris\\mirror-1\\player.gd");
+    const uri = pathToFileUri("C:\\siralos\\mirror-1\\player.gd");
+    expect(fileUriToPath(uri)).toBe("C:\\siralos\\mirror-1\\player.gd");
   });
 
   it("percent-encodes spaces and Unicode without double-encoding", () => {
-    const uri = pathToFileUri("/tmp/solaris/mirror/my file.gd");
-    expect(uri).toBe("file:///tmp/solaris/mirror/my%20file.gd");
-    expect(fileUriToPath(uri)).toBe("/tmp/solaris/mirror/my file.gd");
-    const unicode = pathToFileUri("/tmp/solaris/mirror/плаyer.gd");
-    expect(fileUriToPath(unicode)).toBe("/tmp/solaris/mirror/плаyer.gd");
+    const uri = pathToFileUri("/tmp/siralos/mirror/my file.gd");
+    expect(uri).toBe("file:///tmp/siralos/mirror/my%20file.gd");
+    expect(fileUriToPath(uri)).toBe("/tmp/siralos/mirror/my file.gd");
+    const unicode = pathToFileUri("/tmp/siralos/mirror/плаyer.gd");
+    expect(fileUriToPath(unicode)).toBe("/tmp/siralos/mirror/плаyer.gd");
   });
 
   it("rejects non-file schemes, host authorities, and malformed percent encoding", () => {

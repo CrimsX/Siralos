@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import type { ReferenceAlias, ReferenceId, ReferenceRevision } from "@solaris/core";
-import { createReferenceId } from "@solaris/core";
+import type { ReferenceAlias, ReferenceId, ReferenceRevision } from "@siralos/core";
+import { createReferenceId } from "@siralos/core";
 import { createReferenceAccess, type ReferenceAccessLimits } from "./reference-access.js";
 import {
   createReferenceMaterializer,

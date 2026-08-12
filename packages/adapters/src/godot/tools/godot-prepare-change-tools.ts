@@ -1,4 +1,4 @@
-import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@solaris/core";
+import type { Tool, ToolExecutionContext, ToolExecutionResult } from "@siralos/core";
 import {
   readArrayField,
   readJsonObject,

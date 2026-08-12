@@ -92,7 +92,7 @@ export function createValidationProfile(input: {
 }
 
 /**
- * The standard repository validation profile for the Solaris repository:
+ * The standard repository validation profile for the Siralos repository:
  * formatting, lint, typecheck, build, unit/integration tests, behavior
  * tests, and architecture checks. Milestone manifests reference this
  * profile instead of restating the commands.

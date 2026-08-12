@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import type { WorkspaceFileState } from "@solaris/core";
+import type { WorkspaceFileState } from "@siralos/core";
 import { validateRelativeWorkspacePath } from "../../tools/workspace/mutations/mutation-paths.js";
 import { readFileBounded } from "../../fs/file-read.js";
 

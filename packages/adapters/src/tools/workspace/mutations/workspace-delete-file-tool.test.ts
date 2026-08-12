@@ -65,7 +65,7 @@ describe("workspace.delete_file fail-closed availability", () => {
   });
 
   it("exposes an honest definition and capability", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "solaris-delete-tool-"));
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "siralos-delete-tool-"));
     const tool = createWorkspaceDeleteFileTool(workspaceRoot, createMutationLock(), {} as never);
     expect(tool.definition.name).toBe("workspace.delete_file");
     expect(tool.definition.description).toContain("Unavailable");

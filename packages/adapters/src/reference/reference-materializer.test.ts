@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ReferenceId, ResolvedReferenceIdentity } from "@solaris/core";
-import { createReferenceId } from "@solaris/core";
+import type { ReferenceId, ResolvedReferenceIdentity } from "@siralos/core";
+import { createReferenceId } from "@siralos/core";
 import { createFakeRepositoryMaterializer } from "./reference-test-support.js";
 import {
   createReferenceMaterializer,
@@ -78,7 +78,7 @@ describe("createFakeRepositoryMaterializer", () => {
   };
 
   it("writes fixture files deterministically under baseDir", async () => {
-    const baseDir = join(tmpdir(), `solaris-fake-materializer-${Date.now()}`);
+    const baseDir = join(tmpdir(), `siralos-fake-materializer-${Date.now()}`);
     roots.push({ root: baseDir, cleanup: async () => {} });
     const materializer = createFakeRepositoryMaterializer(fixture, { baseDir });
     expect(materializer.status(REF_ID)).toBe("not-materialized");
@@ -98,7 +98,7 @@ describe("createFakeRepositoryMaterializer", () => {
   });
 
   it("fails for unknown origins and content-less commits", async () => {
-    const baseDir = join(tmpdir(), `solaris-fake-materializer-${Date.now()}`);
+    const baseDir = join(tmpdir(), `siralos-fake-materializer-${Date.now()}`);
     roots.push({ root: baseDir, cleanup: async () => {} });
     const materializer = createFakeRepositoryMaterializer(fixture, { baseDir });
     const unknown = await materializer.materialize(REF_ID, {
@@ -124,7 +124,7 @@ describe("createFakeRepositoryMaterializer", () => {
   });
 
   it("fails closed on fixture paths that could escape the root", async () => {
-    const baseDir = join(tmpdir(), `solaris-fake-materializer-${Date.now()}`);
+    const baseDir = join(tmpdir(), `siralos-fake-materializer-${Date.now()}`);
     roots.push({ root: baseDir, cleanup: async () => {} });
     const hostile: FakeRepositoryFixture = {
       [ORIGIN]: { commits: { [COMMIT]: { "../escape.txt": "x" } }, tags: {}, branches: {} },
@@ -168,7 +168,7 @@ describe("createReferenceRootProvider", () => {
     const fixture: FakeRepositoryFixture = {
       [ORIGIN]: { commits: { [COMMIT]: { "a.txt": "x" } }, tags: {}, branches: {} },
     };
-    const baseDir = join(tmpdir(), `solaris-fake-rootprovider-${Date.now()}`);
+    const baseDir = join(tmpdir(), `siralos-fake-rootprovider-${Date.now()}`);
     roots.push({ root: baseDir, cleanup: async () => {} });
     const provider = createReferenceRootProvider({
       materializer: createFakeRepositoryMaterializer(fixture, { baseDir }),

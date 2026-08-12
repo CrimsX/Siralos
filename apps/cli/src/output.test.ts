@@ -8,10 +8,10 @@ import {
   formatGitDiff,
   formatSafeDoctorReport,
   formatSelfReference,
-  formatSolarisDoctorReport,
+  formatSiralosDoctorReport,
 } from "./output.js";
-import { toSafeReport } from "@solaris/core";
-import type { GitDiffResult, WorkspaceWriteApprovalRequest } from "@solaris/core";
+import { toSafeReport } from "@siralos/core";
+import type { GitDiffResult, WorkspaceWriteApprovalRequest } from "@siralos/core";
 
 describe("TerminalSanitizer", () => {
   it("preserves ordinary text and readable newlines", () => {
@@ -197,7 +197,7 @@ describe("path-bearing display output", () => {
   });
 });
 
-describe("solaris doctor formatters", () => {
+describe("siralos doctor formatters", () => {
   const report = {
     schemaVersion: 1,
     generatedAtMs: 1_700_000_000_000,
@@ -225,11 +225,11 @@ describe("solaris doctor formatters", () => {
     ],
     counts: { pass: 1, warn: 1, fail: 0, skip: 1, total: 3 },
     snapshot: null,
-  } as import("@solaris/core").DoctorReport;
+  } as import("@siralos/core").DoctorReport;
 
   it("formats the human report with per-area status lines and interesting checks", () => {
-    const text = formatSolarisDoctorReport(report);
-    expect(text).toContain("Solaris Doctor");
+    const text = formatSiralosDoctorReport(report);
+    expect(text).toContain("Siralos Doctor");
     expect(text).toContain("runtime         PASS");
     expect(text).toContain("sandbox         WARN");
     expect(text).toContain("1 passed, 1 warning, 0 failed, 1 skipped.");
@@ -240,7 +240,7 @@ describe("solaris doctor formatters", () => {
   it("formats the safe report with sanitized summaries and categories", () => {
     const safe = toSafeReport(report);
     const text = formatSafeDoctorReport(safe);
-    expect(text).toContain("Solaris Doctor (safe report)");
+    expect(text).toContain("Siralos Doctor (safe report)");
     expect(text).toContain("Schema: 1");
     expect(text).toContain("[WARN] sandbox sandbox.backend: Sandbox backend x is setup-required");
     expect(text).toContain("Category: sandbox warn x1");
@@ -248,13 +248,13 @@ describe("solaris doctor formatters", () => {
 
   it("formats the self-reference identity", () => {
     const self = {
-      name: "@solaris",
+      name: "@siralos",
       runtime: { version: "0.0.0", nodeMajor: 24, platform: "linux" },
       revision: "a".repeat(64),
       sections: [{ id: "commands", title: "Interactive commands", lines: [] }],
-    } as unknown as import("@solaris/core").SelfReference;
+    } as unknown as import("@siralos/core").SelfReference;
     const text = formatSelfReference(self);
-    expect(text).toContain("@solaris — installed Solaris runtime");
+    expect(text).toContain("@siralos — installed Siralos runtime");
     expect(text).toContain("Version: 0.0.0");
     expect(text).toContain(`Self-reference revision: ${"a".repeat(64)}`);
     expect(text).toContain("commands");

@@ -14,7 +14,7 @@ export interface SandboxProfile {
   readonly filesystem: {
     readonly workspaceAccess: WorkspaceAccess;
     readonly protectGitMetadata: boolean;
-    readonly protectSolarisMetadata: boolean;
+    readonly protectSiralosMetadata: boolean;
     readonly denySensitiveProjectFiles: boolean;
     /**
      * When true, the source workspace is excluded from the sandboxed
@@ -33,7 +33,7 @@ export interface SandboxProfile {
     readonly outbound: "deny";
     /**
      * Loopback scope intent. `lsp-only` means loopback is limited to the
-     * Solaris-to-Godot LSP channel; enforcement depends on backend
+     * Siralos-to-Godot LSP channel; enforcement depends on backend
      * capabilities and is reported truthfully (never claimed when the
      * backend cannot enforce a port-specific rule). Absent means loopback
      * is not a permitted channel at all.
@@ -50,7 +50,7 @@ export const INSPECT_PROFILE: SandboxProfile = {
   filesystem: {
     workspaceAccess: "read-only",
     protectGitMetadata: false,
-    protectSolarisMetadata: false,
+    protectSiralosMetadata: false,
     denySensitiveProjectFiles: false,
     excludeWorkspaceRead: false,
   },
@@ -72,7 +72,7 @@ export const DEVELOP_OFFLINE_PROFILE: SandboxProfile = {
   filesystem: {
     workspaceAccess: "read-write",
     protectGitMetadata: true,
-    protectSolarisMetadata: true,
+    protectSiralosMetadata: true,
     denySensitiveProjectFiles: true,
     excludeWorkspaceRead: false,
   },
@@ -102,7 +102,7 @@ export const VALIDATION_OFFLINE_PROFILE: SandboxProfile = {
   filesystem: {
     workspaceAccess: "read-only",
     protectGitMetadata: true,
-    protectSolarisMetadata: true,
+    protectSiralosMetadata: true,
     denySensitiveProjectFiles: true,
     excludeWorkspaceRead: false,
   },
@@ -123,7 +123,7 @@ export const VALIDATION_OFFLINE_PROFILE: SandboxProfile = {
  * Internal effective profile for Godot engine probes.
  *
  * Godot probes are project-independent, read-only, offline, and fixed by
- * Solaris: they run in a Solaris-private probe directory with a sandbox
+ * Siralos: they run in a Siralos-private probe directory with a sandbox
  * private home and temp, the project workspace is never writable and, where
  * the backend can enforce a host-read allowlist, is excluded from readable
  * roots entirely (the probe executes a verified private copy inside its run
@@ -137,7 +137,7 @@ export const GODOT_PROBE_OFFLINE_PROFILE: SandboxProfile = {
   filesystem: {
     workspaceAccess: "read-only",
     protectGitMetadata: true,
-    protectSolarisMetadata: true,
+    protectSiralosMetadata: true,
     denySensitiveProjectFiles: true,
     excludeWorkspaceRead: true,
   },
@@ -170,7 +170,7 @@ export const GODOT_RECOVERY_PROBE_OFFLINE_PROFILE: SandboxProfile = {
   filesystem: {
     workspaceAccess: "read-only",
     protectGitMetadata: true,
-    protectSolarisMetadata: true,
+    protectSiralosMetadata: true,
     denySensitiveProjectFiles: true,
     excludeWorkspaceRead: true,
   },
@@ -205,7 +205,7 @@ export const GODOT_RECOVERY_PROBE_OFFLINE_PROFILE: SandboxProfile = {
  * the recovery-mode editor; the source workspace is never writable and,
  * where the backend can enforce a host-read allowlist, is excluded from
  * readable roots entirely. External outbound network is denied; loopback is
- * intended to be limited to the Solaris-to-Godot LSP channel (`lsp-only`),
+ * intended to be limited to the Siralos-to-Godot LSP channel (`lsp-only`),
  * and when the backend cannot enforce that port-specific scope the session
  * reports the isolation as unverified and fails closed rather than
  * claiming port-specific isolation. This profile is never user-selectable
@@ -216,7 +216,7 @@ export const GODOT_LSP_LOCAL_PROFILE: SandboxProfile = {
   filesystem: {
     workspaceAccess: "read-only",
     protectGitMetadata: true,
-    protectSolarisMetadata: true,
+    protectSiralosMetadata: true,
     denySensitiveProjectFiles: true,
     excludeWorkspaceRead: true,
   },
@@ -239,7 +239,7 @@ export const GODOT_DIAGNOSTICS_OFFLINE_PROFILE: SandboxProfile = {
   filesystem: {
     workspaceAccess: "read-only",
     protectGitMetadata: true,
-    protectSolarisMetadata: true,
+    protectSiralosMetadata: true,
     denySensitiveProjectFiles: true,
     excludeWorkspaceRead: true,
   },

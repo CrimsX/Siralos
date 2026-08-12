@@ -1,7 +1,7 @@
 import { lstat, realpath, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { isProtectedBehavioralConfigPath } from "@solaris/core";
+import { isProtectedBehavioralConfigPath } from "@siralos/core";
 import { foldPathComponent } from "../../../fs-case.js";
 import { isWithinPathIdentity, samePathIdentity } from "../../../fs-path-identity.js";
 import { describeFsError } from "../workspace-path.js";
@@ -263,7 +263,7 @@ export async function resolveCreateTarget(
   }
   const resolved = path.resolve(canonicalRoot, requested);
   if (!isInside(canonicalRoot, resolved)) {
-    return { status: "rejected", message: "Path is outside the Solaris workspace." };
+    return { status: "rejected", message: "Path is outside the Siralos workspace." };
   }
   const protectedMessage = protectedWriteMessage(resolved);
   if (protectedMessage !== null) {
@@ -320,7 +320,7 @@ export async function resolveMutationTarget(
   }
   const resolved = path.resolve(canonicalRoot, requested);
   if (!isInside(canonicalRoot, resolved)) {
-    return { status: "rejected", message: "Path is outside the Solaris workspace." };
+    return { status: "rejected", message: "Path is outside the Siralos workspace." };
   }
   const protectedMessage = protectedWriteMessage(resolved);
   if (protectedMessage !== null) {
@@ -375,7 +375,7 @@ export async function resolveMutationTarget(
     };
   }
   if (!isWithinPathIdentity(canonicalRoot, canonicalTarget)) {
-    return { status: "rejected", message: "Path is outside the Solaris workspace." };
+    return { status: "rejected", message: "Path is outside the Siralos workspace." };
   }
   return {
     status: "resolved",
@@ -392,7 +392,7 @@ export function isProtectedWriteTarget(
   const basename = components.at(-1) ?? "";
   const fold = (value: string): string => foldPathComponent(value, platform);
   if (
-    components.some((component) => fold(component) === ".git" || fold(component) === ".solaris")
+    components.some((component) => fold(component) === ".git" || fold(component) === ".siralos")
   ) {
     return true;
   }

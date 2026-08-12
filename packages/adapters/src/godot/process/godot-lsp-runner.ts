@@ -1,7 +1,7 @@
-import type { GodotEngineProfile, GodotInstallation, SandboxedProcessResult } from "@solaris/core";
+import type { GodotEngineProfile, GodotInstallation, SandboxedProcessResult } from "@siralos/core";
 
 /**
- * Fixed Solaris-owned Godot LSP session invocation. The recovery-mode
+ * Fixed Siralos-owned Godot LSP session invocation. The recovery-mode
  * editor runs against the disposable mirror only, with the dynamically
  * allocated loopback LSP port. The architecture check enforces that this
  * module is the only runtime module that may pair `--lsp-port` with
@@ -68,7 +68,7 @@ export interface GodotLSPServerStartRequest {
   readonly engineProfile: GodotEngineProfile;
   /** Absolute mirror project path; the source workspace is never used. */
   readonly mirrorProjectPath: string;
-  /** Solaris-allocated loopback-only port. */
+  /** Siralos-allocated loopback-only port. */
   readonly allocatedPort: number;
   readonly signal?: AbortSignal;
 }

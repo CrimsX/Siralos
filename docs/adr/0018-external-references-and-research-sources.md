@@ -23,7 +23,7 @@ supersedes: []
 ## Context
 
 A Godot-native development harness needs upstream material: engine source,
-addon repositories, and published documentation. Solaris must be able to
+addon repositories, and published documentation. Siralos must be able to
 consult that material without ever treating it as editable workspace state
 or as trusted instructions. ADR 0017 established that instructions,
 knowledge, history/evidence, and security policy are distinct authority
@@ -31,7 +31,7 @@ classes; external material must not blur those lines either. A repository
 README is not policy, a fetched documentation page is not project
 knowledge, and neither can grant a capability — but an agent that simply
 concatenates everything it found into the prompt would make all of it look
-equally binding. Solaris also has no sandboxed Git execution and no
+equally binding. Siralos also has no sandboxed Git execution and no
 outbound network from sandboxed processes at this stage, so any repository
 materialization or remote research must be designed around what can
 mechanically fail closed today.
@@ -88,8 +88,8 @@ Neither becomes project knowledge automatically.
   (`owner/repo`, https only, no credentials, no query/fragment, no extra
   path segments).
 - **Managed cache outside the workspace (fail-closed at this stage).**
-  Repository materialization targets Solaris-owned private storage outside
-  the workspace (documented layout `~/.solaris/references/<fingerprint>/`
+  Repository materialization targets Siralos-owned private storage outside
+  the workspace (documented layout `~/.siralos/references/<fingerprint>/`
   with a `metadata.json`); the managed-cache root is never model-facing,
   and cache content is never presented as workspace material. At this
   stage real repository materialization is `unavailable`: it requires

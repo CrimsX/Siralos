@@ -12,7 +12,7 @@ import {
   type SandboxBackendStatus,
   type SandboxedProcessRequest,
   type SandboxedProcessResult,
-} from "@solaris/core";
+} from "@siralos/core";
 import {
   ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID,
   ANTHROPIC_SANDBOX_RUNTIME_VERSION,
@@ -32,7 +32,7 @@ import { completedResult, createFakeSandboxBackend } from "../fake-sandbox-backe
 const tempDirectories: string[] = [];
 
 async function withTempWorkspace(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "solaris-sandbox-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "siralos-sandbox-test-"));
   tempDirectories.push(directory);
   return directory;
 }
@@ -131,7 +131,7 @@ describe("host-read allowlist boundary", () => {
   it("classifies candidates against the allowlist surface", async () => {
     const surface = await hostReadAllowSurface();
     expect(isWithinHostReadAllowSurface(process.execPath, surface)).toBe(true);
-    expect(isWithinHostReadAllowSurface(join(tmpdir(), "solaris-unapproved.txt"), surface)).toBe(
+    expect(isWithinHostReadAllowSurface(join(tmpdir(), "siralos-unapproved.txt"), surface)).toBe(
       false,
     );
   });

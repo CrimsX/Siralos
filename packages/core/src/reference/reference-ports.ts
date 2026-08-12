@@ -13,7 +13,7 @@ import type { MaterializationStatus } from "./reference-model.js";
  * Core defines the ports; adapters implement them. The resolver maps a
  * declared source to a resolved identity (canonical path + fingerprint for
  * local directories, origin + commit for repositories). The materializer
- * manages the Solaris-owned private cache for repository references. The
+ * manages the Siralos-owned private cache for repository references. The
  * access port provides list/read/search over a materialized reference.
  *
  * Core never performs network or process execution and never touches the
@@ -47,7 +47,7 @@ export type MaterializationOutcome =
 
 export interface ReferenceMaterializerPort {
   /**
-   * Materialize a resolved reference into the Solaris-owned managed cache.
+   * Materialize a resolved reference into the Siralos-owned managed cache.
    * `root` is the private cache absolute path — INTERNAL only, never
    * model-facing.
    */

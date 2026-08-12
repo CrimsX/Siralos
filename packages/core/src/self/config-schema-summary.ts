@@ -2,7 +2,7 @@ import { canonicalizeJson, sha256Hex } from "../godot/digest.js";
 
 /**
  * Authored summary of the trusted user-level configuration surface
- * (`schemas/user-config.schema.json`), for the built-in `@solaris`
+ * (`schemas/user-config.schema.json`), for the built-in `@siralos`
  * self-reference (Stage 3 milestone 6).
  *
  * The summary is deliberately small: it documents what configuration

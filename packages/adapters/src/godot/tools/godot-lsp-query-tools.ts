@@ -4,7 +4,7 @@ import type {
   Tool,
   ToolExecutionContext,
   ToolExecutionResult,
-} from "@solaris/core";
+} from "@siralos/core";
 
 /**
  * Read-only GDScript language-intelligence tools. Each tool requires an
@@ -258,8 +258,8 @@ export function createGodotLSPDiagnosticsTool(
 }
 
 function hoverOutput(
-  result: import("@solaris/core").GDScriptHoverResult,
-): import("@solaris/core").JsonValue {
+  result: import("@siralos/core").GDScriptHoverResult,
+): import("@siralos/core").JsonValue {
   return {
     path: result.path,
     range: rangeOutput(result.range),
@@ -267,7 +267,7 @@ function hoverOutput(
   };
 }
 
-function rangeOutput(range: import("@solaris/core").GDScriptSourceRange | null): {
+function rangeOutput(range: import("@siralos/core").GDScriptSourceRange | null): {
   readonly start: { readonly line: number; readonly column: number };
   readonly end: { readonly line: number; readonly column: number };
 } | null {
@@ -281,8 +281,8 @@ function rangeOutput(range: import("@solaris/core").GDScriptSourceRange | null):
 }
 
 function completionOutput(
-  result: import("@solaris/core").GDScriptCompletionResult,
-): import("@solaris/core").JsonValue {
+  result: import("@siralos/core").GDScriptCompletionResult,
+): import("@siralos/core").JsonValue {
   return {
     path: result.path,
     items: result.items.map((item) => ({
@@ -297,8 +297,8 @@ function completionOutput(
 }
 
 function definitionOutput(
-  result: import("@solaris/core").GDScriptDefinitionResult,
-): import("@solaris/core").JsonValue {
+  result: import("@siralos/core").GDScriptDefinitionResult,
+): import("@siralos/core").JsonValue {
   return {
     path: result.path,
     locations: result.locations.map((location) => ({
@@ -311,8 +311,8 @@ function definitionOutput(
 }
 
 function diagnosticsOutput(
-  result: import("@solaris/core").GDScriptDiagnosticResult,
-): import("@solaris/core").JsonValue {
+  result: import("@siralos/core").GDScriptDiagnosticResult,
+): import("@siralos/core").JsonValue {
   return {
     path: result.path,
     diagnostics: result.diagnostics.map((diagnostic) => ({

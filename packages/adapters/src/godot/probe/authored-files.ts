@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, open } from "node:fs/promises";
 import type { BigIntStats, Dirent } from "node:fs";
 import { join, sep } from "node:path";
-import { GODOT_LIMITS } from "@solaris/core";
+import { GODOT_LIMITS } from "@siralos/core";
 import { enumerateDirectoryBounded } from "../../fs/directory-enumeration.js";
 import { PROJECT_SCAN_EXCLUDED_DIRECTORIES } from "../project/bounded-scan.js";
 
@@ -111,8 +111,8 @@ export async function scanAuthoredFiles(
       }
       if (
         PROJECT_SCAN_EXCLUDED_DIRECTORIES.includes(entry.name) ||
-        entry.name.startsWith(".solaris-mutation-") ||
-        entry.name.startsWith(".solaris-quarantine-")
+        entry.name.startsWith(".siralos-mutation-") ||
+        entry.name.startsWith(".siralos-quarantine-")
       ) {
         continue;
       }

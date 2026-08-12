@@ -4,7 +4,7 @@ import type {
   GodotInstallation,
   GodotProbeRunner,
   GodotVersionProbe,
-} from "@solaris/core";
+} from "@siralos/core";
 
 /**
  * Deterministic probe runner for tests. Standard tests never require a real
@@ -130,7 +130,7 @@ function resolveApiDumpProbe(options: FakeGodotProbeRunnerOptions): GodotApiDump
   return { status: "success", summary };
 }
 
-function parseVersion(text: string): import("@solaris/core").GodotVersion | null {
+function parseVersion(text: string): import("@siralos/core").GodotVersion | null {
   const segments = text.trim().split(".");
   const major = Number(segments[0]);
   const minor = Number(segments[1]);
@@ -166,7 +166,7 @@ function parseVersion(text: string): import("@solaris/core").GodotVersion | null
     statusNumber: statusNumberMatch === null ? null : Number(statusNumberMatch[1]),
     build: buildSegment ?? null,
     commit: null,
-  } satisfies import("@solaris/core").GodotVersion;
+  } satisfies import("@siralos/core").GodotVersion;
 }
 
 function defaultHelpText(advertiseApiDump: boolean): string {
@@ -186,7 +186,7 @@ function defaultHelpText(advertiseApiDump: boolean): string {
 function parseCapabilities(text: string) {
   const options: readonly {
     readonly option: string;
-    readonly key: keyof import("@solaris/core").GodotCommandCapabilities;
+    readonly key: keyof import("@siralos/core").GodotCommandCapabilities;
   }[] = [
     { option: "--editor", key: "editor" },
     { option: "--project-manager", key: "projectManager" },
@@ -213,5 +213,5 @@ function parseCapabilities(text: string) {
   for (const entry of options) {
     result[entry.key] = text.includes(entry.option);
   }
-  return result as unknown as import("@solaris/core").GodotCommandCapabilities;
+  return result as unknown as import("@siralos/core").GodotCommandCapabilities;
 }

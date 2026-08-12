@@ -1,5 +1,5 @@
-import type { CheckpointStore, UndoOutcome, UndoService } from "@solaris/core";
-import type { ApprovalReviewer } from "@solaris/core";
+import type { CheckpointStore, UndoOutcome, UndoService } from "@siralos/core";
+import type { ApprovalReviewer } from "@siralos/core";
 import type { MutationLock } from "../../tools/workspace/mutations/mutation-lock.js";
 
 export interface UndoServiceDependencies {

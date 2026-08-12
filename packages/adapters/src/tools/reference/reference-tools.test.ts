@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import type { JsonObject, ToolExecutionResult } from "@solaris/core";
+import type { JsonObject, ToolExecutionResult } from "@siralos/core";
 import { createReferenceServices } from "../../reference/reference-services.js";
 import {
   createTempWorkspace,
