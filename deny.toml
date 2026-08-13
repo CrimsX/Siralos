@@ -1,0 +1,45 @@
+# Siralos dependency policy (pre-Stage-4 assurance, contract Part 1).
+#
+# Authoritative command: `cargo deny check` (cargo-deny, pinned in CI).
+# Policy decisions and the cargo-vet evaluation are recorded in
+# docs/development/SUPPLY_CHAIN.md.
+
+[advisories]
+# RustSec vulnerability advisories always fail the gate in cargo-deny
+# 0.20; `unsound` retains its scope-based default (workspace).
+# Unmaintained/yanked notices are review signals.
+unsound = "workspace"
+unmaintained = "none"
+yanked = "warn"
+
+[bans]
+# Duplicate transitive versions are a review signal, not a hard failure
+# (the repository treats duplicates as a signal unless a specific
+# duplication is known harmful). Wildcard requirements are never
+# acceptable.
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[licenses]
+# The private, unpublished workspace crates (publish = false) are not
+# license-checked; their licensing decision is deferred to Stage 6
+# release planning (docs/development/SUPPLY_CHAIN.md). Every external
+# dependency is fully checked against the allowlist.
+private = { ignore = true }
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+]
+
+[sources]
+# Only the official crates.io registry; unknown registries and Git
+# sources are denied outright.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

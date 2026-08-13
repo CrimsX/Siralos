@@ -81,6 +81,15 @@ jobs:
       - name: Core-only check (no optional domain)
         run: cargo check -p siralos-core --locked
 
+      # Supply-chain gate (docs/development/SUPPLY_CHAIN.md): cargo-deny
+      # pinned at the version validated locally; advisories, licenses,
+      # wildcards, sources, and duplicate-version signals.
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.20.2
+
+      - name: Dependency policy (cargo deny)
+        run: cargo deny check
+
       # The migration's audit remediation gate (ADR 0033): oracle vs
       # candidate canonical records; POSIX scenarios execute here.
       - name: Differential harness
