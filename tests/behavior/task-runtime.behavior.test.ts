@@ -80,7 +80,18 @@ function createTask(
   });
   handle.transitionPhase("working");
   if (options.criteriaSatisfied === true) {
-    handle.verifyCriterion("criterion-1", null);
+    handle.attachEvidence({
+      id: "ev-criterion-1",
+      kind: "workspace_read",
+      source: { type: "workspace_read", paths: ["scripts/player/player.gd"] },
+      verification: {
+        checkId: "criterion-1",
+        criterionId: "criterion-1",
+        milestone: null,
+        outcome: "passed",
+      },
+    });
+    handle.verifyCriterion("criterion-1", "ev-criterion-1");
   }
   return handle;
 }
@@ -92,6 +103,12 @@ function completeResearch(handle: ReturnType<typeof createTask>): void {
     id: "ev-read-1",
     kind: "workspace_read",
     source: { type: "workspace_read", paths: ["scripts/player/player.gd"] },
+    verification: {
+      checkId: "criterion-1",
+      criterionId: "criterion-1",
+      milestone: null,
+      outcome: "passed",
+    },
   });
   expect(attached.status).toBe("attached");
   const completed = handle.completeStep("research", [
@@ -297,8 +314,8 @@ describe("Behavior 4 — a completion request does not bypass acceptance criteri
   it("completion stays blocked while validation or review is not clean", () => {
     const f = fixture();
     const handle = createTask(f);
-    handle.verifyCriterion("criterion-1", null);
     completeResearch(handle);
+    handle.verifyCriterion("criterion-1", "ev-read-1");
     handle.beginStep("implement");
     handle.attachEvidence({
       id: "ev-mutation-1",

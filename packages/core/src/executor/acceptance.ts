@@ -1,4 +1,5 @@
 import type { EvidenceRecord, AcceptanceState } from "../tasks/task-model.js";
+import { evidenceSourceSupportsSuccessfulOutcome } from "../tasks/task-evidence-outcome.js";
 import type { MilestoneManifest, AcceptanceRequirement } from "./milestone-manifest.js";
 import { resolveAcceptanceEvidenceKinds } from "./standard-acceptance.js";
 
@@ -49,14 +50,51 @@ export interface MilestoneAcceptanceReport {
 
 export interface AcceptanceEvaluationInput {
   readonly manifest: MilestoneManifest;
+  /** Exact authoritative task contract identity being evaluated. */
+  readonly task: {
+    readonly taskId: string;
+    readonly contractRevision: number;
+    readonly contractDigest: string | null;
+  };
   /** Host-attached evidence records of the task (never executor claims). */
   readonly evidence: readonly EvidenceRecord[];
   /** Host-verified acceptance states of the task's contract. */
   readonly acceptance: readonly AcceptanceState[];
 }
 
+function isCurrentTaskEvidence(
+  record: EvidenceRecord,
+  task: AcceptanceEvaluationInput["task"],
+): boolean {
+  return (
+    task.contractDigest !== null &&
+    record.taskId === task.taskId &&
+    record.taskContractRevision === task.contractRevision &&
+    record.taskContractDigest === task.contractDigest
+  );
+}
+
+function kindCanVerifyCriterion(record: EvidenceRecord, criterion: AcceptanceState): boolean {
+  if (criterion.verificationKind === "user") {
+    return record.kind === "user_approval";
+  }
+  if (criterion.verificationKind === "review") {
+    return record.kind === "review_result";
+  }
+  return record.kind !== "review_result" && record.kind !== "user_approval";
+}
+
+function validSuccessfulRecord(record: EvidenceRecord): boolean {
+  return (
+    record.verification?.outcome === "passed" &&
+    evidenceSourceSupportsSuccessfulOutcome(record.kind, record.source)
+  );
+}
+
 function evaluateRequirement(
+  manifest: MilestoneManifest,
   requirement: AcceptanceRequirement,
+  task: AcceptanceEvaluationInput["task"],
   evidence: readonly EvidenceRecord[],
   acceptance: readonly AcceptanceState[],
 ): MilestoneRequirementResult {
@@ -82,10 +120,28 @@ function evaluateRequirement(
           };
     }
     if (criterion.status === "satisfied" && criterion.verifiedBy !== null) {
+      const records = evidence.filter((entry) => entry.id === criterion.verifiedBy);
+      const record = records.length === 1 ? records[0] : undefined;
+      if (
+        record === undefined ||
+        !isCurrentTaskEvidence(record, task) ||
+        record.verification?.criterionId !== requirement.criterionId ||
+        record.verification.checkId !== requirement.checkId ||
+        !kindCanVerifyCriterion(record, criterion) ||
+        (evidenceKinds.length > 0 && !evidenceKinds.includes(record.kind)) ||
+        !validSuccessfulRecord(record)
+      ) {
+        return {
+          id: requirement.id,
+          status: "fail",
+          satisfiedBy: [],
+          note: `Linked criterion ${requirement.criterionId} has invalid or stale verification evidence.`,
+        };
+      }
       return {
         id: requirement.id,
         status: "pass",
-        satisfiedBy: [criterion.verifiedBy],
+        satisfiedBy: [record.id],
         note: null,
       };
     }
@@ -105,12 +161,39 @@ function evaluateRequirement(
     };
   }
 
-  // Evidence-kind matching over host-attached records only.
-  const matches = evidence
-    .filter((record) => evidenceKinds.includes(record.kind))
-    .map((record) => record.id);
-  if (matches.length > 0) {
-    return { id: requirement.id, status: "pass", satisfiedBy: matches, note: null };
+  // A kind is only a whitelist. Direct milestone evidence must additionally
+  // target this immutable manifest requirement/check and current task
+  // contract, and its structured source must independently show success.
+  const targeted = evidence.filter(
+    (record) =>
+      isCurrentTaskEvidence(record, task) &&
+      record.verification?.milestone?.manifestId === manifest.id &&
+      record.verification.milestone.manifestVersion === manifest.version &&
+      record.verification.milestone.requirementId === requirement.id,
+  );
+  const passing = targeted.filter(
+    (record) =>
+      record.verification?.checkId === requirement.checkId &&
+      evidenceKinds.includes(record.kind) &&
+      validSuccessfulRecord(record),
+  );
+  if (passing.length > 0) {
+    return {
+      id: requirement.id,
+      status: "pass",
+      satisfiedBy: passing.map((record) => record.id).sort(),
+      note: null,
+    };
+  }
+  if (targeted.length > 0) {
+    return {
+      id: requirement.id,
+      status: targeted.some((record) => record.verification?.outcome === "failed")
+        ? "fail"
+        : "incomplete",
+      satisfiedBy: [],
+      note: "Targeted host evidence did not contain a matching successful check outcome.",
+    };
   }
   if (requirement.optional === true) {
     return {
@@ -136,7 +219,13 @@ export function createAcceptanceEvaluator(): AcceptanceEvaluator {
   return {
     evaluate(input: AcceptanceEvaluationInput): MilestoneAcceptanceReport {
       const requirements = input.manifest.acceptance.map((requirement) =>
-        evaluateRequirement(requirement, input.evidence, input.acceptance),
+        evaluateRequirement(
+          input.manifest,
+          requirement,
+          input.task,
+          input.evidence,
+          input.acceptance,
+        ),
       );
       const counts: MilestoneAcceptanceCounts = {
         pass: 0,

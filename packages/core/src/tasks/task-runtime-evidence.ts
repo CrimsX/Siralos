@@ -4,10 +4,12 @@ import type {
   EvidenceRecord,
   EvidenceRef,
   EvidenceSource,
+  EvidenceVerification,
   TaskStepId,
 } from "./task-model.js";
 import type { CriterionResult, EvidenceAttachResult, StepOpResult } from "./task-runtime-model.js";
 import type { Mutable, TaskRecord, TaskRuntimeHooks } from "./task-runtime-record.js";
+import { evidenceSourceSupportsSuccessfulOutcome } from "./task-evidence-outcome.js";
 import { findTaskStep, terminalTaskMutationReason } from "./task-runtime-state.js";
 import { MAX_TASK_EVIDENCE_RECORDS, validateEvidencePayload } from "./task-runtime-validation.js";
 
@@ -79,7 +81,12 @@ export function completeTaskStep(
 
 export function attachTaskEvidence(
   record: TaskRecord,
-  input: { readonly id: string; readonly kind: EvidenceKind; readonly source: EvidenceSource },
+  input: {
+    readonly id: string;
+    readonly kind: EvidenceKind;
+    readonly source: EvidenceSource;
+    readonly verification?: EvidenceVerification;
+  },
   hooks: TaskRuntimeHooks,
 ): EvidenceAttachResult {
   const terminalReason = terminalTaskMutationReason(record);
@@ -103,7 +110,10 @@ export function attachTaskEvidence(
     id: input.id,
     kind: input.kind,
     taskId: record.id,
+    taskContractRevision: record.contract.revision,
+    taskContractDigest: record.contract.digest.value,
     source: validated.source,
+    verification: validated.verification,
     attachedAtMs: hooks.now(),
   };
   record.state.evidence.push(entry);
@@ -135,8 +145,56 @@ export function verifyTaskCriterion(
   if (criterion === undefined) {
     return { status: "rejected", reason: `Unknown acceptance criterion: ${criterionId}` };
   }
-  if (verifiedBy !== null && !record.state.evidence.some((entry) => entry.id === verifiedBy)) {
+  if (verifiedBy === null) {
+    return {
+      status: "rejected",
+      reason: `Acceptance criterion ${criterionId} requires exact successful verification evidence.`,
+    };
+  }
+  const evidence = record.state.evidence.find((entry) => entry.id === verifiedBy);
+  if (evidence === undefined) {
     return { status: "rejected", reason: `Unknown evidence reference: ${verifiedBy}` };
+  }
+  if (
+    evidence.taskId !== record.id ||
+    evidence.taskContractRevision !== record.contract.revision ||
+    evidence.taskContractDigest !== record.contract.digest.value
+  ) {
+    return {
+      status: "rejected",
+      reason: `Evidence ${verifiedBy} is not bound to the current task contract revision.`,
+    };
+  }
+  if (
+    evidence.verification === null ||
+    evidence.verification.criterionId !== criterionId ||
+    evidence.verification.checkId !== criterionId
+  ) {
+    return {
+      status: "rejected",
+      reason: `Evidence ${verifiedBy} is not bound to acceptance criterion ${criterionId}.`,
+    };
+  }
+  if (
+    evidence.verification.outcome !== "passed" ||
+    !evidenceSourceSupportsSuccessfulOutcome(evidence.kind, evidence.source)
+  ) {
+    return {
+      status: "rejected",
+      reason: `Evidence ${verifiedBy} does not contain a successful verification outcome.`,
+    };
+  }
+  const kindMatches =
+    criterion.verificationKind === "user"
+      ? evidence.kind === "user_approval"
+      : criterion.verificationKind === "review"
+        ? evidence.kind === "review_result"
+        : evidence.kind !== "review_result" && evidence.kind !== "user_approval";
+  if (!kindMatches) {
+    return {
+      status: "rejected",
+      reason: `Evidence kind ${evidence.kind} cannot verify a ${criterion.verificationKind} criterion.`,
+    };
   }
   criterion.status = "satisfied";
   criterion.verifiedBy = verifiedBy;

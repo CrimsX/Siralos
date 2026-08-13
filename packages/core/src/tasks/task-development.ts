@@ -273,12 +273,28 @@ export function createDevelopmentTaskFlow(
   function attach(
     kind: EvidenceKind,
     source: TaskState["evidence"][number]["source"],
+    criterionId?: string,
+    outcome: "passed" | "failed" | "incomplete" = "passed",
   ): string | null {
     if (handle === null) {
       return null;
     }
     const id = nextEvidenceId(kind.replace(/_/g, "-"));
-    const result = handle.attachEvidence({ id, kind, source });
+    const result = handle.attachEvidence({
+      id,
+      kind,
+      source,
+      ...(criterionId === undefined
+        ? {}
+        : {
+            verification: {
+              checkId: criterionId,
+              criterionId,
+              milestone: null,
+              outcome,
+            },
+          }),
+    });
     return result.status === "attached" ? id : null;
   }
 
@@ -362,11 +378,23 @@ export function createDevelopmentTaskFlow(
             type: "change_preview",
             changeSetId: event.changeSetId,
           });
+          const approvalId = attach(
+            "user_approval",
+            {
+              type: "user_approval",
+              approvalId: event.changeSetId,
+              subjectId: event.changeSetId,
+              decision: "approved",
+            },
+            "user-approval",
+          );
           if (previewId !== null) {
             previewEvidenceIds.preview = previewId;
-            verify("user-approval", previewId);
             completeStep("investigate", [{ evidenceId: previewId, kind: "change_preview" }]);
             completeStep("propose", [{ evidenceId: previewId, kind: "change_preview" }]);
+          }
+          if (approvalId !== null) {
+            verify("user-approval", approvalId);
           }
           beginStep("apply");
           break;
@@ -374,12 +402,16 @@ export function createDevelopmentTaskFlow(
         case "development_change_applied": {
           transitionTo("working");
           const firstRevision = event.revisions?.[0];
-          const mutationId = attach("mutation_receipt", {
-            type: "mutation",
-            changeSetId: lastApprovedChangeSetId ?? "<applied>",
-            checkpointId: null,
-            ...(firstRevision === undefined ? {} : { revision: firstRevision.revision }),
-          });
+          const mutationId = attach(
+            "mutation_receipt",
+            {
+              type: "mutation",
+              changeSetId: lastApprovedChangeSetId ?? "<applied>",
+              checkpointId: null,
+              ...(firstRevision === undefined ? {} : { revision: firstRevision.revision }),
+            },
+            "mutation-applied",
+          );
           if (mutationId !== null) {
             previewEvidenceIds.mutation = mutationId;
             verify("mutation-applied", mutationId);
@@ -393,12 +425,17 @@ export function createDevelopmentTaskFlow(
           break;
         case "development_parser_completed": {
           transitionTo("validating");
-          const parserId = attach("parser_result", {
-            type: "parser",
-            checkedFiles: event.checkedFiles,
-            validFiles: event.validFiles,
-            errors: event.checkedFiles - event.validFiles,
-          });
+          const parserId = attach(
+            "parser_result",
+            {
+              type: "parser",
+              checkedFiles: event.checkedFiles,
+              validFiles: event.validFiles,
+              errors: event.checkedFiles - event.validFiles,
+            },
+            "parses",
+            event.checkedFiles - event.validFiles === 0 ? "passed" : "failed",
+          );
           if (parserId !== null) {
             previewEvidenceIds.parser = parserId;
             if (event.checkedFiles - event.validFiles === 0) {
@@ -409,12 +446,17 @@ export function createDevelopmentTaskFlow(
         }
         case "development_validation_completed": {
           transitionTo("reviewing");
-          const lspId = attach("lsp_result", {
-            type: "lsp",
-            diagnosticCount: event.errors + event.warnings,
-            errors: event.errors,
-            warnings: event.warnings,
-          });
+          const lspId = attach(
+            "lsp_result",
+            {
+              type: "lsp",
+              diagnosticCount: event.errors + event.warnings,
+              errors: event.errors,
+              warnings: event.warnings,
+            },
+            "lsp-clean",
+            event.errors === 0 ? "passed" : "failed",
+          );
           if (lspId !== null) {
             previewEvidenceIds.lsp = lspId;
             if (event.errors === 0) {
@@ -439,11 +481,16 @@ export function createDevelopmentTaskFlow(
           break;
         case "development_native_verified": {
           transitionTo("validating");
-          const nativeId = attach("validation_result", {
-            type: "native_verification",
-            targetPath: event.targetPath,
-            status: event.status,
-          });
+          const nativeId = attach(
+            "validation_result",
+            {
+              type: "native_verification",
+              targetPath: event.targetPath,
+              status: event.status,
+            },
+            "native-verified",
+            event.status === "verified" ? "passed" : "failed",
+          );
           if (nativeId !== null && event.status === "verified") {
             verify("native-verified", nativeId);
           }
@@ -451,11 +498,16 @@ export function createDevelopmentTaskFlow(
         }
         case "development_consistency_completed": {
           transitionTo("validating");
-          const consistencyId = attach("validation_result", {
-            type: "consistency",
-            consistent: event.consistent,
-            concernCount: event.concernCount,
-          });
+          const consistencyId = attach(
+            "validation_result",
+            {
+              type: "consistency",
+              consistent: event.consistent,
+              concernCount: event.concernCount,
+            },
+            "cross-surface-consistent",
+            event.consistent ? "passed" : "failed",
+          );
           if (consistencyId !== null && event.consistent) {
             verify("cross-surface-consistent", consistencyId);
           }
@@ -473,12 +525,16 @@ export function createDevelopmentTaskFlow(
           // The unified batch applied exactly as prepared: every file was
           // hash-verified before and after, so no unexpected change to the
           // batch's files was introduced (batch-scoped workspace integrity).
-          const scopeId = attach("validation_result", {
-            type: "validation",
-            outcome: "verified",
-            workspaceIntegrityVerified: true,
-            unexpectedChanges: 0,
-          });
+          const scopeId = attach(
+            "validation_result",
+            {
+              type: "validation",
+              outcome: "verified",
+              workspaceIntegrityVerified: true,
+              unexpectedChanges: 0,
+            },
+            "scope-verified",
+          );
           if (scopeId !== null) {
             verify("scope-verified", scopeId);
           }
@@ -490,11 +546,16 @@ export function createDevelopmentTaskFlow(
           break;
         case "review_completed": {
           const blocking = event.critical + event.high;
-          const reviewId = attach("review_result", {
-            type: "review",
-            status: blocking > 0 ? "findings" : "clean",
-            blockingFindings: blocking,
-          });
+          const reviewId = attach(
+            "review_result",
+            {
+              type: "review",
+              status: blocking > 0 ? "findings" : "clean",
+              blockingFindings: blocking,
+            },
+            "review-clean",
+            blocking === 0 ? "passed" : "failed",
+          );
           if (reviewId !== null) {
             previewEvidenceIds.review = reviewId;
           }
@@ -572,7 +633,19 @@ export function createDevelopmentTaskFlow(
             if (result.changes.length > 0 && previewEvidenceIds.mutation !== null) {
               verify("mutation-applied", previewEvidenceIds.mutation);
             } else if (result.changes.length === 0) {
-              handle.verifyCriterion("mutation-applied", null, "No source changes were required.");
+              const noChangeId = attach(
+                "validation_result",
+                {
+                  type: "validation",
+                  outcome: "no_change_required",
+                  workspaceIntegrityVerified: true,
+                  unexpectedChanges: 0,
+                },
+                "mutation-applied",
+              );
+              if (noChangeId !== null) {
+                verify("mutation-applied", noChangeId);
+              }
             }
             if (result.validation.parser && previewEvidenceIds.parser !== null) {
               verify("parses", previewEvidenceIds.parser);
@@ -581,12 +654,16 @@ export function createDevelopmentTaskFlow(
               verify("lsp-clean", previewEvidenceIds.lsp);
             }
             if (result.validation.workspaceIntegrity) {
-              const scopeId = attach("validation_result", {
-                type: "validation",
-                outcome: "verified",
-                workspaceIntegrityVerified: true,
-                unexpectedChanges: 0,
-              });
+              const scopeId = attach(
+                "validation_result",
+                {
+                  type: "validation",
+                  outcome: "verified",
+                  workspaceIntegrityVerified: true,
+                  unexpectedChanges: 0,
+                },
+                "scope-verified",
+              );
               if (scopeId !== null) {
                 verify("scope-verified", scopeId);
               }

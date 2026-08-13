@@ -1,26 +1,74 @@
 import { describe, expect, it } from "vitest";
+import type { AcceptanceState, EvidenceRecord } from "../tasks/task-model.js";
 import { createAcceptanceEvaluator } from "./acceptance.js";
 import { createMilestoneManifest } from "./milestone-manifest.js";
 import { S3M8_MILESTONE_MANIFEST } from "./s3m8-manifest.js";
-import type { AcceptanceState, EvidenceRecord } from "../tasks/task-model.js";
+import { S3R2_MILESTONE_MANIFEST } from "./s3r2-manifest.js";
 
-const manifest = S3M8_MILESTONE_MANIFEST;
+const TASK = {
+  taskId: "task-1",
+  contractRevision: 1,
+  contractDigest: "a".repeat(64),
+} as const;
+
+let evidenceSequence = 0;
 
 function evidence(
   overrides: Partial<EvidenceRecord> & { kind: EvidenceRecord["kind"] },
 ): EvidenceRecord {
+  evidenceSequence += 1;
   return {
-    id: `ev-${Math.random().toString(36).slice(2)}`,
-    taskId: "task-1",
-    attachedAtMs: 1,
+    id: `ev-${evidenceSequence}`,
+    taskId: TASK.taskId,
+    taskContractRevision: TASK.contractRevision,
+    taskContractDigest: TASK.contractDigest,
+    attachedAtMs: evidenceSequence,
     source: { type: "parser", checkedFiles: 1, validFiles: 1, errors: 0 },
+    verification: null,
     ...overrides,
   };
 }
 
+function milestoneEvidence(
+  manifest: typeof S3R2_MILESTONE_MANIFEST,
+  requirementId: string,
+  overrides: Partial<EvidenceRecord> = {},
+): EvidenceRecord {
+  const requirement = manifest.acceptance.find((entry) => entry.id === requirementId);
+  if (requirement === undefined) {
+    throw new Error(`Unknown test requirement: ${requirementId}`);
+  }
+  return evidence({
+    kind: "validation_result",
+    source: {
+      type: "validation",
+      outcome: "passed",
+      workspaceIntegrityVerified: true,
+      unexpectedChanges: 0,
+    },
+    verification: {
+      checkId: requirement.checkId,
+      criterionId: null,
+      milestone: {
+        manifestId: manifest.id,
+        manifestVersion: manifest.version,
+        requirementId,
+      },
+      outcome: "passed",
+    },
+    ...overrides,
+  });
+}
+
 describe("acceptance evaluator", () => {
   it("cannot pass without host evidence: empty evidence leaves every requirement incomplete", () => {
-    const report = createAcceptanceEvaluator().evaluate({ manifest, evidence: [], acceptance: [] });
+    const manifest = S3M8_MILESTONE_MANIFEST;
+    const report = createAcceptanceEvaluator().evaluate({
+      manifest,
+      task: TASK,
+      evidence: [],
+      acceptance: [],
+    });
     expect(report.counts.total).toBe(manifest.acceptance.length);
     expect(report.counts.incomplete).toBe(manifest.acceptance.length);
     expect(report.counts.pass).toBe(0);
@@ -28,11 +76,11 @@ describe("acceptance evaluator", () => {
   });
 
   it("an executor claim string can never enter the evaluator", () => {
-    // The evaluator's input surface accepts only EvidenceRecord[] and
-    // AcceptanceState[]; a prose claim is structurally unrepresentable.
+    const manifest = S3M8_MILESTONE_MANIFEST;
     const claim = { text: "All acceptance criteria passed." };
     const report = createAcceptanceEvaluator().evaluate({
       manifest,
+      task: TASK,
       evidence: [],
       acceptance: [
         {
@@ -49,56 +97,53 @@ describe("acceptance evaluator", () => {
     expect(report.counts.incomplete).toBe(manifest.acceptance.length);
   });
 
-  it("passes requirements whose evidence kinds have host-attached records", () => {
+  it("does not treat evidence kind as acceptance authority", () => {
+    const manifest = S3M8_MILESTONE_MANIFEST;
     const records = [
       evidence({ kind: "parser_result", id: "ev-parse" }),
-      evidence({ kind: "workspace_read", id: "ev-read" }),
+      evidence({
+        kind: "validation_result",
+        id: "ev-validation",
+        source: {
+          type: "validation",
+          outcome: "passed",
+          workspaceIntegrityVerified: true,
+          unexpectedChanges: 0,
+        },
+      }),
     ];
     const report = createAcceptanceEvaluator().evaluate({
       manifest,
+      task: TASK,
       evidence: records,
       acceptance: [],
     });
-    const parse = report.requirements.find((requirement) => requirement.id === "S3M8.PARSE.TSCN");
-    expect(parse?.status).toBe("pass");
-    expect(parse?.satisfiedBy).toContain("ev-parse");
-    // Security negatives still cannot pass on parser evidence alone.
-    const noProcess = report.requirements.find(
-      (requirement) => requirement.id === "S3M8.SECURITY.NO_PROCESS",
-    );
-    expect(noProcess?.status).toBe("incomplete");
+    expect(report.counts.pass).toBe(0);
+    expect(report.passed).toBe(false);
   });
 
-  it("passes standard-library requirements when their resolved evidence kinds match", () => {
-    const records = [
-      evidence({ kind: "review_result", id: "ev-review" }),
-      evidence({ kind: "validation_result", id: "ev-validation" }),
-    ];
+  it("passes only evidence bound to the exact immutable milestone check", () => {
+    const record = milestoneEvidence(S3R2_MILESTONE_MANIFEST, "S3R2.CORPUS.SCHEMA");
     const report = createAcceptanceEvaluator().evaluate({
-      manifest,
-      evidence: records,
+      manifest: S3R2_MILESTONE_MANIFEST,
+      task: TASK,
+      evidence: [record],
       acceptance: [],
     });
-    const noProcess = report.requirements.find(
-      (requirement) => requirement.id === "S3M8.SECURITY.NO_PROCESS",
-    );
-    // STANDARD.NO_PROCESS_EXECUTION resolves to validation_result/review_result/workspace_read.
-    expect(noProcess?.status).toBe("pass");
-    expect(noProcess?.satisfiedBy).toContain("ev-review");
+    expect(report.requirements.find((entry) => entry.id === "S3R2.CORPUS.SCHEMA")).toMatchObject({
+      status: "pass",
+      satisfiedBy: [record.id],
+    });
+    expect(report.counts.pass).toBe(1);
+    expect(report.counts.incomplete).toBe(S3R2_MILESTONE_MANIFEST.acceptance.length - 1);
   });
 
-  it("passes via a host-verified linked criterion, and fails on a failed criterion", () => {
+  it("passes via an exactly bound host-verified criterion and fails mismatched evidence", () => {
     const linked = createMilestoneManifest({
       id: "S3M9",
       title: "t",
       goal: "g",
-      acceptance: [
-        {
-          id: "S3M9.X",
-          description: "x",
-          criterionId: "crit-x",
-        },
-      ],
+      acceptance: [{ id: "S3M9.X", description: "x", criterionId: "crit-x" }],
     });
     const evaluator = createAcceptanceEvaluator();
     const satisfied: AcceptanceState[] = [
@@ -107,57 +152,173 @@ describe("acceptance evaluator", () => {
         description: "x",
         verificationKind: "deterministic",
         status: "satisfied",
-        verifiedBy: "ev-1",
+        verifiedBy: "ev-criterion",
         note: null,
       },
     ];
-    const pass = evaluator.evaluate({ manifest: linked, evidence: [], acceptance: satisfied });
-    expect(pass.requirements[0]?.status).toBe("pass");
-    expect(pass.passed).toBe(true);
-
-    const failed: AcceptanceState[] = [
-      {
+    const bound = evidence({
+      kind: "parser_result",
+      id: "ev-criterion",
+      verification: {
+        checkId: "crit-x",
         criterionId: "crit-x",
-        description: "x",
-        verificationKind: "deterministic",
-        status: "failed",
-        verifiedBy: null,
-        note: "n",
+        milestone: null,
+        outcome: "passed",
       },
-    ];
-    const fail = evaluator.evaluate({ manifest: linked, evidence: [], acceptance: failed });
-    expect(fail.requirements[0]?.status).toBe("fail");
-    expect(fail.passed).toBe(false);
+    });
+    expect(
+      evaluator.evaluate({ manifest: linked, task: TASK, evidence: [bound], acceptance: satisfied })
+        .passed,
+    ).toBe(true);
+
+    const mismatched = {
+      ...bound,
+      verification: { ...bound.verification!, criterionId: "other" },
+    };
+    const failed = evaluator.evaluate({
+      manifest: linked,
+      task: TASK,
+      evidence: [mismatched],
+      acceptance: satisfied,
+    });
+    expect(failed.requirements[0]?.status).toBe("fail");
+    expect(failed.passed).toBe(false);
   });
 
-  it("optional requirements become not_applicable when their linked criterion is absent", () => {
-    const optional = createMilestoneManifest({
+  it("requires review and user criteria to use their explicit evidence paths", () => {
+    const linked = createMilestoneManifest({
       id: "S3M9",
       title: "t",
       goal: "g",
       acceptance: [
-        { id: "S3M9.X", description: "x", criterionId: "crit-x", optional: true },
-        { id: "S3M9.Y", description: "y", evidenceKinds: ["workspace_read"] },
+        { id: "S3M9.REVIEW", description: "review", criterionId: "reviewed" },
+        { id: "S3M9.USER", description: "user", criterionId: "approved" },
       ],
+    });
+    const acceptance: AcceptanceState[] = [
+      {
+        criterionId: "reviewed",
+        description: "review",
+        verificationKind: "review",
+        status: "satisfied",
+        verifiedBy: "ev-review-wrong-kind",
+        note: null,
+      },
+      {
+        criterionId: "approved",
+        description: "user",
+        verificationKind: "user",
+        status: "satisfied",
+        verifiedBy: null,
+        note: null,
+      },
+    ];
+    const wrongKind = evidence({
+      kind: "parser_result",
+      id: "ev-review-wrong-kind",
+      verification: {
+        checkId: "reviewed",
+        criterionId: "reviewed",
+        milestone: null,
+        outcome: "passed",
+      },
+    });
+    const report = createAcceptanceEvaluator().evaluate({
+      manifest: linked,
+      task: TASK,
+      evidence: [wrongKind],
+      acceptance,
+    });
+    expect(report.requirements.map((entry) => entry.status)).toEqual(["fail", "incomplete"]);
+  });
+
+  it("optional requirements become not_applicable only when their target is absent", () => {
+    const optional = createMilestoneManifest({
+      id: "S3M9",
+      title: "t",
+      goal: "g",
+      acceptance: [{ id: "S3M9.X", description: "x", criterionId: "crit-x", optional: true }],
     });
     const report = createAcceptanceEvaluator().evaluate({
       manifest: optional,
-      evidence: [evidence({ kind: "workspace_read", id: "ev-read" })],
+      task: TASK,
+      evidence: [],
       acceptance: [],
     });
-    expect(report.requirements.find((requirement) => requirement.id === "S3M9.X")?.status).toBe(
-      "not_applicable",
-    );
-    expect(report.requirements.find((requirement) => requirement.id === "S3M9.Y")?.status).toBe(
-      "pass",
-    );
+    expect(report.requirements[0]?.status).toBe("not_applicable");
     expect(report.passed).toBe(true);
   });
 
+  it("a failing or unrelated validation record cannot pass S3R2", () => {
+    const failed = milestoneEvidence(S3R2_MILESTONE_MANIFEST, "S3R2.CORPUS.SCHEMA", {
+      source: {
+        type: "validation",
+        outcome: "failed",
+        workspaceIntegrityVerified: false,
+        unexpectedChanges: 1,
+      },
+      verification: {
+        checkId: "S3R2.CORPUS.SCHEMA",
+        criterionId: null,
+        milestone: {
+          manifestId: "S3R2",
+          manifestVersion: 1,
+          requirementId: "S3R2.CORPUS.SCHEMA",
+        },
+        outcome: "failed",
+      },
+    });
+    const unrelated = milestoneEvidence(S3R2_MILESTONE_MANIFEST, "S3R2.ADR.REGISTERED");
+    const report = createAcceptanceEvaluator().evaluate({
+      manifest: S3R2_MILESTONE_MANIFEST,
+      task: TASK,
+      evidence: [failed, unrelated],
+      acceptance: [],
+    });
+    expect(report.requirements.find((entry) => entry.id === "S3R2.CORPUS.SCHEMA")?.status).toBe(
+      "fail",
+    );
+    expect(report.counts.pass).toBe(1);
+    expect(report.passed).toBe(false);
+  });
+
+  it("rejects stale task revisions, digests, and check identities", () => {
+    const requirementId = "S3R2.CORPUS.SCHEMA";
+    const stale = milestoneEvidence(S3R2_MILESTONE_MANIFEST, requirementId, {
+      taskContractRevision: 0,
+    });
+    const wrongDigest = milestoneEvidence(S3R2_MILESTONE_MANIFEST, requirementId, {
+      taskContractDigest: "b".repeat(64),
+    });
+    const wrongCheck = milestoneEvidence(S3R2_MILESTONE_MANIFEST, requirementId, {
+      verification: {
+        checkId: "OTHER.CHECK",
+        criterionId: null,
+        milestone: { manifestId: "S3R2", manifestVersion: 1, requirementId },
+        outcome: "passed",
+      },
+    });
+    const report = createAcceptanceEvaluator().evaluate({
+      manifest: S3R2_MILESTONE_MANIFEST,
+      task: TASK,
+      evidence: [stale, wrongDigest, wrongCheck],
+      acceptance: [],
+    });
+    expect(report.requirements.find((entry) => entry.id === requirementId)?.status).toBe(
+      "incomplete",
+    );
+    expect(report.passed).toBe(false);
+  });
+
   it("reports deterministic counts and overall state", () => {
-    const report = createAcceptanceEvaluator().evaluate({ manifest, evidence: [], acceptance: [] });
+    const manifest = S3M8_MILESTONE_MANIFEST;
+    const report = createAcceptanceEvaluator().evaluate({
+      manifest,
+      task: TASK,
+      evidence: [],
+      acceptance: [],
+    });
     expect(report.manifestId).toBe("S3M8");
-    expect(report.counts.total).toBe(report.requirements.length);
     expect(
       report.counts.pass +
         report.counts.fail +

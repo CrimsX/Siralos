@@ -1,5 +1,12 @@
 import { deepFreeze } from "../domain/deep-freeze.js";
-import type { EvidenceKind, EvidenceSource, FindingRef, TaskStepSpec } from "./task-model.js";
+import { evidenceSourceSupportsSuccessfulOutcome } from "./task-evidence-outcome.js";
+import type {
+  EvidenceKind,
+  EvidenceSource,
+  EvidenceVerification,
+  FindingRef,
+  TaskStepSpec,
+} from "./task-model.js";
 
 export const MAX_EVIDENCE_SOURCE_BYTES = 4096;
 export const MAX_TASK_EVIDENCE_RECORDS = 256;
@@ -28,6 +35,7 @@ const EVIDENCE_SOURCE_TYPES_BY_KIND: Readonly<
   // verification, cross-surface consistency, and impact sources.
   validation_result: ["validation", "native_verification", "consistency", "impact"],
   review_result: ["review"],
+  user_approval: ["user_approval"],
   reference_read: ["reference_read"],
   reference_search: ["reference_search"],
   research: ["research"],
@@ -35,6 +43,8 @@ const EVIDENCE_SOURCE_TYPES_BY_KIND: Readonly<
 const EVIDENCE_KINDS = new Set<EvidenceKind>(
   Object.keys(EVIDENCE_SOURCE_TYPES_BY_KIND) as EvidenceKind[],
 );
+const EVIDENCE_BINDING_ID_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
+const VERIFICATION_OUTCOMES = new Set(["passed", "failed", "incomplete"]);
 
 export function prepareTaskStepSpecs(
   steps: readonly TaskStepSpec[] | undefined,
@@ -111,13 +121,18 @@ export function validateAndCloneTaskFindings(findings: readonly FindingRef[]): F
 }
 
 export type EvidencePayloadValidation =
-  | { readonly ok: true; readonly source: EvidenceSource }
+  | {
+      readonly ok: true;
+      readonly source: EvidenceSource;
+      readonly verification: EvidenceVerification | null;
+    }
   | { readonly ok: false; readonly reason: string };
 
 export function validateEvidencePayload(input: {
   readonly id: string;
   readonly kind: EvidenceKind;
   readonly source: EvidenceSource;
+  readonly verification?: EvidenceVerification;
 }): EvidencePayloadValidation {
   if (input.id.trim().length === 0) {
     return { ok: false, reason: "Evidence requires a non-empty id." };
@@ -142,6 +157,10 @@ export function validateEvidencePayload(input: {
       ].join(" or ")}, not ${input.source.type}.`,
     };
   }
+  const verification = validateEvidenceVerification(input.verification);
+  if (!verification.ok) {
+    return verification;
+  }
   try {
     const serialized = JSON.stringify(input.source);
     const source = structuredClone(input.source);
@@ -151,8 +170,59 @@ export function validateEvidencePayload(input: {
         reason: `Evidence source exceeds the ${MAX_EVIDENCE_SOURCE_BYTES}-byte bound; attach a reference, not raw output.`,
       };
     }
-    return { ok: true, source };
+    if (
+      verification.verification?.outcome === "passed" &&
+      !evidenceSourceSupportsSuccessfulOutcome(input.kind, source)
+    ) {
+      return {
+        ok: false,
+        reason: "Passed verification evidence must contain a successful source outcome.",
+      };
+    }
+    return { ok: true, source, verification: verification.verification };
   } catch {
     return { ok: false, reason: "Evidence source must be finite JSON-serializable data." };
   }
+}
+
+function validateEvidenceVerification(
+  input: EvidenceVerification | undefined,
+):
+  | { readonly ok: true; readonly verification: EvidenceVerification | null }
+  | { readonly ok: false; readonly reason: string } {
+  if (input === undefined) {
+    return { ok: true, verification: null };
+  }
+  if (!EVIDENCE_BINDING_ID_PATTERN.test(input.checkId)) {
+    return { ok: false, reason: `Invalid evidence verification check id: ${input.checkId}` };
+  }
+  if (!VERIFICATION_OUTCOMES.has(input.outcome)) {
+    return {
+      ok: false,
+      reason: `Invalid evidence verification outcome: ${String(input.outcome)}`,
+    };
+  }
+  if (input.criterionId !== null && !EVIDENCE_BINDING_ID_PATTERN.test(input.criterionId)) {
+    return {
+      ok: false,
+      reason: `Invalid evidence verification criterion id: ${input.criterionId}`,
+    };
+  }
+  if (input.milestone !== null) {
+    if (
+      !EVIDENCE_BINDING_ID_PATTERN.test(input.milestone.manifestId) ||
+      !EVIDENCE_BINDING_ID_PATTERN.test(input.milestone.requirementId) ||
+      !Number.isSafeInteger(input.milestone.manifestVersion) ||
+      input.milestone.manifestVersion < 1
+    ) {
+      return { ok: false, reason: "Invalid milestone evidence target." };
+    }
+  }
+  if (input.criterionId === null && input.milestone === null) {
+    return {
+      ok: false,
+      reason: "Verification evidence must bind a task criterion or milestone requirement.",
+    };
+  }
+  return { ok: true, verification: structuredClone(input) };
 }

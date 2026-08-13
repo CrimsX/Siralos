@@ -54,6 +54,7 @@ export type EvidenceKind =
   | "lsp_result"
   | "validation_result"
   | "review_result"
+  | "user_approval"
   | "reference_read"
   | "reference_search"
   | "research";
@@ -105,6 +106,12 @@ export type EvidenceSource =
       readonly completeness: "complete" | "bounded" | "partial";
     }
   | { readonly type: "review"; readonly status: string; readonly blockingFindings: number }
+  | {
+      readonly type: "user_approval";
+      readonly approvalId: string;
+      readonly subjectId: string;
+      readonly decision: "approved" | "denied";
+    }
   | { readonly type: "change_preview"; readonly changeSetId: string }
   | {
       readonly type: "workspace_read";
@@ -145,11 +152,39 @@ export type EvidenceSource =
       readonly truncated: boolean;
     };
 
+export type EvidenceVerificationOutcome = "passed" | "failed" | "incomplete";
+
+/** Exact immutable milestone target of host-observed verification evidence. */
+export interface MilestoneEvidenceTarget {
+  readonly manifestId: string;
+  readonly manifestVersion: number;
+  readonly requirementId: string;
+}
+
+/**
+ * Host-owned verification binding. The enclosing EvidenceRecord supplies
+ * the task id and exact contract revision/digest; this value binds the
+ * observation to one check and, when applicable, one task criterion and/or
+ * milestone requirement. Unbound evidence remains useful for task steps but
+ * cannot satisfy acceptance.
+ */
+export interface EvidenceVerification {
+  readonly checkId: string;
+  readonly criterionId: AcceptanceCriterionId | null;
+  readonly milestone: MilestoneEvidenceTarget | null;
+  readonly outcome: EvidenceVerificationOutcome;
+}
+
 export interface EvidenceRecord {
   readonly id: string;
   readonly kind: EvidenceKind;
   readonly taskId: TaskId;
+  /** Exact TaskContract identity current when the host attached this evidence. */
+  readonly taskContractRevision: number;
+  readonly taskContractDigest: string;
   readonly source: EvidenceSource;
+  /** Null for ordinary step evidence that has not verified an acceptance target. */
+  readonly verification: EvidenceVerification | null;
   readonly attachedAtMs: number;
 }
 

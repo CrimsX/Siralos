@@ -79,6 +79,11 @@ describe("Behavior — executor briefing final boundary", () => {
     }
     const report = createAcceptanceEvaluator().evaluate({
       manifest: S3M8_MILESTONE_MANIFEST,
+      task: {
+        taskId: task.taskId,
+        contractRevision: task.contractRevision,
+        contractDigest: task.contractDigest,
+      },
       evidence: task.evidence,
       acceptance: task.acceptance,
     });

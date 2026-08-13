@@ -25,13 +25,19 @@ export function runBriefCommand(io: SessionIO, sessionInfo: SessionInfo): void {
 
 export function runMilestoneCommand(io: SessionIO, sessionInfo: SessionInfo): void {
   const handle = sessionInfo.tasks.latestTask();
+  const snapshot = handle?.snapshot() ?? null;
   const report =
-    handle === null
+    snapshot === null
       ? null
       : createAcceptanceEvaluator().evaluate({
           manifest: sessionInfo.milestoneManifest,
-          evidence: handle.snapshot().evidence,
-          acceptance: handle.snapshot().acceptance,
+          task: {
+            taskId: snapshot.taskId,
+            contractRevision: snapshot.contractRevision,
+            contractDigest: snapshot.contractDigest,
+          },
+          evidence: snapshot.evidence,
+          acceptance: snapshot.acceptance,
         });
   io.write(formatMilestoneManifest(sessionInfo.milestoneManifest, report));
 }

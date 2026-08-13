@@ -11,6 +11,7 @@ import type {
   EvidenceKind,
   EvidenceRef,
   EvidenceSource,
+  EvidenceVerification,
   FindingRef,
   ProgressState,
   TaskId,
@@ -248,6 +249,7 @@ export function createTaskRuntime(options: TaskRuntimeOptions = {}): TaskRuntime
         readonly id: string;
         readonly kind: EvidenceKind;
         readonly source: EvidenceSource;
+        readonly verification?: EvidenceVerification;
       }): EvidenceAttachResult {
         return attachTaskEvidence(record, input, hooks);
       },

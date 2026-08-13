@@ -78,16 +78,11 @@ export function findTaskStep(record: TaskRecord, stepId: TaskStepId) {
 }
 
 export function reconcileTaskAcceptance(record: TaskRecord, contract: TaskContract): void {
-  const previous = new Map(record.state.acceptance.map((entry) => [entry.criterionId, entry]));
+  // Every accepted observation is bound to one exact contract revision and
+  // digest. Even when criterion prose is unchanged, revising any contract
+  // input invalidates prior verification rather than silently promoting it
+  // to a different authoritative task contract.
   record.state.acceptance = contract.acceptanceCriteria.map((criterion) => {
-    const existing = previous.get(criterion.id);
-    if (
-      existing !== undefined &&
-      existing.description === criterion.description &&
-      existing.verificationKind === criterion.verificationKind
-    ) {
-      return { ...existing };
-    }
     return {
       criterionId: criterion.id,
       description: criterion.description,

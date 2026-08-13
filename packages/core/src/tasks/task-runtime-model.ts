@@ -10,6 +10,7 @@ import type {
   EvidenceKind,
   EvidenceRef,
   EvidenceSource,
+  EvidenceVerification,
   FindingRef,
   ProgressState,
   TaskId,
@@ -112,6 +113,7 @@ export interface TaskHandle {
     readonly id: string;
     readonly kind: EvidenceKind;
     readonly source: EvidenceSource;
+    readonly verification?: EvidenceVerification;
   }): EvidenceAttachResult;
   verifyCriterion(
     criterionId: AcceptanceCriterionId,

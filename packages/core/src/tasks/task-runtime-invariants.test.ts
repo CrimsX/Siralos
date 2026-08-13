@@ -43,6 +43,12 @@ function complete(handle: TaskHandle): void {
       id: "evidence-1",
       kind: "workspace_read",
       source: { type: "workspace_read", paths: ["project.godot"] },
+      verification: {
+        checkId: "verified",
+        criterionId: "verified",
+        milestone: null,
+        outcome: "passed",
+      },
     }).status,
   ).toBe("attached");
   expect(handle.verifyCriterion("verified", "evidence-1").status).toBe("verified");
@@ -204,7 +210,20 @@ describe("task runtime invariants", () => {
 
   it("reconciles acceptance state when the TaskContract revision changes", () => {
     const handle = createTaskRuntime().createTask(createInput("task-revised-acceptance"));
-    expect(handle.verifyCriterion("verified", null).status).toBe("verified");
+    expect(
+      handle.attachEvidence({
+        id: "ev-verified",
+        kind: "workspace_read",
+        source: { type: "workspace_read", paths: ["project.godot"] },
+        verification: {
+          checkId: "verified",
+          criterionId: "verified",
+          milestone: null,
+          outcome: "passed",
+        },
+      }).status,
+    ).toBe("attached");
+    expect(handle.verifyCriterion("verified", "ev-verified").status).toBe("verified");
 
     handle.reviseContract({
       id: "task-revised-acceptance",
@@ -223,7 +242,7 @@ describe("task runtime invariants", () => {
     });
 
     expect(handle.snapshot().acceptance).toMatchObject([
-      { criterionId: "verified", status: "satisfied" },
+      { criterionId: "verified", status: "pending", verifiedBy: null },
       { criterionId: "new-check", status: "pending" },
     ]);
     expect(handle.evaluateCompletion().missing).toContain(
@@ -243,6 +262,57 @@ describe("task runtime invariants", () => {
     expect(handle.snapshot().acceptance).toMatchObject([
       { criterionId: "verified", status: "pending", verifiedBy: null },
     ]);
+  });
+
+  it("rejects null, stale, failed, and criterion-mismatched verification evidence", () => {
+    const handle = createTaskRuntime().createTask(createInput("task-exact-verification"));
+    expect(handle.verifyCriterion("verified", null)).toMatchObject({ status: "rejected" });
+
+    expect(
+      handle.attachEvidence({
+        id: "ev-wrong",
+        kind: "workspace_read",
+        source: { type: "workspace_read", paths: ["project.godot"] },
+        verification: {
+          checkId: "other",
+          criterionId: "other",
+          milestone: null,
+          outcome: "passed",
+        },
+      }).status,
+    ).toBe("attached");
+    expect(handle.verifyCriterion("verified", "ev-wrong")).toMatchObject({ status: "rejected" });
+
+    expect(
+      handle.attachEvidence({
+        id: "ev-failed",
+        kind: "parser_result",
+        source: { type: "parser", checkedFiles: 1, validFiles: 0, errors: 1 },
+        verification: {
+          checkId: "verified",
+          criterionId: "verified",
+          milestone: null,
+          outcome: "failed",
+        },
+      }).status,
+    ).toBe("attached");
+    expect(handle.verifyCriterion("verified", "ev-failed")).toMatchObject({ status: "rejected" });
+
+    expect(
+      handle.attachEvidence({
+        id: "ev-current",
+        kind: "workspace_read",
+        source: { type: "workspace_read", paths: ["project.godot"] },
+        verification: {
+          checkId: "verified",
+          criterionId: "verified",
+          milestone: null,
+          outcome: "passed",
+        },
+      }).status,
+    ).toBe("attached");
+    handle.reviseContract({ id: "task-exact-verification", context: "new task context" });
+    expect(handle.verifyCriterion("verified", "ev-current")).toMatchObject({ status: "rejected" });
   });
 
   it("rejects an unbounded findings replacement without changing current findings", () => {

@@ -47,6 +47,22 @@ describe("milestone manifest", () => {
     ).toThrow(/must declare evidenceKinds, a criterionId, or standardIds/);
   });
 
+  it("rejects a criterion-linked requirement with a divergent check identity", () => {
+    expect(() =>
+      createMilestoneManifest({
+        ...BASE,
+        acceptance: [
+          {
+            id: "S3M9.X",
+            description: "x",
+            criterionId: "criterion-x",
+            checkId: "different-check",
+          },
+        ],
+      }),
+    ).toThrow(/must use its linked criterion id as checkId/);
+  });
+
   it("enforces entry bounds deterministically", () => {
     const many = Array.from({ length: MILESTONE_MANIFEST_LIMITS.maxInvariants + 1 }, (_, i) => ({
       id: `inv-${i}`,

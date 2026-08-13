@@ -57,6 +57,8 @@ export type ArchitectureConcern = string;
  */
 export interface AcceptanceRequirement {
   readonly id: string;
+  /** Exact host check identity required by evidence for this requirement. */
+  readonly checkId: string;
   readonly description: string;
   /** Evidence kinds whose host-attached records satisfy this requirement. */
   readonly evidenceKinds?: readonly EvidenceKind[];
@@ -70,6 +72,11 @@ export interface AcceptanceRequirement {
    */
   readonly optional?: boolean;
 }
+
+/** Creation/revision shape; omitted check ids deterministically default to the requirement id. */
+export type AcceptanceRequirementInput = Omit<AcceptanceRequirement, "checkId"> & {
+  readonly checkId?: string;
+};
 
 export interface MilestoneRef {
   readonly id: MilestoneId;
@@ -182,7 +189,7 @@ function copyStatements(kind: string, values: readonly string[], max: number): s
 }
 
 function validateAcceptance(
-  requirements: readonly AcceptanceRequirement[],
+  requirements: readonly AcceptanceRequirementInput[],
 ): AcceptanceRequirement[] {
   if (requirements.length > MILESTONE_MANIFEST_LIMITS.maxAcceptance) {
     throw new Error(
@@ -199,6 +206,15 @@ function validateAcceptance(
       throw new Error(`Duplicate acceptance requirement id: ${requirement.id}`);
     }
     ids.add(requirement.id);
+    const checkId = requirement.checkId?.trim() ?? requirement.criterionId ?? requirement.id;
+    if (!ENTRY_ID_PATTERN.test(checkId)) {
+      throw new Error(`Invalid acceptance check id: ${checkId}`);
+    }
+    if (requirement.criterionId !== undefined && checkId !== requirement.criterionId) {
+      throw new Error(
+        `Acceptance requirement ${requirement.id} must use its linked criterion id as checkId.`,
+      );
+    }
     const description = requirement.description.trim();
     if (description.length === 0) {
       throw new Error(`Acceptance requirement ${requirement.id} requires a description.`);
@@ -229,6 +245,7 @@ function validateAcceptance(
     }
     result.push({
       id: requirement.id,
+      checkId,
       description,
       ...(evidenceKinds.length > 0 ? { evidenceKinds } : {}),
       ...(requirement.criterionId === undefined ? {} : { criterionId: requirement.criterionId }),
@@ -273,7 +290,7 @@ interface ManifestShape {
   readonly deliverables: readonly MilestoneDeliverable[];
   readonly nonGoals: readonly string[];
   readonly invariants: readonly MilestoneInvariant[];
-  readonly acceptance: readonly AcceptanceRequirement[];
+  readonly acceptance: readonly AcceptanceRequirementInput[];
   readonly requiredTests: readonly TestRequirement[];
   readonly architectureConcerns: readonly ArchitectureConcern[];
   readonly validationProfile?: ValidationProfileRef;
@@ -363,7 +380,7 @@ export interface CreateMilestoneManifestInput {
   readonly deliverables?: readonly MilestoneDeliverable[];
   readonly nonGoals?: readonly string[];
   readonly invariants?: readonly MilestoneInvariant[];
-  readonly acceptance: readonly AcceptanceRequirement[];
+  readonly acceptance: readonly AcceptanceRequirementInput[];
   readonly requiredTests?: readonly TestRequirement[];
   readonly architectureConcerns?: readonly ArchitectureConcern[];
   readonly validationProfile?: ValidationProfileRef;
@@ -419,7 +436,7 @@ export interface ReviseMilestoneManifestInput {
   readonly deliverables?: readonly MilestoneDeliverable[];
   readonly nonGoals?: readonly string[];
   readonly invariants?: readonly MilestoneInvariant[];
-  readonly acceptance?: readonly AcceptanceRequirement[];
+  readonly acceptance?: readonly AcceptanceRequirementInput[];
   readonly requiredTests?: readonly TestRequirement[];
   readonly architectureConcerns?: readonly ArchitectureConcern[];
   readonly validationProfile?: ValidationProfileRef;
