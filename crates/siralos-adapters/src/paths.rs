@@ -118,6 +118,15 @@ mod tests {
         assert_eq!(state_dir_for(home), PathBuf::from("/home/user/.siralos"));
     }
 
+    #[test]
+    fn preserves_unicode_home_paths_verbatim() {
+        // Unicode home paths must be preserved byte-for-byte; no
+        // normalization, no lossy conversion.
+        let home = Path::new("/home/über-使用者");
+        let state = state_dir_for(home);
+        assert_eq!(state, PathBuf::from("/home/über-使用者/.siralos"));
+    }
+
     #[cfg(windows)]
     #[test]
     fn preserves_non_utf8_home_paths_on_windows() {
