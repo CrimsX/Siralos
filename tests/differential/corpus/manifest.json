@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "corpusVersion": 1,
+  "corpusVersion": 3,
   "scenarios": [
     {
       "file": "state-dir.set.windows.json",
@@ -16,15 +16,15 @@
     },
     {
       "file": "state-dir.fallback.posix.json",
-      "sha256": "bc8c5d01c00e44fd99535d7ae7673751a23031c07e23236ae912fc1c878907c7"
+      "sha256": "232416906832b4a92dfa3729cd2016d9a16254abb21401268cbbec01174a1655"
     },
     {
       "file": "state-dir.unset.windows.json",
-      "sha256": "6d069561a55dd922512a19f0366393dbff56c00b31a360b5254d613165915dc7"
+      "sha256": "7ddd8a0e3431cb7a527858a59b898c5163e5f6a5148218d8da431e019fa1ae50"
     },
     {
       "file": "state-dir.unset.posix.json",
-      "sha256": "0c7e8518bebe6503050e26dd496fde1fa603ac9bae3806f4ec2f405d46d0ba8e"
+      "sha256": "2bb80c96aa5fef75db2d4fdf58bff462e46ae20cfa4471376140a0c26492f223"
     },
     {
       "file": "version.identity.json",

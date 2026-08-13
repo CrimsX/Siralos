@@ -41,22 +41,21 @@ describe("replay stress", () => {
   });
 
   it("is stable under perturbed environment key insertion order", () => {
-    // Perturb the set scenario's env with irrelevant variables in
-    // different key orders and verify the canonical record is
-    // unchanged.
+    // Reorder the declared Windows fallback fixture. Arbitrary
+    // variables are deliberately rejected before process creation.
     const base = runOracle(CORPUS, ROOT);
     const { scenarios } = loadCorpus(CORPUS);
-    const setScenario = scenarios.find((s) => s.id === "state-dir.set.windows");
-    if (setScenario !== undefined) {
+    const fallback = scenarios.find((s) => s.id === "state-dir.fallback.windows");
+    if (fallback !== undefined) {
       const record = runStateDirProbe({
-        ...setScenario.env,
-        IRRELEVANT_A: "x",
-        IRRELEVANT_B: "y",
+        USERPROFILE: fallback.env.USERPROFILE,
+        HOMEDRIVE: fallback.env.HOMEDRIVE,
+        HOMEPATH: fallback.env.HOMEPATH,
       });
       const reverse = runStateDirProbe({
-        ...setScenario.env,
-        IRRELEVANT_B: "y",
-        IRRELEVANT_A: "x",
+        HOMEPATH: fallback.env.HOMEPATH,
+        HOMEDRIVE: fallback.env.HOMEDRIVE,
+        USERPROFILE: fallback.env.USERPROFILE,
       });
       expect(reverse).toEqual(record);
     }

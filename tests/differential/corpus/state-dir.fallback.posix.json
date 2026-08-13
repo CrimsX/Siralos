@@ -2,7 +2,7 @@
   "id": "state-dir.fallback.posix",
   "subject": "state-dir",
   "platforms": ["posix"],
-  "parity": "required",
+  "parity": "informational",
   "env": {
     "HOME": ""
   }

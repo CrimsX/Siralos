@@ -10,6 +10,7 @@
 //!
 //! Exit codes: 0 = success, 2 = harness error.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -23,18 +24,16 @@ fn usage() -> ExitCode {
     ExitCode::from(2)
 }
 
-fn option_value(args: &[String], name: &str) -> Option<String> {
-    let index = args.iter().position(|arg| arg == name)?;
-    args.get(index + 1).cloned()
-}
-
 fn run_command(args: &[String]) -> ExitCode {
-    let corpus = option_value(args, "--corpus");
-    let root = option_value(args, "--root");
-    let out = option_value(args, "--out");
-    let (Some(corpus), Some(root), Some(out)) = (corpus, root, out) else {
+    let [corpus_flag, corpus, root_flag, root, out_flag, out] = args else {
         return usage();
     };
+    if corpus_flag != "--corpus"
+        || root_flag != "--root"
+        || out_flag != "--out"
+    {
+        return usage();
+    }
     let result =
         harness::run_corpus(&PathBuf::from(corpus), &PathBuf::from(root));
     match result {
@@ -47,7 +46,7 @@ fn run_command(args: &[String]) -> ExitCode {
                     return ExitCode::from(2);
                 }
             }
-            if let Err(error) = std::fs::write(&out, records) {
+            if let Err(error) = std::fs::write(out, records) {
                 eprintln!("siralos-harness: cannot write {out}: {error}");
                 return ExitCode::from(2);
             }
@@ -65,9 +64,22 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("run") => run_command(&args[1..]),
-        Some("probe-state-dir") => {
-            print!("{}", harness::probe_state_dir());
-            ExitCode::SUCCESS
+        Some("probe-state-dir") if args.len() == 1 => {
+            match harness::probe_state_dir_bytes() {
+                Ok(bytes) => {
+                    if let Err(error) = std::io::stdout().write_all(&bytes) {
+                        eprintln!(
+                            "siralos-harness: cannot write probe outcome: {error}"
+                        );
+                        return ExitCode::from(2);
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("siralos-harness: {error}");
+                    ExitCode::from(2)
+                }
+            }
         }
         _ => usage(),
     }

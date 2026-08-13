@@ -5,10 +5,12 @@
 //! interactive terminal session of the TypeScript reference
 //! implementation is not ported yet.
 //!
-//! The differential behavioral harness (ADR 0033) candidate runner
-//! lives in [`harness`] and is exercised by the `siralos-harness`
-//! binary.
+//! With the internal `differential-harness` feature enabled, the ADR 0033
+//! candidate runner lives in the `harness` module and is exercised by the
+//! `siralos-harness` binary. Neither surface is part of the default product
+//! build.
 
+#[cfg(feature = "differential-harness")]
 pub mod harness;
 
 use std::ffi::OsString;

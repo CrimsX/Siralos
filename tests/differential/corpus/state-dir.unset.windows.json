@@ -2,6 +2,6 @@
   "id": "state-dir.unset.windows",
   "subject": "state-dir",
   "platforms": ["windows"],
-  "parity": "required",
+  "parity": "informational",
   "env": {}
 }

@@ -1,53 +1,83 @@
-//! Differential behavioral harness — candidate runner (ADR 0033).
+//! Differential behavioral harness candidate runner (ADR 0033).
 //!
-//! Reads the scenario corpus, executes each applicable scenario against
-//! the Siralos Rust candidate, and emits canonical outcome records in
-//! the same deterministic format as the TypeScript oracle runner:
-//! sorted-key compact JSON (`serde_json` over `BTreeMap`-backed values,
-//! byte-identical to `canonicalizeJson` in `@siralos/core`).
-//!
-//! Environment-sensitive scenarios run in a probe subprocess with a
-//! scrubbed environment (exactly the scenario's fixtures), mirroring the
-//! oracle side, so both sides exercise their real environment-reading
-//! code path.
+//! The checked-in corpus is parsed as a strict, bounded protocol. Each
+//! applicable scenario runs against the Rust candidate and produces one
+//! canonical outcome record in manifest order.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::Path;
+use std::io::Read;
+use std::path::{Component, Path};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-/// Scenario `platforms` value for Windows hosts.
+/// Scenario platform value for Windows hosts.
 pub const PLATFORM_WINDOWS: &str = "windows";
 
-/// Scenario `platforms` value for POSIX hosts.
+/// Scenario platform value for POSIX hosts.
 pub const PLATFORM_POSIX: &str = "posix";
 
-/// Subject id for state-dir resolution scenarios.
-pub const SUBJECT_STATE_DIR: &str = "state-dir";
+const SUBJECT_STATE_DIR: &str = "state-dir";
+const SUBJECT_VERSION_IDENTITY: &str = "version-identity";
+const CORPUS_SCHEMA_VERSION: u64 = 1;
+const CORPUS_VERSION: u64 = 3;
+const MAX_MANIFEST_BYTES: usize = 64 * 1024;
+const MAX_SCENARIO_BYTES: usize = 16 * 1024;
+const MAX_SCENARIOS: usize = 256;
+const MAX_IDENTIFIER_BYTES: usize = 128;
+const MAX_FILE_NAME_BYTES: usize = 160;
+const MAX_ENV_ENTRIES: usize = 16;
+const MAX_ENV_KEY_BYTES: usize = 64;
+const MAX_ENV_VALUE_BYTES: usize = 4 * 1024;
+const MAX_PROBE_OUTPUT_BYTES: usize = 16 * 1024;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(5);
+const PROBE_ERROR_MARKER: &[u8] = b"ERR";
 
-/// Subject id for product version identity scenarios.
-pub const SUBJECT_VERSION_IDENTITY: &str = "version-identity";
-
-/// The platform name of the current host, as scenario `platforms` use it.
-pub fn platform_name() -> &'static str {
-    if cfg!(windows) { PLATFORM_WINDOWS } else { PLATFORM_POSIX }
+/// Stable category for an exit-2 harness failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HarnessErrorKind {
+    /// Corpus bytes or structure violate the versioned protocol.
+    Corpus,
+    /// A required repository input could not be read or decoded.
+    Input,
+    /// The probe process could not be created.
+    ProbeSpawn,
+    /// The probe exceeded its deterministic deadline.
+    ProbeTimeout,
+    /// The probe exited unsuccessfully or was terminated.
+    ProbeExit,
+    /// The probe emitted an invalid or over-limit outcome.
+    ProbeProtocol,
 }
 
-/// A harness failure (bad corpus, I/O error, unknown subject). Distinct
-/// from scenario outcomes: this is an exit-2 condition, never a parity
-/// deviation.
+/// A harness failure, distinct from a behavioral parity deviation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessError {
+    kind: HarnessErrorKind,
     detail: String,
 }
 
 impl HarnessError {
-    fn new(detail: impl Into<String>) -> Self {
-        Self { detail: detail.into() }
+    /// Stable machine-branchable error category.
+    pub fn kind(&self) -> HarnessErrorKind {
+        self.kind
+    }
+
+    fn new(kind: HarnessErrorKind, detail: impl Into<String>) -> Self {
+        Self { kind, detail: detail.into() }
+    }
+
+    fn corpus(detail: impl Into<String>) -> Self {
+        Self::new(HarnessErrorKind::Corpus, detail)
+    }
+
+    fn input(detail: impl Into<String>) -> Self {
+        Self::new(HarnessErrorKind::Input, detail)
     }
 }
 
@@ -59,152 +89,527 @@ impl fmt::Display for HarnessError {
 
 impl std::error::Error for HarnessError {}
 
-/// The corpus manifest: scenario file names with content digests.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Manifest {
-    /// Corpus schema version (1).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Manifest {
     #[serde(rename = "schemaVersion")]
-    pub schema_version: u64,
-    /// Corpus content version; bumped when scenarios change.
+    schema_version: u64,
     #[serde(rename = "corpusVersion")]
-    pub corpus_version: u64,
-    /// Scenario file entries in deterministic order.
-    pub scenarios: Vec<ManifestEntry>,
+    corpus_version: u64,
+    scenarios: Vec<ManifestEntry>,
 }
 
-/// One corpus manifest entry.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ManifestEntry {
-    /// Scenario file name relative to the corpus directory.
-    pub file: String,
-    /// SHA-256 of the scenario's canonical serialization.
-    pub sha256: String,
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestEntry {
+    file: String,
+    sha256: String,
 }
 
-/// One typed scenario: inputs only, never expected outputs.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Scenario {
-    /// Stable scenario id, unique within the corpus.
-    pub id: String,
-    /// Subject id (`state-dir`, `version-identity`).
-    pub subject: String,
-    /// Platforms the scenario runs on (`windows`, `posix`, `*`).
-    pub platforms: Vec<String>,
-    /// `required` scenarios gate parity; `informational` are recorded
-    /// but never fail the gate.
-    pub parity: String,
-    /// Environment fixtures for probe subprocesses (scrubbed env).
-    pub env: BTreeMap<String, String>,
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Scenario {
+    id: String,
+    subject: String,
+    platforms: Vec<String>,
+    parity: String,
+    env: BTreeMap<String, String>,
 }
 
-/// A scenario together with whether it applies to the current platform.
-pub struct LoadedScenario {
-    /// The parsed scenario.
-    pub scenario: Scenario,
-    /// Whether the scenario runs on the current platform.
-    pub applicable: bool,
+struct LoadedScenario {
+    scenario: Scenario,
+    applicable: bool,
 }
 
-/// Load and validate the corpus manifest and scenario files.
-pub fn load_corpus(
+/// Current-host platform value used by scenario applicability.
+pub fn platform_name() -> &'static str {
+    if cfg!(windows) { PLATFORM_WINDOWS } else { PLATFORM_POSIX }
+}
+
+fn read_bounded_utf8(
+    path: &Path,
+    maximum_bytes: usize,
+    label: &str,
+    error_kind: HarnessErrorKind,
+) -> Result<String, HarnessError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        HarnessError::new(
+            error_kind,
+            format!("cannot inspect {label}: {error}"),
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(HarnessError::new(
+            error_kind,
+            format!("{label} must be a regular file"),
+        ));
+    }
+    let declared_len = usize::try_from(metadata.len()).map_err(|_| {
+        HarnessError::new(error_kind, format!("{label} is too large"))
+    })?;
+    if declared_len > maximum_bytes {
+        return Err(HarnessError::new(
+            error_kind,
+            format!("{label} exceeds {maximum_bytes} bytes"),
+        ));
+    }
+    let bytes = std::fs::read(path).map_err(|error| {
+        HarnessError::new(error_kind, format!("cannot read {label}: {error}"))
+    })?;
+    if bytes.len() > maximum_bytes {
+        return Err(HarnessError::new(
+            error_kind,
+            format!("{label} exceeds {maximum_bytes} bytes"),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        HarnessError::new(error_kind, format!("{label} is not valid UTF-8"))
+    })
+}
+
+fn absolute_corpus_directory(
+    path: &Path,
+    label: &str,
+) -> Result<std::path::PathBuf, HarnessError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| {
+                HarnessError::corpus(format!(
+                    "cannot resolve {label}: {error}"
+                ))
+            })?
+            .join(path)
+    };
+    let metadata = std::fs::symlink_metadata(&absolute).map_err(|error| {
+        HarnessError::corpus(format!("cannot inspect {label}: {error}"))
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(HarnessError::corpus(format!(
+            "{label} may not be a symlink"
+        )));
+    }
+    if !metadata.is_dir() {
+        return Err(HarnessError::corpus(format!(
+            "{label} must be a directory"
+        )));
+    }
+    Ok(absolute)
+}
+
+fn valid_identifier(value: &str) -> bool {
+    if value.is_empty() || value.len() > MAX_IDENTIFIER_BYTES {
+        return false;
+    }
+    let mut previous_separator = false;
+    for (index, byte) in value.bytes().enumerate() {
+        let separator = byte == b'.' || byte == b'-';
+        if !(byte.is_ascii_lowercase() || byte.is_ascii_digit() || separator)
+            || (separator && (index == 0 || previous_separator))
+        {
+            return false;
+        }
+        previous_separator = separator;
+    }
+    !previous_separator
+}
+
+fn valid_file_name(file: &str) -> bool {
+    if file.is_empty() || file.len() > MAX_FILE_NAME_BYTES {
+        return false;
+    }
+    let path = Path::new(file);
+    if path.is_absolute() {
+        return false;
+    }
+    let mut components = path.components();
+    let one_normal = matches!(components.next(), Some(Component::Normal(_)))
+        && components.next().is_none();
+    one_normal
+        && file.ends_with(".json")
+        && file.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || byte == b'.'
+                || byte == b'-'
+        })
+        && file.as_bytes()[0].is_ascii_alphanumeric()
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn validate_environment(scenario: &Scenario) -> Result<(), HarnessError> {
+    if scenario.env.len() > MAX_ENV_ENTRIES {
+        return Err(HarnessError::corpus(format!(
+            "scenario {} has too many environment entries",
+            scenario.id
+        )));
+    }
+    for (key, value) in &scenario.env {
+        let valid_key = !key.is_empty()
+            && key.len() <= MAX_ENV_KEY_BYTES
+            && key.bytes().enumerate().all(|(index, byte)| {
+                (index == 0 && (byte.is_ascii_uppercase() || byte == b'_'))
+                    || (index > 0
+                        && (byte.is_ascii_uppercase()
+                            || byte.is_ascii_digit()
+                            || byte == b'_'))
+            })
+            && matches!(
+                key.as_str(),
+                "HOME" | "HOMEDRIVE" | "HOMEPATH" | "USERPROFILE"
+            );
+        if !valid_key {
+            return Err(HarnessError::corpus(format!(
+                "scenario {} has unsupported environment key",
+                scenario.id
+            )));
+        }
+        if value.len() > MAX_ENV_VALUE_BYTES || value.contains('\0') {
+            return Err(HarnessError::corpus(format!(
+                "scenario {} has an invalid environment value",
+                scenario.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_scenario(
+    scenario: &Scenario,
+    file: &str,
+) -> Result<(), HarnessError> {
+    if !valid_identifier(&scenario.id)
+        || format!("{}.json", scenario.id) != file
+    {
+        return Err(HarnessError::corpus(format!(
+            "scenario {file} has a noncanonical or mismatched id"
+        )));
+    }
+    if !matches!(
+        scenario.subject.as_str(),
+        SUBJECT_STATE_DIR | SUBJECT_VERSION_IDENTITY
+    ) {
+        return Err(HarnessError::corpus(format!(
+            "scenario {} has an unsupported subject",
+            scenario.id
+        )));
+    }
+    if !matches!(scenario.parity.as_str(), "required" | "informational") {
+        return Err(HarnessError::corpus(format!(
+            "scenario {} has an unsupported parity classification",
+            scenario.id
+        )));
+    }
+    if scenario.platforms.is_empty() || scenario.platforms.len() > 2 {
+        return Err(HarnessError::corpus(format!(
+            "scenario {} has an invalid platform count",
+            scenario.id
+        )));
+    }
+    let platforms: BTreeSet<&str> =
+        scenario.platforms.iter().map(String::as_str).collect();
+    if platforms.len() != scenario.platforms.len()
+        || platforms
+            .iter()
+            .any(|platform| !matches!(*platform, "*" | "windows" | "posix"))
+        || (platforms.contains("*") && platforms.len() != 1)
+    {
+        return Err(HarnessError::corpus(format!(
+            "scenario {} has invalid or duplicate platforms",
+            scenario.id
+        )));
+    }
+    validate_environment(scenario)?;
+    match scenario.subject.as_str() {
+        SUBJECT_VERSION_IDENTITY => {
+            if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} has invalid version-identity inputs",
+                    scenario.id
+                )));
+            }
+        }
+        SUBJECT_STATE_DIR => {
+            if platforms.len() != 1 || platforms.contains("*") {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} must target one concrete platform",
+                    scenario.id
+                )));
+            }
+            let windows = platforms.contains(PLATFORM_WINDOWS);
+            let wrong_key = scenario.env.keys().any(|key| {
+                if windows {
+                    !matches!(
+                        key.as_str(),
+                        "USERPROFILE" | "HOMEDRIVE" | "HOMEPATH"
+                    )
+                } else {
+                    key != "HOME"
+                }
+            });
+            if wrong_key {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} has an environment key for another platform",
+                    scenario.id
+                )));
+            }
+            let controlled = if windows {
+                scenario.env.contains_key("USERPROFILE")
+            } else {
+                scenario.env.get("HOME").is_some_and(|home| !home.is_empty())
+            };
+            if scenario.parity == "required" && !controlled {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} required parity does not fully declare its home-resolution input",
+                    scenario.id
+                )));
+            }
+        }
+        _ => unreachable!("subject was validated above"),
+    }
+    Ok(())
+}
+
+fn canonical_scenario_digest(
+    scenario: &Scenario,
+) -> Result<String, HarnessError> {
+    let value = serde_json::to_value(scenario).map_err(|error| {
+        HarnessError::corpus(format!(
+            "cannot canonicalize scenario {}: {error}",
+            scenario.id
+        ))
+    })?;
+    let canonical = serde_json::to_vec(&value).map_err(|error| {
+        HarnessError::corpus(format!(
+            "cannot serialize scenario {}: {error}",
+            scenario.id
+        ))
+    })?;
+    Ok(sha256_hex(&canonical))
+}
+
+fn load_corpus(
     corpus_dir: &Path,
     platform: &str,
 ) -> Result<Vec<LoadedScenario>, HarnessError> {
-    let manifest_text = std::fs::read_to_string(
-        corpus_dir.join("manifest.json"),
-    )
-    .map_err(|error| {
-        HarnessError::new(format!("cannot read corpus manifest: {error}"))
-    })?;
+    if !matches!(platform, PLATFORM_WINDOWS | PLATFORM_POSIX) {
+        return Err(HarnessError::corpus("unsupported host platform"));
+    }
+    let corpus_dir =
+        absolute_corpus_directory(corpus_dir, "corpus directory")?;
+    let manifest_text = read_bounded_utf8(
+        &corpus_dir.join("manifest.json"),
+        MAX_MANIFEST_BYTES,
+        "corpus manifest",
+        HarnessErrorKind::Corpus,
+    )?;
     let manifest: Manifest =
         serde_json::from_str(&manifest_text).map_err(|error| {
-            HarnessError::new(format!("malformed corpus manifest: {error}"))
+            HarnessError::corpus(format!("malformed corpus manifest: {error}"))
         })?;
-    if manifest.schema_version != 1 {
-        return Err(HarnessError::new(format!(
+    if manifest.schema_version != CORPUS_SCHEMA_VERSION {
+        return Err(HarnessError::corpus(format!(
             "unsupported corpus schemaVersion {}",
             manifest.schema_version
         )));
     }
+    if manifest.corpus_version != CORPUS_VERSION {
+        return Err(HarnessError::corpus(format!(
+            "unsupported corpusVersion {}",
+            manifest.corpus_version
+        )));
+    }
+    if manifest.scenarios.is_empty()
+        || manifest.scenarios.len() > MAX_SCENARIOS
+    {
+        return Err(HarnessError::corpus(format!(
+            "corpus must contain 1-{MAX_SCENARIOS} scenarios"
+        )));
+    }
+
+    let mut files = BTreeSet::new();
+    let mut ids = BTreeSet::new();
     let mut loaded = Vec::with_capacity(manifest.scenarios.len());
-    for entry in &manifest.scenarios {
-        let text = std::fs::read_to_string(corpus_dir.join(&entry.file))
-            .map_err(|error| {
-                HarnessError::new(format!(
-                    "cannot read {}: {error}",
-                    entry.file
-                ))
-            })?;
+    for entry in manifest.scenarios {
+        if !valid_file_name(&entry.file) || !valid_sha256(&entry.sha256) {
+            return Err(HarnessError::corpus(
+                "manifest entry has an invalid file name or digest",
+            ));
+        }
+        if !files.insert(entry.file.clone()) {
+            return Err(HarnessError::corpus(format!(
+                "corpus contains duplicate file {}",
+                entry.file
+            )));
+        }
+        let text = read_bounded_utf8(
+            &corpus_dir.join(&entry.file),
+            MAX_SCENARIO_BYTES,
+            &format!("scenario {}", entry.file),
+            HarnessErrorKind::Corpus,
+        )?;
         let scenario: Scenario =
             serde_json::from_str(&text).map_err(|error| {
-                HarnessError::new(format!(
+                HarnessError::corpus(format!(
                     "malformed scenario {}: {error}",
                     entry.file
                 ))
             })?;
-        if scenario.parity != "required" && scenario.parity != "informational"
-        {
-            return Err(HarnessError::new(format!(
-                "scenario {} has invalid parity {}",
-                scenario.id, scenario.parity
+        validate_scenario(&scenario, &entry.file)?;
+        if canonical_scenario_digest(&scenario)? != entry.sha256 {
+            return Err(HarnessError::corpus(format!(
+                "scenario {} does not match its manifest digest",
+                entry.file
             )));
         }
-        let applicable =
-            scenario.platforms.iter().any(|p| p == "*" || p == platform);
+        if !ids.insert(scenario.id.clone()) {
+            return Err(HarnessError::corpus(format!(
+                "corpus contains duplicate scenario id {}",
+                scenario.id
+            )));
+        }
+        let applicable = scenario
+            .platforms
+            .iter()
+            .any(|candidate| candidate == "*" || candidate == platform);
         loaded.push(LoadedScenario { scenario, applicable });
     }
     Ok(loaded)
 }
 
-/// Lowercase hex SHA-256 of UTF-8 text.
-fn sha256_hex(text: &str) -> String {
+fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
+    hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
 
-/// The probe subprocess's output: the resolved state directory, or the
-/// literal marker `ERR` when resolution failed. Must stay byte-identical
-/// with the oracle probe's marker.
-const PROBE_ERROR_MARKER: &str = "ERR";
-
-/// The candidate's state-dir resolution result as the probe would print
-/// it. Read-only; reads the process environment.
-pub fn probe_state_dir() -> String {
-    match siralos_adapters::paths::state_dir() {
-        Ok(path) => path.display().to_string(),
-        Err(_) => PROBE_ERROR_MARKER.to_string(),
+/// Candidate state-directory probe bytes for the internal subprocess.
+///
+/// POSIX paths retain their exact native bytes. Windows fixture paths must be
+/// valid Unicode because the TypeScript oracle can only observe a JavaScript
+/// string; an unpaired native surrogate is therefore a harness protocol error,
+/// not a lossy identity conversion.
+///
+/// # Errors
+///
+/// Returns [`HarnessErrorKind::ProbeProtocol`] if a Windows native path cannot
+/// be represented without loss.
+pub fn probe_state_dir_bytes() -> Result<Vec<u8>, HarnessError> {
+    let path = match siralos_adapters::paths::state_dir() {
+        Ok(path) => path,
+        Err(_) => return Ok(PROBE_ERROR_MARKER.to_vec()),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(path.as_os_str().as_bytes().to_vec())
+    }
+    #[cfg(windows)]
+    {
+        path.as_os_str()
+            .to_str()
+            .map(|text| text.as_bytes().to_vec())
+            .ok_or_else(|| {
+                HarnessError::new(
+                    HarnessErrorKind::ProbeProtocol,
+                    "state-dir probe path is not representable by the TypeScript oracle",
+                )
+            })
     }
 }
 
-/// Spawn this executable's `probe-state-dir` subcommand with exactly the
-/// scenario's environment and return its stdout bytes.
+fn execute_bounded_child(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<Vec<u8>, HarnessError> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| {
+            HarnessError::new(
+                HarnessErrorKind::ProbeSpawn,
+                format!("cannot spawn state-dir probe: {error}"),
+            )
+        })?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        let status = child.try_wait().map_err(|error| {
+            HarnessError::new(
+                HarnessErrorKind::ProbeExit,
+                format!("cannot observe state-dir probe: {error}"),
+            )
+        })?;
+        if let Some(status) = status {
+            let mut stdout = child.stdout.take().ok_or_else(|| {
+                HarnessError::new(
+                    HarnessErrorKind::ProbeProtocol,
+                    "state-dir probe stdout was not captured",
+                )
+            })?;
+            let mut bytes = Vec::new();
+            stdout
+                .by_ref()
+                .take((MAX_PROBE_OUTPUT_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .map_err(|error| {
+                    HarnessError::new(
+                        HarnessErrorKind::ProbeProtocol,
+                        format!("cannot read state-dir probe output: {error}"),
+                    )
+                })?;
+            if !status.success() {
+                return Err(HarnessError::new(
+                    HarnessErrorKind::ProbeExit,
+                    format!(
+                        "state-dir probe exited unsuccessfully ({status})"
+                    ),
+                ));
+            }
+            if bytes.is_empty() || bytes.len() > MAX_PROBE_OUTPUT_BYTES {
+                return Err(HarnessError::new(
+                    HarnessErrorKind::ProbeProtocol,
+                    "state-dir probe output is empty or exceeds the byte bound",
+                ));
+            }
+            return Ok(bytes);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(HarnessError::new(
+                HarnessErrorKind::ProbeTimeout,
+                "state-dir probe timed out",
+            ));
+        }
+        std::thread::sleep(PROBE_POLL_INTERVAL);
+    }
+}
+
 fn spawn_state_dir_probe(
     env: &BTreeMap<String, String>,
 ) -> Result<Vec<u8>, HarnessError> {
     let executable = std::env::current_exe().map_err(|error| {
-        HarnessError::new(format!(
-            "cannot resolve current executable: {error}"
-        ))
+        HarnessError::new(
+            HarnessErrorKind::ProbeSpawn,
+            format!("cannot resolve current executable: {error}"),
+        )
     })?;
-    let output = Command::new(executable)
-        .arg("probe-state-dir")
-        .env_clear()
-        .envs(env)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|error| {
-            HarnessError::new(format!("probe subprocess failed: {error}"))
-        })?;
-    Ok(output.stdout)
+    let mut command = Command::new(executable);
+    command.arg("probe-state-dir").env_clear().envs(env);
+    execute_bounded_child(&mut command, PROBE_TIMEOUT)
 }
 
-/// Build the canonical record for a state-dir scenario.
 fn state_dir_record(scenario_id: &str, stdout: &[u8]) -> Value {
-    let text = String::from_utf8_lossy(stdout);
-    if text == PROBE_ERROR_MARKER {
+    if stdout == PROBE_ERROR_MARKER {
         json!({
             "scenarioId": scenario_id,
             "subject": SUBJECT_STATE_DIR,
@@ -216,19 +621,20 @@ fn state_dir_record(scenario_id: &str, stdout: &[u8]) -> Value {
             "scenarioId": scenario_id,
             "subject": SUBJECT_STATE_DIR,
             "kind": "ok",
-            "stateDirSha256": sha256_hex(&text),
+            "stateDirSha256": sha256_hex(stdout),
         })
     }
 }
 
-/// The candidate's product version from the workspace manifest.
 fn cargo_workspace_version(root: &Path) -> Result<String, HarnessError> {
-    let text =
-        std::fs::read_to_string(root.join("Cargo.toml")).map_err(|error| {
-            HarnessError::new(format!("cannot read Cargo.toml: {error}"))
-        })?;
+    let text = read_bounded_utf8(
+        &root.join("Cargo.toml"),
+        MAX_MANIFEST_BYTES,
+        "Cargo.toml",
+        HarnessErrorKind::Input,
+    )?;
     let value: toml::Value = toml::from_str(&text).map_err(|error| {
-        HarnessError::new(format!("malformed Cargo.toml: {error}"))
+        HarnessError::input(format!("malformed Cargo.toml: {error}"))
     })?;
     value
         .get("workspace")
@@ -237,13 +643,12 @@ fn cargo_workspace_version(root: &Path) -> Result<String, HarnessError> {
         .and_then(|version| version.as_str())
         .map(str::to_owned)
         .ok_or_else(|| {
-            HarnessError::new(
+            HarnessError::input(
                 "Cargo.toml declares no [workspace.package] version",
             )
         })
 }
 
-/// Build the canonical record for a version-identity scenario.
 fn version_identity_record(
     scenario_id: &str,
     version: Result<String, HarnessError>,
@@ -264,8 +669,7 @@ fn version_identity_record(
     }
 }
 
-/// Execute one scenario and produce its canonical record.
-pub fn run_scenario(
+fn run_scenario(
     scenario: &Scenario,
     root: &Path,
 ) -> Result<Value, HarnessError> {
@@ -278,51 +682,106 @@ pub fn run_scenario(
             &scenario.id,
             cargo_workspace_version(root),
         )),
-        other => Err(HarnessError::new(format!("unknown subject {other}"))),
+        _ => unreachable!("subject was validated while loading the corpus"),
     }
 }
 
-/// Run every applicable scenario and return the canonical records text.
+/// Run every applicable scenario and return exact canonical record bytes.
+///
+/// # Errors
+///
+/// Returns a typed harness failure for malformed corpus input, repository
+/// input errors, or a probe lifecycle/protocol failure.
 pub fn run_corpus(
     corpus_dir: &Path,
     root: &Path,
 ) -> Result<String, HarnessError> {
-    let platform = platform_name();
-    let scenarios = load_corpus(corpus_dir, platform)?;
-    let mut records: Vec<Value> = Vec::new();
+    let scenarios = load_corpus(corpus_dir, platform_name())?;
+    let mut records = Vec::new();
     for loaded in scenarios {
-        if !loaded.applicable {
-            continue;
+        if loaded.applicable {
+            records.push(run_scenario(&loaded.scenario, root)?);
         }
-        records.push(run_scenario(&loaded.scenario, root)?);
     }
     Ok(canonical_records_text(records))
 }
 
-/// Serialize records canonically: sorted keys, compact, one array.
-pub fn canonical_records_text(records: Vec<Value>) -> String {
-    serde_json::to_string(&Value::Array(records))
-        .expect("records are always serializable")
+fn canonical_records_text(records: Vec<Value>) -> String {
+    let text = serde_json::to_string(&Value::Array(records))
+        .expect("outcome records are constructed from serializable values");
+    format!("{text}\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        PLATFORM_POSIX, PLATFORM_WINDOWS, canonical_records_text,
-        cargo_workspace_version, platform_name, probe_state_dir, run_corpus,
-        state_dir_record,
+        HarnessErrorKind, PLATFORM_POSIX, PLATFORM_WINDOWS,
+        canonical_records_text, canonical_scenario_digest,
+        cargo_workspace_version, execute_bounded_child, load_corpus,
+        platform_name, probe_state_dir_bytes, state_dir_record,
+        validate_scenario,
     };
     use serde_json::json;
-    use std::path::Path;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
 
-    #[test]
-    fn platform_name_is_one_of_the_contract_values() {
-        let name = platform_name();
-        assert!(name == PLATFORM_WINDOWS || name == PLATFORM_POSIX);
+    use super::Scenario;
+
+    static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TempCorpus(PathBuf);
+
+    impl TempCorpus {
+        fn copy() -> Self {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let source = root.join("tests/differential/corpus");
+            let destination = std::env::temp_dir().join(format!(
+                "siralos-rust-corpus-{}-{}",
+                std::process::id(),
+                TEMP_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&destination).expect("create temp corpus");
+            for entry in std::fs::read_dir(source).expect("read corpus") {
+                let entry = entry.expect("corpus entry");
+                std::fs::copy(
+                    entry.path(),
+                    destination.join(entry.file_name()),
+                )
+                .expect("copy corpus entry");
+            }
+            Self(destination)
+        }
+    }
+
+    impl Drop for TempCorpus {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).expect("remove temp corpus");
+        }
+    }
+
+    fn scenario() -> Scenario {
+        Scenario {
+            id: "state-dir.set.posix".to_owned(),
+            subject: "state-dir".to_owned(),
+            platforms: vec!["posix".to_owned()],
+            parity: "required".to_owned(),
+            env: BTreeMap::from([(
+                "HOME".to_owned(),
+                "/fixture/home".to_owned(),
+            )]),
+        }
     }
 
     #[test]
-    fn state_dir_record_hashes_ok_outputs() {
+    fn platform_name_is_one_of_the_contract_values() {
+        assert!(matches!(platform_name(), PLATFORM_WINDOWS | PLATFORM_POSIX));
+    }
+
+    #[test]
+    fn state_dir_record_hashes_raw_ok_bytes() {
         let record = state_dir_record(
             "state-dir.set.windows",
             b"C:\\fixture\\home\\.siralos",
@@ -332,61 +791,180 @@ mod tests {
     }
 
     #[test]
-    fn state_dir_record_marks_errors_with_null_hash() {
+    fn state_dir_record_marks_only_the_exact_error_marker() {
         let record = state_dir_record("state-dir.unset.windows", b"ERR");
         assert_eq!(record["kind"], "error");
         assert!(record["stateDirSha256"].is_null());
+
+        let non_utf8 = state_dir_record("state-dir.set.posix", &[0xff]);
+        assert_eq!(non_utf8["kind"], "ok");
     }
 
     #[test]
-    fn records_serialize_with_sorted_keys_and_no_whitespace() {
-        // Within each record, keys are sorted; the array preserves the
-        // provided (manifest) order, which both runners share.
+    fn records_are_canonical_with_one_trailing_newline() {
         let records = vec![
             json!({"scenarioId": "b", "kind": "ok"}),
             json!({"scenarioId": "a", "kind": "ok"}),
         ];
-        let text = canonical_records_text(records);
         assert_eq!(
-            text,
-            r#"[{"kind":"ok","scenarioId":"b"},{"kind":"ok","scenarioId":"a"}]"#
+            canonical_records_text(records),
+            "[{\"kind\":\"ok\",\"scenarioId\":\"b\"},{\"kind\":\"ok\",\"scenarioId\":\"a\"}]\n"
         );
     }
 
     #[test]
-    fn probe_reports_a_state_dir_path_ending_in_the_canonical_name() {
-        // Test environments always have a home directory (CI and
-        // developer machines); the probe output must be the resolved
-        // state dir, never the error marker or an empty string.
-        let output = probe_state_dir();
-        assert!(!output.is_empty());
-        assert_ne!(output, "ERR");
-        assert!(output.ends_with(".siralos"));
+    fn scenario_validation_rejects_unknown_environment_authority() {
+        let mut input = scenario();
+        input.env.insert("NODE_OPTIONS".to_owned(), "--require=x".to_owned());
+        assert!(
+            validate_scenario(&input, "state-dir.set.posix.json").is_err()
+        );
     }
 
     #[test]
-    fn workspace_version_extraction_matches_the_workspace_manifest() {
-        // The real repo Cargo.toml is the fixture: its version must be
-        // parseable and equal to the package.json version audited by the
-        // oracle (the differential gate's version-identity subject).
+    fn scenario_validation_rejects_id_file_mismatch() {
+        assert!(validate_scenario(&scenario(), "other.json").is_err());
+    }
+
+    #[test]
+    fn scenario_validation_rejects_required_os_home_fallback() {
+        let mut input = scenario();
+        input.env.insert("HOME".to_owned(), String::new());
+        let error = validate_scenario(&input, "state-dir.set.posix.json")
+            .expect_err("required fallback is uncontrolled");
+        assert!(error.to_string().contains("does not fully declare"));
+    }
+
+    #[test]
+    fn scenario_digest_matches_the_javascript_canonical_order() {
+        assert_eq!(
+            canonical_scenario_digest(&scenario()).expect("canonical"),
+            "50508c3bb501926a100bbcbd9567bac8add9b125a4bd234da11cafbad84202ef"
+        );
+    }
+
+    #[test]
+    fn strict_loader_accepts_the_checked_in_digest_bound_corpus() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let version = cargo_workspace_version(&root)
-            .expect("workspace version is extractable");
-        assert_eq!(version, "0.0.0");
+        let loaded = load_corpus(
+            &root.join("tests/differential/corpus"),
+            platform_name(),
+        )
+        .expect("checked-in corpus");
+        assert_eq!(loaded.len(), 7);
     }
 
     #[test]
-    fn corpus_run_is_replay_stable() {
-        // Determinism replay (assurance contract Part 11): repeated runs
-        // over the same corpus produce byte-identical canonical records.
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let corpus = repo.join("tests/differential/corpus");
-        let first = run_corpus(&corpus, &repo).expect("corpus runs");
-        for _ in 0..3 {
-            assert_eq!(
-                run_corpus(&corpus, &repo).expect("corpus runs"),
-                first
-            );
-        }
+    fn strict_loader_rejects_digest_tampering() {
+        let corpus = TempCorpus::copy();
+        let path = corpus.0.join("state-dir.set.posix.json");
+        let text = std::fs::read_to_string(&path).expect("scenario");
+        std::fs::write(&path, text.replace("/fixture/home", "/tampered"))
+            .expect("tamper scenario");
+        let error = load_corpus(&corpus.0, PLATFORM_POSIX)
+            .err()
+            .expect("tampering rejected");
+        assert_eq!(error.kind(), HarnessErrorKind::Corpus);
+        assert!(error.to_string().contains("manifest digest"));
+    }
+
+    #[test]
+    fn strict_loader_rejects_unknown_fields() {
+        let corpus = TempCorpus::copy();
+        let path = corpus.0.join("state-dir.set.posix.json");
+        let text = std::fs::read_to_string(&path).expect("scenario");
+        std::fs::write(
+            &path,
+            text.replace("\n}", ",\n  \"unexpected\": true\n}"),
+        )
+        .expect("alter scenario");
+        let error = load_corpus(&corpus.0, PLATFORM_POSIX)
+            .err()
+            .expect("unknown field rejected");
+        assert_eq!(error.kind(), HarnessErrorKind::Corpus);
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn strict_loader_rejects_manifest_path_traversal() {
+        let corpus = TempCorpus::copy();
+        let path = corpus.0.join("manifest.json");
+        let text = std::fs::read_to_string(&path).expect("manifest");
+        std::fs::write(
+            &path,
+            text.replace(
+                "state-dir.set.windows.json",
+                "../state-dir.set.windows.json",
+            ),
+        )
+        .expect("alter manifest");
+        let error = load_corpus(&corpus.0, PLATFORM_POSIX)
+            .err()
+            .expect("traversal rejected");
+        assert_eq!(error.kind(), HarnessErrorKind::Corpus);
+        assert!(error.to_string().contains("invalid file name"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strict_loader_rejects_a_symlinked_corpus_root() {
+        use std::os::unix::fs::symlink;
+
+        let corpus = TempCorpus::copy();
+        let alias = corpus.0.with_extension("alias");
+        symlink(&corpus.0, &alias).expect("create corpus alias");
+        let error = load_corpus(&alias, PLATFORM_POSIX)
+            .err()
+            .expect("symlink root rejected");
+        std::fs::remove_file(alias).expect("remove corpus alias");
+        assert_eq!(error.kind(), HarnessErrorKind::Corpus);
+        assert!(error.to_string().contains("may not be a symlink"));
+    }
+
+    #[test]
+    fn child_nonzero_exit_is_a_typed_harness_error() {
+        let executable = std::env::current_exe().expect("test executable");
+        let mut command = Command::new(executable);
+        command.arg("--definitely-not-a-test-runner-option");
+        let error =
+            execute_bounded_child(&mut command, Duration::from_secs(2))
+                .expect_err("invalid invocation exits nonzero");
+        assert_eq!(error.kind(), HarnessErrorKind::ProbeExit);
+    }
+
+    #[test]
+    fn child_timeout_is_a_typed_harness_error() {
+        let executable = std::env::current_exe().expect("test executable");
+        let mut command = Command::new(executable);
+        command.args([
+            "--ignored",
+            "--exact",
+            "harness::tests::timeout_child",
+        ]);
+        let error =
+            execute_bounded_child(&mut command, Duration::from_millis(50))
+                .expect_err("sleeping child times out");
+        assert_eq!(error.kind(), HarnessErrorKind::ProbeTimeout);
+    }
+
+    #[test]
+    #[ignore = "executed only as a bounded child by child_timeout_is_a_typed_harness_error"]
+    fn timeout_child() {
+        std::thread::sleep(Duration::from_secs(5));
+        print!("late");
+    }
+
+    #[test]
+    fn probe_reports_a_nonempty_outcome() {
+        assert!(!probe_state_dir_bytes().expect("probe bytes").is_empty());
+    }
+
+    #[test]
+    fn workspace_version_matches_the_workspace_manifest() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        assert_eq!(
+            cargo_workspace_version(&root).expect("workspace version"),
+            "0.0.0"
+        );
     }
 }
