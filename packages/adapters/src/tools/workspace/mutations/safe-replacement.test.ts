@@ -569,8 +569,11 @@ describe("safe deletion state machine", () => {
         // Between the identity capture and the displacement rename the
         // target is substituted with a different object (a swapped parent
         // would do the same): the rename displaces the substitute, whose
-        // dev+ino differs from the captured identity.
-        await rm(_from, { force: true });
+        // dev+ino differs from the captured identity. Keep the captured
+        // object linked at a side path so POSIX cannot immediately reuse
+        // its inode for the substitute and mask the identity branch behind
+        // the later content-hash check.
+        await REAL_REPLACEMENT_FS_OPS.rename(_from, `${_from}.captured-original`);
         await writeFile(_from, "swapped content\n");
       },
     });
