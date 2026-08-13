@@ -1,0 +1,16 @@
+[package]
+name = "domain-abi-wit-host"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "WIT component host for the domain-ABI prototype (assurance contract Part 17). Standalone experiment."
+
+[workspace]
+
+[dependencies]
+wasmtime = "31"
+wasmtime-wasi = "31"
+wit-bindgen = "0.40"
+
+[profile.release]
+opt-level = 3

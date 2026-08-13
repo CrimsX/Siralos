@@ -1,0 +1,12 @@
+[package]
+name = "domain-abi-ipc-prototype"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Process-IPC domain boundary prototype (assurance contract Part 18). Standalone experiment, NOT a workspace member."
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

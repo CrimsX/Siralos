@@ -558,6 +558,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["process", "testing"],
     paths: ["tests/differential/**", "crates/siralos-cli/src/harness/**"],
   },
+  {
+    id: "adr:0034",
+    path: "docs/adr/0034-godot-domain-host-boundary.md",
+    kind: "adr",
+    concerns: ["architecture", "security", "rust"],
+    status: "accepted",
+    domains: ["architecture", "security"],
+    paths: ["experiments/domain-abi/**", "docs/development/PROTOCOL_VERSIONING.md"],
+  },
 ]);
 
 /**

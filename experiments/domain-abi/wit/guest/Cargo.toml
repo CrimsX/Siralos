@@ -1,0 +1,18 @@
+[package]
+name = "domain-abi-wit-guest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "WIT guest component for the domain-ABI prototype (assurance contract Part 17). Standalone experiment."
+
+[workspace]
+
+[dependencies]
+wit-bindgen = "0.40"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true

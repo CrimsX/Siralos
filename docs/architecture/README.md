@@ -64,6 +64,7 @@ maps them by source-path globs:
 | Overall architecture                                                     | `packages/**`                                                                                                                                | ARCHITECTURE.md                                                              | ADR-0001                                                   |
 | Rust candidate implementation (Stage 3R)                                 | `crates/**`                                                                                                                                  | ARCHITECTURE.md § Rust candidate workspace, `docs/development/RUST_STYLE.md` | ADR-0032                                                   |
 | Differential behavioral harness (Stage 3R R2)                            | `tests/differential/**`, `crates/siralos-cli/src/harness/**`                                                                                 | ADR-0033                                                                     | ADR-0033                                                   |
+| Domain host ABI (Godot domain boundary)                                  | `experiments/domain-abi/**`                                                                                                                  | ADR-0034                                                                     | ADR-0034                                                   |
 
 ## ADR status
 

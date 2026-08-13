@@ -1,0 +1,54 @@
+// The experimental Godot domain boundary world (assurance contract
+// Part 17). Deliberately minimal: metadata, capability declaration,
+// one semantic query, one structured result, host-mediated workspace
+// and process requests, cancellation/error behavior, version
+// incompatibility.
+
+package siralos:domain-abi@1.0.0;
+
+interface domain-api {
+    /// Domain package identity, bound per operation.
+    record package-identity {
+        package-id: string,
+        package-digest: string,
+    }
+
+    /// One semantic query result.
+    record semantic-result {
+        package-id: string,
+        query: string,
+        node-count: u32,
+        source-bytes: u32,
+    }
+
+    /// The host's answer to a mediated request.
+    variant host-answer {
+        ok(string),
+        denied(string),
+        cancelled,
+        error(string),
+    }
+
+    /// Capabilities the domain declares it wants. The host's policy
+    /// decides; the prototype host denies process capabilities.
+    enum declared-capability {
+        workspace-read,
+        process-exec,
+    }
+
+    /// Bind the exact package identity for this component instance.
+    bind: func(identity: package-identity) -> result<_, string>;
+
+    /// One semantic query executed locally in the domain.
+    query: func(text: string) -> result<semantic-result, string>;
+
+    /// Request host-mediated workspace read access.
+    request-workspace-read: func(path: string, max-bytes: u32) -> host-answer;
+
+    /// Request a host-mediated runtime/process capability.
+    request-capability: func(capability: declared-capability) -> host-answer;
+}
+
+world siralos-domain {
+    export domain-api;
+}
