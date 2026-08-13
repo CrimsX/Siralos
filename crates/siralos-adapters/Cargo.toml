@@ -8,6 +8,10 @@ publish = false
 
 [dependencies]
 siralos-core = { workspace = true }
+# `dirs` provides the OS user-database home fallback (Windows
+# FOLDERID_Profile, POSIX getpwuid) behind a safe wrapper; the standard
+# library has no equivalent and hand-rolling it would require unsafe FFI.
+dirs = "6"
 
 [lints]
 workspace = true

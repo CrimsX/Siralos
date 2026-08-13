@@ -2,9 +2,23 @@
 //!
 //! Siralos keeps user-level state (configuration, runs, checkpoints)
 //! beneath one home-directory-owned state directory, canonically
-//! `~/.siralos`. R1 establishes the resolution primitive only; the
-//! TypeScript reference implementation remains authoritative for the
-//! full layout.
+//! `~/.siralos`. R1 established the resolution primitive; the
+//! differential behavioral harness (ADR 0033) audits it against the
+//! TypeScript reference and drives remediation of drift. The TypeScript
+//! reference implementation remains authoritative for the full layout.
+//!
+//! Home resolution mirrors the reference's `os.homedir()` (libuv):
+//! - Windows: `USERPROFILE` when set and non-empty; an explicitly set
+//!   but empty `USERPROFILE` is a resolution failure (libuv reports
+//!   ENOENT rather than falling back); otherwise the OS user profile.
+//!   `HOMEDRIVE`/`HOMEPATH` are not consulted (current libuv does not
+//!   use them; documented divergence from the historical Node docs).
+//! - POSIX: `HOME` when set and non-empty; otherwise the OS user
+//!   database home (getpwuid).
+//!
+//! The OS-user-database fallback lives in the `dirs` crate behind a
+//! safe wrapper: the standard library has no equivalent, and
+//! hand-rolling it would require unsafe FFI, which is forbidden.
 //!
 //! Filesystem identities are kept in [`PathBuf`] for as long as
 //! practical: no component of this module assumes the home directory or
@@ -24,18 +38,40 @@ const STATE_DIR_NAME: &str = ".siralos";
 /// Resolve the canonical user state directory from the process
 /// environment.
 ///
-/// Home resolution mirrors the TypeScript reference implementation
-/// (`os.homedir()`): `USERPROFILE`, then `HOMEDRIVE` + `HOMEPATH`, on
-/// Windows; `HOME` elsewhere. The directory is not created and nothing is
-/// written; this function is read-only.
+/// The directory is not created and nothing is written; this function
+/// is read-only.
 ///
 /// # Errors
 ///
 /// Returns [`StateDirError::NoHomeDirectory`] when no home directory can
-/// be determined from the environment.
+/// be determined (including an explicitly empty `USERPROFILE` on
+/// Windows, which the reference treats as a failure).
 pub fn state_dir() -> Result<PathBuf, StateDirError> {
-    let home = home_dir_from_env().ok_or(StateDirError::NoHomeDirectory)?;
-    Ok(state_dir_for(&home))
+    // Windows order must mirror the reference (`os.homedir()`/libuv):
+    // `USERPROFILE` wins when set and non-empty, an explicitly empty
+    // `USERPROFILE` is a failure, and otherwise the OS user profile is
+    // used. `dirs` alone cannot express this order (it prefers the
+    // known-folder profile over `USERPROFILE`), so the primary variable
+    // is resolved here and `dirs` supplies the OS-profile fallback.
+    #[cfg(windows)]
+    {
+        if env::var_os("USERPROFILE").is_some_and(|value| value.is_empty()) {
+            return Err(StateDirError::NoHomeDirectory);
+        }
+        let home = env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
+            .ok_or(StateDirError::NoHomeDirectory)?;
+        Ok(state_dir_for(&home))
+    }
+    // POSIX order mirrors the reference: `HOME` wins when set and
+    // non-empty (dirs treats an empty `HOME` as absent, matching
+    // libuv's fallback to the user database), otherwise getpwuid.
+    #[cfg(not(windows))]
+    {
+        let home = dirs::home_dir().ok_or(StateDirError::NoHomeDirectory)?;
+        Ok(state_dir_for(&home))
+    }
 }
 
 /// Build the state directory path beneath `home`.
@@ -45,34 +81,6 @@ pub fn state_dir() -> Result<PathBuf, StateDirError> {
 /// environment (which would require `unsafe` under edition 2024).
 pub(crate) fn state_dir_for(home: &Path) -> PathBuf {
     home.join(STATE_DIR_NAME)
-}
-
-/// Read the home directory from the process environment.
-///
-/// `OsString` values are preserved verbatim; a set-but-empty variable is
-/// treated as absent because joining an empty component would silently
-/// change the resulting path's meaning.
-fn home_dir_from_env() -> Option<PathBuf> {
-    if cfg!(windows) {
-        let profile = env::var_os("USERPROFILE");
-        if let Some(profile) = profile.filter(|value| !value.is_empty()) {
-            return Some(PathBuf::from(profile));
-        }
-        let drive = env::var_os("HOMEDRIVE").filter(|value| !value.is_empty());
-        let path = env::var_os("HOMEPATH").filter(|value| !value.is_empty());
-        match (drive, path) {
-            (Some(drive), Some(path)) => {
-                let mut home = PathBuf::from(drive);
-                home.push(path);
-                Some(home)
-            }
-            _ => None,
-        }
-    } else {
-        env::var_os("HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    }
 }
 
 /// Failure to resolve the user state directory.
