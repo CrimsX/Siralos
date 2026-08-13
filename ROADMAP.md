@@ -53,15 +53,15 @@ unsafe filesystem or process boundary intentionally fails closed.
   Compiler, and the `/brief` / `/milestone` inspection commands. It is not
   a roadmap stage.
 - **Stage 3R is active.** R1 (Siralos rename + Rust engineering standard +
-  domain-neutral Rust foundation, ADR 0032) is complete: the project is
-  renamed to Siralos everywhere (identity ratchet enforced), the
-  TypeScript implementation is documented as the Siralos behavioral
-  reference/migration oracle, a canonical Rust Engineering Guide exists
-  (`docs/development/RUST_STYLE.md`), and the Rust workspace
-  (`siralos-core` / `siralos-adapters` / `siralos-cli`, edition 2024,
-  pinned toolchain, rustfmt/clippy gates, domain-neutral core, no Godot
-  package) builds and tests green with no Godot domain present. R2
-  (Differential Behavioral Harness) is next.
+  domain-neutral Rust foundation, ADR 0032) is complete. R2
+  (Differential Behavioral Harness, ADR 0033) is complete: the audit
+  remediation gate runs the scenario corpus against the TypeScript
+  reference and the Rust candidate, machine-compares canonical outcome
+  records, emits a per-commit migration audit, and gates remediation —
+  its first subjects (state-dir resolution, product version identity)
+  hold parity, and the audit drove real drift remediation in
+  `siralos-adapters::paths`. R3 (the first differential-verified
+  subsystem port) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -213,9 +213,16 @@ Domain-Neutral Foundation, ADR 0032):
   user must explicitly request it. No marketplace or plugin ecosystem is
   implemented.
 
-Next: Stage 3R — R2 (Differential Behavioral Harness): differential
-verification of Rust candidate behavior against the TypeScript
-reference.
+Next: Stage 3R — R3: the first subsystem port under the differential
+gate (behavior extraction → idiomatic Rust redesign → parity → review →
+measurement), with the harness scenarios extended to the ported
+surface. R2 (Differential Behavioral Harness, ADR 0033) is complete:
+the audit remediation gate runs deterministic scenarios against the
+TypeScript reference and the Rust candidate, machine-compares canonical
+outcome records, emits a per-commit migration audit, and blocks
+acceptance until drift is remediated — parity held on the state-dir and
+version-identity subjects, with real drift remediated in
+`siralos-adapters::paths`.
 
 ### Next: Stage 4 — Runtime and visual QA
 

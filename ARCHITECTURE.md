@@ -241,6 +241,31 @@ The TypeScript implementation remains the behavioral reference
 is preserved across migration, structure is deliberately redesigned
 (ADR 0032).
 
+## Differential behavioral harness (Stage 3R R2, ADR 0033)
+
+The migration's audit remediation gate: a deterministic, offline harness
+that runs a versioned, digest-bound scenario corpus against both
+implementations and machine-compares canonical outcome records.
+
+- Corpus: `tests/differential/corpus/` — typed scenario inputs only
+  (never expected outputs), each with a stable id and SHA-256 digest.
+- Oracle runner (TypeScript) and candidate runner (Rust, `siralos-harness`
+  binary in `siralos-cli`) emit identical canonical record formats;
+  environment-sensitive scenarios execute in probe subprocesses with
+  scrubbed environments.
+- Comparator: exact canonical match; `required` scenarios gate (exit 1
+  on deviation), `informational` scenarios are recorded only. Every run
+  emits `audit.json` — coverage, per-scenario status, and the deviation
+  inventory that drives remediation.
+- Wired as `npm run check:differential` into `npm run check` and the
+  GitHub Actions Rust workflow.
+
+The first subjects are the state-dir resolution (TS `os.homedir()` path
+versus `siralos-adapters::paths::state_dir`) and the product version
+identity (package.json versus Cargo.toml). Every later ported subsystem
+adds scenarios; a port is accepted only when its required scenarios
+compare clean.
+
 ## Why a modular monolith
 
 One process with explicit module boundaries is the smallest structure that keeps UI, application logic, and infrastructure separable without introducing distributed orchestration, message buses, or deployment complexity. Siralos can grow its later stages inside this boundary and can extract packages later if a real need appears.

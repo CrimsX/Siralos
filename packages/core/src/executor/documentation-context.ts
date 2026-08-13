@@ -549,6 +549,15 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["architecture", "process"],
     paths: ["crates/**", "docs/development/RUST_STYLE.md"],
   },
+  {
+    id: "adr:0033",
+    path: "docs/adr/0033-differential-behavioral-harness.md",
+    kind: "adr",
+    concerns: ["process", "testing", "rust"],
+    status: "accepted",
+    domains: ["process", "testing"],
+    paths: ["tests/differential/**", "crates/siralos-cli/src/harness/**"],
+  },
 ]);
 
 /**
