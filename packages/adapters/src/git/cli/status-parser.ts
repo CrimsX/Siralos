@@ -46,7 +46,7 @@ export function parsePorcelainV2(output: string): GitStatusResult {
       continue;
     }
     if (record.startsWith("? ")) {
-      untracked.push(normalizePath(record.slice(2)));
+      untracked.push(record.slice(2));
       if (totalEntries(untracked, changes, conflicts) > MAX_GIT_STATUS_ENTRIES) {
         truncated = true;
         break;
@@ -167,13 +167,13 @@ function parseOrdinaryRecord(
   if (kind !== "ordinary") {
     const next = records[index + 1];
     if (next !== undefined && next.length > 0) {
-      originalPath = normalizePath(next);
+      originalPath = next;
       consumedExtra = true;
     }
   }
   return {
     change: {
-      path: normalizePath(parsed.path),
+      path: parsed.path,
       originalPath,
       indexStatus: mapIndexStatus(xy[0] ?? "."),
       worktreeStatus: mapWorktreeStatus(xy[1] ?? "."),
@@ -186,7 +186,7 @@ function parseOrdinaryRecord(
 function parseUnmergedRecord(record: string): GitConflictEntry | null {
   const parsed = splitHeaderAndPath(record, 11);
   return {
-    path: normalizePath(parsed.path),
+    path: parsed.path,
     stage1Oid: parsed.header[7] ?? null,
     stage2Oid: parsed.header[8] ?? null,
     stage3Oid: parsed.header[9] ?? null,
@@ -252,8 +252,4 @@ function parseInteger(value: string | undefined): number | null {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isNaN(parsed) ? null : parsed;
-}
-
-function normalizePath(value: string): string {
-  return value.split("\\").join("/");
 }

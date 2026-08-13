@@ -204,6 +204,12 @@ describe("git status inspection", () => {
     expect(() => parsePorcelainV2("### nonsense\n")).toThrow(GitError);
   });
 
+  it("preserves literal backslashes in NUL-delimited porcelain paths", async () => {
+    const { parsePorcelainV2 } = await import("./status-parser.js");
+    const status = parsePorcelainV2("? back\\slash.txt\0");
+    expect(status.untracked).toEqual(["back\\slash.txt"]);
+  });
+
   it("returns truncated status without throwing when output is cut mid-record", async () => {
     const repo = await createTempRepo();
     for (let i = 0; i < 300; i += 1) {
