@@ -30,7 +30,7 @@ describe("canonical serialization properties", () => {
       42,
       "",
       "plain",
-      "quote\"backslash\\unicode\u00e9",
+      'quote"backslash\\unicode\u00e9',
       [1, "two", null, { z: 1, a: [true, false] }],
       { zeta: 1, alpha: "beta", mid: null, num: 7 },
       { nested: { deep: { deeper: [{ x: 1 }, { x: 2 }] } } },

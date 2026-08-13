@@ -143,11 +143,19 @@ export function runChecks(root) {
   const rootCargoText = readFileSync(rootCargo, "utf8");
 
   const members = tomlSectionKeys(rootCargoText, "workspace").filter(
-    (key) => key !== "resolver" && key !== "members",
+    (key) => key !== "resolver" && key !== "members" && key !== "exclude",
   );
   const memberLines = [...rootCargoText.matchAll(/members\s*=\s*\[([^\]]*)\]/g)].flatMap((match) =>
     [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]),
   );
+  // The nightly-only fuzz crate must stay outside the stable workspace
+  // (docs/development/SUPPLY_CHAIN.md toolchain policy).
+  const excludeLines = [...rootCargoText.matchAll(/exclude\s*=\s*\[([^\]]*)\]/g)].flatMap((match) =>
+    [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]),
+  );
+  if (!excludeLines.includes("fuzz")) {
+    errors.push("Cargo.toml: the nightly-only fuzz crate must be excluded from the workspace");
+  }
   if (memberLines.length === 0) {
     errors.push("Cargo.toml: workspace members must be declared explicitly");
   }

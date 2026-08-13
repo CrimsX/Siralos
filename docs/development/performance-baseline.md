@@ -8,11 +8,11 @@ workflow — never a PR gate — until a stable baseline history exists.
 
 ## Benchmarks
 
-| Workload | Input size | Median | Toolchain | Commit |
-| --- | --- | --- | --- | --- |
-| `version/parse-canonical` | "1.97.1" (7 bytes) | ~23.1 ns | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
-| `version/parse-reject` | "not-a-version" (13 bytes) | ~78.9 ns | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
-| `version/display-round-trip` | Version(1,97,1) | recorded by criterion | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+| Workload                     | Input size                 | Median                | Toolchain                             | Commit                   |
+| ---------------------------- | -------------------------- | --------------------- | ------------------------------------- | ------------------------ |
+| `version/parse-canonical`    | "1.97.1" (7 bytes)         | ~23.1 ns              | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+| `version/parse-reject`       | "not-a-version" (13 bytes) | ~78.9 ns              | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+| `version/display-round-trip` | Version(1,97,1)            | recorded by criterion | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
 
 Environment: Windows 11, x86_64-pc-windows-gnu host (MinGW-w64),
 criterion 0.5, `cargo bench -p siralos-core`.

@@ -24,6 +24,7 @@ members = [
     "crates/siralos-adapters",
     "crates/siralos-cli",
 ]
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.0"
@@ -84,6 +85,14 @@ describe("runChecks", () => {
   it("passes on a clean workspace", () => {
     const root = writeFixture(cleanWorkspaceFixture());
     expect(runChecks(root)).toEqual([]);
+  });
+
+  it("rejects a workspace without the fuzz exclusion", () => {
+    const files = cleanWorkspaceFixture();
+    files["Cargo.toml"] = files["Cargo.toml"].replace('exclude = ["fuzz"]\n', "");
+    const root = writeFixture(files);
+    const errors = runChecks(root);
+    expect(errors.some((error) => error.includes("fuzz crate must be excluded"))).toBe(true);
   });
 
   it("rejects a missing workspace manifest", () => {
