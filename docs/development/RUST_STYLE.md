@@ -28,13 +28,61 @@ architecture and security requirements. It does not copy source code and
 does not claim BurntSushi authorship or endorsement. The result is the
 Siralos style.
 
+## Engineering priority order
+
+Siralos resolves conflicts between engineering goals in this order:
+
+```text
+1. Correctness
+2. Security / authority preservation
+3. Determinism
+4. Type-driven invariant design
+5. Ownership clarity
+6. Simple local reasoning
+7. Maintainability
+8. API quality
+9. Testability
+10. Performance evidence
+11. Consistent formatting/style
+```
+
+Style must never override correctness. Performance must never override
+correctness, security, or determinism.
+
+## Migration philosophy
+
+Siralos Rust is not TypeScript, Node.js, C, C++, Java, or another
+language expressed with Rust syntax. During migration:
+
+```text
+existing behavior + invariants
+        ↓
+understand semantics
+        ↓
+identify accidental source-language structure
+        ↓
+design idiomatic Rust representation
+        ↓
+preserve observable behavior
+        ↓
+verify
+        ↓
+measure
+        ↓
+optimize where justified
+```
+
+Do not preserve source-language structure merely for visual similarity.
+Behavioral parity does not require structural parity.
+
 ## Toolchain and edition
 
 - Rust **edition 2024** for the entire workspace.
 - An explicit, pinned toolchain lives in `rust-toolchain.toml`. Do not
   silently depend on whatever compiler happens to be installed.
-- **Stable** Rust is the default. Nightly requires an evidenced
-  requirement.
+- **Stable** Rust is the default and the production-build requirement.
+  Nightly is used only for separate quality jobs (fuzzing, Miri,
+  sanitizers, coverage) and requires an evidenced requirement.
 - The declared MSRV (`[workspace.package] rust-version`) is the floor;
   the pinned toolchain is what gates are run with. Bumping either
   requires passing the full Rust gate.
@@ -64,119 +112,48 @@ Every Rust change must pass, before handoff:
 
 ```text
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo build --workspace
-cargo test --workspace
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo check --workspace --all-targets --all-features --locked
+cargo test --workspace --all-targets --all-features --locked
 npm run check:rust
 ```
 
-`npm run check` runs the TypeScript and Rust gates together.
+`npm run check` runs the TypeScript and Rust gates together. Locked
+dependency resolution is required; `Cargo.lock` is authoritative for the
+application and is never silently updated by CI.
 
-## Readability
-
-Optimize code first for correctness, clarity, local reasoning, and
-maintainability — before cleverness. Prefer code whose invariants can be
-understood from the local module. Use straightforward control flow;
-early returns are encouraged where they reduce nesting. Pattern matching
-is preferred when it makes state distinctions explicit. Do not compress
-meaningful state transitions into dense expressions merely to reduce
-line count.
-
-## Comments
-
-Comments explain _why_: invariants, tradeoffs, safety conditions,
-performance reasons, platform reasons, protocol reasons, and
-non-obvious behavior. Avoid comments that narrate syntax.
-
-Good comments explain:
-
-- why this cache may be reused
-- why this ordering must remain stable
-- why this allocation is intentionally retained
-- why this lock cannot be removed
-- why Windows needs a separate path
-
-When implementation complexity exists because of an important tradeoff,
-explain it near the code. Large or subtle subsystems may have a design
-document if the explanation cannot reasonably live in source comments;
-do not create architecture documentation for trivial code.
-
-## Public API documentation
-
-Public APIs must be intentionally documented: semantics, invariants,
-errors, panics where applicable, cancellation behavior where applicable,
-side effects, security implications where applicable, and examples for
-non-obvious APIs.
-
-Compiler-enforced documentation quality is on by default:
-
-```text
-missing_docs = "deny"      (workspace lint)
-broken_intra_doc_links = "deny"   (workspace lint, rustdoc)
-```
-
-Do not suppress documentation lints globally for convenience.
-
-## Visibility
-
-Default to private. Increase visibility in this order, only when the
-wider visibility is actually required:
-
-```text
-private
-→ pub(crate)
-→ pub(super)
-→ pub
-```
-
-Do not make implementation details public for convenience. Public
-exports form a deliberate API surface; prefer explicit re-exports from
-crate/module boundaries over leaking the internal source layout.
-
-## Module design
-
-Modules own coherent concepts: one understandable subsystem, not one
-file per type. Do not create tiny modules merely to reduce file size,
-and do not create enormous modules to avoid architectural thinking.
-Split modules when there is a real cohesion or ownership boundary. The
-target remains a modular monolith.
-
-## Crate design
-
-A new crate requires a real reason:
-
-- dependency isolation
-- distribution boundary
-- capability/security boundary
-- independently useful library boundary
-- compilation boundary with measurable value
-- external protocol boundary
-
-Invalid reason: _this class/interface had its own TypeScript file_.
-There is no crate-per-concept architecture. The workspace is
-`crates/siralos-core`, `crates/siralos-adapters`, `crates/siralos-cli`;
-no placeholder or hypothetical domain crates exist.
-
-## Type design
+## Type-driven design
 
 Use the type system to make invalid states difficult or impossible to
-construct:
+construct. Prefer enums, validated constructors, newtypes where
+semantically meaningful, explicit state types, `Option<T>`, and
+`Result<T, E>`, and private fields protecting invariants.
 
-- enums for mutually exclusive states
-- newtypes for semantically distinct identifiers
-- explicit structs for meaningful records
-- private fields when construction requires invariants
-- non-zero or bounded integer types where useful
+Avoid sentinel values, magic strings, integer status codes, groups of
+booleans representing one state machine, stringly typed identifiers,
+and generic JSON objects where a stable type is known.
 
-Avoid magic strings, generic `HashMap<String, Value>` state when a type
-is known, unrelated boolean flags encoding state, sentinel integer
-values, and stringly typed protocols. Do not wrap every primitive in a
-newtype; create types where they protect meaning or invariants.
+### Option over sentinels
 
-## Enums over boolean state machines
+Use `Option<T>` when absence is semantically meaningful. Do not
+represent absence with arbitrary sentinel values such as `-1`, `0`, `""`,
+`"none"`, or `"null"` unless that sentinel is part of an external
+protocol Siralos must faithfully model. At an external boundary, parse
+the sentinel into the internal typed representation as early as
+practical.
 
-When several booleans form mutually exclusive or constrained states, use
-an enum or a dedicated state type. For example, prefer:
+### Result over status flags
+
+Recoverable operations return `Result<T, E>` rather than a `bool`,
+integer error code, magic string, or panic when callers need failure
+information. Do not introduce a custom `Result`-like abstraction; use
+Rust conventions.
+
+### State modeling
+
+When multiple primitive fields jointly encode one logical state,
+replace them with one explicit state type unless there is a concrete
+reason not to. For example, prefer:
 
 ```text
 NotInstalled
@@ -184,190 +161,358 @@ InstalledDisabled
 InstalledEnabled
 ```
 
-over `installed: bool` + `enabled: bool`, where invalid combinations
-could otherwise exist.
+over `installed: bool` + `enabled: bool` when the boolean representation
+admits invalid combinations. Apply this especially to task lifecycle,
+approvals, revisions, capabilities, domain installation, evidence
+status, validation state, acceptance state, process lifecycle, and
+cancellation state. Do not create an enum where the domain is genuinely
+binary and a boolean is clearer.
 
-## Ownership
+### Boolean policy
+
+There is no blanket prohibition on `bool`. Use `bool` when the concept
+genuinely represents yes/no, enabled/disabled, or a present/absent
+property with no additional semantic state. The decision is semantic,
+not stylistic.
+
+### Newtype policy
+
+Use newtypes when they materially protect identity, unit, authority,
+validation, range, or cross-domain confusion — for example `TaskId`,
+`RevisionId`, `ArtifactDigest`, `CapabilityId`, `DomainPackageId`,
+`RunId`. Do not wrap every primitive merely for stylistic consistency;
+every newtype must earn its existence by improving correctness or
+meaning.
+
+### Build values directly
+
+Prefer constructing a value from an expression when that improves local
+reasoning:
+
+```rust
+let mode = match config {
+    Config::Fast => Mode::Fast,
+    Config::Safe => Mode::Safe,
+};
+```
+
+over a mutable variable assigned inside branches, when the value is
+conceptually the result of one decision. Do not contort naturally
+iterative or stateful algorithms to eliminate every mutable local;
+mutation is valid when mutation is the clearest model.
+
+## Ownership and borrowing
 
 Prefer borrowing when ownership is not required; prefer owned values
 when ownership materially simplifies lifetime management. Do not create
-complex lifetimes solely to avoid a small, cold-path allocation. Do not
-clone merely to satisfy the borrow checker without understanding why the
-clone is needed; every non-trivial clone in a hot or repeated path is
-reviewed.
+complex lifetimes solely to avoid a small, cold-path allocation.
 
-Avoid pervasive `Arc`/`Rc`/`Mutex`/`RwLock` as architectural defaults.
-Use shared ownership only when shared ownership is actually required.
+A `.clone()` introduced merely to satisfy the borrow checker is a
+**design-review trigger**: determine which component should own the
+value, whether the lifetime/borrow scope can be simplified, whether
+ownership should move, and whether restructuring removes the clone.
+Keep the clone only when copying the value is the correct semantic
+operation. Valid clones include intentionally duplicated immutable
+data, ownership transfer across long-lived boundaries, small cold-path
+values, snapshots, and explicit replication semantics. For non-trivial
+or repeated-path clones, review frequency, data size, ownership reason,
+alternative designs, readability, and performance relevance. Do not
+optimize away inexpensive clones at the cost of incomprehensible
+lifetimes.
 
-## Collections
+## API design
+
+### Function parameters
+
+There is no blanket rule that every public parameter uses
+`impl AsRef<T>` or `impl Into<T>`. Use the least-assumptive parameter
+type that materially improves callers without obscuring semantics. A
+public path utility with heterogeneous callers may use
+`impl AsRef<Path>`; an internal function with one clear borrowing
+contract uses `&Path`; a function whose semantics require ownership
+takes `String`. Use generic convenience deliberately, not
+automatically.
+
+### Traits
+
+Introduce a trait when there is a real behavioral seam: multiple real
+implementations, meaningful test substitution, a provider boundary, an
+execution-environment boundary, a host/domain capability boundary, or a
+protocol abstraction. Prefer concrete types when only one implementation
+exists and polymorphism provides no present value. Do not design trait
+hierarchies for hypothetical future consumers. Do not translate every
+TypeScript interface into a Rust trait.
+
+### From / TryFrom
+
+Prefer the standard conversion traits when conversion semantics are
+natural: `From` for infallible semantic conversion, `TryFrom` when
+validation or failure is required. Do not implement them when conversion
+would be surprising or hide expensive/domain-significant behavior, and
+do not add conversions merely to make `.into()` available everywhere.
+
+### Pattern matching and match exhaustiveness
+
+Use `match`, `if let`, and `let ... else` where they improve clarity
+with enums, `Option`, `Result`, destructuring, and explicit state
+transitions. Do not require pattern matching when a straightforward
+method or conditional is clearer. Prefer explicit exhaustive matching
+for closed internal enums; avoid `_ =>` catch-all arms that would cause
+newly added variants to be silently ignored. Wildcard arms are
+acceptable when the remaining variants are intentionally equivalent,
+the input type is externally extensible/non-exhaustive, or ignoring
+remaining cases is genuinely part of the contract; document non-obvious
+wildcard behavior.
+
+### Tuples
+
+Tuples are allowed. Use them for short-lived local grouping, iterator
+items, closure inputs/outputs, and simple two-value relationships whose
+semantics are obvious. Prefer a named struct when the value crosses an
+API boundary, fields have distinct semantic meaning, there are several
+fields, callers depend on positional knowledge, or the representation is
+likely to evolve. Do not create a struct for every two-value iterator
+pair.
+
+### Turbofish
+
+There is no mandatory turbofish style. Use whichever form is clearest in
+context; prefer inference when unambiguous and explicit types when they
+clarify domain meaning or resolve ambiguous inference. Do not create
+style churn solely to change type-annotation placement.
+
+### Iterators and loops
+
+Prefer iterators when they make the transformation clearer; prefer
+ordinary loops when they make mutation, branching, state, early
+termination, error handling, or ownership clearer. Avoid index loops
+when iterating directly over the collection provides the same semantics.
+Do not force `.map().filter().fold()` chains when a loop is easier to
+understand. Readability outranks iterator purity.
+
+### Builders and generics
+
+Use builders for configuration-heavy objects with many options, sensible
+defaults, unclear constructor parameter ordering, or optional
+configuration; builder output must validate invariants. Do not use
+builders for simple two- or three-field types. Use generics when they
+provide meaningful static polymorphism or reusable algorithms; do not
+parameterize speculatively.
+
+## Error handling
+
+### Layered error architecture
+
+```text
+siralos-core            typed semantic errors
+domain/protocol bounds  typed errors appropriate to caller decisions
+adapters                preserve meaningful source/context
+CLI / application       contextual aggregation/presentation
+```
+
+Use `anyhow` or equivalent only at application/orchestration boundaries
+where callers no longer need to branch on detailed error types. Do not
+use `anyhow::Error` as the universal internal error representation, and
+do not create a bespoke error enum for every tiny helper.
+
+### Error types
+
+Meaningful errors preserve information required for recovery,
+deterministic decisions, diagnostics, policy, tests, and provenance.
+Errors distinguish failure categories where Siralos behavior depends on
+them. Never build control flow around human-readable error strings;
+never parse error strings to determine control flow.
+
+### Panics, unwrap, expect
+
+Panics must not represent expected user, workspace, provider, protocol,
+stale-revision, process, optional-domain-absence, or configuration
+failures; expected failure uses `Result`, `Option`, or an explicit
+state. Panics may represent impossible internal states where the
+invariant has already been enforced and continuation would indicate a
+programming defect. Production code does not use `.unwrap()` for
+expected failure paths. `expect()` is acceptable when the invariant is
+genuinely guaranteed by construction, and the message must explain the
+violated invariant — not `should work` but e.g. `validated task plans
+always contain at least one phase`. Tests may use `unwrap()`/`expect()`
+freely where failure means the test itself should fail.
+
+## Modules and visibility
+
+### Visibility
+
+Default to private. Increase visibility in this order, only when the
+wider visibility is actually required:
+
+```text
+private
+→ pub(super)
+→ pub(crate)
+→ pub
+```
+
+Do not expose implementation details for convenience. Public exports
+form a deliberate API surface; prefer explicit re-exports from
+crate/module boundaries over leaking the internal source layout.
+
+### Public API surface
+
+Reduce unnecessary `pub` items. A public Rust API creates documentation,
+compatibility, testing, and semantic-expectation burden. Do not expose
+migration internals or implementation structure merely to simplify
+tests; test through meaningful boundaries where practical.
+
+### Module organization and ordering
+
+Keep type definitions and their principal implementations near each
+other where practical; organize by coherent responsibility, not
+arbitrary type count. Do not enforce one-type-per-file, and do not place
+an entire subsystem in one enormous file to avoid modules. Split at
+meaningful responsibility, ownership, dependency, or conceptual
+boundaries. A common internal ordering is principal type, principal
+impl, supporting types, error types, private helpers, tests — but do not
+enforce this mechanically when another organization is clearer.
+
+### Crate design
+
+A new crate requires a real reason: dependency isolation, distribution
+boundary, capability/security boundary, an independently useful library
+boundary, a compilation boundary with measurable value, or an external
+protocol boundary. Invalid reason: _this class/interface had its own
+TypeScript file_. The workspace is `crates/siralos-core`,
+`crates/siralos-adapters`, `crates/siralos-cli`; no placeholder or
+hypothetical domain crates exist. The target remains a modular monolith.
+
+## Collections and determinism
 
 Choose collections based on semantics — not `HashMap` by default.
 Consider stable ordering, deterministic iteration, lookup complexity,
-insertion behavior, memory usage, and expected size.
+insertion behavior, memory usage, and expected size. Siralos
+deterministic host decisions must not accidentally depend on randomized
+hash iteration order. Where ordering affects observable behavior, make
+ordering explicit. Do not globally replace every `HashMap` with an
+ordered collection; use deterministic normalization/sorting at the
+appropriate boundary when that better represents the semantics.
 
-Siralos deterministic host decisions must not accidentally depend on
-randomized hash iteration order. Where ordering affects observable
-behavior, make ordering explicit (for example a `Vec` of sorted entries
-or an explicit sort before iteration).
-
-## Strings, bytes, and paths
+## Paths and strings
 
 Do not assume filesystem paths are valid UTF-8. Keep filesystem
 identities in `Path`/`PathBuf`/`OsStr`/`OsString` for as long as
-practical and convert to UTF-8 only at boundaries that genuinely require
-UTF-8. Do not use lossy conversion for authoritative identity, revision,
-security, comparison, or mutation logic unless explicitly designed and
-tested. Byte-oriented processing is appropriate where text validity is
-not a semantic requirement. Do not introduce `bstr` automatically;
-choose dependencies based on actual need.
+practical. Do not use lossy string conversion for authority, revision
+identity, target equality, mutation targeting, or security decisions.
+Lossy/display conversion is acceptable only for user-facing diagnostics
+clearly separated from authoritative identity. Byte-oriented processing
+is appropriate where text validity is not a semantic requirement. Do not
+introduce `bstr` automatically; choose dependencies based on actual
+need.
 
-## Errors
-
-Core/domain code exposes meaningful typed errors where callers need to
-distinguish failure kinds. Error types preserve the failure category and
-relevant identifiers/limits, and wrap source errors where appropriate.
-Never parse error strings to determine control flow.
-
-Conceptually:
-
-```text
-core        typed errors
-adapters    typed/contextual errors as appropriate
-CLI/app     contextual presentation
-```
-
-Do not make `anyhow::Error` the universal internal error type, and do
-not create a unique error enum for every trivial helper.
-
-## Panics
-
-Panics must not represent expected user, workspace, provider, or runtime
-failures; expected failure uses `Result`, `Option`, or an explicit
-state. `unwrap()` and `expect()` are acceptable when the invariant is
-genuinely guaranteed by construction, or in tests. Production
-`expect()` messages explain the violated invariant:
-
-```text
-validated task plans always contain at least one phase
-```
-
-Avoid meaningless messages such as `should work`.
-
-## Traits
-
-Introduce a trait when there is a real behavioral seam: multiple real
-implementations, test substitution at a meaningful boundary, a
-host/domain capability boundary, a provider boundary, or an
-execution-environment boundary. Do not mirror every TypeScript interface
-as a Rust trait. Prefer concrete types until polymorphism is needed.
-Avoid deep trait inheritance and generic trait frameworks.
-
-## Generics
-
-Use generics when they provide meaningful static polymorphism or
-reusable algorithms. Do not parameterize types speculatively, and prefer
-a concrete understandable API over complex generic machinery with one
-caller. Avoid generic parameters that merely move complexity from the
-implementation to call sites.
-
-## Builders
-
-Use builders for configuration-heavy objects: many options, sensible
-defaults, unclear constructor parameter ordering, or optional
-configuration that would otherwise create many constructors. Do not use
-builders for simple two- or three-field types with obvious construction.
-Builder output must still validate invariants.
-
-## Iterators
-
-Prefer iterator-based transformations where they remain clear. Do not
-force iterator chains when an ordinary loop makes mutation, error
-handling, branching, early termination, or state clearer. Clarity beats
-stylistic purity.
-
-## Async
+## Async and concurrency
 
 Async must exist because the operation benefits from asynchronous
-execution. Do not migrate every TypeScript `async` function to a Rust
-`async fn`. Before porting an async operation, determine whether it is
-truly asynchronous I/O, concurrent, or cancellation-sensitive — or
-merely async because the TypeScript API forced it. Use synchronous Rust
-for inherently synchronous operations. Do not introduce an async runtime
-into `siralos-core` without an evidenced architectural requirement.
-
-## Concurrency
+execution (asynchronous I/O, concurrency, cancellation, latency hiding,
+or an async protocol boundary). Do not migrate every TypeScript `async`
+function to a Rust `async fn`. Use synchronous Rust for synchronous
+work. Do not introduce an async runtime into `siralos-core` without an
+evidenced architectural requirement.
 
 Concurrency must be explicit and bounded. Prefer ownership transfer and
 message passing where appropriate; use locks where shared mutable state
 is genuinely the correct representation. Do not introduce
-`Arc<Mutex<...>>` by default. For each lock, understand its owner, the
-protected invariant, its scope, contention expectations,
-poisoning/error semantics, and cancellation interactions.
-
-Parallel execution must not make authoritative Siralos decisions
-nondeterministic. Normalize concurrent observations before they
-influence deterministic state.
+`Arc`/`Rc`/`Mutex`/`RwLock` because ownership is difficult. For every
+shared synchronization primitive, be able to answer: who owns this
+state, why must it be shared, what invariant does the lock protect, and
+what operations occur while locked? Parallel execution must not make
+authoritative Siralos decisions nondeterministic; normalize concurrent
+observations before they influence deterministic state.
 
 ## Unsafe Rust
 
-Siralos starts from `#![forbid(unsafe_code)]` (workspace lint) and
-`unsafe` is forbidden in the foundation. Do not add unsafe Rust without
-an unavoidable, evidenced requirement; performance alone is not
-sufficient without measurement. If a future milestone genuinely requires
-unsafe Rust:
-
-1. isolate it behind a small safe abstraction,
-2. document the invariant,
-3. include an explicit `SAFETY:` explanation,
-4. test the boundary,
-5. fuzz it where appropriate,
-6. benchmark the need,
-7. document why a safe implementation was inadequate,
-
-and do not propagate unsafe assumptions across the architecture.
+Siralos starts from `#![forbid(unsafe_code)]` and `unsafe` is forbidden
+in the foundation. Do not add unsafe Rust because it may be faster,
+another project uses it, a benchmark might improve, or an FFI shortcut
+is convenient. Any future exception requires an unavoidable, evidenced
+requirement and the isolation, documentation (`SAFETY:` explanation),
+testing, fuzzing, and benchmarking protocol in this guide. Do not
+propagate unsafe assumptions across the architecture.
 
 ## Dependencies
 
-Prefer the standard library when it provides a clear adequate solution.
-Add a dependency when it provides meaningful correctness, security,
-interoperability, maintainability, or performance value. Before adding
-one, consider maintenance status, license, transitive dependencies,
-feature set, default features, platform behavior, MSRV/toolchain
-implications, and supply-chain implications. Disable default features
-when unused and when doing so materially reduces unnecessary
-capability/dependency weight. Do not build inferior local
-implementations of complex well-solved infrastructure merely to avoid
-all dependencies, and do not add dependencies for hypothetical future
-milestones.
+Dependency versions are selected deliberately, not "always newest".
+Before adding a dependency consider purpose, maintenance, license,
+security history, transitive graph, default features, platform support,
+MSRV/toolchain requirements, binary-size impact, compilation impact,
+and supply-chain implications. Prefer the standard library when it
+provides a clear adequate solution; disable default features when
+unused; do not build inferior local implementations of complex
+well-solved infrastructure; do not add dependencies for hypothetical
+future milestones. Use the committed lockfile for deterministic
+application builds. Do not silently upgrade unrelated dependencies as
+part of ordinary implementation work.
+
+Prefer workspace-level dependency declarations when multiple workspace
+crates intentionally share the dependency and centralization reduces
+drift; do not force single-crate dependencies into
+`[workspace.dependencies]` when centralization provides no benefit.
 
 ## Feature flags
 
 Feature flags represent real optional composition. Cargo features are
 compile-time composition; they are not the end-user Godot installation
-mechanism. Siralos optional domains require a runtime package lifecycle.
-Avoid feature combinations whose behavior is difficult to reason about,
-and test supported feature combinations.
+mechanism. Avoid feature combinations whose behavior is difficult to
+reason about, and test supported feature combinations.
 
-## Logging and diagnostics
+## Comments and documentation
 
-Logs are diagnostics, not state. Correctness never depends on log
-parsing. Prefer structured diagnostic fields where the logging stack
-supports them. Avoid noisy logs in hot paths; expensive diagnostic
-construction must not occur when the relevant level is disabled. Never
-log secrets or credentials.
+### Comments
 
-## Test style
+Comments explain _why_: invariants, tradeoffs, safety constraints,
+performance reasons, platform behavior, protocol subtleties, and
+unexpected workarounds. Do not narrate syntax. Do not remove useful
+existing rationale comments merely to reduce comment count.
 
-Tests are deterministic. Cover ordinary behavior, boundary cases,
-invalid inputs, state transitions, error categories, stale state,
-platform-sensitive behavior, and meaningful configuration combinations.
-Prefer compact reusable fixtures over duplicated setup; use table/matrix
-tests when multiple configuration knobs must preserve the same behavior.
-Do not generate enormous abstraction frameworks to avoid several clear
-test cases. Tests may use `unwrap()` freely where failure means the test
-itself should fail.
+### Documentation
 
-## Property testing and fuzzing
+Public APIs must be intentionally documented: semantics, errors, panics,
+safety, side effects, cancellation, security implications, and examples
+where relevant. Compiler-enforced documentation quality is on by
+default (`missing_docs = "deny"`, `broken_intra_doc_links = "deny"`).
+Do not require verbose documentation for intentionally private
+implementation details.
+
+## Testing
+
+### Test philosophy
+
+Tests must verify meaningful behavior. Merely asserting `is_ok()` or
+`is_some()` is insufficient when the contained value matters. Prefer
+test names describing scenario + expected behavior (e.g.
+`rejects_write_when_revision_is_stale`) over `test_revision`.
+
+### Test structure
+
+Literal `// Arrange` / `// Act` / `// Assert` comments are not required.
+Require clear conceptual separation between setup, action, and
+verification when the test is large enough to benefit; small obvious
+tests need no structural comments.
+
+### Deterministic tests
+
+Tests must not accidentally depend on map iteration order, filesystem
+enumeration order, wall-clock time, uncontrolled randomness, external
+network access, or process scheduling, unless that condition is the
+explicit behavior under test. Inject or normalize nondeterminism where
+required by Siralos architecture.
+
+### Test style
+
+Cover ordinary behavior, boundary cases, invalid inputs, state
+transitions, error categories, stale state, platform-sensitive behavior,
+and meaningful configuration combinations. Prefer compact reusable
+fixtures over duplicated setup; use table/matrix tests when multiple
+configuration knobs must preserve the same behavior. Do not generate
+enormous abstraction frameworks to avoid several clear test cases.
+
+### Property testing and fuzzing
 
 Consider property tests or fuzzing for parsers, protocol decoding,
 revision handling, canonical serialization, path normalization,
@@ -375,66 +520,71 @@ state-machine transitions, structured mutation, and security-sensitive
 input boundaries. Fuzzing complements deterministic regression tests; it
 does not replace them. Do not fuzz trivial getters/setters.
 
-## Documentation tests
+### Documentation tests
 
-Public examples should compile where practical. Use doctests for
-meaningful library API examples; examples represent real supported
-behavior. Do not maintain pseudo-code presented as compilable Rust.
+Public examples should compile where practical; examples represent real
+supported behavior. Do not maintain pseudo-code presented as compilable
+Rust.
 
-## Clippy
+## Formatting and linting
 
-Clippy is a required quality gate:
+### Rustfmt
+
+rustfmt is authoritative with the repository-owned configuration; do not
+manually format around it. CI runs `cargo fmt --all --check` and never
+auto-formats the repository.
+
+### Clippy
+
+Clippy is a required quality gate with warnings denied:
 
 ```text
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
-Do not blindly enable the entire `restriction` group. Selected
-additional lints may be enabled when they align with Siralos's
-engineering requirements. Lint suppressions must be narrow, local where
-practical, and justified — never crate-wide `allow` merely to silence
-inconvenient warnings.
+Do not enable the complete `restriction` group. Select individual lints
+only where they encode a useful Siralos engineering policy: ask whether
+the lint prevents a known class of defect in Siralos or merely imposes
+someone's preference. Style preference alone is insufficient.
 
-## Compiler warnings
+### Lint suppression
 
-Production Rust compiles without warnings under the supported toolchain;
-warnings are CI failures. Do not suppress `dead_code`, `unused`, or
-`unreachable` globally to make incomplete architecture compile — remove
-dead speculative code instead.
+Fix the warning by default. A narrow lint suppression is permitted only
+when the code is intentionally correct and changing it would make the
+implementation less clear, less correct, or materially worse.
+Suppressions must be local, narrowly scoped, and justified where
+non-obvious — never broad crate-level `allow` merely to make CI green.
+Review existing suppressions periodically.
 
-## Release profiles
+### Compiler warnings
 
-Do not blindly copy another project's Cargo release profile. Create a
-Siralos profile based on Siralos's actual runtime characteristics;
-candidates to evaluate with measurement include `opt-level`, LTO,
-`codegen-units`, panic strategy, debug information, strip, and
-incremental. Aggressive release optimization belongs behind measurement.
-Build-time cost, binary size, debuggability, and runtime performance are
-all legitimate tradeoffs.
+Compiler warnings are CI failures. Do not globally suppress
+`dead_code`, `unused`, or `unreachable_code` to preserve unfinished
+migration scaffolding; remove dead speculative code. If a future
+placeholder genuinely must exist, document and isolate it rather than
+weakening warnings globally.
 
-## API quality
+## Performance
 
-Public APIs follow established Rust conventions: conventional naming,
-common traits where semantically correct, `From`/`TryFrom` where
-appropriate, `AsRef` where borrowing conversion is appropriate,
-iterator support where natural, useful `Debug`, explicit fallibility,
-and predictable ownership. Do not implement traits merely because they
-are available; trait implementations must preserve expected semantics.
+Siralos maintains an evidence-first performance rule. Review allocation,
+cloning, repeated I/O, parsing, hashing, serialization, synchronization,
+process creation, and buffering — but optimize in this order:
 
-## Debuggability
+```text
+correctness
+→ invariants
+→ ownership
+→ architecture
+→ measurement
+→ optimization
+→ re-measurement
+```
 
-Important host types have useful diagnostic representations. Do not leak
-secrets, credentials, or full sensitive workspace contents through
-`Debug`. Where a derived `Debug` would expose sensitive information,
-implement or omit it deliberately.
-
-## Deterministic code
-
-Siralos authoritative decisions must be reproducible. Do not depend on
-unordered iteration, wall-clock time without an injected clock,
-uncontrolled randomness, process scheduling, filesystem enumeration
-order, or thread completion order for authoritative decisions. Normalize
-these inputs explicitly. This requirement overrides convenience.
+Do not import micro-optimizations from unrelated Rust projects without
+evidence they matter to Siralos. A faster incorrect host decision is a
+regression. Optimization must never weaken determinism, security,
+capability enforcement, revision correctness, evidence provenance,
+cancellation semantics, approval binding, validation, or acceptance.
 
 ## Security style
 
@@ -443,28 +593,113 @@ comments, naming, instructions, documentation, or assumed call ordering;
 security is enforced by host-owned state and code. Lower-trust layers
 must not acquire authority through generic helper APIs.
 Security-sensitive methods make the authority boundary visible.
+Derived or custom `Debug` implementations must not leak credentials,
+provider secrets, sensitive tokens, or private workspace content;
+review security-sensitive types before deriving `Debug`, and use
+redaction or omit diagnostic traits where appropriate.
 
-## Performance style
+## Derives
 
-Prefer architectural performance improvements over clever
-micro-optimizations: avoid unnecessary I/O, repeated parsing, repeated
-hashing, and unnecessary allocation; stream rather than buffer entire
-inputs; bound concurrency; avoid unnecessary process launches; reduce
-serialization boundaries; reduce unnecessary context reconstruction.
-Only then consider instruction-level or data-layout optimization.
+Do not require all types to derive `Debug`/`Clone`/`PartialEq`/`Eq`/
+`Serialize`/`Deserialize` automatically. Derive traits when their
+semantics make sense: `Debug` when useful (reviewing sensitive fields),
+`Clone` only when semantic copying is legitimate, `PartialEq`/`Eq` when
+equality has clear semantics, and `Serialize`/`Deserialize` only at
+actual serialization boundaries. Do not make internal types serializable
+merely for convenience.
 
-Optimization is evidence-driven: establish a representative benchmark or
-measurable fixture, record the baseline, apply the change, measure
-again, verify behavioral equivalence, and retain the optimization only
-if the tradeoff is justified. A faster incorrect host decision is a
-regression. Optimization must never weaken determinism, security,
-capability enforcement, revision correctness, evidence provenance,
-cancellation semantics, approval binding, validation, or acceptance.
+## Anti-absolutism
 
-## Review standard for new Rust
+Engineering rules that exist only because an external style guide says
+"always" or "never" must be evaluated against Siralos's actual
+semantics. Absolute rules are appropriate for genuine invariants such
+as: model cannot grant authority; core must remain domain-neutral;
+approval cannot authorize changed content; required sandbox unavailable
+→ fail closed. They are usually inappropriate for stylistic choices such
+as: never use tuples; always use turbofish; always use iterators; never
+use bool; never use wildcard matches; always use `AsRef`; always derive
+`Clone`/`Debug`/`Eq`/`Serialize`; all tests must contain literal
+Arrange/Act/Assert comments; `#[allow]` is always forbidden; always
+select the latest dependency version. Each may be useful in particular
+contexts; none is a universal Siralos invariant.
 
-Every meaningful Rust change is reviewed for: correctness, invariants,
-ownership, error behavior, visibility, allocation, cloning,
-determinism, security, platform behavior, test coverage, documentation,
-and performance implications. This review is especially important during
-TypeScript migration.
+## Executor-generated Rust
+
+Because Siralos is developed partly through LLM coding executors, before
+finalizing Rust code the executor must review whether it introduced:
+
+- TypeScript-shaped abstractions
+- unnecessary traits
+- unnecessary `Arc`
+- unnecessary locks
+- unnecessary clones
+- unnecessary owned strings
+- stringly typed state
+- groups of boolean state flags
+- gratuitous generics
+- unnecessary async
+- pass-through wrappers
+- speculative factories/managers
+- unnecessary public visibility
+
+This is a review checklist, not an instruction to remove legitimate
+constructs.
+
+## Review checklist
+
+For each meaningful Rust implementation task, consider: correctness;
+Siralos invariants; invalid states; ownership; borrowing; visibility;
+errors; panic behavior; allocation; cloning; async necessity;
+concurrency; determinism; filesystem/path handling; security; tests;
+documentation; performance implications. Do not require a verbose report
+for every trivial change; the executor should perform the review even
+when the final response only summarizes material findings.
+
+## Machine-enforceable vs human-review rules
+
+- **Machine enforceable**: rustfmt, Clippy, warnings denied, unsafe
+  forbidden, architecture dependency restrictions, documentation lints,
+  dead-code warnings.
+- **Review enforceable**: ownership, clone justification, state
+  modeling, trait necessity, API genericity, comment quality, tuple
+  readability, async necessity, module cohesion.
+
+Do not create brittle regex checks for semantic style rules simply
+because automation is possible.
+
+## Reusable executor prompt clause
+
+Future Rust implementation prompts should include:
+
+```text
+RUST ENGINEERING STANDARD
+
+All Rust code created or modified by this milestone must comply with the
+repository-authoritative Siralos Rust Style & Engineering Guide.
+
+Do not mechanically translate TypeScript or other source-language patterns.
+
+Use Rust's type system to represent meaningful invariants and state where doing
+so improves correctness and local reasoning.
+
+Before finalizing, review ownership, cloning, traits, visibility, error types,
+async usage, shared state, deterministic ordering and path handling.
+
+Any intentional deviation from the guide must be justified by repository
+semantics or measured evidence rather than stylistic preference.
+```
+
+Do not paste the entire guide into every milestone prompt.
+
+## Reusable review clause
+
+```text
+Perform the Siralos Rust self-review before acceptance.
+
+Refactor source-language-shaped Rust where the Rust type/ownership model
+provides a simpler and safer representation.
+
+Behavioral parity does not require structural parity.
+
+Do not make stylistic refactors unrelated to the milestone.
+```
