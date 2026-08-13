@@ -199,7 +199,7 @@ jobs:
       - name: Verify JavaScript toolchain identity
         shell: bash
         run: |
-          node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'; const npm = execFileSync(npmCommand, ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
+          node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npm = process.platform === 'win32' ? execFileSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd --version'], { encoding: 'utf8' }).trim() : execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
 
       - name: Cache cargo artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
