@@ -9,13 +9,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { canonicalizeJson, sha256Hex } from "./shared/canonical.mjs";
-import { CONTRACT_LIMITS } from "./shared/contract.mjs";
+import { CONTRACT_LIMITS, computeCorpusDigest } from "./shared/contract.mjs";
+import { SCENARIO_OUTCOME, canonicalRecordDocument } from "./shared/protocol.mjs";
+import { superviseRunner } from "./shared/runner-process.mjs";
 import { loadCorpus, runOracle, runStateDirProbe } from "./run-oracle.mjs";
 import {
   collectSourceIdentity,
   decodeGitPathList,
   parseCanonicalRecords,
   runCompare,
+  semanticDifferences,
 } from "./compare.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -94,8 +97,9 @@ describe("canonical serialization properties", () => {
 describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
-    expect(manifest.schemaVersion).toBe(1);
-    expect(manifest.corpusVersion).toBe(3);
+    expect(manifest.schemaVersion).toBe(2);
+    expect(manifest.corpusVersion).toBe(4);
+    expect(manifest.corpusSha256).toBe(computeCorpusDigest(manifest));
     expect(manifest.scenarios.length).toBeGreaterThanOrEqual(6);
     for (const entry of manifest.scenarios) {
       const scenario = JSON.parse(readFileSync(join(CORPUS, entry.file), "utf8"));
@@ -140,10 +144,42 @@ describe("corpus integrity", () => {
     expect(() => loadCorpus(corpus, "posix")).toThrow(/does not match its manifest digest/u);
   });
 
+  it("distinguishes missing, malformed, and mismatched fixture digests", () => {
+    const missingCorpus = mutableCorpus();
+    mutateJson(join(missingCorpus, "manifest.json"), (manifest) => {
+      delete manifest.corpusSha256;
+    });
+    expect(() => loadCorpus(missingCorpus, "posix")).toThrow(/corpusSha256 is required/u);
+
+    const malformedCorpus = mutableCorpus();
+    mutateJson(join(malformedCorpus, "manifest.json"), (manifest) => {
+      manifest.corpusSha256 = "not-a-digest";
+    });
+    expect(() => loadCorpus(malformedCorpus, "posix")).toThrow(/lowercase SHA-256/u);
+
+    const mismatchedCorpus = mutableCorpus();
+    mutateJson(join(mismatchedCorpus, "manifest.json"), (manifest) => {
+      manifest.corpusSha256 = "0".repeat(64);
+    });
+    expect(() => loadCorpus(mismatchedCorpus, "posix")).toThrow(/does not match corpusSha256/u);
+
+    const missingScenario = mutableCorpus();
+    mutateJson(join(missingScenario, "manifest.json"), (manifest) => {
+      delete manifest.scenarios[0].sha256;
+    });
+    expect(() => loadCorpus(missingScenario, "posix")).toThrow(/sha256 is required/u);
+
+    const malformedScenario = mutableCorpus();
+    mutateJson(join(malformedScenario, "manifest.json"), (manifest) => {
+      manifest.scenarios[0].sha256 = "invalid";
+    });
+    expect(() => loadCorpus(malformedScenario, "posix")).toThrow(/lowercase SHA-256/u);
+  });
+
   it("rejects unsupported corpus and schema versions and unknown manifest fields", () => {
     for (const [field, value, expected] of [
-      ["schemaVersion", 2, /unsupported corpus schemaVersion/u],
-      ["corpusVersion", 4, /unsupported corpusVersion/u],
+      ["schemaVersion", 3, /unsupported corpus schemaVersion/u],
+      ["corpusVersion", 5, /unsupported corpusVersion/u],
       ["unexpected", true, /unknown or missing fields/u],
     ]) {
       const corpus = mutableCorpus();
@@ -225,7 +261,7 @@ describe("oracle determinism", () => {
   it("emits only canonical sorted-key JSON", () => {
     const text = runOracle(CORPUS, ROOT);
     const records = parseCanonicalRecords(text, "oracle");
-    expect(text).toBe(`${canonicalizeJson(records)}\n`);
+    expect(text).toBe(canonicalRecordDocument(records));
   });
 
   it("treats probe timeout, nonzero exit, and empty output as harness errors", () => {
@@ -248,6 +284,84 @@ describe("oracle determinism", () => {
   });
 });
 
+describe("runner lifecycle classification", () => {
+  const crash = (implementation) =>
+    superviseRunner({
+      implementation,
+      scenarioId: "fixture.crash",
+      command: process.execPath,
+      args: ["-e", "process.exit(7)"],
+      cwd: ROOT,
+    });
+  const timeout = (implementation) =>
+    superviseRunner({
+      implementation,
+      scenarioId: "fixture.timeout",
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 10_000)"],
+      cwd: ROOT,
+      timeoutMs: 100,
+    });
+
+  it("classifies a reference process crash with fixture and implementation identity", async () => {
+    await expect(crash("reference")).resolves.toMatchObject({
+      outcome: "PROCESS_CRASHED",
+      implementation: "reference",
+      scenarioId: "fixture.crash",
+      exitCode: 7,
+    });
+  });
+
+  it("classifies a candidate process crash with fixture and implementation identity", async () => {
+    await expect(crash("candidate")).resolves.toMatchObject({
+      outcome: "PROCESS_CRASHED",
+      implementation: "candidate",
+      scenarioId: "fixture.crash",
+      exitCode: 7,
+    });
+  });
+
+  it("classifies and terminates a reference timeout", async () => {
+    await expect(timeout("reference")).resolves.toMatchObject({
+      outcome: "TIMED_OUT",
+      implementation: "reference",
+      scenarioId: "fixture.timeout",
+    });
+  });
+
+  it("classifies and terminates a candidate timeout", async () => {
+    await expect(timeout("candidate")).resolves.toMatchObject({
+      outcome: "TIMED_OUT",
+      implementation: "candidate",
+      scenarioId: "fixture.timeout",
+    });
+  });
+
+  it("keeps typed harness failure distinct from a process crash", async () => {
+    const diagnostic = JSON.stringify({
+      category: "CORPUS_INTEGRITY_FAILURE",
+      code: "CONTENT_MISMATCH",
+      message: "fixture digest mismatch",
+    });
+    await expect(
+      superviseRunner({
+        implementation: "reference",
+        scenarioId: "fixture.corrupt",
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stderr.write(${JSON.stringify(`SIRALOS_HARNESS_ERROR ${diagnostic}\n`)}); process.exit(2)`,
+        ],
+        cwd: ROOT,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "HARNESS_ERROR",
+      category: "CORPUS_INTEGRITY_FAILURE",
+      code: "CONTENT_MISMATCH",
+    });
+  });
+});
+
 describe("comparator semantics", () => {
   // `c` is windows-only, so on posix both sides skip it; `a` is
   // required and `b` informational on every platform.
@@ -259,16 +373,27 @@ describe("comparator semantics", () => {
   const record = (id, hash) => ({
     scenarioId: id,
     subject: "state-dir",
-    kind: "ok",
-    stateDirSha256: hash,
+    outcome: SCENARIO_OUTCOME.COMPLETED,
+    result: { stateDirSha256: hash },
   });
+  const unsupported = (id) => ({
+    scenarioId: id,
+    subject: "state-dir",
+    outcome: SCENARIO_OUTCOME.UNSUPPORTED,
+    error: { category: "PLATFORM_NOT_APPLICABLE" },
+  });
+  const records = (a = "a", b = "b") => [
+    record("a", a.repeat(64)),
+    record("b", b.repeat(64)),
+    unsupported("c"),
+  ];
   const POSIX = "posix";
 
   it("holds parity when records match exactly", () => {
-    const records = [record("a", "a".repeat(64)), record("b", "b".repeat(64))];
+    const matching = records();
     const { audit, deviations } = runCompare({
-      oracleRecords: records,
-      candidateRecords: structuredClone(records),
+      oracleRecords: matching,
+      candidateRecords: structuredClone(matching),
       scenarios,
       platform: POSIX,
     });
@@ -279,21 +404,126 @@ describe("comparator semantics", () => {
 
   it("flags a required record mismatch as a deviation", () => {
     const { audit, deviations } = runCompare({
-      oracleRecords: [record("a", "a".repeat(64)), record("b", "b".repeat(64))],
-      candidateRecords: [record("a", "d".repeat(64)), record("b", "b".repeat(64))],
+      oracleRecords: records(),
+      candidateRecords: records("d", "b"),
       scenarios,
       platform: POSIX,
     });
     expect(audit.parityHeld).toBe(false);
     expect(deviations).toHaveLength(1);
     expect(deviations[0]).toMatchObject({ scenarioId: "a", reason: "record-mismatch" });
+    expect(deviations[0].differences).toEqual([
+      {
+        path: "$.result.stateDirSha256",
+        kind: "VALUE_CHANGED",
+        oracle: "a".repeat(64),
+        candidate: "d".repeat(64),
+        policy: "scalar-exact",
+      },
+    ]);
     expect(audit.deviationCount).toBe(1);
+  });
+
+  it("reports scalar, missing, extra, ordered-sequence, and error-category differences", () => {
+    expect(semanticDifferences({ value: 1 }, { value: 2 })[0]).toMatchObject({
+      path: "$.value",
+      kind: "VALUE_CHANGED",
+    });
+    expect(semanticDifferences({ value: 1 }, {})[0]).toMatchObject({
+      path: "$.value",
+      kind: "MISSING_IN_CANDIDATE",
+    });
+    expect(semanticDifferences({}, { value: 1 })[0]).toMatchObject({
+      path: "$.value",
+      kind: "EXTRA_IN_CANDIDATE",
+    });
+    expect(semanticDifferences({ events: ["a", "b"] }, { events: ["b", "a"] })).toEqual([
+      {
+        path: "$.events",
+        kind: "ORDER_CHANGED",
+        oracle: ["a", "b"],
+        candidate: ["b", "a"],
+        policy: "sequence-order-authoritative",
+      },
+    ]);
+    expect(
+      semanticDifferences(
+        { error: { category: "PARSE_ERROR" } },
+        { error: { category: "IO_ERROR" } },
+      )[0],
+    ).toMatchObject({ path: "$.error.category", kind: "ERROR_CATEGORY_CHANGED" });
+    expect(semanticDifferences({ map: { b: 2, a: 1 } }, { map: { a: 1, b: 2 } })).toEqual([]);
+  });
+
+  it("keeps explicit UNIMPLEMENTED outcomes visible and gate-failing", () => {
+    const unimplemented = (id) => ({
+      scenarioId: id,
+      subject: "state-dir",
+      outcome: SCENARIO_OUTCOME.UNIMPLEMENTED,
+      error: { category: "SUBSYSTEM_NOT_PORTED" },
+    });
+    const candidate = records();
+    candidate[0] = unimplemented("a");
+    const { audit } = runCompare({
+      oracleRecords: records(),
+      candidateRecords: candidate,
+      scenarios,
+      platform: POSIX,
+    });
+    expect(audit.parityHeld).toBe(false);
+    expect(audit.deviated[0]).toMatchObject({ scenarioId: "a", reason: "unimplemented" });
+  });
+
+  it("keeps matching product failures distinct from runner failures", () => {
+    const productFailure = {
+      scenarioId: "a",
+      subject: "state-dir",
+      outcome: SCENARIO_OUTCOME.PRODUCT_FAILURE,
+      error: { category: "NO_HOME_DIRECTORY" },
+    };
+    const oracle = records();
+    const candidate = records();
+    oracle[0] = productFailure;
+    candidate[0] = structuredClone(productFailure);
+
+    const { audit } = runCompare({
+      oracleRecords: oracle,
+      candidateRecords: candidate,
+      scenarios,
+      platform: POSIX,
+    });
+
+    expect(audit.parityHeld).toBe(true);
+    expect(audit.parity).toContain("a");
+  });
+
+  it("keeps applicable UNSUPPORTED outcomes visible and gate-failing", () => {
+    const candidate = records();
+    candidate[0] = {
+      scenarioId: "a",
+      subject: "state-dir",
+      outcome: SCENARIO_OUTCOME.UNSUPPORTED,
+      error: { category: "SUBSYSTEM_UNSUPPORTED" },
+    };
+
+    const { audit } = runCompare({
+      oracleRecords: records(),
+      candidateRecords: candidate,
+      scenarios,
+      platform: POSIX,
+    });
+
+    expect(audit.parityHeld).toBe(false);
+    expect(audit.deviated[0]).toMatchObject({
+      scenarioId: "a",
+      reason: "unsupported-applicable-scenario",
+    });
   });
 
   it("records but never fails informational deviations", () => {
     const { audit, deviations } = runCompare({
-      oracleRecords: [record("a", "a".repeat(64)), record("b", "a".repeat(64))],
-      candidateRecords: [record("a", "a".repeat(64)), record("b", "d".repeat(64))],
+      oracleRecords: records("a", "a"),
+      candidateRecords: records("a", "d"),
       scenarios,
       platform: POSIX,
     });
@@ -303,16 +533,16 @@ describe("comparator semantics", () => {
   });
 
   it("rejects missing, extra, duplicate, and out-of-order records", () => {
-    const records = [record("a", "a".repeat(64)), record("b", "b".repeat(64))];
+    const matching = records();
     for (const candidateRecords of [
-      [record("b", "b".repeat(64))],
-      [...records, record("unexpected", "c".repeat(64))],
-      [records[0], records[0]],
-      [records[1], records[0]],
+      matching.slice(1),
+      [...matching, record("unexpected", "c".repeat(64))],
+      [matching[0], matching[0], matching[2]],
+      [matching[1], matching[0], matching[2]],
     ]) {
       expect(() =>
         runCompare({
-          oracleRecords: records,
+          oracleRecords: matching,
           candidateRecords,
           scenarios,
           platform: POSIX,
@@ -322,10 +552,10 @@ describe("comparator semantics", () => {
   });
 
   it("derives skipped scenarios that neither side ran", () => {
-    const records = [record("a", "a".repeat(64)), record("b", "b".repeat(64))];
+    const matching = records();
     const { audit } = runCompare({
-      oracleRecords: records,
-      candidateRecords: structuredClone(records),
+      oracleRecords: matching,
+      candidateRecords: structuredClone(matching),
       scenarios,
       platform: POSIX,
     });
@@ -336,8 +566,8 @@ describe("comparator semantics", () => {
   it("rejects malformed records", () => {
     expect(() =>
       runCompare({
-        oracleRecords: [{ scenarioId: 42 }, record("b", "b".repeat(64))],
-        candidateRecords: [record("a", "a".repeat(64)), record("b", "b".repeat(64))],
+        oracleRecords: [{ scenarioId: 42 }, record("b", "b".repeat(64)), unsupported("c")],
+        candidateRecords: records(),
         scenarios,
         platform: POSIX,
       }),
@@ -345,13 +575,13 @@ describe("comparator semantics", () => {
   });
 
   it("rejects subject mismatches and subject-specific malformed fields", () => {
-    const valid = [record("a", "a".repeat(64)), record("b", "b".repeat(64))];
+    const valid = records();
     const wrongSubject = structuredClone(valid);
     wrongSubject[0] = {
       scenarioId: "a",
       subject: "version-identity",
-      kind: "ok",
-      version: "0.0.0",
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: { version: "0.0.0" },
     };
     expect(() =>
       runCompare({
@@ -363,7 +593,7 @@ describe("comparator semantics", () => {
     ).toThrow(/subject mismatch/u);
 
     const missingHash = structuredClone(valid);
-    delete missingHash[0].stateDirSha256;
+    delete missingHash[0].result.stateDirSha256;
     expect(() =>
       runCompare({
         oracleRecords: missingHash,
@@ -386,20 +616,25 @@ describe("comparator semantics", () => {
   });
 
   it("emits per-subject and per-scenario coverage", () => {
-    const records = [record("a", "a".repeat(64)), record("b", "b".repeat(64))];
+    const matching = records();
     const { audit } = runCompare({
-      oracleRecords: records,
-      candidateRecords: structuredClone(records),
+      oracleRecords: matching,
+      candidateRecords: structuredClone(matching),
       scenarios,
       platform: POSIX,
-      corpusVersion: 3,
+      corpusVersion: 4,
       corpusDigest: "c".repeat(64),
       sourceIdentity: { commit: "d".repeat(40) },
     });
-    expect(audit.schemaVersion).toBe(2);
+    expect(audit.schemaVersion).toBe(3);
+    expect(audit.referenceRecords).toBe(3);
+    expect(audit.referenceRecordsSha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(audit.candidateRecordsSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(audit.perSubject["state-dir"]).toMatchObject({
       total: 3,
       applicable: 2,
+      requiredApplicable: 1,
+      matchedRequired: 1,
       parity: 1,
       informationalParity: 1,
       skippedPlatform: 1,
@@ -412,18 +647,36 @@ describe("comparator semantics", () => {
   });
 
   it("rejects record files that are not exact canonical bytes", () => {
-    const records = [record("a", "a".repeat(64))];
-    const canonical = `${canonicalizeJson(records)}\n`;
-    expect(parseCanonicalRecords(canonical, "oracle")).toEqual(records);
+    const matching = [record("a", "a".repeat(64))];
+    const canonical = canonicalRecordDocument(matching);
+    expect(parseCanonicalRecords(canonical, "oracle")).toEqual(matching);
     expect(() => parseCanonicalRecords(canonical.trim(), "oracle")).toThrow(/not exact canonical/u);
-    expect(() => parseCanonicalRecords(`${JSON.stringify(records, null, 2)}\n`, "oracle")).toThrow(
-      /not exact canonical/u,
+    expect(() =>
+      parseCanonicalRecords(
+        `${JSON.stringify({ schemaVersion: 1, records: matching }, null, 2)}\n`,
+        "oracle",
+      ),
+    ).toThrow(/not exact canonical/u);
+  });
+
+  it("rejects a malformed or unsupported runner protocol", () => {
+    expect(() => parseCanonicalRecords('{"records":[],"schemaVersion":2}\n', "candidate")).toThrow(
+      /unsupported schemaVersion/u,
+    );
+    expect(() => parseCanonicalRecords('{"schemaVersion":1}\n', "candidate")).toThrow(
+      /unknown or missing fields/u,
     );
   });
 
   it("binds audit provenance to commit and directly hashed source bytes", () => {
     const identity = collectSourceIdentity(ROOT);
-    expect(Object.keys(identity).sort()).toEqual(["commit", "sourceFiles", "sourceTreeSha256"]);
+    expect(Object.keys(identity).sort()).toEqual([
+      "candidate",
+      "commit",
+      "reference",
+      "sourceFiles",
+      "sourceTreeSha256",
+    ]);
     expect(identity.commit).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
     expect(identity.sourceTreeSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(identity.sourceFiles).toBeGreaterThan(0);

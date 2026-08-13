@@ -15,13 +15,19 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { canonicalizeJson, sha256HexBytes } from "./shared/canonical.mjs";
+import { sha256HexBytes } from "./shared/canonical.mjs";
 import {
   CONTRACT_LIMITS,
+  CorpusIntegrityError,
   loadValidatedCorpus,
   readBoundedUtf8File,
   validateProbeEnvironment,
 } from "./shared/contract.mjs";
+import {
+  SCENARIO_OUTCOME,
+  canonicalRecordDocument,
+  harnessDiagnostic,
+} from "./shared/protocol.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROBE = join(HERE, "probes", "state-dir-oracle.mjs");
@@ -32,8 +38,9 @@ function optionValue(args, name) {
   return index === -1 || index + 1 >= args.length ? undefined : args[index + 1];
 }
 
-function harnessError(message) {
+function harnessError(category, code, message) {
   console.error(`oracle runner: ${message}`);
+  console.error(harnessDiagnostic(category, code, message));
   process.exit(2);
 }
 
@@ -80,9 +87,15 @@ export function runStateDirProbe(env, { probe = PROBE, timeoutMs = PROBE_TIMEOUT
     throw new Error("state-dir probe output exceeded the harness bound");
   }
   if (output.toString("utf8") === "ERR") {
-    return { kind: "error", stateDirSha256: null };
+    return {
+      outcome: SCENARIO_OUTCOME.PRODUCT_FAILURE,
+      error: { category: "NO_HOME_DIRECTORY" },
+    };
   }
-  return { kind: "ok", stateDirSha256: sha256HexBytes(output) };
+  return {
+    outcome: SCENARIO_OUTCOME.COMPLETED,
+    result: { stateDirSha256: sha256HexBytes(output) },
+  };
 }
 
 /** The oracle record for a single scenario. */
@@ -104,52 +117,94 @@ export function runScenario(scenario, root) {
         ),
       );
       if (typeof packageJson.version !== "string") {
-        return { scenarioId: scenario.id, subject: scenario.subject, kind: "error", version: null };
+        return {
+          scenarioId: scenario.id,
+          subject: scenario.subject,
+          outcome: SCENARIO_OUTCOME.PRODUCT_FAILURE,
+          error: { category: "VERSION_UNAVAILABLE" },
+        };
       }
       return {
         scenarioId: scenario.id,
         subject: scenario.subject,
-        kind: "ok",
-        version: packageJson.version,
+        outcome: SCENARIO_OUTCOME.COMPLETED,
+        result: { version: packageJson.version },
       };
     } catch {
-      return { scenarioId: scenario.id, subject: scenario.subject, kind: "error", version: null };
+      return {
+        scenarioId: scenario.id,
+        subject: scenario.subject,
+        outcome: SCENARIO_OUTCOME.PRODUCT_FAILURE,
+        error: { category: "VERSION_UNAVAILABLE" },
+      };
     }
   }
   throw new Error(`unknown subject ${scenario.subject}`);
 }
 
 /** Emit canonical records for all applicable scenarios. */
-export function runOracle(corpusDir, root, platform = platformName()) {
+export function runOracle(corpusDir, root, platform = platformName(), scenarioId = undefined) {
   const { scenarios } = loadCorpus(corpusDir, platform);
   const records = [];
   for (const scenario of scenarios) {
-    if (!scenario.applicable) {
+    if (scenarioId !== undefined && scenario.id !== scenarioId) {
       continue;
     }
-    records.push(runScenario(scenario, root));
+    if (!scenario.applicable) {
+      records.push({
+        scenarioId: scenario.id,
+        subject: scenario.subject,
+        outcome: SCENARIO_OUTCOME.UNSUPPORTED,
+        error: { category: "PLATFORM_NOT_APPLICABLE" },
+      });
+    } else {
+      records.push(runScenario(scenario, root));
+    }
   }
-  return `${canonicalizeJson(records)}\n`;
+  if (scenarioId !== undefined && records.length === 0) {
+    throw new CorpusIntegrityError(
+      "UNKNOWN_SCENARIO",
+      "requested scenario is not present in the digest-bound corpus",
+    );
+  }
+  return canonicalRecordDocument(records);
 }
 
 function main() {
   const corpus = optionValue(process.argv, "--corpus");
   const root = optionValue(process.argv, "--root");
   const out = optionValue(process.argv, "--out");
+  const scenario = optionValue(process.argv, "--scenario");
   if (corpus === undefined || root === undefined || out === undefined) {
-    harnessError("usage: run-oracle.mjs --corpus <dir> --root <repo> --out <file>");
+    harnessError(
+      "HARNESS_INVOCATION_FAILURE",
+      "INVALID_ARGUMENTS",
+      "usage: run-oracle.mjs --corpus <dir> --root <repo> --out <file> [--scenario <id>]",
+    );
   }
   let output;
   try {
-    output = runOracle(corpus, root);
+    output = runOracle(corpus, root, platformName(), scenario);
   } catch (error) {
-    harnessError(String(error instanceof Error ? error.message : error));
+    const message = String(error instanceof Error ? error.message : error);
+    harnessError(
+      error instanceof CorpusIntegrityError
+        ? "CORPUS_INTEGRITY_FAILURE"
+        : "HARNESS_INTERNAL_FAILURE",
+      error instanceof CorpusIntegrityError ? error.code : "RUNNER_EXECUTION_FAILURE",
+      message,
+    );
   }
   try {
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, output, "utf8");
   } catch (error) {
-    harnessError(`cannot write ${out}: ${String(error instanceof Error ? error.message : error)}`);
+    console.error(`oracle runner: cannot write ${out}`);
+    harnessError(
+      "HARNESS_INTERNAL_FAILURE",
+      "OUTPUT_WRITE_FAILURE",
+      `oracle runner could not write its protocol document: ${String(error instanceof Error ? error.message : error)}`,
+    );
   }
   process.stdout.write(`oracle: wrote ${out}\n`);
 }

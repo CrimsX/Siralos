@@ -23,8 +23,9 @@ pub const PLATFORM_POSIX: &str = "posix";
 
 const SUBJECT_STATE_DIR: &str = "state-dir";
 const SUBJECT_VERSION_IDENTITY: &str = "version-identity";
-const CORPUS_SCHEMA_VERSION: u64 = 1;
-const CORPUS_VERSION: u64 = 3;
+const CORPUS_SCHEMA_VERSION: u64 = 2;
+const CORPUS_VERSION: u64 = 4;
+const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_SCENARIO_BYTES: usize = 16 * 1024;
 const MAX_SCENARIOS: usize = 256;
@@ -59,6 +60,7 @@ pub enum HarnessErrorKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessError {
     kind: HarnessErrorKind,
+    code: String,
     detail: String,
 }
 
@@ -68,8 +70,37 @@ impl HarnessError {
         self.kind
     }
 
+    /// Stable code used by the runner-process protocol.
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Stable category separating fixture integrity from runner failures.
+    pub fn category(&self) -> &'static str {
+        match self.kind {
+            HarnessErrorKind::Corpus => "CORPUS_INTEGRITY_FAILURE",
+            _ => "HARNESS_INTERNAL_FAILURE",
+        }
+    }
+
     fn new(kind: HarnessErrorKind, detail: impl Into<String>) -> Self {
-        Self { kind, detail: detail.into() }
+        let code = match kind {
+            HarnessErrorKind::Corpus => "MALFORMED_CORPUS",
+            HarnessErrorKind::Input => "REPOSITORY_INPUT_FAILURE",
+            HarnessErrorKind::ProbeSpawn => "PROBE_SPAWN_FAILURE",
+            HarnessErrorKind::ProbeTimeout => "PROBE_TIMEOUT",
+            HarnessErrorKind::ProbeExit => "PROBE_PROCESS_CRASHED",
+            HarnessErrorKind::ProbeProtocol => "PROBE_PROTOCOL_ERROR",
+        };
+        Self { kind, code: code.to_owned(), detail: detail.into() }
+    }
+
+    fn with_code(
+        kind: HarnessErrorKind,
+        code: &str,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self { kind, code: code.to_owned(), detail: detail.into() }
     }
 
     fn corpus(detail: impl Into<String>) -> Self {
@@ -89,21 +120,23 @@ impl fmt::Display for HarnessError {
 
 impl std::error::Error for HarnessError {}
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     #[serde(rename = "schemaVersion")]
     schema_version: u64,
     #[serde(rename = "corpusVersion")]
     corpus_version: u64,
+    #[serde(rename = "corpusSha256")]
+    corpus_sha256: Option<String>,
     scenarios: Vec<ManifestEntry>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ManifestEntry {
     file: String,
-    sha256: String,
+    sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -395,6 +428,22 @@ fn canonical_scenario_digest(
     Ok(sha256_hex(&canonical))
 }
 
+fn canonical_corpus_digest(
+    manifest: &Manifest,
+) -> Result<String, HarnessError> {
+    let value = json!({
+        "schemaVersion": manifest.schema_version,
+        "corpusVersion": manifest.corpus_version,
+        "scenarios": &manifest.scenarios,
+    });
+    let canonical = serde_json::to_vec(&value).map_err(|error| {
+        HarnessError::corpus(format!(
+            "cannot serialize corpus identity: {error}"
+        ))
+    })?;
+    Ok(sha256_hex(&canonical))
+}
+
 fn load_corpus(
     corpus_dir: &Path,
     platform: &str,
@@ -415,16 +464,21 @@ fn load_corpus(
             HarnessError::corpus(format!("malformed corpus manifest: {error}"))
         })?;
     if manifest.schema_version != CORPUS_SCHEMA_VERSION {
-        return Err(HarnessError::corpus(format!(
-            "unsupported corpus schemaVersion {}",
-            manifest.schema_version
-        )));
+        return Err(HarnessError::with_code(
+            HarnessErrorKind::Corpus,
+            "UNSUPPORTED_VERSION",
+            format!(
+                "unsupported corpus schemaVersion {}",
+                manifest.schema_version
+            ),
+        ));
     }
     if manifest.corpus_version != CORPUS_VERSION {
-        return Err(HarnessError::corpus(format!(
-            "unsupported corpusVersion {}",
-            manifest.corpus_version
-        )));
+        return Err(HarnessError::with_code(
+            HarnessErrorKind::Corpus,
+            "UNSUPPORTED_VERSION",
+            format!("unsupported corpusVersion {}", manifest.corpus_version),
+        ));
     }
     if manifest.scenarios.is_empty()
         || manifest.scenarios.len() > MAX_SCENARIOS
@@ -434,13 +488,41 @@ fn load_corpus(
         )));
     }
 
+    let corpus_sha256 =
+        manifest.corpus_sha256.as_deref().ok_or_else(|| {
+            HarnessError::with_code(
+                HarnessErrorKind::Corpus,
+                "MISSING_DIGEST",
+                "corpus manifest.corpusSha256 is required",
+            )
+        })?;
+    if !valid_sha256(corpus_sha256) {
+        return Err(HarnessError::with_code(
+            HarnessErrorKind::Corpus,
+            "MALFORMED_DIGEST",
+            "corpus manifest.corpusSha256 must be a lowercase SHA-256 digest",
+        ));
+    }
+
     let mut files = BTreeSet::new();
-    let mut ids = BTreeSet::new();
-    let mut loaded = Vec::with_capacity(manifest.scenarios.len());
-    for entry in manifest.scenarios {
-        if !valid_file_name(&entry.file) || !valid_sha256(&entry.sha256) {
+    for entry in &manifest.scenarios {
+        if !valid_file_name(&entry.file) {
             return Err(HarnessError::corpus(
-                "manifest entry has an invalid file name or digest",
+                "manifest entry has an invalid file name",
+            ));
+        }
+        let entry_sha256 = entry.sha256.as_deref().ok_or_else(|| {
+            HarnessError::with_code(
+                HarnessErrorKind::Corpus,
+                "MISSING_DIGEST",
+                format!("manifest entry {} has no digest", entry.file),
+            )
+        })?;
+        if !valid_sha256(entry_sha256) {
+            return Err(HarnessError::with_code(
+                HarnessErrorKind::Corpus,
+                "MALFORMED_DIGEST",
+                format!("manifest entry {} has an invalid digest", entry.file),
             ));
         }
         if !files.insert(entry.file.clone()) {
@@ -449,6 +531,22 @@ fn load_corpus(
                 entry.file
             )));
         }
+    }
+    if canonical_corpus_digest(&manifest)? != corpus_sha256 {
+        return Err(HarnessError::with_code(
+            HarnessErrorKind::Corpus,
+            "CONTENT_MISMATCH",
+            "corpus manifest does not match corpusSha256",
+        ));
+    }
+
+    let mut ids = BTreeSet::new();
+    let mut loaded = Vec::with_capacity(manifest.scenarios.len());
+    for entry in manifest.scenarios {
+        let entry_sha256 = entry
+            .sha256
+            .as_deref()
+            .expect("manifest digest was validated before scenario loading");
         let text = read_bounded_utf8(
             &corpus_dir.join(&entry.file),
             MAX_SCENARIO_BYTES,
@@ -463,11 +561,15 @@ fn load_corpus(
                 ))
             })?;
         validate_scenario(&scenario, &entry.file)?;
-        if canonical_scenario_digest(&scenario)? != entry.sha256 {
-            return Err(HarnessError::corpus(format!(
-                "scenario {} does not match its manifest digest",
-                entry.file
-            )));
+        if canonical_scenario_digest(&scenario)? != entry_sha256 {
+            return Err(HarnessError::with_code(
+                HarnessErrorKind::Corpus,
+                "CONTENT_MISMATCH",
+                format!(
+                    "scenario {} does not match its manifest digest",
+                    entry.file
+                ),
+            ));
         }
         if !ids.insert(scenario.id.clone()) {
             return Err(HarnessError::corpus(format!(
@@ -613,15 +715,15 @@ fn state_dir_record(scenario_id: &str, stdout: &[u8]) -> Value {
         json!({
             "scenarioId": scenario_id,
             "subject": SUBJECT_STATE_DIR,
-            "kind": "error",
-            "stateDirSha256": null,
+            "outcome": "PRODUCT_FAILURE",
+            "error": { "category": "NO_HOME_DIRECTORY" },
         })
     } else {
         json!({
             "scenarioId": scenario_id,
             "subject": SUBJECT_STATE_DIR,
-            "kind": "ok",
-            "stateDirSha256": sha256_hex(stdout),
+            "outcome": "COMPLETED",
+            "result": { "stateDirSha256": sha256_hex(stdout) },
         })
     }
 }
@@ -657,16 +759,25 @@ fn version_identity_record(
         Ok(version) => json!({
             "scenarioId": scenario_id,
             "subject": SUBJECT_VERSION_IDENTITY,
-            "kind": "ok",
-            "version": version,
+            "outcome": "COMPLETED",
+            "result": { "version": version },
         }),
         Err(_) => json!({
             "scenarioId": scenario_id,
             "subject": SUBJECT_VERSION_IDENTITY,
-            "kind": "error",
-            "version": null,
+            "outcome": "PRODUCT_FAILURE",
+            "error": { "category": "VERSION_UNAVAILABLE" },
         }),
     }
+}
+
+fn unsupported_record(scenario: &Scenario) -> Value {
+    json!({
+        "scenarioId": scenario.id,
+        "subject": scenario.subject,
+        "outcome": "UNSUPPORTED",
+        "error": { "category": "PLATFORM_NOT_APPLICABLE" },
+    })
 }
 
 fn run_scenario(
@@ -695,19 +806,38 @@ fn run_scenario(
 pub fn run_corpus(
     corpus_dir: &Path,
     root: &Path,
+    scenario_id: Option<&str>,
 ) -> Result<String, HarnessError> {
     let scenarios = load_corpus(corpus_dir, platform_name())?;
     let mut records = Vec::new();
+    let mut selected = scenario_id.is_none();
     for loaded in scenarios {
-        if loaded.applicable {
-            records.push(run_scenario(&loaded.scenario, root)?);
+        if scenario_id.is_some_and(|id| id != loaded.scenario.id) {
+            continue;
         }
+        selected = true;
+        records.push(if loaded.applicable {
+            run_scenario(&loaded.scenario, root)?
+        } else {
+            unsupported_record(&loaded.scenario)
+        });
+    }
+    if !selected {
+        return Err(HarnessError::with_code(
+            HarnessErrorKind::Corpus,
+            "UNKNOWN_SCENARIO",
+            "requested scenario is not present in the digest-bound corpus",
+        ));
     }
     Ok(canonical_records_text(records))
 }
 
 fn canonical_records_text(records: Vec<Value>) -> String {
-    let text = serde_json::to_string(&Value::Array(records))
+    let document = json!({
+        "schemaVersion": RUNNER_PROTOCOL_SCHEMA_VERSION,
+        "records": records,
+    });
+    let text = serde_json::to_string(&document)
         .expect("outcome records are constructed from serializable values");
     format!("{text}\n")
 }
@@ -786,18 +916,21 @@ mod tests {
             "state-dir.set.windows",
             b"C:\\fixture\\home\\.siralos",
         );
-        assert_eq!(record["kind"], "ok");
-        assert_eq!(record["stateDirSha256"].as_str().unwrap().len(), 64);
+        assert_eq!(record["outcome"], "COMPLETED");
+        assert_eq!(
+            record["result"]["stateDirSha256"].as_str().unwrap().len(),
+            64
+        );
     }
 
     #[test]
     fn state_dir_record_marks_only_the_exact_error_marker() {
         let record = state_dir_record("state-dir.unset.windows", b"ERR");
-        assert_eq!(record["kind"], "error");
-        assert!(record["stateDirSha256"].is_null());
+        assert_eq!(record["outcome"], "PRODUCT_FAILURE");
+        assert_eq!(record["error"]["category"], "NO_HOME_DIRECTORY");
 
         let non_utf8 = state_dir_record("state-dir.set.posix", &[0xff]);
-        assert_eq!(non_utf8["kind"], "ok");
+        assert_eq!(non_utf8["outcome"], "COMPLETED");
     }
 
     #[test]
@@ -808,7 +941,7 @@ mod tests {
         ];
         assert_eq!(
             canonical_records_text(records),
-            "[{\"kind\":\"ok\",\"scenarioId\":\"b\"},{\"kind\":\"ok\",\"scenarioId\":\"a\"}]\n"
+            "{\"records\":[{\"kind\":\"ok\",\"scenarioId\":\"b\"},{\"kind\":\"ok\",\"scenarioId\":\"a\"}],\"schemaVersion\":1}\n"
         );
     }
 
@@ -865,7 +998,39 @@ mod tests {
             .err()
             .expect("tampering rejected");
         assert_eq!(error.kind(), HarnessErrorKind::Corpus);
+        assert_eq!(error.code(), "CONTENT_MISMATCH");
         assert!(error.to_string().contains("manifest digest"));
+    }
+
+    #[test]
+    fn strict_loader_distinguishes_corpus_digest_failures() {
+        for (replacement, expected_code) in [
+            (
+                "\"corpusSha256\": \"2c3476d08b25769cfcec217daedbe647247b7a4075f5ce639843bb368fc00974\",",
+                "MISSING_DIGEST",
+            ),
+            ("\"corpusSha256\": \"invalid\"", "MALFORMED_DIGEST"),
+            (
+                "\"corpusSha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"",
+                "CONTENT_MISMATCH",
+            ),
+        ] {
+            let corpus = TempCorpus::copy();
+            let path = corpus.0.join("manifest.json");
+            let text = std::fs::read_to_string(&path).expect("manifest");
+            let original = "\"corpusSha256\": \"2c3476d08b25769cfcec217daedbe647247b7a4075f5ce639843bb368fc00974\"";
+            let changed = if expected_code == "MISSING_DIGEST" {
+                text.replace(&format!("{original},\n"), "")
+            } else {
+                text.replace(original, replacement)
+            };
+            std::fs::write(path, changed).expect("alter manifest");
+            let error = load_corpus(&corpus.0, PLATFORM_POSIX)
+                .err()
+                .expect("invalid corpus digest rejected");
+            assert_eq!(error.kind(), HarnessErrorKind::Corpus);
+            assert_eq!(error.code(), expected_code);
+        }
     }
 
     #[test]

@@ -2,7 +2,10 @@
 id: ADR-0033
 status: accepted
 domains: [process, testing]
-paths: [tests/differential/**, crates/siralos-cli/src/harness/**]
+paths:
+  - tests/differential/**
+  - crates/siralos-cli/src/harness.rs
+  - crates/siralos-cli/src/bin/siralos-harness.rs
 supersedes: []
 ---
 
@@ -39,7 +42,7 @@ scenario corpus (checked in, versioned, digest-bound)
         +---> Rust candidate runner  ---> canonical outcome records
                                             |
                                             v
-                          comparator (exact canonical match)
+                          comparator (typed semantic comparison)
                           exit 0 = parity, 1 = deviation, 2 = harness error
                                             |
                                             v
@@ -50,17 +53,22 @@ scenario corpus (checked in, versioned, digest-bound)
 - **Scenario corpus**: `tests/differential/corpus/`, a versioned set of
   typed scenarios (inputs only, never expected outputs). Each scenario
   has a stable id and a SHA-256 digest over its canonical serialization
-  (ADR 0028 discipline). Both runners independently enforce the same
-  versioned schema, exact field sets, UTF-8/size/count bounds, canonical
-  file names, digest binding, uniqueness, environment authority, and
-  non-symlink corpus/file requirements before any scenario executes.
+  (ADR 0028 discipline). The manifest also carries an overall corpus
+  digest binding its schema version, corpus version, ordered scenario file
+  inventory, and scenario digests. Both runners independently enforce the
+  same versioned schema, exact field sets, UTF-8/size/count bounds,
+  canonical file names, digest binding, uniqueness, environment authority,
+  and non-symlink corpus/file requirements before any scenario executes.
   Scenario fields: `id`, `subject`, `platforms` (`windows` / `posix` /
   `*`), `parity` (`required` | `informational`), and subject-specific
   inputs (environment fixtures for state-dir resolution).
-- **Canonical outcome records**: a fixed schema, serialized with sorted
-  keys and no absolute paths, timestamps, randomness, or environment
-  leakage outside the scenario's declared fixtures. Records carry the
-  scenario id, the outcome kind (`ok` | `error`), and subject fields.
+- **Canonical outcome records**: runner protocol schema 1 is an exact
+  canonical document containing typed scenario outcomes: `COMPLETED`,
+  `PRODUCT_FAILURE`, `UNIMPLEMENTED`, or `UNSUPPORTED`. Non-applicable
+  platform scenarios emit `UNSUPPORTED` with
+  `PLATFORM_NOT_APPLICABLE`; they are never silently omitted. Records
+  contain no absolute paths, timestamps, randomness, or environment
+  leakage outside the scenario's declared fixtures.
 - **Oracle runner** (TypeScript): executes each applicable scenario
   against the reference implementation and emits one record per
   scenario. Environment-sensitive scenarios run in a **probe
@@ -70,21 +78,31 @@ scenario corpus (checked in, versioned, digest-bound)
 - **Candidate runner** (Rust): executes the same scenarios against the
   Rust candidate, also via probe subprocesses with scrubbed
   environments, and emits records in the identical format.
+- **Runner supervision**: the authoritative command starts each reference
+  and candidate scenario runner under the same hard deadline and raw-byte
+  diagnostic limit. A lifecycle result is one of `COMPLETED`, `TIMED_OUT`,
+  `PROCESS_CRASHED`, `PROTOCOL_ERROR`, or `HARNESS_ERROR`. Timeout
+  termination is descendant-aware where the host permits it. Product
+  failures remain inside a successfully completed runner protocol and can
+  never be confused with lifecycle failure.
 - **Comparator**: each runner output must already be exact canonical JSON
   with one trailing newline. The comparator rejects missing, extra,
   duplicate, reordered, malformed, or subject-mismatched records before
-  comparing the canonical records. `required` scenarios must match
-  exactly; `informational` scenarios are recorded and reported but never
-  fail the gate. Deviations are reported per scenario with field-level
-  detail. Exit codes: 0 = parity, 1 = deviation, 2 = harness error
-  (mirroring the doctor exit-code conventions).
-- **Audit report**: every run emits `audit.json` (digest-bound, no
-  timestamps): corpus and exact runner-record digests, source commit and
-  a bounded direct-byte source-tree digest, per-subject coverage, and
-  per-scenario status (`parity` / `deviated` / `skipped-platform` /
-  `informational`). CI retains the runner records and audit as build
-  artifacts. The audit is the evidence record of migration parity for
-  those exact source and corpus inputs.
+  comparison. It treats object order as irrelevant, preserves sequence
+  order, and reports bounded differences by JSON path and kind rather than
+  dumping whole canonical records. `required` scenarios must match;
+  applicable `UNIMPLEMENTED` or `UNSUPPORTED` outcomes keep the gate red.
+  `informational` scenarios are recorded and reported but never fail the
+  gate. Exit codes: 0 = parity, 1 = deviation, 2 = harness error.
+- **Audit report**: every run emits schema-3 `audit.json` (digest-bound, no
+  timestamps): corpus version/digest, separate reference and candidate
+  implementation identities, exact protocol-document digests, total,
+  applicable, required, required-applicable, and matched-required counts,
+  per-subject coverage, per-scenario status, intentional deviations, and
+  `parityHeld`. Source identity includes the commit plus a bounded direct-
+  byte digest of the selected source tree. CI retains both protocol
+  documents, the audit, and a typed `failure.json` when lifecycle or
+  corpus integrity fails.
 - **Remediation loop**: a deviation is a remediation item. It is
   resolved either by fixing the candidate so parity is restored, or by
   classifying the divergence as documented contract scope (recorded in

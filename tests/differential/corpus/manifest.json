@@ -1,6 +1,7 @@
 {
-  "schemaVersion": 1,
-  "corpusVersion": 3,
+  "schemaVersion": 2,
+  "corpusVersion": 4,
+  "corpusSha256": "2c3476d08b25769cfcec217daedbe647247b7a4075f5ce639843bb368fc00974",
   "scenarios": [
     {
       "file": "state-dir.set.windows.json",

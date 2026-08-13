@@ -9,8 +9,8 @@ import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
-export const CORPUS_SCHEMA_VERSION = 1;
-export const CORPUS_VERSION = 3;
+export const CORPUS_SCHEMA_VERSION = 2;
+export const CORPUS_VERSION = 4;
 export const ALLOWED_SUBJECTS = new Set(["state-dir", "version-identity"]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -33,6 +33,19 @@ const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 const ENV_KEY = /^[A-Z_][A-Z0-9_]*$/u;
 const LOWER_SHA256 = /^[0-9a-f]{64}$/u;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+
+/** Typed fixture-identity failure; corrupted fixtures never execute. */
+export class CorpusIntegrityError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "CorpusIntegrityError";
+    this.code = code;
+  }
+}
+
+function integrity(code, message) {
+  return new CorpusIntegrityError(code, message);
+}
 
 function byteLength(value) {
   return Buffer.byteLength(value, "utf8");
@@ -102,6 +115,9 @@ function assertCorpusDirectory(path, label) {
 function validateManifestEntry(entry, index) {
   const label = `corpus manifest entry ${index}`;
   assertPlainObject(entry, label);
+  if (!Object.hasOwn(entry, "sha256")) {
+    throw integrity("MISSING_DIGEST", `${label}.sha256 is required`);
+  }
   assertExactKeys(entry, ["file", "sha256"], label);
   assertBoundedString(entry.file, CONTRACT_LIMITS.fileNameBytes, `${label}.file`);
   if (
@@ -112,8 +128,22 @@ function validateManifestEntry(entry, index) {
     throw new Error(`${label}.file must be a contained canonical JSON file name`);
   }
   if (typeof entry.sha256 !== "string" || !LOWER_SHA256.test(entry.sha256)) {
-    throw new Error(`${label}.sha256 must be a lowercase SHA-256 digest`);
+    throw integrity("MALFORMED_DIGEST", `${label}.sha256 must be a lowercase SHA-256 digest`);
   }
+}
+
+/** Canonical bytes covered by the manifest's overall corpus digest. */
+export function corpusIdentityValue(manifest) {
+  return {
+    schemaVersion: manifest.schemaVersion,
+    corpusVersion: manifest.corpusVersion,
+    scenarios: manifest.scenarios,
+  };
+}
+
+/** Overall corpus identity, excluding the digest field itself. */
+export function computeCorpusDigest(manifest) {
+  return sha256Hex(canonicalizeJson(corpusIdentityValue(manifest)));
 }
 
 function validatePlatforms(platforms, label) {
@@ -228,12 +258,31 @@ export function loadValidatedCorpus(corpusDir, platform) {
   );
   const manifest = parseJson(manifestText, "corpus manifest");
   assertPlainObject(manifest, "corpus manifest");
-  assertExactKeys(manifest, ["schemaVersion", "corpusVersion", "scenarios"], "corpus manifest");
+  if (!Object.hasOwn(manifest, "corpusSha256")) {
+    throw integrity("MISSING_DIGEST", "corpus manifest.corpusSha256 is required");
+  }
+  assertExactKeys(
+    manifest,
+    ["schemaVersion", "corpusVersion", "corpusSha256", "scenarios"],
+    "corpus manifest",
+  );
   if (manifest.schemaVersion !== CORPUS_SCHEMA_VERSION) {
-    throw new Error(`unsupported corpus schemaVersion ${JSON.stringify(manifest.schemaVersion)}`);
+    throw integrity(
+      "UNSUPPORTED_VERSION",
+      `unsupported corpus schemaVersion ${JSON.stringify(manifest.schemaVersion)}`,
+    );
   }
   if (manifest.corpusVersion !== CORPUS_VERSION) {
-    throw new Error(`unsupported corpusVersion ${JSON.stringify(manifest.corpusVersion)}`);
+    throw integrity(
+      "UNSUPPORTED_VERSION",
+      `unsupported corpusVersion ${JSON.stringify(manifest.corpusVersion)}`,
+    );
+  }
+  if (typeof manifest.corpusSha256 !== "string" || !LOWER_SHA256.test(manifest.corpusSha256)) {
+    throw integrity(
+      "MALFORMED_DIGEST",
+      "corpus manifest.corpusSha256 must be a lowercase SHA-256 digest",
+    );
   }
   if (
     !Array.isArray(manifest.scenarios) ||
@@ -242,16 +291,22 @@ export function loadValidatedCorpus(corpusDir, platform) {
   ) {
     throw new Error(`corpus manifest must contain 1-${CONTRACT_LIMITS.scenarios} scenarios`);
   }
-
   const files = new Set();
-  const ids = new Set();
-  const scenarios = [];
   for (const [index, entry] of manifest.scenarios.entries()) {
     validateManifestEntry(entry, index);
     if (files.has(entry.file)) {
       throw new Error(`corpus manifest contains duplicate file ${entry.file}`);
     }
     files.add(entry.file);
+  }
+  const corpusDigest = computeCorpusDigest(manifest);
+  if (corpusDigest !== manifest.corpusSha256) {
+    throw integrity("CONTENT_MISMATCH", "corpus manifest does not match corpusSha256");
+  }
+
+  const ids = new Set();
+  const scenarios = [];
+  for (const entry of manifest.scenarios) {
     const path = resolve(root, entry.file);
     if (dirname(path) !== root) {
       throw new Error(`scenario file escapes the corpus: ${entry.file}`);
@@ -260,7 +315,10 @@ export function loadValidatedCorpus(corpusDir, platform) {
     const scenario = validateScenario(parseJson(text, `scenario ${entry.file}`), entry.file);
     const digest = sha256Hex(canonicalizeJson(scenario));
     if (digest !== entry.sha256) {
-      throw new Error(`scenario ${entry.file} does not match its manifest digest`);
+      throw integrity(
+        "CONTENT_MISMATCH",
+        `scenario ${entry.file} does not match its manifest digest`,
+      );
     }
     if (ids.has(scenario.id)) {
       throw new Error(`corpus manifest contains duplicate scenario id ${scenario.id}`);
@@ -275,6 +333,6 @@ export function loadValidatedCorpus(corpusDir, platform) {
   return {
     manifest,
     scenarios,
-    corpusDigest: sha256Hex(canonicalizeJson(manifest)),
+    corpusDigest,
   };
 }

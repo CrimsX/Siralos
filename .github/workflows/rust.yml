@@ -13,8 +13,8 @@ on:
   workflow_dispatch:
 
 # Least privilege: ordinary Rust validation needs read-only contents.
-# No write authority, no secrets, no id-token. CodeQL (if added later)
-# must scope security-events: write to its own job.
+# No write authority, no secrets, no id-token. The separate CodeQL workflow
+# scopes security-events: write to its own analysis job.
 permissions:
   contents: read
 
@@ -161,6 +161,7 @@ jobs:
             tests/differential/out/oracle.json
             tests/differential/out/candidate.json
             tests/differential/out/audit.json
+            tests/differential/out/failure.json
           if-no-files-found: warn
         if: always()
 
@@ -239,6 +240,7 @@ jobs:
             tests/differential/out/oracle.json
             tests/differential/out/candidate.json
             tests/differential/out/audit.json
+            tests/differential/out/failure.json
           if-no-files-found: warn
         if: always()
 

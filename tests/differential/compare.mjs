@@ -16,17 +16,20 @@ import {
   CONTRACT_LIMITS,
   readBoundedUtf8File,
 } from "./shared/contract.mjs";
+import {
+  SCENARIO_OUTCOME,
+  canonicalRecordDocument,
+  parseCanonicalRecordDocument,
+  validateOutcomeRecord,
+} from "./shared/protocol.mjs";
 import { loadCorpus, platformName } from "./run-oracle.mjs";
 
-const AUDIT_SCHEMA_VERSION = 2;
+const AUDIT_SCHEMA_VERSION = 3;
 const SOURCE_FILE_COUNT_LIMIT = 100_000;
 const SOURCE_BYTES_LIMIT = 256 * 1024 * 1024;
 const GIT_OUTPUT_LIMIT = 8 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 10_000;
-const LOWER_SHA256 = /^[0-9a-f]{64}$/u;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
-const VERSION =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const FATAL_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 function optionValue(args, name) {
@@ -43,97 +46,14 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function assertExactKeys(value, expected, label) {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
-    throw new Error(`${label} has unknown or missing fields`);
-  }
-}
-
-function subjectFields(subject) {
-  if (subject === "state-dir") {
-    return ["scenarioId", "subject", "kind", "stateDirSha256"];
-  }
-  if (subject === "version-identity") {
-    return ["scenarioId", "subject", "kind", "version"];
-  }
-  throw new Error(`record has unsupported subject ${JSON.stringify(subject)}`);
-}
-
 /** Validate a subject-specific canonical outcome record. */
 export function validateRecord(record, source, expectedScenario = undefined) {
-  const label = `${source} record`;
-  if (!isObject(record)) {
-    throw new Error(`malformed ${label}: expected an object`);
-  }
-  if (typeof record.subject !== "string" || !ALLOWED_SUBJECTS.has(record.subject)) {
-    throw new Error(`malformed ${label}: unsupported subject`);
-  }
-  assertExactKeys(record, subjectFields(record.subject), label);
-  if (
-    typeof record.scenarioId !== "string" ||
-    record.scenarioId.length === 0 ||
-    Buffer.byteLength(record.scenarioId, "utf8") > CONTRACT_LIMITS.identifierBytes
-  ) {
-    throw new Error(`malformed ${label}: invalid scenarioId`);
-  }
-  if (record.kind !== "ok" && record.kind !== "error") {
-    throw new Error(`malformed ${label}: unsupported outcome kind`);
-  }
-  if (expectedScenario !== undefined) {
-    if (record.scenarioId !== expectedScenario.id) {
-      throw new Error(
-        `${source} record set is out of order, incomplete, or contains an extra scenario`,
-      );
-    }
-    if (record.subject !== expectedScenario.subject) {
-      throw new Error(`${source} record ${record.scenarioId} has a subject mismatch`);
-    }
-  }
-  if (record.subject === "state-dir") {
-    const valid =
-      (record.kind === "ok" &&
-        typeof record.stateDirSha256 === "string" &&
-        LOWER_SHA256.test(record.stateDirSha256)) ||
-      (record.kind === "error" && record.stateDirSha256 === null);
-    if (!valid) {
-      throw new Error(`malformed ${label}: invalid state-dir outcome`);
-    }
-  } else {
-    const valid =
-      (record.kind === "ok" &&
-        typeof record.version === "string" &&
-        Buffer.byteLength(record.version, "utf8") <= CONTRACT_LIMITS.identifierBytes &&
-        VERSION.test(record.version)) ||
-      (record.kind === "error" && record.version === null);
-    if (!valid) {
-      throw new Error(`malformed ${label}: invalid version-identity outcome`);
-    }
-  }
-  return record;
+  return validateOutcomeRecord(record, source, expectedScenario);
 }
 
 /** Parse a bounded record file and require its exact canonical byte form. */
 export function parseCanonicalRecords(text, source) {
-  if (Buffer.byteLength(text, "utf8") > CONTRACT_LIMITS.recordsBytes) {
-    throw new Error(`${source} record file exceeds the harness byte bound`);
-  }
-  let records;
-  try {
-    records = JSON.parse(text);
-  } catch (error) {
-    throw new Error(
-      `${source} record file is not JSON: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-  if (!Array.isArray(records) || records.length > CONTRACT_LIMITS.scenarios) {
-    throw new Error(`${source} record file must be a bounded JSON array`);
-  }
-  if (`${canonicalizeJson(records)}\n` !== text) {
-    throw new Error(`${source} record file is not exact canonical JSON with one trailing newline`);
-  }
-  return records;
+  return parseCanonicalRecordDocument(text, source);
 }
 
 function validateComparisonScenarios(scenarios) {
@@ -178,10 +98,110 @@ function validateRecordSet(records, source, applicable) {
   }
 }
 
-function differingFields(oracle, candidate) {
-  return [...new Set([...Object.keys(oracle), ...Object.keys(candidate)])]
-    .sort()
-    .filter((key) => canonicalizeJson(oracle[key]) !== canonicalizeJson(candidate[key]));
+function pathSegment(key) {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+}
+
+function valueType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+/** Structured semantic differences: objects are maps, arrays preserve order. */
+export function semanticDifferences(oracle, candidate, path = "$") {
+  const oracleType = valueType(oracle);
+  const candidateType = valueType(candidate);
+  if (oracleType !== candidateType) {
+    return [
+      {
+        path,
+        kind: "TYPE_CHANGED",
+        oracle,
+        candidate,
+        policy: "type-sensitive",
+      },
+    ];
+  }
+  if (oracleType === "array") {
+    if (oracle.length !== candidate.length) {
+      return [
+        {
+          path,
+          kind: "ORDER_CHANGED",
+          oracle,
+          candidate,
+          policy: "sequence-order-authoritative",
+        },
+      ];
+    }
+    const oracleMembers = oracle.map(canonicalizeJson).sort();
+    const candidateMembers = candidate.map(canonicalizeJson).sort();
+    if (
+      canonicalizeJson(oracle) !== canonicalizeJson(candidate) &&
+      canonicalizeJson(oracleMembers) === canonicalizeJson(candidateMembers)
+    ) {
+      return [
+        {
+          path,
+          kind: "ORDER_CHANGED",
+          oracle,
+          candidate,
+          policy: "sequence-order-authoritative",
+        },
+      ];
+    }
+    const differences = [];
+    for (let index = 0; index < oracle.length; index += 1) {
+      differences.push(
+        ...semanticDifferences(oracle[index], candidate[index], `${path}[${index}]`),
+      );
+    }
+    return differences;
+  }
+  if (oracleType === "object") {
+    const differences = [];
+    const oracleKeys = Object.keys(oracle).sort();
+    const candidateKeys = Object.keys(candidate).sort();
+    for (const key of oracleKeys) {
+      const childPath = `${path}${pathSegment(key)}`;
+      if (!Object.hasOwn(candidate, key)) {
+        differences.push({
+          path: childPath,
+          kind: "MISSING_IN_CANDIDATE",
+          oracle: oracle[key],
+          candidate: null,
+          policy: "object-key-order-insensitive",
+        });
+      } else {
+        differences.push(...semanticDifferences(oracle[key], candidate[key], childPath));
+      }
+    }
+    for (const key of candidateKeys) {
+      if (!Object.hasOwn(oracle, key)) {
+        differences.push({
+          path: `${path}${pathSegment(key)}`,
+          kind: "EXTRA_IN_CANDIDATE",
+          oracle: null,
+          candidate: candidate[key],
+          policy: "object-key-order-insensitive",
+        });
+      }
+    }
+    return differences;
+  }
+  if (Object.is(oracle, candidate)) {
+    return [];
+  }
+  return [
+    {
+      path,
+      kind: path === "$.error.category" ? "ERROR_CATEGORY_CHANGED" : "VALUE_CHANGED",
+      oracle,
+      candidate,
+      policy: "scalar-exact",
+    },
+  ];
 }
 
 function perSubjectCoverage(scenarios, statuses) {
@@ -192,10 +212,15 @@ function perSubjectCoverage(scenarios, statuses) {
       continue;
     }
     const subjectStatuses = statuses.filter((status) => status.subject === subject);
+    const requiredApplicable = subjectStatuses.filter(
+      (status) => status.parity === "required" && status.status !== "skipped-platform",
+    );
     coverage[subject] = {
       total: subjectScenarios.length,
       applicable: subjectStatuses.filter((status) => status.status !== "skipped-platform").length,
       required: subjectScenarios.filter((scenario) => scenario.parity === "required").length,
+      requiredApplicable: requiredApplicable.length,
+      matchedRequired: requiredApplicable.filter((status) => status.status === "parity").length,
       informational: subjectScenarios.filter((scenario) => scenario.parity === "informational")
         .length,
       parity: subjectStatuses.filter((status) => status.status === "parity").length,
@@ -230,11 +255,8 @@ export function runCompare({
     throw new Error(`unsupported comparison platform ${JSON.stringify(platform)}`);
   }
   validateComparisonScenarios(scenarios);
-  const applicable = scenarios.filter(
-    (scenario) => scenario.platforms.includes("*") || scenario.platforms.includes(platform),
-  );
-  validateRecordSet(oracleRecords, "oracle", applicable);
-  validateRecordSet(candidateRecords, "candidate", applicable);
+  validateRecordSet(oracleRecords, "oracle", scenarios);
+  validateRecordSet(candidateRecords, "candidate", scenarios);
 
   const parity = [];
   const deviated = [];
@@ -244,6 +266,19 @@ export function runCompare({
   let applicableIndex = 0;
   for (const scenario of scenarios) {
     if (!scenario.platforms.includes("*") && !scenario.platforms.includes(platform)) {
+      const oracle = oracleRecords[applicableIndex];
+      const candidate = candidateRecords[applicableIndex];
+      applicableIndex += 1;
+      const expectedUnsupported =
+        oracle.outcome === SCENARIO_OUTCOME.UNSUPPORTED &&
+        candidate.outcome === SCENARIO_OUTCOME.UNSUPPORTED &&
+        oracle.error.category === "PLATFORM_NOT_APPLICABLE" &&
+        candidate.error.category === "PLATFORM_NOT_APPLICABLE";
+      if (!expectedUnsupported) {
+        throw new Error(
+          `non-applicable scenario ${scenario.id} must be an explicit UNSUPPORTED outcome on both runners`,
+        );
+      }
       statuses.push({
         scenarioId: scenario.id,
         subject: scenario.subject,
@@ -255,7 +290,11 @@ export function runCompare({
     const oracle = oracleRecords[applicableIndex];
     const candidate = candidateRecords[applicableIndex];
     applicableIndex += 1;
-    const matches = canonicalizeJson(oracle) === canonicalizeJson(candidate);
+    const unavailableOutcome = [SCENARIO_OUTCOME.UNIMPLEMENTED, SCENARIO_OUTCOME.UNSUPPORTED].find(
+      (outcome) => oracle.outcome === outcome || candidate.outcome === outcome,
+    );
+    const matches =
+      unavailableOutcome === undefined && canonicalizeJson(oracle) === canonicalizeJson(candidate);
     if (matches) {
       if (scenario.parity === "informational") {
         informational.push(scenario.id);
@@ -274,10 +313,30 @@ export function runCompare({
       scenarioId: scenario.id,
       subject: scenario.subject,
       parity: scenario.parity,
-      reason: "record-mismatch",
-      differingFields: differingFields(oracle, candidate),
-      oracle: canonicalizeJson(oracle),
-      candidate: canonicalizeJson(candidate),
+      reason:
+        unavailableOutcome === SCENARIO_OUTCOME.UNIMPLEMENTED
+          ? "unimplemented"
+          : unavailableOutcome === SCENARIO_OUTCOME.UNSUPPORTED
+            ? "unsupported-applicable-scenario"
+            : scenario.parity === "informational"
+              ? "host-owned OS account fallback is outside the declared fixture authority"
+              : "record-mismatch",
+      authoritativeDecision: scenario.parity === "informational" ? "ADR-0033" : null,
+      status: scenario.parity === "informational" ? "accepted" : "unexplained",
+      referenceBehavior: oracle,
+      candidateBehavior: candidate,
+      differences:
+        unavailableOutcome === undefined
+          ? semanticDifferences(oracle, candidate)
+          : [
+              {
+                path: "$.outcome",
+                kind: "NON_COMPLETION",
+                oracle: oracle.outcome,
+                candidate: candidate.outcome,
+                policy: "required-applicable-scenario-must-be-implemented",
+              },
+            ],
     };
     if (scenario.parity === "informational") {
       informationalDeviations.push(entry);
@@ -296,16 +355,27 @@ export function runCompare({
     .filter((status) => status.status === "skipped-platform")
     .map((status) => status.scenarioId)
     .sort();
+  const requiredScenarios = scenarios.filter((scenario) => scenario.parity === "required");
+  const requiredApplicable = requiredScenarios.filter(
+    (scenario) => scenario.platforms.includes("*") || scenario.platforms.includes(platform),
+  );
   const audit = {
     schemaVersion: AUDIT_SCHEMA_VERSION,
     corpusVersion,
     corpusDigest,
     sourceIdentity,
+    referenceIdentity: sourceIdentity?.reference ?? null,
+    candidateIdentity: sourceIdentity?.candidate ?? null,
     platform,
-    oracleRecords: oracleRecords.length,
+    totalScenarios: scenarios.length,
+    applicableScenarios: statuses.filter((status) => status.status !== "skipped-platform").length,
+    requiredScenarios: requiredScenarios.length,
+    requiredApplicableScenarios: requiredApplicable.length,
+    matchedRequiredScenarios: parity.length,
+    referenceRecords: oracleRecords.length,
     candidateRecords: candidateRecords.length,
-    oracleRecordsSha256: sha256Hex(`${canonicalizeJson(oracleRecords)}\n`),
-    candidateRecordsSha256: sha256Hex(`${canonicalizeJson(candidateRecords)}\n`),
+    referenceRecordsSha256: sha256Hex(canonicalRecordDocument(oracleRecords)),
+    candidateRecordsSha256: sha256Hex(canonicalRecordDocument(candidateRecords)),
     perSubject: perSubjectCoverage(scenarios, statuses),
     scenarios: statuses,
     parity: parity.sort(),
@@ -430,6 +500,14 @@ export function collectSourceIdentity(root) {
     commit,
     sourceTreeSha256: hash.digest("hex"),
     sourceFiles: paths.length,
+    reference: {
+      implementation: "typescript-reference",
+      commit,
+    },
+    candidate: {
+      implementation: "rust-candidate",
+      commit,
+    },
   };
 }
 
