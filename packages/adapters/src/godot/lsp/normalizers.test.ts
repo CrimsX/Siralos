@@ -185,7 +185,8 @@ describe("normalizeHover", () => {
       context("a.gd"),
     );
     expect(result?.contents[0]?.text).toContain("<script>");
-    expect(JSON.stringify(result)).not.toContain(MIRROR);
+    expect(result?.contents[0]?.text).not.toContain(MIRROR);
+    expect(result?.contents[0]?.text).toContain("<mirror>/x");
   });
 });
 

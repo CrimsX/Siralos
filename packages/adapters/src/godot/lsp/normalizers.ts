@@ -157,7 +157,7 @@ export function normalizeHover(
   if (path === null || hover === null || hover === undefined) {
     return null;
   }
-  const contents = extractHoverContents(hover);
+  const contents = extractHoverContents(hover, context);
   const range =
     typeof hover === "object" && !Array.isArray(hover)
       ? to1BasedRange((hover as Record<string, unknown>)["range"])
@@ -165,19 +165,27 @@ export function normalizeHover(
   return { path, range, contents };
 }
 
-function extractHoverContents(hover: unknown): readonly GDScriptHoverSection[] {
+function extractHoverContents(
+  hover: unknown,
+  context: LSPNormalizationContext,
+): readonly GDScriptHoverSection[] {
   if (typeof hover === "object" && hover !== null && !Array.isArray(hover)) {
     const value = (hover as Record<string, unknown>)["contents"];
-    return sectionsFromContents(value);
+    return sectionsFromContents(value, context);
   }
-  return sectionsFromContents(hover);
+  return sectionsFromContents(hover, context);
 }
 
-function sectionsFromContents(value: unknown): readonly GDScriptHoverSection[] {
+function sectionsFromContents(
+  value: unknown,
+  context: LSPNormalizationContext,
+): readonly GDScriptHoverSection[] {
   const sections: GDScriptHoverSection[] = [];
   let totalBytes = 0;
   const push = (kind: "plaintext" | "markdown", text: string): void => {
-    const sanitized = sanitizeControlCharacters(text);
+    const sanitized = sanitizeControlCharacters(text)
+      .split(context.mirrorRootPath)
+      .join("<mirror>");
     const remaining = Math.max(GODOT_LIMITS.lspMaxHoverBytes - totalBytes, 0);
     const bounded = truncateUtf8Bytes(sanitized, remaining);
     totalBytes += Buffer.byteLength(bounded, "utf8");
