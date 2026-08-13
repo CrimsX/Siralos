@@ -450,16 +450,16 @@ export function createDevelopmentTaskFlow(
             "lsp_result",
             {
               type: "lsp",
-              diagnosticCount: event.errors + event.warnings,
-              errors: event.errors,
-              warnings: event.warnings,
+              diagnosticCount: event.lspErrors + event.lspWarnings,
+              errors: event.lspErrors,
+              warnings: event.lspWarnings,
             },
             "lsp-clean",
-            event.errors === 0 ? "passed" : "failed",
+            event.lspErrors === 0 ? "passed" : "failed",
           );
           if (lspId !== null) {
             previewEvidenceIds.lsp = lspId;
-            if (event.errors === 0) {
+            if (event.lspErrors === 0) {
               verify("lsp-clean", lspId);
             }
           }

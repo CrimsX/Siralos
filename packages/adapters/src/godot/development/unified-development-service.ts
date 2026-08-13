@@ -750,6 +750,8 @@ export function createUnifiedDevelopmentService(
         id: current.id,
         errors: lspOutcome.errors,
         warnings: lspOutcome.warnings,
+        lspErrors: lspOutcome.errors,
+        lspWarnings: lspOutcome.warnings,
       });
     }
     const textGateFailure =

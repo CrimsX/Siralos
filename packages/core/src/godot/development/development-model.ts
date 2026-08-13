@@ -263,8 +263,12 @@ export type DevelopmentEvent =
   | {
       readonly type: "development_validation_completed";
       readonly id: string;
+      /** Cumulative workflow diagnostic counts retained for status/reporting. */
       readonly errors: number;
       readonly warnings: number;
+      /** Latest iteration's LSP diagnostic counts used as acceptance evidence. */
+      readonly lspErrors: number;
+      readonly lspWarnings: number;
     }
   | {
       readonly type: "development_repair_requested";

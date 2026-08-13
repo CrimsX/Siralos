@@ -809,6 +809,9 @@ export function createGDScriptDevelopmentService(
       id: current.id,
       errors: current.errorCount,
       warnings: current.warningCount,
+      lspErrors: lspDiagnostics.diagnostics.filter((entry) => entry.severity === "error").length,
+      lspWarnings: lspDiagnostics.diagnostics.filter((entry) => entry.severity === "warning")
+        .length,
     });
     if (validation === "errors") {
       emit({ type: "development_repair_requested", id: current.id, iteration: current.iteration });
@@ -1475,6 +1478,7 @@ export function createGDScriptDevelopmentService(
       ...evidence.lsp.diagnostics,
     ]);
     const hasEvidence = current.evidence.length > 0;
+    const latestEvidence = current.evidence.at(-1);
     return {
       status,
       iterations: current.iteration,
@@ -1488,11 +1492,12 @@ export function createGDScriptDevelopmentService(
         // failed, or unavailable before validation); that is never
         // reported as passed.
         parser:
-          hasEvidence &&
-          current.evidence.every(
-            (evidence) => evidence.parser.validFiles === evidence.parser.checkedFiles,
-          ),
-        lsp: hasEvidence && current.evidence.every((evidence) => evidence.lsp.started),
+          latestEvidence !== undefined &&
+          latestEvidence.parser.validFiles === latestEvidence.parser.checkedFiles,
+        lsp:
+          latestEvidence !== undefined &&
+          latestEvidence.lsp.started &&
+          latestEvidence.lsp.diagnostics.every((entry) => entry.severity !== "error"),
         workspaceIntegrity:
           hasEvidence && current.evidence.every((evidence) => evidence.workspaceIntegrity.verified),
       },

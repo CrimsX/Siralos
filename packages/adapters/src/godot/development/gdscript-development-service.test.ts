@@ -840,6 +840,11 @@ describe("repair loop", () => {
     if (outcome.status === "applied" && outcome.result !== null) {
       expect(outcome.result.iterations).toBe(2);
       expect(outcome.result.checkpointIds.length).toBe(checkpointCountBefore + 1);
+      expect(outcome.result.validation.parser).toBe(true);
+      expect(outcome.result.validation.lsp).toBe(true);
+      // Historical diagnostics remain reportable even though the latest
+      // repaired state passed both gates.
+      expect(outcome.result.diagnostics.errors).toBeGreaterThan(0);
     }
     // The repair triggered a fresh parser run and a fresh language session.
     expect(harness.parser.log.filter((entry) => entry === "execute").length).toBeGreaterThan(
