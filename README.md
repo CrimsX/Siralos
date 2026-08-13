@@ -4,6 +4,9 @@ Siralos is a deterministic, security-first, domain-neutral software-development
 and QA harness that places host-owned validation, policy, evidence, and
 controlled effects around probabilistic model reasoning.
 
+[![Rust CI](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml)
+[![CodeQL](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml)
+
 > **Status: active development / Rust migration.** The broad TypeScript
 > implementation is the current behavioral reference. Rust is the successor
 > implementation, migrated under differential verification. Stage 3R R2 is
@@ -102,9 +105,9 @@ See the [architecture index](docs/architecture/README.md),
 
 ### Bootstrap
 
-From an existing repository checkout:
-
 ```bash
+git clone https://github.com/CrimsX/Siralos.git siralos
+cd siralos
 npm ci
 ```
 
