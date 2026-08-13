@@ -1,5 +1,6 @@
 ﻿import { afterEach, describe, expect, it } from "vitest";
 import {
+  chmod,
   mkdtemp,
   mkdir,
   rm,
@@ -161,6 +162,9 @@ async function createHarness(options: ProbeHarnessOptions = {}): Promise<ProbeHa
   const executableRoot = await withTempRoot();
   const executable = path.join(executableRoot, "godot-test.exe");
   await writeFile(executable, "#!/bin/sh\necho fixture\n");
+  if (process.platform !== "win32") {
+    await chmod(executable, 0o755);
+  }
   if (options.noProject !== true) {
     await writeFiles(workspaceRoot, {
       "project.godot":

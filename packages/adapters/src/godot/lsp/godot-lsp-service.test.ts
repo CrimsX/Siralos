@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { GDScriptLanguageService, SandboxBackend, SandboxBackendStatus } from "@siralos/core";
@@ -79,6 +79,9 @@ async function createHarness(options: { noProject?: boolean; helpText?: string }
   const executableRoot = await withTempRoot();
   const executable = path.join(executableRoot, "godot-test.exe");
   await writeFile(executable, "#!/bin/sh\necho fixture\n");
+  if (process.platform !== "win32") {
+    await chmod(executable, 0o755);
+  }
   if (options.noProject !== true) {
     await mkdir(path.join(workspaceRoot, "src", "player"), { recursive: true });
     await writeFile(
