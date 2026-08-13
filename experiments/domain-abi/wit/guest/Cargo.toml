@@ -8,7 +8,7 @@ description = "WIT guest component for the domain-ABI prototype (assurance contr
 [workspace]
 
 [dependencies]
-wit-bindgen = "0.40"
+wit-bindgen = "=0.55.0"
 
 [lib]
 crate-type = ["cdylib"]

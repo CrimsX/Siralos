@@ -11,7 +11,7 @@ wit_bindgen::generate!({
 use std::sync::Mutex;
 
 use exports::siralos::domain_abi::domain_api::{
-    Guest, HostAnswer, PackageIdentity, SemanticResult, DeclaredCapability,
+    DeclaredCapability, Guest, HostAnswer, PackageIdentity, SemanticResult,
 };
 
 static STATE: Mutex<Option<String>> = Mutex::new(None);
@@ -41,15 +41,19 @@ impl Guest for SiralosDomain {
     fn request_workspace_read(path: String, max_bytes: u32) -> HostAnswer {
         // The domain asks; the host performs. The answer echoes the
         // mediated request for the host to fulfill.
-        HostAnswer::Ok(format!("mediated read of {path} (max {max_bytes} bytes)"))
+        HostAnswer::Ok(format!(
+            "mediated read of {path} (max {max_bytes} bytes)"
+        ))
     }
 
     fn request_capability(capability: DeclaredCapability) -> HostAnswer {
         match capability {
-            DeclaredCapability::WorkspaceRead => HostAnswer::Ok("granted".to_string()),
-            DeclaredCapability::ProcessExec => {
-                HostAnswer::Denied("process capability not granted by host policy".to_string())
+            DeclaredCapability::WorkspaceRead => {
+                HostAnswer::Ok("granted".to_string())
             }
+            DeclaredCapability::ProcessExec => HostAnswer::Denied(
+                "process capability not granted by host policy".to_string(),
+            ),
         }
     }
 }

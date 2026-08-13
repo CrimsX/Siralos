@@ -8,9 +8,13 @@ description = "WIT component host for the domain-ABI prototype (assurance contra
 [workspace]
 
 [dependencies]
-wasmtime = "31"
-wasmtime-wasi = "31"
-wit-bindgen = "0.40"
+wasmtime = { version = "=47.0.3", default-features = false, features = [
+    "component-model",
+    "cranelift",
+    "runtime",
+    "std",
+] }
+wasmtime-wasi = { version = "=47.0.3", default-features = false, features = ["p2"] }
 
 [profile.release]
 opt-level = 3

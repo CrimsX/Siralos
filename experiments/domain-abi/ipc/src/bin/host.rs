@@ -5,12 +5,13 @@
 //! here (bounded), process capabilities are denied by policy, and the
 //! exact package identity is bound per operation.
 
-use domain_abi_ipc_prototype::{Message, ResponseKind, PROTOCOL_NAME, PROTOCOL_VERSION};
+use domain_abi_ipc_prototype::{
+    Message, PROTOCOL_NAME, PROTOCOL_VERSION, ResponseKind,
+};
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
-
 
 const PACKAGE_ID: &str = "godot";
 const PACKAGE_DIGEST: &str = "sha256-fixture-digest";
@@ -26,13 +27,15 @@ pub struct DomainSession {
 
 impl DomainSession {
     pub fn spawn() -> std::io::Result<DomainSession> {
-        let mut child = Command::new(domain_executable()).arg("domain")
+        let mut child = Command::new(domain_executable())
+            .arg("domain")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
         let stdin = child.stdin.take().expect("stdin piped");
-        let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
+        let stdout =
+            BufReader::new(child.stdout.take().expect("stdout piped"));
         Ok(DomainSession { child, stdin, stdout, next_request_id: 1 })
     }
 
@@ -44,7 +47,10 @@ impl DomainSession {
     fn recv(&mut self) -> Result<Message, String> {
         let mut line = String::new();
         if self.stdout.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-            return Err("domain process closed the channel (crash or shutdown)".to_string());
+            return Err(
+                "domain process closed the channel (crash or shutdown)"
+                    .to_string(),
+            );
         }
         Message::parse(line.trim_end())
     }
@@ -70,16 +76,18 @@ impl DomainSession {
         self.send(&Message::Query { request_id: id, text: text.to_string() })
             .map_err(|e| e.to_string())?;
         match self.recv()? {
-            Message::Response { request_id, kind: ResponseKind::Ok { result } }
-                if request_id == id =>
-            {
-                Ok(result)
-            }
+            Message::Response {
+                request_id,
+                kind: ResponseKind::Ok { result },
+            } if request_id == id => Ok(result),
             other => Err(format!("unexpected response: {other:?}")),
         }
     }
 
-    pub fn request_capability(&mut self, capability: &str) -> Result<ResponseKind, String> {
+    pub fn request_capability(
+        &mut self,
+        capability: &str,
+    ) -> Result<ResponseKind, String> {
         let id = self.next_request_id;
         self.next_request_id += 1;
         self.send(&Message::CapabilityRequest {
@@ -88,7 +96,9 @@ impl DomainSession {
         })
         .map_err(|e| e.to_string())?;
         match self.recv()? {
-            Message::Response { request_id, kind } if request_id == id => Ok(kind),
+            Message::Response { request_id, kind } if request_id == id => {
+                Ok(kind)
+            }
             other => Err(format!("unexpected response: {other:?}")),
         }
     }
@@ -103,7 +113,9 @@ impl DomainSession {
         })
         .map_err(|e| e.to_string())?;
         match self.recv()? {
-            Message::Response { request_id, kind } if request_id == id => Ok(kind),
+            Message::Response { request_id, kind } if request_id == id => {
+                Ok(kind)
+            }
             other => Err(format!("unexpected response: {other:?}")),
         }
     }
@@ -117,7 +129,8 @@ impl DomainSession {
 
 fn domain_executable() -> std::path::PathBuf {
     // The domain is the sibling binary in the same target directory.
-    let mut path = std::env::current_exe().expect("resolve current executable");
+    let mut path =
+        std::env::current_exe().expect("resolve current executable");
     path.set_file_name(if cfg!(windows) { "domain.exe" } else { "domain" });
     path
 }
@@ -131,7 +144,9 @@ where
     let elapsed = start.elapsed();
     match result {
         Ok(()) => eprintln!("{label}: {:?}", elapsed),
-        Err(error) => eprintln!("{label}: FAILED ({error})"),
+        // CI treats this executable as conformance evidence. A logged
+        // failure with exit status zero would be a false pass.
+        Err(error) => panic!("{label}: FAILED ({error})"),
     }
     elapsed
 }
@@ -159,7 +174,8 @@ fn main() {
 
     // Protocol mismatch: version 2 must be rejected hard.
     {
-        let mut child = Command::new(domain_executable()).arg("domain")
+        let mut child = Command::new(domain_executable())
+            .arg("domain")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -182,12 +198,16 @@ fn main() {
         stdin.flush().expect("flush");
         let mut line = String::new();
         stdout.read_line(&mut line).expect("read response");
-        let response = Message::parse(line.trim_end()).expect("parse response");
+        let response =
+            Message::parse(line.trim_end()).expect("parse response");
         let code = match &response {
             Message::Error { code, .. } => code.as_str(),
             _ => "",
         };
-        assert_eq!(code, "protocol_mismatch", "version mismatch must be rejected: {response:?}");
+        assert_eq!(
+            code, "protocol_mismatch",
+            "version mismatch must be rejected: {response:?}"
+        );
         let mut rest = String::new();
         let _ = stdout.read_line(&mut rest); // channel closed after error
         let _ = child.kill();
@@ -197,7 +217,8 @@ fn main() {
 
     // Child crash: a killed domain must surface as channel close.
     {
-        let mut child = Command::new(domain_executable()).arg("domain")
+        let mut child = Command::new(domain_executable())
+            .arg("domain")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -205,7 +226,9 @@ fn main() {
             .expect("spawn domain");
         let _ = child.kill();
         let _ = child.wait();
-        eprintln!("child-crash: kill/wait succeeded, host observes channel close on next recv");
+        eprintln!(
+            "child-crash: kill/wait succeeded, host observes channel close on next recv"
+        );
     }
 
     // --- Measurement (contract Part 18) ---
@@ -214,9 +237,7 @@ fn main() {
 
     let start = Instant::now();
     for i in 0..PING_COUNT {
-        session
-            .query(&format!("ping {i}"))
-            .expect("query succeeds");
+        session.query(&format!("ping {i}")).expect("query succeeds");
     }
     let per_call = start.elapsed() / PING_COUNT;
     eprintln!("round-trip: {per_call:?} per call ({PING_COUNT} calls)");

@@ -23,30 +23,17 @@ pub enum Message {
         package_digest: String,
     },
     /// Semantic query; the host mediates any needed workspace access.
-    Query {
-        request_id: u64,
-        text: String,
-    },
+    Query { request_id: u64, text: String },
     /// The domain requests host-mediated workspace read access.
-    WorkspaceRead {
-        request_id: u64,
-        path: String,
-        max_bytes: usize,
-    },
+    WorkspaceRead { request_id: u64, path: String, max_bytes: usize },
     /// The domain requests a host-mediated runtime/process capability.
     /// The host's policy decides; the prototype always denies with a
     /// typed reason.
-    CapabilityRequest {
-        request_id: u64,
-        capability: String,
-    },
+    CapabilityRequest { request_id: u64, capability: String },
     /// Host → domain: cancel an in-flight request.
     Cancel { request_id: u64 },
     /// Response carrying a structured result.
-    Response {
-        request_id: u64,
-        kind: ResponseKind,
-    },
+    Response { request_id: u64, kind: ResponseKind },
     /// Protocol-level failure (malformed, stale binding, policy deny).
     Error { request_id: Option<u64>, code: String, message: String },
     /// Clean shutdown.
@@ -68,13 +55,14 @@ impl Message {
     }
 
     pub fn parse(line: &str) -> Result<Message, String> {
-        serde_json::from_str(line).map_err(|error| format!("malformed message: {error}"))
+        serde_json::from_str(line)
+            .map_err(|error| format!("malformed message: {error}"))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Message, ResponseKind, PROTOCOL_NAME, PROTOCOL_VERSION};
+    use super::{Message, PROTOCOL_NAME, PROTOCOL_VERSION, ResponseKind};
 
     #[test]
     fn hello_round_trips() {
@@ -101,12 +89,15 @@ mod tests {
         };
         let line = message.serialize();
         let parsed = Message::parse(&line).expect("parses");
-        assert_ne!(parsed, Message::Hello {
-            protocol: PROTOCOL_NAME.to_string(),
-            version: PROTOCOL_VERSION,
-            package_id: "godot".to_string(),
-            package_digest: "abc".to_string(),
-        });
+        assert_ne!(
+            parsed,
+            Message::Hello {
+                protocol: PROTOCOL_NAME.to_string(),
+                version: PROTOCOL_VERSION,
+                package_id: "godot".to_string(),
+                package_digest: "abc".to_string(),
+            }
+        );
     }
 
     #[test]

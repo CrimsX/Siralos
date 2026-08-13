@@ -4,16 +4,19 @@
 //! (workspace read, process capability) through the protocol. It holds
 //! no filesystem or process authority of its own.
 
-use domain_abi_ipc_prototype::{Message, ResponseKind, PROTOCOL_NAME, PROTOCOL_VERSION};
+use domain_abi_ipc_prototype::{
+    Message, PROTOCOL_NAME, PROTOCOL_VERSION, ResponseKind,
+};
 
 use std::io::{self, BufRead, Write};
 
-
-fn respond(line_writer: &mut impl Write, request_id: Option<u64>, kind: ResponseKind) {
-    let message = Message::Response {
-        request_id: request_id.unwrap_or(0),
-        kind,
-    };
+fn respond(
+    line_writer: &mut impl Write,
+    request_id: Option<u64>,
+    kind: ResponseKind,
+) {
+    let message =
+        Message::Response { request_id: request_id.unwrap_or(0), kind };
     let _ = writeln!(line_writer, "{}", message.serialize());
     let _ = line_writer.flush();
 }
@@ -43,7 +46,12 @@ fn main() {
             }
         };
         match message {
-            Message::Hello { protocol, version, package_id: id, package_digest: _ } => {
+            Message::Hello {
+                protocol,
+                version,
+                package_id: id,
+                package_digest: _,
+            } => {
                 if protocol != PROTOCOL_NAME || version != PROTOCOL_VERSION {
                     let _ = writeln!(
                         stdout,
@@ -51,7 +59,9 @@ fn main() {
                         Message::Error {
                             request_id: None,
                             code: "protocol_mismatch".to_string(),
-                            message: format!("protocol {protocol} v{version} unsupported"),
+                            message: format!(
+                                "protocol {protocol} v{version} unsupported"
+                            ),
                         }
                         .serialize()
                     );
@@ -73,7 +83,11 @@ fn main() {
                     "query": text,
                     "semantic": { "nodes": 0, "sources": text.len() },
                 });
-                respond(&mut stdout, Some(request_id), ResponseKind::Ok { result });
+                respond(
+                    &mut stdout,
+                    Some(request_id),
+                    ResponseKind::Ok { result },
+                );
             }
             Message::WorkspaceRead { request_id, path, max_bytes } => {
                 // The domain ASKS; the host performs. Here the child
@@ -83,14 +97,20 @@ fn main() {
                     "requested_max_bytes": max_bytes,
                     "mediated_by": "host",
                 });
-                respond(&mut stdout, Some(request_id), ResponseKind::Ok { result });
+                respond(
+                    &mut stdout,
+                    Some(request_id),
+                    ResponseKind::Ok { result },
+                );
             }
             Message::CapabilityRequest { request_id, capability } => {
                 respond(
                     &mut stdout,
                     Some(request_id),
                     ResponseKind::Denied {
-                        reason: format!("capability {capability} not granted by host policy"),
+                        reason: format!(
+                            "capability {capability} not granted by host policy"
+                        ),
                     },
                 );
             }
