@@ -4,6 +4,7 @@
  * informational classification, incomplete runs, malformed records).
  */
 import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,6 +92,27 @@ describe("canonical serialization properties", () => {
     expect(canonicalA).toBe(canonicalizeJson(b));
     expect(sha256Hex(canonicalA)).toBe(sha256Hex(canonicalizeJson(b)));
     expect(canonicalA).toBe('{"a":2,"m":3,"z":1}');
+  });
+});
+
+describe("module entry guards", () => {
+  it("allows the comparator API to be imported without an argv entry", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--input-type=module", "--eval", "await import('./tests/differential/compare.mjs')"],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024,
+        timeout: 10_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
   });
 });
 

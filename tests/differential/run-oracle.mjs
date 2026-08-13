@@ -209,6 +209,6 @@ function main() {
   process.stdout.write(`oracle: wrote ${out}\n`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }
