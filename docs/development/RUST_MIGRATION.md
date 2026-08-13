@@ -23,7 +23,7 @@ concepts never satisfy those identifiers by implication.
 | Milestone | Scope                                                                                                                           | Current status |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------- |
 | R1        | Siralos rename, Rust workspace, and engineering standards                                                                       | Verified       |
-| R2        | Differential Behavioral Harness                                                                                                 | Remediation    |
+| R2        | Differential Behavioral Harness                                                                                                 | Verified       |
 | R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Not due        |
 | R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Not due        |
 | R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Not due        |
@@ -35,10 +35,13 @@ concepts never satisfy those identifiers by implication.
 | R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Not due        |
 | R12       | TypeScript reference retirement or an explicit evidence-backed retention disposition                                            | Not due        |
 
-R2 remains in remediation until its corpus is mechanically digest-bound, its
-runners and comparator fail closed, its audit evidence is trustworthy, and
-the complete repository gate passes on the supported platform matrix. A green
-unit suite alone does not complete R2.
+R2 is verified: its corpus is mechanically digest-bound, its independent
+runners and comparator fail closed, its audit records carry source/corpus/
+record provenance and explicit coverage, and the complete local repository
+gate passes. The Tier-1 CI matrix reruns parity on Linux, Windows, and macOS
+and retains the exact oracle, candidate, and audit records; a failed matrix
+run blocks integration. R2 verification does not authorize R3 work or satisfy
+any later migration or Stage-4 entry gate.
 
 ## Porting gate
 
