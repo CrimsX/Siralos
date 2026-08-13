@@ -2,9 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   readdir,
   rename,
   rm,
@@ -177,30 +179,57 @@ function expectVerified(outcome: VerifiedPreimageOutcome): Buffer {
 }
 
 /**
- * Byte-for-byte recursive snapshot of a directory tree: relative path ->
- * SHA-256 of content. Any deletion, rename, or content change anywhere in
- * the tree changes the snapshot, so equality before/after an operation
- * proves no destructive filesystem operation occurred. Symlinks and special
- * files are recorded by kind and never opened: reading a FIFO could block
- * forever, and following a symlink would observe the target rather than the
- * entry.
+ * Recursive observable snapshot of a directory tree: readable files are
+ * content-hashed, directories are recorded by path, symlinks by target, and
+ * unreadable entries by stable identity metadata. Equality before/after an
+ * operation proves that no observable entry or readable content changed.
+ * Special files are recorded by kind and never opened: reading a FIFO could
+ * block forever, and following a symlink would observe the target rather than
+ * the entry.
  */
 async function snapshotTree(root: string): Promise<ReadonlyMap<string, string>> {
-  const { createHash } = await import("node:crypto");
-  const { readdir, readFile } = await import("node:fs/promises");
   const snapshot = new Map<string, string>();
+  const entryIdentity = async (absolute: string): Promise<string> => {
+    const metadata = await lstat(absolute);
+    return [
+      `dev:${metadata.dev}`,
+      `ino:${metadata.ino}`,
+      `mode:${metadata.mode}`,
+      `size:${metadata.size}`,
+      `mtime:${metadata.mtimeMs}`,
+      `ctime:${metadata.ctimeMs}`,
+    ].join(":");
+  };
   const walk = async (directory: string, relative: string): Promise<void> => {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      snapshot.set(
+        relative.length === 0 ? "." : relative,
+        `entry-kind:unreadable-directory:${await entryIdentity(directory)}`,
+      );
+      return;
+    }
+    for (const entry of entries) {
       const entryRelative = relative.length === 0 ? entry.name : `${relative}/${entry.name}`;
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) {
+        snapshot.set(entryRelative, "entry-kind:directory");
         await walk(absolute, entryRelative);
       } else if (entry.isFile()) {
-        const content = await readFile(absolute);
-        snapshot.set(entryRelative, createHash("sha256").update(content).digest("hex"));
+        try {
+          const content = await readFile(absolute);
+          snapshot.set(entryRelative, createHash("sha256").update(content).digest("hex"));
+        } catch {
+          snapshot.set(
+            entryRelative,
+            `entry-kind:unreadable-file:${await entryIdentity(absolute)}`,
+          );
+        }
       } else {
         const kind = entry.isSymbolicLink()
-          ? "symlink"
+          ? `symlink:${await readlink(absolute)}`
           : entry.isFIFO()
             ? "fifo"
             : entry.isSocket()

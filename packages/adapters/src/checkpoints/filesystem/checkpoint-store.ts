@@ -657,16 +657,10 @@ async function verifyOpenedStability(
       message: `Checkpoint ${context} opened preimage object is not a regular file.`,
     };
   }
-  if (
-    handleStats.dev !== expected.dev ||
-    handleStats.ino !== expected.ino ||
-    handleStats.size !== expected.size ||
-    handleStats.mtimeNs !== expected.mtimeNs ||
-    handleStats.ctimeNs !== expected.ctimeNs
-  ) {
+  if (handleStats.dev !== expected.dev || handleStats.ino !== expected.ino) {
     return {
       status: "invalid",
-      message: `Checkpoint ${context} preimage changed during verification (in-place mutation).`,
+      message: `Checkpoint ${context} opened preimage object differs from the pre-read object (identity substitution).`,
     };
   }
   let pathStats;
@@ -690,16 +684,30 @@ async function verifyOpenedStability(
       message: `Checkpoint ${context} preimage path no longer resolves to a non-link regular file.`,
     };
   }
+  if (pathStats.dev !== handleStats.dev || pathStats.ino !== handleStats.ino) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage path now resolves to a different object.`,
+    };
+  }
   if (
-    pathStats.dev !== handleStats.dev ||
-    pathStats.ino !== handleStats.ino ||
+    handleStats.size !== expected.size ||
+    handleStats.mtimeNs !== expected.mtimeNs ||
+    handleStats.ctimeNs !== expected.ctimeNs
+  ) {
+    return {
+      status: "invalid",
+      message: `Checkpoint ${context} preimage changed during verification (in-place mutation).`,
+    };
+  }
+  if (
     pathStats.size !== handleStats.size ||
     pathStats.mtimeNs !== handleStats.mtimeNs ||
     pathStats.ctimeNs !== handleStats.ctimeNs
   ) {
     return {
       status: "invalid",
-      message: `Checkpoint ${context} preimage path now resolves to a different object.`,
+      message: `Checkpoint ${context} preimage path changed during verification.`,
     };
   }
   return null;
