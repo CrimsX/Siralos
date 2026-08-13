@@ -35,13 +35,15 @@ concepts never satisfy those identifiers by implication.
 | R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Not due        |
 | R12       | TypeScript reference retirement or an explicit evidence-backed retention disposition                                            | Not due        |
 
-R2 is verified: its corpus is mechanically digest-bound, its independent
-runners and comparator fail closed, its audit records carry source/corpus/
-record provenance and explicit coverage, and the complete local repository
-gate passes. The Tier-1 CI matrix reruns parity on Linux, Windows, and macOS
-and retains the exact oracle, candidate, and audit records; a failed matrix
-run blocks integration. R2 verification does not authorize R3 work or satisfy
-any later migration or Stage-4 entry gate.
+R2 is verified: its versioned corpus is mechanically bound by scenario and
+overall digests; its reference and candidate runners have symmetric bounded
+lifecycle supervision; and its semantic comparator reports typed JSON-path
+differences. The audit records source, corpus, and exact protocol-document
+provenance plus explicit scenario and per-subject coverage, and the complete
+local repository gate passes. The Tier-1 CI matrix reruns parity on Linux,
+Windows, and macOS and retains the exact reference, candidate, audit, and
+failure records; a failed matrix run blocks integration. R2 verification does
+not authorize R3 work or satisfy any later migration or Stage-4 entry gate.
 
 ## Porting gate
 

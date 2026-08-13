@@ -56,8 +56,9 @@ unsafe filesystem or process boundary intentionally fails closed.
   domain-neutral Rust foundation, ADR 0032) is complete. R2
   (Differential Behavioral Harness, ADR 0033) is complete: the audit
   remediation gate runs the scenario corpus against the TypeScript
-  reference and the Rust candidate, machine-compares canonical outcome
-  records, emits a per-commit migration audit, and gates remediation —
+  reference and the Rust candidate under symmetric bounded supervision,
+  semantically compares typed canonical outcome records, emits a
+  digest-bound per-commit migration audit, and gates remediation —
   its first subjects (state-dir resolution, product version identity)
   hold parity, and the audit drove real drift remediation in
   `siralos-adapters::paths`. R3 (the first differential-verified
@@ -220,8 +221,9 @@ surface. The complete internal sequence is recorded in
 `docs/development/RUST_MIGRATION.md`. R2 (Differential Behavioral
 Harness, ADR 0033) is complete:
 the audit remediation gate runs deterministic scenarios against the
-TypeScript reference and the Rust candidate, machine-compares canonical
-outcome records, emits a per-commit migration audit, and blocks
+TypeScript reference and the Rust candidate, semantically compares typed
+canonical outcome records, emits a digest-bound per-commit migration audit,
+and blocks
 acceptance until drift is remediated — parity held on the state-dir and
 version-identity subjects, with real drift remediated in
 `siralos-adapters::paths`.

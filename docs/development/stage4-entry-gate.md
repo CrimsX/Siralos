@@ -6,7 +6,7 @@ criterion below holds. Status is host-observed evidence, never claims.
 This document is the written gate; it is re-evaluated at each
 milestone.
 
-| #   | Criterion                                                                   | Status (R2.5)              | Owner / note                                                                                                                                                                                        |
+| #   | Criterion                                                                   | Current status             | Owner / note                                                                                                                                                                                        |
 | --- | --------------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Stage 1–3 Rust migration audit passes                                       | **NOT MET**                | Migration is at skeleton stage (R1 foundation + R2 harness; subsystem ports R3+ pending). The differential audit (ADR 0033) is the audit mechanism and runs green on the current surface.           |
 | 2   | Required Rust style/Clippy/rustfmt gates pass                               | **PASS**                   | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` green; enforced in CI.                                                                   |
