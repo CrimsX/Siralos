@@ -1005,26 +1005,35 @@ mod tests {
     #[test]
     fn strict_loader_distinguishes_corpus_digest_failures() {
         for (replacement, expected_code) in [
+            (None, "MISSING_DIGEST"),
+            (Some("invalid"), "MALFORMED_DIGEST"),
             (
-                "\"corpusSha256\": \"2c3476d08b25769cfcec217daedbe647247b7a4075f5ce639843bb368fc00974\",",
-                "MISSING_DIGEST",
-            ),
-            ("\"corpusSha256\": \"invalid\"", "MALFORMED_DIGEST"),
-            (
-                "\"corpusSha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"",
+                Some(
+                    "0000000000000000000000000000000000000000000000000000000000000000",
+                ),
                 "CONTENT_MISMATCH",
             ),
         ] {
             let corpus = TempCorpus::copy();
             let path = corpus.0.join("manifest.json");
             let text = std::fs::read_to_string(&path).expect("manifest");
-            let original = "\"corpusSha256\": \"2c3476d08b25769cfcec217daedbe647247b7a4075f5ce639843bb368fc00974\"";
-            let changed = if expected_code == "MISSING_DIGEST" {
-                text.replace(&format!("{original},\n"), "")
+            let mut manifest: serde_json::Value =
+                serde_json::from_str(&text).expect("valid manifest JSON");
+            let object = manifest.as_object_mut().expect("manifest object");
+            if let Some(replacement) = replacement {
+                object.insert(
+                    "corpusSha256".to_owned(),
+                    serde_json::Value::String(replacement.to_owned()),
+                );
             } else {
-                text.replace(original, replacement)
-            };
-            std::fs::write(path, changed).expect("alter manifest");
+                object.remove("corpusSha256");
+            }
+            std::fs::write(
+                path,
+                serde_json::to_vec_pretty(&manifest)
+                    .expect("serialize manifest"),
+            )
+            .expect("alter manifest");
             let error = load_corpus(&corpus.0, PLATFORM_POSIX)
                 .err()
                 .expect("invalid corpus digest rejected");
