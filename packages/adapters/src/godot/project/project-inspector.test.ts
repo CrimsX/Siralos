@@ -436,7 +436,10 @@ describe("project path containment", () => {
 
   it("skips a symlinked plugin.cfg with a warning", async () => {
     const workspace = await withWorkspace();
-    await writeFiles(workspace, { "real.cfg": '[plugin]\nscript="x.gd"\n' });
+    await writeFiles(workspace, {
+      "project.godot": "config_version=5\n",
+      "real.cfg": '[plugin]\nscript="x.gd"\n',
+    });
     await mkdir(join(workspace, "addons", "linked"), { recursive: true });
     try {
       await symlink(join(workspace, "real.cfg"), join(workspace, "addons", "linked", "plugin.cfg"));
