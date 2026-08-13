@@ -15,6 +15,50 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const CORPUS = join(HERE, "corpus");
 const ROOT = join(HERE, "..", "..");
 
+describe("canonical serialization properties", () => {
+  // Deterministic generator: nested values with deliberately
+  // unsorted keys, arrays, strings (incl. escapes), numbers, null,
+  // and booleans.
+  function generateValue(seed) {
+    const values = [
+      null,
+      true,
+      false,
+      0,
+      1,
+      -1,
+      42,
+      "",
+      "plain",
+      "quote\"backslash\\unicode\u00e9",
+      [1, "two", null, { z: 1, a: [true, false] }],
+      { zeta: 1, alpha: "beta", mid: null, num: 7 },
+      { nested: { deep: { deeper: [{ x: 1 }, { x: 2 }] } } },
+    ];
+    return values[seed % values.length];
+  }
+
+  it("is idempotent over parsed values (parse → canonicalize → parse → canonicalize)", () => {
+    for (let seed = 0; seed < 64; seed += 1) {
+      const value = generateValue(seed);
+      const once = canonicalizeJson(value);
+      const parsed = JSON.parse(once);
+      const twice = canonicalizeJson(parsed);
+      expect(twice).toBe(once);
+      expect(JSON.parse(twice)).toEqual(parsed);
+    }
+  });
+
+  it("produces sorted keys and stable digests regardless of input key order", () => {
+    const a = { z: 1, a: 2, m: 3 };
+    const b = { m: 3, a: 2, z: 1 };
+    const canonicalA = canonicalizeJson(a);
+    expect(canonicalA).toBe(canonicalizeJson(b));
+    expect(sha256Hex(canonicalA)).toBe(sha256Hex(canonicalizeJson(b)));
+    expect(canonicalA).toBe('{"a":2,"m":3,"z":1}');
+  });
+});
+
 describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
