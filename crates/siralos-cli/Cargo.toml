@@ -9,10 +9,22 @@ publish = false
 [dependencies]
 siralos-core = { workspace = true }
 siralos-adapters = { workspace = true }
+# Harness tooling (differential behavioral harness, ADR 0033): canonical
+# JSON corpus/records (serde/serde_json), scenario hashing (sha2), and
+# Cargo.toml version extraction (toml). The standard library has no
+# JSON/TOML parser or SHA-256.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+toml = "0.8"
 
 [[bin]]
 name = "siralos"
 path = "src/main.rs"
+
+[[bin]]
+name = "siralos-harness"
+path = "src/bin/siralos-harness.rs"
 
 [lints]
 workspace = true

@@ -1,0 +1,9 @@
+{
+  "id": "state-dir.set.posix",
+  "subject": "state-dir",
+  "platforms": ["posix"],
+  "parity": "required",
+  "env": {
+    "HOME": "/fixture/home"
+  }
+}

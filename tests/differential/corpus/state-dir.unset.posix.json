@@ -1,0 +1,7 @@
+{
+  "id": "state-dir.unset.posix",
+  "subject": "state-dir",
+  "platforms": ["posix"],
+  "parity": "required",
+  "env": {}
+}

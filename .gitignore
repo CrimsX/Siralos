@@ -4,3 +4,4 @@ coverage/
 *.tsbuildinfo
 .reasonix/
 /target/
+/tests/differential/out/

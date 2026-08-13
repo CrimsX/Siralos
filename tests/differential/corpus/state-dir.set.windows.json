@@ -1,0 +1,9 @@
+{
+  "id": "state-dir.set.windows",
+  "subject": "state-dir",
+  "platforms": ["windows"],
+  "parity": "required",
+  "env": {
+    "USERPROFILE": "C:\\fixture\\home"
+  }
+}

@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,6 +40,14 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      # The migration's audit remediation gate (ADR 0033): runs the
+      # scenario corpus against the TypeScript reference and the Rust
+      # candidate, compares canonical outcome records, and emits the
+      # migration audit. POSIX scenarios execute here; Windows scenarios
+      # are skipped by both sides identically.
+      - name: Differential harness
+        run: npm run check:differential
 
       # Repository-level ratchets from the Siralos engineering standard
       # (docs/development/RUST_STYLE.md, ADR 0032): the Rust architecture

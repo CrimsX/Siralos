@@ -1,0 +1,7 @@
+{
+  "id": "version.identity",
+  "subject": "version-identity",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {}
+}

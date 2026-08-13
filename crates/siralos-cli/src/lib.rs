@@ -1,9 +1,15 @@
-//! Argument parsing for the `siralos` binary.
+//! Argument parsing and harness logic for the `siralos` binaries.
 //!
 //! R1 exposes only the version and usage surfaces needed to prove the
 //! binary identity and the workspace dependency direction. The
 //! interactive terminal session of the TypeScript reference
 //! implementation is not ported yet.
+//!
+//! The differential behavioral harness (ADR 0033) candidate runner
+//! lives in [`harness`] and is exercised by the `siralos-harness`
+//! binary.
+
+pub mod harness;
 
 use std::ffi::OsString;
 

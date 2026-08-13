@@ -1,0 +1,11 @@
+{
+  "id": "state-dir.fallback.windows",
+  "subject": "state-dir",
+  "platforms": ["windows"],
+  "parity": "required",
+  "env": {
+    "USERPROFILE": "",
+    "HOMEDRIVE": "C:",
+    "HOMEPATH": "\\fixture\\home"
+  }
+}
