@@ -3,8 +3,10 @@
 Status: authoritative (pre-Stage-4 assurance, contract Parts 13–14).
 Workload identity, input size, environment, toolchain, commit, and
 median are recorded per benchmark. Regression budgets are defined for
-high-value operations but are enforced only by the scheduled assurance
-workflow — never a PR gate — until a stable baseline history exists.
+high-value operations. The scheduled assurance workflow records and
+uploads Criterion's machine-readable estimates plus the exact commit and
+toolchain; it does not claim an automatic regression verdict until a
+stable comparable-run history exists.
 
 ## Benchmarks
 
@@ -20,16 +22,22 @@ criterion 0.5, `cargo bench -p siralos-core`.
 Command:
 
 ```text
-cargo bench --workspace
+cargo bench --workspace --locked
 ```
 
 ## Regression budgets
 
 Defined for the high-value current-surface operations (version parsing
 throughput): a sustained median regression above 2× the recorded
-baseline in two consecutive scheduled assurance runs is a review item.
+baseline in two comparable scheduled assurance runs is a review item.
+This is a human review policy, not an automatically enforced threshold.
 Budgets become enforceable gates only after a stable baseline history
-exists across platforms.
+and a statistically sound comparison mechanism exist across platforms.
+
+The weekly `performance` assurance job executes the locked benchmark
+suite and retains `target/criterion` as an artifact named for the source
+commit. A missing or failed benchmark job is therefore visible; a green
+job proves measurement completed, not that performance is unchanged.
 
 ## Performance review (contract Part 14)
 

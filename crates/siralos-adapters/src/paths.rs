@@ -24,7 +24,6 @@
 //! practical: no component of this module assumes the home directory or
 //! the resulting path is valid UTF-8.
 
-use std::env;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -55,10 +54,12 @@ pub fn state_dir() -> Result<PathBuf, StateDirError> {
     // is resolved here and `dirs` supplies the OS-profile fallback.
     #[cfg(windows)]
     {
-        if env::var_os("USERPROFILE").is_some_and(|value| value.is_empty()) {
+        if std::env::var_os("USERPROFILE")
+            .is_some_and(|value| value.is_empty())
+        {
             return Err(StateDirError::NoHomeDirectory);
         }
-        let home = env::var_os("USERPROFILE")
+        let home = std::env::var_os("USERPROFILE")
             .map(PathBuf::from)
             .or_else(dirs::home_dir)
             .ok_or(StateDirError::NoHomeDirectory)?;
@@ -149,8 +150,10 @@ mod tests {
     #[test]
     fn preserves_non_utf8_home_paths_on_unix() {
         use std::os::unix::ffi::OsStringExt;
-        let home =
-            PathBuf::from(OsStringExt::from_vec(b"/home/\xFF\xFE".to_vec()));
+        // Bind the extension-trait result to its concrete type. Rust 1.85
+        // cannot infer it through PathBuf's multiple From implementations.
+        let bytes = std::ffi::OsString::from_vec(b"/home/\xFF\xFE".to_vec());
+        let home = PathBuf::from(bytes);
         let state = state_dir_for(&home);
         assert!(state.ends_with(STATE_DIR_NAME));
         assert!(state.starts_with(&home));

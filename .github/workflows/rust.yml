@@ -2,8 +2,9 @@ name: Siralos Rust CI
 
 # Validation CI only: no release, no publication, no dependency updates,
 # no Godot acquisition. The TypeScript reference remains the migration
-# oracle (ADR 0032/0033), so the differential harness and the ratchet
-# scripts run as Node steps in the full-gate job.
+# oracle (ADR 0032/0033). A dedicated job runs that complete oracle gate
+# before the Rust candidate gate; the differential harness then compares
+# both implementations without recursively re-running the TypeScript suite.
 on:
   push:
     branches: ["main"]
@@ -23,10 +24,46 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  NODE_VERSION: 24.17.0
+  NPM_VERSION: 11.13.0
 
 jobs:
+  oracle:
+    name: TypeScript behavioral oracle (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # actions/setup-node v6.4.0 (GitHub-owned, immutable SHA pin).
+      - name: Install pinned Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install pinned npm
+        shell: bash
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Verify JavaScript toolchain identity
+        run: |
+          node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npm = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
+
+      - name: Install locked npm dependencies
+        run: npm ci
+
+      # The TypeScript implementation is the migration oracle. This is
+      # the full non-Rust gate: formatting, lint, typecheck, build/tests,
+      # architecture/nondeterminism/identity ratchets, and doc links.
+      - name: TypeScript oracle gate
+        run: npm run check:typescript
+
   gate:
     name: Rust gate (Linux)
+    needs: oracle
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -43,6 +80,19 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
+      - name: Install pinned Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pinned npm
+        shell: bash
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Verify JavaScript toolchain identity
+        run: |
+          node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npm = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
+
       # Reconstructible cargo artifacts only: registry, git checkouts,
       # and the workspace target directory. Keyed on OS, toolchain, and
       # Cargo.lock; correctness never depends on a cache hit.
@@ -57,9 +107,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # The workspace has no Cargo features, so --all-features is the
-      # (trivially) supported configuration; this is documented rather
-      # than assumed from generic conventions.
+      # --all-features includes the internal differential-harness tooling
+      # feature. The default `siralos` product binary remains lean and is
+      # exercised separately below without that feature.
       - name: Format check
         run: cargo fmt --all --check
 
@@ -75,6 +125,11 @@ jobs:
       - name: Test (locked, all targets, all features)
         run: cargo test --workspace --all-targets --all-features --locked
 
+      - name: CLI identity and help (default features)
+        run: |
+          cargo run --locked --bin siralos -- --version
+          cargo run --locked --bin siralos -- --help
+
       # Core-without-Godot proof: siralos-core must build with no
       # optional domain dependency (architecture ratchet re-checks the
       # forbidden-symbol boundary separately).
@@ -88,23 +143,35 @@ jobs:
         run: cargo install cargo-deny --locked --version 0.20.2
 
       - name: Dependency policy (cargo deny)
-        run: cargo deny check
+        run: cargo deny --locked check
 
       # The migration's audit remediation gate (ADR 0033): oracle vs
       # candidate canonical records; POSIX scenarios execute here.
       - name: Differential harness
         run: npm run check:differential
 
-      # Repository ratchets (ADR 0032): Rust architecture boundaries and
-      # the identity check. Dependency-free Node scripts.
+      # The harness output is intentionally gitignored. Retain the exact
+      # oracle, candidate, and comparison records as reviewable CI evidence,
+      # including on parity failure or harness error.
+      - name: Upload differential evidence (Linux)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: differential-linux-${{ github.sha }}
+          path: |
+            tests/differential/out/oracle.json
+            tests/differential/out/candidate.json
+            tests/differential/out/audit.json
+          if-no-files-found: warn
+        if: always()
+
+      # Rust-specific repository ratchet (ADR 0032). The identity and
+      # documentation ratchets already ran in the oracle job.
       - name: Rust architecture ratchet
         run: node scripts/check-rust-architecture.mjs
 
-      - name: Identity ratchet
-        run: node scripts/check-siralos-identity.mjs
-
   platform:
     name: Rust platform (${{ matrix.os }})
+    needs: oracle
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -118,6 +185,20 @@ jobs:
 
       - name: Install Rust toolchain
         run: rustup show active-toolchain
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pinned npm
+        shell: bash
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Verify JavaScript toolchain identity
+        shell: bash
+        run: |
+          node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'; const npm = execFileSync(npmCommand, ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
 
       - name: Cache cargo artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -138,6 +219,11 @@ jobs:
       - name: Test (locked, all targets, all features)
         run: cargo test --workspace --all-targets --all-features --locked
 
+      - name: CLI identity and help (default features)
+        run: |
+          cargo run --locked --bin siralos -- --version
+          cargo run --locked --bin siralos -- --help
+
       # The differential harness runs the platform's own state-dir
       # scenarios (Windows scenarios on windows-latest; POSIX scenarios
       # on macos-latest), exercising the home-resolution contract on
@@ -145,5 +231,37 @@ jobs:
       - name: Differential harness
         run: npm run check:differential
 
+      - name: Upload differential evidence (${{ matrix.os }})
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: differential-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            tests/differential/out/oracle.json
+            tests/differential/out/candidate.json
+            tests/differential/out/audit.json
+          if-no-files-found: warn
+        if: always()
+
       - name: Core-only check (no optional domain)
         run: cargo check -p siralos-core --locked
+
+  msrv:
+    name: Minimum supported Rust 1.85.0
+    needs: oracle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Cargo.toml declares 1.85 as the MSRV. Test it directly rather
+      # than treating the edition floor as evidence of compatibility.
+      - name: Install exact MSRV
+        run: rustup toolchain install 1.85.0 --profile minimal
+
+      - name: Check workspace at MSRV (locked, all targets, all features)
+        # `cargo check` is the compatibility proof for every target and
+        # feature. Behavioral execution remains on the pinned stable and
+        # Tier-1 matrix; duplicating it at MSRV adds no API coverage.
+        run: cargo +1.85.0 check --workspace --all-targets --all-features --locked

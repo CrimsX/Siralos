@@ -7,16 +7,17 @@ Status: authoritative (pre-Stage-4 assurance, contract Part 9 / Part 10).
 A platform is supported only when Siralos executes real tests there.
 The Tier-1 matrix is:
 
-| OS      | CI runner      | Build                       | Tests                | Differential harness | CLI                 |
-| ------- | -------------- | --------------------------- | -------------------- | -------------------- | ------------------- |
-| Linux   | ubuntu-latest  | `cargo check/test --locked` | full workspace suite | POSIX scenarios      | `siralos --version` |
-| Windows | windows-latest | `cargo check/test --locked` | full workspace suite | Windows scenarios    | `siralos --version` |
-| macOS   | macos-latest   | `cargo check/test --locked` | full workspace suite | POSIX scenarios      | `siralos --version` |
+| OS      | CI runner      | Build                       | Tests                | Differential harness | CLI                   |
+| ------- | -------------- | --------------------------- | -------------------- | -------------------- | --------------------- |
+| Linux   | ubuntu-latest  | `cargo check/test --locked` | full workspace suite | POSIX scenarios      | `--version`, `--help` |
+| Windows | windows-latest | `cargo check/test --locked` | full workspace suite | Windows scenarios    | `--version`, `--help` |
+| macOS   | macos-latest   | `cargo check/test --locked` | full workspace suite | POSIX scenarios      | `--version`, `--help` |
 
 `.github/workflows/rust.yml` enforces the matrix; `fail-fast: false`
 keeps every platform's evidence visible. The Linux gate additionally
 runs fmt, clippy, documentation, differential, ratchets, the supply
-chain gate, and the core-only check.
+chain gate, and the core-only check. Every Tier-1 runner executes the
+default-feature `siralos` binary for both identity and help behavior.
 
 Local development hosts: Windows uses the GNU host target with
 MinGW-w64 (the CI Windows runner uses the default MSVC host, which

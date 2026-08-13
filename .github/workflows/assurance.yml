@@ -1,9 +1,9 @@
-name: Siralos assurance (nightly)
+name: Siralos scheduled assurance
 
-# Scheduled/specialized assurance: fuzzing, Miri, sanitizers, and
-# coverage. Separate from the ordinary stable quality gate
-# (rust.yml): these jobs use a pinned nightly toolchain and never
-# block ordinary PR validation.
+# Scheduled/specialized assurance: nightly adversarial checks plus
+# stable performance and retained-prototype evidence. Separate from the
+# ordinary stable quality gate (rust.yml), these jobs never block pull
+# request validation.
 on:
   schedule:
     # Weekly: Monday 04:00 UTC.
@@ -20,6 +20,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  NIGHTLY_TOOLCHAIN: nightly-2026-07-15
+  CARGO_FUZZ_VERSION: 0.13.2
+  CARGO_LLVM_COV_VERSION: 0.8.7
 
 jobs:
   adversarial:
@@ -33,43 +36,48 @@ jobs:
 
       - name: Install nightly toolchain (pinned components)
         run: |
-          rustup toolchain install nightly --profile minimal --component miri
-          rustup component add rust-src --toolchain nightly
+          rustup toolchain install "$NIGHTLY_TOOLCHAIN" --profile minimal \
+            --component miri --component rust-src
 
-      - name: Install fuzz and coverage tooling
+      - name: Install stable coverage support
         run: |
-          cargo install cargo-fuzz --locked
-          cargo install cargo-llvm-cov --locked
+          rustup show active-toolchain
+          rustup component add llvm-tools-preview
+
+      - name: Install pinned fuzz and coverage tooling
+        run: |
+          cargo install cargo-fuzz --locked --version "$CARGO_FUZZ_VERSION"
+          cargo install cargo-llvm-cov --locked --version "$CARGO_LLVM_COV_VERSION"
 
       # Bounded smoke runs; minimized crashes (if any) are added to the
       # repository as deterministic regression tests by a follow-up.
       - name: Build fuzz targets
-        run: cargo +nightly fuzz build -s none
+        run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz build -s none
 
       - name: Fuzz version parsing
-        run: cargo +nightly fuzz run version_parse -s none -- -max_total_time=60
+        run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz run version_parse -s none -- -max_total_time=60
 
       - name: Fuzz CLI arguments
-        run: cargo +nightly fuzz run cli_args -s none -- -max_total_time=60
+        run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz run cli_args -s none -- -max_total_time=60
 
       - name: Fuzz corpus decoding
-        run: cargo +nightly fuzz run corpus_scenario -s none -- -max_total_time=60
+        run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz run corpus_scenario -s none -- -max_total_time=60
 
       # All-safe-Rust workspace: Miri is scoped to siralos-core
       # (docs/development/ADVERSARIAL_TESTING.md).
       - name: Miri (siralos-core)
-        run: cargo +nightly miri test -p siralos-core
+        run: cargo +"$NIGHTLY_TOOLCHAIN" miri test -p siralos-core --locked
 
       # AddressSanitizer over the core tests; never claims memory
       # correctness beyond what it executes.
       - name: AddressSanitizer (siralos-core)
         run: |
-          RUSTFLAGS="-Z sanitizer=address" cargo +nightly -Zbuild-std test \
-            -p siralos-core --target x86_64-unknown-linux-gnu
+          RUSTFLAGS="-Z sanitizer=address" cargo +"$NIGHTLY_TOOLCHAIN" -Zbuild-std test \
+            -p siralos-core --target x86_64-unknown-linux-gnu --locked
 
       # Coverage evidence for the migration audit (no percentage gate).
       - name: Coverage (workspace)
-        run: cargo llvm-cov --workspace --lcov --output-path target/coverage.lcov
+        run: cargo llvm-cov --workspace --lcov --output-path target/coverage.lcov --locked
 
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -77,3 +85,96 @@ jobs:
           name: coverage
           path: target/coverage.lcov
         if: always()
+
+  performance:
+    name: Performance evidence (stable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned stable toolchain
+        run: rustup show active-toolchain
+
+      # Criterion emits machine-readable estimates beneath
+      # target/criterion. This records measurements and run identity;
+      # it does not claim a stable cross-run threshold yet.
+      - name: Record benchmark evidence
+        run: |
+          cargo bench --workspace --locked
+          rustc -Vv > target/criterion/run-identity.txt
+          git rev-parse HEAD >> target/criterion/run-identity.txt
+
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: criterion-${{ github.sha }}
+          path: target/criterion
+        if: always()
+
+  domain-abi:
+    name: Retained domain ABI prototypes (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned stable toolchain and component target
+        run: |
+          rustup show active-toolchain
+          rustup target add wasm32-wasip2
+
+      - name: Cache prototype cargo artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            experiments/domain-abi/ipc/target
+            experiments/domain-abi/wit/guest/target
+            experiments/domain-abi/wit/host/target
+          key: ${{ runner.os }}-domain-abi-${{ hashFiles('experiments/domain-abi/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-domain-abi-
+
+      - name: Format retained prototypes
+        run: |
+          cargo fmt --manifest-path experiments/domain-abi/ipc/Cargo.toml --all --check
+          cargo fmt --manifest-path experiments/domain-abi/wit/guest/Cargo.toml --all --check
+          cargo fmt --manifest-path experiments/domain-abi/wit/host/Cargo.toml --all --check
+
+      - name: IPC prototype (locked, warnings denied)
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          cargo clippy --manifest-path experiments/domain-abi/ipc/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path experiments/domain-abi/ipc/Cargo.toml --all-targets --locked
+          # The host intentionally spawns the sibling domain executable,
+          # so materialize both binaries before launching conformance.
+          cargo build --manifest-path experiments/domain-abi/ipc/Cargo.toml --release --bins --locked
+          cargo run --manifest-path experiments/domain-abi/ipc/Cargo.toml --release --locked --bin host
+
+      - name: WIT guest component (locked, warnings denied)
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          cargo build --manifest-path experiments/domain-abi/wit/guest/Cargo.toml --release --target wasm32-wasip2 --locked
+          cp experiments/domain-abi/wit/guest/target/wasm32-wasip2/release/domain_abi_wit_guest.wasm experiments/domain-abi/wit/guest.component.wasm
+
+      - name: WIT host conformance (locked, warnings denied)
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo run --manifest-path experiments/domain-abi/wit/host/Cargo.toml --release --locked -- experiments/domain-abi/wit/guest.component.wasm
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.20.2
+
+      - name: Audit retained prototype dependencies
+        run: |
+          cargo deny --locked --config deny.toml --manifest-path experiments/domain-abi/ipc/Cargo.toml check
+          cargo deny --locked --config deny.toml --manifest-path experiments/domain-abi/wit/guest/Cargo.toml check
+          cargo deny --locked --config deny.toml --manifest-path experiments/domain-abi/wit/host/Cargo.toml check

@@ -6,7 +6,7 @@ and priorities).
 
 ## Fuzzing (contract Part 4)
 
-- Tooling: `cargo-fuzz` + `libfuzzer-sys` in `fuzz/` — a standalone
+- Tooling: `cargo-fuzz` 0.13.2 + `libfuzzer-sys` in `fuzz/` — a standalone
   crate **excluded from the workspace** (`exclude = ["fuzz"]`): fuzzing
   requires a nightly toolchain and must never enter the stable quality
   gate.
@@ -25,8 +25,8 @@ and priorities).
   bounded smoke (`-max_total_time`/`-runs`), and minimized crashes, if
   any, become deterministic regression tests in the repository.
 - Miri on the Windows GNU host is likewise unavailable (cargo-miri
-  requires the MSVC target); the scheduled workflow runs
-  `cargo +nightly miri test -p siralos-core` on ubuntu.
+  requires the MSVC target); the scheduled workflow runs it with pinned
+  `nightly-2026-07-15` on ubuntu.
 
 ## Property testing (contract Part 5)
 
@@ -55,8 +55,8 @@ run cargo-miri. Architecture is not contorted for Miri compatibility.
 - ThreadSanitizer: **NOT APPLICABLE** — the workspace contains zero
   shared-state concurrency primitives (no `std::sync`, atomics,
   channels, `Arc`, or `thread::spawn` in any crate; verified by scan).
-- Sanitizer jobs are separate from the stable quality gate and use the
-  pinned nightly toolchain.
+- Sanitizer jobs are separate from the stable quality gate and use pinned
+  `nightly-2026-07-15`.
 
 ## Concurrency model testing (contract Part 8)
 
@@ -74,11 +74,11 @@ triggers a Loom re-evaluation at its porting milestone.
 
 ## Coverage analysis (contract Part 15)
 
-`cargo llvm-cov` over the workspace test suite is used to locate
-untested critical paths (security decisions, identity, validation,
-state transitions). There is no repository-wide percentage objective;
-generated/error-only boilerplate is not artificially tested. Results
-are recorded per milestone in the R2.5 report.
+Pinned `cargo-llvm-cov` 0.8.7 over the workspace test suite is used to
+locate untested critical paths (security decisions, identity,
+validation, state transitions). There is no repository-wide percentage
+objective; generated/error-only boilerplate is not artificially tested.
+Results are recorded per milestone in the R2.5 report.
 
 ## Host limitations (recorded evidence)
 
