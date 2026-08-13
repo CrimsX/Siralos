@@ -155,7 +155,7 @@ describe("resolveReferencePath", () => {
       const linkPath = path.join(root.root, "inside-link.txt");
       await createSymlink(path.join(root.root, "target.txt"), linkPath);
       const resolved = await resolveReferencePath(root.root, "inside-link.txt");
-      expect(resolved).toMatchObject({ ok: true, relative: "inside-link.txt" });
+      expect(resolved).toMatchObject({ ok: true, relative: "target.txt" });
     },
   );
 

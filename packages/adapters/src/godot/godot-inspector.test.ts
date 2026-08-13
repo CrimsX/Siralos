@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -31,6 +31,9 @@ async function executableFixture(directory: string, name = "godot-test.exe"): Pr
   await mkdir(directory, { recursive: true });
   const path = join(directory, name);
   await writeFile(path, `#!/bin/sh\necho "4.7.1.stable.official"\n`);
+  if (process.platform !== "win32") {
+    await chmod(path, 0o755);
+  }
   return path;
 }
 

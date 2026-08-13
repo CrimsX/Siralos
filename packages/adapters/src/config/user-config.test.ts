@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_USER_CONFIG, loadUserConfig, parseUserConfig } from "./user-config.js";
 
 const tempDirectories: string[] = [];
+const absoluteGodotPath = join(tmpdir(), "godot.exe");
+const absoluteVersionedGodotPath = join(tmpdir(), "Godot_v4.7.1-stable.exe");
 
 async function withConfigFile(content: string): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "siralos-config-"));
@@ -317,7 +319,7 @@ describe("parseUserConfig godot section", () => {
         activeInstallation: "primary",
         installations: {
           primary: {
-            path: "C:\\Tools\\Godot\\Godot_v4.7.1-stable_win64.exe",
+            path: absoluteVersionedGodotPath,
             editionHint: "standard",
           },
         },
@@ -326,7 +328,7 @@ describe("parseUserConfig godot section", () => {
     });
     expect(config.godot.activeInstallation).toBe("primary");
     expect(config.godot.installations["primary"]).toEqual({
-      path: "C:\\Tools\\Godot\\Godot_v4.7.1-stable_win64.exe",
+      path: absoluteVersionedGodotPath,
       editionHint: "standard",
     });
     expect(config.godot.discoverOnPath).toBe(true);
@@ -334,7 +336,7 @@ describe("parseUserConfig godot section", () => {
 
   it("defaults edition hints to unknown and discovery to true", () => {
     const config = parseUserConfig({
-      godot: { installations: { primary: { path: "C:\\godot.exe" } } },
+      godot: { installations: { primary: { path: absoluteGodotPath } } },
     });
     expect(config.godot.installations["primary"]?.editionHint).toBe("unknown");
     expect(config.godot.discoverOnPath).toBe(true);
@@ -357,7 +359,7 @@ describe("parseUserConfig godot section", () => {
   it("rejects unknown installation keys", () => {
     expect(() =>
       parseUserConfig({
-        godot: { installations: { primary: { path: "C:\\godot.exe", secret: "x" } } },
+        godot: { installations: { primary: { path: absoluteGodotPath, secret: "x" } } },
       }),
     ).toThrow("Unknown Godot installation key");
   });
@@ -365,14 +367,16 @@ describe("parseUserConfig godot section", () => {
   it("rejects unknown edition hints", () => {
     expect(() =>
       parseUserConfig({
-        godot: { installations: { primary: { path: "C:\\godot.exe", editionHint: "mono" } } },
+        godot: {
+          installations: { primary: { path: absoluteGodotPath, editionHint: "mono" } },
+        },
       }),
     ).toThrow("Unknown Godot edition hint");
   });
 
   it("rejects empty installation ids", () => {
     expect(() =>
-      parseUserConfig({ godot: { installations: { "": { path: "C:\\godot.exe" } } } }),
+      parseUserConfig({ godot: { installations: { "": { path: absoluteGodotPath } } } }),
     ).toThrow("installation id");
   });
 
@@ -385,7 +389,7 @@ describe("parseUserConfig godot section", () => {
   it("rejects oversized installation maps", () => {
     const installations: Record<string, { path: string }> = {};
     for (let index = 0; index < 17; index += 1) {
-      installations[`id-${index}`] = { path: "C:\\godot.exe" };
+      installations[`id-${index}`] = { path: absoluteGodotPath };
     }
     expect(() => parseUserConfig({ godot: { installations } })).toThrow("limited to 16");
   });

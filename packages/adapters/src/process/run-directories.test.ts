@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -72,15 +72,15 @@ describe("createRunDirectoryProvider (fail-closed contract)", () => {
     }
     const workspace = await createTempWorkspace();
     const runsRoot = uniqueRunsRoot();
-    const real = uniqueRunsRoot();
     const outside = uniqueRunsRoot();
     try {
       // A hostile process pre-creates the runs root, then swaps it for a
       // link to a victim directory before the provider is invoked.
-      await mkdir(real, { recursive: true });
+      await mkdir(runsRoot, { recursive: true });
       await mkdir(outside, { recursive: true });
       await writeFile(join(outside, "victim.txt"), "keep me");
-      await symlink(outside, real, "dir");
+      await rm(runsRoot, { recursive: true });
+      await symlink(outside, runsRoot, "dir");
       const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
       const outcome = await provider.create();
       expect(outcome.ok).toBe(false);
@@ -161,6 +161,7 @@ describe("createRunDirectoryProvider (fail-closed contract)", () => {
     const outside = uniqueRunsRoot();
     try {
       const provider = createRunDirectoryProvider({ workspaceRoot: workspace.root, runsRoot });
+      await mkdir(runsRoot, { recursive: true });
       await mkdir(outside, { recursive: true });
       await writeFile(join(outside, "victim.txt"), "keep me");
       await symlink(outside, join(runsRoot, "run-id"), "dir");
