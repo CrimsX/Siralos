@@ -8,3 +8,5 @@ coverage/
 /fuzz/target/
 /fuzz/artifacts/
 /fuzz/corpus/
+/experiments/**/target/
+/experiments/**/guest.component.wasm
