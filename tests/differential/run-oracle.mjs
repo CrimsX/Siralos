@@ -65,7 +65,7 @@ export function loadCorpus(corpusDir, platform = platformName()) {
 }
 
 /** Run the state-dir probe under the scenario's scrubbed environment. */
-function runStateDirProbe(env) {
+export function runStateDirProbe(env) {
   const result = spawnSync(process.execPath, [PROBE], {
     env,
     encoding: "buffer",

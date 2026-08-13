@@ -309,7 +309,7 @@ pub fn canonical_records_text(records: Vec<Value>) -> String {
 mod tests {
     use super::{
         PLATFORM_POSIX, PLATFORM_WINDOWS, canonical_records_text,
-        cargo_workspace_version, platform_name, probe_state_dir,
+        cargo_workspace_version, platform_name, probe_state_dir, run_corpus,
         state_dir_record,
     };
     use serde_json::json;
@@ -373,5 +373,20 @@ mod tests {
         let version = cargo_workspace_version(&root)
             .expect("workspace version is extractable");
         assert_eq!(version, "0.0.0");
+    }
+
+    #[test]
+    fn corpus_run_is_replay_stable() {
+        // Determinism replay (assurance contract Part 11): repeated runs
+        // over the same corpus produce byte-identical canonical records.
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let corpus = repo.join("tests/differential/corpus");
+        let first = run_corpus(&corpus, &repo).expect("corpus runs");
+        for _ in 0..3 {
+            assert_eq!(
+                run_corpus(&corpus, &repo).expect("corpus runs"),
+                first
+            );
+        }
     }
 }
