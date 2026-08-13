@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdir, open, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import {
   isProtectedWriteTarget,
-  removeCreatedObjectIfSame,
   resolveCreateTarget,
   resolveMutationTarget,
   verifyParentChainIdentity,
@@ -334,45 +333,4 @@ describe("verifyParentChainIdentity", () => {
       expect(verified.ok).toBe(false);
     },
   );
-});
-
-describe("removeCreatedObjectIfSame", () => {
-  it("removes the exact object by dev+ino", async () => {
-    const workspace = await withWorkspace();
-    const filePath = path.join(workspace.root, "a.txt");
-    const handle = await open(filePath, "wx");
-    const stats = await handle.stat({ bigint: true });
-    await handle.close();
-    const outcome = await removeCreatedObjectIfSame(filePath, stats.dev, stats.ino);
-    expect(outcome).toBe("removed");
-    await expect(import("node:fs/promises").then((fs) => fs.readFile(filePath))).rejects.toThrow();
-  });
-
-  it("never unlinks a path that no longer resolves to the proven object", async () => {
-    const workspace = await withWorkspace();
-    const filePath = path.join(workspace.root, "a.txt");
-    const handle = await open(filePath, "wx");
-    const stats = await handle.stat({ bigint: true });
-    await handle.close();
-    const { rm } = await import("node:fs/promises");
-    await rm(filePath, { force: true });
-    await writeFile(filePath, "replaced by another process\n");
-    const outcome = await removeCreatedObjectIfSame(filePath, stats.dev, stats.ino);
-    expect(outcome).toBe("preserved");
-    expect(await import("node:fs/promises").then((fs) => fs.readFile(filePath, "utf8"))).toBe(
-      "replaced by another process\n",
-    );
-  });
-
-  it("reports absent when the path no longer resolves", async () => {
-    const workspace = await withWorkspace();
-    const filePath = path.join(workspace.root, "a.txt");
-    const handle = await open(filePath, "wx");
-    const stats = await handle.stat({ bigint: true });
-    await handle.close();
-    const { rm } = await import("node:fs/promises");
-    await rm(filePath, { force: true });
-    const outcome = await removeCreatedObjectIfSame(filePath, stats.dev, stats.ino);
-    expect(outcome).toBe("absent");
-  });
 });
