@@ -1,62 +1,140 @@
-name: Rust
+name: Siralos Rust CI
 
+# Validation CI only: no release, no publication, no dependency updates,
+# no Godot acquisition. The TypeScript reference remains the migration
+# oracle (ADR 0032/0033), so the differential harness and the ratchet
+# scripts run as Node steps in the full-gate job.
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
+
+# Least privilege: ordinary Rust validation needs read-only contents.
+# No write authority, no secrets, no id-token. CodeQL (if added later)
+# must scope security-events: write to its own job.
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust-gates:
-    name: Rust gates (fmt, clippy, build, test)
+  gate:
+    name: Rust gate (Linux)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v7.0.1 (GitHub-owned, immutable SHA pin).
+      # Credentials are not persisted: no authenticated Git operation
+      # happens after checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # rust-toolchain.toml is the single source of truth for the exact
-      # channel (currently 1.97.1) and its components; rustup installs
-      # them on the first cargo invocation, so the action only ensures
-      # rustup exists. Do not hardcode the channel here.
+      # channel (currently 1.97.1) and its components (rustfmt, clippy);
+      # `rustup show` installs them. No hardcoded version here.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        run: rustup show active-toolchain
 
+      # Reconstructible cargo artifacts only: registry, git checkouts,
+      # and the workspace target directory. Keyed on OS, toolchain, and
+      # Cargo.lock; correctness never depends on a cache hit.
       - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
+      # The workspace has no Cargo features, so --all-features is the
+      # (trivially) supported configuration; this is documented rather
+      # than assumed from generic conventions.
       - name: Format check
         run: cargo fmt --all --check
 
+      - name: Check (locked, all targets, all features)
+        run: cargo check --workspace --all-targets --all-features --locked
+
       - name: Clippy (warnings denied)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - name: Build
-        run: cargo build --workspace
+      - name: Documentation (warnings denied)
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 
-      - name: Test
-        run: cargo test --workspace
+      - name: Test (locked, all targets, all features)
+        run: cargo test --workspace --all-targets --all-features --locked
 
-      # The migration's audit remediation gate (ADR 0033): runs the
-      # scenario corpus against the TypeScript reference and the Rust
-      # candidate, compares canonical outcome records, and emits the
-      # migration audit. POSIX scenarios execute here; Windows scenarios
-      # are skipped by both sides identically.
+      # Core-without-Godot proof: siralos-core must build with no
+      # optional domain dependency (architecture ratchet re-checks the
+      # forbidden-symbol boundary separately).
+      - name: Core-only check (no optional domain)
+        run: cargo check -p siralos-core --locked
+
+      # The migration's audit remediation gate (ADR 0033): oracle vs
+      # candidate canonical records; POSIX scenarios execute here.
       - name: Differential harness
         run: npm run check:differential
 
-      # Repository-level ratchets from the Siralos engineering standard
-      # (docs/development/RUST_STYLE.md, ADR 0032): the Rust architecture
-      # check (crate shape, dependency direction, binary identity, core
-      # domain neutrality, unsafe backstop) and the identity check (no
-      # stale former project identity). Both are dependency-free Node
-      # scripts and need no npm install.
+      # Repository ratchets (ADR 0032): Rust architecture boundaries and
+      # the identity check. Dependency-free Node scripts.
       - name: Rust architecture ratchet
         run: node scripts/check-rust-architecture.mjs
 
       - name: Identity ratchet
         run: node scripts/check-siralos-identity.mjs
+
+  platform:
+    name: Rust platform (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Platform-sensitive Stage 1-3 behavior: paths, environment
+      # propagation, state-dir resolution, CLI exit codes.
+      - name: Check (locked, all targets, all features)
+        run: cargo check --workspace --all-targets --all-features --locked
+
+      - name: Test (locked, all targets, all features)
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      # The differential harness runs the platform's own state-dir
+      # scenarios (Windows scenarios on windows-latest; POSIX scenarios
+      # on macos-latest), exercising the home-resolution contract on
+      # every supported OS.
+      - name: Differential harness
+        run: npm run check:differential
+
+      - name: Core-only check (no optional domain)
+        run: cargo check -p siralos-core --locked
