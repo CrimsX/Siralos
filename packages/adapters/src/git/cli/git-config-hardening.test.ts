@@ -305,7 +305,9 @@ describe("git special filenames", () => {
     repo.git("add", ".");
     repo.commit("initial");
     if (names.length > 0) {
-      await writeFile(`${repo.root}/${names[0] as string}`, "world\n");
+      for (const name of names) {
+        await writeFile(`${repo.root}/${name}`, "world\n");
+      }
     } else {
       await repo.write("plain.txt", "world\n");
     }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,6 +26,9 @@ afterEach(async () => {
 
 async function writeExecutable(path: string, content = "fake godot"): Promise<string> {
   await writeFile(path, content);
+  if (process.platform !== "win32") {
+    await chmod(path, 0o755);
+  }
   return path;
 }
 
