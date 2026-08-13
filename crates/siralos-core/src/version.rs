@@ -164,6 +164,54 @@ mod tests {
     use super::Version;
     use core::str::FromStr;
 
+    use proptest::prelude::*;
+
+    // Canonical `major.minor.patch` strings within the component bounds
+    // must parse and round-trip through Display unchanged.
+    proptest! {
+        #[test]
+        fn parses_and_round_trips_canonical_versions(
+            major in 0u8..=u8::MAX,
+            minor in 0u8..=u8::MAX,
+            patch in 0u16..=u16::MAX,
+        ) {
+            let text = format!("{major}.{minor}.{patch}");
+            let version = Version::parse(&text).expect("canonical version parses");
+            prop_assert_eq!(version.to_string(), text);
+            prop_assert_eq!(version, Version::new(major, minor, patch));
+        }
+    }
+
+    // Ordering is numeric: for any three in-bounds components,
+    // a smaller component value never yields a larger version.
+    proptest! {
+        #[test]
+        fn ordering_is_numeric_and_total(
+            a_major in 0u8..=u8::MAX, a_minor in 0u8..=u8::MAX, a_patch in 0u16..=u16::MAX,
+            b_major in 0u8..=u8::MAX, b_minor in 0u8..=u8::MAX, b_patch in 0u16..=u16::MAX,
+        ) {
+            let a = Version::new(a_major, a_minor, a_patch);
+            let b = Version::new(b_major, b_minor, b_patch);
+            let lexicographic = (a_major, a_minor, a_patch).cmp(&(b_major, b_minor, b_patch));
+            prop_assert_eq!(a.cmp(&b), lexicographic);
+        }
+    }
+
+    // Non-canonical spellings that contain only digits and dots may
+    // parse, but their Display is always the canonical form; parsing
+    // never panics on any ASCII input.
+    proptest! {
+        #[test]
+        fn never_panics_and_canonicalizes(
+            text in proptest::string::string_regex("[0-9.]{0,24}").unwrap(),
+        ) {
+            let parsed = Version::parse(&text);
+            if let Ok(version) = parsed {
+                prop_assert_eq!(version.to_string().parse::<Version>().expect("canonical"), version);
+            }
+        }
+    }
+
     #[test]
     fn parses_canonical_versions() {
         let version = Version::parse("0.0.0").expect("valid version");

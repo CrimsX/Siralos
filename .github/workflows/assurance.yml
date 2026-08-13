@@ -1,0 +1,79 @@
+name: Siralos assurance (nightly)
+
+# Scheduled/specialized assurance: fuzzing, Miri, sanitizers, and
+# coverage. Separate from the ordinary stable quality gate
+# (rust.yml): these jobs use a pinned nightly toolchain and never
+# block ordinary PR validation.
+on:
+  schedule:
+    # Weekly: Monday 04:00 UTC.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assurance-${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  adversarial:
+    name: Adversarial (fuzz, Miri, ASan, coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install nightly toolchain (pinned components)
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          rustup component add rust-src --toolchain nightly
+
+      - name: Install fuzz and coverage tooling
+        run: |
+          cargo install cargo-fuzz --locked
+          cargo install cargo-llvm-cov --locked
+
+      # Bounded smoke runs; minimized crashes (if any) are added to the
+      # repository as deterministic regression tests by a follow-up.
+      - name: Build fuzz targets
+        run: cargo +nightly fuzz build -s none
+
+      - name: Fuzz version parsing
+        run: cargo +nightly fuzz run version_parse -s none -- -max_total_time=60
+
+      - name: Fuzz CLI arguments
+        run: cargo +nightly fuzz run cli_args -s none -- -max_total_time=60
+
+      - name: Fuzz corpus decoding
+        run: cargo +nightly fuzz run corpus_scenario -s none -- -max_total_time=60
+
+      # All-safe-Rust workspace: Miri is scoped to siralos-core
+      # (docs/development/ADVERSARIAL_TESTING.md).
+      - name: Miri (siralos-core)
+        run: cargo +nightly miri test -p siralos-core
+
+      # AddressSanitizer over the core tests; never claims memory
+      # correctness beyond what it executes.
+      - name: AddressSanitizer (siralos-core)
+        run: |
+          RUSTFLAGS="-Z sanitizer=address" cargo +nightly -Zbuild-std test \
+            -p siralos-core --target x86_64-unknown-linux-gnu
+
+      # Coverage evidence for the migration audit (no percentage gate).
+      - name: Coverage (workspace)
+        run: cargo llvm-cov --workspace --lcov --output-path target/coverage.lcov
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: target/coverage.lcov
+        if: always()

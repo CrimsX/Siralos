@@ -5,6 +5,9 @@ members = [
     "crates/siralos-adapters",
     "crates/siralos-cli",
 ]
+# The fuzz crate is nightly-only and must never enter the stable
+# quality gate (docs/development/SUPPLY_CHAIN.md toolchain policy).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.0"

@@ -5,3 +5,6 @@ coverage/
 .reasonix/
 /target/
 /tests/differential/out/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/
