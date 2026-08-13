@@ -567,6 +567,19 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
     domains: ["architecture", "security"],
     paths: ["experiments/domain-abi/**", "docs/development/PROTOCOL_VERSIONING.md"],
   },
+  {
+    id: "adr:0035",
+    path: "docs/adr/0035-domain-neutral-controlled-runtime-boundary.md",
+    kind: "adr",
+    concerns: ["runtime", "architecture", "domain-host"],
+    status: "accepted",
+    domains: ["runtime", "architecture", "domain-host"],
+    paths: [
+      "packages/core/src/runtime/**",
+      "experiments/domain-abi/**",
+      "docs/development/RUST_MIGRATION.md",
+    ],
+  },
 ]);
 
 /**

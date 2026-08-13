@@ -216,7 +216,9 @@ Domain-Neutral Foundation, ADR 0032):
 Next: Stage 3R — R3: the first subsystem port under the differential
 gate (behavior extraction → idiomatic Rust redesign → parity → review →
 measurement), with the harness scenarios extended to the ported
-surface. R2 (Differential Behavioral Harness, ADR 0033) is complete:
+surface. The complete internal sequence is recorded in
+`docs/development/RUST_MIGRATION.md`. R2 (Differential Behavioral
+Harness, ADR 0033) is complete:
 the audit remediation gate runs deterministic scenarios against the
 TypeScript reference and the Rust candidate, machine-compares canonical
 outcome records, emits a per-commit migration audit, and blocks
@@ -226,15 +228,19 @@ version-identity subjects, with real drift remediated in
 
 ### Next: Stage 4 — Runtime and visual QA
 
-Not started. The Stage 3 loop is complete; the first Stage 4 milestone is
-Controlled Godot Execution: sandboxed, bounded project/runtime execution
-that produces structured runtime evidence without granting unrestricted
-desktop or network access. It is not implemented here.
+Not started. Stage 4 begins only after the Stage 3R migration and the
+pre-Stage-4 entry gate pass. Its first milestone is generic Controlled
+Runtime Execution: sandboxed, bounded process supervision under Siralos
+authority that produces structured runtime evidence without granting
+unrestricted desktop or network access. The Godot runtime adapter is the
+first specialization built on that host boundary; it is not the boundary
+itself. Neither capability is implemented here.
 
 ## 4. Runtime and visual QA
 
-Automated runtime testing, debugging, visual gameplay verification, and
-performance profiling against an intentionally launched Godot project.
+Generic controlled runtime execution and evidence, followed by an optional
+Godot runtime adapter, automated runtime testing, debugging, visual gameplay
+verification, controlled interaction, QA workflows, and performance profiling.
 
 Status: not started.
 

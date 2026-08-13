@@ -297,11 +297,15 @@ ADR 0033) are complete — the harness is the migration's audit
 remediation gate: it runs deterministic scenarios against the Siralos
 TypeScript reference and the Rust candidate, compares canonical outcome
 records, and emits a per-commit migration audit. **R3 (the first
-differential-verified subsystem port) is next.** After Stage 3R, the
-product proceeds to **Stage 4 milestone 1: Controlled Godot Execution**
-— sandboxed, bounded project/runtime execution that produces structured
-runtime evidence without granting unrestricted desktop or network
-access. Stage 3 is complete: the unified Godot-native development loop
+differential-verified subsystem port) is next.** The authoritative R1-R12
+sequence is recorded in
+[the Rust migration track](docs/development/RUST_MIGRATION.md). After
+Stage 3R, the product proceeds to **Stage 4 milestone 1: Controlled
+Runtime Execution** — a generic sandboxed, bounded supervised-process
+boundary that produces structured runtime evidence without granting
+unrestricted desktop or network access. Godot is its first later
+specialization; it does not define the core runtime boundary. Stage 3 is
+complete: the unified Godot-native development loop
 (`/develop`) routes script-only, native-only, and bounded mixed tasks
 through planning, surface discovery, unified change sets with
 per-target revision/approval binding, checkpoint-then-apply batches,
