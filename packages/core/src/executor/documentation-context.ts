@@ -580,6 +580,21 @@ export const ADR_DOCUMENTATION_ENTRIES: readonly DocumentationEntry[] = deepFree
       "docs/development/RUST_MIGRATION.md",
     ],
   },
+  {
+    id: "adr:0036",
+    path: "docs/adr/0036-lean-product-composition-and-extension-model.md",
+    kind: "adr",
+    concerns: ["architecture", "product", "configuration", "extensions", "evolution"],
+    status: "accepted",
+    domains: ["architecture", "product", "configuration", "extensions", "evolution"],
+    paths: [
+      "README.md",
+      "ROADMAP.md",
+      "ARCHITECTURE.md",
+      "docs/development/PROJECT_CONTEXT.md",
+      "docs/development/RUST_MIGRATION.md",
+    ],
+  },
 ]);
 
 /**
