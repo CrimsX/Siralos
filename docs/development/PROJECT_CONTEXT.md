@@ -273,6 +273,27 @@ gates. Repository text, providers, references, research, and tool output are
 untrusted data, never policy. [SECURITY.md](../../SECURITY.md) is the complete
 security contract.
 
+### Deterministic Host guarantees are non-configurable
+
+The lean composition model does not weaken Siralos determinism. The following
+Host guarantees cannot be configured away by Profiles, Skills, Plugins, or
+project configuration:
+
+```text
+revision verification
+digest identity
+stale-write rejection
+capability enforcement
+deterministic authoritative ordering
+explicit nondeterminism boundaries
+transaction verification
+evidence identity
+replay semantics
+```
+
+Configuration may change what environment is requested. It may never disable
+the Host mechanisms that make authoritative behavior verifiable.
+
 ## 8. Mutation model
 
 The required mutation sequence is:
@@ -314,6 +335,40 @@ search -> structural/summary -> evidence -> exact content only when necessary
 Context carries provenance and authority, remains bounded, and is reconstructable
 from host-owned state. Conversation history is not authoritative state.
 
+### Deltas are derived; full artifacts are authoritative
+
+Full current artifacts are authoritative. Semantic deltas are derived
+descriptions of material change, usable for targeted staleness propagation,
+incremental Context compilation, validation/review selection, cache
+invalidation, Tool-surface comparison, Profile comparison, and future
+`/evolve` experiment comparison. Do not build a delta-only state
+reconstruction or event-sourcing architecture.
+
+### Targeted invalidation
+
+The preferred model is:
+
+```text
+input identity changed
+    -> derive semantic delta
+    -> invalidate only known affected derived state
+```
+
+Conceptually: a Skill change may change affected Profile/Context identity; a
+Plugin change may change the ToolSurface; a Context policy change invalidates
+compiled Context; one changed source file invalidates only dependent derived
+Context/index artifacts where known. Do not build a universal dependency graph
+or generic reactive engine before evidence requires one.
+
+### Cache rules
+
+Caches are derived and reconstructable; caches are never authoritative. A
+future derived-cache key should generally combine input content identity,
+algorithm/schema version, and relevant configuration identity — for example
+`SourceDigest + ParserVersion -> ParsedSource` or
+`ContextItemDigest + TokenizerIdentity -> TokenCount`. Do not introduce a
+generic CacheManager, distributed cache, or reactive cache framework now.
+
 ## 10. Provider model
 
 Siralos is provider-neutral. Provider/model code cannot decide host tool
@@ -321,6 +376,43 @@ authority, approval, security policy, or authoritative task completion. Model
 and provider identity plus relevant generation configuration are recorded where
 reproducibility requires them. Real provider integrations are not implemented
 in the current milestone.
+
+### Profile / lock / Context identity
+
+Future Profile semantics remain compatible with H1/H2:
+
+```text
+siralos.toml -> resolution -> siralos.lock -> ResolvedProfile
+                                              -> ResolvedProfileDigest
+```
+
+A Run eventually records the exact ResolvedProfile identity. ContextSnapshot
+identity remains separate from `siralos.lock`: a lockfile records resolvable
+portable inputs; a ContextSnapshot records exact model-visible compiled
+material. Never merge them.
+
+### Profile stability during a Run
+
+One Run uses one resolved/effective Profile identity. Provider, model, tool,
+and context composition must not silently change mid-Run; a material
+composition change requires an explicit transition, a new Run, or otherwise
+visible identity change. This supports reproducibility, explainability, cache
+stability, and Tool-surface stability.
+
+### Tool-surface identity
+
+If a future Plugin update changes tool presence, tool schema, side-effect
+classification, or capability requirements, the model-visible ToolSurface
+identity must be able to change explicitly. Plugin updates must never silently
+mutate the model-visible callable environment inside an existing Run.
+
+### External nondeterminism
+
+External nondeterministic observations — LLM responses, network responses,
+process/compiler output, future Plugin service responses — are recorded or
+explicitly classified when strict replay requires them. Strict replay consumes
+recorded observations rather than silently calling live external systems
+again (H2).
 
 ## 11. Godot domain policy
 
@@ -384,6 +476,22 @@ make Rust parity complete.
 - **H2**: same authoritative inputs produce the same host decision. Fresh LLM
   prose need not be byte-identical; nondeterministic observations are recorded
   or explicitly unreplayable.
+
+### Identity model preservation
+
+Keep the accepted distinctions: **digest** = exact content identity,
+**delta** = what materially changed, **revision** = lifecycle identity. Never
+collapse these concepts. Reuse one typed, domain-separated digest
+architecture (the existing ArtifactDigest/domain-separated identity model)
+for future exact identities; do not create independent hashing systems such as
+`ProfileHash`, `ContextFingerprint`, `PluginChecksum`, or `SkillHash`.
+
+Structured semantic artifacts may use canonical serialization before hashing.
+Workspace source identity must continue to reflect the exact relevant bytes
+where stale-write protection depends on exact source identity — do not
+normalize away meaningful source changes before revision/staleness
+verification.
+
 - **ICM**: phase-specific, provenance-aware, reconstructable typed context and
   artifacts.
 - **H3**: runtime-readiness identity, budgets, lifecycle, failure taxonomy,
@@ -460,6 +568,45 @@ adversarial, evaluation, and performance suites. The current authoritative
 local gate is `npm run check`; R2 parity alone is `npm run
 check:differential`. Live sandbox/Godot probes are opt-in and a skip is never a
 pass. See [GOLDEN_TRACES.md](GOLDEN_TRACES.md) for scenario status.
+
+### Budget categories
+
+Keep distinct:
+
+- **Deterministic/countable budgets** — context tokens, tool calls, retry
+  count, output bytes, artifact count, and future Plugin work/fuel where
+  supported.
+- **Operational budgets** — wall-clock timeout, deadline, memory ceiling,
+  process lifetime.
+
+Wall-clock timing itself is not a deterministic computation boundary.
+
+### Future Plugin resource bounds
+
+Plugins must never implicitly receive unbounded resources. The eventual
+Plugin Host should be able to bound memory, execution/work, host-call count,
+output size, open resources, and wall-clock lifetime. No Plugin runtime is
+designed or implemented in this goal.
+
+### Observability source of truth
+
+Avoid separate competing truths for CLI logs, GUI history, model transcripts,
+analytics, and debug output. Authoritative structured Host state/evidence is
+recorded once; human, model, CLI, GUI, evaluation, and debugging surfaces
+project from that state where practical. No telemetry platform is built now.
+
+### Durable versioning and stable boundaries
+
+Keep separate: product version, schema version, and protocol/ABI version.
+Unknown durable schema or ABI versions must fail explicitly; do not guess
+future versions. Compatibility discipline applies to durable/external
+boundaries — future `siralos.toml`, `siralos.lock`, Run artifacts,
+ContextSnapshot, Skill/Plugin manifests, WIT interfaces, and machine-readable
+external protocols. Internal Rust module names, structs, functions, and
+traits are not stable public contracts merely because they exist during R3;
+internal Rust APIs remain free to evolve until a real external consumer
+exists. Do not prematurely version internal structs or create speculative
+public traits.
 
 ## 20. Authoritative documentation index
 
