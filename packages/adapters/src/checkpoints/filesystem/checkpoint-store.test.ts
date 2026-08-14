@@ -2196,9 +2196,12 @@ describe("storage accounting and unexpected entries", () => {
     // layout: enumeration stops at the cap and refuses without ever
     // materializing the full listing.
     const dir = checkpointDirOf(context, first.id);
-    for (let index = 0; index < 1000; index += 1) {
-      await writeFile(join(dir, `f-${index}.bin`), "x");
-    }
+    const hostileFanout = 64;
+    await Promise.all(
+      Array.from({ length: hostileFanout }, (_, index) =>
+        writeFile(join(dir, `f-${index}.bin`), "x"),
+      ),
+    );
     const before = await snapshotTree(context.rootDirectory);
     await expect(context.store.prepare(preparedUpdate())).rejects.toBeInstanceOf(
       CheckpointStorageLimitError,
