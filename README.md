@@ -195,6 +195,8 @@ records what remains before runtime and visual QA work can start.
 - [RFC ownership](docs/architecture/RFC_INDEX.md) and
   [golden traces](docs/development/GOLDEN_TRACES.md) — decision and verification
   work-item registries
+- [Contributing](CONTRIBUTING.md) — development setup, checks, scope, and review
+  expectations
 - [Architecture decisions](docs/adr/) — accepted and historical ADRs
 
 ## Security
@@ -203,7 +205,7 @@ The model cannot grant itself authority. Effects are host-controlled, approvals
 bind only to exact prepared operations, and missing enforcement fails closed.
 Repository content, provider output, and tool output are untrusted data—not
 policy. Read [SECURITY.md](SECURITY.md) before changing an authority or process
-boundary.
+boundary or reporting a vulnerability.
 
 ## License
 

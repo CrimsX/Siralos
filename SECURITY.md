@@ -2,6 +2,18 @@
 
 This document describes the Siralos security model: how provider-driven capabilities are gated, how sandboxed processes are confined, and what is deliberately not implemented yet.
 
+## Reporting a vulnerability
+
+Do not disclose vulnerability details, credentials, private paths, or exploit
+material in a public issue. Use GitHub's private vulnerability-reporting form:
+
+<https://github.com/CrimsX/Siralos/security/advisories/new>
+
+If GitHub does not offer the private form, do not publish the report. A public
+issue may state only that the private reporting mechanism is unavailable and
+request that it be enabled; it must contain no vulnerability details. Siralos
+does not publish or invent a personal security email address.
+
 ## Threat model
 
 Siralos will eventually run development commands, tests, formatters, package managers, Git, and Godot processes on the user's machine. Those operations may execute untrusted repository code. The threat model assumes:
