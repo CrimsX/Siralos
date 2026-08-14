@@ -38,7 +38,7 @@ export async function createTempRepo(initialBranch = "main"): Promise<TempRepo> 
   const git = (...args: string[]): { status: number; stdout: string; stderr: string } => {
     const result = spawnSync(
       "git",
-      ["-c", "user.name=Siralos Test", "-c", "user.email=test@siralos.dev", ...args],
+      ["-c", "user.name=Siralos Test", "-c", "user.email=test@example.invalid", ...args],
       {
         cwd: root,
         encoding: "utf8",
