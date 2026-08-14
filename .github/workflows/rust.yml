@@ -55,11 +55,37 @@ jobs:
       - name: Install locked npm dependencies
         run: npm ci
 
-      # The TypeScript implementation is the migration oracle. This is
-      # the full non-Rust gate: formatting, lint, typecheck, build/tests,
-      # architecture/nondeterminism/identity ratchets, and doc links.
-      - name: TypeScript oracle gate
-        run: npm run check:typescript
+      # Keep each command aligned with check:typescript while exposing the
+      # exact failing boundary in public check metadata and clean-room runs.
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: TypeScript build and tests
+        run: npm test
+
+      - name: Architecture ratchet
+        run: npm run check:architecture
+
+      - name: Nondeterminism ratchet
+        run: npm run check:nondeterminism
+
+      - name: Identity ratchet
+        run: npm run check:identity
+
+      - name: Public-hygiene ratchet
+        run: npm run check:public
+
+      - name: Documentation links
+        run: npm run check:docs
+
+      - name: Project-context contract
+        run: npm run check:context
 
   gate:
     name: Rust gate (Linux)
