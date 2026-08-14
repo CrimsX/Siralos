@@ -66,6 +66,7 @@ maps them by source-path globs:
 | Differential behavioral harness (Stage 3R R2)                            | `tests/differential/**`, `crates/siralos-cli/src/harness/**`                                                                                 | ADR-0033                                                                                                           | ADR-0033                                                   |
 | Domain host ABI (Godot domain boundary)                                  | `experiments/domain-abi/**`                                                                                                                  | ADR-0034                                                                                                           | ADR-0034                                                   |
 | Controlled runtime boundary                                              | `packages/core/src/runtime/**`, `experiments/domain-abi/**`                                                                                  | `docs/development/PROJECT_CONTEXT.md`, `docs/development/RUST_MIGRATION.md`                                        | ADR-0031, ADR-0035                                         |
+| Product vision / composition & extension model                           | README.md, ROADMAP.md, ARCHITECTURE.md, `docs/development/PROJECT_CONTEXT.md`, `docs/development/RUST_MIGRATION.md`                          | ARCHITECTURE.md § Product vision and conceptual ownership                                                          | ADR-0036                                                   |
 | Migration and requirements traceability                                  | `crates/**`, `tests/differential/**`, milestone manifests                                                                                    | `docs/development/RUST_MIGRATION.md`, `docs/requirements/REQUIREMENTS.md`, `docs/architecture/RFC_INDEX.md`        | ADR-0032, ADR-0033                                         |
 | Public context and repository hygiene                                    | `scripts/check-public-hygiene.mjs`, public documentation                                                                                     | `docs/development/PROJECT_CONTEXT.md`, `docs/development/GOLDEN_TRACES.md`                                         | ADR-0022, ADR-0023                                         |
 
@@ -75,3 +76,8 @@ All ADRs are `accepted` and current unless their frontmatter says
 otherwise. ADR 0003 was never adopted; there are no superseded or
 deprecated ADRs today. Obsolete historical material, when it exists,
 lives in `docs/archive/` and is excluded from normal discovery.
+
+ADR 0036 is the lean product, composition, and extension model (the
+pre-R3 vision freeze). It narrows several earlier future-facing
+statements without superseding their ADRs; earlier ADRs remain the
+historical decision records.

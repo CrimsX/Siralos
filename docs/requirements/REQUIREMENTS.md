@@ -8,6 +8,23 @@ current repository; they do not weaken or silently rewrite the requirement.
 An accepted ADR may refine an interpretation, but a superseding interpretation
 must retain the requirement ID and cite the decision.
 
+## Vision freeze interpretation (ADR 0036)
+
+[ADR 0036](../adr/0036-lean-product-composition-and-extension-model.md) is the
+authoritative interpretation for future-facing requirements. Under that
+freeze: Profiles are the composition unit; Context is inspectable/controllable
+state; Skills are declarative and authority-free; Plugins are the only
+executable extension package (explicit install, capability-scoped); Tool is
+the one callable operation abstraction; a Run uses one stable Effective
+Profile; /evolve requires measured evaluation and prefers configuration over
+Host complexity. Requirements implying now-rejected future architecture
+(general Hooks, built-in multi-agent frameworks, TaskGraph, generic workflow
+engines, agent teams/Fleet, distributed workers, plugin marketplaces, plugin
+dependency graphs, automatic acquisition, model-router architecture, generic
+Memory, GUI/TUI runtime ownership) are interpreted as deferred/superseded in
+status below — their IDs remain stable and their requirement text remains
+normative unless an implementation ADR supersedes it.
+
 ## Status vocabulary
 
 - **VERIFIED**: implemented and supported by executable repository evidence.
@@ -39,6 +56,9 @@ test, prompt, or document is not sufficient by implication.
 - [ADR 0032](../adr/0032-rust-migration-and-siralos-rename.md) and
   [ADR 0033](../adr/0033-differential-behavioral-harness.md) own migration and
   behavioral parity.
+- [ADR 0036](../adr/0036-lean-product-composition-and-extension-model.md) owns
+  the lean product, composition, and extension interpretation for
+  future-facing requirements.
 - `npm run check`, `npm run check:differential`, behavior tests, architecture
   ratchets, property tests, and fuzz targets are executable evidence. The
   [golden trace registry](../development/GOLDEN_TRACES.md) distinguishes
@@ -94,7 +114,7 @@ test, prompt, or document is not sufficient by implication.
 | HAR-019 | Context, tokens, model calls, tool calls, transactions, cost where measurable, and wall time support budgets.                       | PARTIAL        | Current context/tool/task/time budgets exist; cost and full transaction budgets are later.      |
 | HAR-020 | Context compilation ordering is deterministic for the same authoritative inputs.                                                    | VERIFIED       | ContextProjector, Executor Brief Compiler, documentation selector tests.                        |
 | HAR-021 | Core behavior is independent of any single model vendor.                                                                            | VERIFIED       | Provider port and deterministic fake adapter; no vendor concepts in core.                       |
-| HAR-022 | Optional model routing is policy/orchestration rather than foundational state semantics.                                            | NOT DUE        | Real provider routing is a later milestone.                                                     |
+| HAR-022 | Optional model routing is policy/orchestration rather than foundational state semantics.                                            | NOT DUE        | ADR 0036: a Profile selects a Provider; model-router architecture is not committed.             |
 | HAR-023 | Prompt/context templates are versioned or content-addressed where identity matters.                                                 | PARTIAL        | Execution contract, plan/context fingerprints, and corpus digests exist.                        |
 | HAR-024 | Runs record model identifier/profile and relevant generation configuration.                                                         | PARTIAL        | Provider identity is recorded in current requests/evidence; full run records are later.         |
 | HAR-025 | Long-running tool/task execution is cancellable.                                                                                    | VERIFIED       | Abort-aware tool/provider/planner/service contracts and adversarial tests.                      |
@@ -111,13 +131,13 @@ test, prompt, or document is not sufficient by implication.
 | HAR-036 | Context distinguishes authority/trust classes such as system, user, observed repository data, tool observation and model synthesis. | VERIFIED       | ICM/projection/evidence/reference/research contracts.                                           |
 | HAR-037 | Secrets stay out of normal context whenever tools can consume credentials out of band.                                              | VERIFIED       | Credential isolation and safe-report tests; real providers are not yet integrated.              |
 | HAR-038 | Network access has explicit policy: offline/restricted/allowlisted/unrestricted.                                                    | VERIFIED       | Built-in profiles and research/network policy.                                                  |
-| HAR-039 | Domain packages declare requested capabilities before activation.                                                                   | NOT DUE        | Stage 3R R6.                                                                                    |
-| HAR-040 | Third-party package ecosystems require digest/provenance/signature policy before being treated as trusted.                          | PARTIAL        | Supply-chain and ADR 0034 identity policy exist; package ecosystem is not due.                  |
+| HAR-039 | Domain packages declare requested capabilities before activation.                                                                   | NOT DUE        | Stage 3R R6 under the ADR 0036 Permission -> CapabilityRequest -> CapabilityGrant model.        |
+| HAR-040 | Third-party package ecosystems require digest/provenance/signature policy before being treated as trusted.                          | PARTIAL        | Supply-chain and ADR 0034 identity policy exist; Plugin ecosystem is not due (ADR 0036).        |
 | HAR-041 | Core/domain behavior is validated with fixture-driven integration tests.                                                            | VERIFIED       | Behavior suites, Godot fixtures, R2 corpus, ABI conformance.                                    |
 | HAR-042 | Representative full runs are stored as golden traces and replayed in CI when that replay layer is due.                              | NOT DUE        | Registry exists; full replay layer is R10-R11.                                                  |
 | HAR-043 | Core algebra/parsers/protocols receive property testing and fuzzing proportional to risk.                                           | PARTIAL        | Version property/fuzz infrastructure exists; coverage expands with migrated subsystems.         |
 | HAR-044 | Maintain an adversarial evaluation suite.                                                                                           | PARTIAL        | Adversarial unit/behavior/conformance suites exist; full evaluation program is later.           |
-| HAR-045 | Run equivalent evaluation tasks across multiple models/providers where economically practical.                                      | NOT DUE        | Real providers are not implemented.                                                             |
+| HAR-045 | Run equivalent evaluation tasks across multiple models/providers where economically practical.                                      | NOT DUE        | Real providers are not implemented; Stage 6 /evolve evaluation under ADR 0036.                  |
 | HAR-046 | Track task success, invalid proposals, unnecessary edits, rollback rate, context efficiency and intervention rate over time.        | PARTIAL        | Current task/projection metrics exist; longitudinal evaluation storage is later.                |
 | HAR-047 | Dogfood Siralos on Siralos with recorded metrics once usable.                                                                       | NOT DUE        | Requires later usable effect/runtime milestones.                                                |
 | HAR-048 | CI enforces formatting, Clippy, compilation and tests; warnings normally fail project code.                                         | VERIFIED       | `npm run check`, Rust matrix, warnings-denied Clippy.                                           |
@@ -126,7 +146,7 @@ test, prompt, or document is not sufficient by implication.
 | HAR-051 | Documentation/RFC/schema drift is detected during appropriate verification/release review.                                          | PARTIAL        | Documentation, architecture, identity, public-hygiene, and differential ratchets exist.         |
 | HAR-052 | Keep the stable foundational core small; features belong in higher layers/extensions where possible.                                | VERIFIED       | Dependency architecture and Rust core neutrality ratchets.                                      |
 | HAR-053 | Do not let Godot, a model provider, a UI or a transport protocol define Siralos Core semantics.                                     | PARTIAL        | Rust core is neutral; the TypeScript oracle still owns historical Godot contracts.              |
-| HAR-054 | Defer multi-agent sophistication until deterministic single-agent execution satisfies quality gates.                                | VERIFIED       | Multi-agent functionality is absent/deferred.                                                   |
+| HAR-054 | Defer multi-agent sophistication until deterministic single-agent execution satisfies quality gates.                                | VERIFIED       | Multi-agent functionality is absent and is not core architecture (ADR 0036).                    |
 | HAR-055 | Avoid hidden magic: implicit detection, implicit permissions, invisible context injection or silent state mutation.                 | VERIFIED       | Explicit profiles, projections, task state, capability decisions, and diagnostics.              |
 
 ## Anti-pattern register
