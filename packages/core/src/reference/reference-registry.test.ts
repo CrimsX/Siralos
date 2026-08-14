@@ -98,7 +98,9 @@ describe("isPathWithin (pure containment)", () => {
     expect(isPathWithin("c:\\users\\testuser\\project", "C:\\Users\\TestUser\\PROJECT\\sub")).toBe(
       true,
     );
-    expect(isPathWithin("C:\\Users\\TestUser\\project", "C:\\Users\\TestUser\\project2")).toBe(false);
+    expect(isPathWithin("C:\\Users\\TestUser\\project", "C:\\Users\\TestUser\\project2")).toBe(
+      false,
+    );
     expect(isPathWithin("C:\\Users\\TestUser\\project", "D:\\Users\\TestUser\\project\\sub")).toBe(
       false,
     );
