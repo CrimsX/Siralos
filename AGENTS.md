@@ -80,7 +80,13 @@ Run checks relevant to each cohesive change before committing, then run `npm run
 
 ## Intended direction
 
-- Siralos is a minimal, declarative AI coding harness with an inspectable execution environment; the lean product, composition, and extension model (ADR 0036) governs future-facing work: Profiles are the composition unit, Context is inspectable/controllable, Skills are declarative and authority-free, Plugins are the only executable extension package, Tool is the one callable operation abstraction, and /evolve requires evaluation. Multi-agent machinery, general Hooks, TaskGraph, workflow engines, marketplaces, and automatic acquisition are not committed.
+- The lean product, composition, and extension model
+  ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md))
+  governs future-facing work; read it (and
+  [PROJECT_CONTEXT.md](docs/development/PROJECT_CONTEXT.md)) before
+  product/architecture decisions. Multi-agent machinery, general Hooks,
+  TaskGraph, workflow engines, marketplaces, and automatic acquisition
+  are not committed.
 - Siralos is a deterministic, security-first, context-efficient software-development and QA harness with a domain-neutral core and explicitly installed optional domain intelligence (Godot is the first and only optional domain).
 - The TypeScript implementation is the behavioral reference; later Stage 3R milestones port subsystems to idiomatic Rust under behavioral parity, refactoring-during-port, and evidence-driven optimization rules (ADR 0032, `docs/development/RUST_STYLE.md`).
 - Next: Stage 3R R3 — the first subsystem port under the differential gate (behavior extraction → idiomatic Rust redesign → parity → review → measurement, ADR 0032/0033). Do not implement R3+ porting work in the current milestone.
