@@ -6,10 +6,12 @@ Stage 3R is an internal migration track. It does not replace Siralos's six
 public product stages. The TypeScript implementation remains the behavioral
 reference until R12's retirement gate is satisfied.
 
-External master-handoff identifiers remain reserved and explicitly
-unverified until their normative source text is checked in; see the
-[handoff traceability register](HANDOFF_TRACEABILITY.md). Similar repository
-concepts never satisfy those identifiers by implication.
+Stable cross-project requirement identifiers are repository-owned in the
+[normative requirements register](../requirements/REQUIREMENTS.md). The
+[RFC ownership index](../architecture/RFC_INDEX.md) and
+[golden trace registry](GOLDEN_TRACES.md) preserve their decision and
+verification work items without manufacturing duplicate documents. Similar
+repository concepts never satisfy those identifiers by implication.
 
 ## Status vocabulary
 
