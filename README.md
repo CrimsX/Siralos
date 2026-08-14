@@ -111,6 +111,10 @@ cd siralos
 npm ci
 ```
 
+For development or a new coding-agent session, read [AGENTS.md](AGENTS.md) and
+the [project context](docs/development/PROJECT_CONTEXT.md) before selecting
+milestone work. No separate conversational handoff is required.
+
 ### Run
 
 Launch the TypeScript behavioral reference:
@@ -135,9 +139,9 @@ Run the standard local repository quality gate:
 npm run check
 ```
 
-This covers formatting, linting, TypeScript build and tests, architecture and
-identity ratchets, documentation links, R2 differential parity, Rust formatting,
-Clippy with warnings denied, and Rust tests.
+This covers formatting, linting, TypeScript build and tests, architecture,
+identity and public-hygiene ratchets, documentation links, R2 differential
+parity, Rust formatting, Clippy with warnings denied, and Rust tests.
 
 Run only the authoritative R2 parity decision:
 
@@ -171,6 +175,8 @@ records what remains before runtime and visual QA work can start.
 
 ## Documentation
 
+- [Project context](docs/development/PROJECT_CONTEXT.md) — complete public-safe
+  development bootstrap and current implementation reality
 - [Architecture](ARCHITECTURE.md) — ownership, dependency direction, and system
   design
 - [Architecture index](docs/architecture/README.md) — subsystem-to-code and ADR
@@ -184,6 +190,11 @@ records what remains before runtime and visual QA work can start.
   porting gate
 - [Rust style guide](docs/development/RUST_STYLE.md) — authoritative Rust
   engineering standard
+- [Normative requirements](docs/requirements/REQUIREMENTS.md) — CORE, HAR, and
+  anti-pattern registers with current evidence status
+- [RFC ownership](docs/architecture/RFC_INDEX.md) and
+  [golden traces](docs/development/GOLDEN_TRACES.md) — decision and verification
+  work-item registries
 - [Architecture decisions](docs/adr/) — accepted and historical ADRs
 
 ## Security

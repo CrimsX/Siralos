@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## New session / coding-agent bootstrap
+
+1. Read [docs/development/PROJECT_CONTEXT.md](docs/development/PROJECT_CONTEXT.md).
+2. Read the scoped `AGENTS.md` for files being modified.
+3. Follow linked architecture, ADR, security, and style documents as applicable.
+4. Verify current milestone status from repository evidence before claiming completion.
+
 ## Repository
 
 - npm workspace monorepo using ESM, strict TypeScript, and project references.
