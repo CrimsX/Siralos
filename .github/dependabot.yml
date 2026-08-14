@@ -1,6 +1,8 @@
 # Siralos dependency update policy (pre-Stage-4 assurance contract
-# Part 2). Grouped, weekly, registry-scoped. PRs open by Dependabot
-# run through the ordinary validation gate; no privileged execution.
+# Part 2). Weekly and registry-scoped. Cargo and npm updates remain
+# isolated per dependency so compiler, linter, hashing, and sandbox
+# changes receive independent validation. GitHub Actions updates may
+# remain grouped. Dependabot PRs receive no privileged execution.
 version: 2
 updates:
   - package-ecosystem: "cargo"
@@ -8,19 +10,11 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    groups:
-      cargo-dependencies:
-        patterns:
-          - "*"
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    groups:
-      npm-dependencies:
-        patterns:
-          - "*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
