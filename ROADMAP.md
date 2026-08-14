@@ -1,6 +1,10 @@
 # Siralos roadmap
 
-Siralos keeps six public product stages. A stage can have its contracts and
+Siralos keeps six public product stages. Stages 1–3 are historical/current
+product milestones; future stages 4–6 follow the lean vision freeze in
+[ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)
+(Stages 4–6 remain staged product direction subject to evidence, not
+guaranteed implementation commitments). A stage can have its contracts and
 adapters implemented while still being operationally incomplete because an
 unsafe filesystem or process boundary intentionally fails closed.
 
@@ -228,7 +232,7 @@ acceptance until drift is remediated — parity held on the state-dir and
 version-identity subjects, with real drift remediated in
 `siralos-adapters::paths`.
 
-### Next: Stage 4 — Runtime and visual QA
+### Next: Stage 4 — Controlled execution
 
 Not started. Stage 4 begins only after the Stage 3R migration and the
 pre-Stage-4 entry gate pass. Its first milestone is generic Controlled
@@ -238,25 +242,40 @@ unrestricted desktop or network access. The Godot runtime adapter is the
 first specialization built on that host boundary; it is not the boundary
 itself. Neither capability is implemented here.
 
-## 4. Runtime and visual QA
+## 4. Controlled execution
 
-Generic controlled runtime execution and evidence, followed by an optional
-Godot runtime adapter, automated runtime testing, debugging, visual gameplay
-verification, controlled interaction, QA workflows, and performance profiling.
+Stage 4 — Controlled Execution (lean vision, ADR 0036): generic
+host-authorized runtime execution and structured runtime evidence, followed by
+the optional Godot runtime adapter, visual evidence, controlled interaction,
+QA workflows, and performance profiling where domain-owned. The generic
+boundary comes first; the Godot adapter is a specialization, never the
+boundary itself (ADR 0035).
 
-Status: not started.
+Status: not started. The Stage 3R migration and the Stage-4 entry gate must
+pass first.
 
-## 5. Extensibility and optional agents
+## 5. Composition
 
-Skills, game-development-specific agent profiles, and explicitly user-invoked
-multi-agent review/comparison.
+Stage 5 — Composition (lean vision, ADR 0036): Profiles (declarative working
+configuration; the composition unit), portable locking (`siralos.toml` /
+`siralos.lock` semantics), Context controls (Live / Pinned / Frozen;
+show/explain/diff), Skills and the Skill Creator, capability-scoped Plugins,
+Tools, Views where justified, and optional Domains contributed by Plugins.
+Multi-agent functionality is not part of Siralos Core and is not committed
+roadmap work (ADR 0036).
 
-Status: not started. Multi-agent functionality is not part of the current
-runtime.
+Status: not started. These are staged product direction subject to evidence,
+not guaranteed implementation commitments.
 
-## 6. Controlled evolution and stable release
+## 6. Evolution and stabilization
 
-Controlled `/evolve` workflows, persistence where justified, security
-hardening, compatibility policy, packaging, and stable release criteria.
+Stage 6 — Evolution & Stabilization (lean vision, ADR 0036): bounded,
+measured `/evolve` workflows (baseline → candidate → evaluation →
+comparison → reject or propose) over Profiles, Context, Skills, Plugins, and
+Host, evaluation corpora/baselines, Profile/Context optimization, Skill
+creation/refinement, Plugin/Host improvement proposals, compatibility,
+performance, packaging, and stable release criteria. Evolve requires
+evaluation; it prefers configuration over Host complexity and may recommend
+deletion.
 
 Status: not started.

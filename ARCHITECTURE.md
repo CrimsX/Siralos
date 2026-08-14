@@ -4,6 +4,53 @@
 
 Siralos is a modular monolith: one repository, one npm workspace, one process, and clearly separated layers. See `docs/adr/0001-modular-monolith.md` for the decision record.
 
+## Product vision and conceptual ownership (ADR 0036)
+
+The committed product vision (ADR 0036) is a small privileged Host composed
+with declarative Profiles, inspectable Context, declarative Skills,
+capability-scoped Plugins, bounded Runs, and a measured Evolve workflow:
+
+```text
++---------------------------------+
+|      USER CONFIGURATION         |
+| Profile · Context · Skills      |
++----------------+----------------+
+                 |
+                 v
++---------------------------------+
+|         SIRALOS HOST            |
+| State · Revision · Capability   |
+| Tools · Effects · Evidence      |
++----------------+----------------+
+                 |
+                 v
++---------------------------------+
+|       OPTIONAL PLUGINS          |
+| Tools · Views · Domains         |
++---------------------------------+
+```
+
+Status vocabulary used throughout this document:
+
+- **CURRENT** — implemented and wired in the repository today (the
+  TypeScript behavioral reference, the Rust candidate foundation, and
+  their verified surfaces).
+- **TARGET** — committed product direction for a future stage/milestone
+  (Profiles, Context controls, Skills, Plugins, Tools, Views, Domains,
+  Runs, /evolve). Target items are documented as direction; none are
+  described as existing code until implemented.
+- **FUTURE / NOT DUE** — deliberately not committed (general Hooks,
+  built-in multi-agent frameworks, TaskGraph, generic workflow engines,
+  agent teams/Fleet, distributed workers, plugin marketplaces, plugin
+  dependency graphs, automatic Skill/Plugin acquisition, model-router
+  architecture, generic Memory subsystem, GUI/TUI runtime ownership).
+  These may be reconsidered only from concrete demand and evidence.
+
+The Host is deliberately not a plugin and cannot be replaced by
+configuration. Orchestration is not a foundational ownership layer; higher-
+level schedulers may consume Siralos Runs without defining Run semantics. The
+permanent lean constitution is recorded in ADR 0036.
+
 ```text
 @Siralos CLI (apps/cli)
     │  input parsing, rendering, process lifecycle
@@ -465,7 +512,7 @@ apps/cli/
 
 ## Task runtime
 
-The task runtime (Stage 3 milestone 1, ADR 0014) is the host-owned structured task foundation that later context projection, planning, multi-agent orchestration, persistence, and `/evolve` build upon. It lives in core (`packages/core/src/tasks/`) and is provider-neutral, sandbox-neutral, and Node-free: it observes typed host facts and never imports provider or sandbox ports (architecture-enforced).
+The task runtime (Stage 3 milestone 1, ADR 0014) is the host-owned structured task foundation that later context projection, planning, persistence, and `/evolve` build upon (multi-agent orchestration is not core architecture; ADR 0036). It lives in core (`packages/core/src/tasks/`) and is provider-neutral, sandbox-neutral, and Node-free: it observes typed host facts and never imports provider or sandbox ports (architecture-enforced).
 
 ```text
 packages/core/src/tasks/
@@ -609,7 +656,8 @@ whole-file SHA-256)`. The handle is an ergonomic reference, never
   the new post-edit revision and invalidates the previous current binding,
   while old revisions stay resolvable as historical evidence. A
   session-local observed-reads record (`path, revision, mode`) is
-  groundwork for future multi-agent stale-read detection.
+  groundwork for future multi-agent stale-read detection — a historical
+  note: multi-agent machinery is not core architecture (ADR 0036).
 - **Read modes**: `workspace.read` supports `exact` (authoritative source,
   revision handle, SHA-256, bounded text/range — the only basis for text
   mutation), `structural` (deterministic GDScript declarations with
@@ -874,7 +922,11 @@ Sessions are in-memory only. No SQLite, transcript storage, or session restorati
 
 ## Deferred: multi-agent functionality
 
-The current workflow is one interactive primary agent. Multi-agent review, agents as a product concept, and `/evolve` are out of scope for the foundation stage and are not modelled in core.
+One Run is one selected Profile and one primary model/tool loop (ADR 0036).
+Multi-agent machinery — subagents, agent teams, Fleet, TaskGraph, worker
+hierarchies, distributed workers — is not core architecture and is not
+committed roadmap work; it may be reconsidered only from concrete demand and
+evidence. `/evolve` remains a committed future feature in Stage 6.
 
 ## Deferred: process and write tools
 

@@ -19,9 +19,22 @@ the publication authority after later documentation-only commits.
 
 ## 1. Product definition
 
-Siralos is a deterministic, security-first, context-efficient
-software-development and QA harness with a domain-neutral core and explicitly
-installed optional domain intelligence.
+Siralos is a minimal, declarative AI coding harness with an inspectable
+execution environment.
+
+Expanded product explanation (ADR 0036):
+
+> Profiles define how the model works. Context shows what Siralos gives it.
+> The Host controls what it can do.
+
+Technical tagline:
+
+> Probabilistic reasoning. Deterministic execution.
+
+The security-first, context-efficient engineering posture of Stages 1-3
+remains the implementation reality beneath this identity; the identity itself
+is frozen by [ADR 0036](../adr/0036-lean-product-composition-and-extension-model.md)
+and the lean constitution.
 
 ```text
 probabilistic model reasoning
@@ -93,15 +106,19 @@ Useful language:
 ## 3. Current roadmap position
 
 The six public product stages are separate from the internal Stage 3R migration
-track:
+track. Stages 1-3 are historical/current product milestones; stages 4-6 are
+refined by the lean vision freeze (ADR 0036) and remain staged product
+direction subject to evidence, not guaranteed commitments:
 
 1. Harness Foundation - broad TypeScript reference established.
 2. Godot Script-Development MVP - broad TypeScript reference established, with
    unsafe effects truthfully unavailable.
 3. Godot-Native Development MVP - broad TypeScript reference established.
-4. Runtime and Visual QA - not begun.
-5. Extensibility and Optional Agents - not begun.
-6. Controlled Evolution and Stable Release - not begun.
+4. Controlled Execution (Runtime and Visual QA) - not begun.
+5. Composition (Profiles, Context controls, Skills, Plugins, Tools, Views,
+   optional Domains) - not begun.
+6. Evolution & Stabilization (/evolve, evaluation, packaging, release) -
+   not begun.
 
 Current Stage 3R position:
 
@@ -155,23 +172,61 @@ and unnecessary async. Do not restate the full guide in milestone prompts.
 
 ## 6. Architecture
 
-The conceptual ownership layers are:
+The conceptual ownership model (ADR 0036) is:
 
 ```text
-Foundation
-    |
-    v
-Deterministic Runtime
-    |
-    v
-Extensions
-    |
-    v
-Orchestration
-    |
-    v
-Experience
+USER CONFIGURATION
+Profile · Context · Skills
+            |
+            v
+SIRALOS HOST
+State · Revision · Capability
+Tools · Effects · Evidence
+            |
+            v
+OPTIONAL PLUGINS
+Tools · Views · Domains
 ```
+
+Siralos is a small privileged Host: authoritative state, revision/staleness
+semantics, capability enforcement, effect execution, plugin containment,
+evidence/run identity, profile resolution invariants, and context
+provenance/integrity rules are non-replaceable Host responsibilities.
+Orchestration is not a foundational ownership layer; higher-level schedulers
+may consume Siralos Runs without defining Run semantics. The previous
+five-layer model (Foundation / Deterministic Runtime / Extensions /
+Orchestration / Experience) is superseded by this lean model.
+
+The Host stays small by moving sophistication upward into declarative
+configuration, Skills, and explicitly installed Plugins whenever doing so does
+not weaken correctness, authority, determinism, or inspectability (ADR 0036
+core thesis). Canonical product primitives:
+
+- **Profile** — a named declarative AI working configuration; it requests
+  authority through resolution and Host policy, it never grants it.
+- **Context** — the exact model-visible material Siralos compiles and sends
+  through its provider boundary; inspectable, explainable, bounded, and
+  controllable (Live / Pinned / Frozen).
+- **Skill** — reusable declarative guidance for model reasoning; it has no
+  authority (Skill != Capability).
+- **Plugin** — the only optional executable extension package; explicitly
+  installed, versioned, digestable, capability-scoped, and contained by the
+  Host boundary; core works with zero Plugins.
+- **Tool** — the one callable typed operation abstraction (stable identity,
+  typed input/output, side-effect classification, capability requirements).
+- **View** — a Plugin-contributed presentation surface; it renders public
+  state and requests typed Tools through the Host and has no direct
+  authority.
+- **Domain** — specialized development intelligence contributed by a Plugin
+  (Godot is the first and currently only planned Domain).
+- **Run** — one bounded Siralos execution under an explicit Effective Profile
+  and Host authority state; one Run uses one stable Profile identity.
+- **Evolve** — a bounded evaluation workflow that proposes measured
+  improvements, escalating Profile -> Context -> Skill -> Plugin -> Host.
+- **Permission vs Capability** — Permission is the user-facing authorization
+  terminology; Capability (CapabilityRequest/CapabilityGrant) is the
+  host-enforced internal security terminology. Installing or selecting a
+  Plugin never implies authority.
 
 Dependencies point toward lower-level ownership. The current Rust bias is a
 modular monolith:
@@ -185,8 +240,8 @@ real dependency, distribution, security, or ABI reason. Current TypeScript
 dependency direction is `apps/cli -> packages/adapters -> packages/core`; the
 TypeScript core still carries historical Godot contracts because it is the
 behavioral reference, not the target Rust structure. See
-[ARCHITECTURE.md](../../ARCHITECTURE.md) and the
-[architecture index](../architecture/README.md).
+[ARCHITECTURE.md](../../ARCHITECTURE.md), [ADR 0036](../adr/0036-lean-product-composition-and-extension-model.md),
+and the [architecture index](../architecture/README.md).
 
 ## 7. Permanent security model
 
@@ -294,7 +349,10 @@ Component Model with versioned WIT as the primary host/domain boundary. A
 versioned out-of-process IPC boundary is retained as fallback/reference
 evidence. Domain code receives only structurally granted imports; package
 identity and capability requests remain host-controlled. Reopening the decision
-requires new evidence and a superseding ADR.
+requires new evidence and a superseding ADR. ADR 0036 records the long-term
+unification target — the same capability-scoped Plugin mechanism preferred for
+ordinary executable Plugins and Domain-contributing Plugins if practical —
+without changing ADR 0034's measured decision.
 
 ## 13. R2 differential contract
 
@@ -346,13 +404,24 @@ The future internal Stage 4 sequence is:
 Stage 4.1 is generic runtime execution, never shorthand for "run Godot." It is
 not due until the Stage 3R migration and entry gates pass.
 
-## 16. Stage 5 / 6 guardrails
+## 16. Stage 5 / 6 guardrails (lean vision, ADR 0036)
 
-Stage 5 may later own runtime protocol/SDK/ACP work, skills/plugins/hooks,
-optional workers or subagents, TaskGraph, worktree isolation, and durable work.
-Stage 6 may later own `/evolve`, benchmarks/ablations, release provenance,
-controlled improvement, and stable-release work. These are planned/not due and
-must not be pulled into R3.
+Stage 5 (Composition) may later own Profiles, portable locking
+(`siralos.toml` / `siralos.lock` semantics), Context controls (Live /
+Pinned / Frozen, explain/diff), Skills and the Skill Creator, capability-scoped
+Plugins, Tools, Views where justified, and optional Domains. Stage 6
+(Evolution & Stabilization) may later own `/evolve` with measured evaluation,
+evaluation corpora/baselines, Profile/Context optimization, Skill
+creation/refinement, Plugin/Host improvement proposals, compatibility,
+performance, packaging, and release stabilization.
+
+Deliberately removed from committed core architecture by ADR 0036: general
+Hooks, built-in optional agents/subagents, TaskGraph, generic workflow
+engines, Agent Teams, Fleet, distributed/remote workers, plugin marketplaces,
+plugin dependency graphs, automatic Skill/Plugin acquisition, model-router
+architecture, a generic Memory subsystem, and GUI/TUI runtime ownership.
+These are speculative/future-only and may be reconsidered only from concrete
+demand/evidence. None of the above is due and none may be pulled into R3.
 
 ## 17. Harness-derived design lessons
 
@@ -364,9 +433,13 @@ Adopted principles, independent of any conversational source:
 - unknown/unavailable reasons are typed;
 - operation receipts are bounded and redacted;
 - durable sequenced runtime events arrive only in their owning stage;
-- worker/model identity becomes explicit when workers arrive.
+- Run identity and provider/model identity are recorded where
+  reproducibility requires them; worker identity is not a core concept
+  (ADR 0036) and appears only if an external orchestration consumer
+  demonstrates a concrete need.
 
-The last two are **PLANNED / NOT DUE**, not current defects.
+The runtime-event and identity items are **PLANNED / NOT DUE**, not current
+defects; worker identity specifically is **SPECULATIVE / NOT CORE**.
 
 ## 18. Anti-patterns
 
@@ -408,6 +481,10 @@ pass. See [GOLDEN_TRACES.md](GOLDEN_TRACES.md) for scenario status.
 
 Accepted ADR frontmatter owns status and scope. `docs/archive/` is explicitly
 historical/non-authoritative and excluded from normal context discovery.
+[ADR 0036](../adr/0036-lean-product-composition-and-extension-model.md) is the
+authoritative lean product, composition, and extension model for future
+milestones; earlier ADRs remain the historical decision records they narrowed
+without superseding.
 
 ## 21. Prompt / goal generation rules
 

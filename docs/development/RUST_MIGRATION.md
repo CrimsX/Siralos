@@ -69,6 +69,22 @@ accidental complexity. Broad refactoring of the reference ahead of its port is
 discouraged because it changes the migration oracle without advancing the
 candidate.
 
+### Lean porting discipline (ADR 0036)
+
+R3 remains **Domain-Neutral Core**, but the porting guidance is explicit:
+R3 must not mechanically port planning, orchestration, context-projector
+proliferation, workflow abstractions, agent hierarchies, or other
+TypeScript-era structures when their required behavior can be represented by
+fewer idiomatic Rust types. Behavioral parity does not require structural
+parity (ADR 0032); the lean product model (ADR 0036) additionally forbids
+designing core around orchestration layers, generic workflow engines,
+multi-agent machinery, or extension abstractions that are not committed
+product concepts. Evaluate each ported surface as Profile behavior, a Skill,
+an ordinary model artifact, or a small Host contract before mirroring a
+TypeScript structure (for example the planning contracts), and prefer the
+smallest structure that preserves required observable behavior, authority,
+and determinism.
+
 ## Stage 4 entry
 
 Stage 4 begins only after R1-R11, the Stage 1-3 migration audit, R12's

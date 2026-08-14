@@ -1,8 +1,16 @@
 # Siralos
 
-Siralos is a deterministic, security-first, domain-neutral software-development
-and QA harness that places host-owned validation, policy, evidence, and
-controlled effects around probabilistic model reasoning.
+Siralos is a minimal, declarative AI coding harness with an inspectable
+execution environment.
+
+Profiles define how the model works. Context shows what Siralos gives it. The
+Host controls what it can do.
+
+_Probabilistic reasoning. Deterministic execution._ The host places host-owned
+validation, policy, evidence, and controlled effects around probabilistic
+model reasoning, and stays small by moving sophistication into declarative
+configuration, Skills, and explicitly installed Plugins
+([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
 
 [![Rust CI](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml)
 [![CodeQL](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml)
