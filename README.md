@@ -101,6 +101,9 @@ See the [architecture index](docs/architecture/README.md),
 - Node.js 24 (`.nvmrc`; CI uses 24.17.0)
 - npm 11.13.0
 - Rust 1.97.1 through `rust-toolchain.toml`
+- On Windows, a modern MinGW-w64 toolchain on `PATH` for the pinned
+  `x86_64-pc-windows-gnu` Rust host, including GNU `dlltool` and `as`
+  ([Rust platform requirements](https://doc.rust-lang.org/rustc/platform-support/windows-gnu.html))
 - Git
 
 ### Bootstrap
