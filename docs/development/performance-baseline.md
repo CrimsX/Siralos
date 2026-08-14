@@ -56,3 +56,17 @@ are ported (R3+): repository discovery, file search, structural read,
 revision hashing, prepared mutation generation, TaskState transitions,
 ContextProjector/ToolProjector/EvidenceProjector, planning policy,
 knowledge selection, and scene/resource parsing.
+
+The lean vision (ADR 0036) adds a small future benchmark set sufficient
+for before/after analysis:
+
+- Profile resolution (and `siralos.lock` -> ResolvedProfile)
+- digest/canonical identity computation
+- semantic delta calculation
+- Context compilation
+- Context recompilation after one changed source
+- Tool-surface construction
+
+Later milestones may add Plugin cold/warm load, repository
+indexing/search, and Godot parsing. Benchmarks are evidence tools, not
+necessarily hard PR gates.

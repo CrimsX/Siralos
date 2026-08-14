@@ -85,6 +85,38 @@ TypeScript structure (for example the planning contracts), and prefer the
 smallest structure that preserves required observable behavior, authority,
 and determinism.
 
+### Rust leverage principle
+
+Siralos uses Rust's ownership, borrowing, enums, exhaustive matching,
+strong types, generics, and zero-cost abstractions to make the Host simpler
+and more efficient by construction. The migration must not preserve
+source-language allocation, concurrency, serialization, or object patterns
+when Rust provides a simpler representation. Performance-sensitive code is
+measured before specialized optimization. Unsafe code, synchronization,
+dynamic dispatch, unnecessary allocation, and unnecessary async require
+concrete justification. The full standard is
+[RUST_STYLE.md](RUST_STYLE.md); do not create a separate optimization
+milestone.
+
+### Port review clause
+
+Every ported subsystem review must check:
+
+- states represented with types instead of flag combinations;
+- one clear owner for mutable authoritative state;
+- borrowing rather than cloning where natural;
+- no internal JSON/serialization churn without a real boundary;
+- no unnecessary heap allocation;
+- no unnecessary dynamic dispatch;
+- no unnecessary `Arc`/`Mutex`/`RwLock`;
+- no unnecessary async;
+- deterministic collection/order semantics;
+- no repeated parsing/hashing/canonicalization without reason;
+- standard zero-cost abstractions preferred over low-level tricks;
+- future revision-aware incremental reuse remains possible.
+
+Do not micro-optimize without measurement.
+
 ## Stage 4 entry
 
 Stage 4 begins only after R1-R11, the Stage 1-3 migration audit, R12's
