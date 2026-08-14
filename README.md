@@ -20,6 +20,21 @@ configuration, Skills, and explicitly installed Plugins
 > implementation, migrated under differential verification. Stage 3R R2 is
 > complete; **R3 — Domain-Neutral Core** is next and has not begun.
 
+## Status vocabulary
+
+- **CURRENT** — implemented and verified in the repository today
+  (the TypeScript behavioral reference, the Rust candidate foundation, and
+  their verified surfaces).
+- **TARGET** — committed product direction for a future stage
+  (Profiles, portable locking, Context controls, Skills, Plugins, Tools,
+  Views, Domains, Runs, Evolve). Target items are documented as direction;
+  none are described as shipped until implemented.
+- **FUTURE / NOT DUE** — deliberately not committed (general Hooks,
+  built-in multi-agent frameworks, TaskGraph, generic workflow engines,
+  plugin marketplaces, automatic acquisition, and similar). These may be
+  reconsidered only from concrete demand and evidence
+  ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
+
 ## Overview
 
 Models can reason and propose, but they do not own Siralos state or authority.
@@ -43,15 +58,19 @@ the first and currently only optional domain being developed for Siralos.
 
 ## Why Siralos?
 
-- Deterministic host decisions around probabilistic reasoning
-- Explicit, fail-closed authority and capability boundaries
-- Revision-bound plans, changes, and approvals
-- Bounded context, tools, outputs, and lifecycle operations
-- Evidence, provenance, replay, and differential verification
-- Provider-neutral architecture with optional domain intelligence
+- Deterministic Host decisions around probabilistic reasoning
+- Inspectable, provenance-bearing model Context
+- Explicit capability and fail-closed authority boundaries
+- Revision-bound, verifiable effects
+- Portable declarative configuration as the future composition model
+  (TARGET, not shipped)
+- Evidence, replay, and differential verification
+- Optional capability-scoped specialization rather than core feature growth
 
 The detailed ownership model and invariants live in
-[ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md).
+[ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md). The lean
+product, composition, and extension model is frozen in
+[ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md).
 
 ## Current capabilities
 
@@ -69,13 +88,21 @@ The detailed ownership model and invariants live in
   runners, semantic comparison, replay checks, and machine-readable parity
   evidence
 
-### In migration or planned
+### In migration (CURRENT)
 
 - The Rust successor currently covers the Stage 3R foundation and R2 harness;
   the first domain-neutral core port is R3
 - Workspace mutation, undo, Git inspection, development commands, and dynamic
   Godot execution remain intentionally unavailable where the current host
   cannot mechanically enforce the required identity guarantees
+
+### Target (not yet implemented)
+
+- Profiles, portable `siralos.toml`/`siralos.lock` semantics, full Context
+  controls (Live / Pinned / Frozen), Skills and the Skill Creator, Plugins,
+  Tools, Views where justified, optional Domains, and the measured
+  `/evolve` workflow are TARGET concepts in their owning stages
+  (ADR 0036) — none are implemented
 - Real provider integrations, additional domains, and Stage 4 runtime/visual QA
   are future milestones
 
@@ -84,23 +111,49 @@ checkpoint creation, or cleanup. See the [roadmap](ROADMAP.md) for exact status.
 
 ## Architecture
 
-The repository contains two implementations during Stage 3R:
+The target conceptual ownership model (ADR 0036) is:
 
 ```text
-TypeScript behavioral reference
+User Configuration
+        |
+        v
+Siralos Host
+        |
+        v
+Optional Plugins
+```
+
+- **User Configuration** — Profile, Context, Skills
+- **Siralos Host** — State, Revision, Capability, Tools, Effects, Evidence;
+  the small privileged, non-replaceable kernel
+- **Optional Plugins** — Tools, future Views, optional Domains
+
+This is a product ownership model, not an implementation-layer dependency
+diagram; dependency details live in [ARCHITECTURE.md](ARCHITECTURE.md).
+Orchestration is not a foundational Host layer — higher-level schedulers may
+consume Runs later without defining Run semantics.
+
+### Current implementation
+
+During Stage 3R the repository contains two implementations:
+
+```text
+TypeScript behavioral reference (CURRENT)
   apps/cli → packages/adapters → packages/core
 
-Rust successor
+Rust successor (CURRENT foundation)
   siralos-cli → siralos-adapters → siralos-core
 ```
 
 Both cores own domain-neutral policy and contracts. Adapters own infrastructure
 and optional domain behavior. The CLI is the composition and terminal boundary.
-Godot does not define or appear in the Rust core.
+Godot does not define or appear in the Rust core. The TypeScript structure is
+the behavioral reference, not the target architecture.
 
 See the [architecture index](docs/architecture/README.md),
-[ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md), and
-[ADR 0033](docs/adr/0033-differential-behavioral-harness.md).
+[ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md),
+[ADR 0033](docs/adr/0033-differential-behavioral-harness.md), and
+[ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md).
 
 ## Getting started
 
