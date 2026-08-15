@@ -1,0 +1,55 @@
+// Fixture WIT for the ABI-incompatible conformance component
+// (Stage 3R R6). Identical shape to the production boundary but with
+// package version 1.1.0 and an added interface member, so a component
+// built against it can never instantiate against the production
+// @1.0.0 world: unknown versions fail explicitly, never silently.
+
+package siralos:domain-abi@1.1.0;
+
+interface domain-api {
+    record package-identity {
+        package-id: string,
+        package-digest: string,
+        abi: string,
+    }
+
+    record semantic-result {
+        package-id: string,
+        query: string,
+        node-count: u32,
+        source-bytes: u32,
+    }
+
+    variant host-answer {
+        ok(string),
+        denied(string),
+        cancelled,
+        error(string),
+    }
+
+    variant effect-request {
+        workspace-read(tuple<string, u32>),
+        process-exec(string),
+    }
+
+    bind: func(identity: package-identity) -> result<_, string>;
+
+    query: func(text: string) -> result<semantic-result, string>;
+
+    request-effect: func(request: effect-request) -> host-answer;
+
+    /// Added in 1.1.0: a structural difference that makes the world
+    /// incompatible with the production 1.0.0 host.
+    extra: func() -> u32;
+}
+
+interface host-effects {
+    use domain-api.{effect-request, host-answer};
+
+    perform: func(request: effect-request) -> host-answer;
+}
+
+world siralos-domain {
+    export domain-api;
+    import host-effects;
+}

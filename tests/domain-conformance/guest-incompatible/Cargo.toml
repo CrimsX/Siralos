@@ -1,0 +1,19 @@
+[package]
+name = "siralos-domain-conformance-guest-incompatible"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "ABI-incompatible conformance guest fixture (Stage 3R R6). Standalone fixture, not a workspace member; built for wasm32-wasip2."
+
+[workspace]
+
+[dependencies]
+wit-bindgen = "=0.55.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

@@ -3,3 +3,5 @@ dist/
 coverage/
 package-lock.json
 .reasonix/
+tests/domain-conformance/guest/target/
+tests/domain-conformance/guest-incompatible/target/

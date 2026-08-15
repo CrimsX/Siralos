@@ -1,0 +1,6 @@
+# Synthetic conformance guest build artifacts (Stage 3R R6).
+# The guests are standalone crates; their target directories are
+# reproducible build output and are never part of the source tree.
+guest/target/
+guest-incompatible/target/
+_gen/
