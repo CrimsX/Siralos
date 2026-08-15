@@ -70,6 +70,14 @@ pub enum DomainFailure {
         /// The requested capabilities outside Host authority, ordered.
         missing: Vec<CapabilityId>,
     },
+    /// The activation request exceeds the installed package's declared
+    /// capabilities. The package declaration is the authority ceiling
+    /// for its own activation; a request may only narrow it.
+    UndeclaredCapability {
+        /// The requested capabilities absent from the package
+        /// declaration, in canonical order.
+        missing: Vec<CapabilityId>,
+    },
     /// A resource or runtime bound was exceeded.
     ResourceExceeded {
         /// Which resource class was exceeded.
@@ -113,6 +121,7 @@ impl DomainFailure {
             Self::UnsupportedAbi { .. } => "UNSUPPORTED_ABI",
             Self::IdentityMismatch { .. } => "IDENTITY_MISMATCH",
             Self::CapabilityDenied { .. } => "CAPABILITY_DENIED",
+            Self::UndeclaredCapability { .. } => "UNDECLARED_CAPABILITY",
             Self::ResourceExceeded { .. } => "RESOURCE_EXCEEDED",
             Self::InvalidInput { .. } => "INVALID_INPUT",
             Self::InvalidOutput { .. } => "INVALID_OUTPUT",
@@ -151,6 +160,9 @@ mod tests {
                 detail: "stale bytes".to_owned(),
             },
             DomainFailure::CapabilityDenied {
+                missing: vec![CapabilityId::parse("process-exec").unwrap()],
+            },
+            DomainFailure::UndeclaredCapability {
                 missing: vec![CapabilityId::parse("process-exec").unwrap()],
             },
             DomainFailure::ResourceExceeded {

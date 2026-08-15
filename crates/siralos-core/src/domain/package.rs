@@ -83,7 +83,8 @@ impl PackageDigest {
 }
 
 /// Versioned ABI identity in canonical WIT package form
-/// (`name@major.minor.patch`, for example `siralos:domain-abi@1.0.0`).
+/// (`name` at `major.minor.patch`, for example
+/// `siralos:domain-abi` at `1.0.0`).
 /// Compatibility is exact equality: unknown or incompatible versions
 /// fail closed and are never downgraded, reinterpreted, or
 /// best-effort deserialized (docs/development/PROTOCOL_VERSIONING.md).

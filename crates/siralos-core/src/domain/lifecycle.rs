@@ -192,6 +192,29 @@ impl ActiveDomain {
     }
 }
 
+/// The validated, not-yet-committed outcome of activation preparation:
+/// the exact binding and the effective grant. The authoritative
+/// transition happens only when the Host commits the prepared
+/// activation, so no fallible runtime step can ever leave the lifecycle
+/// Active without a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedActivation {
+    binding: ActivationBinding,
+    grant: CapabilityGrant,
+}
+
+impl PreparedActivation {
+    /// The exact identity that will be bound on commit.
+    pub fn binding(&self) -> &ActivationBinding {
+        &self.binding
+    }
+
+    /// The effective grant that will apply on commit.
+    pub fn grant(&self) -> &CapabilityGrant {
+        &self.grant
+    }
+}
+
 /// A typed reason why an activation is not eligible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EligibilityReason {
@@ -203,8 +226,12 @@ pub enum EligibilityReason {
     IdentityMismatch,
     /// The request ABI is not the supported ABI.
     UnsupportedAbi,
+    /// The domain is already active in a session.
+    Active,
     /// The requested capabilities are outside Host authority.
     CapabilityDenied,
+    /// The request exceeds the installed package's declared capabilities.
+    UndeclaredCapability,
     /// The resource/runtime check failed.
     ResourceExceeded,
     /// The runtime is unavailable.
@@ -219,7 +246,9 @@ impl EligibilityReason {
             Self::Disabled => "DISABLED",
             Self::IdentityMismatch => "IDENTITY_MISMATCH",
             Self::UnsupportedAbi => "UNSUPPORTED_ABI",
+            Self::Active => "ACTIVE",
             Self::CapabilityDenied => "CAPABILITY_DENIED",
+            Self::UndeclaredCapability => "UNDECLARED_CAPABILITY",
             Self::ResourceExceeded => "RESOURCE_EXCEEDED",
             Self::Unavailable => "UNAVAILABLE",
         }
@@ -243,6 +272,23 @@ impl Eligibility {
     pub fn reasons(&self) -> &[EligibilityReason] {
         &self.reasons
     }
+}
+
+/// The requested capabilities absent from the installed package's
+/// declaration, in canonical (ordered, deduplicated) request order. The
+/// package declaration is the authority ceiling for its own activation
+/// requests: a request may only narrow it, never broaden it.
+fn undeclared_capabilities(
+    request: &CapabilityRequest,
+    package: &DomainPackage,
+) -> Vec<crate::domain::capability::CapabilityId> {
+    request
+        .iter()
+        .filter(|capability| {
+            !package.requested_capabilities().contains(capability)
+        })
+        .cloned()
+        .collect()
 }
 
 /// The internal authoritative state: one explicit enum, so impossible
@@ -411,6 +457,10 @@ impl DomainLifecycle {
         if !request.abi.is_compatible_with(supported_abi) {
             reasons.push(EligibilityReason::UnsupportedAbi);
         }
+        if !undeclared_capabilities(request.capabilities(), package).is_empty()
+        {
+            reasons.push(EligibilityReason::UndeclaredCapability);
+        }
         if matches!(
             decide_grant(request.capabilities(), authority),
             crate::domain::capability::GrantDecision::Denied { .. }
@@ -443,8 +493,8 @@ impl DomainLifecycle {
         let reasons = match &self.state {
             DomainState::Absent => vec![EligibilityReason::NotInstalled],
             DomainState::Installed(_) => vec![EligibilityReason::Disabled],
-            DomainState::Enabled(package)
-            | DomainState::Active { package, .. } => self.deep_reasons(
+            DomainState::Active { .. } => vec![EligibilityReason::Active],
+            DomainState::Enabled(package) => self.deep_reasons(
                 package,
                 request,
                 supported_abi,
@@ -455,24 +505,25 @@ impl DomainLifecycle {
         Eligibility { ready: reasons.is_empty(), reasons }
     }
 
-    /// Activate the installed, enabled package for this session.
-    /// Fails closed (typed) on any of: wrong identity, stale digest,
-    /// incompatible ABI, capability denial, or a failed
-    /// resource/runtime check — before any semantic work. The
-    /// returned binding is the exact identity used for this
-    /// activation.
-    pub fn activate(
-        &mut self,
-        request: ActivationRequest,
+    /// Prepare an activation without committing any authoritative
+    /// state. Pure validation: the installed/enabled gates, the exact
+    /// identity, the ABI, the package-declaration capability ceiling,
+    /// the Host policy decision, and the resource/runtime check all run
+    /// here, so every fallible preparation happens before the
+    /// authoritative Active transition. The result must be committed
+    /// with [`DomainLifecycle::commit_activation`].
+    pub fn prepare_activation(
+        &self,
+        request: &ActivationRequest,
         supported_abi: &DomainAbi,
         authority: &HostAuthority,
-        runtime: RuntimeCheckResult,
-    ) -> Result<ActiveDomain, DomainFailure> {
+        runtime: &RuntimeCheckResult,
+    ) -> Result<PreparedActivation, DomainFailure> {
         let package = match &self.state {
             DomainState::Absent => return Err(DomainFailure::NotInstalled),
             DomainState::Installed(_) => return Err(DomainFailure::Disabled),
             DomainState::Enabled(package) => package,
-            DomainState::Active { package, .. } => package,
+            DomainState::Active { .. } => return Err(DomainFailure::Active),
         };
         if request.package_id != *package.id() {
             return Err(DomainFailure::IdentityMismatch {
@@ -494,6 +545,15 @@ impl DomainLifecycle {
                 found: request.abi.as_str().to_owned(),
             });
         }
+        // The package declaration is the authority ceiling for its own
+        // activation: a request may narrow it, never broaden it.
+        let undeclared =
+            undeclared_capabilities(request.capabilities(), package);
+        if !undeclared.is_empty() {
+            return Err(DomainFailure::UndeclaredCapability {
+                missing: undeclared,
+            });
+        }
         let grant = match decide_grant(request.capabilities(), authority) {
             crate::domain::capability::GrantDecision::Granted(grant) => grant,
             crate::domain::capability::GrantDecision::Denied { missing } => {
@@ -503,7 +563,7 @@ impl DomainLifecycle {
         match runtime {
             RuntimeCheckResult::Ready => {}
             RuntimeCheckResult::ResourceExceeded(kind) => {
-                return Err(DomainFailure::ResourceExceeded { kind });
+                return Err(DomainFailure::ResourceExceeded { kind: *kind });
             }
             RuntimeCheckResult::Unavailable => {
                 return Err(DomainFailure::Unavailable {
@@ -511,19 +571,65 @@ impl DomainLifecycle {
                 });
             }
         }
-        let active = ActiveDomain {
-            session_id: self.next_session,
-            binding: ActivationBinding::from_request(&request),
+        Ok(PreparedActivation {
+            binding: ActivationBinding::from_request(request),
             grant,
-        };
-        self.next_session += 1;
-        self.state = DomainState::Active {
-            package: package.clone(),
-            active: active.clone(),
-        };
-        Ok(active)
+        })
     }
 
+    /// Commit a prepared activation: the single authoritative
+    /// Enabled -> Active transition. Infallible by construction — the
+    /// Host performs every fallible runtime step before calling this —
+    /// and it allocates the session id only for committed activations,
+    /// so failed provisional attempts never advance the session
+    /// counter.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an internal invariant violation (the lifecycle is no
+    /// longer Enabled); the Host flow guarantees the prepared
+    /// activation is committed immediately.
+    pub fn commit_activation(
+        &mut self,
+        prepared: PreparedActivation,
+    ) -> ActiveDomain {
+        let package =
+            match std::mem::replace(&mut self.state, DomainState::Absent) {
+                DomainState::Enabled(package) => package,
+                _ => {
+                    panic!("commit_activation requires the enabled state");
+                }
+            };
+        let active = ActiveDomain {
+            session_id: self.next_session,
+            binding: prepared.binding,
+            grant: prepared.grant,
+        };
+        self.next_session += 1;
+        self.state = DomainState::Active { package, active: active.clone() };
+        active
+    }
+    /// Activate the installed, enabled package for this session:
+    /// preparation plus commit. Fails closed (typed) on any of: wrong
+    /// identity, stale digest, incompatible ABI, undeclared
+    /// capabilities, Host policy denial, or a failed resource/runtime
+    /// check — before any authoritative state changes. While already
+    /// active, activation is rejected with the typed active failure.
+    pub fn activate(
+        &mut self,
+        request: ActivationRequest,
+        supported_abi: &DomainAbi,
+        authority: &HostAuthority,
+        runtime: RuntimeCheckResult,
+    ) -> Result<ActiveDomain, DomainFailure> {
+        let prepared = self.prepare_activation(
+            &request,
+            supported_abi,
+            authority,
+            &runtime,
+        )?;
+        Ok(self.commit_activation(prepared))
+    }
     /// End the current run/session-scoped activation. The package
     /// stays installed and enabled.
     pub fn deactivate(&mut self) -> Result<(), DomainFailure> {
@@ -735,6 +841,24 @@ mod tests {
         assert_eq!(granted, vec!["workspace-read"]);
         assert_eq!(lifecycle.state(), LifecycleState::Active);
         assert!(lifecycle.active().is_some());
+        // Active -> Active is rejected with the typed active failure,
+        // and the original session is preserved exactly (no counter
+        // advancement, no binding/grant change).
+        assert!(matches!(
+            lifecycle.activate(
+                request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            ),
+            Err(DomainFailure::Active)
+        ));
+        assert_eq!(lifecycle.state(), LifecycleState::Active);
+        let preserved = lifecycle.active().expect("session preserved");
+        assert_eq!(preserved.session_id(), 1);
+        assert_eq!(preserved.binding().digest().as_str(), digest1);
+        // The deeper identity/ABI checks run while enabled, not active.
+        lifecycle.deactivate().expect("deactivate");
         // Wrong digest fails before any semantic work.
         assert!(matches!(
             lifecycle.activate(
@@ -880,6 +1004,7 @@ mod tests {
             eligibility.reasons(),
             &[
                 EligibilityReason::IdentityMismatch,
+                EligibilityReason::UndeclaredCapability,
                 EligibilityReason::CapabilityDenied,
                 EligibilityReason::ResourceExceeded,
             ],
@@ -898,6 +1023,167 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn active_eligibility_is_explicitly_not_ready() {
+        let mut lifecycle = DomainLifecycle::new();
+        let digest1 = digest(1);
+        lifecycle.install(package("conformance-domain", &digest1)).unwrap();
+        lifecycle.enable().unwrap();
+        let supported = DomainAbi::parse(ABI).unwrap();
+        lifecycle
+            .activate(
+                request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let eligibility = lifecycle.eligibility(
+            &request("conformance-domain", &digest1),
+            &supported,
+            &authority(),
+            &RuntimeCheckResult::Ready,
+        );
+        assert!(!eligibility.ready());
+        assert_eq!(eligibility.reasons(), &[EligibilityReason::Active]);
+    }
+
+    #[test]
+    fn package_declaration_bounds_activation_requests() {
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let authority_both =
+            HostAuthority::parse(&ids(&["workspace-read", "process-exec"]))
+                .unwrap();
+
+        // Equal package/request capability set succeeds.
+        let mut lifecycle = DomainLifecycle::new();
+        let digest1 = digest(1);
+        lifecycle
+            .install(
+                DomainPackage::parse(
+                    "conformance-domain",
+                    &digest1,
+                    ABI,
+                    &ids(&["workspace-read", "process-exec"]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        lifecycle.enable().unwrap();
+        let equal = ActivationRequest::parse(
+            "conformance-domain",
+            &digest1,
+            ABI,
+            &ids(&["workspace-read", "process-exec"]),
+        )
+        .unwrap();
+        let active = lifecycle
+            .activate(
+                equal,
+                &supported,
+                &authority_both,
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let granted: Vec<&str> =
+            active.grant().iter().map(|id| id.as_str()).collect();
+        assert_eq!(granted, vec!["process-exec", "workspace-read"]);
+        lifecycle.deactivate().unwrap();
+
+        // A strict subset of the declaration succeeds.
+        let subset = ActivationRequest::parse(
+            "conformance-domain",
+            &digest1,
+            ABI,
+            &ids(&["workspace-read"]),
+        )
+        .unwrap();
+        let active = lifecycle
+            .activate(
+                subset,
+                &supported,
+                &authority_both,
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let granted: Vec<&str> =
+            active.grant().iter().map(|id| id.as_str()).collect();
+        assert_eq!(granted, vec!["workspace-read"]);
+        lifecycle.deactivate().unwrap();
+
+        // A request exceeding the declaration fails typed, even when
+        // Host authority contains the extra capability.
+        let exceeding = ActivationRequest::parse(
+            "conformance-domain",
+            &digest1,
+            ABI,
+            &ids(&["workspace-read", "process-exec", "network-access"]),
+        )
+        .unwrap();
+        assert!(matches!(
+            lifecycle.activate(
+                exceeding,
+                &supported,
+                &authority_both,
+                RuntimeCheckResult::Ready,
+            ),
+            Err(DomainFailure::UndeclaredCapability { missing })
+            if missing.len() == 1
+                && missing[0].as_str() == "network-access"
+        ));
+        // The lifecycle is untouched by the failed request.
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+
+        // Host authority narrows independently of the declaration.
+        let narrow_authority =
+            HostAuthority::parse(&ids(&["workspace-read"])).unwrap();
+        let both = ActivationRequest::parse(
+            "conformance-domain",
+            &digest1,
+            ABI,
+            &ids(&["workspace-read", "process-exec"]),
+        )
+        .unwrap();
+        assert!(matches!(
+            lifecycle.activate(
+                both,
+                &supported,
+                &narrow_authority,
+                RuntimeCheckResult::Ready,
+            ),
+            Err(DomainFailure::CapabilityDenied { missing })
+            if missing.len() == 1
+                && missing[0].as_str() == "process-exec"
+        ));
+
+        // Undeclared capabilities are reported in canonical order.
+        let unordered = ActivationRequest::parse(
+            "conformance-domain",
+            &digest1,
+            ABI,
+            &ids(&[
+                "network-access",
+                "workspace-read",
+                "process-exec",
+                "telemetry",
+            ]),
+        )
+        .unwrap();
+        match lifecycle.activate(
+            unordered,
+            &supported,
+            &authority_both,
+            RuntimeCheckResult::Ready,
+        ) {
+            Err(DomainFailure::UndeclaredCapability { missing }) => {
+                let missing: Vec<&str> =
+                    missing.iter().map(|id| id.as_str()).collect();
+                assert_eq!(missing, vec!["network-access", "telemetry"],);
+            }
+            other => panic!("unexpected activation outcome: {other:?}"),
+        }
+    }
     #[test]
     fn workspace_files_are_opaque_and_never_acquire() {
         // The marker name is deliberately a neutral string: core
