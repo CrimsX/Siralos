@@ -78,12 +78,16 @@ unsafe filesystem or process boundary intentionally fails closed.
   canonical root and containment resolution, bounded exact reads,
   deterministic listing and search, fail-closed mutation preparation,
   checkpoint storage inspection/reconciliation, and the Git disposition
-  boundary. The differential corpus gained 19 R4 scenarios across the
+  boundary. The differential corpus gained 23 R4 scenarios across the
   `workspace-read`, `workspace-list`, `workspace-search`,
   `workspace-revision`, `workspace-prepare`, `checkpoint`, and
   `git-inspection` subjects; all required applicable scenarios match and
   the complete local repository gate passes (corpus schema 3, corpus
-  version 6). R5 (Generic Language Intelligence) is next.
+  version 7, 47 scenario files). R4 hardening made the bounded exact reads
+  EOF-verified on both implementations (a short read is never treated as
+  EOF, a partial prefix never becomes whole-file identity, and size
+  boundaries are explicit) and made checkpoint source-path inspection fail
+  closed on any escape. R5 (Generic Language Intelligence) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -265,7 +269,8 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   classification, and the read-only Git error/disposition contract.
 - The workspace adapters in `siralos-adapters`: canonical root
   resolution, containment-safe path resolution (symlink/junction
-  escapes rejected), bounded exact reads with whole-file SHA-256
+  escapes rejected), bounded complete exact reads (EOF-verified; a
+  partial prefix is never returned as complete) with whole-file SHA-256
   identity, deterministic bounded listing and search with the reference
   exclusions and truncation dispositions, the fail-closed
   mutation-preparation boundary (prepare/apply report unavailable;
@@ -277,12 +282,16 @@ Implemented (R4 — Generic Workspace / Project Foundation):
 - The differential harness (ADR 0033) gained the R4 subjects
   `workspace-read`, `workspace-list`, `workspace-search`,
   `workspace-revision`, `workspace-prepare`, `checkpoint`, and
-  `git-inspection` with 19 scenarios driven through the real reference
+  `git-inspection` with 23 scenarios driven through the real reference
   tools/store/registry and the real Rust adapters; all required
-  applicable scenarios match (corpus schema 3, corpus version 6).
-  Deliberately unavailable effects (mutation application, new
-  checkpoint creation, Git inspection) report the same typed outcomes
-  on both sides.
+  applicable scenarios match (corpus schema 3, corpus version 7, 47
+  scenario files). R4 hardening added differential coverage for bounded
+  complete reads at the exact size boundary, whole-file suffix
+  identity, symlink and parent-symlink escape, and checkpoint path
+  escape, with deterministic short-read regression coverage on both
+  implementations. Deliberately unavailable effects (mutation
+  application, new checkpoint creation, Git inspection) report the same
+  typed outcomes on both sides.
 
 Next: Stage 3R — R5: Generic Language Intelligence. The complete
 internal sequence is recorded in `docs/development/RUST_MIGRATION.md`.

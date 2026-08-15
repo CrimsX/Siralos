@@ -8,7 +8,7 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R4
 Next milestone: R5 - Generic Language Intelligence
-Last verified commit: 35dead4e14c83621196f4d3bb0493deff410afa9
+Last verified commit: 056864cc2534c3f856f0f5ba2dada2f532a334bf
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -101,10 +101,14 @@ the fail-closed mutation-preparation boundary (prepare/apply report
 unavailable; nothing is written, approved, or checkpointed), checkpoint
 storage inspection and startup reconciliation over the reference metadata
 layout, and the typed unavailable Git inspection boundary. The differential
-corpus gained 19 scenarios across the `workspace-read`, `workspace-list`,
+corpus gained 23 scenarios across the `workspace-read`, `workspace-list`,
 `workspace-search`, `workspace-revision`, `workspace-prepare`,
 `checkpoint`, and `git-inspection` subjects; all required applicable
-scenarios match (ADR 0033 gate, corpus version 6). Structural/summary
+scenarios match (ADR 0033 gate, corpus version 7, 47 scenario files). R4
+hardening corrected the bounded exact reads on both implementations so a
+short read is never treated as EOF, a partial prefix can never become
+authoritative source identity, file-size boundaries are explicit, and
+checkpoint source-path inspection fails closed on any escape. Structural/summary
 read modes remain explicit typed unsupported dispositions at R4
 (GDScript structure extraction is R5-owned). No further major Stage 1-3
 subsystem has been ported yet.
