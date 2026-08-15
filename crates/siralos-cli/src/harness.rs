@@ -627,7 +627,10 @@ fn load_corpus(
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    // sha2 0.11 returns a hybrid-array Array that no longer implements
+    // LowerHex; format the digest bytes explicitly. The produced hex
+    // string is byte-identical to the previous LowerHex output.
+    hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Candidate state-directory probe bytes for the internal subprocess.
