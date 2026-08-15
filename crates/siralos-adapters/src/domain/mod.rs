@@ -16,5 +16,5 @@
 mod effects;
 mod host;
 
-pub use effects::{EffectMediationBounds, MediatedAnswer};
+pub use effects::{EffectMediation, EffectMediationBounds, MediatedAnswer};
 pub use host::{DomainHost, DomainHostBounds, EffectRequest, QueryOutcome};

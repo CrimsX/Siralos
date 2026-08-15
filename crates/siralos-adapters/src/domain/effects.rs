@@ -8,6 +8,7 @@
 //! denied by policy. A denial is typed and never escalates.
 
 use siralos_core::domain::capability::CapabilityGrant;
+use siralos_core::domain::failure::ResourceExceededKind;
 
 use crate::workspace::read::{ReadInput, ReadMode, read_file};
 use crate::workspace::resolve::resolve_workspace_path;
@@ -41,6 +42,19 @@ pub enum MediatedAnswer {
     Cancelled,
     /// The effect failed with a typed reason.
     Error(String),
+}
+
+/// The typed outcome of one mediation attempt. The guest-visible answer
+/// is separate from the Host-observed resource classification, so a
+/// resource failure never degrades into a prose string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffectMediation {
+    /// A normal guest-visible answer.
+    Answer(MediatedAnswer),
+    /// A Host resource bound was exceeded (for example the Host-call
+    /// budget); the guest still receives a bounded disposition, but the
+    /// Host observes the typed resource failure.
+    ResourceExceeded(ResourceExceededKind),
 }
 
 /// The host-side mediator state for one activation session: the
@@ -77,17 +91,18 @@ impl EffectMediator {
 
     /// Mediate one effect request: capability check, bounds, and the
     /// production workspace read where granted. The domain receives
-    /// only the typed answer.
+    /// only the typed answer; the Host observes the typed outcome,
+    /// including resource exhaustion.
     pub fn mediate(
         &mut self,
         request: &crate::domain::host::EffectRequest,
-    ) -> MediatedAnswer {
+    ) -> EffectMediation {
         if self.cancelled {
-            return MediatedAnswer::Cancelled;
+            return EffectMediation::Answer(MediatedAnswer::Cancelled);
         }
         if self.remaining_calls == 0 {
-            return MediatedAnswer::Error(
-                "host-call budget exceeded".to_owned(),
+            return EffectMediation::ResourceExceeded(
+                ResourceExceededKind::HostCalls,
             );
         }
         self.remaining_calls -= 1;
@@ -102,20 +117,22 @@ impl EffectMediator {
                     ) {
                         Ok(capability) => capability,
                         Err(_) => {
-                            return MediatedAnswer::Error(
-                                "invalid capability id".to_owned(),
+                            return EffectMediation::Answer(
+                                MediatedAnswer::Error(
+                                    "invalid capability id".to_owned(),
+                                ),
                             );
                         }
                     };
                 if !self.grant.contains(&capability) {
-                    return MediatedAnswer::Denied(
+                    return EffectMediation::Answer(MediatedAnswer::Denied(
                         "workspace-read is not granted".to_owned(),
-                    );
+                    ));
                 }
                 if path.is_empty() || *max_bytes == 0 {
-                    return MediatedAnswer::Error(
+                    return EffectMediation::Answer(MediatedAnswer::Error(
                         "invalid workspace-read request".to_owned(),
-                    );
+                    ));
                 }
                 let max_bytes = usize::try_from(
                     u64::from(*max_bytes)
@@ -123,9 +140,9 @@ impl EffectMediator {
                 )
                 .unwrap_or(usize::MAX);
                 if resolve_workspace_path(&self.root, path).is_err() {
-                    return MediatedAnswer::Denied(
+                    return EffectMediation::Answer(MediatedAnswer::Denied(
                         "path is outside the workspace".to_owned(),
-                    );
+                    ));
                 }
                 let limits = WorkspaceLimits {
                     max_read_file_size_bytes: max_bytes,
@@ -151,27 +168,31 @@ impl EffectMediator {
                         if answer.len() > self.bounds.max_answer_bytes {
                             answer.truncate(self.bounds.max_answer_bytes);
                         }
-                        MediatedAnswer::Ok(answer)
+                        EffectMediation::Answer(MediatedAnswer::Ok(answer))
                     }
                     crate::workspace::read::ReadOutcome::Denied {
                         message,
-                    } => MediatedAnswer::Denied(message),
+                    } => EffectMediation::Answer(MediatedAnswer::Denied(
+                        message,
+                    )),
                     crate::workspace::read::ReadOutcome::Cancelled => {
-                        MediatedAnswer::Cancelled
+                        EffectMediation::Answer(MediatedAnswer::Cancelled)
                     }
                     crate::workspace::read::ReadOutcome::Failed {
                         message,
-                    } => MediatedAnswer::Error(message),
+                    } => {
+                        EffectMediation::Answer(MediatedAnswer::Error(message))
+                    }
                     crate::workspace::read::ReadOutcome::Unsupported {
                         ..
-                    } => MediatedAnswer::Error(
+                    } => EffectMediation::Answer(MediatedAnswer::Error(
                         "unsupported read mode".to_owned(),
-                    ),
+                    )),
                     crate::workspace::read::ReadOutcome::InvalidInput {
                         ..
-                    } => MediatedAnswer::Error(
+                    } => EffectMediation::Answer(MediatedAnswer::Error(
                         "invalid workspace-read request".to_owned(),
-                    ),
+                    )),
                 }
             }
             crate::domain::host::EffectRequest::ProcessExec(_command) => {
@@ -186,20 +207,22 @@ impl EffectMediator {
                     ) {
                         Ok(capability) => capability,
                         Err(_) => {
-                            return MediatedAnswer::Error(
-                                "invalid capability id".to_owned(),
+                            return EffectMediation::Answer(
+                                MediatedAnswer::Error(
+                                    "invalid capability id".to_owned(),
+                                ),
                             );
                         }
                     };
                 if !self.grant.contains(&capability) {
-                    return MediatedAnswer::Denied(
+                    return EffectMediation::Answer(MediatedAnswer::Denied(
                         "process-exec is not granted by Host policy"
                             .to_owned(),
-                    );
+                    ));
                 }
-                MediatedAnswer::Error(
+                EffectMediation::Answer(MediatedAnswer::Error(
                     "process execution is unavailable in this host".to_owned(),
-                )
+                ))
             }
         }
     }
@@ -208,10 +231,11 @@ impl EffectMediator {
 #[cfg(test)]
 mod tests {
     use super::{
-        CAPABILITY_WORKSPACE_READ, EffectMediationBounds, EffectMediator,
-        MediatedAnswer,
+        CAPABILITY_WORKSPACE_READ, EffectMediation, EffectMediationBounds,
+        EffectMediator, MediatedAnswer,
     };
     use siralos_core::domain::capability::HostAuthority;
+    use siralos_core::domain::failure::ResourceExceededKind;
 
     #[test]
     fn process_exec_is_denied_by_policy() {
@@ -249,7 +273,10 @@ mod tests {
                 "whoami".to_owned(),
             ),
         );
-        assert!(matches!(answer, MediatedAnswer::Denied(_)));
+        assert!(matches!(
+            answer,
+            EffectMediation::Answer(MediatedAnswer::Denied(_))
+        ));
     }
 
     #[test]
@@ -289,17 +316,16 @@ mod tests {
                     "x".to_owned(),
                 ),
             );
-            assert!(matches!(
-                answer,
-                MediatedAnswer::Denied(_) | MediatedAnswer::Ok(_)
-            ));
+            assert!(matches!(answer, EffectMediation::Answer(_)));
         }
         let exhausted = mediator.mediate(
             &crate::domain::host::EffectRequest::ProcessExec("x".to_owned()),
         );
+        // Host-call exhaustion is a typed Host-observed resource
+        // failure, never a prose string.
         assert!(matches!(
             exhausted,
-            MediatedAnswer::Error(reason) if reason == "host-call budget exceeded"
+            EffectMediation::ResourceExceeded(ResourceExceededKind::HostCalls)
         ));
     }
 
@@ -334,6 +360,6 @@ mod tests {
         let answer = mediator.mediate(
             &crate::domain::host::EffectRequest::ProcessExec("x".to_owned()),
         );
-        assert_eq!(answer, MediatedAnswer::Cancelled);
+        assert_eq!(answer, EffectMediation::Answer(MediatedAnswer::Cancelled));
     }
 }

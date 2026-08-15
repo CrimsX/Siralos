@@ -16,7 +16,7 @@ use siralos_adapters::domain::{
     DomainHost, DomainHostBounds, EffectRequest, MediatedAnswer, QueryOutcome,
 };
 use siralos_core::domain::capability::HostAuthority;
-use siralos_core::domain::failure::DomainFailure;
+use siralos_core::domain::failure::{DomainFailure, ResourceExceededKind};
 use siralos_core::domain::lifecycle::{ActivationRequest, RuntimeCheckResult};
 use siralos_core::domain::package::{DomainAbi, DomainPackage};
 use siralos_core::identity::sha256_hex;
@@ -30,7 +30,7 @@ const ABI: &str = "siralos:domain-abi@1.0.0";
 
 /// Exact SHA-256 of `fixtures/conformance-domain.component.wasm`.
 const CONFORMANCE_DIGEST: &str =
-    "feda66689d44205d642abd1aa6fc48d7a4b98ec386734ff5c0a47b629a74ee28";
+    "e8fc793632a9a1050364e1c5eed0eb16b55c645ccd589f472cf06a80039ac8f8";
 
 /// Exact SHA-256 of `fixtures/incompatible-domain.component.wasm`.
 const INCOMPATIBLE_DIGEST: &str =
@@ -465,14 +465,336 @@ fn host_call_budget_is_enforced() {
         let _ =
             host.request_effect(EffectRequest::ProcessExec("x".to_owned()));
     }
-    match host.request_effect(EffectRequest::ProcessExec("x".to_owned())) {
-        Ok(MediatedAnswer::Error(reason)) => {
-            assert!(reason.contains("host-call budget"));
+    let failure = host
+        .request_effect(EffectRequest::ProcessExec("x".to_owned()))
+        .expect_err("budget exhaustion is a typed failure");
+    assert!(matches!(
+        failure,
+        DomainFailure::ResourceExceeded {
+            kind: ResourceExceededKind::HostCalls,
         }
+    ));
+}
+
+/// Request with an explicit capability set.
+fn request_with_caps(
+    id: &str,
+    digest: &str,
+    capabilities: &[&str],
+) -> ActivationRequest {
+    ActivationRequest::parse(
+        id,
+        digest,
+        ABI,
+        &capabilities.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>(),
+    )
+    .expect("request parses")
+}
+
+/// Package with an explicit declared capability set.
+fn package_with_caps(
+    id: &str,
+    digest: &str,
+    capabilities: &[&str],
+) -> DomainPackage {
+    DomainPackage::parse(
+        id,
+        digest,
+        ABI,
+        &capabilities.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>(),
+    )
+    .expect("package parses")
+}
+
+#[test]
+fn bind_rejection_leaves_enabled_and_unpublished() {
+    let root = temp_dir("bind-reject");
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        default_bounds(),
+    );
+    host.install(package_with_caps(
+        "reject-bind",
+        CONFORMANCE_DIGEST,
+        &["workspace-read"],
+    ))
+    .expect("install");
+    host.enable().expect("enable");
+    let failure = host
+        .activate(
+            request_with_caps(
+                "reject-bind",
+                CONFORMANCE_DIGEST,
+                &["workspace-read"],
+            ),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("bind rejection fails activation");
+    assert_eq!(failure.code(), "INVALID_OUTPUT");
+    assert_eq!(host.state().as_str(), "enabled");
+    assert!(host.active().is_none());
+    // A normal activation succeeds after the failed provisional attempt.
+    host.uninstall().expect("uninstall");
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("reactivation");
+    match host.query("still works") {
+        QueryOutcome::Ok { .. } => {}
+        other => panic!("unexpected query outcome: {other:?}"),
+    }
+}
+
+#[test]
+fn bind_trap_leaves_enabled_and_unpublished() {
+    let root = temp_dir("bind-trap");
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        default_bounds(),
+    );
+    host.install(package_with_caps(
+        "trap-bind",
+        CONFORMANCE_DIGEST,
+        &["workspace-read"],
+    ))
+    .expect("install");
+    host.enable().expect("enable");
+    let failure = host
+        .activate(
+            request_with_caps(
+                "trap-bind",
+                CONFORMANCE_DIGEST,
+                &["workspace-read"],
+            ),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("bind trap fails activation");
+    assert_eq!(failure.code(), "GUEST_FAULT");
+    assert_eq!(host.state().as_str(), "enabled");
+    assert!(host.active().is_none());
+    host.uninstall().expect("uninstall");
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("reactivation");
+}
+
+#[test]
+fn bind_fuel_exhaustion_leaves_enabled_and_unpublished() {
+    let root = temp_dir("bind-fuel");
+    let mut bounds = default_bounds();
+    bounds.fuel_per_call = 20_000;
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        bounds,
+    );
+    host.install(package_with_caps(
+        "loop-bind",
+        CONFORMANCE_DIGEST,
+        &["workspace-read"],
+    ))
+    .expect("install");
+    host.enable().expect("enable");
+    let failure = host
+        .activate(
+            request_with_caps(
+                "loop-bind",
+                CONFORMANCE_DIGEST,
+                &["workspace-read"],
+            ),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("bind fuel exhaustion fails activation");
+    assert_eq!(failure.code(), "RESOURCE_EXCEEDED");
+    assert_eq!(host.state().as_str(), "enabled");
+    assert!(host.active().is_none());
+    host.uninstall().expect("uninstall");
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("reactivation");
+}
+
+#[test]
+fn active_to_active_is_rejected_and_sessions_are_monotonic() {
+    let root = temp_dir("active-active");
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        default_bounds(),
+    );
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
+    let failure = host
+        .activate(
+            request("conformance-domain", CONFORMANCE_DIGEST),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("active-to-active rejected");
+    assert_eq!(failure.code(), "ACTIVE");
+    let preserved = host.active().expect("session preserved");
+    assert_eq!(preserved.session_id(), 1);
+    host.deactivate().expect("deactivate");
+    let next = host
+        .activate(
+            request("conformance-domain", CONFORMANCE_DIGEST),
+            RuntimeCheckResult::Ready,
+        )
+        .expect("reactivation");
+    assert_eq!(next.session_id(), 2);
+}
+
+#[test]
+fn package_declaration_bounds_activation_through_the_host() {
+    let root = temp_dir("declaration");
+    let mut host = make_host_with_authority(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        default_bounds(),
+        &["workspace-read", "process-exec"],
+    );
+    // The installed package declares only workspace-read.
+    host.install(package_with_caps(
+        "conformance-domain",
+        CONFORMANCE_DIGEST,
+        &["workspace-read"],
+    ))
+    .expect("install");
+    host.enable().expect("enable");
+    // Host authority contains both capabilities, so the only
+    // failing layer is the package declaration.
+    let failure = host
+        .activate(
+            request_with_caps(
+                "conformance-domain",
+                CONFORMANCE_DIGEST,
+                &["workspace-read", "process-exec"],
+            ),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("undeclared capability fails activation");
+    assert_eq!(failure.code(), "UNDECLARED_CAPABILITY");
+    assert_eq!(host.state().as_str(), "enabled");
+    assert!(host.active().is_none());
+    // The declared subset still activates.
+    let active = host
+        .activate(
+            request("conformance-domain", CONFORMANCE_DIGEST),
+            RuntimeCheckResult::Ready,
+        )
+        .expect("declared subset activates");
+    let granted: Vec<&str> =
+        active.grant().iter().map(|id| id.as_str()).collect();
+    assert_eq!(granted, vec!["workspace-read"]);
+}
+
+#[test]
+fn semantic_output_aggregate_bound_is_enforced() {
+    let root = temp_dir("output-bound");
+    let mut bounds = default_bounds();
+    // package_id ("conformance-domain", 18 bytes) + query payload
+    // must fit the aggregate semantic result bound.
+    bounds.max_result_bytes = 82;
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        bounds,
+    );
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
+    // Exact boundary (18 + 64 = 82) is accepted.
+    match host.query("pad:64") {
+        QueryOutcome::Ok { node_count, .. } => assert_eq!(node_count, 64),
+        other => panic!("unexpected query outcome: {other:?}"),
+    }
+    // One byte over the aggregate bound is a typed output failure.
+    match host.query("pad:65") {
+        QueryOutcome::Failed(failure) => {
+            assert_eq!(failure.code(), "RESOURCE_EXCEEDED");
+        }
+        other => panic!("unexpected query outcome: {other:?}"),
+    }
+    // An oversized guest rejection reason cannot bypass the bound.
+    match host.query("reject:200") {
+        QueryOutcome::Failed(failure) => {
+            assert_eq!(failure.code(), "RESOURCE_EXCEEDED");
+        }
+        other => panic!("unexpected query outcome: {other:?}"),
+    }
+    // The host remains internally consistent afterwards.
+    match host.query("pad:1") {
+        QueryOutcome::Ok { node_count, .. } => assert_eq!(node_count, 1),
+        other => panic!("unexpected query outcome: {other:?}"),
+    }
+}
+
+#[test]
+fn effect_answer_payload_cannot_bypass_the_host_visible_bound() {
+    let root = temp_dir("effect-bound");
+    let mut bounds = default_bounds();
+    bounds.effects.max_answer_bytes = 64;
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        bounds,
+    );
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
+    let failure = host
+        .request_effect(EffectRequest::ProcessExec("big".to_owned()))
+        .expect_err("oversized guest-forged answer is rejected");
+    assert_eq!(failure.code(), "RESOURCE_EXCEEDED");
+    // Normal effect answers still work.
+    match host.request_effect(EffectRequest::ProcessExec("x".to_owned())) {
+        Ok(MediatedAnswer::Denied(_)) => {}
         other => panic!("unexpected answer: {other:?}"),
     }
 }
 
+#[test]
+fn host_call_budget_is_a_typed_host_observed_failure() {
+    let root = temp_dir("host-calls");
+    let mut bounds = default_bounds();
+    bounds.effects.max_host_calls = 5;
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        bounds,
+    );
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
+    for _ in 0..5 {
+        let _ =
+            host.request_effect(EffectRequest::ProcessExec("x".to_owned()));
+    }
+    let failure = host
+        .request_effect(EffectRequest::ProcessExec("x".to_owned()))
+        .expect_err("budget exhaustion is a typed failure");
+    assert!(matches!(
+        failure,
+        DomainFailure::ResourceExceeded {
+            kind: ResourceExceededKind::HostCalls,
+        }
+    ));
+    // The guest-initiated path records the same typed classification.
+    match host.query("calls:100") {
+        QueryOutcome::Failed(failure) => {
+            assert!(matches!(
+                failure,
+                DomainFailure::ResourceExceeded {
+                    kind: ResourceExceededKind::HostCalls,
+                }
+            ));
+        }
+        other => panic!("unexpected query outcome: {other:?}"),
+    }
+}
+
+/// Host over a fixture with an explicit Host authority set.
+fn make_host_with_authority(
+    component: &Path,
+    root: &Path,
+    bounds: DomainHostBounds,
+    capabilities: &[&str],
+) -> DomainHost {
+    DomainHost::new(
+        DomainAbi::parse(ABI).expect("abi parses"),
+        authority(capabilities),
+        component.to_path_buf(),
+        root.to_path_buf(),
+        bounds,
+    )
+}
 #[test]
 fn activation_is_session_scoped_and_binds_exact_identity() {
     let root = temp_dir("session");

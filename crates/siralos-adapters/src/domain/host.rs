@@ -11,7 +11,7 @@
 //! failures.
 
 use crate::domain::effects::{
-    EffectMediationBounds, EffectMediator, MediatedAnswer,
+    EffectMediation, EffectMediationBounds, EffectMediator, MediatedAnswer,
 };
 
 use siralos_core::domain::capability::{CapabilityGrant, HostAuthority};
@@ -112,6 +112,11 @@ struct HostState {
     /// filesystem, network, or process authority.
     wasi: WasiCtx,
     table: ResourceTable,
+    /// The typed outcome of the most recent mediation attempt, so the
+    /// Host retains machine-branchable resource classifications (for
+    /// example HostCalls) even though the guest protocol only carries a
+    /// bounded disposition.
+    last_mediation: Option<EffectMediation>,
 }
 
 impl WasiView for HostState {
@@ -152,18 +157,29 @@ impl siralos::domain_abi::host_effects::Host for HostState {
         &mut self,
         request: EffectRequest,
     ) -> siralos::domain_abi::domain_api::HostAnswer {
-        match self.mediator.mediate(&request) {
-            MediatedAnswer::Ok(text) => {
-                siralos::domain_abi::domain_api::HostAnswer::Ok(text)
-            }
-            MediatedAnswer::Denied(reason) => {
-                siralos::domain_abi::domain_api::HostAnswer::Denied(reason)
-            }
-            MediatedAnswer::Cancelled => {
-                siralos::domain_abi::domain_api::HostAnswer::Cancelled
-            }
-            MediatedAnswer::Error(reason) => {
-                siralos::domain_abi::domain_api::HostAnswer::Error(reason)
+        let outcome = self.mediator.mediate(&request);
+        self.last_mediation = Some(outcome.clone());
+        match outcome {
+            EffectMediation::Answer(answer) => match answer {
+                MediatedAnswer::Ok(text) => {
+                    siralos::domain_abi::domain_api::HostAnswer::Ok(text)
+                }
+                MediatedAnswer::Denied(reason) => {
+                    siralos::domain_abi::domain_api::HostAnswer::Denied(reason)
+                }
+                MediatedAnswer::Cancelled => {
+                    siralos::domain_abi::domain_api::HostAnswer::Cancelled
+                }
+                MediatedAnswer::Error(reason) => {
+                    siralos::domain_abi::domain_api::HostAnswer::Error(reason)
+                }
+            },
+            EffectMediation::ResourceExceeded(_) => {
+                // The guest still receives a bounded disposition; the
+                // Host's typed classification is retained separately.
+                siralos::domain_abi::domain_api::HostAnswer::Error(
+                    "host-call budget exceeded".to_owned(),
+                )
             }
         }
     }
@@ -348,20 +364,22 @@ impl DomainHost {
                 found: request.abi().as_str().to_owned(),
             });
         }
-        // 3. Lifecycle decision (identity, protocol, capability,
-        //    runtime checks).
-        let active = self.lifecycle.activate(
-            request.clone(),
+        // 3. Lifecycle preparation: every typed gate (identity,
+        //    protocol, package-declaration capability ceiling, Host
+        //    policy, runtime check) runs now WITHOUT committing any
+        //    authoritative state. The prepared grant drives the
+        //    mediator.
+        let prepared = self.lifecycle.prepare_activation(
+            &request,
             &self.supported_abi,
             &self.authority,
-            runtime,
+            &runtime,
         )?;
         // 4. Instantiate: version/world-incompatible components fail
         //    explicitly; the component imports exactly host-effects,
         //    so any other import also fails here. The store is created
-        //    after the decision so the mediator starts with the real
-        //    effective grant.
-        let mut store = self.store(active.grant().clone(), &engine)?;
+        //    with the prepared effective grant.
+        let mut store = self.store(prepared.grant().clone(), &engine)?;
         // Instantiation executes the component's canonical-ABI
         // initialization, which also consumes fuel; grant the call
         // budget for it.
@@ -402,18 +420,33 @@ impl DomainHost {
                 package_digest: request.digest().as_str().to_owned(),
                 abi: request.abi().as_str().to_owned(),
             };
+        // 5. Bind the exact activation identity into the guest. The
+        //    guest's bind is fallible untrusted execution: a trap, a
+        //    rejection, or a resource failure here leaves the lifecycle
+        //    Enabled with no session — the authoritative commit happens
+        //    only after every fallible step.
         let bound = instance
             .interface0
             .call_bind(&mut store, &identity)
-            .map_err(|error| DomainFailure::GuestFault {
-                detail: format!("bind call trapped: {error}"),
+            .map_err(|error| {
+                // Nothing has been committed yet: the lifecycle is
+                // still Enabled and no session exists, so the typed
+                // failure is returned as-is.
+                classify_trap(&error, self.bounds.max_result_bytes)
             })?;
         if let Err(reason) = bound {
-            self.lifecycle.deactivate().ok();
+            if reason.len() > self.bounds.max_result_bytes {
+                return Err(DomainFailure::ResourceExceeded {
+                    kind: ResourceExceededKind::OutputBytes,
+                });
+            }
             return Err(DomainFailure::InvalidOutput {
                 reason: format!("guest rejected the identity: {reason}"),
             });
         }
+        // 6. Commit: the single authoritative Enabled -> Active
+        //    transition. No fallible operation remains afterwards.
+        let active = self.lifecycle.commit_activation(prepared);
         self.session = Some(HostSession { store, instance, cancelled: false });
         Ok(active)
     }
@@ -445,18 +478,33 @@ impl DomainHost {
                     reason: format!("fuel unavailable: {error}"),
                 });
             }
+            session.store.data_mut().last_mediation = None;
             session.instance.interface0.call_query(&mut session.store, text)
         };
+        // The guest may have consumed the effect budget during the
+        // query; the Host observes the typed resource failure even
+        // though the guest protocol carried only bounded dispositions.
+        let mediation = self
+            .session
+            .as_ref()
+            .and_then(|session| session.store.data().last_mediation.clone());
+        if let Some(EffectMediation::ResourceExceeded(kind)) = mediation {
+            return QueryOutcome::Failed(DomainFailure::ResourceExceeded {
+                kind,
+            });
+        }
         match call_result {
             Ok(Ok(result)) => {
-                if result.query.len() > self.bounds.max_result_bytes
-                    || result.package_id.len() > self.bounds.max_result_bytes
-                {
+                // One deterministic aggregate accounting rule over the
+                // complete returned representation: every
+                // guest-controlled variable-length field counts toward
+                // the single semantic result bound.
+                let output_bytes =
+                    result.package_id.len() + result.query.len();
+                if output_bytes > self.bounds.max_result_bytes {
                     return QueryOutcome::Failed(
-                        DomainFailure::InvalidOutput {
-                            reason:
-                                "query result exceeds the output byte bound"
-                                    .to_owned(),
+                        DomainFailure::ResourceExceeded {
+                            kind: ResourceExceededKind::OutputBytes,
                         },
                     );
                 }
@@ -467,9 +515,18 @@ impl DomainHost {
                     source_bytes: result.source_bytes,
                 }
             }
-            Ok(Err(reason)) => QueryOutcome::Rejected {
-                reason: bound_reason(&reason, self.bounds.max_result_bytes),
-            },
+            Ok(Err(reason)) => {
+                // Guest rejection reasons are guest-controlled output
+                // and cannot bypass the semantic result bound.
+                if reason.len() > self.bounds.max_result_bytes {
+                    return QueryOutcome::Failed(
+                        DomainFailure::ResourceExceeded {
+                            kind: ResourceExceededKind::OutputBytes,
+                        },
+                    );
+                }
+                QueryOutcome::Rejected { reason }
+            }
             Err(error) => {
                 let failure =
                     classify_trap(&error, self.bounds.max_result_bytes);
@@ -516,6 +573,7 @@ impl DomainHost {
                     reason: format!("fuel unavailable: {error}"),
                 });
             }
+            session.store.data_mut().last_mediation = None;
             session
                 .instance
                 .interface0
@@ -530,6 +588,37 @@ impl DomainHost {
                 return Err(failure);
             }
         };
+        // The Host retains the typed mediation outcome (for example
+        // HostCalls exhaustion) even though the guest protocol only
+        // carried a bounded disposition.
+        let mediation = self
+            .session
+            .as_ref()
+            .and_then(|session| session.store.data().last_mediation.clone());
+        if let Some(EffectMediation::ResourceExceeded(kind)) = mediation {
+            return Err(DomainFailure::ResourceExceeded { kind });
+        }
+        // Guest-produced answer payloads are guest-controlled output
+        // and cannot bypass the effect answer bound.
+        let payload = match &answer {
+            exports::siralos::domain_abi::domain_api::HostAnswer::Ok(text)
+            | exports::siralos::domain_abi::domain_api::HostAnswer::Denied(
+                text,
+            )
+            | exports::siralos::domain_abi::domain_api::HostAnswer::Error(
+                text,
+            ) => Some(text.len()),
+            exports::siralos::domain_abi::domain_api::HostAnswer::Cancelled => {
+                None
+            }
+        };
+        if payload
+            .is_some_and(|bytes| bytes > self.bounds.effects.max_answer_bytes)
+        {
+            return Err(DomainFailure::ResourceExceeded {
+                kind: ResourceExceededKind::OutputBytes,
+            });
+        }
         Ok(match answer {
             exports::siralos::domain_abi::domain_api::HostAnswer::Ok(text) => {
                 MediatedAnswer::Ok(text)
@@ -578,6 +667,7 @@ impl DomainHost {
                 limits,
                 wasi: WasiCtxBuilder::new().build(),
                 table: ResourceTable::new(),
+                last_mediation: None,
             },
         );
         store.limiter(|state| &mut state.limits);
@@ -623,4 +713,33 @@ fn classify_trap(error: &wasmtime::Error, maximum: usize) -> DomainFailure {
         };
     }
     DomainFailure::GuestFault { detail: bound_reason(&chain, maximum) }
+}
+#[cfg(test)]
+mod tests {
+    use super::classify_trap;
+    use siralos_core::domain::failure::{DomainFailure, ResourceExceededKind};
+
+    #[test]
+    fn memory_limit_traps_classify_as_memory_resource_exhaustion() {
+        let error = wasmtime::Error::msg("wasm trap: memory limit exceeded");
+        match classify_trap(&error, 4096) {
+            DomainFailure::ResourceExceeded { kind } => {
+                assert_eq!(kind, ResourceExceededKind::Memory);
+            }
+            other => panic!("unexpected classification: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fuel_traps_classify_as_fuel_resource_exhaustion() {
+        let error = wasmtime::Error::msg(
+            "wasm trap: all fuel consumed by WebAssembly",
+        );
+        match classify_trap(&error, 4096) {
+            DomainFailure::ResourceExceeded { kind } => {
+                assert_eq!(kind, ResourceExceededKind::Fuel);
+            }
+            other => panic!("unexpected classification: {other:?}"),
+        }
+    }
 }
