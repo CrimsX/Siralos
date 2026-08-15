@@ -761,6 +761,7 @@ name = "siralos-adapters"
 version = "0.0.0"
 dependencies = [
  "dirs",
+ "serde_json",
  "siralos-core",
 ]
 

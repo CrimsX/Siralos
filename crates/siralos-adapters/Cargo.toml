@@ -12,6 +12,9 @@ siralos-core = { workspace = true }
 # FOLDERID_Profile, POSIX getpwuid) behind a safe wrapper; the standard
 # library has no equivalent and hand-rolling it would require unsafe FFI.
 dirs = "6"
+# JSON tool-input parsing and checkpoint metadata documents: the
+# standard library has no JSON parser.
+serde_json = "1"
 
 [lints]
 workspace = true

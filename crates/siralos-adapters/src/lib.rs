@@ -10,5 +10,6 @@
 //! (enforced by `npm run check:rust`).
 
 pub mod paths;
+pub mod workspace;
 
 pub use paths::state_dir;
