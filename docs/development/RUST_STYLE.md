@@ -13,11 +13,12 @@ restating its contents.
 
 ## Purpose
 
-Siralos is a deterministic, security-first, context-efficient
-software-development and QA harness with a domain-neutral core and
-explicitly installed optional domain intelligence. Rust code must serve
-that posture: local reasoning, explicit authority, deterministic
-behavior, and mechanical enforcement of boundaries.
+Siralos is a minimal, declarative AI coding harness with an inspectable
+execution environment (ADR 0036). Rust code must preserve its small
+privileged Host, explicit authority boundaries, deterministic behavior,
+revision and identity guarantees, and evidence-driven execution: local
+reasoning, explicit authority, deterministic behavior, and mechanical
+enforcement of boundaries remain the engineering posture.
 
 This guide distills engineering principles from high-quality Rust
 practice — including the patterns visible in Andrew Gallant's
