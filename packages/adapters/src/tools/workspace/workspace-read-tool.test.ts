@@ -110,6 +110,31 @@ describe("workspace.read", () => {
     expect(stringOf(rangedOutput["content"])).toBe("line one");
   });
 
+  it("bases whole-file identity on the complete bytes, not a common prefix", async () => {
+    // Two files sharing an identical prefix but differing later bytes
+    // must produce different authoritative digests, and the digest of
+    // the prefix alone must match neither: a short first read
+    // containing only the prefix can never masquerade as the complete
+    // file identity.
+    const workspace = await withWorkspace();
+    const prefix = "shared prefix line\n";
+    await writeFixtureFiles(workspace.root, {
+      "ident-a.txt": `${prefix}suffix A\n`,
+      "ident-b.txt": `${prefix}suffix B\n`,
+    });
+    const tool = createWorkspaceReadTool(workspace.root);
+    const outputA = expectSuccess(await tool.execute({ path: "ident-a.txt" }, {}));
+    const outputB = expectSuccess(await tool.execute({ path: "ident-b.txt" }, {}));
+    const digestA = stringOf(outputA["sha256"]);
+    const digestB = stringOf(outputB["sha256"]);
+    expect(digestA).not.toBe(digestB);
+    expect(digestA).toBe(createHash("sha256").update(`${prefix}suffix A\n`).digest("hex"));
+    expect(digestB).toBe(createHash("sha256").update(`${prefix}suffix B\n`).digest("hex"));
+    const prefixDigest = createHash("sha256").update(prefix).digest("hex");
+    expect(prefixDigest).not.toBe(digestA);
+    expect(prefixDigest).not.toBe(digestB);
+  });
+
   it("produces different hashes for different bytes", async () => {
     const workspace = await withWorkspace();
     await writeFixtureFiles(workspace.root, { "a.txt": "same bytes" });

@@ -145,9 +145,11 @@ export function createWorkspaceReadTool(
           message: `File is too large (${stats.size} bytes; limit ${WORKSPACE_LIMITS.maxReadFileSizeBytes}).`,
         };
       }
-      // The read itself is capped: a file grown or swapped after the stat is
-      // read only up to the size bound plus one byte, so a hostile
-      // replacement can never drive an unbounded read or block on a FIFO.
+      // The read itself is a bounded complete read: a file grown or swapped
+      // after the stat is read only up to the size bound plus one byte, one
+      // short read is never treated as EOF, a partial prefix is never
+      // returned as complete, and a hostile replacement can never drive an
+      // unbounded read or block on a FIFO.
       const buffer = await readFileBounded(
         resolved.absolutePath,
         WORKSPACE_LIMITS.maxReadFileSizeBytes,
