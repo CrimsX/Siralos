@@ -8,7 +8,7 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R5
 Next milestone: R6 - Minimal Domain Capability Architecture and Synthetic Conformance Domain
-Last verified commit: bfea62d5f5438096e5432c12e01973099e20b1d0
+Last verified commit: 23a7b0ae0705727373aa15ad2ca7e32e3bf6c008
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
