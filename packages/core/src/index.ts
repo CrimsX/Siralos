@@ -1658,3 +1658,26 @@ export type {
   GodotSceneIntelligence,
   GodotSceneIntelligenceSupport,
 } from "./godot/scene/intelligence.js";
+export {
+  normalizeDefinitionLocations,
+  type DefinitionLimits,
+  type DefinitionLocation,
+} from "./language/definition.js";
+export {
+  normalizeDiagnosticPayload,
+  normalizeDiagnosticSet,
+  mapLspSeverity,
+  type DiagnosticPayloadLimits,
+  type DiagnosticSeverity,
+  type LanguageDiagnostic,
+} from "./language/diagnostic.js";
+export {
+  isOneBasedPosition,
+  isOrderedRange,
+  toOneBasedPosition,
+  toOneBasedRange,
+  type LanguagePosition,
+  type LanguageRange,
+} from "./language/position.js";
+export { sanitizeControlCharacters } from "./language/sanitize.js";
+export { truncateUtf8Bytes, utf8ByteLength } from "./language/truncate.js";

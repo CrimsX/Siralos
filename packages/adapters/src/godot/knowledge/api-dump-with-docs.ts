@@ -304,23 +304,11 @@ function nullableHash(value: unknown): string | null {
   return nullableString(value);
 }
 
-/** Truncates UTF-8 text to an exact byte bound without splitting a code point. */
-export function truncateUtf8Bytes(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
-    return text;
-  }
-  let result = "";
-  let bytes = 0;
-  for (const character of text) {
-    const size = Buffer.byteLength(character, "utf8");
-    if (bytes + size > maxBytes) {
-      break;
-    }
-    result += character;
-    bytes += size;
-  }
-  return result;
-}
+// Generic UTF-8 byte truncation (Stage 3R R5) lives in the core
+// language module; this adapter re-exports it for Godot consumers.
+import { truncateUtf8Bytes } from "@siralos/core";
+
+export { truncateUtf8Bytes };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)

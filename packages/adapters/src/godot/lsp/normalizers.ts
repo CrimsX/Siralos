@@ -1,12 +1,13 @@
 import {
   GODOT_LIMITS,
+  normalizeDefinitionLocations,
+  normalizeDiagnosticPayload,
+  toOneBasedRange,
   type GDScriptCompletionItem,
   type GDScriptCompletionResult,
-  type GDScriptDefinitionLocation,
   type GDScriptDefinitionResult,
   type GDScriptHoverResult,
   type GDScriptHoverSection,
-  type GDScriptSourceRange,
   type GodotGDScriptDiagnostic,
 } from "@siralos/core";
 import { sanitizeControlCharacters } from "../diagnostics/diagnostic-normalizer.js";
@@ -28,33 +29,6 @@ export interface LSPNormalizationContext {
   readonly path: string;
 }
 
-function to1BasedRange(range: unknown): GDScriptSourceRange | null {
-  if (typeof range !== "object" || range === null) {
-    return null;
-  }
-  const start = to1BasedPosition((range as Record<string, unknown>)["start"]);
-  const end = to1BasedPosition((range as Record<string, unknown>)["end"]);
-  if (start === null || end === null) {
-    return null;
-  }
-  return { start, end };
-}
-
-function to1BasedPosition(position: unknown): { line: number; column: number } | null {
-  if (typeof position !== "object" || position === null) {
-    return null;
-  }
-  const line = (position as Record<string, unknown>)["line"];
-  const character = (position as Record<string, unknown>)["character"];
-  if (typeof line !== "number" || typeof character !== "number") {
-    return null;
-  }
-  if (!Number.isInteger(line) || !Number.isInteger(character) || line < 0 || character < 0) {
-    return null;
-  }
-  return { line: line + 1, column: character + 1 };
-}
-
 export interface NormalizedPublishDiagnostics {
   readonly path: string;
   readonly diagnostics: readonly GodotGDScriptDiagnostic[];
@@ -66,7 +40,10 @@ export interface NormalizedPublishDiagnostics {
  * rejected (returns null); severity 1=error, 2=warning, 3=info, 4=hint
  * (info); unknown severities are preserved as `unknown`; line/column are
  * converted 0-based → 1-based; bounded related information is folded into
- * the message; message size and per-document count are bounded.
+ * the message; message size and per-document count are bounded. The
+ * generic payload normalization lives in the core language module
+ * (Stage 3R R5); this wrapper supplies the mirror URI mapping and the
+ * Godot source label.
  */
 export function normalizePublishDiagnostics(
   uri: string,
@@ -80,71 +57,24 @@ export function normalizePublishDiagnostics(
   if (path === null) {
     return null;
   }
-  if (!Array.isArray(rawDiagnostics)) {
+  const normalized = normalizeDiagnosticPayload(
+    rawDiagnostics,
+    "godot-lsp",
+    path,
+    context.mirrorRootPath,
+    {
+      maxDiagnostics: limits.maxDiagnostics,
+      maxMessageBytes: GODOT_LIMITS.maxDiagnosticMessageBytes,
+    },
+  );
+  if (normalized === null) {
     return null;
   }
-  const diagnostics: GodotGDScriptDiagnostic[] = [];
-  let truncated = false;
-  for (const entry of rawDiagnostics) {
-    if (diagnostics.length >= limits.maxDiagnostics) {
-      truncated = true;
-      break;
-    }
-    if (typeof entry !== "object" || entry === null) {
-      continue;
-    }
-    const record = entry as Record<string, unknown>;
-    const range = to1BasedRange(record["range"]);
-    const severity = mapSeverity(record["severity"]);
-    const code = mapCode(record["code"]);
-    const message = boundMessage(record["message"], context);
-    if (message.length === 0) {
-      continue;
-    }
-    diagnostics.push({
-      source: "godot-lsp",
-      severity,
-      path,
-      line: range?.start.line ?? null,
-      column: range?.start.column ?? null,
-      code,
-      message,
-      rawCategory: typeof record["source"] === "string" ? record["source"] : null,
-    });
-  }
-  return { path, diagnostics, truncated };
-}
-
-function mapSeverity(value: unknown): GodotGDScriptDiagnostic["severity"] {
-  if (value === 1) {
-    return "error";
-  }
-  if (value === 2) {
-    return "warning";
-  }
-  if (value === 3 || value === 4) {
-    return "info";
-  }
-  return "unknown";
-}
-
-function mapCode(value: unknown): string | null {
-  if (typeof value === "string") {
-    return truncateUtf8Bytes(value, GODOT_LIMITS.maxDiagnosticMessageBytes);
-  }
-  if (typeof value === "number") {
-    return String(value);
-  }
-  return null;
-}
-
-function boundMessage(value: unknown, context: LSPNormalizationContext): string {
-  if (typeof value !== "string") {
-    return "";
-  }
-  let text = sanitizeControlCharacters(value).trim();
-  text = text.split(context.mirrorRootPath).join("<mirror>");
-  return truncateUtf8Bytes(text, GODOT_LIMITS.maxDiagnosticMessageBytes);
+  return {
+    path: normalized.path,
+    diagnostics: normalized.diagnostics as readonly GodotGDScriptDiagnostic[],
+    truncated: normalized.truncated,
+  };
 }
 
 /** One hover section; markup is data, never executed or rendered. */
@@ -160,7 +90,7 @@ export function normalizeHover(
   const contents = extractHoverContents(hover, context);
   const range =
     typeof hover === "object" && !Array.isArray(hover)
-      ? to1BasedRange((hover as Record<string, unknown>)["range"])
+      ? toOneBasedRange((hover as Record<string, unknown>)["range"])
       : null;
   return { path, range, contents };
 }
@@ -310,62 +240,23 @@ export function normalizeDefinition(
   uri: string,
   locations: unknown,
   context: LSPNormalizationContext,
+  limits: { readonly maxLocations: number } = {
+    maxLocations: GODOT_LIMITS.lspMaxDefinitionLocations,
+  },
 ): GDScriptDefinitionResult {
   const path = mirrorUriToWorkspaceRelative(uri, context.mirrorRootPath) ?? context.path;
-  const rawLocations = Array.isArray(locations)
-    ? locations
-    : locations === null || locations === undefined
-      ? []
-      : [locations];
-  const result: GDScriptDefinitionLocation[] = [];
-  let truncated = false;
-  for (const entry of rawLocations) {
-    if (result.length >= GODOT_LIMITS.lspMaxDefinitionLocations) {
-      truncated = true;
-      break;
-    }
-    const location = normalizeDefinitionLocation(entry, context);
-    if (location !== null) {
-      result.push(location);
-    }
-  }
-  return { path, locations: result, truncated };
-}
-
-function normalizeDefinitionLocation(
-  entry: unknown,
-  context: LSPNormalizationContext,
-): GDScriptDefinitionLocation | null {
-  if (typeof entry !== "object" || entry === null) {
-    return null;
-  }
-  const record = entry as Record<string, unknown>;
-  // LocationLink: use targetUri + targetRange.
-  const uri =
-    typeof record["targetUri"] === "string"
-      ? record["targetUri"]
-      : typeof record["uri"] === "string"
-        ? record["uri"]
-        : null;
-  const rangeValue = record["targetRange"] !== undefined ? record["targetRange"] : record["range"];
-  if (uri === null) {
-    return null;
-  }
-  const range = to1BasedRange(rangeValue);
-  if (range === null) {
-    return null;
-  }
-  const relative = mirrorUriToWorkspaceRelative(uri, context.mirrorRootPath);
-  if (relative !== null) {
-    // Only mirror-file definitions map back to workspace-relative paths.
-    return { path: relative, range, external: false };
-  }
-  // Out-of-project and engine-internal URIs are represented conservatively
-  // without absolute paths.
-  const basename =
-    uri
-      .split("/")
-      .filter((part) => part.length > 0)
-      .pop() ?? "external";
-  return { path: sanitizeControlCharacters(basename), range, external: true };
+  // The generic definition normalization (Stage 3R R5) lives in the core
+  // language module; the mirror URI mapping stays at this adapter
+  // boundary. The per-query bound defaults to the reference limit.
+  const normalized = normalizeDefinitionLocations(
+    locations,
+    path,
+    (target: string) => mirrorUriToWorkspaceRelative(target, context.mirrorRootPath),
+    { maxLocations: limits.maxLocations },
+  );
+  return {
+    path: normalized.path,
+    locations: normalized.locations,
+    truncated: normalized.truncated,
+  };
 }

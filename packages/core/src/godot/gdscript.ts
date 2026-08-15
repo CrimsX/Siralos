@@ -1,4 +1,5 @@
 import { canonicalizeJson, sha256Hex } from "./digest.js";
+import { normalizeDiagnosticSet } from "../language/diagnostic.js";
 import { GODOT_LIMITS } from "./limits.js";
 
 /**
@@ -197,53 +198,15 @@ export type GodotProjectCheckResult =
  * Deterministic diagnostic aggregation policy: exact duplicates are
  * collapsed, results are sorted by (path, line, column, message), and the
  * run-wide bound is applied with explicit truncation. Duplicates from the
- * same engine output are never double-counted.
+ * same engine output are never double-counted. The generic semantics live
+ * in the language module (Stage 3R R5); this wrapper keeps the Godot
+ * vocabulary type.
  */
 export function aggregateGDScriptDiagnostics(
   diagnostics: readonly GodotGDScriptDiagnostic[],
   maxDiagnostics: number = GODOT_LIMITS.maxDiagnosticsPerRun,
 ): { readonly diagnostics: readonly GodotGDScriptDiagnostic[]; readonly truncated: boolean } {
-  const seen = new Set<string>();
-  const unique: GodotGDScriptDiagnostic[] = [];
-  for (const diagnostic of diagnostics) {
-    const key = [
-      diagnostic.path ?? "",
-      diagnostic.line ?? -1,
-      diagnostic.column ?? -1,
-      diagnostic.code ?? "",
-      diagnostic.message,
-    ].join("\u0000");
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    unique.push(diagnostic);
-  }
-  unique.sort((left, right) => {
-    const leftPath = left.path ?? "";
-    const rightPath = right.path ?? "";
-    if (leftPath !== rightPath) {
-      return leftPath < rightPath ? -1 : 1;
-    }
-    const leftLine = left.line ?? -1;
-    const rightLine = right.line ?? -1;
-    if (leftLine !== rightLine) {
-      return leftLine - rightLine;
-    }
-    const leftColumn = left.column ?? -1;
-    const rightColumn = right.column ?? -1;
-    if (leftColumn !== rightColumn) {
-      return leftColumn - rightColumn;
-    }
-    const leftMessage = left.message;
-    const rightMessage = right.message;
-    if (leftMessage !== rightMessage) {
-      return leftMessage < rightMessage ? -1 : 1;
-    }
-    return 0;
-  });
-  const truncated = unique.length > maxDiagnostics;
-  return { diagnostics: unique.slice(0, maxDiagnostics), truncated };
+  return normalizeDiagnosticSet(diagnostics, maxDiagnostics);
 }
 
 /**

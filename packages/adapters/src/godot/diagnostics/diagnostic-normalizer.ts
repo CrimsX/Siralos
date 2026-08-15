@@ -309,19 +309,11 @@ function boundMessage(message: string, mirrorProjectPath: string | null): string
   return truncateUtf8Bytes(sanitized, MAX_MESSAGE_BYTES);
 }
 
-export function sanitizeControlCharacters(text: string): string {
-  // Regex literals and escape strings cannot carry control-character
-  // sequences under the lint guard, so the patterns are assembled from
-  // explicit code points (C0, DEL, and C1 0x80-0x9F).
-  const csi = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, "g");
-  const controls = new RegExp(
-    `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}-${String.fromCharCode(159)}]`,
-    "g",
-  );
-  let result = text.replace(csi, "");
-  result = result.replace(controls, "\uFFFD");
-  return result;
-}
+// Generic control-character sanitization (Stage 3R R5) lives in the
+// core language module; this adapter re-exports it for Godot consumers.
+import { sanitizeControlCharacters } from "@siralos/core";
+
+export { sanitizeControlCharacters };
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
