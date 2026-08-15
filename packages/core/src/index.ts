@@ -1701,3 +1701,51 @@ export {
 } from "./language/structure.js";
 export { sanitizeControlCharacters } from "./language/sanitize.js";
 export { truncateUtf8Bytes, utf8ByteLength } from "./language/truncate.js";
+export {
+  decideGrant,
+  parseCapabilityId,
+  parseCapabilityRequest,
+  parseHostAuthority,
+  type CapabilityGrant,
+  type CapabilityId,
+  type CapabilityRequest,
+  type GrantDecision,
+  type HostAuthority,
+} from "./domain/capability.js";
+export {
+  abiIsCompatible,
+  parseDomainAbi,
+  parseDomainPackage,
+  parseDomainPackageId,
+  parsePackageDigest,
+  verifyPackageDigest,
+  type DomainAbi,
+  type DomainPackage,
+  type DomainPackageId,
+  type PackageDigest,
+} from "./domain/package.js";
+export {
+  bindingFromRequest,
+  bindingMatches,
+  classifyWorkspaceFile,
+  createDomainLifecycle,
+  parseActivationRequest,
+  parseRuntimeCheckResult,
+  workspaceDomainScan,
+  WORKSPACE_FILE_OPAQUE,
+  type ActivationBinding,
+  type ActivationRequest,
+  type ActiveDomain,
+  type DomainLifecycle,
+  type Eligibility,
+  type EligibilityReason,
+  type LifecycleState,
+  type RuntimeCheckResult,
+  type WorkspaceDomainScan,
+} from "./domain/lifecycle.js";
+export {
+  failureCode,
+  type DomainFailure,
+  type ParseResult,
+  type ResourceKind,
+} from "./domain/failure.js";
