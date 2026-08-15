@@ -52,8 +52,8 @@ function expectedIds(prefix, count, width) {
 
 const REGISTER_EXPECTATIONS = [
   { key: "core", pattern: /^\|\s*(CORE-\d{3})\s*\|/gm, ids: expectedIds("CORE", 20, 3) },
-  { key: "harness", pattern: /^\|\s*(HAR-\d{3})\s*\|/gm, ids: expectedIds("HAR", 55, 3) },
-  { key: "anti-pattern", pattern: /^\|\s*(AP-\d{3})\s*\|/gm, ids: expectedIds("AP", 16, 3) },
+  { key: "harness", pattern: /^\|\s*(HAR-\d{3})\s*\|/gm, ids: expectedIds("HAR", 56, 3) },
+  { key: "anti-pattern", pattern: /^\|\s*(AP-\d{3})\s*\|/gm, ids: expectedIds("AP", 17, 3) },
   { key: "RFC", pattern: /^\|\s*(RFC-\d{4})\s*\|/gm, ids: expectedIds("RFC", 20, 4) },
   { key: "golden trace", pattern: /^\|\s*(GT-\d{3})\s*\|/gm, ids: expectedIds("GT", 18, 3) },
 ];

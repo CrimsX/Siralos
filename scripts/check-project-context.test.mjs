@@ -50,7 +50,7 @@ function validInput() {
       ...sections.map((section, index) => `## ${index + 1}. ${section}`),
     ].join("\n"),
     agents: "Read docs/development/PROJECT_CONTEXT.md first.",
-    requirements: [rows("CORE", 20, 3), rows("HAR", 55, 3), rows("AP", 16, 3)].join("\n"),
+    requirements: [rows("CORE", 20, 3), rows("HAR", 56, 3), rows("AP", 17, 3)].join("\n"),
     rfc: rows("RFC", 20, 4),
     golden: rows("GT", 18, 3),
     commitExists: () => true,
