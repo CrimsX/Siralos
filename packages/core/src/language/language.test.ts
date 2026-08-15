@@ -98,8 +98,8 @@ describe("normalizeDiagnosticPayload", () => {
       rawCategory: "gdscript",
     });
     // Missing locations are never fabricated.
-    expect(payload?.diagnostics[1].line).toBeNull();
-    expect(payload?.diagnostics[1].column).toBeNull();
+    expect(payload?.diagnostics[1]?.line ?? null).toBeNull();
+    expect(payload?.diagnostics[1]?.column ?? null).toBeNull();
     expect(payload?.truncated).toBe(false);
   });
 
