@@ -35,6 +35,19 @@ impl Guest for ConformanceDomain {
         {
             return Err("invalid package identity".to_string());
         }
+        // Deterministic bind failure markers (conformance only): the
+        // host must treat bind as fallible untrusted execution.
+        if identity.package_id == "reject-bind" {
+            return Err("identity rejected".to_string());
+        }
+        if identity.package_id == "trap-bind" {
+            panic!("synthetic bind trap");
+        }
+        if identity.package_id == "loop-bind" {
+            loop {
+                std::hint::spin_loop();
+            }
+        }
         *STATE.lock().expect("guest state lock") = Some(identity);
         Ok(())
     }
@@ -47,6 +60,71 @@ impl Guest for ConformanceDomain {
         if text == "loop" {
             loop {
                 std::hint::spin_loop();
+            }
+        }
+        if text == "bigmem" {
+            // Deterministic memory-exhaustion marker (conformance
+            // only): allocating beyond the host's store memory limit
+            // must trap with the typed memory resource failure.
+            let big = vec![0u8; 100 * 1024 * 1024];
+            let package_id = STATE
+                .lock()
+                .expect("guest state lock")
+                .as_ref()
+                .map(|identity| identity.package_id.clone())
+                .unwrap_or_else(|| "<unbound>".to_string());
+            return Ok(SemanticResult {
+                package_id,
+                query: "bigmem".to_string(),
+                node_count: big.len() as u32,
+                source_bytes: 6,
+            });
+        }
+        if let Some(count) = text.strip_prefix("pad:") {
+            if let Ok(size) = count.parse::<usize>() {
+                let package_id = STATE
+                    .lock()
+                    .expect("guest state lock")
+                    .as_ref()
+                    .map(|identity| identity.package_id.clone())
+                    .unwrap_or_else(|| "<unbound>".to_string());
+                let padded = "x".repeat(size);
+                let source_bytes = padded.len() as u32;
+                return Ok(SemanticResult {
+                    package_id,
+                    query: padded,
+                    node_count: size as u32,
+                    source_bytes,
+                });
+            }
+        }
+        if let Some(count) = text.strip_prefix("reject:") {
+            if let Ok(size) = count.parse::<usize>() {
+                return Err("y".repeat(size));
+            }
+        }
+        if let Some(count) = text.strip_prefix("calls:") {
+            if let Ok(times) = count.parse::<u32>() {
+                // Exhaust the Host-call budget through the real
+                // boundary: the Host observes the typed resource
+                // failure independently of the guest-visible answers.
+                for _ in 0..times {
+                    let _ = perform(&imports::EffectRequest::ProcessExec(
+                        "budget".to_string(),
+                    ));
+                }
+                let package_id = STATE
+                    .lock()
+                    .expect("guest state lock")
+                    .as_ref()
+                    .map(|identity| identity.package_id.clone())
+                    .unwrap_or_else(|| "<unbound>".to_string());
+                return Ok(SemanticResult {
+                    package_id,
+                    query: "calls-done".to_string(),
+                    node_count: times,
+                    source_bytes: 10,
+                });
             }
         }
         if text == "denied" {
@@ -87,6 +165,14 @@ impl Guest for ConformanceDomain {
     }
 
     fn request_effect(request: EffectRequest) -> HostAnswer {
+        // Deterministic oversized-payload marker (conformance only):
+        // the guest forges an over-bound answer that the host must
+        // reject with a typed output failure.
+        if let EffectRequest::ProcessExec(command) = &request {
+            if command == "big" {
+                return HostAnswer::Error("z".repeat(4096));
+            }
+        }
         // The domain forwards the request; the Host performs it. The
         // domain receives only the typed answer. The export-side and
         // import-side WIT types are distinct Rust types, so the

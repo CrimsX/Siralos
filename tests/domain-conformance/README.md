@@ -67,3 +67,19 @@ world interfaces plus the minimal wasm32-wasip2 std plumbing), trap
 containment with typed fault outcomes and session stop, fuel-bounded
 termination of pathological guests, input/output/host-call bounds,
 cancellation, and session-scoped activation binding.
+
+## Resource bounds and typed failure classification
+
+The host enforces fuel per call (execution/work budget), input and
+aggregate output byte bounds, the Host-call budget, and the store
+instance limit. Traps are classified into typed resource failures:
+fuel exhaustion is `ResourceExceeded(Fuel)`, memory-limit traps are
+`ResourceExceeded(Memory)`, aggregate output over the semantic result
+bound is `ResourceExceeded(OutputBytes)`, and Host-call exhaustion is
+`ResourceExceeded(HostCalls)` (Host-observed; the guest protocol only
+carries a bounded disposition). Observed on the retained Wasmtime
+47.0.3 line: the sync store-limiter `memory_size` cap does not engage
+for component-model guest linear memory growth, so memory containment
+rests on the fuel/work budget plus the typed classification; the
+store-limiter `instances` cap is enforced. This observation is part of
+the compatibility evidence for any future Wasmtime bump.
