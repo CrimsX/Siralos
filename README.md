@@ -17,8 +17,10 @@ configuration, Skills, and explicitly installed Plugins
 
 > **Status: active development / Rust migration.** The broad TypeScript
 > implementation is the current behavioral reference. Rust is the successor
-> implementation, migrated under differential verification. Stage 3R R2 is
-> complete; **R3 — Domain-Neutral Core** is next and has not begun.
+> implementation, migrated under differential verification. Stage 3R R3 —
+> Domain-Neutral Core — is complete (host-owned task kernel at differential
+> parity); **R4 — Generic Workspace / Project Foundation** is next and has
+> not begun.
 
 ## Status vocabulary
 
@@ -90,8 +92,10 @@ product, composition, and extension model is frozen in
 
 ### In migration (CURRENT)
 
-- The Rust successor currently covers the Stage 3R foundation and R2 harness;
-  the first domain-neutral core port is R3
+- The Rust successor covers the Stage 3R foundation, the R2 harness, and
+  the R3 domain-neutral host-owned task kernel (contracts, task state,
+  evidence, acceptance, completion, activity, progress) at differential
+  parity with the TypeScript reference
 - Workspace mutation, undo, Git inspection, development commands, and dynamic
   Godot execution remain intentionally unavailable where the current host
   cannot mechanically enforce the required identity guarantees
@@ -229,8 +233,8 @@ separate, explicit concerns.
 
 - Public product stages 1–3 have a broad TypeScript reference surface; effectful
   capabilities retain truthful availability reporting
-- Stage 3R R1 and R2 are complete
-- **Next:** Stage 3R R3 — Domain-Neutral Core
+- Stage 3R R1, R2, and R3 are complete
+- **Next:** Stage 3R R4 — Generic Workspace / Project Foundation
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

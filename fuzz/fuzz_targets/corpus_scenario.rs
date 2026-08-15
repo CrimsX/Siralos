@@ -28,7 +28,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     match scenario.subject.as_str() {
-        "state-dir" | "version-identity" => {}
+        "state-dir" | "version-identity" | "task-contract" => {}
         _ => return,
     }
 });

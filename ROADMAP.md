@@ -65,8 +65,13 @@ unsafe filesystem or process boundary intentionally fails closed.
   digest-bound per-commit migration audit, and gates remediation —
   its first subjects (state-dir resolution, product version identity)
   hold parity, and the audit drove real drift remediation in
-  `siralos-adapters::paths`. R3 (the first differential-verified
-  subsystem port) is next.
+  `siralos-adapters::paths`. R3 (Domain-Neutral Core) is complete: the
+  host-owned task kernel in `siralos-core` (revisioned contracts with
+  the reference digest contract, authoritative task state, lifecycle
+  transitions, bounded evidence, acceptance, completion gating, terminal
+  immutability, activity, and progress) holds byte parity with the
+  TypeScript reference across 17 differential `task-contract`
+  scenarios. R4 (Generic Workspace / Project Foundation) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -218,19 +223,27 @@ Domain-Neutral Foundation, ADR 0032):
   user must explicitly request it. No marketplace or plugin ecosystem is
   implemented.
 
-Next: Stage 3R — R3: the first subsystem port under the differential
-gate (behavior extraction → idiomatic Rust redesign → parity → review →
-measurement), with the harness scenarios extended to the ported
-surface. The complete internal sequence is recorded in
-`docs/development/RUST_MIGRATION.md`. R2 (Differential Behavioral
-Harness, ADR 0033) is complete:
-the audit remediation gate runs deterministic scenarios against the
-TypeScript reference and the Rust candidate, semantically compares typed
-canonical outcome records, emits a digest-bound per-commit migration audit,
-and blocks
-acceptance until drift is remediated — parity held on the state-dir and
-version-identity subjects, with real drift remediated in
-`siralos-adapters::paths`.
+Implemented (R3 — Domain-Neutral Core, ADR 0036):
+
+- The host-owned task kernel in `siralos-core`: revisioned immutable
+  TaskContract with the exact reference content-digest contract
+  (revision = lifecycle identity, digest = material identity),
+  materialized authoritative TaskState with an explicit phase transition
+  table, terminal immutability, bounded evidence bound to the exact
+  contract revision/digest, host-owned acceptance (deterministic/review/
+  user verification kinds with successful-outcome cross-checks), the
+  completion gate, append-only activity records, and host-observed
+  progress.
+- The R2 differential harness gained 17 `task-contract` scenarios
+  executed by both implementations (the TypeScript oracle runs the real
+  reference via Node's native type stripping); all required applicable
+  scenarios match byte-for-byte and the complete local repository gate
+  passes (corpus schema 3, corpus version 5).
+
+Next: Stage 3R — R4: Generic Workspace / Project Foundation (reads,
+revisions, search, prepared effects, checkpoints, and optional Git
+integration). The complete internal sequence is recorded in
+`docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution
 

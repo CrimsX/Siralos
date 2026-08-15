@@ -26,8 +26,8 @@ repository concepts never satisfy those identifiers by implication.
 | --------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------- |
 | R1        | Siralos rename, Rust workspace, and engineering standards                                                                       | Verified       |
 | R2        | Differential Behavioral Harness                                                                                                 | Verified       |
-| R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Not due        |
-| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Not due        |
+| R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Verified       |
+| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Next           |
 | R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Not due        |
 | R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Not due        |
 | R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Not due        |
@@ -44,8 +44,17 @@ differences. The audit records source, corpus, and exact protocol-document
 provenance plus explicit scenario and per-subject coverage, and the complete
 local repository gate passes. The Tier-1 CI matrix reruns parity on Linux,
 Windows, and macOS and retains the exact reference, candidate, audit, and
-failure records; a failed matrix run blocks integration. R2 verification does
-not authorize R3 work or satisfy any later migration or Stage-4 entry gate.
+failure records; a failed matrix run blocks integration.
+
+R3 is verified: the domain-neutral host-owned task kernel lives in `siralos-core` (revisioned contracts with the reference content-digest
+contract, materialized authoritative state, the explicit phase transition
+table, bounded evidence with exact contract-revision/digest binding,
+host-owned acceptance, the completion gate, terminal immutability,
+append-only activity, and host-observed progress). The corpus gained 17
+`task-contract` scenarios executed by both implementations under the R2
+protocol; all required applicable scenarios match byte-for-byte and the
+complete local repository gate passes. R3 verification does not authorize
+R4 work or satisfy any later migration or Stage-4 entry gate.
 
 ## Porting gate
 

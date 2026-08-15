@@ -49,6 +49,20 @@ reuses a single built binary (`cargo run --quiet`) and never rebuilds
 per fixture. No optimizations were applied without measurement; none
 were needed for the current surface.
 
+## Stage 3R R3 task-kernel baseline
+
+| Workload                              | Input size          | Median   | Toolchain                             | Commit                   |
+| ------------------------------------- | ------------------- | -------- | ------------------------------------- | ------------------------ |
+| `task/contract-validation-and-digest` | contract + SHA-256  | ~3.90 µs | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+| `task/create`                         | 1 step, 1 criterion | ~1.55 µs | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+| `task/phase-transition`               | prepared -> working | ~5.08 µs | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+| `task/evidence-attach-acceptance`     | 1 evidence record   | ~6.17 µs | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+| `task/findings-validation`            | 1 finding           | ~190 ns  | stable 1.97.1 (release/bench profile) | see `git rev-parse HEAD` |
+
+Command: `cargo bench -p siralos-core --locked --bench task_baseline`.
+No optimization was justified by these baselines; they exist for later
+before/after comparison when the task kernel gains consumers.
+
 ## Future workloads
 
 Stage 1–3 operations that will gain benchmarks when their subsystems
