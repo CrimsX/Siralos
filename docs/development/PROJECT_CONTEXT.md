@@ -8,7 +8,7 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R3
 Next milestone: R4 - Generic Workspace / Project Foundation
-Last verified commit: 75dbf46c9e07d3b542460572d242cf37c8fcac3e
+Last verified commit: 35dead4e14c83621196f4d3bb0493deff410afa9
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
