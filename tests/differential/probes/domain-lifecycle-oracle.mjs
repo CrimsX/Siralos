@@ -38,7 +38,7 @@ function readStdinBounded() {
 
 function failureRecord(failure) {
   const record = { code: failure.code };
-  if (failure.code === "CAPABILITY_DENIED") {
+  if (failure.code === "CAPABILITY_DENIED" || failure.code === "UNDECLARED_CAPABILITY") {
     record.missing = [...failure.missing];
   }
   return record;

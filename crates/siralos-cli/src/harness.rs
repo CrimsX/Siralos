@@ -37,7 +37,7 @@ const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
 const SUBJECT_DOMAIN_LIFECYCLE: &str = "domain-lifecycle";
 const SUBJECT_DOMAIN_CAPABILITY: &str = "domain-capability";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 10;
+const CORPUS_VERSION: u64 = 11;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
@@ -3615,7 +3615,9 @@ fn domain_failure_record(op: &str, failure: &DomainFailure) -> Value {
     record.insert("op".to_owned(), json!(op));
     record.insert("ok".to_owned(), json!(false));
     record.insert("code".to_owned(), json!(failure.code()));
-    if let DomainFailure::CapabilityDenied { missing } = failure {
+    if let DomainFailure::CapabilityDenied { missing }
+    | DomainFailure::UndeclaredCapability { missing } = failure
+    {
         record.insert(
             "missing".to_owned(),
             json!(missing.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
@@ -4117,7 +4119,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 79);
+        assert_eq!(loaded.len(), 86);
     }
 
     #[test]

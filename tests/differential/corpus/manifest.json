@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 10,
+  "corpusVersion": 11,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -41,6 +41,34 @@
     {
       "file": "domain-lifecycle.absent.json",
       "sha256": "c9b1812a5e6668b9227119e484a02b02715b324014cd008313f0ab0420fa9562"
+    },
+    {
+      "file": "domain-lifecycle.active-active.json",
+      "sha256": "a8b91f41726a60abc1337e987467cf896ce1b9141bbd71de4f4f11c102c93c83"
+    },
+    {
+      "file": "domain-lifecycle.active-eligibility.json",
+      "sha256": "1e386a5926d5b1d2901c7973e5ae5f3e03929e3436845d4a756ae80409434aec"
+    },
+    {
+      "file": "domain-lifecycle.capability-authority-narrow.json",
+      "sha256": "21213a8957c183f5baf7d347120fd3b2bb9b64b0b178ac84c0f8bde681122766"
+    },
+    {
+      "file": "domain-lifecycle.capability-equal.json",
+      "sha256": "b2911fcf5bcd901d5086c770096d05a9deabfd7a9ae7a80adc6c53f32b6aa730"
+    },
+    {
+      "file": "domain-lifecycle.capability-ordering.json",
+      "sha256": "b25cfc346cee94da1c136ac14c363d957d1c12989c73c1168a567263dd045332"
+    },
+    {
+      "file": "domain-lifecycle.capability-subset.json",
+      "sha256": "b8d85ce0e43c8b94d1388c3255d8b762bd7dad3fd5f6b74d1ebf17c3156ac752"
+    },
+    {
+      "file": "domain-lifecycle.capability-undeclared.json",
+      "sha256": "c85096f4c786a838306a3e16de6c10b55aa37f73558133dce24bf81b8713eb22"
     },
     {
       "file": "domain-lifecycle.disabled.json",
@@ -319,5 +347,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "c1742af10b5cf192f57ce417c151855e65ff76643fb771d3da67e0d9c41cde9e"
+  "corpusSha256": "e171405642897c3ff1035ca5813a2888c608a73bbc9a0929d240ffbc4457b860"
 }

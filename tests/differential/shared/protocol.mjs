@@ -934,12 +934,14 @@ function validateDomainLifecycleResult(record, label) {
         validateDomainStringArray(op.grant, 32, `${label}.activate.grant`);
       } else {
         const keys =
-          op.code === "CAPABILITY_DENIED" ? ["op", "ok", "code", "missing"] : ["op", "ok", "code"];
+          op.code === "CAPABILITY_DENIED" || op.code === "UNDECLARED_CAPABILITY"
+            ? ["op", "ok", "code", "missing"]
+            : ["op", "ok", "code"];
         assertExactKeys(op, keys, `${label}.activate`);
         if (op.ok !== false || typeof op.code !== "string" || !DOMAIN_FAILURE_CODE.test(op.code)) {
           throw new Error(`${label}.activate failure is invalid`);
         }
-        if (op.code === "CAPABILITY_DENIED") {
+        if (op.code === "CAPABILITY_DENIED" || op.code === "UNDECLARED_CAPABILITY") {
           validateDomainStringArray(op.missing, 32, `${label}.activate.missing`);
         }
       }
