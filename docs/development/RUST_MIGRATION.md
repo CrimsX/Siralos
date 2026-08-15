@@ -185,10 +185,16 @@ guest disposition. Every prepared activation is additionally bound to
 the lifecycle generation validated at preparation: every successful
 material transition (install, uninstall, enable, disable, activation
 commit, deactivate) advances the generation, and commit revalidates
-the generation, the Enabled state, and the exact package binding
-before any mutation, so a stale preparation fails typed
-(`STALE_ACTIVATION`) without state change, session-id consumption, or
-a published HostSession.
+the generation, the Enabled state, and the complete exact package
+binding (stable id, exact digest, and ABI) before any mutation, so a
+stale preparation fails typed (`STALE_ACTIVATION`) without state
+change, session-id consumption, or a published HostSession. Activation
+identity is exact in all three dimensions: the request ABI must
+identify the installed package ABI (a Host-compatible request can
+never substitute for a differently declared package ABI — typed
+identity mismatch) and must also satisfy Host compatibility (typed
+unsupported-ABI failure), so every successful activation satisfies
+`ActivationBinding::matches(installed_package)` by construction.
 R6 verification does not authorize R7 work or satisfy any later
 migration or Stage-4 entry gate.
 

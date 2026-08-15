@@ -127,7 +127,13 @@ unsafe filesystem or process boundary intentionally fails closed.
   lifecycle generation validated at preparation (a stale commit fails
   typed with `STALE_ACTIVATION`, mutating nothing and consuming no
   session id), so preparation can never outlive the lifecycle episode
-  it validated. R6 implements
+  it validated. Activation identity is exact in all three dimensions:
+  the request ABI must identify the installed package ABI (a
+  Host-compatible request can never substitute for a differently
+  declared package ABI) and must also satisfy Host compatibility, so
+  every successful activation satisfies
+  `ActivationBinding::matches(installed_package)` by construction. R6
+  implements
   no Plugin system and no Godot Domain. R7 (Provider, Tool-Loop,
   Projection, Configuration, and CLI Parity) is next.
 - Stages 4–6 are not started.

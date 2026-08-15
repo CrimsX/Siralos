@@ -270,8 +270,10 @@ separate, explicit concerns.
   production Component Model / WIT boundary in
   `siralos-adapters::domain`, prepared activations bound to the
   validated lifecycle generation with typed stale-commit rejection,
-  and the deterministic product-neutral synthetic conformance Domain
-  proving the boundary — at differential parity)
+  exact three-dimensional activation identity (id, digest, and ABI
+  against the installed package), and the deterministic
+  product-neutral synthetic conformance Domain proving the boundary —
+  at differential parity)
 - **Next:** Stage 3R R7 — Provider, Tool-Loop, Projection, Configuration, and CLI Parity
 - Stage 4 has not begun
 

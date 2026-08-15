@@ -8,7 +8,7 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R6
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Last verified commit: 5548e97f26121367979c2b629362e9be90336877
+Last verified commit: 9e69042a96f208c8d1a576069f5e4485d1c7b2ba
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -171,7 +171,13 @@ at preparation: every successful material lifecycle transition
 (install, uninstall, enable, disable, activation commit, deactivate)
 advances the generation, and a stale commit fails typed with
 `STALE_ACTIVATION` before any mutation, session-id allocation, or
-HostSession publication. R6 implements no Plugin
+HostSession publication. Activation identity is exact in all three
+dimensions: the request ABI must identify the installed package ABI
+(a Host-compatible request can never substitute for a differently
+declared package ABI) and must also satisfy Host compatibility, so
+every successful activation satisfies
+`ActivationBinding::matches(installed_package)` by construction. R6
+implements no Plugin
 system, no marketplace, no provider/tool integration, and no Godot
 Domain.
 
