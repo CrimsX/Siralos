@@ -125,9 +125,9 @@ describe("executor brief compiler", () => {
       pack: packFor(task),
       milestone: S3M8_MILESTONE_MANIFEST,
     });
-    expect(brief.executionContract.revision).toBe(1);
+    expect(brief.executionContract.revision).toBe(2);
     const rendered = renderExecutorBrief(brief);
-    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 1");
+    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 2");
     expect(rendered).not.toMatch(/no push|rebase|rewrite history/i);
     expect(rendered).not.toMatch(/npm run|format:check|typecheck/i);
     expect(rendered).not.toMatch(/untrusted/i);
@@ -135,29 +135,30 @@ describe("executor brief compiler", () => {
 
   it("changes identity when the execution contract revision changes", () => {
     const task = contract();
-    const v2 = reviseExecutionContract(DEFAULT_EXECUTION_CONTRACT, {
+    const v3 = reviseExecutionContract(DEFAULT_EXECUTION_CONTRACT, {
       reportingRequirements: [
         ...DEFAULT_EXECUTION_CONTRACT.reportingRequirements,
         { id: "REPORT.EXTRA", requirement: "extra" },
       ],
     });
-    const briefV1 = compileExecutorBrief({
+    const briefV2 = compileExecutorBrief({
       contract: task,
       executionContract: DEFAULT_EXECUTION_CONTRACT,
       pack: packFor(task),
       milestone: S3M8_MILESTONE_MANIFEST,
     });
-    const briefV2 = compileExecutorBrief({
+    const briefV3 = compileExecutorBrief({
       contract: task,
-      executionContract: v2,
+      executionContract: v3,
       pack: packFor(task, S3M8_MILESTONE_MANIFEST, {
-        executionContract: { id: v2.id, revision: v2.revision },
+        executionContract: { id: v3.id, revision: v3.revision },
       }),
       milestone: S3M8_MILESTONE_MANIFEST,
     });
     expect(briefV2.executionContract.revision).toBe(2);
-    expect(computeExecutorBriefFingerprint(briefV1)).not.toBe(
-      computeExecutorBriefFingerprint(briefV2),
+    expect(briefV3.executionContract.revision).toBe(3);
+    expect(computeExecutorBriefFingerprint(briefV2)).not.toBe(
+      computeExecutorBriefFingerprint(briefV3),
     );
   });
 

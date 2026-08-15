@@ -299,15 +299,17 @@ export function computeExecutionContractDigest(contract: ExecutionContract): str
 }
 
 /**
- * Siralos default execution contract, revision 1.
+ * Siralos default execution contract, revision 1 (historical).
  *
- * Permanent executor rules for implementation tasks, each pointing at the
- * authoritative enforcement mechanism. Milestone-specific requirements
- * never belong here. This constant is the repository-owned representation
- * of the contract (ADR 0022): validated, immutable, and loaded through
- * `validateExecutionContract` at every runtime boundary.
+ * The original immutable default: permanent executor rules for
+ * implementation tasks, each pointing at the authoritative enforcement
+ * mechanism. Milestone-specific requirements never belong here. This
+ * revision is frozen (ADR 0022): a material change produces the next
+ * revision through `reviseExecutionContract`; revision 1 is never
+ * mutated in place. The current default is
+ * `DEFAULT_EXECUTION_CONTRACT` (revision 2).
  */
-export const DEFAULT_EXECUTION_CONTRACT: ExecutionContract = createExecutionContract({
+export const DEFAULT_EXECUTION_CONTRACT_V1: ExecutionContract = createExecutionContract({
   id: "siralos-execution-contract",
   validationProfile: { profileId: STANDARD_REPO_VALIDATION.profileId, revision: 1 },
   gitRules: [
@@ -362,14 +364,6 @@ export const DEFAULT_EXECUTION_CONTRACT: ExecutionContract = createExecutionCont
       requirement:
         "Never weaken the fail-closed posture with pathname rechecks or private filenames.",
       enforcedBy: "AGENTS.md fail-closed posture; architecture checks",
-    },
-    {
-      id: "CORE.SECURITY.RECOVERY_AUTHORITY",
-      kind: "security",
-      requirement:
-        "RECOVERY STANDARD: Prefer deterministic recovery for known recoverable failures. Any automatic recovery must be bounded, use only existing Host authority, preserve all validation/revision/security gates, and verify its result. Capability denial, unavailable enforcement, uncertain state, or an exhausted recovery budget stop recovery rather than weakening policy. Model-assisted recovery proposes ordinary actions through the same Host boundary; it receives no special authority.",
-      enforcedBy:
-        "Security contract bounded-recovery invariant (SECURITY.md); Host authority precedence",
     },
   ],
   architectureRules: [
@@ -431,3 +425,31 @@ export const DEFAULT_EXECUTION_CONTRACT: ExecutionContract = createExecutionCont
     },
   ],
 });
+
+/**
+ * Siralos default execution contract, revision 2 (current default).
+ *
+ * Derived from revision 1 through `reviseExecutionContract`; the only
+ * material difference is the added `CORE.SECURITY.RECOVERY_AUTHORITY`
+ * rule (the accepted bounded-recovery invariant freeze). New tasks and
+ * current-default resolution use this revision; an active task keeps
+ * the revision recorded in its TaskRuntimeSnapshot. Any future material
+ * change to the default must produce revision 3 through
+ * `reviseExecutionContract`, never an in-place edit of this object.
+ */
+export const DEFAULT_EXECUTION_CONTRACT: ExecutionContract = reviseExecutionContract(
+  DEFAULT_EXECUTION_CONTRACT_V1,
+  {
+    securityRules: [
+      ...DEFAULT_EXECUTION_CONTRACT_V1.securityRules,
+      {
+        id: "CORE.SECURITY.RECOVERY_AUTHORITY",
+        kind: "security",
+        requirement:
+          "RECOVERY STANDARD: Prefer deterministic recovery for known recoverable failures. Any automatic recovery must be bounded, use only existing Host authority, preserve all validation/revision/security gates, and verify its result. Capability denial, unavailable enforcement, uncertain state, or an exhausted recovery budget stop recovery rather than weakening policy. Model-assisted recovery proposes ordinary actions through the same Host boundary; it receives no special authority.",
+        enforcedBy:
+          "Security contract bounded-recovery invariant (SECURITY.md); Host authority precedence",
+      },
+    ],
+  },
+);

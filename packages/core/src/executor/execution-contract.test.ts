@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_EXECUTION_CONTRACT,
+  DEFAULT_EXECUTION_CONTRACT_V1,
   EXECUTION_CONTRACT_LIMITS,
   computeExecutionContractDigest,
   createExecutionContract,
+  executionContractRef,
   reviseExecutionContract,
   validateExecutionContract,
+  type ExecutionRule,
 } from "./execution-contract.js";
 import { STANDARD_REPO_VALIDATION } from "./validation-profile.js";
 
@@ -111,16 +114,42 @@ describe("execution contract", () => {
     );
   });
 
-  it("default contract: permanent rules exist once and reference enforcement", () => {
-    const contract = DEFAULT_EXECUTION_CONTRACT;
-    expect(contract.revision).toBe(1);
-    expect(contract.id).toBe("siralos-execution-contract");
-    const ids = [
-      ...contract.gitRules,
-      ...contract.securityRules,
-      ...contract.architectureRules,
-      ...contract.testRules,
-    ].map((rule) => rule.id);
+  it("default contract: the recovery-aware current default is revision 2, derived from revision 1", () => {
+    const v1 = DEFAULT_EXECUTION_CONTRACT_V1;
+    const v2 = DEFAULT_EXECUTION_CONTRACT;
+    const ruleIds = (rules: readonly ExecutionRule[]): string[] => rules.map((rule) => rule.id);
+    // 1. Revision 1 remains revision 1; 2. revision 2 advances to 2.
+    expect(v1.revision).toBe(1);
+    expect(v2.revision).toBe(2);
+    // 3. Both use the same stable contract ID.
+    expect(v1.id).toBe("siralos-execution-contract");
+    expect(v2.id).toBe(v1.id);
+    // 4. Revision 1 does not contain the recovery rule; 5. revision 2 does.
+    expect(ruleIds(v1.securityRules)).not.toContain("CORE.SECURITY.RECOVERY_AUTHORITY");
+    expect(ruleIds(v2.securityRules)).toContain("CORE.SECURITY.RECOVERY_AUTHORITY");
+    // 6. Revising revision 1 never mutates revision 1 in place.
+    const v1DigestBefore = computeExecutionContractDigest(v1);
+    const probe = reviseExecutionContract(v1, {});
+    expect(computeExecutionContractDigest(v1)).toBe(v1DigestBefore);
+    expect(probe.revision).toBe(2);
+    // 7. Revision 1 and revision 2 digests differ.
+    expect(computeExecutionContractDigest(v2)).not.toBe(v1DigestBefore);
+    // 8. Contract references distinguish the two revisions.
+    expect(executionContractRef(v1)).toEqual({ id: "siralos-execution-contract", revision: 1 });
+    expect(executionContractRef(v2)).toEqual({ id: "siralos-execution-contract", revision: 2 });
+    // 9. Validation accepts both revisions.
+    expect(validateExecutionContract(v1).revision).toBe(1);
+    expect(validateExecutionContract(v2).revision).toBe(2);
+    // The only material difference is the recovery rule.
+    expect(v2.securityRules.length).toBe(v1.securityRules.length + 1);
+    expect(v2.gitRules).toEqual(v1.gitRules);
+    expect(v2.architectureRules).toEqual(v1.architectureRules);
+    expect(v2.testRules).toEqual(v1.testRules);
+    expect(v2.reportingRequirements).toEqual(v1.reportingRequirements);
+    // Permanent rules exist once and reference enforcement.
+    const ids = [...v2.gitRules, ...v2.securityRules, ...v2.architectureRules, ...v2.testRules].map(
+      (rule) => rule.id,
+    );
     expect(ids).toContain("CORE.GIT.NO_PUSH");
     expect(ids).toContain("CORE.GIT.LOGICAL_COMMITS");
     expect(ids).toContain("CORE.GIT.INSPECT_STAGING");
@@ -134,16 +163,27 @@ describe("execution contract", () => {
     expect(ids).toContain("CORE.TEST.FINAL_BOUNDARY");
     expect(ids).toContain("CORE.TEST.STANDARD_VALIDATION");
     for (const rule of [
-      ...contract.gitRules,
-      ...contract.securityRules,
-      ...contract.architectureRules,
-      ...contract.testRules,
+      ...v2.gitRules,
+      ...v2.securityRules,
+      ...v2.architectureRules,
+      ...v2.testRules,
     ]) {
       expect(rule.enforcedBy.length).toBeGreaterThan(0);
       expect(rule.enforcedBy).not.toBe(rule.requirement);
     }
-    expect(contract.validationProfile.profileId).toBe(STANDARD_REPO_VALIDATION.profileId);
-    expect(validateExecutionContract(contract).revision).toBe(1);
+    expect(v2.validationProfile.profileId).toBe(STANDARD_REPO_VALIDATION.profileId);
+    // 10. The current default resolves to revision 2.
+    expect(validateExecutionContract(v2).revision).toBe(2);
+  });
+
+  it("default contract: historical revision 1 is digest-pinned (in-place mutation ratchet)", () => {
+    // Revision 1 is frozen history: any edit to its definition changes
+    // this digest and fails the gate, forcing a new revision instead.
+    expect(computeExecutionContractDigest(DEFAULT_EXECUTION_CONTRACT_V1)).toBe(
+      "6cb2335ca5d34c8045623a888eaa40424e5c4136518973055359d2575c263861",
+    );
+    // The current default is always exactly one revision ahead of V1.
+    expect(DEFAULT_EXECUTION_CONTRACT.revision).toBe(DEFAULT_EXECUTION_CONTRACT_V1.revision + 1);
   });
 
   it("default contract validates at the runtime boundary", () => {

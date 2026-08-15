@@ -841,7 +841,7 @@ describe("runInteractiveSession", { timeout: 30_000 }, () => {
       "/exit",
     ]);
     await runInteractiveSession(io, application, sessionInfo);
-    expect(io.text).toContain("Executor brief (siralos-execution-contract rev 1)");
+    expect(io.text).toContain("Executor brief (siralos-execution-contract rev 2)");
     expect(io.text).toContain("TASK\nInspect the main scene file read-only");
     expect(io.text).toContain("Milestone: S3M11 rev 1");
     expect(io.text).toContain("Fingerprint:");

@@ -73,7 +73,7 @@ describe("executor briefing service", () => {
     const brief = briefing.latestOrCompile();
     expect(brief).not.toBeNull();
     expect(brief?.taskId).toBe(contract.id);
-    expect(brief?.executionContract.revision).toBe(1);
+    expect(brief?.executionContract.revision).toBe(2);
     expect(brief?.milestone?.id).toBe("S3M8");
     expect(briefing.fingerprint()).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -151,14 +151,14 @@ describe("executor briefing service", () => {
     const runtimeSnapshot = handle?.runtimeSnapshot() as TaskRuntimeSnapshot;
     expect(runtimeSnapshot.executionContract).toBeNull(); // sources did not carry identity
 
-    const v2 = reviseExecutionContract(DEFAULT_EXECUTION_CONTRACT, {
+    const v3 = reviseExecutionContract(DEFAULT_EXECUTION_CONTRACT, {
       reportingRequirements: [
         ...DEFAULT_EXECUTION_CONTRACT.reportingRequirements,
         { id: "REPORT.EXTRA", requirement: "extra" },
       ],
     });
     const briefing = createExecutorBriefing({
-      executionContract: v2,
+      executionContract: v3,
       milestone: S3M8_MILESTONE_MANIFEST,
       getTaskContract: () => runtime.latestTask()?.contract() ?? null,
       getTaskSnapshot: () => runtime.latestTask()?.snapshot() ?? null,
@@ -166,8 +166,8 @@ describe("executor briefing service", () => {
     });
     const brief = briefing.latestOrCompile();
     // The active task's snapshot stays contract-free while a NEW task
-    // compiled under rev 2 would carry the newer identity:
-    expect(brief?.executionContract.revision).toBe(2);
+    // compiled under rev 3 would carry the newer identity:
+    expect(brief?.executionContract.revision).toBe(3);
     expect(runtimeSnapshot.executionContract).toBeNull();
   });
 

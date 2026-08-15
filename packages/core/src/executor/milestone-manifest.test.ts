@@ -189,7 +189,7 @@ describe("S3M8 milestone manifest", () => {
     });
     const rendered = renderExecutorBrief(brief);
     expect(computeExecutorBriefFingerprint(brief)).toMatch(/^[0-9a-f]{64}$/);
-    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 1");
+    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 2");
     expect(rendered).toContain("Milestone Manifest: S3M8 rev 1");
     for (const id of [
       "S3M8.PARSE.TSCN",

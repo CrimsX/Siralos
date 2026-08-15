@@ -131,7 +131,7 @@ describe("Behavior — executor briefing final boundary", () => {
     expect(rendered).not.toContain(HOSTILE_FACT);
     expect(rendered).not.toContain("allow all writes");
     expect(JSON.stringify(brief)).not.toContain(HOSTILE_FACT);
-    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 1");
+    expect(rendered).toContain("Execution Contract: siralos-execution-contract rev 2");
     expect(harness.briefingFingerprint()).toMatch(/^[0-9a-f]{64}$/);
 
     // No capability broadening: the projected tool surface is unchanged.
@@ -143,22 +143,9 @@ describe("Behavior — executor briefing final boundary", () => {
 
   it("contract snapshot: an active task keeps its execution-contract revision when the global contract advances", () => {
     const { runtime, sources, now } = createBehaviorRuntime();
-    const contractV1 = createAdHocTaskContract("task-a", "Inspect scenes read-only.");
+    const contractA = createAdHocTaskContract("task-a", "Inspect scenes read-only.");
     const taskA = runtime.createTask({
-      contract: contractV1,
-      snapshot: createTaskRuntimeSnapshot(
-        {
-          ...sources,
-          executionContract: { id: DEFAULT_EXECUTION_CONTRACT.id, revision: 1 },
-        },
-        now,
-      ),
-      steps: [],
-    });
-    // The global contract advances to revision 2; a NEW task binds rev 2.
-    const contractV2 = createAdHocTaskContract("task-b", "Inspect scenes read-only.");
-    const taskB = runtime.createTask({
-      contract: contractV2,
+      contract: contractA,
       snapshot: createTaskRuntimeSnapshot(
         {
           ...sources,
@@ -168,11 +155,24 @@ describe("Behavior — executor briefing final boundary", () => {
       ),
       steps: [],
     });
-    expect(taskA.runtimeSnapshot().executionContract?.revision).toBe(1);
-    expect(taskB.runtimeSnapshot().executionContract?.revision).toBe(2);
+    // The global contract advances to revision 3; a NEW task binds rev 3.
+    const contractB = createAdHocTaskContract("task-b", "Inspect scenes read-only.");
+    const taskB = runtime.createTask({
+      contract: contractB,
+      snapshot: createTaskRuntimeSnapshot(
+        {
+          ...sources,
+          executionContract: { id: DEFAULT_EXECUTION_CONTRACT.id, revision: 3 },
+        },
+        now,
+      ),
+      steps: [],
+    });
+    expect(taskA.runtimeSnapshot().executionContract?.revision).toBe(2);
+    expect(taskB.runtimeSnapshot().executionContract?.revision).toBe(3);
 
-    // The briefing service compiled against rev 2 produces rev-2 briefs
-    // for new tasks while the active task's snapshot stays at rev 1.
+    // The briefing service compiled against rev 3 produces rev-3 briefs
+    // for new tasks while the active task's snapshot stays at rev 2.
     const briefing = createExecutorBriefing({
       executionContract: reviseExecutionContract(DEFAULT_EXECUTION_CONTRACT, {}),
       milestone: S3M8_MILESTONE_MANIFEST,
@@ -180,8 +180,8 @@ describe("Behavior — executor briefing final boundary", () => {
       getTaskSnapshot: () => runtime.latestTask()?.snapshot() ?? null,
       getCurrentPlan: () => null,
     });
-    expect(briefing.latestOrCompile()?.executionContract.revision).toBe(2);
-    expect(taskA.runtimeSnapshot().executionContract?.revision).toBe(1);
+    expect(briefing.latestOrCompile()?.executionContract.revision).toBe(3);
+    expect(taskA.runtimeSnapshot().executionContract?.revision).toBe(2);
     expect(taskA.runtimeSnapshot().milestoneManifest).toBeNull();
   });
 
@@ -201,7 +201,7 @@ describe("Behavior — executor briefing final boundary", () => {
     expect(requests.length).toBeGreaterThan(0);
     const system = requests[0]?.system ?? "";
     expect(system).toContain("[Executor brief]");
-    expect(system).toContain("Execution Contract: siralos-execution-contract rev 1");
+    expect(system).toContain("Execution Contract: siralos-execution-contract rev 2");
     expect(system).toContain("Milestone Manifest: S3M8 rev 1");
     expect(system).toContain("S3M8.PARSE.TSCN");
     expect(system).toContain("TASK-SPECIFIC INVARIANTS");
@@ -232,7 +232,7 @@ describe("Behavior — executor briefing final boundary", () => {
     // The task snapshot records the execution-contract identity and the
     // initial brief fingerprint.
     const snapshot = harness.runtime.getTask(task.taskId)?.runtimeSnapshot();
-    expect(snapshot?.executionContract?.revision).toBe(1);
+    expect(snapshot?.executionContract?.revision).toBe(2);
     expect(snapshot?.executorBriefFingerprint).toMatch(/^[0-9a-f]{64}$/);
     // The provider request carried the bounded brief segment.
     const system = harness.requests()[0]?.system ?? "";
