@@ -8,14 +8,16 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R2
 Next milestone: R3 - Domain-Neutral Core
-Last verified commit: 22041693932f8e7e785e714b8d34258d6cd25959
+Last verified commit: 75dbf46c9e07d3b542460572d242cf37c8fcac3e
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
 The verified-commit field is an evidence pointer, not a wall-clock status. It
-names the exact rewritten baseline that passed `npm run check` before this
-context consolidation. The latest successful required CI run on `main` remains
-the publication authority after later documentation-only commits.
+names the exact baseline whose worktree content passed the full `npm run check`
+gate (verified parent/baseline model): documentation-only metadata
+reconciliation commits after that baseline do not alter executable behavior,
+and the latest successful required CI run on `main` remains the publication
+authority after later documentation-only commits.
 
 ## 1. Product definition
 
