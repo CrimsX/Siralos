@@ -103,8 +103,15 @@ async function readBundleExecutableName(contentsDirectory: string): Promise<stri
     const handle = await open(plistPath, "r");
     try {
       const buffer = Buffer.alloc(BUNDLE_EXECUTABLE_NAME_LIMIT);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      content = buffer.subarray(0, bytesRead).toString("utf8");
+      let total = 0;
+      while (total < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+        if (bytesRead === 0) {
+          break; // EOF
+        }
+        total += bytesRead;
+      }
+      content = buffer.subarray(0, total).toString("utf8");
     } finally {
       await handle.close().catch(() => undefined);
     }

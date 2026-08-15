@@ -251,9 +251,11 @@ function isAbsoluteRelative(value: string): boolean {
 
 /**
  * Verified bounded read of a project file: canonical containment before the
- * open, a single bounded raw read, and an identity re-verification after the
- * read. A path swapped during inspection returns "changed" and the data is
- * never returned to callers.
+ * open, a bounded complete read (reads until EOF or the bound; one short
+ * read is never treated as EOF and a partial prefix is never returned as
+ * complete content), and an identity re-verification after the read. A path
+ * swapped during inspection returns "changed" and the data is never returned
+ * to callers.
  */
 export type BoundedProjectFileRead =
   | { readonly ok: true; readonly content: string; readonly bytesRead: number }
@@ -301,8 +303,15 @@ export async function readBoundedProjectFile(options: {
   let bytes: Buffer;
   try {
     const buffer = Buffer.alloc(Math.min(metadata.size, options.maxBytes) + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    bytes = buffer.subarray(0, bytesRead);
+    let total = 0;
+    while (total < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+      if (bytesRead === 0) {
+        break; // EOF
+      }
+      total += bytesRead;
+    }
+    bytes = buffer.subarray(0, total);
   } catch {
     return { ok: false, reason: "read-failed" };
   } finally {

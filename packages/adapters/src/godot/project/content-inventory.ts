@@ -766,11 +766,18 @@ function defaultReadHead(fsOps: GodotProjectFsOps): GodotProjectReadHead {
       const handle = await fsOps.open(path);
       try {
         const buffer = Buffer.alloc(Math.min(maxBytes, GODOT_LIMITS.maxToolScriptHeadBytes));
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        let total = 0;
+        while (total < buffer.length) {
+          const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+          if (bytesRead === 0) {
+            break; // EOF
+          }
+          total += bytesRead;
+        }
         return {
           ok: true,
-          content: buffer.subarray(0, bytesRead).toString("utf8"),
-          bytesRead,
+          content: buffer.subarray(0, total).toString("utf8"),
+          bytesRead: total,
         };
       } finally {
         await handle.close().catch(() => undefined);
