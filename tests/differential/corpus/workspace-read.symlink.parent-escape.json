@@ -1,0 +1,34 @@
+{
+  "id": "workspace-read.symlink.parent-escape",
+  "subject": "workspace-read",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-read-parent-escape",
+    "files": [
+      {
+        "path": "real/secret.txt",
+        "content": "inside\n"
+      }
+    ],
+    "symlinks": [
+      {
+        "link": "link",
+        "target": "../siralos-r4-outside-dir",
+        "directory": true
+      }
+    ],
+    "reads": [
+      {
+        "path": "link/secret.txt"
+      },
+      {
+        "path": "link"
+      },
+      {
+        "path": "real/secret.txt"
+      }
+    ]
+  }
+}

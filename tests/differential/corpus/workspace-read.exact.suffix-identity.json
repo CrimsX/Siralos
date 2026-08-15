@@ -1,0 +1,28 @@
+{
+  "id": "workspace-read.exact.suffix-identity",
+  "subject": "workspace-read",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-read-suffix-identity",
+    "files": [
+      {
+        "path": "ident-a.txt",
+        "content": "shared prefix line\nsuffix A\n"
+      },
+      {
+        "path": "ident-b.txt",
+        "content": "shared prefix line\nsuffix B\n"
+      }
+    ],
+    "reads": [
+      {
+        "path": "ident-a.txt"
+      },
+      {
+        "path": "ident-b.txt"
+      }
+    ]
+  }
+}

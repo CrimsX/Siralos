@@ -10,7 +10,15 @@
  * report fingerprint validity instead.
  */
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+  realpathSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFilesystemCheckpointStore } from "../../../packages/adapters/src/checkpoints/filesystem/checkpoint-store.js";
@@ -97,6 +105,26 @@ async function run(input) {
   for (const [path, content] of Object.entries(input.workspaceFiles ?? {})) {
     mkdirSync(join(workspace, path.split("/").slice(0, -1).join("/")), { recursive: true });
     writeFileSync(join(workspace, path), content, "utf8");
+  }
+  for (const spec of input.workspaceSymlinks ?? []) {
+    try {
+      const target = spec.target.startsWith("../")
+        ? join(workspace, "..", spec.target.slice(3))
+        : join(workspace, spec.target);
+      if (spec.target.startsWith("../")) {
+        if (spec.directory === true) {
+          mkdirSync(target, { recursive: true });
+          writeFileSync(join(target, "secret.txt"), "outside secret\n", "utf8");
+        } else {
+          writeFileSync(target, "outside secret\n", "utf8");
+        }
+      }
+      mkdirSync(join(workspace, spec.link, ".."), { recursive: true });
+      symlinkSync(target, join(workspace, spec.link));
+    } catch {
+      // Symlink creation is a host privilege; both runners observe the
+      // same per-host outcome and report it identically.
+    }
   }
   const store = await createFilesystemCheckpointStore({
     workspaceRoot: workspace,

@@ -111,13 +111,20 @@ function createWorkspace(files, symlinks) {
   }
   for (const spec of symlinks ?? []) {
     try {
-      // A `../` target points at a real file just outside the workspace,
-      // so the containment rejection exercises the canonical escape path.
+      // A `../` target points at a real file (or, with `directory: true`,
+      // a real directory containing `secret.txt`) just outside the
+      // workspace, so the containment rejection exercises the canonical
+      // escape path.
       const target = spec.target.startsWith("../")
         ? join(root, "..", spec.target.slice(3))
         : join(root, spec.target);
       if (spec.target.startsWith("../")) {
-        writeFileSync(target, "outside secret\n", "utf8");
+        if (spec.directory === true) {
+          mkdirSync(target, { recursive: true });
+          writeFileSync(join(target, "secret.txt"), "outside secret\n", "utf8");
+        } else {
+          writeFileSync(target, "outside secret\n", "utf8");
+        }
       }
       mkdirSync(join(root, spec.link, ".."), { recursive: true });
       symlinkSync(target, join(root, spec.link));

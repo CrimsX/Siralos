@@ -32,7 +32,7 @@ const SUBJECT_WORKSPACE_PREPARE: &str = "workspace-prepare";
 const SUBJECT_CHECKPOINT: &str = "checkpoint";
 const SUBJECT_GIT_INSPECTION: &str = "git-inspection";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 6;
+const CORPUS_VERSION: u64 = 7;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -2152,17 +2152,28 @@ fn create_fixture_workspace(
         for spec in symlinks {
             let link = root.join(scenario_string(spec, "link")?);
             let target = scenario_string(spec, "target")?;
-            let target_path =
-                if let Some(relative) = target.strip_prefix("../") {
-                    let outside =
-                        root.parent().map(|parent| parent.join(relative));
-                    if let Some(outside) = &outside {
+            let directory =
+                spec.get("directory").and_then(Value::as_bool) == Some(true);
+            let target_path = if let Some(relative) =
+                target.strip_prefix("../")
+            {
+                let outside =
+                    root.parent().map(|parent| parent.join(relative));
+                if let Some(outside) = &outside {
+                    if directory {
+                        let _ = std::fs::create_dir_all(outside);
+                        let _ = std::fs::write(
+                            outside.join("secret.txt"),
+                            b"outside secret\n",
+                        );
+                    } else {
                         let _ = std::fs::write(outside, b"outside secret\n");
                     }
-                    outside.unwrap_or_else(|| root.join(&target))
-                } else {
-                    root.join(&target)
-                };
+                }
+                outside.unwrap_or_else(|| root.join(&target))
+            } else {
+                root.join(&target)
+            };
             if let Some(parent) = link.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -2954,6 +2965,46 @@ fn checkpoint_record(
             )?;
         }
     }
+    if let Ok(symlinks) = scenario_array(input, "workspaceSymlinks") {
+        for spec in symlinks {
+            let link = workspace.join(scenario_string(spec, "link")?);
+            let target = scenario_string(spec, "target")?;
+            let directory =
+                spec.get("directory").and_then(Value::as_bool) == Some(true);
+            let target_path = if let Some(relative) =
+                target.strip_prefix("../")
+            {
+                let outside =
+                    workspace.parent().map(|parent| parent.join(relative));
+                if let Some(outside) = &outside {
+                    if directory {
+                        let _ = std::fs::create_dir_all(outside);
+                        let _ = std::fs::write(
+                            outside.join("secret.txt"),
+                            b"outside secret\n",
+                        );
+                    } else {
+                        let _ = std::fs::write(outside, b"outside secret\n");
+                    }
+                }
+                outside.unwrap_or_else(|| workspace.join(&target))
+            } else {
+                workspace.join(&target)
+            };
+            if let Some(parent) = link.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(&target_path, &link);
+            }
+            #[cfg(windows)]
+            {
+                let _ =
+                    std::os::windows::fs::symlink_file(&target_path, &link);
+            }
+        }
+    }
     let store =
         open_checkpoint_store(&workspace, &store_root).map_err(|error| {
             HarnessError::new(
@@ -3188,7 +3239,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 43);
+        assert_eq!(loaded.len(), 47);
     }
 
     #[test]

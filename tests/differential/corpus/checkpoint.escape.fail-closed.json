@@ -1,0 +1,81 @@
+{
+  "id": "checkpoint.escape.fail-closed",
+  "subject": "checkpoint",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "workspaceFiles": {
+      "a.txt": "inside"
+    },
+    "workspaceSymlinks": [
+      {
+        "link": "link",
+        "target": "../siralos-r4-outside-dir",
+        "directory": true
+      }
+    ],
+    "checkpoints": [
+      {
+        "id": "cp_0000000031",
+        "record": {
+          "relativePath": "link/secret.txt",
+          "operation": "delete",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-01T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 15
+          },
+          "after": {
+            "exists": false,
+            "sha256": null,
+            "byteLength": null
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      },
+      {
+        "id": "cp_0000000032",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "delete",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-02T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "106b086224a4d945eae25f7be3805a931a873270326dd868b0e41f71ee9fff72",
+            "byteLength": 6
+          },
+          "after": {
+            "exists": false,
+            "sha256": null,
+            "byteLength": null
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      }
+    ],
+    "ops": [
+      {
+        "op": "list",
+        "states": ["prepared"]
+      },
+      {
+        "op": "reconcile"
+      },
+      {
+        "op": "list-after"
+      }
+    ]
+  }
+}

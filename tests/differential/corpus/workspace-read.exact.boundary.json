@@ -1,0 +1,53 @@
+{
+  "id": "workspace-read.exact.boundary",
+  "subject": "workspace-read",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-read-boundary",
+    "files": [
+      {
+        "path": "tiny.txt",
+        "content": "x"
+      },
+      {
+        "path": "below-limit.txt",
+        "size": 524287,
+        "fill": "d"
+      },
+      {
+        "path": "at-limit.txt",
+        "size": 524288,
+        "fill": "a"
+      },
+      {
+        "path": "over-limit.txt",
+        "size": 524289,
+        "fill": "b"
+      },
+      {
+        "path": "much-larger.txt",
+        "size": 1048576,
+        "fill": "c"
+      }
+    ],
+    "reads": [
+      {
+        "path": "tiny.txt"
+      },
+      {
+        "path": "below-limit.txt"
+      },
+      {
+        "path": "at-limit.txt"
+      },
+      {
+        "path": "over-limit.txt"
+      },
+      {
+        "path": "much-larger.txt"
+      }
+    ]
+  }
+}

@@ -1,7 +1,11 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 6,
+  "corpusVersion": 7,
   "scenarios": [
+    {
+      "file": "checkpoint.escape.fail-closed.json",
+      "sha256": "a7ab91b5f92a4ac4846165c7d3f52470388aaf78507ca61dd3502ded1bb7bedc"
+    },
     {
       "file": "checkpoint.inspection.json",
       "sha256": "622bbbe368be3386d693404e25a645b828d88b96479f7ad7721c3b53d9186580"
@@ -147,8 +151,20 @@
       "sha256": "1f2028bc3cadb3e33cabba41669b405eb25eef79396df2ccce04c9602957432a"
     },
     {
+      "file": "workspace-read.exact.boundary.json",
+      "sha256": "dc6bc781e726a1dcaf6ecbe7128d4e0a0b227bb05fee4a922ad9d161bb84de6d"
+    },
+    {
+      "file": "workspace-read.exact.suffix-identity.json",
+      "sha256": "d0efdf1b1e7df169b3d453507b27c5f43708d240373ffef597f5ae2d34b0e20c"
+    },
+    {
       "file": "workspace-read.symlink.escape.json",
       "sha256": "6053654e8f3df635f868459669c2bcd2428246b5706c7e235d6ef40a3fe73cce"
+    },
+    {
+      "file": "workspace-read.symlink.parent-escape.json",
+      "sha256": "bfd1572dd994c7fe3704fd9b4f0a3bba55693a2eb86988c05c8563691be9e4df"
     },
     {
       "file": "workspace-revision.bounded.json",
@@ -175,5 +191,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "8a5023c7f435715bf7c96038be4239122d488be1dd617c6be4d100465edcbc4d"
+  "corpusSha256": "e46966cf874b9cebc9544fcf8167e8614325287e472e0f669d72f04c07f85e39"
 }
