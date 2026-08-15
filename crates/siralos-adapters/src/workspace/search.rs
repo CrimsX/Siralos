@@ -8,9 +8,9 @@
 //! index, cache, or language intelligence is introduced.
 
 use crate::workspace::fs::{
-    DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8, fold_path_component,
-    looks_binary, read_file_bounded, split_into_lines, utf16_index_of,
-    utf16_slice,
+    BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8,
+    fold_path_component, looks_binary, read_complete_file_bounded,
+    split_into_lines, utf16_index_of, utf16_slice,
 };
 use crate::workspace::resolve::resolve_workspace_path;
 
@@ -311,11 +311,11 @@ pub fn search(
             if cancelled {
                 return SearchOutcome::Cancelled;
             }
-            let bytes = match read_file_bounded(
+            let bytes = match read_complete_file_bounded(
                 &absolute,
                 limits.max_search_file_size_bytes,
             ) {
-                Ok(Some(bytes)) => bytes,
+                BoundedFileRead::Complete(bytes) => bytes,
                 _ => {
                     skipped_files += 1;
                     continue;

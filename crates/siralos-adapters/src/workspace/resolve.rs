@@ -4,10 +4,15 @@
 //! Every model-facing path is validated (NUL, empty, absolute, drive,
 //! parent traversal), joined against the canonical root, checked for
 //! lexical containment, then canonicalized (symlinks resolved) and
-//! re-checked for containment, so a symlink/junction/reparse escape
-//! never widens authority. The returned workspace-relative path is
-//! the canonical target's relative path with `/` separators, exactly
-//! like the reference.
+//! re-checked for containment, so any symlink/junction/reparse escape
+//! present at resolution time is rejected and the resolved path is the
+//! canonical in-workspace target. This is validation-time containment:
+//! the mechanism does not bind the later pathname-based open to the
+//! validated object against a same-user process that substitutes the
+//! target or a parent after resolution (see SECURITY.md "Workspace
+//! read containment"). The returned workspace-relative path is the
+//! canonical target's relative path with `/` separators, exactly like
+//! the reference.
 
 use crate::workspace::fs::normalize_join;
 
@@ -154,6 +159,48 @@ mod tests {
             resolve_workspace_path(&root, "").unwrap_err(),
             PathRejection::Empty,
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_symlink_escape_is_rejected_and_inside_links_are_allowed() {
+        // Policy A: a symlink/junction/reparse parent is allowed only
+        // when its canonical target stays inside the workspace; any
+        // escape is rejected at resolution (validation time).
+        let base = std::env::temp_dir().join("siralos-resolve-link-test");
+        let outside =
+            std::env::temp_dir().join("siralos-resolve-link-outside");
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(base.join("real")).unwrap();
+        fs::create_dir_all(base.join("alias")).unwrap();
+        fs::write(base.join("real/f.txt"), "x").unwrap();
+        fs::write(base.join("alias/f.txt"), "x").unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "outside").unwrap();
+        std::os::unix::fs::symlink(&outside, base.join("link")).unwrap();
+        std::os::unix::fs::symlink(
+            base.join("alias"),
+            base.join("inside-link"),
+        )
+        .unwrap();
+        // Escape through a symlinked parent fails closed.
+        assert_eq!(
+            resolve_workspace_path(&base, "link/secret.txt").unwrap_err(),
+            PathRejection::LinkEscape,
+        );
+        assert_eq!(
+            resolve_workspace_path(&base, "link").unwrap_err(),
+            PathRejection::LinkEscape,
+        );
+        // An in-workspace parent symlink resolves to its canonical
+        // target and stays contained.
+        let resolved =
+            resolve_workspace_path(&base, "inside-link/f.txt").unwrap();
+        assert_eq!(resolved.workspace_relative_path, "alias/f.txt");
+        assert!(resolved.absolute_path.starts_with(&base));
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]

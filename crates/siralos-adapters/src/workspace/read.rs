@@ -1,19 +1,21 @@
 //! Bounded exact source reads (R4, reference `workspace.read`).
 //!
 //! The authoritative read path: containment-safe resolution, excluded
-//! directories, regular-file verification, bounded single-shot read,
-//! binary probe, strict UTF-8 decoding, whole-file SHA-256, revision
-//! issuance, and deterministic line-range slicing with UTF-16-aware
-//! content truncation (whole-file identity is never derived from
-//! truncated returned text). Structural/summary modes are R5-owned
+//! directories, regular-file verification, bounded complete read (EOF
+//! verified; one short read is never treated as EOF and a partial
+//! prefix is never returned as complete), binary probe, strict UTF-8
+//! decoding, whole-file SHA-256, revision issuance, and deterministic
+//! line-range slicing with UTF-16-aware content truncation (whole-file
+//! identity is never derived from truncated returned text).
+//! Structural/summary modes are R5-owned
 //! language surfaces: for non-GDScript files the reference returns an
 //! explicit `supported: false` success; for GDScript files this R4
 //! adapter reports the typed unsupported disposition and R5 owns the
 //! language extraction.
 
 use crate::workspace::fs::{
-    DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8, looks_binary,
-    read_file_bounded, split_into_lines, utf16_len, utf16_slice,
+    BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8, looks_binary,
+    read_complete_file_bounded, split_into_lines, utf16_len, utf16_slice,
 };
 use crate::workspace::list::excluded_component;
 use crate::workspace::resolve::resolve_workspace_path;
@@ -243,11 +245,11 @@ pub fn read_file(
             ),
         };
     }
-    let bytes = match read_file_bounded(
+    let bytes = match read_complete_file_bounded(
         &resolved.absolute_path,
         limits.max_read_file_size_bytes,
     ) {
-        Ok(Some(bytes)) => bytes,
+        BoundedFileRead::Complete(bytes) => bytes,
         _ => {
             return ReadOutcome::Failed {
                 message: format!(
@@ -404,6 +406,84 @@ mod tests {
         assert_eq!(end_line, 2);
         assert_eq!(total_lines, 2);
         assert!(!truncated);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn exact_identity_covers_complete_file_bytes_not_a_prefix() {
+        // Whole-file source identity: files sharing an identical prefix
+        // but differing later bytes must produce different digests, and a
+        // short read containing only the common prefix must never
+        // produce either authoritative identity. A bounded complete read
+        // (EOF verified) is the only basis for digest and revision.
+        use siralos_core::identity::sha256_hex;
+        let base = workspace();
+        let prefix = b"shared prefix line\n";
+        let suffix_a = b"suffix A\n";
+        let suffix_b = b"suffix B\n";
+        std::fs::write(
+            base.join("ident-a.txt"),
+            [prefix.as_slice(), suffix_a.as_slice()].concat(),
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("ident-b.txt"),
+            [prefix.as_slice(), suffix_b.as_slice()].concat(),
+        )
+        .unwrap();
+        let read_digest = |name: &str| -> (String, Option<String>) {
+            let input = ReadInput {
+                path: name.to_owned(),
+                start_line: 1,
+                end_line: None,
+                mode: ReadMode::Exact,
+            };
+            let mut registry =
+                siralos_core::workspace::revision::WorkspaceRevisionRegistry::new(
+                    siralos_core::workspace::revision::WorkspaceRevisionRegistryOptions {
+                        workspace_fingerprint: "fixture-suffix-identity".to_owned(),
+                        max_entries: None,
+                    },
+                )
+                .unwrap();
+            match read_file(
+                &base,
+                &input,
+                &WORKSPACE_LIMITS,
+                Some(&mut registry),
+                false,
+            ) {
+                ReadOutcome::Success { sha256, revision, .. } => {
+                    (sha256, revision)
+                }
+                other => panic!("read failed: {other:?}"),
+            }
+        };
+        let (digest_a, revision_a) = read_digest("ident-a.txt");
+        let (digest_b, revision_b) = read_digest("ident-b.txt");
+        assert_ne!(
+            digest_a, digest_b,
+            "suffix change must alter source identity"
+        );
+        assert_eq!(
+            digest_a,
+            sha256_hex(&[prefix.as_slice(), suffix_a.as_slice()].concat())
+        );
+        assert_eq!(
+            digest_b,
+            sha256_hex(&[prefix.as_slice(), suffix_b.as_slice()].concat())
+        );
+        // The common prefix alone is not either identity: a short first
+        // read containing only the prefix can never masquerade as the
+        // complete file.
+        let prefix_digest = sha256_hex(prefix);
+        assert_ne!(prefix_digest, digest_a);
+        assert_ne!(prefix_digest, digest_b);
+        // Revision handles are issued per complete content identity.
+        let revision_a = revision_a.expect("revision issued for file A");
+        let revision_b = revision_b.expect("revision issued for file B");
+        assert_ne!(revision_a, revision_b);
+        assert!(revision_a.starts_with("rev_"));
         let _ = std::fs::remove_dir_all(&base);
     }
 

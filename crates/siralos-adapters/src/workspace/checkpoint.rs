@@ -14,7 +14,7 @@
 //! workspace path) is a machine identity, so differential records
 //! report fingerprint validity rather than the fingerprint itself.
 
-use crate::workspace::fs::read_file_bounded;
+use crate::workspace::fs::{BoundedFileRead, read_complete_file_bounded};
 
 use siralos_core::identity::sha256_hex;
 use siralos_core::workspace::checkpoint::{
@@ -470,12 +470,32 @@ impl CheckpointStore {
                 "Checkpoint metadata is oversized: {id}."
             )));
         }
-        let raw =
-            std::fs::read_to_string(&metadata_path).map_err(|error| {
-                CheckpointStoreError::Invalid(format!(
+        let bytes = match read_complete_file_bounded(
+            &metadata_path,
+            MAX_METADATA_BYTES as usize,
+        ) {
+            BoundedFileRead::Complete(bytes) => bytes,
+            BoundedFileRead::TooLarge => {
+                return Err(CheckpointStoreError::Invalid(format!(
+                    "Checkpoint metadata is oversized: {id}."
+                )));
+            }
+            BoundedFileRead::NotReadable => {
+                return Err(CheckpointStoreError::Invalid(format!(
+                    "Checkpoint metadata is missing or a symbolic link: {id}."
+                )));
+            }
+            BoundedFileRead::IoError(error) => {
+                return Err(CheckpointStoreError::Invalid(format!(
                     "Checkpoint metadata cannot be read: {id}: {error}"
-                ))
-            })?;
+                )));
+            }
+        };
+        let raw = String::from_utf8(bytes).map_err(|_| {
+            CheckpointStoreError::Invalid(format!(
+                "Checkpoint metadata is not valid UTF-8: {id}."
+            ))
+        })?;
         parse_metadata(
             &raw,
             id,
@@ -719,6 +739,14 @@ pub fn reconcile_checkpoints(
 /// Read the exact current workspace file state (exists + SHA-256),
 /// mirroring `readWorkspaceFileState`: invalid, missing, linked,
 /// non-regular, or oversized targets carry `sha256: null`.
+///
+/// Containment: the record's relative path is lexically validated, then
+/// the canonical parent directory must resolve inside the canonical
+/// workspace root. A parent symlink/junction/reparse escape fails closed
+/// (`exists: true, sha256: null`) exactly like a linked target, so a
+/// corrupted or malicious checkpoint record can never cause inspection
+/// outside the intended workspace. The leaf is lstat-verified without
+/// following and read through the bounded complete-read primitive.
 pub fn read_workspace_file_state(
     workspace_root: &Path,
     relative_path: &str,
@@ -729,7 +757,27 @@ pub fn read_workspace_file_state(
     {
         return WorkspaceFileState { exists: true, sha256: None };
     }
-    let absolute = workspace_root.join(relative_path);
+    let canonical_root = match std::fs::canonicalize(workspace_root) {
+        Ok(root) => root,
+        Err(_) => return WorkspaceFileState { exists: false, sha256: None },
+    };
+    let (parent, leaf) = match relative_path.rfind('/') {
+        Some(index) => (&relative_path[..index], &relative_path[index + 1..]),
+        None => (".", relative_path),
+    };
+    let canonical_parent =
+        match std::fs::canonicalize(canonical_root.join(parent)) {
+            Ok(parent) => parent,
+            Err(_) => {
+                return WorkspaceFileState { exists: false, sha256: None };
+            }
+        };
+    if canonical_parent != canonical_root
+        && !canonical_parent.starts_with(&canonical_root)
+    {
+        return WorkspaceFileState { exists: true, sha256: None };
+    }
+    let absolute = canonical_parent.join(leaf);
     let stats = match std::fs::symlink_metadata(&absolute) {
         Ok(stats) => stats,
         Err(_) => return WorkspaceFileState { exists: false, sha256: None },
@@ -740,8 +788,11 @@ pub fn read_workspace_file_state(
     if stats.len() > max_state_bytes {
         return WorkspaceFileState { exists: true, sha256: None };
     }
-    let bytes = match read_file_bounded(&absolute, max_state_bytes as usize) {
-        Ok(Some(bytes)) => bytes,
+    let bytes = match read_complete_file_bounded(
+        &absolute,
+        max_state_bytes as usize,
+    ) {
+        BoundedFileRead::Complete(bytes) => bytes,
         _ => return WorkspaceFileState { exists: true, sha256: None },
     };
     WorkspaceFileState { exists: true, sha256: Some(sha256_hex(&bytes)) }
@@ -954,6 +1005,53 @@ mod tests {
         assert_eq!(after.state, CheckpointState::Abandoned);
         let _ = std::fs::remove_dir_all(&workspace);
         let _ = std::fs::remove_dir_all(&store_root);
+    }
+
+    #[test]
+    fn workspace_file_state_fails_closed_on_parent_link_escape() {
+        // A malicious checkpoint record whose relative path resolves
+        // through a workspace symlink/junction to an outside directory
+        // must never cause inspection outside the workspace: the state
+        // is the same fail-closed "linked" disposition, never the
+        // outside file's bytes or hash.
+        let workspace = scratch("siralos-cp-esc-ws");
+        let outside = scratch("siralos-cp-esc-outside");
+        std::fs::write(outside.join("secret.txt"), b"outside secret").unwrap();
+        std::fs::create_dir_all(workspace.join("real")).unwrap();
+        std::fs::write(workspace.join("real/inner.txt"), b"inside").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, workspace.join("link"))
+                .expect("create directory symlink");
+        }
+        let escape =
+            read_workspace_file_state(&workspace, "link/secret.txt", 1024);
+        if std::fs::symlink_metadata(workspace.join("link")).is_ok() {
+            // The link exists: the escape must fail closed.
+            assert_eq!(
+                escape,
+                WorkspaceFileState { exists: true, sha256: None },
+                "a parent link escape must never read outside the workspace",
+            );
+        } else {
+            // The host cannot create the link: the path is unresolvable.
+            assert_eq!(
+                escape,
+                WorkspaceFileState { exists: false, sha256: None },
+            );
+        }
+        // In-workspace paths still read exactly.
+        let inner =
+            read_workspace_file_state(&workspace, "real/inner.txt", 1024);
+        assert_eq!(
+            inner,
+            WorkspaceFileState {
+                exists: true,
+                sha256: Some(siralos_core::identity::sha256_hex(b"inside")),
+            },
+        );
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
