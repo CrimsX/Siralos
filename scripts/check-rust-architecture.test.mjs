@@ -220,6 +220,17 @@ path = "src/main.rs"
     expect(errors.some((error) => error.includes("domain-neutral"))).toBe(true);
   });
 
+  it("rejects LSP transport and process machinery in siralos-core sources", () => {
+    const root = writeFixture(
+      cleanWorkspaceFixture({
+        "crates/siralos-core/src/lib.rs":
+          "//! Core.\n\n/// JSON-RPC framing must never reach core.\npub fn frame() {}\n",
+      }),
+    );
+    const errors = runChecks(root);
+    expect(errors.some((error) => error.includes("language-intelligence-neutral"))).toBe(true);
+  });
+
   it("rejects unsafe Rust anywhere in the foundation", () => {
     const root = writeFixture(
       cleanWorkspaceFixture({

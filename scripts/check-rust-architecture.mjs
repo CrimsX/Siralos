@@ -30,6 +30,16 @@ const EXPECTED_CRATES = ["crates/siralos-core", "crates/siralos-adapters", "crat
 const FORBIDDEN_CORE_SYMBOL_PATTERN =
   /godot|gdscript|\.tscn|\.tres|project\.godot|nodepath|autoload/i;
 
+/**
+ * Language-intelligence neutrality (Stage 3R R5): `siralos-core` must
+ * stay free of LSP/JSON-RPC transport, process execution, socket
+ * infrastructure, async runtimes, and domain-registry concepts. The
+ * literal word "LSP" is allowed (position-conversion semantics are
+ * documented against the protocol); transport machinery is not.
+ */
+const FORBIDDEN_CORE_LANGUAGE_PATTERN =
+  /json-rpc|content-length|std::process|std::net|tokio|domain registry/i;
+
 /** Dangerous unsafe forms (defense in depth behind the forbid lint). */
 const UNSAFE_PATTERN = /\bunsafe\s+(fn|impl|trait|extern|\{)/;
 
@@ -262,6 +272,11 @@ export function runChecks(root) {
       const content = readFileSync(source, "utf8");
       if (crate === "crates/siralos-core" && FORBIDDEN_CORE_SYMBOL_PATTERN.test(content)) {
         errors.push(`${source}: siralos-core must stay domain-neutral (Godot symbol present)`);
+      }
+      if (crate === "crates/siralos-core" && FORBIDDEN_CORE_LANGUAGE_PATTERN.test(content)) {
+        errors.push(
+          `${source}: siralos-core must stay language-intelligence-neutral (LSP transport, process, socket, async runtime, or domain-registry symbol present)`,
+        );
       }
       if (UNSAFE_PATTERN.test(content)) {
         errors.push(`${source}: unsafe Rust is forbidden in the Siralos foundation`);

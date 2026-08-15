@@ -35,8 +35,11 @@ const REQUIRED_METADATA = new Map([
   ["Status", "Active development"],
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
-  ["Current completed milestone", "R4"],
-  ["Next milestone", "R5 - Generic Language Intelligence"],
+  ["Current completed milestone", "R5"],
+  [
+    "Next milestone",
+    "R6 - Minimal Domain Capability Architecture and Synthetic Conformance Domain",
+  ],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
 
@@ -102,8 +105,12 @@ export function validateProjectContext(input) {
   if (!input.agents.includes("docs/development/PROJECT_CONTEXT.md")) {
     violations.push("AGENTS.md does not bootstrap PROJECT_CONTEXT.md");
   }
-  if (!input.context.includes("R4      COMPLETE") || !input.context.includes("R5      NEXT")) {
-    violations.push("project context does not record R4 complete and R5 next");
+  if (
+    !input.context.includes("R4      COMPLETE") ||
+    !input.context.includes("R5      COMPLETE") ||
+    !input.context.includes("R6      NEXT")
+  ) {
+    violations.push("project context does not record R4/R5 complete and R6 next");
   }
 
   const sources = {
