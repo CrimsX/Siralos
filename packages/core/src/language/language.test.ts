@@ -29,7 +29,9 @@ describe("toOneBasedPosition / toOneBasedRange", () => {
     expect(toOneBasedPosition({ line: 1.5, character: 0 })).toBeNull();
     expect(toOneBasedPosition({ line: "1", character: 0 })).toBeNull();
     expect(toOneBasedRange({ start: { line: 1, character: 0 } })).toBeNull();
-    expect(toOneBasedRange({ start: { line: -1, character: 0 }, end: { line: 1, character: 1 } })).toBeNull();
+    expect(
+      toOneBasedRange({ start: { line: -1, character: 0 }, end: { line: 1, character: 1 } }),
+    ).toBeNull();
   });
 });
 
@@ -135,12 +137,7 @@ describe("normalizeDiagnosticSet", () => {
       100,
     );
     expect(result.truncated).toBe(false);
-    expect(result.diagnostics.map((entry) => entry.message)).toEqual([
-      "orphan",
-      "a",
-      "z",
-      "m",
-    ]);
+    expect(result.diagnostics.map((entry) => entry.message)).toEqual(["orphan", "a", "z", "m"]);
   });
 
   it("applies the bound with explicit truncation", () => {
@@ -162,14 +159,18 @@ describe("normalizeDiagnosticSet", () => {
 
 describe("normalizeDefinitionLocations", () => {
   it("normalizes LocationLink and Location forms with external redaction", () => {
-    const mapUri = (uri: string) => (uri.startsWith("file:///work/") ? uri.slice("file:///work/".length) : null);
+    const mapUri = (uri: string) =>
+      uri.startsWith("file:///work/") ? uri.slice("file:///work/".length) : null;
     const result = normalizeDefinitionLocations(
       [
         {
           targetUri: "file:///work/scripts/player.gd",
           targetRange: { start: { line: 10, character: 4 }, end: { line: 10, character: 12 } },
         },
-        { uri: "file:///elsewhere/engine/core.gd", range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } } },
+        {
+          uri: "file:///elsewhere/engine/core.gd",
+          range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+        },
         { targetUri: "file:///work/scripts/x.gd" }, // missing range: skipped
       ],
       "scripts/player.gd",

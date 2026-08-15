@@ -252,8 +252,13 @@ separate, explicit concerns.
 
 - Public product stages 1–3 have a broad TypeScript reference surface; effectful
   capabilities retain truthful availability reporting
-- Stage 3R R1, R2, R3, and R4 are complete
-- **Next:** Stage 3R R5 — Generic Language Intelligence
+- Stage 3R R1 through R5 are complete (R5: generic language intelligence —
+  one-based positions/ranges, bounded sanitized diagnostics, generic
+  symbol/definition/reference models, the language-neutral structural
+  representation, typed validation results, revision binding, and the
+  generic language-service URI mapping — at differential parity)
+- **Next:** Stage 3R R6 — Minimal Domain Capability Architecture and
+  Synthetic Conformance Domain
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

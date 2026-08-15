@@ -38,3 +38,16 @@ Every runner emits protocol schema version 1. Applicable scenarios produce
 `COMPLETED`, `PRODUCT_FAILURE`, `UNIMPLEMENTED`, or `UNSUPPORTED`. A scenario
 excluded by the current platform remains present as an explicit `UNSUPPORTED`
 record with category `PLATFORM_NOT_APPLICABLE`; it is not silently omitted.
+
+The Stage 3R R5 subjects (language-diagnostics, language-structure, and
+language-definition) execute generic language-intelligence parity: the
+TypeScript side reaches the real generic language modules
+(`packages/core/src/language`) and the production Godot wrappers/URI
+mapping; the Rust side reaches `siralos-core::language` and
+`siralos-adapters::language::uri`. The language-structure fixtures
+carry pre-structured semantic documents (never raw source), so R5
+proves the generic structural representation and the deterministic
+advisory summary semantics — not GDScript/Godot parsing. Godot-
+specific language parity (engine diagnostics, LSP, the GDScript
+scanner) is deliberately NOT established by this corpus; those
+surfaces remain the later Godot milestones' oracle.

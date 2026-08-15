@@ -310,8 +310,9 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   application, new checkpoint creation, Git inspection) report the same
   typed outcomes on both sides.
 
-Next: Stage 3R — R5: Generic Language Intelligence. The complete
-internal sequence is recorded in `docs/development/RUST_MIGRATION.md`.
+Next: Stage 3R — R6: Minimal Domain Capability Architecture and
+Synthetic Conformance Domain. The complete internal sequence is recorded
+in `docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution
 

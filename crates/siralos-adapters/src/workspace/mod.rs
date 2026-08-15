@@ -8,8 +8,11 @@
 //! reconciliation, and the typed unavailable Git disposition. No
 //! language or domain interpretation lives here: `project.godot`,
 //! `.gd` sources, and every other file remain opaque workspace data.
-//! Structural/summary read modes are R5-owned language surfaces and
-//! report an explicit typed unsupported disposition.
+//! Structural/summary read modes are generic language surfaces; the
+//! Rust workspace adapter reports an explicit typed unsupported
+//! disposition (the generic representation is verified in
+//! `siralos-core::language`; the GDScript scanner implementation is
+//! the later Godot milestones' surface).
 
 pub mod checkpoint;
 pub mod effects;

@@ -22,7 +22,7 @@ pub const WORKSPACE_REVISION_HANDLE_PREFIX: &str = "rev_";
 pub const DEFAULT_REVISION_REGISTRY_LIMIT: usize = 1024;
 
 /// Read mode recorded by an observed read (protocol compatibility;
-/// structural/summary modes are R5-owned language surfaces).
+/// structural/summary modes are generic language surfaces).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObservedReadMode {
     /// Authoritative exact source read.
