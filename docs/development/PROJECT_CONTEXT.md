@@ -8,7 +8,7 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R6
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Last verified commit: 9979e123fe3caacf76ce2ee8c02d1c6c7f0013e4
+Last verified commit: f87c1dc356e3735e3789e1e4d6bafb2fcc376b0b
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
