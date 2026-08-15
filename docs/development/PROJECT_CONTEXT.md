@@ -6,8 +6,8 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R2
-Next milestone: R3 - Domain-Neutral Core
+Current completed milestone: R3
+Next milestone: R4 - Generic Workspace / Project Foundation
 Last verified commit: 75dbf46c9e07d3b542460572d242cf37c8fcac3e
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
@@ -82,7 +82,11 @@ does not make them a shipped capability.
 The Cargo workspace contains `siralos-core`, `siralos-adapters`, and
 `siralos-cli`. R1 established the domain-neutral workspace and engineering
 rules. R2 added the differential behavioral harness and its first parity
-subjects. No major Stage 1-3 subsystem has been ported yet.
+subjects. R3 added the domain-neutral host-owned task kernel to
+`siralos-core` (contracts, revisions, materialized state, transitions,
+evidence, acceptance, completion gate, activity, progress) with 17
+differential scenarios held at byte parity against the TypeScript reference
+(ADR 0033 gate). No further major Stage 1-3 subsystem has been ported yet.
 
 ### Target architecture
 
@@ -127,8 +131,9 @@ Current Stage 3R position:
 ```text
 R1      COMPLETE
 R2      COMPLETE
-R3      NEXT
-R4-R12  NOT DUE
+R3      COMPLETE
+R4      NEXT
+R5-R12  NOT DUE
 ```
 
 Status changes require executable evidence and an update to
@@ -137,12 +142,12 @@ Status changes require executable evidence and an update to
 
 ## 4. Stage 3R migration track
 
-| Milestone | Scope                                                          |
-| --------- | -------------------------------------------------------------- |
-| R1        | Siralos rename + Rust engineering/domain-neutral foundation    |
-| R2        | Differential Behavioral Harness                                |
-| R3        | Domain-Neutral Core                                            |
-| R4        | Generic Workspace / Project Foundation                         |
+| Milestone | Scope                                                          | Status   |
+| --------- | -------------------------------------------------------------- | -------- |
+| R1        | Siralos rename + Rust engineering/domain-neutral foundation    | Verified |
+| R2        | Differential Behavioral Harness                                | Verified |
+| R3        | Domain-Neutral Core                                            | Verified |
+| R4        | Generic Workspace / Project Foundation                         | Next     |
 | R5        | Language Intelligence                                          |
 | R6        | Domain Capability Architecture                                 |
 | R7        | Providers / Tools / CLI                                        |
