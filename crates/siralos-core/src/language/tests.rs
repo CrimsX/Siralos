@@ -19,8 +19,9 @@ use crate::language::position::{
 use crate::language::reference::{ReferenceLimits, normalize_references};
 use crate::language::sanitize::sanitize_control_characters;
 use crate::language::structure::{
-    FunctionInfo, PropertyInfo, StructuralDocument, StructuralIssue,
-    StructureStatus, SummaryOptions, build_structural_summary,
+    StructuralDeclaration, StructuralDocument, StructuralIssue,
+    StructuralKind, StructureOptions, StructureStatus, SummaryOptions,
+    build_structural_summary, normalize_structural_document,
 };
 use crate::language::symbol::{Symbol, SymbolKind, normalize_symbols};
 use crate::language::truncate::truncate_utf8_bytes;
@@ -389,129 +390,365 @@ fn validation_distinguishes_source_invalid_from_infrastructure_failure() {
     assert_eq!(ValidationStatus::Unavailable.as_str(), "unavailable");
 }
 
+fn declaration(
+    kind: StructuralKind,
+    name: &str,
+    line: u64,
+) -> StructuralDeclaration {
+    StructuralDeclaration::leaf(
+        kind,
+        Some(name.to_owned()),
+        None,
+        Some(line),
+        Vec::new(),
+    )
+}
+
+fn normalized(
+    path: &str,
+    declarations: Vec<StructuralDeclaration>,
+    dependencies: Vec<String>,
+    issues: Vec<StructuralIssue>,
+) -> StructuralDocument {
+    let mut document = normalize_structural_document(
+        path,
+        declarations,
+        dependencies,
+        issues,
+        &StructureOptions::default(),
+    );
+    document.revision = None;
+    document
+}
+
 #[test]
-fn partial_structure_is_explicitly_marked() {
-    let document = StructuralDocument {
-        path: "scripts/player.gd".to_owned(),
-        revision: None,
-        base_type: Some("Node".to_owned()),
-        declared_name: Some("Player".to_owned()),
-        file_annotations: Vec::new(),
-        signals: Vec::new(),
-        enums: Vec::new(),
-        constants: Vec::new(),
-        properties: Vec::new(),
-        functions: Vec::new(),
-        dependencies: Vec::new(),
-        status: StructureStatus::Partial,
-        issues: vec![StructuralIssue {
-            line: 2,
+fn generic_model_contains_no_language_domain_semantics() {
+    // The generic kind vocabulary is the whole semantic surface: no
+    // language-domain kinds exist, and attributes are never
+    // interpreted.
+    let kinds = [
+        StructuralKind::Type,
+        StructuralKind::Function,
+        StructuralKind::Method,
+        StructuralKind::Field,
+        StructuralKind::Variable,
+        StructuralKind::Constant,
+        StructuralKind::Enum,
+        StructuralKind::Event,
+        StructuralKind::Module,
+        StructuralKind::Other,
+    ];
+    for kind in kinds {
+        assert!(StructuralKind::parse(kind.as_str()) == Some(kind));
+    }
+    assert_eq!(StructuralKind::parse("signal"), None);
+    assert_eq!(StructuralKind::parse("class_name"), None);
+    // A language-provided attribute string is opaque data.
+    let document = normalized(
+        "src/example.lang",
+        vec![StructuralDeclaration::leaf(
+            StructuralKind::Field,
+            Some("value".to_owned()),
+            None,
+            Some(2),
+            vec!["export".to_owned(), "rpc".to_owned()],
+        )],
+        Vec::new(),
+        Vec::new(),
+    );
+    assert_eq!(document.declarations[0].attributes, ["export", "rpc"]);
+    // The generic summary must not interpret the attribute.
+    let summary =
+        build_structural_summary(&document, &SummaryOptions::default());
+    assert!(!summary.text.contains("export"));
+    assert!(!summary.text.contains("signal"));
+}
+
+#[test]
+fn declarations_preserve_deterministic_document_order() {
+    let document = normalized(
+        "src/example.lang",
+        vec![
+            declaration(StructuralKind::Type, "Example", 1),
+            declaration(StructuralKind::Function, "calculate", 5),
+            declaration(StructuralKind::Constant, "LIMIT", 9),
+        ],
+        Vec::new(),
+        Vec::new(),
+    );
+    let names = document
+        .declarations
+        .iter()
+        .filter_map(|item| item.name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["Example", "calculate", "LIMIT"]);
+    assert_eq!(document.declaration_count(), 3);
+}
+
+#[test]
+fn nested_declarations_are_bounded_and_ordered() {
+    let nested = vec![StructuralDeclaration {
+        kind: StructuralKind::Type,
+        name: Some("Example".to_owned()),
+        detail: None,
+        line: Some(1),
+        attributes: Vec::new(),
+        children: vec![
+            declaration(StructuralKind::Method, "calculate", 3),
+            declaration(StructuralKind::Field, "value", 4),
+        ],
+    }];
+    let document =
+        normalized("src/example.lang", nested, Vec::new(), Vec::new());
+    assert_eq!(document.declaration_count(), 3);
+    assert_eq!(
+        document.declarations[0].children[0].kind,
+        StructuralKind::Method,
+    );
+    let summary =
+        build_structural_summary(&document, &SummaryOptions::default());
+    assert!(summary.text.contains("method: 1"));
+    assert!(summary.text.contains("field: 1"));
+}
+
+#[test]
+fn partial_structure_is_derived_from_issues_and_explicit() {
+    let document = normalized(
+        "src/broken.lang",
+        vec![declaration(StructuralKind::Function, "run", 3)],
+        Vec::new(),
+        vec![StructuralIssue {
+            line: Some(2),
             message: "Unterminated string literal.".to_owned(),
         }],
-        truncated: false,
-    };
+    );
+    assert_eq!(document.status, StructureStatus::Partial);
     let summary =
-        build_structural_summary(&document, None, &SummaryOptions::default());
+        build_structural_summary(&document, &SummaryOptions::default());
     assert!(
-        summary
-            .text
-            .contains("structural_status: partial (1 parser error(s))")
+        summary.text.contains("- structural status: partial (1 issue(s))")
     );
     assert!(summary.text.ends_with(
         "advisory structural summary \u{2014} not authoritative source; read exact before editing."
     ));
-    assert!(summary.text.contains("- extends Node"));
-    assert!(summary.text.contains("- class_name Player"));
     assert!(!summary.truncated);
     assert_eq!(summary.bytes, summary.text.len());
+    // A document without issues is complete.
+    let clean =
+        normalized("src/clean.lang", Vec::new(), Vec::new(), Vec::new());
+    assert_eq!(clean.status, StructureStatus::Complete);
+}
+
+#[test]
+fn truncation_bounds_declarations_dependencies_and_issues() {
+    let declarations = (0..6)
+        .map(|index| {
+            declaration(
+                StructuralKind::Function,
+                &format!("f{index}"),
+                index as u64 + 1,
+            )
+        })
+        .collect::<Vec<_>>();
+    let document = normalize_structural_document(
+        "src/big.lang",
+        declarations,
+        (0..8).map(|index| format!("dep{index}")).collect(),
+        (0..80)
+            .map(|index| StructuralIssue {
+                line: Some(index as u64 + 1),
+                message: format!("issue {index}"),
+            })
+            .collect(),
+        &StructureOptions {
+            max_declarations: 4,
+            max_depth: 16,
+            max_dependencies: 3,
+            max_issues: 5,
+        },
+    );
+    assert!(document.truncated);
+    assert_eq!(document.declarations.len(), 4);
+    assert_eq!(document.dependencies, ["dep0", "dep1", "dep2"]);
+    assert_eq!(document.issues.len(), 5);
+    assert_eq!(document.status, StructureStatus::Partial);
+    let summary =
+        build_structural_summary(&document, &SummaryOptions::default());
+    assert!(
+        summary
+            .text
+            .contains("- structural output truncated (output bound reached)",)
+    );
+}
+
+#[test]
+fn depth_bound_excludes_deeper_declarations_explicitly() {
+    let deep = StructuralDeclaration {
+        kind: StructuralKind::Type,
+        name: Some("Outer".to_owned()),
+        detail: None,
+        line: Some(1),
+        attributes: Vec::new(),
+        children: vec![StructuralDeclaration {
+            kind: StructuralKind::Type,
+            name: Some("Inner".to_owned()),
+            detail: None,
+            line: Some(2),
+            attributes: Vec::new(),
+            children: vec![StructuralDeclaration {
+                kind: StructuralKind::Method,
+                name: Some("too_deep".to_owned()),
+                detail: None,
+                line: Some(3),
+                attributes: Vec::new(),
+                children: Vec::new(),
+            }],
+        }],
+    };
+    let document = normalize_structural_document(
+        "src/deep.lang",
+        vec![deep],
+        Vec::new(),
+        Vec::new(),
+        &StructureOptions {
+            max_declarations: 256,
+            max_depth: 2,
+            max_dependencies: 32,
+            max_issues: 64,
+        },
+    );
+    assert!(document.truncated);
+    assert_eq!(document.declaration_count(), 2);
+    assert!(document.declarations[0].children[0].children.is_empty());
+}
+
+#[test]
+fn malformed_generic_input_never_panics() {
+    // Deeply nested children with a depth-1 bound terminate safely.
+    let mut node = StructuralDeclaration::leaf(
+        StructuralKind::Other,
+        None,
+        None,
+        None,
+        Vec::new(),
+    );
+    for _ in 0..10_000 {
+        node = StructuralDeclaration {
+            kind: StructuralKind::Other,
+            name: None,
+            detail: None,
+            line: None,
+            attributes: Vec::new(),
+            children: vec![node],
+        };
+    }
+    let document = normalize_structural_document(
+        "src/hostile.lang",
+        vec![node],
+        Vec::new(),
+        Vec::new(),
+        &StructureOptions::default(),
+    );
+    assert!(document.truncated);
+    // Huge declaration lists are bounded, not panned over.
+    let many = (0..100_000)
+        .map(|index| declaration(StructuralKind::Variable, "", index as u64))
+        .collect::<Vec<_>>();
+    let bounded = normalize_structural_document(
+        "src/huge.lang",
+        many,
+        Vec::new(),
+        Vec::new(),
+        &StructureOptions::default(),
+    );
+    assert!(bounded.truncated);
+    assert_eq!(bounded.declarations.len(), 256);
+}
+
+#[test]
+fn summary_renders_generic_counts_names_and_revision() {
+    let mut document = normalized(
+        "src/example.lang",
+        vec![
+            StructuralDeclaration {
+                kind: StructuralKind::Type,
+                name: Some("Example".to_owned()),
+                detail: None,
+                line: Some(1),
+                attributes: Vec::new(),
+                children: vec![declaration(
+                    StructuralKind::Method,
+                    "calculate",
+                    3,
+                )],
+            },
+            declaration(StructuralKind::Function, "run", 5),
+            declaration(StructuralKind::Constant, "LIMIT", 9),
+        ],
+        vec!["lib/common".to_owned()],
+        Vec::new(),
+    );
+    document.revision = Some("rev_abc".to_owned());
+    let summary =
+        build_structural_summary(&document, &SummaryOptions::default());
+    assert!(!summary.truncated);
+    assert!(summary.text.contains("example.lang (summary @ rev_abc)"));
+    assert!(summary.text.contains(
+        "- declarations: 4 (type: 1, function: 1, method: 1, constant: 1)",
+    ));
+    assert!(summary.text.contains("- top-level: Example, run, LIMIT"));
+    assert!(summary.text.contains("- dependencies: lib/common"));
+    assert!(!summary.text.contains("- extends"));
+    assert!(!summary.text.contains("class_name"));
+    assert!(!summary.text.contains("signals"));
 }
 
 #[test]
 fn summary_truncation_keeps_the_footer_and_marks_explicitly() {
-    let functions = (0..60)
-        .map(|index| FunctionInfo {
-            name: format!("function_{index:02}"),
-            parameters: Vec::new(),
-            return_type: None,
-            is_static: false,
-            annotations: Vec::new(),
-            line: index as u64 + 1,
-            multiline_signature: false,
-        })
-        .collect::<Vec<_>>();
-    let document = StructuralDocument {
-        path: "scripts/big.gd".to_owned(),
-        revision: None,
-        base_type: None,
-        declared_name: None,
-        file_annotations: Vec::new(),
-        signals: Vec::new(),
-        enums: Vec::new(),
-        constants: Vec::new(),
-        properties: vec![PropertyInfo {
-            name: "speed".to_owned(),
-            type_name: Some("float".to_owned()),
-            annotations: vec!["export".to_owned()],
-            line: 1,
-            multiline: false,
-        }],
-        functions,
-        dependencies: Vec::new(),
-        status: StructureStatus::Complete,
-        issues: Vec::new(),
-        truncated: true,
-    };
+    let mut document = normalized(
+        "src/big.lang",
+        (0..30)
+            .map(|index| {
+                StructuralDeclaration::leaf(
+                    StructuralKind::Function,
+                    Some(format!("function_{index:02}")),
+                    None,
+                    Some(index as u64 + 1),
+                    Vec::new(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        Vec::new(),
+        Vec::new(),
+    );
+    document.revision = Some("rev_abc".to_owned());
+    // A 220-byte budget cannot fit the full body plus the footer, so
+    // the body is byte-truncated with the explicit marker.
     let summary = build_structural_summary(
         &document,
-        Some("rev_abc"),
-        &SummaryOptions { max_bytes: Some(300), notable_methods: Some(12) },
+        &SummaryOptions {
+            max_bytes: Some(220),
+            notable_declarations: Some(5),
+        },
     );
     assert!(summary.truncated);
     assert!(summary.text.contains("\u{2026} [summary truncated]"));
-    assert!(summary.text.contains("exported properties: speed"));
+    assert!(summary.text.contains("- top-level: function_00"));
     assert!(summary.text.ends_with(SUMMARY_FOOTER_END));
-    assert!(summary.bytes <= 300);
+    assert!(summary.bytes <= 220);
 }
 
 #[test]
-fn summary_renders_the_notable_function_total() {
-    let functions = (0..20)
-        .map(|index| FunctionInfo {
-            name: format!("fn_{index}"),
-            parameters: Vec::new(),
-            return_type: None,
-            is_static: index % 2 == 0,
-            annotations: Vec::new(),
-            line: index as u64 + 1,
-            multiline_signature: false,
-        })
-        .collect::<Vec<_>>();
-    let document = StructuralDocument {
-        path: "scripts/many.gd".to_owned(),
-        revision: None,
-        base_type: None,
-        declared_name: None,
-        file_annotations: Vec::new(),
-        signals: Vec::new(),
-        enums: Vec::new(),
-        constants: Vec::new(),
-        properties: Vec::new(),
-        functions,
-        dependencies: vec!["res://assets/icon.svg".to_owned()],
-        status: StructureStatus::Complete,
-        issues: Vec::new(),
-        truncated: false,
-    };
-    let summary = build_structural_summary(
-        &document,
-        None,
-        &SummaryOptions { max_bytes: Some(4096), notable_methods: Some(12) },
+fn summary_empty_document_renders_the_baseline() {
+    let document =
+        normalized("src/empty.lang", Vec::new(), Vec::new(), Vec::new());
+    let summary =
+        build_structural_summary(&document, &SummaryOptions::default());
+    assert_eq!(
+        summary.text,
+        "empty.lang (summary no revision)\nadvisory structural summary \u{2014} not authoritative source; read exact before editing."
     );
     assert!(!summary.truncated);
-    assert!(summary.text.contains("fn_0 (static)"));
-    assert!(summary.text.contains(", ... (20 total)"));
-    assert!(summary.text.contains("- dependencies: res://assets/icon.svg"));
-    assert!(summary.text.contains("- 20 functions"));
 }
 
 const SUMMARY_FOOTER_END: &str = "advisory structural summary \u{2014} not authoritative source; read exact before editing.";
@@ -543,31 +780,4 @@ fn malformed_positions_never_panic() {
         end: LanguagePosition { line: 1, column: 1 },
     };
     assert_eq!(validate_range(reversed), Err(PositionError::UnorderedRange));
-}
-
-#[test]
-fn summary_empty_document_renders_the_baseline() {
-    let document = StructuralDocument {
-        path: "scripts/empty.gd".to_owned(),
-        revision: None,
-        base_type: None,
-        declared_name: None,
-        file_annotations: Vec::new(),
-        signals: Vec::new(),
-        enums: Vec::new(),
-        constants: Vec::new(),
-        properties: Vec::new(),
-        functions: Vec::new(),
-        dependencies: Vec::new(),
-        status: StructureStatus::Complete,
-        issues: Vec::new(),
-        truncated: false,
-    };
-    let summary =
-        build_structural_summary(&document, None, &SummaryOptions::default());
-    assert_eq!(
-        summary.text,
-        "empty.gd (summary no revision)\nadvisory structural summary \u{2014} not authoritative source; read exact before editing."
-    );
-    assert!(!summary.truncated);
 }

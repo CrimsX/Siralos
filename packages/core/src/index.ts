@@ -1679,5 +1679,25 @@ export {
   type LanguagePosition,
   type LanguageRange,
 } from "./language/position.js";
+export {
+  DEFAULT_STRUCTURE_LIMITS,
+  DEFAULT_SUMMARY_MAX_BYTES as DEFAULT_STRUCTURE_SUMMARY_MAX_BYTES,
+  DEFAULT_SUMMARY_NOTABLE_DECLARATIONS,
+  SUMMARY_FOOTER,
+  SUMMARY_TRUNCATION_MARKER,
+  STRUCTURAL_KINDS,
+  buildStructuralSummary,
+  declarationCount,
+  normalizeStructuralDocument,
+  parseStructuralKind,
+  type StructuralDeclaration,
+  type StructuralDocument,
+  type StructuralIssue,
+  type StructuralKind,
+  type StructuralSummary,
+  type StructureOptions,
+  type StructureStatus,
+  type SummaryOptions,
+} from "./language/structure.js";
 export { sanitizeControlCharacters } from "./language/sanitize.js";
 export { truncateUtf8Bytes, utf8ByteLength } from "./language/truncate.js";

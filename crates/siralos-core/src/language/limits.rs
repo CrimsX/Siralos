@@ -22,14 +22,18 @@ pub struct LanguageLimits {
     pub max_symbols_per_document: usize,
     /// Maximum reference locations returned per query.
     pub max_references_per_query: usize,
-    /// Maximum structural declarations retained per document.
+    /// Maximum structural declarations retained per document (whole tree).
     pub max_structural_declarations: usize,
+    /// Maximum structural nesting depth (document children are depth 1).
+    pub max_structural_depth: usize,
     /// Maximum structural dependencies retained per document.
     pub max_structural_dependencies: usize,
+    /// Maximum structural issues retained per document.
+    pub max_structural_issues: usize,
     /// Default advisory summary byte budget.
     pub max_summary_bytes: usize,
-    /// Default number of notable function names in a summary.
-    pub default_notable_methods: usize,
+    /// Default number of notable top-level declaration names in a summary.
+    pub default_notable_declarations: usize,
 }
 
 /// The generic language-intelligence limits (reference-extracted).
@@ -46,12 +50,16 @@ pub const LANGUAGE_LIMITS: LanguageLimits = LanguageLimits {
     max_symbols_per_document: 4_096,
     // Generic R5 host ceiling (domains may lower it).
     max_references_per_query: 4_096,
-    // Reference: the structural declaration cap.
+    // Generic R5 host ceiling (domains may lower it).
     max_structural_declarations: 256,
-    // Reference: the structural dependency cap.
+    // Generic R5 host ceiling for nested structure (domains may lower it).
+    max_structural_depth: 16,
+    // Generic R5 host ceiling (domains may lower it).
     max_structural_dependencies: 32,
+    // Generic R5 host ceiling for typed issues (domains may lower it).
+    max_structural_issues: 64,
     // Reference: DEFAULT_SUMMARY_MAX_BYTES.
     max_summary_bytes: 4_096,
-    // Reference: DEFAULT_SUMMARY_NOTABLE_METHODS.
-    default_notable_methods: 12,
+    // Reference: DEFAULT_SUMMARY_NOTABLE_DECLARATIONS.
+    default_notable_declarations: 12,
 };

@@ -114,47 +114,40 @@ proptest! {
     #[test]
     fn summary_bytes_never_exceed_the_budget(
         name in ".{0,12}",
-        functions in 0usize..24,
+        declarations in 0usize..24,
         max_bytes in 120usize..512,
     ) {
         use crate::language::structure::{
-            FunctionInfo, StructuralDocument, StructureStatus, SummaryOptions,
+            StructuralDeclaration, StructuralKind, StructureOptions,
+            SummaryOptions, normalize_structural_document,
         };
-        let functions_list = (0..functions)
-            .map(|index| FunctionInfo {
-                name: format!("fn_{index}"),
-                parameters: Vec::new(),
-                return_type: None,
-                is_static: false,
-                annotations: Vec::new(),
-                line: index as u64 + 1,
-                multiline_signature: false,
-            })
+        let declarations_list = (0..declarations)
+            .map(|index| StructuralDeclaration::leaf(
+                StructuralKind::Function,
+                Some(format!("fn_{index}")),
+                None,
+                Some(index as u64 + 1),
+                Vec::new(),
+            ))
             .collect();
-        let document = StructuralDocument {
-            path: format!("scripts/{name}.gd"),
-            revision: None,
-            base_type: None,
-            declared_name: None,
-            file_annotations: Vec::new(),
-            signals: Vec::new(),
-            enums: Vec::new(),
-            constants: Vec::new(),
-            properties: Vec::new(),
-            functions: functions_list,
-            dependencies: Vec::new(),
-            status: StructureStatus::Complete,
-            issues: Vec::new(),
-            truncated: false,
-        };
+        let document = normalize_structural_document(
+            &format!("src/{name}.lang"),
+            declarations_list,
+            Vec::new(),
+            Vec::new(),
+            &StructureOptions::default(),
+        );
         let summary = build_structural_summary(
             &document,
-            None,
-            &SummaryOptions { max_bytes: Some(max_bytes), notable_methods: Some(12) },
+            &SummaryOptions {
+                max_bytes: Some(max_bytes),
+                notable_declarations: Some(12),
+            },
         );
         prop_assert!(summary.bytes <= max_bytes);
         prop_assert!(summary.text.ends_with(SUMMARY_FOOTER_END));
     }
+
 
     /// Malformed ranges are rejected, never panicked on.
     #[test]

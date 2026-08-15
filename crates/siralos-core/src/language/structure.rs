@@ -1,17 +1,22 @@
-//! Generic structural-document representation and the deterministic
-//! advisory summary formatter (Stage 3R R5, ADR 0016).
+//! Generic structural-document representation, normalization, and the
+//! deterministic advisory summary formatter (Stage 3R R5, ADR 0016).
 //!
 //! A structural document carries only language-neutral facts: typed
-//! declarations with names, signatures, annotations, and lines;
-//! dependencies; a complete/partial status with typed issues; an
-//! explicit truncated flag; and the R4 revision binding. The Host
-//! never understands any language grammar here: a language
-//! implementation turns exact source at a known revision into a
-//! bounded structural document through its own parser. The advisory
-//! summary formatter is the deterministic language-neutral renderer
-//! (byte-bounded, revision-stating, always advisory; the footer is
-//! never truncated away). A summary is advisory and never
-//! authoritative source.
+//! declarations with optional names, opaque signature/detail text,
+//! opaque attributes/modifiers, optional one-based lines, and nested
+//! children; dependencies as opaque bounded facts; a complete/partial
+//! status derived from typed issues; an explicit truncated flag; and
+//! the R4 revision binding. The Host never interprets language
+//! semantics: attribute strings such as `static` or `export` are data,
+//! never meaning. A language implementation turns exact source at a
+//! known revision into this bounded observation through its own
+//! parser (language-domain extraction is a later milestone's
+//! surface). The advisory summary formatter is the deterministic
+//! language-neutral renderer (byte-bounded, revision-stating, always
+//! advisory; the footer is never truncated away). A summary is
+//! advisory and never authoritative source, and structural
+//! information grants no read, write, capability, or completion
+//! authority.
 
 use crate::language::limits::LANGUAGE_LIMITS;
 use crate::language::truncate::{
@@ -37,147 +42,288 @@ impl StructureStatus {
     }
 }
 
-/// One function/signal parameter.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParameterInfo {
-    /// Parameter name.
-    pub name: String,
-    /// Optional type annotation.
-    pub type_name: Option<String>,
+/// Genuinely cross-language declaration categories.
+///
+/// This small closed vocabulary is the stable generic Host contract;
+/// language implementations map their own constructs onto it (for
+/// example a signal or event maps to [`StructuralKind::Event`], a
+/// property or field to [`StructuralKind::Field`]). The vocabulary
+/// never includes language-domain kinds, and no behavior is attached
+/// to any kind beyond deterministic rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StructuralKind {
+    /// A type/class/interface/struct declaration.
+    Type,
+    /// A standalone function declaration.
+    Function,
+    /// A method (function nested inside a type).
+    Method,
+    /// A field or property declaration.
+    Field,
+    /// A variable declaration.
+    Variable,
+    /// A constant declaration.
+    Constant,
+    /// An enum declaration.
+    Enum,
+    /// An event/signal declaration.
+    Event,
+    /// A namespace or module declaration.
+    Module,
+    /// An opaque or unknown declaration category.
+    Other,
 }
 
-/// One file-level annotation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnnotationInfo {
-    /// Annotation name.
-    pub name: String,
-    /// Bounded annotation arguments.
-    pub arguments: Vec<String>,
-    /// One-based line.
-    pub line: u64,
+impl StructuralKind {
+    /// The canonical protocol string for this kind.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Type => "type",
+            Self::Function => "function",
+            Self::Method => "method",
+            Self::Field => "field",
+            Self::Variable => "variable",
+            Self::Constant => "constant",
+            Self::Enum => "enum",
+            Self::Event => "event",
+            Self::Module => "module",
+            Self::Other => "other",
+        }
+    }
+
+    /// Parse a protocol kind string; unknown kinds are rejected so
+    /// invalid data never silently becomes a valid declaration.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "type" => Some(Self::Type),
+            "function" => Some(Self::Function),
+            "method" => Some(Self::Method),
+            "field" => Some(Self::Field),
+            "variable" => Some(Self::Variable),
+            "constant" => Some(Self::Constant),
+            "enum" => Some(Self::Enum),
+            "event" => Some(Self::Event),
+            "module" => Some(Self::Module),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
 }
 
-/// One signal declaration.
+/// One structural declaration (bounded, ordered, language-neutral).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignalInfo {
-    /// Signal name.
-    pub name: String,
-    /// Signal parameters.
-    pub parameters: Vec<ParameterInfo>,
-    /// One-based line.
-    pub line: u64,
-}
-
-/// One enum declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnumInfo {
-    /// Enum name (None for anonymous enums).
+pub struct StructuralDeclaration {
+    /// Cross-language declaration kind.
+    pub kind: StructuralKind,
+    /// Optional display name.
     pub name: Option<String>,
-    /// Bounded member names.
-    pub members: Vec<String>,
-    /// One-based line.
-    pub line: u64,
-    /// True when the declaration spans multiple lines.
-    pub multiline: bool,
+    /// Optional opaque signature/detail text.
+    pub detail: Option<String>,
+    /// Optional one-based source line.
+    pub line: Option<u64>,
+    /// Opaque bounded attributes/modifiers (never interpreted by the
+    /// Host; e.g. `static`, `export`, `rpc` are data).
+    pub attributes: Vec<String>,
+    /// Nested declarations in document order (bounded).
+    pub children: Vec<StructuralDeclaration>,
 }
 
-/// One constant declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConstantInfo {
-    /// Constant name.
-    pub name: String,
-    /// Optional type annotation.
-    pub type_name: Option<String>,
-    /// One-based line.
-    pub line: u64,
-    /// True when the declaration spans multiple lines.
-    pub multiline: bool,
-}
-
-/// One property declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PropertyInfo {
-    /// Property name.
-    pub name: String,
-    /// Optional type annotation.
-    pub type_name: Option<String>,
-    /// Bounded declaration annotations.
-    pub annotations: Vec<String>,
-    /// One-based line.
-    pub line: u64,
-    /// True when the declaration spans multiple lines.
-    pub multiline: bool,
-}
-
-/// One function declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FunctionInfo {
-    /// Function name.
-    pub name: String,
-    /// Bounded parameters.
-    pub parameters: Vec<ParameterInfo>,
-    /// Optional return type annotation.
-    pub return_type: Option<String>,
-    /// True for static functions.
-    pub is_static: bool,
-    /// Bounded declaration annotations.
-    pub annotations: Vec<String>,
-    /// One-based line.
-    pub line: u64,
-    /// True when the signature spans multiple lines.
-    pub multiline_signature: bool,
+impl StructuralDeclaration {
+    /// Construct a declaration with no children.
+    pub fn leaf(
+        kind: StructuralKind,
+        name: Option<String>,
+        detail: Option<String>,
+        line: Option<u64>,
+        attributes: Vec<String>,
+    ) -> Self {
+        Self { kind, name, detail, line, attributes, children: Vec::new() }
+    }
 }
 
 /// One typed structural issue (parser/structure error).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuralIssue {
-    /// One-based line.
-    pub line: u64,
+    /// Optional one-based source line.
+    pub line: Option<u64>,
     /// Bounded issue message.
     pub message: String,
 }
 
-/// A bounded structural document for one exact source state.
+/// Bounds for structural normalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StructureOptions {
+    /// Maximum total declarations retained across the whole tree.
+    pub max_declarations: usize,
+    /// Maximum nesting depth (document children are depth 1).
+    pub max_depth: usize,
+    /// Maximum dependencies retained.
+    pub max_dependencies: usize,
+    /// Maximum issues retained.
+    pub max_issues: usize,
+}
+
+impl Default for StructureOptions {
+    fn default() -> Self {
+        Self {
+            max_declarations: LANGUAGE_LIMITS.max_structural_declarations,
+            max_depth: LANGUAGE_LIMITS.max_structural_depth,
+            max_dependencies: LANGUAGE_LIMITS.max_structural_dependencies,
+            max_issues: LANGUAGE_LIMITS.max_structural_issues,
+        }
+    }
+}
+
+/// A normalized, bounded structural document for one exact source state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuralDocument {
     /// Workspace-relative path with `/` separators.
     pub path: String,
     /// R4 revision handle of the exact source state observed.
     pub revision: Option<String>,
-    /// Declared base type (reference `extends` target).
-    pub base_type: Option<String>,
-    /// Declared type name (reference `class_name`).
-    pub declared_name: Option<String>,
-    /// File-level annotations.
-    pub file_annotations: Vec<AnnotationInfo>,
-    /// Signal declarations (source order).
-    pub signals: Vec<SignalInfo>,
-    /// Enum declarations (source order).
-    pub enums: Vec<EnumInfo>,
-    /// Constant declarations (source order).
-    pub constants: Vec<ConstantInfo>,
-    /// Property declarations (source order).
-    pub properties: Vec<PropertyInfo>,
-    /// Function declarations (source order).
-    pub functions: Vec<FunctionInfo>,
-    /// Bounded structural dependencies.
+    /// Declarations in document order (depth-first, bounded).
+    pub declarations: Vec<StructuralDeclaration>,
+    /// Bounded opaque dependencies.
     pub dependencies: Vec<String>,
-    /// Parse status: complete or partial.
+    /// Parse status derived from the bounded issues.
     pub status: StructureStatus,
-    /// Typed parser/structure issues (source order).
+    /// Typed issues (source order, bounded).
     pub issues: Vec<StructuralIssue>,
-    /// True when the declaration cap was reached (output is bounded).
+    /// True when any output bound was applied (explicit truncation).
     pub truncated: bool,
 }
 
 impl StructuralDocument {
-    /// Total declaration count (bounded by the declaration cap).
+    /// Total declaration count across the whole bounded tree.
     pub fn declaration_count(&self) -> usize {
-        self.signals.len()
-            + self.enums.len()
-            + self.constants.len()
-            + self.properties.len()
-            + self.functions.len()
+        fn walk(declarations: &[StructuralDeclaration], count: &mut usize) {
+            for declaration in declarations {
+                *count += 1;
+                walk(&declaration.children, count);
+            }
+        }
+        let mut count = 0;
+        walk(&self.declarations, &mut count);
+        count
+    }
+
+    /// Top-level (depth-1) declarations.
+    pub fn top_level(&self) -> &[StructuralDeclaration] {
+        &self.declarations
+    }
+}
+
+/// Normalize one structural observation: preserve document order,
+/// bound the declaration tree (count and depth), dependencies, and
+/// issues with explicit truncation, and derive the status from the
+/// bounded issues. Malformed inputs (deep nesting, huge counts) never
+/// panic; they are bounded conservatively.
+pub fn normalize_structural_document(
+    path: &str,
+    declarations: Vec<StructuralDeclaration>,
+    dependencies: Vec<String>,
+    issues: Vec<StructuralIssue>,
+    options: &StructureOptions,
+) -> StructuralDocument {
+    let mut truncated = false;
+    let mut budget = options.max_declarations;
+    let declarations = bound_declarations(
+        declarations,
+        options.max_depth,
+        &mut budget,
+        &mut truncated,
+    );
+    let mut dependencies = dependencies;
+    if dependencies.len() > options.max_dependencies {
+        dependencies.truncate(options.max_dependencies);
+        truncated = true;
+    }
+    let mut issues = issues;
+    if issues.len() > options.max_issues {
+        issues.truncate(options.max_issues);
+        truncated = true;
+    }
+    let status = if issues.is_empty() {
+        StructureStatus::Complete
+    } else {
+        StructureStatus::Partial
+    };
+    StructuralDocument {
+        path: path.to_owned(),
+        revision: None,
+        declarations,
+        dependencies,
+        status,
+        issues,
+        truncated,
+    }
+}
+
+/// Depth-first bounded walk of the declaration tree in document order.
+///
+/// Recursion is bounded by `max_depth` (never by the input shape):
+/// subtrees deeper than the bound are excluded without recursing into
+/// them, and excluded or unprocessed subtrees are dropped through the
+/// iterative `drop_subtree` helper so that cleanup never recurses
+/// through drop glue.
+fn bound_declarations(
+    declarations: Vec<StructuralDeclaration>,
+    max_depth: usize,
+    budget: &mut usize,
+    truncated: &mut bool,
+) -> Vec<StructuralDeclaration> {
+    bound_at_depth(declarations, max_depth, 1, budget, truncated)
+}
+
+fn bound_at_depth(
+    declarations: Vec<StructuralDeclaration>,
+    max_depth: usize,
+    depth: usize,
+    budget: &mut usize,
+    truncated: &mut bool,
+) -> Vec<StructuralDeclaration> {
+    let mut out = Vec::new();
+    let mut pending = declarations.into_iter();
+    while let Some(mut declaration) = pending.next() {
+        if *budget == 0 {
+            // Output bound reached: the unprocessed remainder is
+            // dropped iteratively (never through deep drop glue).
+            *truncated = true;
+            let remaining = pending.collect::<Vec<_>>();
+            drop_subtree(remaining);
+            break;
+        }
+        if depth > max_depth {
+            // Deeper than the contract bound: excluded explicitly.
+            *truncated = true;
+            drop_subtree(std::mem::take(&mut declaration.children));
+            continue;
+        }
+        *budget -= 1;
+        declaration.children = bound_at_depth(
+            std::mem::take(&mut declaration.children),
+            max_depth,
+            depth + 1,
+            budget,
+            truncated,
+        );
+        out.push(declaration);
+    }
+    out
+}
+
+/// Drop a declaration subtree iteratively so cleanup of malformed
+/// deeply nested input never recurses through drop glue.
+fn drop_subtree(mut nodes: Vec<StructuralDeclaration>) {
+    loop {
+        let mut next = Vec::new();
+        for mut node in nodes.drain(..) {
+            next.append(&mut node.children);
+        }
+        if next.is_empty() {
+            break;
+        }
+        nodes = next;
     }
 }
 
@@ -186,15 +332,17 @@ impl StructuralDocument {
 pub struct SummaryOptions {
     /// Hard cap on the summary text (UTF-8 bytes).
     pub max_bytes: Option<usize>,
-    /// Number of notable function names to list.
-    pub notable_methods: Option<usize>,
+    /// Number of notable top-level declaration names to list.
+    pub notable_declarations: Option<usize>,
 }
 
 impl Default for SummaryOptions {
     fn default() -> Self {
         Self {
             max_bytes: Some(LANGUAGE_LIMITS.max_summary_bytes),
-            notable_methods: Some(LANGUAGE_LIMITS.default_notable_methods),
+            notable_declarations: Some(
+                LANGUAGE_LIMITS.default_notable_declarations,
+            ),
         }
     }
 }
@@ -202,8 +350,8 @@ impl Default for SummaryOptions {
 /// Default advisory summary byte budget.
 pub const DEFAULT_SUMMARY_MAX_BYTES: usize = 4096;
 
-/// Default number of notable function names in a summary.
-pub const DEFAULT_SUMMARY_NOTABLE_METHODS: usize = 12;
+/// Default number of notable top-level declaration names in a summary.
+pub const DEFAULT_SUMMARY_NOTABLE_DECLARATIONS: usize = 12;
 
 /// The advisory footer; it is never truncated away and is what stops a
 /// summary from being mistaken for authoritative source.
@@ -227,16 +375,53 @@ pub struct StructuralSummary {
     pub bytes: usize,
 }
 
-/// Render one count entry (`"N label"`, empty when zero).
-pub fn counted_label(count: usize, label: &str) -> String {
-    if count == 0 { String::new() } else { format!("{count} {label}") }
+/// Per-kind declaration counts in the fixed generic kind order.
+fn kind_counts(
+    declarations: &[StructuralDeclaration],
+) -> Vec<(StructuralKind, usize)> {
+    const KINDS: [StructuralKind; 10] = [
+        StructuralKind::Type,
+        StructuralKind::Function,
+        StructuralKind::Method,
+        StructuralKind::Field,
+        StructuralKind::Variable,
+        StructuralKind::Constant,
+        StructuralKind::Enum,
+        StructuralKind::Event,
+        StructuralKind::Module,
+        StructuralKind::Other,
+    ];
+    let mut counts = Vec::new();
+    for kind in KINDS {
+        let count = count_kind(declarations, kind);
+        if count > 0 {
+            counts.push((kind, count));
+        }
+    }
+    counts
 }
 
-/// Build the deterministic advisory structural summary, byte-identical
-/// to the reference `buildWorkspaceSummary` for equivalent inputs.
+fn count_kind(
+    declarations: &[StructuralDeclaration],
+    kind: StructuralKind,
+) -> usize {
+    let mut count = 0;
+    for declaration in declarations {
+        if declaration.kind == kind {
+            count += 1;
+        }
+        count += count_kind(&declaration.children, kind);
+    }
+    count
+}
+
+/// Build the deterministic advisory structural summary. The formatter
+/// renders only generic structure: header with revision, declaration
+/// totals by kind, notable top-level names, dependencies, partial
+/// status with the issue count, and explicit truncation. Attribute
+/// strings are never interpreted (no language-domain meaning).
 pub fn build_structural_summary(
     document: &StructuralDocument,
-    revision: Option<&str>,
     options: &SummaryOptions,
 ) -> StructuralSummary {
     // The advisory footer and the truncation marker always fit: the
@@ -249,97 +434,62 @@ pub fn build_structural_summary(
         .max_bytes
         .unwrap_or(DEFAULT_SUMMARY_MAX_BYTES)
         .max(footer_bytes + marker_bytes);
-    let notable_methods =
-        options.notable_methods.unwrap_or(DEFAULT_SUMMARY_NOTABLE_METHODS);
+    let notable = options
+        .notable_declarations
+        .unwrap_or(DEFAULT_SUMMARY_NOTABLE_DECLARATIONS);
     let mut lines = Vec::new();
     let name =
         document.path.rsplit('/').next().unwrap_or(document.path.as_str());
-    let header = match revision {
+    let header = match document.revision.as_deref() {
         None => format!("{name} (summary no revision)"),
         Some(revision) => format!("{name} (summary @ {revision})"),
     };
     lines.push(header);
-    if let Some(base_type) = document.base_type.as_deref() {
-        lines.push(format!("- extends {base_type}"));
-    }
-    if let Some(declared_name) = document.declared_name.as_deref() {
-        lines.push(format!("- class_name {declared_name}"));
-    }
-    if !document.file_annotations.is_empty() {
-        let annotations = document
-            .file_annotations
-            .iter()
-            .map(|annotation| format!("@{}", annotation.name))
+    let total = document.declaration_count();
+    if total > 0 {
+        let counts = kind_counts(&document.declarations)
+            .into_iter()
+            .map(|(kind, count)| format!("{}: {count}", kind.as_str()))
             .collect::<Vec<_>>()
             .join(", ");
-        lines.push(format!("- annotations: {annotations}"));
+        lines.push(format!("- declarations: {total} ({counts})"));
     }
-    let counts = [
-        counted_label(document.signals.len(), "signals"),
-        counted_label(document.properties.len(), "properties"),
-        counted_label(document.functions.len(), "functions"),
-        counted_label(document.constants.len(), "constants"),
-        counted_label(document.enums.len(), "enums"),
-    ]
-    .into_iter()
-    .filter(|entry| !entry.is_empty())
-    .collect::<Vec<_>>();
-    if !counts.is_empty() {
-        lines.push(format!("- {}", counts.join(", ")));
-    }
-    if !document.properties.is_empty() {
-        let exported = document
-            .properties
+    let named_top_level = document
+        .top_level()
+        .iter()
+        .filter_map(|declaration| declaration.name.as_deref())
+        .collect::<Vec<_>>();
+    if !named_top_level.is_empty() {
+        let listed = named_top_level
             .iter()
-            .filter(|property| {
-                property.annotations.iter().any(|annotation| {
-                    annotation == "export" || annotation.starts_with("export_")
-                })
-            })
-            .map(|property| property.name.as_str())
+            .take(notable)
+            .copied()
             .collect::<Vec<_>>()
             .join(", ");
-        if !exported.is_empty() {
-            lines.push(format!("- exported properties: {exported}"));
-        }
-    }
-    if !document.functions.is_empty() {
-        let notable = document
-            .functions
-            .iter()
-            .take(notable_methods)
-            .map(|function| {
-                if function.is_static {
-                    format!("{} (static)", function.name)
-                } else {
-                    function.name.clone()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let total = document.functions.len();
-        if total > notable_methods {
-            lines.push(format!("- functions: {notable}, ... ({total} total)"));
+        if named_top_level.len() > notable {
+            lines.push(format!(
+                "- top-level: {listed}, ... ({} total)",
+                named_top_level.len(),
+            ));
         } else {
-            lines.push(format!("- functions: {notable}"));
+            lines.push(format!("- top-level: {listed}"));
         }
     }
     if !document.dependencies.is_empty() {
         lines.push(format!(
             "- dependencies: {}",
-            document.dependencies.join(", ")
+            document.dependencies.join(", "),
         ));
     }
     if document.status == StructureStatus::Partial {
         lines.push(format!(
-            "- structural_status: partial ({} parser error(s))",
+            "- structural status: partial ({} issue(s))",
             document.issues.len(),
         ));
     }
     if document.truncated {
         lines.push(
-            "- structural output truncated (declaration cap reached)"
-                .to_owned(),
+            "- structural output truncated (output bound reached)".to_owned(),
         );
     }
     // The advisory footer is never dropped: the body is truncated
@@ -376,7 +526,7 @@ pub fn build_structural_summary(
     let bytes = bounded.len();
     StructuralSummary {
         path: document.path.clone(),
-        revision: revision.map(str::to_owned),
+        revision: document.revision.clone(),
         text: bounded,
         truncated,
         bytes,

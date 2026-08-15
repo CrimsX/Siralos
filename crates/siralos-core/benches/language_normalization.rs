@@ -16,8 +16,9 @@ use siralos_core::language::diagnostic::{
 };
 use siralos_core::language::limits::LANGUAGE_LIMITS;
 use siralos_core::language::structure::{
-    FunctionInfo, StructuralDocument, StructureStatus, SummaryOptions,
-    build_structural_summary,
+    StructuralDeclaration, StructuralDocument, StructuralKind,
+    StructureOptions, SummaryOptions, build_structural_summary,
+    normalize_structural_document,
 };
 
 fn sample_diagnostics(count: usize) -> Vec<Diagnostic> {
@@ -45,33 +46,28 @@ fn sample_diagnostics(count: usize) -> Vec<Diagnostic> {
 }
 
 fn sample_document() -> StructuralDocument {
-    let functions = (0..64)
-        .map(|index| FunctionInfo {
-            name: format!("function_{index:02}"),
-            parameters: Vec::new(),
-            return_type: Some("void".to_owned()),
-            is_static: index % 2 == 0,
-            annotations: Vec::new(),
-            line: index as u64 + 1,
-            multiline_signature: false,
+    let declarations = (0..64)
+        .map(|index| {
+            StructuralDeclaration::leaf(
+                StructuralKind::Function,
+                Some(format!("function_{index:02}")),
+                Some("(int) -> void".to_owned()),
+                Some(index as u64 + 1),
+                if index % 2 == 0 {
+                    vec!["static".to_owned()]
+                } else {
+                    Vec::new()
+                },
+            )
         })
         .collect();
-    StructuralDocument {
-        path: "scripts/bench.gd".to_owned(),
-        revision: None,
-        base_type: Some("Node".to_owned()),
-        declared_name: Some("Bench".to_owned()),
-        file_annotations: Vec::new(),
-        signals: Vec::new(),
-        enums: Vec::new(),
-        constants: Vec::new(),
-        properties: Vec::new(),
-        functions,
-        dependencies: vec!["res://assets/a.svg".to_owned()],
-        status: StructureStatus::Complete,
-        issues: Vec::new(),
-        truncated: false,
-    }
+    normalize_structural_document(
+        "src/bench.lang",
+        declarations,
+        vec!["lib/common".to_owned()],
+        Vec::new(),
+        &StructureOptions::default(),
+    )
 }
 
 fn bench_normalize_diagnostics(criterion: &mut Criterion) {
@@ -95,7 +91,6 @@ fn bench_structural_summary(criterion: &mut Criterion) {
             bencher.iter(|| {
                 let summary = build_structural_summary(
                     std::hint::black_box(&document),
-                    None,
                     &SummaryOptions::default(),
                 );
                 std::hint::black_box(summary.bytes);

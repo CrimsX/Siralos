@@ -56,10 +56,10 @@ pub use position::{
 pub use reference::{ReferenceLimits, ReferenceResult, normalize_references};
 pub use sanitize::sanitize_control_characters;
 pub use structure::{
-    AnnotationInfo, ConstantInfo, EnumInfo, FunctionInfo, ParameterInfo,
-    PropertyInfo, SignalInfo, StructuralDocument, StructuralIssue,
-    StructuralSummary, StructureStatus, SummaryOptions,
-    build_structural_summary, counted_label,
+    DEFAULT_SUMMARY_MAX_BYTES, DEFAULT_SUMMARY_NOTABLE_DECLARATIONS,
+    StructuralDeclaration, StructuralDocument, StructuralIssue,
+    StructuralKind, StructuralSummary, StructureOptions, StructureStatus,
+    SummaryOptions, build_structural_summary, normalize_structural_document,
 };
 pub use symbol::{Symbol, SymbolKind, SymbolResult, normalize_symbols};
 pub use truncate::{
