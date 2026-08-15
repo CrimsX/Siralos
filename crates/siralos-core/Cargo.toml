@@ -14,5 +14,9 @@ criterion = "0.7"
 name = "version_parse"
 harness = false
 
+[[bench]]
+name = "task_baseline"
+harness = false
+
 [lints]
 workspace = true

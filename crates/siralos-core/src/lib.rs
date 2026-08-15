@@ -11,6 +11,8 @@
 //! see `docs/development/RUST_STYLE.md` and ADR 0032 for the engineering
 //! rules this crate follows.
 
+pub mod identity;
+pub mod task;
 pub mod version;
 
 pub use version::Version;
