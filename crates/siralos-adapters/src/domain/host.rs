@@ -326,6 +326,10 @@ impl DomainHost {
     /// loaded and instantiated (malformed or version-incompatible
     /// bytes fail before any lifecycle mutation), then the lifecycle
     /// decision runs, then the exact identity is bound into the guest.
+    /// The final commit revalidates the prepared activation against
+    /// the current lifecycle episode and fails typed if anything
+    /// changed after preparation, publishing no HostSession and
+    /// leaving the lifecycle unchanged.
     pub fn activate(
         &mut self,
         request: ActivationRequest,
@@ -445,8 +449,12 @@ impl DomainHost {
             });
         }
         // 6. Commit: the single authoritative Enabled -> Active
-        //    transition. No fallible operation remains afterwards.
-        let active = self.lifecycle.commit_activation(prepared);
+        //    transition. No fallible operation remains afterwards. A
+        //    stale commit (any lifecycle transition since preparation)
+        //    fails typed and publishes no HostSession; the provisional
+        //    store and instance are simply dropped with the local
+        //    state, so no rollback machinery is needed.
+        let active = self.lifecycle.commit_activation(prepared)?;
         self.session = Some(HostSession { store, instance, cancelled: false });
         Ok(active)
     }

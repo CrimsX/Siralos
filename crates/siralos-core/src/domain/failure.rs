@@ -100,6 +100,11 @@ pub enum DomainFailure {
     },
     /// The operation was cancelled/interrupted.
     Cancelled,
+    /// A prepared activation no longer matches the lifecycle episode
+    /// it was validated against: a material lifecycle transition
+    /// happened after preparation. The commit is rejected without any
+    /// state change, session allocation, or generation advance.
+    StaleActivation,
     /// The operation cannot currently be performed.
     Unavailable {
         /// Stable human-readable reason.
@@ -127,6 +132,7 @@ impl DomainFailure {
             Self::InvalidOutput { .. } => "INVALID_OUTPUT",
             Self::GuestFault { .. } => "GUEST_FAULT",
             Self::Cancelled => "CANCELLED",
+            Self::StaleActivation => "STALE_ACTIVATION",
             Self::Unavailable { .. } => "UNAVAILABLE",
         }
     }
@@ -172,6 +178,7 @@ mod tests {
             DomainFailure::InvalidOutput { reason: "bad".to_owned() },
             DomainFailure::GuestFault { detail: "trap".to_owned() },
             DomainFailure::Cancelled,
+            DomainFailure::StaleActivation,
             DomainFailure::Unavailable { reason: "no runtime".to_owned() },
         ];
         let mut codes: Vec<&str> =

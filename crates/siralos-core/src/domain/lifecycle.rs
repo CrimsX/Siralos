@@ -193,12 +193,16 @@ impl ActiveDomain {
 }
 
 /// The validated, not-yet-committed outcome of activation preparation:
-/// the exact binding and the effective grant. The authoritative
-/// transition happens only when the Host commits the prepared
-/// activation, so no fallible runtime step can ever leave the lifecycle
-/// Active without a session.
+/// the exact binding, the effective grant, and the lifecycle
+/// generation that was validated. The authoritative transition happens
+/// only when the Host commits the prepared activation, so no fallible
+/// runtime step can ever leave the lifecycle Active without a session;
+/// the generation fence binds the preparation to the exact lifecycle
+/// episode, so an intervening material transition makes the prepared
+/// activation stale and commit fails typed instead of mutating.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedActivation {
+    generation: u64,
     binding: ActivationBinding,
     grant: CapabilityGrant,
 }
@@ -303,10 +307,18 @@ enum DomainState {
 
 /// Host-owned domain lifecycle state (installation/enablement records
 /// plus the current run/session-scoped activation).
+///
+/// `generation` is the lifecycle identity of the current episode: it
+/// advances exactly once on every successful material transition
+/// (install, uninstall, enable, disable, activation commit,
+/// deactivate), so a prepared activation is bound to the episode it
+/// was validated against and any intervening transition makes it
+/// stale. Failed operations never advance it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DomainLifecycle {
     state: DomainState,
     next_session: u64,
+    generation: u64,
 }
 
 impl Default for DomainLifecycle {
@@ -318,7 +330,7 @@ impl Default for DomainLifecycle {
 impl DomainLifecycle {
     /// A fresh lifecycle with no package installed.
     pub fn new() -> Self {
-        Self { state: DomainState::Absent, next_session: 1 }
+        Self { state: DomainState::Absent, next_session: 1, generation: 0 }
     }
 
     /// The current lifecycle state.
@@ -373,6 +385,7 @@ impl DomainLifecycle {
         match &self.state {
             DomainState::Absent => {
                 self.state = DomainState::Installed(package);
+                self.generation += 1;
                 Ok(())
             }
             DomainState::Installed(existing)
@@ -395,7 +408,10 @@ impl DomainLifecycle {
     pub fn uninstall(&mut self) -> Result<(), DomainFailure> {
         match std::mem::replace(&mut self.state, DomainState::Absent) {
             DomainState::Absent => Err(DomainFailure::NotInstalled),
-            DomainState::Installed(_) | DomainState::Enabled(_) => Ok(()),
+            DomainState::Installed(_) | DomainState::Enabled(_) => {
+                self.generation += 1;
+                Ok(())
+            }
             other => {
                 self.state = other;
                 Err(DomainFailure::Active)
@@ -410,6 +426,7 @@ impl DomainLifecycle {
             DomainState::Absent => Err(DomainFailure::NotInstalled),
             DomainState::Installed(package) => {
                 self.state = DomainState::Enabled(package);
+                self.generation += 1;
                 Ok(())
             }
             other => {
@@ -425,6 +442,7 @@ impl DomainLifecycle {
             DomainState::Absent => Err(DomainFailure::NotInstalled),
             DomainState::Enabled(package) => {
                 self.state = DomainState::Installed(package);
+                self.generation += 1;
                 Ok(())
             }
             other => {
@@ -572,32 +590,61 @@ impl DomainLifecycle {
             }
         }
         Ok(PreparedActivation {
+            generation: self.generation,
             binding: ActivationBinding::from_request(request),
             grant,
         })
     }
 
     /// Commit a prepared activation: the single authoritative
-    /// Enabled -> Active transition. Infallible by construction — the
-    /// Host performs every fallible runtime step before calling this —
-    /// and it allocates the session id only for committed activations,
-    /// so failed provisional attempts never advance the session
-    /// counter.
+    /// Enabled -> Active transition. Before any mutation the commit
+    /// revalidates the prepared activation against the current
+    /// lifecycle: the generation captured at preparation must still
+    /// equal the current generation, the state must still be Enabled,
+    /// and the prepared binding must still belong to the currently
+    /// enabled package exactly (stable id and exact digest). Any
+    /// mismatch is a stale preparation and
+    /// returns [`DomainFailure::StaleActivation`] without changing
+    /// state, allocating a session id, or advancing the generation.
     ///
-    /// # Panics
-    ///
-    /// Panics on an internal invariant violation (the lifecycle is no
-    /// longer Enabled); the Host flow guarantees the prepared
-    /// activation is committed immediately.
+    /// On success the session id is allocated exactly once, the
+    /// lifecycle advances to Active, and the generation advances, so
+    /// the published [`ActiveDomain`] always carries an exact package
+    /// binding for the enabled package and a session id from a
+    /// committed activation.
     pub fn commit_activation(
         &mut self,
         prepared: PreparedActivation,
-    ) -> ActiveDomain {
+    ) -> Result<ActiveDomain, DomainFailure> {
+        // 1. The prepared activation must still belong to this
+        //    lifecycle episode. Every successful material transition
+        //    advanced the generation, so any such transition since
+        //    preparation is detected here.
+        if prepared.generation != self.generation {
+            return Err(DomainFailure::StaleActivation);
+        }
+        // 2. The current state must still be Enabled.
+        let DomainState::Enabled(package) = &self.state else {
+            return Err(DomainFailure::StaleActivation);
+        };
+        // 3. The prepared binding must still belong to the currently
+        //    enabled package: its package identity (stable id and
+        //    exact digest) must match. The bound ABI is the requested
+        //    ABI, validated against the Host-supported ABI (never the
+        //    package's declared ABI), so the identity check covers id
+        //    and digest only. Generation fencing never replaces this
+        //    package identity check.
+        if prepared.binding.package_id() != package.id()
+            || prepared.binding.digest() != package.digest()
+        {
+            return Err(DomainFailure::StaleActivation);
+        }
         let package =
             match std::mem::replace(&mut self.state, DomainState::Absent) {
                 DomainState::Enabled(package) => package,
-                _ => {
-                    panic!("commit_activation requires the enabled state");
+                other => {
+                    self.state = other;
+                    return Err(DomainFailure::StaleActivation);
                 }
             };
         let active = ActiveDomain {
@@ -606,9 +653,11 @@ impl DomainLifecycle {
             grant: prepared.grant,
         };
         self.next_session += 1;
+        self.generation += 1;
         self.state = DomainState::Active { package, active: active.clone() };
-        active
+        Ok(active)
     }
+
     /// Activate the installed, enabled package for this session:
     /// preparation plus commit. Fails closed (typed) on any of: wrong
     /// identity, stale digest, incompatible ABI, undeclared
@@ -628,7 +677,7 @@ impl DomainLifecycle {
             authority,
             &runtime,
         )?;
-        Ok(self.commit_activation(prepared))
+        self.commit_activation(prepared)
     }
     /// End the current run/session-scoped activation. The package
     /// stays installed and enabled.
@@ -636,6 +685,7 @@ impl DomainLifecycle {
         match std::mem::replace(&mut self.state, DomainState::Absent) {
             DomainState::Active { package, .. } => {
                 self.state = DomainState::Enabled(package);
+                self.generation += 1;
                 Ok(())
             }
             other => {
@@ -1184,6 +1234,372 @@ mod tests {
             other => panic!("unexpected activation outcome: {other:?}"),
         }
     }
+    fn enabled_lifecycle(id: &str, digest: &str) -> DomainLifecycle {
+        let mut lifecycle = DomainLifecycle::new();
+        lifecycle.install(package(id, digest)).unwrap();
+        lifecycle.enable().unwrap();
+        lifecycle
+    }
+
+    /// The typed stale failure is the machine-branchable staleness
+    /// code, never a misclassification of another failure class.
+    fn assert_stale(result: Result<super::ActiveDomain, DomainFailure>) {
+        assert!(matches!(result, Err(DomainFailure::StaleActivation)));
+    }
+
+    #[test]
+    fn stale_preparation_fails_typed_after_disable() {
+        let digest1 = digest(1);
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &DomainAbi::parse(ABI).unwrap(),
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        lifecycle.disable().unwrap();
+        let generation_before = lifecycle.generation;
+        assert_stale(lifecycle.commit_activation(prepared));
+        // No mutation: the lifecycle stays Installed, the session
+        // counter is untouched, and the generation did not advance.
+        assert_eq!(lifecycle.state(), LifecycleState::Installed);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(lifecycle.next_session, 1);
+        assert_eq!(lifecycle.generation, generation_before);
+    }
+
+    #[test]
+    fn stale_preparation_fails_typed_across_replacement() {
+        let digest_a = digest(1);
+        let digest_b = digest(2);
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest_a);
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest_a),
+                &DomainAbi::parse(ABI).unwrap(),
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        lifecycle.disable().unwrap();
+        lifecycle.uninstall().unwrap();
+        lifecycle.install(package("other-domain", &digest_b)).unwrap();
+        lifecycle.enable().unwrap();
+        assert_stale(lifecycle.commit_activation(prepared));
+        // Package B remains Enabled with no A binding attached and no
+        // session allocated.
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(
+            lifecycle.installed_package().map(|p| p.id().as_str()),
+            Some("other-domain"),
+        );
+        assert_eq!(lifecycle.next_session, 1);
+    }
+
+    #[test]
+    fn stale_preparation_fails_after_same_package_restart() {
+        let digest1 = digest(1);
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &DomainAbi::parse(ABI).unwrap(),
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        // Disable and re-enable the SAME package: the validated
+        // lifecycle episode changed, so the old preparation is stale.
+        lifecycle.disable().unwrap();
+        lifecycle.enable().unwrap();
+        assert_stale(lifecycle.commit_activation(prepared));
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(lifecycle.next_session, 1);
+    }
+
+    #[test]
+    fn stale_preparation_fails_after_completed_activation() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        let first = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        lifecycle.commit_activation(first.clone()).unwrap();
+        lifecycle.deactivate().unwrap();
+        // A second preparation is bound to the new episode and
+        // commits; the first preparation can never cross the completed
+        // activation lifecycle.
+        let second = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        assert_eq!(
+            lifecycle.commit_activation(second).unwrap().session_id(),
+            2,
+        );
+        assert_eq!(lifecycle.active().unwrap().session_id(), 2);
+        lifecycle.deactivate().unwrap();
+        assert_stale(lifecycle.commit_activation(first));
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        // Two committed activations, no session consumed by the stale
+        // attempt: the next valid commit gets session 3.
+        assert_eq!(lifecycle.next_session, 3);
+    }
+
+    #[test]
+    fn immediate_prepare_commit_binds_exactly_and_allocates_once() {
+        let digest1 = digest(1);
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let active = lifecycle.commit_activation(prepared).unwrap();
+        // Exact binding, correct grant, exactly one session allocation.
+        assert_eq!(active.session_id(), 1);
+        assert_eq!(lifecycle.next_session, 2);
+        let package = lifecycle.installed_package().unwrap();
+        assert!(active.binding().matches(package));
+        assert_eq!(
+            active.binding().package_id().as_str(),
+            "conformance-domain"
+        );
+        assert_eq!(active.binding().digest().as_str(), digest1);
+        let granted: Vec<&str> =
+            active.grant().iter().map(|id| id.as_str()).collect();
+        assert_eq!(granted, vec!["workspace-read"]);
+        assert_eq!(lifecycle.state(), LifecycleState::Active);
+    }
+
+    #[test]
+    fn commit_misuse_returns_typed_failure_without_panic() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        // Double commit: the second commit of the same preparation is
+        // stale because the first commit advanced the generation.
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        lifecycle.commit_activation(prepared.clone()).unwrap();
+        assert_stale(lifecycle.commit_activation(prepared));
+        assert_eq!(lifecycle.state(), LifecycleState::Active);
+        assert_eq!(lifecycle.active().unwrap().session_id(), 1);
+        assert_eq!(lifecycle.next_session, 2);
+        // A preparation from a different lifecycle (fresh slot) is a
+        // publicly reachable invalid commit and fails typed, leaving
+        // the fresh lifecycle untouched.
+        let mut other = DomainLifecycle::new();
+        let foreign = enabled_lifecycle("conformance-domain", &digest1)
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        assert_stale(other.commit_activation(foreign));
+        assert_eq!(other.state(), LifecycleState::Absent);
+        assert_eq!(other.next_session, 1);
+    }
+
+    #[test]
+    fn failed_operations_do_not_advance_generation() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let mut lifecycle = DomainLifecycle::new();
+        // Failed operations on the fresh lifecycle.
+        assert!(lifecycle.enable().is_err());
+        assert!(lifecycle.disable().is_err());
+        assert!(lifecycle.uninstall().is_err());
+        assert!(lifecycle.deactivate().is_err());
+        assert_eq!(lifecycle.generation, 0);
+        lifecycle.install(package("conformance-domain", &digest1)).unwrap();
+        assert_eq!(lifecycle.generation, 1);
+        // Duplicate install fails without advancing.
+        assert!(
+            lifecycle
+                .install(package("conformance-domain", &digest1))
+                .is_err()
+        );
+        assert_eq!(lifecycle.generation, 1);
+        // Already-disabled disable fails without advancing.
+        assert!(lifecycle.disable().is_err());
+        assert_eq!(lifecycle.generation, 1);
+        lifecycle.enable().unwrap();
+        assert_eq!(lifecycle.generation, 2);
+        // Already-enabled enable fails without advancing.
+        assert!(lifecycle.enable().is_err());
+        assert_eq!(lifecycle.generation, 2);
+        // A rejected activation (wrong digest) fails without advancing.
+        assert!(
+            lifecycle
+                .activate(
+                    request("conformance-domain", &digest(2)),
+                    &supported,
+                    &authority(),
+                    RuntimeCheckResult::Ready,
+                )
+                .is_err()
+        );
+        assert_eq!(lifecycle.generation, 2);
+        // Deactivate without an active session fails without advancing.
+        assert!(lifecycle.deactivate().is_err());
+        assert_eq!(lifecycle.generation, 2);
+    }
+
+    #[test]
+    fn session_ids_advance_only_for_committed_activations() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        // A stale commit creates no observable session gap.
+        lifecycle.disable().unwrap();
+        assert_stale(lifecycle.commit_activation(prepared));
+        lifecycle.enable().unwrap();
+        let active = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let committed = lifecycle.commit_activation(active).unwrap();
+        assert_eq!(committed.session_id(), 1);
+        // Deactivate, prepare again, commit: the next monotonic
+        // committed session id is 2.
+        lifecycle.deactivate().unwrap();
+        let active = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        assert_eq!(
+            lifecycle.commit_activation(active).unwrap().session_id(),
+            2,
+        );
+    }
+
+    /// Table-driven invariant check: whenever the lifecycle is Active,
+    /// the installed package exists, the active binding matches it
+    /// exactly, and the session id belongs to a successful committed
+    /// activation (the monotonic commit count).
+    #[test]
+    fn active_state_invariants_hold_across_lifecycle_sequences() {
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let sequences: Vec<Vec<&str>> = vec![
+            vec!["activate"],
+            vec!["activate", "deactivate", "activate"],
+            vec!["disable", "enable", "activate"],
+            vec!["activate", "deactivate", "disable", "enable", "activate"],
+            vec!["deactivate", "activate", "activate"],
+        ];
+        for sequence in sequences {
+            let digest1 = digest(1);
+            let mut lifecycle =
+                enabled_lifecycle("conformance-domain", &digest1);
+            let mut commits = 0;
+            for step in sequence {
+                match step {
+                    "activate" => {
+                        if lifecycle.state() == LifecycleState::Enabled {
+                            let active = lifecycle
+                                .activate(
+                                    request("conformance-domain", &digest1),
+                                    &supported,
+                                    &authority(),
+                                    RuntimeCheckResult::Ready,
+                                )
+                                .unwrap();
+                            assert_eq!(active.session_id(), commits + 1);
+                            commits += 1;
+                        } else {
+                            assert!(matches!(
+                                lifecycle.activate(
+                                    request("conformance-domain", &digest1),
+                                    &supported,
+                                    &authority(),
+                                    RuntimeCheckResult::Ready,
+                                ),
+                                Err(DomainFailure::Active)
+                            ));
+                        }
+                    }
+                    "deactivate" => {
+                        if lifecycle.state() == LifecycleState::Active {
+                            lifecycle.deactivate().unwrap();
+                        } else {
+                            assert!(matches!(
+                                lifecycle.deactivate(),
+                                Err(DomainFailure::NotActive)
+                            ));
+                        }
+                    }
+                    "disable" => lifecycle.disable().unwrap(),
+                    "enable" => lifecycle.enable().unwrap(),
+                    _ => panic!("unknown sequence step"),
+                }
+                if lifecycle.state() == LifecycleState::Active {
+                    let package =
+                        lifecycle.installed_package().expect("installed");
+                    let active = lifecycle.active().expect("active session");
+                    assert_eq!(
+                        active.binding().package_id(),
+                        package.id(),
+                        "active binding must belong to the installed package",
+                    );
+                    assert_eq!(
+                        active.binding().digest(),
+                        package.digest(),
+                        "active binding must carry the exact package digest",
+                    );
+                    assert_eq!(
+                        active.session_id(),
+                        commits,
+                        "session id belongs to the last committed activation",
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn workspace_files_are_opaque_and_never_acquire() {
         // The marker name is deliberately a neutral string: core
@@ -1208,5 +1624,52 @@ mod tests {
         assert_eq!(scan.activations, 0);
         assert_eq!(scan.downloads, 0);
         assert_eq!(scan.recommendations, 0);
+    }
+
+    #[test]
+    fn rejected_protocol_request_does_not_invalidate_the_episode() {
+        let mut lifecycle = DomainLifecycle::new();
+        let digest1 = digest(1);
+        lifecycle
+            .install(
+                DomainPackage::parse(
+                    "conformance-domain",
+                    &digest1,
+                    "siralos:domain-abi@1.1.0",
+                    &ids(&["workspace-read"]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        lifecycle.enable().unwrap();
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let first = lifecycle.activate(
+            ActivationRequest::parse(
+                "conformance-domain",
+                &digest1,
+                "siralos:domain-abi@1.1.0",
+                &ids(&["workspace-read"]),
+            )
+            .unwrap(),
+            &supported,
+            &authority(),
+            RuntimeCheckResult::Ready,
+        );
+        assert!(matches!(first, Err(DomainFailure::UnsupportedAbi { .. })));
+        assert_eq!(
+            lifecycle.generation, 2,
+            "failed activate must not advance"
+        );
+        let committed = lifecycle.activate(
+            request("conformance-domain", &digest1),
+            &supported,
+            &authority(),
+            RuntimeCheckResult::Ready,
+        );
+        assert!(
+            committed.is_ok(),
+            "valid commit after failed activate must succeed: {committed:?}",
+        );
+        assert_eq!(committed.unwrap().session_id(), 1);
     }
 }
