@@ -71,7 +71,19 @@ unsafe filesystem or process boundary intentionally fails closed.
   transitions, bounded evidence, acceptance, completion gating, terminal
   immutability, activity, and progress) holds byte parity with the
   TypeScript reference across 17 differential `task-contract`
-  scenarios. R4 (Generic Workspace / Project Foundation) is next.
+  scenarios. R4 (Generic Workspace / Project Foundation) is complete:
+  `siralos-core` owns the validated workspace-relative path type, the
+  bounded revision registry, prepared-effect and checkpoint contracts,
+  and the typed unavailable Git disposition; `siralos-adapters` owns the
+  canonical root and containment resolution, bounded exact reads,
+  deterministic listing and search, fail-closed mutation preparation,
+  checkpoint storage inspection/reconciliation, and the Git disposition
+  boundary. The differential corpus gained 19 R4 scenarios across the
+  `workspace-read`, `workspace-list`, `workspace-search`,
+  `workspace-revision`, `workspace-prepare`, `checkpoint`, and
+  `git-inspection` subjects; all required applicable scenarios match and
+  the complete local repository gate passes (corpus schema 3, corpus
+  version 6). R5 (Generic Language Intelligence) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -240,10 +252,40 @@ Implemented (R3 — Domain-Neutral Core, ADR 0036):
   scenarios match byte-for-byte and the complete local repository gate
   passes (corpus schema 3, corpus version 5).
 
-Next: Stage 3R — R4: Generic Workspace / Project Foundation (reads,
-revisions, search, prepared effects, checkpoints, and optional Git
-integration). The complete internal sequence is recorded in
-`docs/development/RUST_MIGRATION.md`.
+Implemented (R4 — Generic Workspace / Project Foundation):
+
+- The domain-neutral workspace foundation in `siralos-core`: workspace
+  identity and the validated workspace-relative path type (NUL,
+  absolute, drive, and parent-traversal rejection; protected-path and
+  behavioral-configuration classification), the reference bounds,
+  deterministic revision handles and the bounded session registry
+  (workspace/path/content bound; handles grant no authority), the typed
+  prepared create/edit/delete effect models, the checkpoint model with
+  operation-state invariants, undo planning, and reconciliation
+  classification, and the read-only Git error/disposition contract.
+- The workspace adapters in `siralos-adapters`: canonical root
+  resolution, containment-safe path resolution (symlink/junction
+  escapes rejected), bounded exact reads with whole-file SHA-256
+  identity, deterministic bounded listing and search with the reference
+  exclusions and truncation dispositions, the fail-closed
+  mutation-preparation boundary (prepare/apply report unavailable;
+  nothing is written, approved, or checkpointed), checkpoint storage
+  inspection and startup reconciliation over the reference metadata
+  layout (creation and retention capacity remain unavailable), and the
+  typed unavailable Git inspection boundary (no enforcing process
+  sandbox exists in the Rust candidate; Git is never spawned).
+- The differential harness (ADR 0033) gained the R4 subjects
+  `workspace-read`, `workspace-list`, `workspace-search`,
+  `workspace-revision`, `workspace-prepare`, `checkpoint`, and
+  `git-inspection` with 19 scenarios driven through the real reference
+  tools/store/registry and the real Rust adapters; all required
+  applicable scenarios match (corpus schema 3, corpus version 6).
+  Deliberately unavailable effects (mutation application, new
+  checkpoint creation, Git inspection) report the same typed outcomes
+  on both sides.
+
+Next: Stage 3R — R5: Generic Language Intelligence. The complete
+internal sequence is recorded in `docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution
 

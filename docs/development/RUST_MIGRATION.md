@@ -27,7 +27,7 @@ repository concepts never satisfy those identifiers by implication.
 | R1        | Siralos rename, Rust workspace, and engineering standards                                                                       | Verified       |
 | R2        | Differential Behavioral Harness                                                                                                 | Verified       |
 | R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Verified       |
-| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Next           |
+| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified       |
 | R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Not due        |
 | R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Not due        |
 | R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Not due        |
@@ -55,6 +55,30 @@ append-only activity, and host-observed progress). The corpus gained 17
 protocol; all required applicable scenarios match byte-for-byte and the
 complete local repository gate passes. R3 verification does not authorize
 R4 work or satisfy any later migration or Stage-4 entry gate.
+
+R4 is verified: the generic workspace/project foundation lives in
+`siralos-core` (validated workspace-relative paths with NUL/absolute/drive/
+traversal rejection and protected-path classification, the reference
+bounds, deterministic revision handles and the bounded session registry,
+typed prepared create/edit/delete effect models, the checkpoint model with
+operation-state invariants, undo planning, and reconciliation
+classification, and the read-only Git error/disposition contract) and
+`siralos-adapters` (canonical root resolution, containment-safe resolution
+that rejects symlink/junction escapes, bounded exact reads with
+whole-file SHA-256 identity, deterministic bounded listing and search,
+the fail-closed mutation-preparation boundary, checkpoint storage
+inspection and startup reconciliation over the reference metadata layout,
+and the typed unavailable Git inspection boundary). The differential
+corpus gained 19 scenarios across the `workspace-read`, `workspace-list`,
+`workspace-search`, `workspace-revision`, `workspace-prepare`,
+`checkpoint`, and `git-inspection` subjects, executed by both
+implementations under the R2 protocol (corpus schema 3, corpus version 6);
+all required applicable scenarios match, the harness self-tests and replay
+stress pass, and the complete local repository gate passes. Deliberately
+unavailable effects (mutation application, new checkpoint creation, Git
+inspection) report the same typed outcomes on both sides. R4 verification
+does not authorize R5 work or satisfy any later migration or Stage-4
+entry gate.
 
 ## Porting gate
 

@@ -17,10 +17,12 @@ configuration, Skills, and explicitly installed Plugins
 
 > **Status: active development / Rust migration.** The broad TypeScript
 > implementation is the current behavioral reference. Rust is the successor
-> implementation, migrated under differential verification. Stage 3R R3 —
-> Domain-Neutral Core — is complete (host-owned task kernel at differential
-> parity); **R4 — Generic Workspace / Project Foundation** is next and has
-> not begun.
+> implementation, migrated under differential verification. Stage 3R R4 —
+> Generic Workspace / Project Foundation — is complete (bounded reads,
+> listing, search, revisions, prepared-effect contracts, checkpoint
+> inspection/reconciliation, and the typed unavailable Git disposition at
+> differential parity); **R5 — Generic Language Intelligence** is next and
+> has not begun.
 
 ## Status vocabulary
 
@@ -92,10 +94,14 @@ product, composition, and extension model is frozen in
 
 ### In migration (CURRENT)
 
-- The Rust successor covers the Stage 3R foundation, the R2 harness, and
-  the R3 domain-neutral host-owned task kernel (contracts, task state,
-  evidence, acceptance, completion, activity, progress) at differential
-  parity with the TypeScript reference
+- The Rust successor covers the Stage 3R foundation, the R2 harness, the
+  R3 domain-neutral host-owned task kernel (contracts, task state,
+  evidence, acceptance, completion, activity, progress), and the R4
+  generic workspace/project foundation (workspace identity and path
+  safety, bounded exact reads, deterministic listing and search, the
+  revision registry, prepared-effect contracts, checkpoint model and
+  inspection/reconciliation, and the typed unavailable Git disposition)
+  at differential parity with the TypeScript reference
 - Workspace mutation, undo, Git inspection, development commands, and dynamic
   Godot execution remain intentionally unavailable where the current host
   cannot mechanically enforce the required identity guarantees
@@ -233,8 +239,8 @@ separate, explicit concerns.
 
 - Public product stages 1–3 have a broad TypeScript reference surface; effectful
   capabilities retain truthful availability reporting
-- Stage 3R R1, R2, and R3 are complete
-- **Next:** Stage 3R R4 — Generic Workspace / Project Foundation
+- Stage 3R R1, R2, R3, and R4 are complete
+- **Next:** Stage 3R R5 — Generic Language Intelligence
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

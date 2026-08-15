@@ -271,8 +271,21 @@ siralos-cli ─────────→ siralos-adapters ─→ siralos-core
   (Godot), and it compiles with the Godot domain completely absent.
   Domain neutrality is enforced by a forbidden-symbol scan over core
   sources plus Cargo.toml dependency rules (`scripts/check-rust-architecture.mjs`).
+  The `workspace` module owns the generic R4 foundation: validated
+  workspace-relative paths and protected-path classification, the
+  reference operation bounds, deterministic revision handles and the
+  bounded session registry, prepared-effect models, checkpoint
+  contracts/invariants/undo-planning/reconciliation classification, and
+  the read-only Git error/disposition contract — no filesystem, process,
+  or language semantics.
 - `siralos-adapters` owns infrastructure/adapters; it may depend only on
-  core.
+  core. Its `workspace` module implements the R4 filesystem surface:
+  canonical root resolution, containment-safe path resolution,
+  bounded exact reads, deterministic bounded listing and search, the
+  fail-closed mutation-preparation boundary, checkpoint storage
+  inspection and reconciliation, and the typed unavailable Git
+  inspection disposition (Git is never spawned without an enforcing
+  process boundary).
 - `siralos-cli` is the composition boundary and the `siralos` binary; it
   may depend only on core and adapters.
 - Exactly three crates exist; no placeholder or hypothetical domain

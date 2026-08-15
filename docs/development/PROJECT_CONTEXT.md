@@ -6,8 +6,8 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R3
-Next milestone: R4 - Generic Workspace / Project Foundation
+Current completed milestone: R4
+Next milestone: R5 - Generic Language Intelligence
 Last verified commit: 35dead4e14c83621196f4d3bb0493deff410afa9
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
@@ -86,7 +86,27 @@ subjects. R3 added the domain-neutral host-owned task kernel to
 `siralos-core` (contracts, revisions, materialized state, transitions,
 evidence, acceptance, completion gate, activity, progress) with 17
 differential scenarios held at byte parity against the TypeScript reference
-(ADR 0033 gate). No further major Stage 1-3 subsystem has been ported yet.
+(ADR 0033 gate). R4 added the generic workspace/project foundation:
+`siralos-core` owns the validated workspace-relative path type (NUL,
+absolute, drive, and traversal rejection; protected-path classification),
+the workspace bounds, the deterministic revision-handle/registry semantics,
+the typed prepared create/edit/delete effect models, the checkpoint model
+with operation-state invariants, undo planning, and reconciliation
+classification, and the read-only Git error/disposition contract;
+`siralos-adapters` owns canonical root resolution, containment-safe path
+resolution (symlink/junction escapes rejected), bounded exact reads with
+whole-file SHA-256 identity, deterministic bounded listing and search,
+the fail-closed mutation-preparation boundary (prepare/apply report
+unavailable; nothing is written, approved, or checkpointed), checkpoint
+storage inspection and startup reconciliation over the reference metadata
+layout, and the typed unavailable Git inspection boundary. The differential
+corpus gained 19 scenarios across the `workspace-read`, `workspace-list`,
+`workspace-search`, `workspace-revision`, `workspace-prepare`,
+`checkpoint`, and `git-inspection` subjects; all required applicable
+scenarios match (ADR 0033 gate, corpus version 6). Structural/summary
+read modes remain explicit typed unsupported dispositions at R4
+(GDScript structure extraction is R5-owned). No further major Stage 1-3
+subsystem has been ported yet.
 
 ### Target architecture
 
@@ -132,8 +152,9 @@ Current Stage 3R position:
 R1      COMPLETE
 R2      COMPLETE
 R3      COMPLETE
-R4      NEXT
-R5-R12  NOT DUE
+R4      COMPLETE
+R5      NEXT
+R6-R12  NOT DUE
 ```
 
 Status changes require executable evidence and an update to
@@ -147,7 +168,7 @@ Status changes require executable evidence and an update to
 | R1        | Siralos rename + Rust engineering/domain-neutral foundation    | Verified |
 | R2        | Differential Behavioral Harness                                | Verified |
 | R3        | Domain-Neutral Core                                            | Verified |
-| R4        | Generic Workspace / Project Foundation                         | Next     |
+| R4        | Generic Workspace / Project Foundation                         | Verified |
 | R5        | Language Intelligence                                          |
 | R6        | Domain Capability Architecture                                 |
 | R7        | Providers / Tools / CLI                                        |
