@@ -224,7 +224,9 @@ describe("domain lifecycle", () => {
     if (!wrong.ok) {
       expect(wrong.failure.code).toBe("IDENTITY_MISMATCH");
     }
-    // Incompatible ABI fails closed.
+    // An ABI that identifies neither the installed package nor the
+    // Host fails closed as a package identity mismatch (the
+    // package-ABI gate precedes the Host-compatibility gate).
     const incompatibleRequest = parseActivationRequest(
       "conformance-domain",
       digest1,
@@ -240,7 +242,7 @@ describe("domain lifecycle", () => {
     });
     expect(incompatible.ok).toBe(false);
     if (!incompatible.ok) {
-      expect(incompatible.failure.code).toBe("UNSUPPORTED_ABI");
+      expect(incompatible.failure.code).toBe("IDENTITY_MISMATCH");
     }
     // Runtime checks gate activation.
     const exhausted = lifecycle.activate(request("conformance-domain", digest1), ABI, authority(), {

@@ -210,9 +210,10 @@ export interface DomainLifecycle {
   ): Eligibility;
   /**
    * Activate the installed, enabled package for this session. Fails
-   * closed (typed) on any of: wrong identity, stale digest,
-   * incompatible ABI, capability denial, or a failed resource/runtime
-   * check — before any semantic work.
+   * closed (typed) on any of: wrong identity, stale digest, ABI that
+   * does not identify the installed package, Host-incompatible ABI,
+   * capability denial, or a failed resource/runtime check — before
+   * any semantic work.
    */
   activate(
     request: ActivationRequest,
@@ -247,6 +248,9 @@ function deepReasons(
 ): EligibilityReason[] {
   const reasons: EligibilityReason[] = [];
   if (request.packageId !== package_.id || request.digest !== package_.digest) {
+    reasons.push("IDENTITY_MISMATCH");
+  }
+  if (!abiIsCompatible(request.abi, package_.abi)) {
     reasons.push("IDENTITY_MISMATCH");
   }
   if (!abiIsCompatible(request.abi, supportedAbi)) {
@@ -385,6 +389,15 @@ export function createDomainLifecycle(): DomainLifecycle {
           failure: {
             code: "IDENTITY_MISMATCH",
             detail: "requested digest does not match the installed package",
+          },
+        };
+      }
+      if (!abiIsCompatible(request.abi, state.package.abi)) {
+        return {
+          ok: false,
+          failure: {
+            code: "IDENTITY_MISMATCH",
+            detail: "requested ABI does not match the installed package ABI",
           },
         };
       }

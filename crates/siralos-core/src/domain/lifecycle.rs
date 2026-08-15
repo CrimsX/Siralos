@@ -472,6 +472,9 @@ impl DomainLifecycle {
         {
             reasons.push(EligibilityReason::IdentityMismatch);
         }
+        if !request.abi.is_compatible_with(package.abi()) {
+            reasons.push(EligibilityReason::IdentityMismatch);
+        }
         if !request.abi.is_compatible_with(supported_abi) {
             reasons.push(EligibilityReason::UnsupportedAbi);
         }
@@ -525,9 +528,11 @@ impl DomainLifecycle {
 
     /// Prepare an activation without committing any authoritative
     /// state. Pure validation: the installed/enabled gates, the exact
-    /// identity, the ABI, the package-declaration capability ceiling,
-    /// the Host policy decision, and the resource/runtime check all run
-    /// here, so every fallible preparation happens before the
+    /// identity (id, digest, and ABI against the installed package),
+    /// the Host-supported ABI, the package-declaration capability
+    /// ceiling, the Host policy decision, and the resource/runtime
+    /// check all run here, so every fallible preparation happens
+    /// before the
     /// authoritative Active transition. The result must be committed
     /// with [`DomainLifecycle::commit_activation`].
     pub fn prepare_activation(
@@ -554,6 +559,13 @@ impl DomainLifecycle {
             return Err(DomainFailure::IdentityMismatch {
                 detail:
                     "requested digest does not match the installed package"
+                        .to_owned(),
+            });
+        }
+        if !request.abi.is_compatible_with(package.abi()) {
+            return Err(DomainFailure::IdentityMismatch {
+                detail:
+                    "requested ABI does not match the installed package ABI"
                         .to_owned(),
             });
         }
@@ -601,8 +613,8 @@ impl DomainLifecycle {
     /// revalidates the prepared activation against the current
     /// lifecycle: the generation captured at preparation must still
     /// equal the current generation, the state must still be Enabled,
-    /// and the prepared binding must still belong to the currently
-    /// enabled package exactly (stable id and exact digest). Any
+    /// and the prepared binding must still exactly match the currently
+    /// enabled package (stable id, exact digest, and ABI). Any
     /// mismatch is a stale preparation and
     /// returns [`DomainFailure::StaleActivation`] without changing
     /// state, allocating a session id, or advancing the generation.
@@ -627,16 +639,12 @@ impl DomainLifecycle {
         let DomainState::Enabled(package) = &self.state else {
             return Err(DomainFailure::StaleActivation);
         };
-        // 3. The prepared binding must still belong to the currently
-        //    enabled package: its package identity (stable id and
-        //    exact digest) must match. The bound ABI is the requested
-        //    ABI, validated against the Host-supported ABI (never the
-        //    package's declared ABI), so the identity check covers id
-        //    and digest only. Generation fencing never replaces this
+        // 3. The prepared binding must still exactly match the
+        //    currently enabled package (stable id, exact digest, and
+        //    ABI): the complete `ActivationBinding::matches`
+        //    invariant. Generation fencing never replaces this
         //    package identity check.
-        if prepared.binding.package_id() != package.id()
-            || prepared.binding.digest() != package.digest()
-        {
+        if !prepared.binding.matches(package) {
             return Err(DomainFailure::StaleActivation);
         }
         let package =
@@ -929,7 +937,9 @@ mod tests {
             ),
             Err(DomainFailure::IdentityMismatch { .. })
         ));
-        // Incompatible ABI fails closed.
+        // An ABI that identifies neither the installed package nor
+        // the Host fails closed as a package identity mismatch (the
+        // package-ABI gate precedes the Host-compatibility gate).
         assert!(matches!(
             lifecycle.activate(
                 ActivationRequest::parse(
@@ -943,7 +953,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::UnsupportedAbi { .. })
+            Err(DomainFailure::IdentityMismatch { .. })
         ));
         // Capability denial is typed and does not escalate.
         let narrow_authority = HostAuthority::parse(&[]).unwrap();
@@ -1580,15 +1590,10 @@ mod tests {
                     let package =
                         lifecycle.installed_package().expect("installed");
                     let active = lifecycle.active().expect("active session");
-                    assert_eq!(
-                        active.binding().package_id(),
-                        package.id(),
-                        "active binding must belong to the installed package",
-                    );
-                    assert_eq!(
-                        active.binding().digest(),
-                        package.digest(),
-                        "active binding must carry the exact package digest",
+                    assert!(
+                        active.binding().matches(package),
+                        "active binding must exactly match the installed \
+                         package (id, digest, and ABI)",
                     );
                     assert_eq!(
                         active.session_id(),
@@ -1598,6 +1603,149 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A Host-compatible request ABI can never substitute for the ABI
+    /// declared by the installed package: the requested ABI must
+    /// identify the installed package exactly.
+    #[test]
+    fn package_abi_mismatch_is_rejected_even_when_host_supports_request_abi() {
+        let digest1 = digest(1);
+        let mut lifecycle = DomainLifecycle::new();
+        lifecycle
+            .install(
+                DomainPackage::parse(
+                    "conformance-domain",
+                    &digest1,
+                    "siralos:domain-abi@1.1.0",
+                    &ids(&["workspace-read"]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        lifecycle.enable().unwrap();
+        let supported = DomainAbi::parse(ABI).unwrap();
+        // Eligibility must not report ready: the ABI differs from the
+        // installed package even though it matches the Host.
+        let eligibility = lifecycle.eligibility(
+            &request("conformance-domain", &digest1),
+            &supported,
+            &authority(),
+            &RuntimeCheckResult::Ready,
+        );
+        assert!(!eligibility.ready());
+        assert_eq!(
+            eligibility.reasons(),
+            &[EligibilityReason::IdentityMismatch],
+        );
+        // Activation is rejected before any PreparedActivation exists,
+        // with zero lifecycle mutation and zero session consumption.
+        assert!(matches!(
+            lifecycle.activate(
+                request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            ),
+            Err(DomainFailure::IdentityMismatch { .. })
+        ));
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(lifecycle.next_session, 1);
+        // The request ABI that DOES identify the package is then
+        // rejected only by the Host-compatibility gate.
+        assert!(matches!(
+            lifecycle.activate(
+                ActivationRequest::parse(
+                    "conformance-domain",
+                    &digest1,
+                    "siralos:domain-abi@1.1.0",
+                    &ids(&["workspace-read"]),
+                )
+                .unwrap(),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            ),
+            Err(DomainFailure::UnsupportedAbi { .. })
+        ));
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert_eq!(lifecycle.next_session, 1);
+    }
+
+    /// Package and request ABI agreeing on an ABI the Host does not
+    /// support is the distinct unsupported/incompatible-ABI failure.
+    #[test]
+    fn matching_package_and_request_abi_unsupported_by_host_fails_typed() {
+        let digest1 = digest(1);
+        let mut lifecycle = DomainLifecycle::new();
+        lifecycle
+            .install(
+                DomainPackage::parse(
+                    "conformance-domain",
+                    &digest1,
+                    "siralos:domain-abi@1.1.0",
+                    &ids(&["workspace-read"]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        lifecycle.enable().unwrap();
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let request = ActivationRequest::parse(
+            "conformance-domain",
+            &digest1,
+            "siralos:domain-abi@1.1.0",
+            &ids(&["workspace-read"]),
+        )
+        .unwrap();
+        let eligibility = lifecycle.eligibility(
+            &request,
+            &supported,
+            &authority(),
+            &RuntimeCheckResult::Ready,
+        );
+        assert_eq!(
+            eligibility.reasons(),
+            &[EligibilityReason::UnsupportedAbi]
+        );
+        assert!(matches!(
+            lifecycle.activate(
+                request,
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            ),
+            Err(DomainFailure::UnsupportedAbi { .. })
+        ));
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(lifecycle.next_session, 1);
+    }
+
+    /// The all-match path binds the exact installed package identity
+    /// (id, digest, and ABI) on every successful activation path.
+    #[test]
+    fn successful_activations_always_satisfy_exact_binding_matches() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let mut lifecycle = DomainLifecycle::new();
+        lifecycle.install(package("conformance-domain", &digest1)).unwrap();
+        lifecycle.enable().unwrap();
+        let active = lifecycle
+            .activate(
+                request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let package = lifecycle.installed_package().unwrap();
+        assert!(
+            active.binding().matches(package),
+            "successful activation must bind the installed package exactly",
+        );
+        assert_eq!(active.binding().abi().as_str(), ABI);
     }
 
     #[test]
@@ -1627,7 +1775,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_protocol_request_does_not_invalidate_the_episode() {
+    fn rejected_protocol_requests_do_not_advance_the_generation() {
         let mut lifecycle = DomainLifecycle::new();
         let digest1 = digest(1);
         lifecycle
@@ -1643,6 +1791,8 @@ mod tests {
             .unwrap();
         lifecycle.enable().unwrap();
         let supported = DomainAbi::parse(ABI).unwrap();
+        // Package and request ABI agree but the Host does not support
+        // them: the typed unsupported-ABI failure, generation unchanged.
         let first = lifecycle.activate(
             ActivationRequest::parse(
                 "conformance-domain",
@@ -1660,16 +1810,21 @@ mod tests {
             lifecycle.generation, 2,
             "failed activate must not advance"
         );
-        let committed = lifecycle.activate(
-            request("conformance-domain", &digest1),
-            &supported,
-            &authority(),
-            RuntimeCheckResult::Ready,
-        );
-        assert!(
-            committed.is_ok(),
-            "valid commit after failed activate must succeed: {committed:?}",
-        );
-        assert_eq!(committed.unwrap().session_id(), 1);
+        // A Host-compatible request cannot substitute for the package
+        // ABI: the typed identity mismatch, generation unchanged, no
+        // session consumed.
+        assert!(matches!(
+            lifecycle.activate(
+                request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            ),
+            Err(DomainFailure::IdentityMismatch { .. })
+        ));
+        assert_eq!(lifecycle.generation, 2);
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(lifecycle.next_session, 1);
     }
 }

@@ -392,6 +392,62 @@ fn version_incompatible_component_fails_instantiation_explicitly() {
 }
 
 #[test]
+fn descriptor_abi_cannot_be_substituted_by_the_host_abi() {
+    let root = temp_dir("descriptor-abi");
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        default_bounds(),
+    );
+    // The descriptor declares ABI 1.1.0 while the component bytes
+    // export the supported 1.0.0 world. Install is digest-bound only
+    // (no installation-time ABI gate), so the package installs.
+    host.install(package(
+        "conformance-domain",
+        CONFORMANCE_DIGEST,
+        "siralos:domain-abi@1.1.0",
+    ))
+    .expect("install");
+    host.enable().expect("enable");
+    // Supplying the Host-supported ABI in the request cannot
+    // substitute for the ABI declared by the installed package: the
+    // request is rejected as a package identity mismatch before any
+    // state change or session allocation.
+    let failure = host
+        .activate(
+            ActivationRequest::parse(
+                "conformance-domain",
+                CONFORMANCE_DIGEST,
+                ABI,
+                &["workspace-read".to_owned()],
+            )
+            .expect("request parses"),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("descriptor ABI cannot be substituted");
+    assert_eq!(failure.code(), "IDENTITY_MISMATCH");
+    assert_eq!(host.state().as_str(), "enabled");
+    assert!(host.active().is_none());
+    // The request ABI that matches the descriptor is then rejected by
+    // the distinct Host-compatibility gate.
+    let failure = host
+        .activate(
+            ActivationRequest::parse(
+                "conformance-domain",
+                CONFORMANCE_DIGEST,
+                "siralos:domain-abi@1.1.0",
+                &["workspace-read".to_owned()],
+            )
+            .expect("request parses"),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("descriptor ABI is not Host-supported");
+    assert_eq!(failure.code(), "UNSUPPORTED_ABI");
+    assert_eq!(host.state().as_str(), "enabled");
+    assert!(host.active().is_none());
+}
+
+#[test]
 fn input_bounds_are_enforced_before_the_call() {
     let root = temp_dir("bounds");
     let mut bounds = default_bounds();
