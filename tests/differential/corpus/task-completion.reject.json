@@ -1,0 +1,93 @@
+{
+  "id": "task-completion.reject",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-1",
+      "request": "Add a health component",
+      "context": "Implement within the workspace.",
+      "constraints": [
+        {
+          "id": "scope",
+          "kind": "scope",
+          "description": "Workspace only."
+        }
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "parses",
+          "description": "GDScript parses.",
+          "verificationKind": "deterministic"
+        }
+      ],
+      "pausePolicy": "none"
+    },
+    "steps": [
+      {
+        "id": "s1",
+        "description": "Implement the component",
+        "kind": "implementation",
+        "accepts": ["workspace_read"]
+      },
+      {
+        "id": "s2",
+        "description": "Verify the change",
+        "kind": "implementation",
+        "accepts": ["parser_result", "validation_result", "review_result"]
+      }
+    ],
+    "ops": [
+      {
+        "op": "transitionPhase",
+        "phase": "working"
+      },
+      {
+        "op": "beginStep",
+        "stepId": "s1"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e1",
+        "kind": "workspace_read",
+        "source": {
+          "type": "workspace_read",
+          "paths": ["project.godot"]
+        },
+        "verification": {
+          "checkId": "parses",
+          "criterionId": "parses",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "parses",
+        "verifiedBy": "e1"
+      },
+      {
+        "op": "completeTask"
+      },
+      {
+        "op": "completeStep",
+        "stepId": "s1",
+        "refs": [
+          {
+            "evidenceId": "e1",
+            "kind": "workspace_read"
+          }
+        ]
+      },
+      {
+        "op": "setValidationStatus",
+        "status": "incomplete"
+      },
+      {
+        "op": "completeTask"
+      }
+    ]
+  }
+}

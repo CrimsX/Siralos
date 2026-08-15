@@ -1,0 +1,58 @@
+{
+  "id": "task-contract.revise",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-1",
+      "request": "Add a health component",
+      "context": "Implement within the workspace.",
+      "constraints": [
+        {
+          "id": "scope",
+          "kind": "scope",
+          "description": "Workspace only."
+        }
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "parses",
+          "description": "GDScript parses.",
+          "verificationKind": "deterministic"
+        }
+      ],
+      "pausePolicy": "none"
+    },
+    "ops": [
+      {
+        "op": "reviseContract",
+        "changes": {
+          "id": "task-1",
+          "request": "Add a health component with tests"
+        }
+      },
+      {
+        "op": "reviseContract",
+        "changes": {
+          "id": "task-1"
+        }
+      },
+      {
+        "op": "reviseContract",
+        "changes": {
+          "id": "task-other"
+        }
+      },
+      {
+        "op": "reviseContract",
+        "changes": {
+          "id": "task-1",
+          "context": "Updated context."
+        }
+      }
+    ]
+  }
+}

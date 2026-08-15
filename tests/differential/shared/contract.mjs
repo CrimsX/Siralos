@@ -9,9 +9,9 @@ import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
-export const CORPUS_SCHEMA_VERSION = 2;
-export const CORPUS_VERSION = 4;
-export const ALLOWED_SUBJECTS = new Set(["state-dir", "version-identity"]);
+export const CORPUS_SCHEMA_VERSION = 3;
+export const CORPUS_VERSION = 5;
+export const ALLOWED_SUBJECTS = new Set(["state-dir", "version-identity", "task-contract"]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
 export const ALLOWED_ENV_KEYS = new Set(["HOME", "HOMEDRIVE", "HOMEPATH", "USERPROFILE"]);
@@ -27,6 +27,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   envValueBytes: 4 * 1024,
   probeOutputBytes: 16 * 1024,
   recordsBytes: 1024 * 1024,
+  taskInputBytes: 8 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -55,6 +56,10 @@ function assertPlainObject(value, label) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
   }
+}
+
+function isPlainRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function assertExactKeys(value, expected, label) {
@@ -201,6 +206,18 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  if (scenario.subject === "task-contract") {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(`${label} task-contract inputs must use platforms ["*"] and an empty env`);
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.taskInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.taskInputBytes} UTF-8 bytes`);
+    }
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -224,7 +241,11 @@ function validateSubjectInputs(scenario, label) {
 export function validateScenario(scenario, file) {
   const label = `scenario ${file}`;
   assertPlainObject(scenario, label);
-  assertExactKeys(scenario, ["id", "subject", "platforms", "parity", "env"], label);
+  const expectedKeys =
+    scenario.subject === "task-contract"
+      ? ["id", "subject", "platforms", "parity", "env", "input"]
+      : ["id", "subject", "platforms", "parity", "env"];
+  assertExactKeys(scenario, expectedKeys, label);
   assertBoundedString(scenario.id, CONTRACT_LIMITS.identifierBytes, `${label}.id`);
   if (!IDENTIFIER.test(scenario.id)) {
     throw new Error(`${label}.id is not canonical`);

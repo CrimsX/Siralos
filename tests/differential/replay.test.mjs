@@ -33,14 +33,16 @@ describe("replay stress", () => {
     }
   });
 
-  it("produces identical records across repeated runs", () => {
+  // Each runOracle call spawns the R3 task probe once per scenario, so
+  // the replay loop needs a generous bound.
+  it("produces identical records across repeated runs", { timeout: 180_000 }, () => {
     const expected = runOracle(CORPUS, ROOT);
     for (let run = 0; run < 5; run += 1) {
       expect(runOracle(CORPUS, ROOT)).toBe(expected);
     }
   });
 
-  it("is stable under perturbed environment key insertion order", () => {
+  it("is stable under perturbed environment key insertion order", { timeout: 120_000 }, () => {
     // Reorder the declared Windows fallback fixture. Arbitrary
     // variables are deliberately rejected before process creation.
     const base = runOracle(CORPUS, ROOT);
@@ -62,7 +64,7 @@ describe("replay stress", () => {
     expect(runOracle(CORPUS, ROOT)).toBe(base);
   });
 
-  it("emits identical record bytes regardless of the output location", () => {
+  it("emits identical record bytes regardless of the output location", { timeout: 120_000 }, () => {
     const outA = withTempOut();
     const outB = withTempOut();
     writeFileSync(outA, runOracle(CORPUS, ROOT), "utf8");

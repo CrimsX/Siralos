@@ -31,7 +31,10 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROBE = join(HERE, "probes", "state-dir-oracle.mjs");
+const TASK_PROBE = join(HERE, "probes", "task-oracle.mjs");
+const TS_REMAP_LOADER = join(HERE, "shared", "ts-remap-loader.mjs");
 const PROBE_TIMEOUT_MS = 10_000;
+const TASK_PROBE_TIMEOUT_MS = 15_000;
 
 function optionValue(args, name) {
   const index = args.indexOf(name);
@@ -98,6 +101,57 @@ export function runStateDirProbe(env, { probe = PROBE, timeoutMs = PROBE_TIMEOUT
   };
 }
 
+/**
+ * Run the task-contract probe against the real TypeScript reference task
+ * runtime. The probe receives the scenario input JSON on stdin (bounded)
+ * and emits the canonical R3 observation object on stdout. Node's native
+ * type stripping executes the reference source directly; the remap loader
+ * resolves the reference's .js import specifiers to their .ts files.
+ */
+export function runTaskProbe(
+  input,
+  { probe = TASK_PROBE, loader = TS_REMAP_LOADER, timeoutMs = TASK_PROBE_TIMEOUT_MS } = {},
+) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > TASK_PROBE_TIMEOUT_MS) {
+    throw new Error("task probe timeout is outside the harness bound");
+  }
+  // No encoding option: spawnSync returns raw Buffers by default, and
+  // the probe output is validated as exact bytes below. The loader must
+  // be a file:// URL: on Windows, --import rejects drive-letter paths.
+  const result = spawnSync(process.execPath, ["--import", pathToFileURL(loader).href, probe], {
+    input: JSON.stringify(input),
+    timeout: timeoutMs,
+    maxBuffer: CONTRACT_LIMITS.probeOutputBytes,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (result.error?.code === "ETIMEDOUT") {
+    throw new Error("task probe timed out");
+  }
+  if (result.error !== undefined) {
+    throw new Error(`task probe could not execute: ${result.error.code ?? "unknown error"}`);
+  }
+  if (result.signal !== null) {
+    throw new Error("task probe terminated by a signal");
+  }
+  if (result.status !== 0) {
+    throw new Error(`task probe exited unsuccessfully (${String(result.status)})`);
+  }
+  const output = result.stdout;
+  if (!Buffer.isBuffer(output) || output.length === 0) {
+    throw new Error("task probe emitted no outcome");
+  }
+  if (output.length > CONTRACT_LIMITS.probeOutputBytes) {
+    throw new Error("task probe output exceeded the harness bound");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(output.toString("utf8"));
+  } catch {
+    throw new Error("task probe emitted malformed JSON");
+  }
+  return parsed;
+}
+
 /** The oracle record for a single scenario. */
 export function runScenario(scenario, root) {
   if (scenario.subject === "state-dir") {
@@ -105,6 +159,14 @@ export function runScenario(scenario, root) {
       scenarioId: scenario.id,
       subject: scenario.subject,
       ...runStateDirProbe(scenario.env),
+    };
+  }
+  if (scenario.subject === "task-contract") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runTaskProbe(scenario.input),
     };
   }
   if (scenario.subject === "version-identity") {

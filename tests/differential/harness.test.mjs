@@ -119,8 +119,8 @@ describe("module entry guards", () => {
 describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
-    expect(manifest.schemaVersion).toBe(2);
-    expect(manifest.corpusVersion).toBe(4);
+    expect(manifest.schemaVersion).toBe(3);
+    expect(manifest.corpusVersion).toBe(5);
     expect(manifest.corpusSha256).toBe(computeCorpusDigest(manifest));
     expect(manifest.scenarios.length).toBeGreaterThanOrEqual(6);
     for (const entry of manifest.scenarios) {
@@ -128,7 +128,7 @@ describe("corpus integrity", () => {
       expect(entry.sha256).toBe(sha256Hex(canonicalizeJson(scenario)));
       expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(scenario.id).toBe(entry.file.replace(/\.json$/, ""));
-      expect(["state-dir", "version-identity"]).toContain(scenario.subject);
+      expect(["state-dir", "version-identity", "task-contract"]).toContain(scenario.subject);
       expect(["required", "informational"]).toContain(scenario.parity);
       expect(Array.isArray(scenario.platforms)).toBe(true);
     }
@@ -200,8 +200,8 @@ describe("corpus integrity", () => {
 
   it("rejects unsupported corpus and schema versions and unknown manifest fields", () => {
     for (const [field, value, expected] of [
-      ["schemaVersion", 3, /unsupported corpus schemaVersion/u],
-      ["corpusVersion", 5, /unsupported corpusVersion/u],
+      ["schemaVersion", 4, /unsupported corpus schemaVersion/u],
+      ["corpusVersion", 6, /unsupported corpusVersion/u],
       ["unexpected", true, /unknown or missing fields/u],
     ]) {
       const corpus = mutableCorpus();
@@ -274,13 +274,13 @@ describe("corpus integrity", () => {
 });
 
 describe("oracle determinism", () => {
-  it("produces byte-identical records on consecutive runs", () => {
+  it("produces byte-identical records on consecutive runs", { timeout: 120_000 }, () => {
     const first = runOracle(CORPUS, ROOT);
     const second = runOracle(CORPUS, ROOT);
     expect(first).toBe(second);
   });
 
-  it("emits only canonical sorted-key JSON", () => {
+  it("emits only canonical sorted-key JSON", { timeout: 120_000 }, () => {
     const text = runOracle(CORPUS, ROOT);
     const records = parseCanonicalRecords(text, "oracle");
     expect(text).toBe(canonicalRecordDocument(records));

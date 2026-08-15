@@ -1,0 +1,143 @@
+{
+  "id": "task-state.terminal",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-1",
+      "request": "Add a health component",
+      "context": "Implement within the workspace.",
+      "constraints": [
+        {
+          "id": "scope",
+          "kind": "scope",
+          "description": "Workspace only."
+        }
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "parses",
+          "description": "GDScript parses.",
+          "verificationKind": "deterministic"
+        }
+      ],
+      "pausePolicy": "none"
+    },
+    "steps": [
+      {
+        "id": "s1",
+        "description": "Implement the component",
+        "kind": "implementation",
+        "accepts": ["workspace_read"]
+      }
+    ],
+    "ops": [
+      {
+        "op": "transitionPhase",
+        "phase": "working"
+      },
+      {
+        "op": "beginStep",
+        "stepId": "s1"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e1",
+        "kind": "workspace_read",
+        "source": {
+          "type": "workspace_read",
+          "paths": ["project.godot"]
+        },
+        "verification": {
+          "checkId": "parses",
+          "criterionId": "parses",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "completeStep",
+        "stepId": "s1",
+        "refs": [
+          {
+            "evidenceId": "e1",
+            "kind": "workspace_read"
+          }
+        ]
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "parses",
+        "verifiedBy": "e1"
+      },
+      {
+        "op": "setValidationStatus",
+        "status": "clean"
+      },
+      {
+        "op": "setReviewStatus",
+        "status": "clean"
+      },
+      {
+        "op": "completeTask"
+      },
+      {
+        "op": "beginStep",
+        "stepId": "unknown"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "late",
+        "kind": "workspace_read",
+        "source": {
+          "type": "workspace_read",
+          "paths": ["late.gd"]
+        }
+      },
+      {
+        "op": "markCriterionFailed",
+        "criterionId": "parses"
+      },
+      {
+        "op": "completeTask"
+      },
+      {
+        "op": "submitDisposition",
+        "disposition": {
+          "type": "continue",
+          "nextAction": "late"
+        },
+        "source": "model"
+      },
+      {
+        "op": "reviseContract",
+        "changes": {
+          "id": "task-1",
+          "request": "late revision"
+        }
+      },
+      {
+        "op": "setValidationStatus",
+        "status": "failed"
+      },
+      {
+        "op": "setFindings",
+        "findings": [
+          {
+            "findingId": "late",
+            "severity": "high",
+            "source": "must-not-be-retained"
+          }
+        ]
+      },
+      {
+        "op": "observe",
+        "action": "late",
+        "fingerprint": "late",
+        "progress": true
+      }
+    ]
+  }
+}

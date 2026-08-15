@@ -1,0 +1,125 @@
+{
+  "id": "task-completion.success",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-1",
+      "request": "Add a health component",
+      "acceptanceCriteria": [
+        {
+          "id": "parses",
+          "description": "GDScript parses.",
+          "verificationKind": "deterministic"
+        },
+        {
+          "id": "review",
+          "description": "Review clean.",
+          "verificationKind": "review"
+        }
+      ],
+      "pausePolicy": "none"
+    },
+    "steps": [
+      {
+        "id": "s1",
+        "description": "Implement the component",
+        "kind": "implementation",
+        "accepts": ["workspace_read"]
+      },
+      {
+        "id": "s2",
+        "description": "Verify the change",
+        "kind": "implementation",
+        "accepts": ["review_result"]
+      }
+    ],
+    "ops": [
+      {
+        "op": "transitionPhase",
+        "phase": "working"
+      },
+      {
+        "op": "beginStep",
+        "stepId": "s1"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e1",
+        "kind": "workspace_read",
+        "source": {
+          "type": "workspace_read",
+          "paths": ["project.godot"]
+        },
+        "verification": {
+          "checkId": "parses",
+          "criterionId": "parses",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "completeStep",
+        "stepId": "s1",
+        "refs": [
+          {
+            "evidenceId": "e1",
+            "kind": "workspace_read"
+          }
+        ]
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "parses",
+        "verifiedBy": "e1"
+      },
+      {
+        "op": "beginStep",
+        "stepId": "s2"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e2",
+        "kind": "review_result",
+        "source": {
+          "type": "review",
+          "status": "clean",
+          "blockingFindings": 0
+        },
+        "verification": {
+          "checkId": "review",
+          "criterionId": "review",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "completeStep",
+        "stepId": "s2",
+        "refs": [
+          {
+            "evidenceId": "e2",
+            "kind": "review_result"
+          }
+        ]
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "review",
+        "verifiedBy": "e2"
+      },
+      {
+        "op": "setValidationStatus",
+        "status": "warnings"
+      },
+      {
+        "op": "setReviewStatus",
+        "status": "clean"
+      },
+      {
+        "op": "completeTask"
+      }
+    ]
+  }
+}

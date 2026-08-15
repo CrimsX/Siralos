@@ -1,0 +1,22 @@
+{
+  "id": "task-contract.create.invalid",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-invalid",
+      "request": "   ",
+      "acceptanceCriteria": [
+        {
+          "id": "a",
+          "description": "a",
+          "verificationKind": "deterministic"
+        }
+      ],
+      "pausePolicy": "none"
+    }
+  }
+}

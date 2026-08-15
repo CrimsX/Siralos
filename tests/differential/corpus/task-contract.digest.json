@@ -1,0 +1,35 @@
+{
+  "id": "task-contract.digest",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-1",
+      "request": "Quote \" backslash \\ newline\n unicode 界 tab\t",
+      "context": "Context with \u0001 control",
+      "constraints": [
+        {
+          "id": "scope",
+          "kind": "scope",
+          "description": "Boundary \" description"
+        }
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "parses",
+          "description": "Parses 界.",
+          "verificationKind": "deterministic"
+        },
+        {
+          "id": "review-1",
+          "description": "Review clean.",
+          "verificationKind": "review"
+        }
+      ],
+      "pausePolicy": "on_approval"
+    }
+  }
+}

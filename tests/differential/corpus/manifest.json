@@ -1,35 +1,103 @@
 {
-  "schemaVersion": 2,
-  "corpusVersion": 4,
-  "corpusSha256": "2c3476d08b25769cfcec217daedbe647247b7a4075f5ce639843bb368fc00974",
+  "schemaVersion": 3,
+  "corpusVersion": 5,
   "scenarios": [
     {
-      "file": "state-dir.set.windows.json",
-      "sha256": "28fa675d6f8189cd014faf3464f0046c094f99bd79293541af67c2455af6c07b"
-    },
-    {
-      "file": "state-dir.set.posix.json",
-      "sha256": "50508c3bb501926a100bbcbd9567bac8add9b125a4bd234da11cafbad84202ef"
+      "file": "state-dir.fallback.posix.json",
+      "sha256": "232416906832b4a92dfa3729cd2016d9a16254abb21401268cbbec01174a1655"
     },
     {
       "file": "state-dir.fallback.windows.json",
       "sha256": "8c1ce46f640e5a093a504189cb4cf39c222244aff8a8f8772af51f4f3da5eccd"
     },
     {
-      "file": "state-dir.fallback.posix.json",
-      "sha256": "232416906832b4a92dfa3729cd2016d9a16254abb21401268cbbec01174a1655"
+      "file": "state-dir.set.posix.json",
+      "sha256": "50508c3bb501926a100bbcbd9567bac8add9b125a4bd234da11cafbad84202ef"
     },
     {
-      "file": "state-dir.unset.windows.json",
-      "sha256": "7ddd8a0e3431cb7a527858a59b898c5163e5f6a5148218d8da431e019fa1ae50"
+      "file": "state-dir.set.windows.json",
+      "sha256": "28fa675d6f8189cd014faf3464f0046c094f99bd79293541af67c2455af6c07b"
     },
     {
       "file": "state-dir.unset.posix.json",
       "sha256": "2bb80c96aa5fef75db2d4fdf58bff462e46ae20cfa4471376140a0c26492f223"
     },
     {
+      "file": "state-dir.unset.windows.json",
+      "sha256": "7ddd8a0e3431cb7a527858a59b898c5163e5f6a5148218d8da431e019fa1ae50"
+    },
+    {
+      "file": "task-acceptance.contract-revision-reset.json",
+      "sha256": "527c9657a6990da20680bfcdfe8915efb2266fb83e85e63275883fd6a3ef79ce"
+    },
+    {
+      "file": "task-acceptance.verify.json",
+      "sha256": "949144b410adc18876975f2b9f56a350697f5a5dbba41ddf10395641e9106a9d"
+    },
+    {
+      "file": "task-activity.sequence.json",
+      "sha256": "e0bb0ff079b763af21d88196ce566414a78f1da9e2d0efe315b8c9e39fa138f0"
+    },
+    {
+      "file": "task-completion.reject.json",
+      "sha256": "a2d272a597c078e2bcbf98bbb13f6e4d6040402717d06a65ab4e7056dd894af0"
+    },
+    {
+      "file": "task-completion.success.json",
+      "sha256": "391cb2415631f9c06b0ce1dbf7c6bc85a9e98162747804878fced337bf6a0395"
+    },
+    {
+      "file": "task-contract.create.invalid.json",
+      "sha256": "5a60f80e6617b3cfcb072c30b6d1656d5b13839991cd2b8523f107a0837305ac"
+    },
+    {
+      "file": "task-contract.create.valid.json",
+      "sha256": "3b07714c8ef6cb867723431e265ede15e46151e8da5ba7ac55e0b808b0c27956"
+    },
+    {
+      "file": "task-contract.digest.json",
+      "sha256": "65d75130c228a722a927c6459d7794a13b4ef112810fbb63a5d49a6a2349de88"
+    },
+    {
+      "file": "task-contract.revise.json",
+      "sha256": "587d9d27967e560ede67cac4b902df06c81e8a53d27bdf882ace705ff6840c34"
+    },
+    {
+      "file": "task-evidence.attach.invalid.json",
+      "sha256": "dd099e258835d0c8dc2443576467d900d9b5f8ee52ea1587814f54587e807069"
+    },
+    {
+      "file": "task-evidence.attach.valid.json",
+      "sha256": "970c018e34db9d20af015a93d193ff70937850cb67d6286424584169b328be18"
+    },
+    {
+      "file": "task-evidence.stale.json",
+      "sha256": "ded6b09bb45761ddd109a7be143444c34049851b97061174bd9dc84cae973365"
+    },
+    {
+      "file": "task-progress.observe.json",
+      "sha256": "a19b7ea3435e142da01f31ba69d4e657f8cb8d214bc2286d963757ba78b9b5f9"
+    },
+    {
+      "file": "task-state.initial.json",
+      "sha256": "fba7f0e656e3b47776e1ef55cede643a7edad08465ec8467b21c906ef591d3dd"
+    },
+    {
+      "file": "task-state.terminal.json",
+      "sha256": "b3608a185efd28d336ef80e480de86208db3fc53fee6c9938900b87940a3b887"
+    },
+    {
+      "file": "task-state.transition.allowed.json",
+      "sha256": "3c2d85cadb7787f955963054e1e53d1e97dc53b6bdcea6c64987df099b7cbaad"
+    },
+    {
+      "file": "task-state.transition.rejected.json",
+      "sha256": "d695b13f5feec3c28c0d9942537b15093625720939627833e72369b23f979ceb"
+    },
+    {
       "file": "version.identity.json",
       "sha256": "0b4fc21ea2faa518e0b2cf5b73e8e5ca326f1187d69b75ecfa64e17526485158"
     }
-  ]
+  ],
+  "corpusSha256": "6e6e6b6dd7b812aef99090aa7d4a76012fc1a3d78a26310d0b4c07dc4984c62e"
 }

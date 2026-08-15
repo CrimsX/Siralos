@@ -1,0 +1,150 @@
+{
+  "id": "task-acceptance.verify",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-1",
+      "request": "Verify all verification kinds",
+      "acceptanceCriteria": [
+        {
+          "id": "deterministic-check",
+          "description": "Deterministic check passed.",
+          "verificationKind": "deterministic"
+        },
+        {
+          "id": "review-check",
+          "description": "Review clean.",
+          "verificationKind": "review"
+        },
+        {
+          "id": "user-check",
+          "description": "User approved.",
+          "verificationKind": "user"
+        }
+      ],
+      "pausePolicy": "none"
+    },
+    "steps": [
+      {
+        "id": "s1",
+        "description": "Collect evidence",
+        "kind": "implementation",
+        "accepts": ["workspace_read", "review_result", "user_approval"]
+      }
+    ],
+    "ops": [
+      {
+        "op": "transitionPhase",
+        "phase": "working"
+      },
+      {
+        "op": "beginStep",
+        "stepId": "s1"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e-read",
+        "kind": "workspace_read",
+        "source": {
+          "type": "workspace_read",
+          "paths": ["project.godot"]
+        },
+        "verification": {
+          "checkId": "review-check",
+          "criterionId": "review-check",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "review-check",
+        "verifiedBy": "e-read"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e-review",
+        "kind": "review_result",
+        "source": {
+          "type": "review",
+          "status": "clean",
+          "blockingFindings": 0
+        },
+        "verification": {
+          "checkId": "review-check",
+          "criterionId": "review-check",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "review-check",
+        "verifiedBy": "e-review"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e-denied",
+        "kind": "user_approval",
+        "source": {
+          "type": "user_approval",
+          "approvalId": "a1",
+          "subjectId": "s1",
+          "decision": "denied"
+        },
+        "verification": {
+          "checkId": "user-check",
+          "criterionId": "user-check",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "user-check",
+        "verifiedBy": "e-denied"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e-approved",
+        "kind": "user_approval",
+        "source": {
+          "type": "user_approval",
+          "approvalId": "a1",
+          "subjectId": "s1",
+          "decision": "approved"
+        },
+        "verification": {
+          "checkId": "user-check",
+          "criterionId": "user-check",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "user-check",
+        "verifiedBy": "e-approved"
+      },
+      {
+        "op": "attachEvidence",
+        "id": "e-read2",
+        "kind": "workspace_read",
+        "source": {
+          "type": "workspace_read",
+          "paths": ["project.godot"]
+        },
+        "verification": {
+          "checkId": "deterministic-check",
+          "criterionId": "deterministic-check",
+          "outcome": "passed"
+        }
+      },
+      {
+        "op": "verifyCriterion",
+        "criterionId": "deterministic-check",
+        "verifiedBy": "e-read2"
+      }
+    ]
+  }
+}

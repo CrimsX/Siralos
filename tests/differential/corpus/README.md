@@ -20,6 +20,10 @@ difference fails the migration gate. `informational` means the harness records
 and reports the observation, but the scenario intentionally includes an input
 that the fixture does not control.
 
+The R3 task-contract scenarios (subject `task-contract`) execute the
+host-owned task kernel (contracts, phases, evidence, acceptance,
+completion, activity, progress) against both implementations; their
+`input` carries the controlled contract, steps, operations, and clock.
 The `state-dir.unset.*` scenarios are informational. An empty process
 environment does not remove the operating system's account database, profile,
 or sandbox-selected home directory. `state-dir.fallback.posix` is informational

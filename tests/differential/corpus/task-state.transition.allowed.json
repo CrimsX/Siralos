@@ -1,0 +1,60 @@
+{
+  "id": "task-state.transition.allowed",
+  "subject": "task-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "now": 1700000000000,
+    "contract": {
+      "id": "task-1",
+      "request": "Add a health component",
+      "context": "Implement within the workspace.",
+      "constraints": [
+        {
+          "id": "scope",
+          "kind": "scope",
+          "description": "Workspace only."
+        }
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "parses",
+          "description": "GDScript parses.",
+          "verificationKind": "deterministic"
+        }
+      ],
+      "pausePolicy": "none"
+    },
+    "ops": [
+      {
+        "op": "transitionPhase",
+        "phase": "working"
+      },
+      {
+        "op": "transitionPhase",
+        "phase": "validating"
+      },
+      {
+        "op": "transitionPhase",
+        "phase": "reviewing"
+      },
+      {
+        "op": "transitionPhase",
+        "phase": "working"
+      },
+      {
+        "op": "transitionPhase",
+        "phase": "blocked"
+      },
+      {
+        "op": "transitionPhase",
+        "phase": "working"
+      },
+      {
+        "op": "transitionPhase",
+        "phase": "cancelled"
+      }
+    ]
+  }
+}
