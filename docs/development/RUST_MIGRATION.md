@@ -104,15 +104,24 @@ revision binding throughout) plus the generic language-service URI
 mapping in `siralos-adapters::language::uri`. The TypeScript reference
 gained matching generic language modules
 (`packages/core/src/language`: position, sanitize, truncate,
-diagnostic, definition) extracted behavior-preservingly from the Godot
-diagnostics/LSP normalization code, which now consumes them; all
-existing TypeScript tests stay green. The differential corpus gained 16
+diagnostic, definition, structure) extracted behavior-preservingly from
+the Godot diagnostics/LSP normalization code, which now consumes them;
+all existing TypeScript tests stay green. The generic structural
+representation is language-neutral by construction: `siralos-core::language::structure`
+owns only cross-language kinds (type/function/method/field/variable/
+constant/enum/event/module/other), opaque attributes/modifiers, and
+generic advisory summary wording, and carries no GDScript/Godot
+semantics (no signal/property/function info models, no `extends`/
+`class_name`, no annotation or `export` interpretation); the
+GDScript-specific scanner and summary remain exclusively the
+TypeScript reference for R8/R9. The differential corpus gained 16
 scenarios across the `language-diagnostics`,
 `language-structure`, and `language-definition` subjects (corpus
-schema 3, corpus version 8, 63 scenario files) executed by both
-implementations under the R2 protocol; all required applicable
-scenarios match, the harness self-tests and replay stress pass, and
-the complete local repository gate passes. R5 deliberately does not
+schema 3, corpus version 9, 63 scenario files) executed by both
+implementations under the R2 protocol, with language-neutral structure
+fixtures; all required applicable scenarios match, the harness
+self-tests and replay stress pass, and the complete local repository
+gate passes. R5 deliberately does not
 port GDScript/Godot parsing (the GDScript structural scanner remains
 the TypeScript reference for R8/R9), LSP/JSON-RPC transport, language
 process execution, provider tool integration, or Domain architecture;

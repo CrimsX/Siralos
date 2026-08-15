@@ -40,6 +40,15 @@ const FORBIDDEN_CORE_SYMBOL_PATTERN =
 const FORBIDDEN_CORE_LANGUAGE_PATTERN =
   /json-rpc|content-length|std::process|std::net|tokio|domain registry/i;
 
+/**
+ * Generic-structure neutrality (Stage 3R R5): production language
+ * modules in `siralos-core` must never encode GDScript/Godot semantic
+ * vocabulary in identifiers, fields, or fixtures. Test files may
+ * mention the terms as negative assertions, so they are excluded.
+ */
+const FORBIDDEN_CORE_LANGUAGE_SEMANTIC_PATTERN =
+  /extendsType|CharacterBody2D|res:\/\/|class_name|@export|base_type|declared_name|fileAnnotations|parserErrors/i;
+
 /** Dangerous unsafe forms (defense in depth behind the forbid lint). */
 const UNSAFE_PATTERN = /\bunsafe\s+(fn|impl|trait|extern|\{)/;
 
@@ -276,6 +285,17 @@ export function runChecks(root) {
       if (crate === "crates/siralos-core" && FORBIDDEN_CORE_LANGUAGE_PATTERN.test(content)) {
         errors.push(
           `${source}: siralos-core must stay language-intelligence-neutral (LSP transport, process, socket, async runtime, or domain-registry symbol present)`,
+        );
+      }
+      const sourceName = source.split(/[\\/]/).pop();
+      const languageProduction =
+        crate === "crates/siralos-core" &&
+        source.includes(join("src", "language")) &&
+        sourceName !== "tests.rs" &&
+        sourceName !== "property_tests.rs";
+      if (languageProduction && FORBIDDEN_CORE_LANGUAGE_SEMANTIC_PATTERN.test(content)) {
+        errors.push(
+          `${source}: siralos-core language modules must stay GDScript-semantic-neutral (GDScript/Godot vocabulary present)`,
         );
       }
       if (UNSAFE_PATTERN.test(content)) {

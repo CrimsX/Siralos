@@ -98,9 +98,13 @@ unsafe filesystem or process boundary intentionally fails closed.
   revision binding; `siralos-adapters::language::uri` owns the generic
   language-service URI mapping. The TypeScript reference gained matching
   generic language modules that the Godot adapters now consume. The
-  differential corpus gained 16 scenarios across the
+  structural representation is language-neutral by construction
+  (cross-language kinds, opaque attributes, generic summary wording; no
+  GDScript/Godot semantics in `siralos-core::language`), and the
+  GDScript scanner/summary remain the TypeScript reference for R8/R9.
+  The differential corpus gained 16 scenarios across the
   `language-diagnostics`, `language-structure`, and
-  `language-definition` subjects (corpus version 8, 63 scenario files);
+  `language-definition` subjects (corpus version 9, 63 scenario files);
   all required applicable scenarios match. R5 ports no GDScript/Godot
   parsing, no LSP transport, no process execution, no provider tools,
   and no Domain architecture. R6 (Minimal Domain Capability Architecture

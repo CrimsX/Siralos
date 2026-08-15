@@ -123,14 +123,22 @@ never authoritative), the typed validation result semantics
 language-service URI mapping in `siralos-adapters::language::uri`, and
 R4 revision binding throughout. The TypeScript reference gained the
 corresponding generic language modules (position/sanitize/truncate/
-diagnostic/definition) that the Godot adapters now consume, preserving
-all existing behavior. The differential corpus gained 16 scenarios
-across the `language-diagnostics`, `language-structure`, and
-`language-definition` subjects (corpus version 8, 63 scenario files);
-all required applicable scenarios match on both implementations. R5
-ports no Godot/GDScript parsing (the GDScript scanner remains the
-TypeScript reference for R8/R9), no LSP transport, no process
-execution, no provider tool surface, and no Domain architecture.
+diagnostic/definition/structure) that the Godot adapters now consume,
+preserving all existing behavior. The generic structural representation
+is explicitly language-neutral: it owns only cross-language kinds
+(type/function/method/field/variable/constant/enum/event/module/other),
+opaque attributes/modifiers, and generic summary wording, with no
+GDScript/Godot semantics (SignalInfo, `extends`/`class_name`,
+annotations, `export` interpretation) anywhere in
+`siralos-core::language`; the GDScript scanner and summary remain the
+TypeScript reference for R8/R9. The differential corpus gained 16
+scenarios across the `language-diagnostics`, `language-structure`, and
+`language-definition` subjects (corpus version 9, 63 scenario files)
+with language-neutral structure fixtures; all required applicable
+scenarios match on both implementations. R5 ports no Godot/GDScript
+parsing (the GDScript scanner remains the TypeScript reference for
+R8/R9), no LSP transport, no process execution, no provider tool
+surface, and no Domain architecture.
 
 ### Target architecture
 
