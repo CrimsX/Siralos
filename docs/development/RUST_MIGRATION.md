@@ -159,9 +159,9 @@ workspace reads, process execution denied). The deterministic synthetic
 conformance Domain (`tests/domain-conformance/`) is product-neutral and
 proves the production boundary on the checked-in component bytes,
 including trap and unbounded-loop pathological behaviors. The
-differential corpus gained 16 scenarios across the `domain-lifecycle`
-and `domain-capability` subjects (corpus schema 3, corpus version 10,
-79 scenario files) executed by both implementations under the R2
+differential corpus gained 23 scenarios across the `domain-lifecycle`
+and `domain-capability` subjects (corpus schema 3, corpus version 11,
+86 scenario files) executed by both implementations under the R2
 protocol; all required applicable scenarios match, the Rust Component
 conformance suite passes, and the complete local repository gate
 passes. R6 implements no Plugin system, no marketplace, no automatic
@@ -181,7 +181,14 @@ semantic output obeys one aggregate byte bound over the complete
 returned representation (guest rejection reasons and effect-answer
 payloads included), and Host-call exhaustion is a Host-observed
 typed ResourceExceeded(HostCalls) failure independent of the bounded
-guest disposition.
+guest disposition. Every prepared activation is additionally bound to
+the lifecycle generation validated at preparation: every successful
+material transition (install, uninstall, enable, disable, activation
+commit, deactivate) advances the generation, and commit revalidates
+the generation, the Enabled state, and the exact package binding
+before any mutation, so a stale preparation fails typed
+(`STALE_ACTIVATION`) without state change, session-id consumption, or
+a published HostSession.
 R6 verification does not authorize R7 work or satisfy any later
 migration or Stage-4 entry gate.
 

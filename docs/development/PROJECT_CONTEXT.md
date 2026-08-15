@@ -8,7 +8,7 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R6
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Last verified commit: f87c1dc356e3735e3789e1e4d6bafb2fcc376b0b
+Last verified commit: 5548e97f26121367979c2b629362e9be90336877
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -161,11 +161,17 @@ process execution denied). The synthetic conformance Domain
 (`tests/domain-conformance/`) is a deterministic, product-neutral
 component fixture proving the production boundary, including
 pathological behaviors (trap, unbounded loop) for containment and
-bounded-execution evidence. The differential corpus gained 16 scenarios
+bounded-execution evidence. The differential corpus gained 23 scenarios
 across the `domain-lifecycle` and `domain-capability` subjects (corpus
-version 10, 79 scenario files); all required applicable scenarios match
+version 11, 86 scenario files); all required applicable scenarios match
 on both implementations, and the Rust Component conformance suite
-passes against the checked-in component bytes. R6 implements no Plugin
+passes against the checked-in component bytes. R6 remediation also
+bound every prepared activation to the lifecycle generation validated
+at preparation: every successful material lifecycle transition
+(install, uninstall, enable, disable, activation commit, deactivate)
+advances the generation, and a stale commit fails typed with
+`STALE_ACTIVATION` before any mutation, session-id allocation, or
+HostSession publication. R6 implements no Plugin
 system, no marketplace, no provider/tool integration, and no Godot
 Domain.
 

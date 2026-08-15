@@ -119,10 +119,15 @@ unsafe filesystem or process boundary intentionally fails closed.
   fail-closed ABI identity, resource bounds, trap containment, and
   host-mediated effects), and the deterministic product-neutral
   synthetic conformance Domain proves the boundary on the checked-in
-  component bytes. The differential corpus gained 16 scenarios across
+  component bytes. The differential corpus gained 23 scenarios across
   the `domain-lifecycle` and `domain-capability` subjects (corpus
-  version 10, 79 scenario files); all required applicable scenarios
-  match, and the Rust Component conformance suite passes. R6 implements
+  version 11, 86 scenario files); all required applicable scenarios
+  match, and the Rust Component conformance suite passes. R6
+  remediation additionally bound every prepared activation to the
+  lifecycle generation validated at preparation (a stale commit fails
+  typed with `STALE_ACTIVATION`, mutating nothing and consuming no
+  session id), so preparation can never outlive the lifecycle episode
+  it validated. R6 implements
   no Plugin system and no Godot Domain. R7 (Provider, Tool-Loop,
   Projection, Configuration, and CLI Parity) is next.
 - Stages 4–6 are not started.
@@ -330,8 +335,8 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   application, new checkpoint creation, Git inspection) report the same
   typed outcomes on both sides.
 
-Next: Stage 3R — R6: Minimal Domain Capability Architecture and
-Synthetic Conformance Domain. The complete internal sequence is recorded
+Next: Stage 3R — R7: Provider, Tool-Loop, Projection, Configuration,
+and CLI Parity. The complete internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution

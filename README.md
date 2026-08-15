@@ -259,13 +259,20 @@ separate, explicit concerns.
 
 - Public product stages 1–3 have a broad TypeScript reference surface; effectful
   capabilities retain truthful availability reporting
-- Stage 3R R1 through R6 are complete (R6: minimal Domain capability architecture and synthetic conformance Domain —
-  one-based positions/ranges, bounded sanitized diagnostics, generic
+- Stage 3R R5 — Generic Language Intelligence — is complete (one-based
+  positions/ranges, bounded sanitized diagnostics, generic
   symbol/definition/reference models, the language-neutral structural
   representation, typed validation results, revision binding, and the
   generic language-service URI mapping — at differential parity)
+- Stage 3R R6 — Minimal Domain Capability Architecture and Synthetic
+  Conformance Domain — is complete (the domain-neutral
+  lifecycle/capability semantics in `siralos-core::domain`, the
+  production Component Model / WIT boundary in
+  `siralos-adapters::domain`, prepared activations bound to the
+  validated lifecycle generation with typed stale-commit rejection,
+  and the deterministic product-neutral synthetic conformance Domain
+  proving the boundary — at differential parity)
 - **Next:** Stage 3R R7 — Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-  Synthetic Conformance Domain
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the
