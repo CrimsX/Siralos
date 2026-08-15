@@ -1,0 +1,43 @@
+{
+  "id": "workspace-prepare.cancelled",
+  "subject": "workspace-prepare",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "line one\n"
+      }
+    ],
+    "verifyPath": "a.txt",
+    "prepares": [
+      {
+        "tool": "workspace.create_file",
+        "input": {
+          "path": "new.txt",
+          "content": "x"
+        },
+        "cancelled": true
+      },
+      {
+        "tool": "workspace.edit_file",
+        "input": {
+          "path": "a.txt",
+          "expectedSha256": "31f21b1dae81d3f32f40e38134bc688e6f7df4f08dde1d7d2cda3c4b59104e1c",
+          "replacements": []
+        },
+        "cancelled": true
+      },
+      {
+        "tool": "workspace.delete_file",
+        "input": {
+          "path": "a.txt",
+          "expectedSha256": "31f21b1dae81d3f32f40e38134bc688e6f7df4f08dde1d7d2cda3c4b59104e1c"
+        },
+        "cancelled": true
+      }
+    ]
+  }
+}

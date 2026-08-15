@@ -35,6 +35,10 @@ const TASK_PROBE = join(HERE, "probes", "task-oracle.mjs");
 const TS_REMAP_LOADER = join(HERE, "shared", "ts-remap-loader.mjs");
 const PROBE_TIMEOUT_MS = 10_000;
 const TASK_PROBE_TIMEOUT_MS = 15_000;
+const WORKSPACE_PROBE_TIMEOUT_MS = 30_000;
+const WORKSPACE_PROBE = join(HERE, "probes", "workspace-oracle.mjs");
+const REVISION_PROBE = join(HERE, "probes", "revision-oracle.mjs");
+const CHECKPOINT_PROBE = join(HERE, "probes", "checkpoint-oracle.mjs");
 
 function optionValue(args, name) {
   const index = args.indexOf(name);
@@ -152,6 +156,56 @@ export function runTaskProbe(
   return parsed;
 }
 
+/**
+ * Run one Stage 3R R4 probe against the real TypeScript reference with
+ * the scenario input on stdin, mirroring the task-probe lifecycle.
+ */
+function runWorkspaceProbe(probe, subject, input, timeoutMs = WORKSPACE_PROBE_TIMEOUT_MS) {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", pathToFileURL(TS_REMAP_LOADER).href, probe],
+    {
+      input: JSON.stringify({ subject, ...input }),
+      timeout: timeoutMs,
+      maxBuffer: CONTRACT_LIMITS.probeOutputBytes,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  if (result.error?.code === "ETIMEDOUT") {
+    throw new Error(`${subject} probe timed out`);
+  }
+  if (result.error !== undefined) {
+    throw new Error(`${subject} probe could not execute: ${result.error.code ?? "unknown error"}`);
+  }
+  if (result.signal !== null) {
+    throw new Error(`${subject} probe terminated by a signal`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`${subject} probe exited unsuccessfully (${String(result.status)})`);
+  }
+  const output = result.stdout;
+  if (!Buffer.isBuffer(output) || output.length === 0) {
+    throw new Error(`${subject} probe emitted no outcome`);
+  }
+  if (output.length > CONTRACT_LIMITS.probeOutputBytes) {
+    throw new Error(`${subject} probe output exceeded the harness bound`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(output.toString("utf8"));
+  } catch {
+    throw new Error(`${subject} probe emitted malformed JSON`);
+  }
+  return parsed;
+}
+
+const WORKSPACE_FILE_SUBJECTS = new Set([
+  "workspace-read",
+  "workspace-list",
+  "workspace-search",
+  "workspace-prepare",
+  "git-inspection",
+]);
 /** The oracle record for a single scenario. */
 export function runScenario(scenario, root) {
   if (scenario.subject === "state-dir") {
@@ -167,6 +221,30 @@ export function runScenario(scenario, root) {
       subject: scenario.subject,
       outcome: SCENARIO_OUTCOME.COMPLETED,
       result: runTaskProbe(scenario.input),
+    };
+  }
+  if (WORKSPACE_FILE_SUBJECTS.has(scenario.subject)) {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(WORKSPACE_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "workspace-revision") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(REVISION_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "checkpoint") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(CHECKPOINT_PROBE, scenario.subject, scenario.input),
     };
   }
   if (scenario.subject === "version-identity") {

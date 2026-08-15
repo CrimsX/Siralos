@@ -10,8 +10,19 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 5;
-export const ALLOWED_SUBJECTS = new Set(["state-dir", "version-identity", "task-contract"]);
+export const CORPUS_VERSION = 6;
+export const ALLOWED_SUBJECTS = new Set([
+  "state-dir",
+  "version-identity",
+  "task-contract",
+  "workspace-read",
+  "workspace-list",
+  "workspace-search",
+  "workspace-revision",
+  "workspace-prepare",
+  "checkpoint",
+  "git-inspection",
+]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
 export const ALLOWED_ENV_KEYS = new Set(["HOME", "HOMEDRIVE", "HOMEPATH", "USERPROFILE"]);
@@ -25,9 +36,10 @@ export const CONTRACT_LIMITS = Object.freeze({
   envEntries: 16,
   envKeyBytes: 64,
   envValueBytes: 4 * 1024,
-  probeOutputBytes: 16 * 1024,
+  probeOutputBytes: 1024 * 1024,
   recordsBytes: 1024 * 1024,
   taskInputBytes: 8 * 1024,
+  workspaceInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -218,6 +230,29 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const WORKSPACE_SUBJECTS = new Set([
+    "workspace-read",
+    "workspace-list",
+    "workspace-search",
+    "workspace-revision",
+    "workspace-prepare",
+    "checkpoint",
+    "git-inspection",
+  ]);
+  if (WORKSPACE_SUBJECTS.has(scenario.subject)) {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.workspaceInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.workspaceInputBytes} UTF-8 bytes`);
+    }
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -241,10 +276,19 @@ function validateSubjectInputs(scenario, label) {
 export function validateScenario(scenario, file) {
   const label = `scenario ${file}`;
   assertPlainObject(scenario, label);
-  const expectedKeys =
-    scenario.subject === "task-contract"
-      ? ["id", "subject", "platforms", "parity", "env", "input"]
-      : ["id", "subject", "platforms", "parity", "env"];
+  const withInput = new Set([
+    "task-contract",
+    "workspace-read",
+    "workspace-list",
+    "workspace-search",
+    "workspace-revision",
+    "workspace-prepare",
+    "checkpoint",
+    "git-inspection",
+  ]);
+  const expectedKeys = withInput.has(scenario.subject)
+    ? ["id", "subject", "platforms", "parity", "env", "input"]
+    : ["id", "subject", "platforms", "parity", "env"];
   assertExactKeys(scenario, expectedKeys, label);
   assertBoundedString(scenario.id, CONTRACT_LIMITS.identifierBytes, `${label}.id`);
   if (!IDENTIFIER.test(scenario.id)) {

@@ -1,0 +1,156 @@
+{
+  "id": "workspace-read.exact.basic",
+  "subject": "workspace-read",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-read",
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "line one\nline two\n"
+      },
+      {
+        "path": "b.txt",
+        "content": "hello"
+      },
+      {
+        "path": "dir/f.txt",
+        "content": "deep file\nsecond line\n"
+      },
+      {
+        "path": "many.txt",
+        "kind": "many-lines"
+      },
+      {
+        "path": "empty.txt",
+        "kind": "empty"
+      },
+      {
+        "path": "crlf.txt",
+        "kind": "crlf"
+      },
+      {
+        "path": "nonl.txt",
+        "kind": "no-trailing-newline"
+      },
+      {
+        "path": "unicode.txt",
+        "kind": "unicode"
+      },
+      {
+        "path": "README.md",
+        "content": "# Fixture\nPlain markdown, not GDScript.\n"
+      },
+      {
+        "path": "node_modules/pkg/x.js",
+        "content": "hidden\n"
+      },
+      {
+        "path": "dist/b.js",
+        "content": "hidden\n"
+      }
+    ],
+    "reads": [
+      {
+        "path": "a.txt"
+      },
+      {
+        "path": "a.txt",
+        "startLine": 2
+      },
+      {
+        "path": "a.txt",
+        "startLine": 1,
+        "endLine": 1
+      },
+      {
+        "path": "b.txt"
+      },
+      {
+        "path": "empty.txt"
+      },
+      {
+        "path": "nonl.txt"
+      },
+      {
+        "path": "crlf.txt"
+      },
+      {
+        "path": "unicode.txt"
+      },
+      {
+        "path": "many.txt",
+        "startLine": 3,
+        "endLine": 5
+      },
+      {
+        "path": "dir/f.txt",
+        "startLine": 1,
+        "endLine": 99
+      },
+      {
+        "path": "missing.txt"
+      },
+      {
+        "path": "dir"
+      },
+      {
+        "path": "a.txt",
+        "startLine": 99
+      },
+      {
+        "path": "README.md",
+        "mode": "summary"
+      },
+      {
+        "path": "README.md",
+        "mode": "structural"
+      },
+      {
+        "path": "node_modules/pkg/x.js"
+      },
+      {
+        "path": "dist/b.js"
+      },
+      {
+        "path": "../escape"
+      },
+      {
+        "path": "/etc/passwd"
+      },
+      {
+        "path": "C:/windows/win.ini"
+      },
+      {
+        "path": "a\u0000b"
+      },
+      {
+        "path": ""
+      },
+      {},
+      {
+        "path": "a.txt",
+        "startLine": 0
+      },
+      {
+        "path": "a.txt",
+        "startLine": 2,
+        "endLine": 1
+      },
+      {
+        "path": "a.txt",
+        "mode": "fancy"
+      },
+      {
+        "path": 42
+      }
+    ],
+    "cancelledReads": [
+      {
+        "path": "a.txt"
+      }
+    ]
+  }
+}

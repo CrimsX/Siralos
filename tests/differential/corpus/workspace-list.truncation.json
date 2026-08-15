@@ -1,0 +1,22 @@
+{
+  "id": "workspace-list.truncation",
+  "subject": "workspace-list",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "bulk",
+        "kind": "bulk",
+        "count": 205,
+        "content": "entry\n"
+      }
+    ],
+    "lists": [
+      {
+        "path": "bulk"
+      }
+    ]
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "id": "workspace-revision.isolation",
+  "subject": "workspace-revision",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-revision-workspace",
+    "ops": [
+      {
+        "op": "issue",
+        "path": "player.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "op": "foreign-resolve",
+        "handle": "rev_df35248a98888b6ce3188dde13df0144"
+      },
+      {
+        "op": "foreign-issue",
+        "path": "player.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "op": "foreign-resolve",
+        "handle": "rev_10e203827c2f0230bbfda28a2e9539fb"
+      },
+      {
+        "op": "resolve",
+        "handle": "rev_10e203827c2f0230bbfda28a2e9539fb"
+      },
+      {
+        "op": "compute",
+        "workspace": "fixture-revision-workspace",
+        "path": "player.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "op": "compute",
+        "workspace": "fixture-other-workspace",
+        "path": "player.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "op": "foreign-issue",
+        "path": "player.gd",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "op": "foreign-resolve",
+        "handle": "rev_c6b585ce50bd30872818e612520e2199"
+      },
+      {
+        "op": "resolve",
+        "handle": "rev_c6b585ce50bd30872818e612520e2199"
+      }
+    ]
+  }
+}

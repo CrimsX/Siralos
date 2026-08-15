@@ -1,0 +1,19 @@
+{
+  "id": "git-inspection.unavailable",
+  "subject": "git-inspection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "backend": {
+      "state": "unavailable",
+      "reason": "fixture backend state",
+      "capabilities": {
+        "filesystemReadRestriction": false,
+        "filesystemWriteRestriction": false,
+        "networkRestriction": false,
+        "processTreeRestriction": false
+      }
+    }
+  }
+}

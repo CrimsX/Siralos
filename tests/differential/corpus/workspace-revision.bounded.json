@@ -1,0 +1,73 @@
+{
+  "id": "workspace-revision.bounded",
+  "subject": "workspace-revision",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-revision-workspace",
+    "limit": 4,
+    "ops": [
+      {
+        "op": "issue",
+        "path": "p1",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "op": "issue",
+        "path": "p2",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "op": "issue",
+        "path": "p3",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "op": "issue",
+        "path": "p4",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "op": "issue",
+        "path": "p5",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "op": "size"
+      },
+      {
+        "op": "current",
+        "path": "p1"
+      },
+      {
+        "op": "resolve",
+        "handle": "rev_7b9d17b4429b12021c7281bb479f1426"
+      },
+      {
+        "op": "current",
+        "path": "p5"
+      },
+      {
+        "op": "issue",
+        "path": "p1",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "op": "size"
+      },
+      {
+        "op": "current",
+        "path": "p1"
+      },
+      {
+        "op": "observe",
+        "path": "p5",
+        "mode": "exact"
+      },
+      {
+        "op": "observed"
+      }
+    ]
+  }
+}

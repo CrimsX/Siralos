@@ -1,0 +1,19 @@
+{
+  "id": "git-inspection.enforcing-missing",
+  "subject": "git-inspection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "backend": {
+      "state": "available",
+      "reason": "fixture backend state",
+      "capabilities": {
+        "filesystemReadRestriction": true,
+        "filesystemWriteRestriction": true,
+        "networkRestriction": false,
+        "processTreeRestriction": true
+      }
+    }
+  }
+}

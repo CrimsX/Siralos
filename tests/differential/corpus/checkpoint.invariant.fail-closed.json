@@ -1,0 +1,132 @@
+{
+  "id": "checkpoint.invariant.fail-closed",
+  "subject": "checkpoint",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "workspaceFiles": {
+      "a.txt": "before bytes"
+    },
+    "checkpoints": [
+      {
+        "id": "cp_0000000010",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "create",
+          "toolName": "workspace.create_file",
+          "createdAt": "2024-01-01T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 0
+          }
+        }
+      },
+      {
+        "id": "cp_0000000011",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-02T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        },
+        "foreignFingerprint": true
+      },
+      {
+        "id": "cp_0000000012",
+        "raw": "{ this is not json"
+      },
+      {
+        "id": "cp_0000000013",
+        "recordJson": "{\"version\":1,\"id\":\"cp_0000000013\",\"workspaceFingerprint\":\"__FINGERPRINT__\",\"relativePath\":\"a.txt\",\"operation\":\"update\",\"toolName\":\"workspace.edit_file\",\"createdAt\":\"2024-01-03T00:00:00.000Z\",\"state\":\"prepared\",\"before\":{\"exists\":true,\"sha256\":\"4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c\",\"byteLength\":12},\"after\":{\"exists\":true,\"sha256\":\"daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca\",\"byteLength\":11},\"preview\":{\"addedLines\":1,\"removedLines\":1},\"unexpected\":true}"
+      },
+      {
+        "id": "cp_0000000014",
+        "recordJson": "{\"version\":1,\"id\":\"cp_0000000099\",\"workspaceFingerprint\":\"__FINGERPRINT__\",\"relativePath\":\"a.txt\",\"operation\":\"update\",\"toolName\":\"workspace.edit_file\",\"createdAt\":\"2024-01-04T00:00:00.000Z\",\"state\":\"prepared\",\"before\":{\"exists\":true,\"sha256\":\"4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c\",\"byteLength\":12},\"after\":{\"exists\":true,\"sha256\":\"daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca\",\"byteLength\":11},\"preview\":{\"addedLines\":1,\"removedLines\":1}}"
+      },
+      {
+        "id": "cp_0000000015",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-05T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      }
+    ],
+    "ops": [
+      {
+        "op": "list"
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000010"
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000011"
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000012"
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000013"
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000014"
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000015"
+      },
+      {
+        "op": "list",
+        "states": ["prepared"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "id": "checkpoint.reconciliation",
+  "subject": "checkpoint",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "workspaceFiles": {
+      "a.txt": "before bytes",
+      "b.txt": "after bytes",
+      "c.txt": "other bytes",
+      "d.txt": "after bytes"
+    },
+    "checkpoints": [
+      {
+        "id": "cp_0000000021",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-01T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      },
+      {
+        "id": "cp_0000000022",
+        "record": {
+          "relativePath": "b.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-02T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      },
+      {
+        "id": "cp_0000000023",
+        "record": {
+          "relativePath": "c.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-03T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      },
+      {
+        "id": "cp_0000000024",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-04T00:00:00.000Z",
+          "state": "applied",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      },
+      {
+        "id": "cp_0000000025",
+        "record": {
+          "relativePath": "d.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-05T00:00:00.000Z",
+          "state": "applied",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      }
+    ],
+    "ops": [
+      {
+        "op": "list",
+        "states": ["prepared", "applied"]
+      },
+      {
+        "op": "reconcile"
+      },
+      {
+        "op": "list-after"
+      },
+      {
+        "op": "list-after",
+        "states": ["prepared", "applied"]
+      }
+    ]
+  }
+}

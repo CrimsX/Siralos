@@ -1,0 +1,39 @@
+{
+  "id": "workspace-search.bounds",
+  "subject": "workspace-search",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "nomatches",
+        "kind": "bulk",
+        "count": 600,
+        "content": "no needle here\n"
+      },
+      {
+        "path": "matches",
+        "kind": "bulk",
+        "count": 130,
+        "content": "needle\n"
+      },
+      {
+        "path": "big",
+        "kind": "bulk",
+        "count": 3,
+        "content": "tiny\n"
+      }
+    ],
+    "searches": [
+      {
+        "query": "needle",
+        "path": "nomatches"
+      },
+      {
+        "query": "needle",
+        "path": "matches"
+      }
+    ]
+  }
+}

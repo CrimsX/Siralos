@@ -1,0 +1,59 @@
+{
+  "id": "workspace-read.exact.binary",
+  "subject": "workspace-read",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-read-binary",
+    "files": [
+      {
+        "path": "bin.dat",
+        "bytes": [0, 1, 2, 3]
+      },
+      {
+        "path": "nuldeep.txt",
+        "kind": "nul-after-probe"
+      },
+      {
+        "path": "invalid-utf8.dat",
+        "bytes": [195, 40]
+      },
+      {
+        "path": "big.txt",
+        "size": 524289,
+        "fill": "x"
+      },
+      {
+        "path": "long.txt",
+        "size": 65000,
+        "fill": "x"
+      },
+      {
+        "path": "at-limit.txt",
+        "size": 524288,
+        "fill": "x"
+      }
+    ],
+    "reads": [
+      {
+        "path": "bin.dat"
+      },
+      {
+        "path": "nuldeep.txt"
+      },
+      {
+        "path": "invalid-utf8.dat"
+      },
+      {
+        "path": "big.txt"
+      },
+      {
+        "path": "long.txt"
+      },
+      {
+        "path": "at-limit.txt"
+      }
+    ]
+  }
+}

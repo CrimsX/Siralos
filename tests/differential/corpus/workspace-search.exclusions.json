@@ -1,0 +1,50 @@
+{
+  "id": "workspace-search.exclusions",
+  "subject": "workspace-search",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "src/ok.txt",
+        "content": "needle here\n"
+      },
+      {
+        "path": "node_modules/pkg/x.js",
+        "content": "needle hidden\n"
+      },
+      {
+        "path": "dist/b.js",
+        "content": "needle hidden\n"
+      },
+      {
+        "path": "coverage/c.js",
+        "content": "needle hidden\n"
+      },
+      {
+        "path": ".git/config",
+        "content": "needle hidden\n"
+      },
+      {
+        "path": ".hidden.txt",
+        "content": "needle hidden\n"
+      },
+      {
+        "path": "README.md",
+        "content": "no needle\n"
+      }
+    ],
+    "symlinks": [
+      {
+        "link": "linked.txt",
+        "target": "src/ok.txt"
+      }
+    ],
+    "searches": [
+      {
+        "query": "needle"
+      }
+    ]
+  }
+}

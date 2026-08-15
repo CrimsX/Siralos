@@ -1,0 +1,75 @@
+{
+  "id": "workspace-search.basic",
+  "subject": "workspace-search",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "src/main.txt",
+        "content": "needle here\nno match\nneedle again\n"
+      },
+      {
+        "path": "src/util.txt",
+        "content": "no needle\n"
+      },
+      {
+        "path": "README.md",
+        "content": "NEEDLE upper\nneedle lower\n"
+      },
+      {
+        "path": "notes.txt",
+        "content": "plain needle"
+      },
+      {
+        "path": "crlf.txt",
+        "kind": "crlf"
+      },
+      {
+        "path": "unicode.txt",
+        "kind": "unicode"
+      }
+    ],
+    "searches": [
+      {
+        "query": "needle"
+      },
+      {
+        "query": "needle",
+        "path": "src"
+      },
+      {
+        "query": "NEEDLE"
+      },
+      {
+        "query": "absent"
+      },
+      {
+        "query": "needle",
+        "maxResults": 2
+      },
+      {
+        "query": "needle",
+        "maxResults": 1
+      },
+      {
+        "query": "☃"
+      },
+      {
+        "query": ""
+      },
+      {
+        "query": "needle",
+        "path": "node_modules"
+      },
+      {
+        "query": "needle",
+        "path": "../x"
+      },
+      {
+        "query": 7
+      }
+    ]
+  }
+}

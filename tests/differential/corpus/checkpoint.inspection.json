@@ -1,0 +1,164 @@
+{
+  "id": "checkpoint.inspection",
+  "subject": "checkpoint",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "workspaceFiles": {
+      "a.txt": "before bytes",
+      "b.txt": "after bytes"
+    },
+    "checkpoints": [
+      {
+        "id": "cp_0000000001",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "create",
+          "toolName": "workspace.create_file",
+          "createdAt": "2024-01-01T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": false,
+            "sha256": null,
+            "byteLength": null
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 2,
+            "removedLines": 0
+          }
+        }
+      },
+      {
+        "id": "cp_0000000002",
+        "record": {
+          "relativePath": "b.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-02T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      },
+      {
+        "id": "cp_0000000003",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "delete",
+          "toolName": "workspace.delete_file",
+          "createdAt": "2024-01-03T00:00:00.000Z",
+          "state": "prepared",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": false,
+            "sha256": null,
+            "byteLength": null
+          },
+          "preview": {
+            "addedLines": 0,
+            "removedLines": 2
+          }
+        }
+      },
+      {
+        "id": "cp_0000000004",
+        "record": {
+          "relativePath": "b.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-04T00:00:00.000Z",
+          "state": "undone",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      },
+      {
+        "id": "cp_0000000005",
+        "record": {
+          "relativePath": "a.txt",
+          "operation": "update",
+          "toolName": "workspace.edit_file",
+          "createdAt": "2024-01-05T00:00:00.000Z",
+          "state": "abandoned",
+          "before": {
+            "exists": true,
+            "sha256": "4f3f9778eb3c6d79754de5ffb8707420e1d3d53db8897bea3f3ba61a260f707c",
+            "byteLength": 12
+          },
+          "after": {
+            "exists": true,
+            "sha256": "daec70bf88159c4c92078624d27126f506626b09001fb366dcc2938f8f1a68ca",
+            "byteLength": 11
+          },
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 1
+          }
+        }
+      }
+    ],
+    "ops": [
+      {
+        "op": "list"
+      },
+      {
+        "op": "list",
+        "states": ["prepared"]
+      },
+      {
+        "op": "list",
+        "states": ["undone", "abandoned"]
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000001"
+      },
+      {
+        "op": "get",
+        "id": "cp_0000000004"
+      },
+      {
+        "op": "get",
+        "id": "cp_missing"
+      },
+      {
+        "op": "get",
+        "id": "cp_bad"
+      }
+    ]
+  }
+}

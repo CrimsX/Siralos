@@ -1,0 +1,63 @@
+{
+  "id": "workspace-prepare.unavailable",
+  "subject": "workspace-prepare",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "line one\nline two\n"
+      }
+    ],
+    "verifyPath": "a.txt",
+    "prepares": [
+      {
+        "tool": "workspace.create_file",
+        "input": {
+          "path": "new.txt",
+          "content": "fresh\n"
+        }
+      },
+      {
+        "tool": "workspace.edit_file",
+        "input": {
+          "path": "a.txt",
+          "expectedSha256": "e9024f1a07d29d52ad3aa5e1a18e94db1f3a9fd32b89e39d47c472cd99071e13",
+          "replacements": [
+            {
+              "oldText": "line",
+              "newText": "LINE"
+            }
+          ]
+        }
+      },
+      {
+        "tool": "workspace.delete_file",
+        "input": {
+          "path": "a.txt",
+          "expectedSha256": "e9024f1a07d29d52ad3aa5e1a18e94db1f3a9fd32b89e39d47c472cd99071e13"
+        }
+      },
+      {
+        "tool": "workspace.create_file",
+        "input": {}
+      },
+      {
+        "tool": "workspace.edit_file",
+        "input": {
+          "path": "missing.txt",
+          "expectedSha256": "nope"
+        }
+      },
+      {
+        "tool": "workspace.create_file",
+        "input": {
+          "path": "node_modules/x.txt",
+          "content": "x"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "id": "workspace-list.root",
+  "subject": "workspace-list",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "x\n"
+      },
+      {
+        "path": "dir/sub.txt",
+        "content": "y\n"
+      },
+      {
+        "path": ".hidden",
+        "content": "z\n"
+      },
+      {
+        "path": "node_modules/pkg/x.js",
+        "content": "n\n"
+      },
+      {
+        "path": "dist/b.js",
+        "content": "d\n"
+      },
+      {
+        "path": "coverage/c.js",
+        "content": "c\n"
+      },
+      {
+        "path": ".git/config",
+        "content": "g\n"
+      },
+      {
+        "path": ".siralos-mutation-abc.tmp",
+        "content": "t\n"
+      },
+      {
+        "path": "README.md",
+        "content": "r\n"
+      }
+    ],
+    "lists": [
+      {},
+      {
+        "path": "."
+      },
+      {
+        "path": "dir"
+      },
+      {
+        "path": "dir/sub.txt"
+      },
+      {
+        "path": "missing"
+      },
+      {
+        "path": "node_modules"
+      },
+      {
+        "path": "dist"
+      },
+      {
+        "path": "coverage"
+      },
+      {
+        "path": ".git"
+      },
+      {
+        "path": "../x"
+      },
+      {
+        "path": ""
+      },
+      {
+        "path": "a\u0000b"
+      },
+      {
+        "path": "/etc"
+      },
+      {
+        "path": "C:/x"
+      },
+      {
+        "path": 5
+      }
+    ]
+  }
+}

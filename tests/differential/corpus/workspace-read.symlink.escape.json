@@ -1,0 +1,30 @@
+{
+  "id": "workspace-read.symlink.escape",
+  "subject": "workspace-read",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-read-symlink",
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "inside\n"
+      }
+    ],
+    "symlinks": [
+      {
+        "link": "escape.txt",
+        "target": "../siralos-r4-outside.txt"
+      }
+    ],
+    "reads": [
+      {
+        "path": "escape.txt"
+      },
+      {
+        "path": "a.txt"
+      }
+    ]
+  }
+}
