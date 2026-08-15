@@ -21,8 +21,15 @@ configuration, Skills, and explicitly installed Plugins
 > Generic Workspace / Project Foundation — is complete (bounded reads,
 > listing, search, revisions, prepared-effect contracts, checkpoint
 > inspection/reconciliation, and the typed unavailable Git disposition at
-> differential parity); **R5 — Generic Language Intelligence** is next and
-> has not begun.
+> differential parity), and **R5 — Generic Language Intelligence** is
+> complete (one-based positions/ranges, bounded sanitized diagnostics
+> with deterministic ordering and explicit truncation, generic
+> symbol/definition/reference models, the language-neutral structural
+> representation with the deterministic advisory summary formatter,
+> typed validation results, revision binding, and the generic
+> language-service URI mapping at differential parity); **R6 — Minimal
+> Domain Capability Architecture and Synthetic Conformance Domain** is
+> next and has not begun.
 
 ## Status vocabulary
 
@@ -96,11 +103,17 @@ product, composition, and extension model is frozen in
 
 - The Rust successor covers the Stage 3R foundation, the R2 harness, the
   R3 domain-neutral host-owned task kernel (contracts, task state,
-  evidence, acceptance, completion, activity, progress), and the R4
+  evidence, acceptance, completion, activity, progress), the R4
   generic workspace/project foundation (workspace identity and path
   safety, bounded exact reads, deterministic listing and search, the
   revision registry, prepared-effect contracts, checkpoint model and
-  inspection/reconciliation, and the typed unavailable Git disposition)
+  inspection/reconciliation, and the typed unavailable Git disposition),
+  and the R5 generic language-intelligence foundation (one-based source
+  positions/ranges, bounded sanitized diagnostics with deterministic
+  ordering and explicit truncation, generic symbol/definition/reference
+  models, the language-neutral structural representation with the
+  deterministic advisory summary formatter, typed validation results,
+  R4 revision binding, and the generic language-service URI mapping)
   at differential parity with the TypeScript reference
 - Workspace mutation, undo, Git inspection, development commands, and dynamic
   Godot execution remain intentionally unavailable where the current host

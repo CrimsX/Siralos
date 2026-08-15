@@ -87,7 +87,24 @@ unsafe filesystem or process boundary intentionally fails closed.
   EOF-verified on both implementations (a short read is never treated as
   EOF, a partial prefix never becomes whole-file identity, and size
   boundaries are explicit) and made checkpoint source-path inspection fail
-  closed on any escape. R5 (Generic Language Intelligence) is next.
+  closed on any escape. R5 (Generic Language Intelligence) is complete:
+  `siralos-core::language` owns the one-based position/range model,
+  the bounded sanitized diagnostic model with deterministic
+  dedup/ordering and explicit truncation, generic symbol/definition/
+  reference query models, the language-neutral structural-document
+  representation with the deterministic advisory summary formatter,
+  typed validation result semantics (source-invalid never conflated with
+  infrastructure failure), reference-extracted generic limits, and R4
+  revision binding; `siralos-adapters::language::uri` owns the generic
+  language-service URI mapping. The TypeScript reference gained matching
+  generic language modules that the Godot adapters now consume. The
+  differential corpus gained 16 scenarios across the
+  `language-diagnostics`, `language-structure`, and
+  `language-definition` subjects (corpus version 8, 63 scenario files);
+  all required applicable scenarios match. R5 ports no GDScript/Godot
+  parsing, no LSP transport, no process execution, no provider tools,
+  and no Domain architecture. R6 (Minimal Domain Capability Architecture
+  and Synthetic Conformance Domain) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation

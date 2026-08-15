@@ -276,8 +276,20 @@ siralos-cli ─────────→ siralos-adapters ─→ siralos-core
   reference operation bounds, deterministic revision handles and the
   bounded session registry, prepared-effect models, checkpoint
   contracts/invariants/undo-planning/reconciliation classification, and
-  the read-only Git error/disposition contract — no filesystem, process,
-  or language semantics.
+  the read-only Git error/disposition contract — no filesystem or
+  process semantics. The `language` module owns the generic R5
+  language-intelligence foundation: one-based positions/ranges with
+  typed validation (0-based LSP conversion happens at the adapter
+  boundary, never silently), the bounded sanitized diagnostic model
+  with closed severities, deterministic dedup/ordering, and explicit
+  truncation, generic symbol/definition/reference query models with
+  deterministic ordering and bounds, the language-neutral
+  structural-document representation with the deterministic
+  byte-bounded advisory summary formatter, typed validation result
+  semantics (source-invalid never conflated with infrastructure
+  failure), reference-extracted generic limits, and R4 revision
+  binding — no GDScript grammar, LSP transport, process execution, or
+  domain-registry concepts (enforced by the architecture check).
 - `siralos-adapters` owns infrastructure/adapters; it may depend only on
   core. Its `workspace` module implements the R4 filesystem surface:
   canonical root resolution, containment-safe path resolution,
@@ -285,7 +297,11 @@ siralos-cli ─────────→ siralos-adapters ─→ siralos-core
   fail-closed mutation-preparation boundary, checkpoint storage
   inspection and reconciliation, and the typed unavailable Git
   inspection disposition (Git is never spawned without an enforcing
-  process boundary).
+  process boundary). Its `language` module owns the generic R5
+  language-service boundary: URI mapping from service URIs to
+  workspace-relative paths (out-of-workspace URIs rejected, decoded
+  escapes refused, native separators normalized), with no process
+  execution and no LSP transport.
 - `siralos-cli` is the composition boundary and the `siralos` binary; it
   may depend only on core and adapters.
 - Exactly three crates exist; no placeholder or hypothetical domain

@@ -6,8 +6,8 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R4
-Next milestone: R5 - Generic Language Intelligence
+Current completed milestone: R5
+Next milestone: R6 - Minimal Domain Capability Architecture and Synthetic Conformance Domain
 Last verified commit: 056864cc2534c3f856f0f5ba2dada2f532a334bf
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
@@ -110,8 +110,27 @@ short read is never treated as EOF, a partial prefix can never become
 authoritative source identity, file-size boundaries are explicit, and
 checkpoint source-path inspection fails closed on any escape. Structural/summary
 read modes remain explicit typed unsupported dispositions at R4
-(GDScript structure extraction is R5-owned). No further major Stage 1-3
-subsystem has been ported yet.
+(GDScript structure extraction is Godot-domain language intelligence,
+R8/R9). R5 added the generic language-intelligence foundation to
+`siralos-core` (`siralos-core::language`): one-based source
+positions/ranges with typed validation, the bounded sanitized diagnostic
+model with deterministic dedup/ordering and explicit truncation, generic
+symbol/reference/definition query models with deterministic ordering and
+bounds, the language-neutral structural-document representation with the
+deterministic advisory summary formatter (byte-bounded, revision-stating,
+never authoritative), the typed validation result semantics
+(source-invalid never conflated with infrastructure failure), the generic
+language-service URI mapping in `siralos-adapters::language::uri`, and
+R4 revision binding throughout. The TypeScript reference gained the
+corresponding generic language modules (position/sanitize/truncate/
+diagnostic/definition) that the Godot adapters now consume, preserving
+all existing behavior. The differential corpus gained 16 scenarios
+across the `language-diagnostics`, `language-structure`, and
+`language-definition` subjects (corpus version 8, 63 scenario files);
+all required applicable scenarios match on both implementations. R5
+ports no Godot/GDScript parsing (the GDScript scanner remains the
+TypeScript reference for R8/R9), no LSP transport, no process
+execution, no provider tool surface, and no Domain architecture.
 
 ### Target architecture
 
@@ -158,8 +177,9 @@ R1      COMPLETE
 R2      COMPLETE
 R3      COMPLETE
 R4      COMPLETE
-R5      NEXT
-R6-R12  NOT DUE
+R5      COMPLETE
+R6      NEXT
+R7-R12  NOT DUE
 ```
 
 Status changes require executable evidence and an update to
@@ -168,20 +188,20 @@ Status changes require executable evidence and an update to
 
 ## 4. Stage 3R migration track
 
-| Milestone | Scope                                                          | Status   |
-| --------- | -------------------------------------------------------------- | -------- |
-| R1        | Siralos rename + Rust engineering/domain-neutral foundation    | Verified |
-| R2        | Differential Behavioral Harness                                | Verified |
-| R3        | Domain-Neutral Core                                            | Verified |
-| R4        | Generic Workspace / Project Foundation                         | Verified |
-| R5        | Language Intelligence                                          |
-| R6        | Domain Capability Architecture                                 |
-| R7        | Providers / Tools / CLI                                        |
-| R8        | Godot Stage-2 parity                                           |
-| R9        | Godot Stage-3 parity                                           |
-| R10       | H1 / H2 / ICM / H3 parity                                      |
-| R11       | Full differential/effect parity                                |
-| R12       | TypeScript reference retirement or explicit retention decision |
+| Milestone | Scope                                                                   | Status   |
+| --------- | ----------------------------------------------------------------------- | -------- |
+| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified |
+| R2        | Differential Behavioral Harness                                         | Verified |
+| R3        | Domain-Neutral Core                                                     | Verified |
+| R4        | Generic Workspace / Project Foundation                                  | Verified |
+| R5        | Generic Language Intelligence                                           | Verified |
+| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Next     |
+| R7        | Providers / Tools / CLI                                                 |
+| R8        | Godot Stage-2 parity                                                    |
+| R9        | Godot Stage-3 parity                                                    |
+| R10       | H1 / H2 / ICM / H3 parity                                               |
+| R11       | Full differential/effect parity                                         |
+| R12       | TypeScript reference retirement or explicit retention decision          |
 
 Permanent migration rule:
 

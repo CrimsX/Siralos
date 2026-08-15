@@ -28,7 +28,7 @@ repository concepts never satisfy those identifiers by implication.
 | R2        | Differential Behavioral Harness                                                                                                 | Verified       |
 | R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Verified       |
 | R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified       |
-| R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Not due        |
+| R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified       |
 | R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Not due        |
 | R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Not due        |
 | R8        | Optional Godot Stage-2 parity                                                                                                   | Not due        |
@@ -89,6 +89,36 @@ unavailable effects (mutation application, new checkpoint creation, Git
 inspection) report the same typed outcomes on both sides. R4 verification
 does not authorize R5 work or satisfy any later migration or Stage-4
 entry gate.
+
+R5 is verified: the generic language-intelligence foundation lives in
+`siralos-core::language` (one-based positions/ranges with typed
+validation and explicit 0-based LSP conversion at the adapter boundary;
+the bounded sanitized diagnostic model with closed severities,
+deterministic dedup/ordering, and explicit truncation; generic
+symbol/definition/reference query models with deterministic ordering
+and bounds; the language-neutral structural-document representation
+with the deterministic byte-bounded advisory summary formatter; typed
+validation result semantics that never conflate source-invalid with
+infrastructure failure; the reference-extracted generic limits; and R4
+revision binding throughout) plus the generic language-service URI
+mapping in `siralos-adapters::language::uri`. The TypeScript reference
+gained matching generic language modules
+(`packages/core/src/language`: position, sanitize, truncate,
+diagnostic, definition) extracted behavior-preservingly from the Godot
+diagnostics/LSP normalization code, which now consumes them; all
+existing TypeScript tests stay green. The differential corpus gained 16
+scenarios across the `language-diagnostics`,
+`language-structure`, and `language-definition` subjects (corpus
+schema 3, corpus version 8, 63 scenario files) executed by both
+implementations under the R2 protocol; all required applicable
+scenarios match, the harness self-tests and replay stress pass, and
+the complete local repository gate passes. R5 deliberately does not
+port GDScript/Godot parsing (the GDScript structural scanner remains
+the TypeScript reference for R8/R9), LSP/JSON-RPC transport, language
+process execution, provider tool integration, or Domain architecture;
+execution-dependent language intelligence reports typed unavailable
+dispositions. R5 verification does not authorize R6 work or satisfy
+any later migration or Stage-4 entry gate.
 
 ## Porting gate
 
