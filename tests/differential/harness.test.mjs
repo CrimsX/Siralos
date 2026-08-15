@@ -460,6 +460,69 @@ describe("comparator semantics", () => {
     expect(audit.deviationCount).toBe(1);
   });
 
+  it("flags an R5 language severity deviation as a deviation", () => {
+    // Stage 3R R5: a mutated diagnostic severity in the candidate
+    // record must fail the comparator (no language-specific
+    // normalization hides real semantic differences).
+    const scenario = {
+      id: "language-diagnostics.empty",
+      subject: "language-diagnostics",
+      platforms: ["*"],
+      parity: "required",
+    };
+    const record = (severity) => ({
+      scenarioId: "language-diagnostics.empty",
+      subject: "language-diagnostics",
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: {
+        documents: [
+          {
+            uri: "file:///work/project/scripts/player.gd",
+            status: "normalized",
+            path: "scripts/player.gd",
+            revision: null,
+            diagnostics: [
+              {
+                source: "langsvc",
+                severity,
+                path: "scripts/player.gd",
+                line: 34,
+                column: 17,
+                code: null,
+                message: "boom",
+                rawCategory: null,
+              },
+            ],
+            truncated: false,
+          },
+        ],
+        aggregate: { diagnostics: [], truncated: false },
+      },
+    });
+    const { audit, deviations } = runCompare({
+      oracleRecords: [record("error")],
+      candidateRecords: [record("warning")],
+      scenarios: [scenario],
+      platform: POSIX,
+    });
+    expect(audit.parityHeld).toBe(false);
+    expect(deviations).toHaveLength(1);
+    expect(deviations[0]).toMatchObject({
+      scenarioId: "language-diagnostics.empty",
+      reason: "record-mismatch",
+    });
+    expect(deviations[0].differences).toEqual([
+      {
+        path: "$.result.documents[0].diagnostics[0].severity",
+        kind: "VALUE_CHANGED",
+        oracle: "error",
+        candidate: "warning",
+        policy: "scalar-exact",
+      },
+    ]);
+    expect(audit.deviationCount).toBe(1);
+  });
+
   it("reports scalar, missing, extra, ordered-sequence, and error-category differences", () => {
     expect(semanticDifferences({ value: 1 }, { value: 2 })[0]).toMatchObject({
       path: "$.value",
