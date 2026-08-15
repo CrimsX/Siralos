@@ -53,3 +53,23 @@ summary semantics — not GDScript/Godot parsing. Godot-specific
 language parity (engine diagnostics, LSP, the GDScript scanner) is
 deliberately NOT established by this corpus; those surfaces remain
 the later Godot milestones' oracle.
+
+The Stage 3R R6 subjects (domain-lifecycle and domain-capability)
+execute generic Domain lifecycle/capability parity: the TypeScript
+side reaches the real generic reference modules
+(`packages/core/src/domain`); the Rust side reaches
+`siralos-core::domain`. The `domain-lifecycle` scenarios drive the
+explicit absent/installed/enabled/active state machine (typed
+transitions, activation eligibility, exact activation binding, and
+the workspace-scan proof that workspace contents never install,
+enable, activate, download, or recommend a Domain — including a
+repository containing `project.godot` with no installed Domain). The
+`domain-capability` scenarios exercise the Host-authoritative grant
+decision (grant subset behavior, typed denial with ordered missing
+capabilities, and the invariant that denial never widens Host
+authority). The actual WIT/Component execution boundary is proven by
+the Rust conformance suite
+(`crates/siralos-adapters/tests/domain_conformance.rs`) on the
+checked-in synthetic conformance component bytes
+(`tests/domain-conformance/`); the differential subjects cover the
+generic semantics only, exactly like the earlier subjects.

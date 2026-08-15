@@ -1,0 +1,23 @@
+{
+  "id": "domain-capability.grant-subset",
+  "subject": "domain-capability",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "authority": ["workspace-read", "process-exec"],
+    "ops": [
+      {
+        "op": "decide",
+        "request": ["workspace-read"]
+      },
+      {
+        "op": "decide",
+        "request": []
+      },
+      {
+        "op": "inspectAuthority"
+      }
+    ]
+  }
+}

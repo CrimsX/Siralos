@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 9;
+export const CORPUS_VERSION = 10;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -25,6 +25,8 @@ export const ALLOWED_SUBJECTS = new Set([
   "language-diagnostics",
   "language-structure",
   "language-definition",
+  "domain-lifecycle",
+  "domain-capability",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -44,6 +46,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   taskInputBytes: 8 * 1024,
   workspaceInputBytes: 64 * 1024,
   languageInputBytes: 64 * 1024,
+  domainInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -276,6 +279,21 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const DOMAIN_SUBJECTS = new Set(["domain-lifecycle", "domain-capability"]);
+  if (DOMAIN_SUBJECTS.has(scenario.subject)) {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.domainInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.domainInputBytes} UTF-8 bytes`);
+    }
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -311,6 +329,8 @@ export function validateScenario(scenario, file) {
     "language-diagnostics",
     "language-structure",
     "language-definition",
+    "domain-lifecycle",
+    "domain-capability",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

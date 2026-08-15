@@ -1,0 +1,26 @@
+{
+  "id": "domain-capability.denied-no-escalation",
+  "subject": "domain-capability",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "authority": ["workspace-read"],
+    "ops": [
+      {
+        "op": "decide",
+        "request": ["process-exec"]
+      },
+      {
+        "op": "inspectAuthority"
+      },
+      {
+        "op": "decide",
+        "request": ["process-exec"]
+      },
+      {
+        "op": "inspectAuthority"
+      }
+    ]
+  }
+}

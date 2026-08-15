@@ -1,0 +1,72 @@
+{
+  "id": "domain-lifecycle.identity-mismatch",
+  "subject": "domain-lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "supportedAbi": "siralos:domain-abi@1.0.0",
+    "authority": ["workspace-read"],
+    "ops": [
+      {
+        "op": "install",
+        "package": {
+          "id": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "requestedCapabilities": ["workspace-read"]
+        },
+        "computedDigest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "op": "enable"
+      },
+      {
+        "op": "activate",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "ready"
+      },
+      {
+        "op": "install",
+        "package": {
+          "id": "conformance-domain",
+          "digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "abi": "siralos:domain-abi@1.0.0",
+          "requestedCapabilities": ["workspace-read"]
+        },
+        "computedDigest": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      {
+        "op": "uninstall"
+      },
+      {
+        "op": "install",
+        "package": {
+          "id": "conformance-domain",
+          "digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "abi": "siralos:domain-abi@1.0.0",
+          "requestedCapabilities": ["workspace-read"]
+        },
+        "computedDigest": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      {
+        "op": "activate",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "ready"
+      },
+      {
+        "op": "inspect"
+      }
+    ]
+  }
+}

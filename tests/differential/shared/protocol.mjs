@@ -782,6 +782,248 @@ function validateLanguageDefinitionResult(record, label) {
     }
   }
 }
+const DOMAIN_STATE_VALUES = new Set(["absent", "installed", "enabled", "active"]);
+const DOMAIN_OP_VALUES = new Set([
+  "inspect",
+  "install",
+  "uninstall",
+  "enable",
+  "disable",
+  "deactivate",
+  "eligibility",
+  "activate",
+  "workspaceScan",
+  "decide",
+  "inspectAuthority",
+  "invalid",
+]);
+const DOMAIN_FAILURE_CODE = /^[A-Z][A-Z0-9_]*$/u;
+
+function validateDomainStringArray(value, maximum, label) {
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw new Error(`${label} must be a bounded array`);
+  }
+  for (const entry of value) {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new Error(`${label} entries must be non-empty strings`);
+    }
+  }
+}
+
+function validateDomainPackageValue(value, label) {
+  if (!isObject(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  assertExactKeys(value, ["id", "digest", "abi", "requestedCapabilities"], label);
+  if (
+    typeof value.id !== "string" ||
+    typeof value.abi !== "string" ||
+    !LOWER_SHA256.test(value.digest)
+  ) {
+    throw new Error(`${label} identity fields are invalid`);
+  }
+  validateDomainStringArray(value.requestedCapabilities, 32, `${label}.requestedCapabilities`);
+}
+
+function validateDomainBinding(value, label) {
+  if (!isObject(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  assertExactKeys(value, ["packageId", "digest", "abi"], label);
+  if (
+    typeof value.packageId !== "string" ||
+    typeof value.abi !== "string" ||
+    !LOWER_SHA256.test(value.digest)
+  ) {
+    throw new Error(`${label} identity fields are invalid`);
+  }
+}
+
+function validateDomainActivation(value, label) {
+  if (!isObject(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  assertExactKeys(value, ["sessionId", "binding", "grant"], label);
+  if (!Number.isSafeInteger(value.sessionId) || value.sessionId < 1) {
+    throw new Error(`${label}.sessionId is invalid`);
+  }
+  validateDomainBinding(value.binding, `${label}.binding`);
+  validateDomainStringArray(value.grant, 32, `${label}.grant`);
+}
+
+function validateDomainFailureOp(op, label) {
+  assertExactKeys(op, ["op", "ok", "code"], label);
+  if (op.ok !== false || typeof op.code !== "string" || !DOMAIN_FAILURE_CODE.test(op.code)) {
+    throw new Error(`${label} failure op is invalid`);
+  }
+}
+
+function validateDomainLifecycleResult(record, label) {
+  assertExactKeys(record.result, ["ops"], `${label}.result`);
+  if (!Array.isArray(record.result.ops) || record.result.ops.length > 128) {
+    throw new Error(`${label}.result.ops must be a bounded array`);
+  }
+  for (const op of record.result.ops) {
+    if (!isObject(op) || typeof op.op !== "string" || !DOMAIN_OP_VALUES.has(op.op)) {
+      throw new Error(`${label}.result.ops entries must carry a known op`);
+    }
+    if (op.op === "inspect") {
+      assertExactKeys(
+        op,
+        ["op", "state", "available", "enabled", "active", "package", "activation"],
+        `${label}.inspect`,
+      );
+      if (!DOMAIN_STATE_VALUES.has(op.state)) {
+        throw new Error(`${label}.inspect state is invalid`);
+      }
+      if (
+        typeof op.available !== "boolean" ||
+        typeof op.enabled !== "boolean" ||
+        typeof op.active !== "boolean"
+      ) {
+        throw new Error(`${label}.inspect flags are invalid`);
+      }
+      if (op.package !== null) {
+        validateDomainPackageValue(op.package, `${label}.inspect.package`);
+      }
+      if (op.activation !== null) {
+        validateDomainActivation(op.activation, `${label}.inspect.activation`);
+      }
+      continue;
+    }
+    if (op.op === "install") {
+      if (op.ok === true) {
+        assertExactKeys(op, ["op", "ok", "state"], `${label}.install`);
+        if (!DOMAIN_STATE_VALUES.has(op.state)) {
+          throw new Error(`${label}.install state is invalid`);
+        }
+      } else {
+        validateDomainFailureOp(op, `${label}.install`);
+      }
+      continue;
+    }
+    if (
+      op.op === "uninstall" ||
+      op.op === "enable" ||
+      op.op === "disable" ||
+      op.op === "deactivate"
+    ) {
+      if (op.ok === true) {
+        assertExactKeys(op, ["op", "ok"], `${label}.${op.op}`);
+      } else {
+        validateDomainFailureOp(op, `${label}.${op.op}`);
+      }
+      continue;
+    }
+    if (op.op === "eligibility") {
+      if (op.ready === true || op.ready === false) {
+        assertExactKeys(op, ["op", "ready", "reasons"], `${label}.eligibility`);
+        validateDomainStringArray(op.reasons, 8, `${label}.eligibility.reasons`);
+      } else {
+        validateDomainFailureOp(op, `${label}.eligibility`);
+      }
+      continue;
+    }
+    if (op.op === "activate") {
+      if (op.ok === true) {
+        assertExactKeys(op, ["op", "ok", "sessionId", "binding", "grant"], `${label}.activate`);
+        if (!Number.isSafeInteger(op.sessionId) || op.sessionId < 1) {
+          throw new Error(`${label}.activate sessionId is invalid`);
+        }
+        validateDomainBinding(op.binding, `${label}.activate.binding`);
+        validateDomainStringArray(op.grant, 32, `${label}.activate.grant`);
+      } else {
+        const keys =
+          op.code === "CAPABILITY_DENIED" ? ["op", "ok", "code", "missing"] : ["op", "ok", "code"];
+        assertExactKeys(op, keys, `${label}.activate`);
+        if (op.ok !== false || typeof op.code !== "string" || !DOMAIN_FAILURE_CODE.test(op.code)) {
+          throw new Error(`${label}.activate failure is invalid`);
+        }
+        if (op.code === "CAPABILITY_DENIED") {
+          validateDomainStringArray(op.missing, 32, `${label}.activate.missing`);
+        }
+      }
+      continue;
+    }
+    if (op.op === "workspaceScan") {
+      assertExactKeys(
+        op,
+        [
+          "op",
+          "files",
+          "candidates",
+          "installs",
+          "enables",
+          "activations",
+          "downloads",
+          "recommendations",
+        ],
+        `${label}.workspaceScan`,
+      );
+      if (!Array.isArray(op.files) || op.files.length > 256) {
+        throw new Error(`${label}.workspaceScan files must be a bounded array`);
+      }
+      for (const file of op.files) {
+        if (!isObject(file)) {
+          throw new Error(`${label}.workspaceScan files entries must be objects`);
+        }
+        assertExactKeys(file, ["name", "kind"], `${label}.workspaceScan file`);
+        if (typeof file.name !== "string" || file.kind !== "opaque") {
+          throw new Error(`${label}.workspaceScan file classification is invalid`);
+        }
+      }
+      for (const key of [
+        "candidates",
+        "installs",
+        "enables",
+        "activations",
+        "downloads",
+        "recommendations",
+      ]) {
+        if (!Number.isSafeInteger(op[key]) || op[key] < 0) {
+          throw new Error(`${label}.workspaceScan ${key} is invalid`);
+        }
+      }
+      continue;
+    }
+    throw new Error(`${label}.result.ops has an unsupported lifecycle op`);
+  }
+}
+
+function validateDomainCapabilityResult(record, label) {
+  assertExactKeys(record.result, ["ops"], `${label}.result`);
+  if (!Array.isArray(record.result.ops) || record.result.ops.length > 128) {
+    throw new Error(`${label}.result.ops must be a bounded array`);
+  }
+  for (const op of record.result.ops) {
+    if (!isObject(op) || typeof op.op !== "string" || !DOMAIN_OP_VALUES.has(op.op)) {
+      throw new Error(`${label}.result.ops entries must carry a known op`);
+    }
+    if (op.op === "decide") {
+      if (op.granted === true) {
+        assertExactKeys(op, ["op", "granted", "grant"], `${label}.decide`);
+        validateDomainStringArray(op.grant, 32, `${label}.decide.grant`);
+      } else if (op.granted === false) {
+        assertExactKeys(op, ["op", "granted", "missing"], `${label}.decide`);
+        validateDomainStringArray(op.missing, 32, `${label}.decide.missing`);
+      } else {
+        validateDomainFailureOp(op, `${label}.decide`);
+      }
+      continue;
+    }
+    if (op.op === "inspectAuthority") {
+      assertExactKeys(op, ["op", "authority"], `${label}.inspectAuthority`);
+      validateDomainStringArray(op.authority, 32, `${label}.inspectAuthority.authority`);
+      continue;
+    }
+    if (op.op === "invalid") {
+      assertExactKeys(op, ["op", "ok", "code"], `${label}.invalid`);
+      continue;
+    }
+    throw new Error(`${label}.result.ops has an unsupported capability op`);
+  }
+}
+
 function validateCompletedResult(record, label) {
   if (!isObject(record.result)) {
     throw new Error(`${label}.result must be an object`);
@@ -838,6 +1080,14 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "language-definition") {
     validateLanguageDefinitionResult(record, label);
+    return;
+  }
+  if (record.subject === "domain-lifecycle") {
+    validateDomainLifecycleResult(record, label);
+    return;
+  }
+  if (record.subject === "domain-capability") {
+    validateDomainCapabilityResult(record, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

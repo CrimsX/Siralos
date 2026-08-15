@@ -1,0 +1,24 @@
+{
+  "id": "domain-capability.denied",
+  "subject": "domain-capability",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "authority": ["workspace-read"],
+    "ops": [
+      {
+        "op": "decide",
+        "request": ["workspace-read", "process-exec"]
+      },
+      {
+        "op": "decide",
+        "request": ["network-access"]
+      },
+      {
+        "op": "decide",
+        "request": ["process-exec"]
+      }
+    ]
+  }
+}

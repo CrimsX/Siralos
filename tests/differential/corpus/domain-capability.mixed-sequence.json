@@ -1,0 +1,35 @@
+{
+  "id": "domain-capability.mixed-sequence",
+  "subject": "domain-capability",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "authority": ["workspace-read", "process-exec"],
+    "ops": [
+      {
+        "op": "decide",
+        "request": ["process-exec"]
+      },
+      {
+        "op": "decide",
+        "request": ["workspace-read"]
+      },
+      {
+        "op": "inspectAuthority"
+      },
+      {
+        "op": "decide",
+        "request": ["workspace-read", "process-exec", "network-access"]
+      },
+      {
+        "op": "decide",
+        "request": []
+      },
+      {
+        "op": "decide",
+        "request": ["workspace-read"]
+      }
+    ]
+  }
+}

@@ -34,9 +34,12 @@ const SUBJECT_GIT_INSPECTION: &str = "git-inspection";
 const SUBJECT_LANGUAGE_DIAGNOSTICS: &str = "language-diagnostics";
 const SUBJECT_LANGUAGE_STRUCTURE: &str = "language-structure";
 const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
+const SUBJECT_DOMAIN_LIFECYCLE: &str = "domain-lifecycle";
+const SUBJECT_DOMAIN_CAPABILITY: &str = "domain-capability";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 9;
+const CORPUS_VERSION: u64 = 10;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
+const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -358,6 +361,8 @@ fn validate_scenario(
             | SUBJECT_LANGUAGE_DIAGNOSTICS
             | SUBJECT_LANGUAGE_STRUCTURE
             | SUBJECT_LANGUAGE_DEFINITION
+            | SUBJECT_DOMAIN_LIFECYCLE
+            | SUBJECT_DOMAIN_CAPABILITY
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -440,7 +445,9 @@ fn validate_scenario(
         | SUBJECT_GIT_INSPECTION
         | SUBJECT_LANGUAGE_DIAGNOSTICS
         | SUBJECT_LANGUAGE_STRUCTURE
-        | SUBJECT_LANGUAGE_DEFINITION => {
+        | SUBJECT_LANGUAGE_DEFINITION
+        | SUBJECT_DOMAIN_LIFECYCLE
+        | SUBJECT_DOMAIN_CAPABILITY => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -471,8 +478,14 @@ fn validate_scenario(
                     | SUBJECT_LANGUAGE_STRUCTURE
                     | SUBJECT_LANGUAGE_DEFINITION
             );
+            let domain_subject = matches!(
+                scenario.subject.as_str(),
+                SUBJECT_DOMAIN_LIFECYCLE | SUBJECT_DOMAIN_CAPABILITY
+            );
             let max_input_bytes = if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
+            } else if domain_subject {
+                MAX_DOMAIN_INPUT_BYTES
             } else {
                 MAX_WORKSPACE_INPUT_BYTES
             };
@@ -986,6 +999,32 @@ fn run_scenario(
                 "language input was validated while loading the corpus",
             );
             let result = language_definition_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_DOMAIN_LIFECYCLE => {
+            let input = scenario
+                .input
+                .as_ref()
+                .expect("domain input was validated while loading the corpus");
+            let result = domain_lifecycle_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_DOMAIN_CAPABILITY => {
+            let input = scenario
+                .input
+                .as_ref()
+                .expect("domain input was validated while loading the corpus");
+            let result = domain_capability_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -2073,6 +2112,32 @@ fn scenario_array<'a>(
             "scenario input missing array field {key}"
         ))
     })
+}
+/// Scenario string array field (typed corpus-integrity failure).
+fn scenario_string_array(
+    input: &Value,
+    key: &str,
+) -> Result<Vec<String>, HarnessError> {
+    input
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| {
+                    entry.as_str().map(str::to_owned).ok_or_else(|| {
+                        HarnessError::corpus(format!(
+                            "scenario input field {key} must contain only strings"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .ok_or_else(|| {
+            HarnessError::corpus(format!(
+                "scenario input missing string array field {key}"
+            ))
+        })?
 }
 
 fn scenario_object<'a>(
@@ -3521,6 +3586,394 @@ fn language_definition_record(input: &Value) -> Result<Value, HarnessError> {
     }
     Ok(json!({ "queries": queries }))
 }
+
+// ---------------------------------------------------------------------------
+// Stage 3R R6 subjects: domain-lifecycle and domain-capability.
+// ---------------------------------------------------------------------------
+//
+// Executes each R6 scenario against the real siralos-core::domain
+// lifecycle/capability semantics and builds the canonical R6
+// observation object that the TypeScript oracle probe emits for the
+// same inputs. The observations are semantic parity data, never a
+// TypeScript object layout.
+
+use siralos_core::domain::capability::{
+    CapabilityRequest, GrantDecision, HostAuthority, decide_grant,
+};
+use siralos_core::domain::failure::DomainFailure;
+use siralos_core::domain::lifecycle::{
+    ActivationRequest, DomainLifecycle, RuntimeCheckResult,
+    classify_workspace_file, workspace_domain_scan,
+};
+use siralos_core::domain::package::{
+    DomainAbi, DomainPackage, PackageDigest, verify_package_digest,
+};
+
+/// Failure record: the stable code plus typed detail fields.
+fn domain_failure_record(op: &str, failure: &DomainFailure) -> Value {
+    let mut record = serde_json::Map::new();
+    record.insert("op".to_owned(), json!(op));
+    record.insert("ok".to_owned(), json!(false));
+    record.insert("code".to_owned(), json!(failure.code()));
+    if let DomainFailure::CapabilityDenied { missing } = failure {
+        record.insert(
+            "missing".to_owned(),
+            json!(missing.iter().map(|id| id.as_str()).collect::<Vec<_>>()),
+        );
+    }
+    Value::Object(record)
+}
+
+/// Parse one package descriptor from a scenario value (typed failure,
+/// matching the reference parse order: id, digest, abi, capabilities).
+fn parse_scenario_package(
+    value: &Value,
+) -> Result<DomainPackage, DomainFailure> {
+    let id = domain_string(value.get("id"))?;
+    let digest = domain_string(value.get("digest"))?;
+    let abi = domain_string(value.get("abi"))?;
+    let capabilities =
+        domain_string_array(value.get("requestedCapabilities"))?;
+    DomainPackage::parse(&id, &digest, &abi, &capabilities)
+}
+
+/// Parse an activation request from a scenario value.
+fn parse_scenario_request(
+    value: &Value,
+) -> Result<ActivationRequest, DomainFailure> {
+    let package_id = domain_string(value.get("packageId"))?;
+    let digest = domain_string(value.get("digest"))?;
+    let abi = domain_string(value.get("abi"))?;
+    let capabilities = domain_string_array(value.get("capabilities"))?;
+    ActivationRequest::parse(&package_id, &digest, &abi, &capabilities)
+}
+
+/// One scenario string field (typed invalid-input failure).
+fn domain_string(value: Option<&Value>) -> Result<String, DomainFailure> {
+    value.and_then(Value::as_str).map(str::to_owned).ok_or_else(|| {
+        DomainFailure::InvalidInput {
+            reason: "missing string field".to_owned(),
+        }
+    })
+}
+
+/// One scenario string array field (typed invalid-input failure).
+fn domain_string_array(
+    value: Option<&Value>,
+) -> Result<Vec<String>, DomainFailure> {
+    value
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| {
+                    entry.as_str().map(str::to_owned).ok_or_else(|| {
+                        DomainFailure::InvalidInput {
+                            reason: "array entry is not a string".to_owned(),
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_else(|| {
+            Err(DomainFailure::InvalidInput {
+                reason: "array field expected".to_owned(),
+            })
+        })
+}
+
+/// The canonical inspect observation for the current lifecycle state.
+fn domain_inspect_value(lifecycle: &DomainLifecycle) -> Value {
+    let package = lifecycle.installed_package();
+    let active = lifecycle.active();
+    json!({
+        "op": "inspect",
+        "state": lifecycle.state().as_str(),
+        "available": lifecycle.available(),
+        "enabled": lifecycle.enabled(),
+        "active": active.is_some(),
+        "package": package.map(|package| json!({
+            "id": package.id().as_str(),
+            "digest": package.digest().as_str(),
+            "abi": package.abi().as_str(),
+            "requestedCapabilities": package
+                .requested_capabilities()
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+        })),
+        "activation": active.map(|active| json!({
+            "sessionId": active.session_id(),
+            "binding": {
+                "packageId": active.binding().package_id().as_str(),
+                "digest": active.binding().digest().as_str(),
+                "abi": active.binding().abi().as_str(),
+            },
+            "grant": active
+                .grant()
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+        })),
+    })
+}
+
+/// Execute one domain-lifecycle operation and return its canonical
+/// observation.
+fn run_domain_lifecycle_op(
+    lifecycle: &mut DomainLifecycle,
+    op: &str,
+    entry: &Value,
+    supported_abi: &DomainAbi,
+    authority: &HostAuthority,
+) -> Result<Value, HarnessError> {
+    match op {
+        "inspect" => Ok(domain_inspect_value(lifecycle)),
+        "install" => {
+            let package = match parse_scenario_package(object_field(
+                entry, "package",
+            )?) {
+                Ok(package) => package,
+                Err(failure) => {
+                    return Ok(domain_failure_record("install", &failure));
+                }
+            };
+            let computed = scenario_string(entry, "computedDigest")?;
+            let computed_digest = match PackageDigest::parse(&computed) {
+                Ok(digest) => digest,
+                Err(failure) => {
+                    return Ok(domain_failure_record("install", &failure));
+                }
+            };
+            if let Err(failure) =
+                verify_package_digest(package.digest(), &computed_digest)
+            {
+                return Ok(domain_failure_record("install", &failure));
+            }
+            match lifecycle.install(package) {
+                Ok(()) => Ok(json!({
+                    "op": "install",
+                    "ok": true,
+                    "state": lifecycle.state().as_str(),
+                })),
+                Err(failure) => Ok(domain_failure_record("install", &failure)),
+            }
+        }
+        "uninstall" | "enable" | "disable" | "deactivate" => {
+            let result = match op {
+                "uninstall" => lifecycle.uninstall(),
+                "enable" => lifecycle.enable(),
+                "disable" => lifecycle.disable(),
+                _ => lifecycle.deactivate(),
+            };
+            Ok(match result {
+                Ok(()) => json!({ "op": op, "ok": true }),
+                Err(failure) => domain_failure_record(op, &failure),
+            })
+        }
+        "eligibility" => {
+            let request = match parse_scenario_request(object_field(
+                entry,
+                "activation",
+            )?) {
+                Ok(request) => request,
+                Err(failure) => {
+                    return Ok(domain_failure_record("eligibility", &failure));
+                }
+            };
+            let runtime = match RuntimeCheckResult::parse(&scenario_string(
+                entry, "runtime",
+            )?) {
+                Ok(runtime) => runtime,
+                Err(failure) => {
+                    return Ok(domain_failure_record("eligibility", &failure));
+                }
+            };
+            let eligibility = lifecycle.eligibility(
+                &request,
+                supported_abi,
+                authority,
+                &runtime,
+            );
+            Ok(json!({
+                "op": "eligibility",
+                "ready": eligibility.ready(),
+                "reasons": eligibility
+                    .reasons()
+                    .iter()
+                    .map(|reason| reason.code())
+                    .collect::<Vec<_>>(),
+            }))
+        }
+        "activate" => {
+            let request = match parse_scenario_request(object_field(
+                entry,
+                "activation",
+            )?) {
+                Ok(request) => request,
+                Err(failure) => {
+                    return Ok(domain_failure_record("activate", &failure));
+                }
+            };
+            let runtime = match RuntimeCheckResult::parse(&scenario_string(
+                entry, "runtime",
+            )?) {
+                Ok(runtime) => runtime,
+                Err(failure) => {
+                    return Ok(domain_failure_record("activate", &failure));
+                }
+            };
+            match lifecycle.activate(
+                request,
+                supported_abi,
+                authority,
+                runtime,
+            ) {
+                Ok(active) => Ok(json!({
+                    "op": "activate",
+                    "ok": true,
+                    "sessionId": active.session_id(),
+                    "binding": {
+                        "packageId": active.binding().package_id().as_str(),
+                        "digest": active.binding().digest().as_str(),
+                        "abi": active.binding().abi().as_str(),
+                    },
+                    "grant": active
+                        .grant()
+                        .iter()
+                        .map(|id| id.as_str())
+                        .collect::<Vec<_>>(),
+                })),
+                Err(failure) => {
+                    Ok(domain_failure_record("activate", &failure))
+                }
+            }
+        }
+        "workspaceScan" => {
+            let files = scenario_string_array(entry, "files")?;
+            let classified = files
+                .iter()
+                .map(|name| json!({ "name": name, "kind": classify_workspace_file(name) }))
+                .collect::<Vec<_>>();
+            let scan = workspace_domain_scan(&files);
+            Ok(json!({
+                "op": "workspaceScan",
+                "files": classified,
+                "candidates": scan.candidates,
+                "installs": scan.installs,
+                "enables": scan.enables,
+                "activations": scan.activations,
+                "downloads": scan.downloads,
+                "recommendations": scan.recommendations,
+            }))
+        }
+        _ => Ok(json!({ "op": op, "ok": false, "code": "INVALID_INPUT" })),
+    }
+}
+
+/// Canonical record for one domain-lifecycle scenario.
+fn domain_lifecycle_record(input: &Value) -> Result<Value, HarnessError> {
+    let supported_abi =
+        DomainAbi::parse(&scenario_string(input, "supportedAbi")?).map_err(
+            |failure| {
+                HarnessError::corpus(format!(
+                    "domain input has an invalid supported ABI: {}",
+                    failure.code()
+                ))
+            },
+        )?;
+    let authority =
+        HostAuthority::parse(&scenario_string_array(input, "authority")?)
+            .map_err(|failure| {
+                HarnessError::corpus(format!(
+                    "domain input has an invalid authority: {}",
+                    failure.code()
+                ))
+            })?;
+    let mut lifecycle = DomainLifecycle::new();
+    let mut ops: Vec<Value> = Vec::new();
+    for entry in scenario_array(input, "ops")? {
+        let op = scenario_string(entry, "op")?;
+        let observation = run_domain_lifecycle_op(
+            &mut lifecycle,
+            &op,
+            entry,
+            &supported_abi,
+            &authority,
+        )?;
+        ops.push(observation);
+    }
+    Ok(json!({ "ops": ops }))
+}
+
+/// Canonical record for one domain-capability scenario.
+fn domain_capability_record(input: &Value) -> Result<Value, HarnessError> {
+    let authority = match HostAuthority::parse(&scenario_string_array(
+        input,
+        "authority",
+    )?) {
+        Ok(authority) => authority,
+        Err(failure) => {
+            return Ok(json!({
+                "authority": [],
+                "ops": [{"op": "invalid", "ok": false, "code": failure.code()}],
+            }));
+        }
+    };
+    let mut ops: Vec<Value> = Vec::new();
+    for entry in scenario_array(input, "ops")? {
+        let op = scenario_string(entry, "op")?;
+        match op.as_str() {
+            "decide" => {
+                let request = match CapabilityRequest::parse(
+                    &scenario_string_array(entry, "request")?,
+                ) {
+                    Ok(request) => request,
+                    Err(failure) => {
+                        ops.push(json!({
+                            "op": "decide",
+                            "ok": false,
+                            "code": failure.code(),
+                        }));
+                        continue;
+                    }
+                };
+                match decide_grant(&request, &authority) {
+                    GrantDecision::Granted(grant) => ops.push(json!({
+                        "op": "decide",
+                        "granted": true,
+                        "grant": grant
+                            .iter()
+                            .map(|id| id.as_str())
+                            .collect::<Vec<_>>(),
+                    })),
+                    GrantDecision::Denied { missing } => ops.push(json!({
+                        "op": "decide",
+                        "granted": false,
+                        "missing": missing
+                            .iter()
+                            .map(|id| id.as_str())
+                            .collect::<Vec<_>>(),
+                    })),
+                }
+            }
+            "inspectAuthority" => ops.push(json!({
+                "op": "inspectAuthority",
+                "authority": authority
+                    .iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>(),
+            })),
+            _ => ops.push(json!({
+                "op": op,
+                "ok": false,
+                "code": "INVALID_INPUT",
+            })),
+        }
+    }
+    Ok(json!({ "ops": ops }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3664,7 +4117,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 63);
+        assert_eq!(loaded.len(), 79);
     }
 
     #[test]

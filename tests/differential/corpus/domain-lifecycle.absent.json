@@ -1,0 +1,45 @@
+{
+  "id": "domain-lifecycle.absent",
+  "subject": "domain-lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "supportedAbi": "siralos:domain-abi@1.0.0",
+    "authority": ["workspace-read"],
+    "ops": [
+      {
+        "op": "inspect"
+      },
+      {
+        "op": "enable"
+      },
+      {
+        "op": "activate",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "ready"
+      },
+      {
+        "op": "eligibility",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "ready"
+      },
+      {
+        "op": "uninstall"
+      },
+      {
+        "op": "deactivate"
+      }
+    ]
+  }
+}

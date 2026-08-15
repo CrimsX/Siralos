@@ -1,0 +1,86 @@
+{
+  "id": "domain-lifecycle.eligibility",
+  "subject": "domain-lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "supportedAbi": "siralos:domain-abi@1.0.0",
+    "authority": ["workspace-read"],
+    "ops": [
+      {
+        "op": "install",
+        "package": {
+          "id": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "requestedCapabilities": ["workspace-read"]
+        },
+        "computedDigest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "op": "enable"
+      },
+      {
+        "op": "eligibility",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "2222222222222222222222222222222222222222222222222222222222222222",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "ready"
+      },
+      {
+        "op": "eligibility",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@9.9.9",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "ready"
+      },
+      {
+        "op": "eligibility",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read", "process-exec"]
+        },
+        "runtime": "ready"
+      },
+      {
+        "op": "eligibility",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "resource-exceeded"
+      },
+      {
+        "op": "eligibility",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "unavailable"
+      },
+      {
+        "op": "eligibility",
+        "activation": {
+          "packageId": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "capabilities": ["workspace-read"]
+        },
+        "runtime": "ready"
+      }
+    ]
+  }
+}

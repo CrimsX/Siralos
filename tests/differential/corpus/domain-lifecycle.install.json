@@ -1,0 +1,36 @@
+{
+  "id": "domain-lifecycle.install",
+  "subject": "domain-lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "supportedAbi": "siralos:domain-abi@1.0.0",
+    "authority": ["workspace-read"],
+    "ops": [
+      {
+        "op": "install",
+        "package": {
+          "id": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "requestedCapabilities": ["workspace-read", "process-exec"]
+        },
+        "computedDigest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "op": "inspect"
+      },
+      {
+        "op": "install",
+        "package": {
+          "id": "conformance-domain",
+          "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "abi": "siralos:domain-abi@1.0.0",
+          "requestedCapabilities": ["workspace-read", "process-exec"]
+        },
+        "computedDigest": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  }
+}

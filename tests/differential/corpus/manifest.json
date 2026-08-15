@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 9,
+  "corpusVersion": 10,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -21,6 +21,70 @@
     {
       "file": "checkpoint.undo-plan.json",
       "sha256": "d163c153db0e3d27f224818b077620ff3f57ea9bee461cb06bcd14531bc1172e"
+    },
+    {
+      "file": "domain-capability.denied-no-escalation.json",
+      "sha256": "0140047310da1962b06e0de05f98843a84a9f1b831df3e4fddae49cbf2de0cfc"
+    },
+    {
+      "file": "domain-capability.denied.json",
+      "sha256": "9487f76e7215b945897382b54090bd849f080e512d1f1bf935f326247a1b93c1"
+    },
+    {
+      "file": "domain-capability.grant-subset.json",
+      "sha256": "f4e8436f2e6117258845a4eacb5b7d6cd5c4838cdd6cd42627fad5e67c651f4b"
+    },
+    {
+      "file": "domain-capability.mixed-sequence.json",
+      "sha256": "a864416c9969db41f0176dbf8cc13db8f328df8b2d388bef45ef64e7bad72b82"
+    },
+    {
+      "file": "domain-lifecycle.absent.json",
+      "sha256": "c9b1812a5e6668b9227119e484a02b02715b324014cd008313f0ab0420fa9562"
+    },
+    {
+      "file": "domain-lifecycle.disabled.json",
+      "sha256": "c736ddc7616f0b46446a57df42f77ff1e340fe4cda5f74aadcd45bfe39b3b6cb"
+    },
+    {
+      "file": "domain-lifecycle.eligibility.json",
+      "sha256": "a3e30c3bf1b4c106f990f7e5372d8e32b27bb598e2b9308f7445a7fe2591bdc1"
+    },
+    {
+      "file": "domain-lifecycle.enable.json",
+      "sha256": "33cb529d9c21aaec1e5cf921e872d38bf418230ea0a18db105386d6f9cd73bed"
+    },
+    {
+      "file": "domain-lifecycle.enablement-no-authority.json",
+      "sha256": "7c1b56fdb8d79dd979e122cb1c4e4b074d4b61dc90c328f5ede1ca6bee8c762b"
+    },
+    {
+      "file": "domain-lifecycle.identity-mismatch.json",
+      "sha256": "07741f45845cf2fd2be2a3ddf8661e6dd51bde837f697436b7c2192af7c08d05"
+    },
+    {
+      "file": "domain-lifecycle.install.digest-mismatch.json",
+      "sha256": "f98ceddd78e48199bfdd28d71c5b9e9833db6a0fe93668830b9b93b0aaf62ce8"
+    },
+    {
+      "file": "domain-lifecycle.install.json",
+      "sha256": "e24d55e39f7f722dcb75ad53eeac06fc018df560995afa1e2d12566f07e6d2de"
+    },
+    {
+      "file": "domain-lifecycle.no-implicit-activation.json",
+      "sha256": "fc5a608a76354945f2217d21eb557eff3ca4204e1e140f44b4525d8b036da41c"
+    },
+    {
+      "file": "domain-lifecycle.protocol-incompatible.json",
+      "sha256": "b9858aa5461e2ace9af0ebb437e751427f7613ca3a6d19a4795f63d30c83e63a"
+    },
+    {
+      "file": "domain-lifecycle.requested-capabilities.json",
+      "sha256": "1b534dfb9ec2236e1cb4406208181e0746af709269149932436bec70d0747a83"
+    },
+    {
+      "file": "domain-lifecycle.session-scope.json",
+      "sha256": "c4bde411d7da51837e53eed658b318faf201d4eca4f7c6480aa970ef58e38036"
     },
     {
       "file": "git-inspection.enforcing-missing.json",
@@ -255,5 +319,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "43b3491fb80d86e7373928ee66428638e7c87b1e801d152f1f8c17775da31f10"
+  "corpusSha256": "c1742af10b5cf192f57ce417c151855e65ff76643fb771d3da67e0d9c41cde9e"
 }

@@ -1,0 +1,20 @@
+{
+  "id": "domain-lifecycle.no-implicit-activation",
+  "subject": "domain-lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "supportedAbi": "siralos:domain-abi@1.0.0",
+    "authority": ["workspace-read"],
+    "ops": [
+      {
+        "op": "workspaceScan",
+        "files": ["project.godot", "project.godot.import", "main.ts", "README.md"]
+      },
+      {
+        "op": "inspect"
+      }
+    ]
+  }
+}
