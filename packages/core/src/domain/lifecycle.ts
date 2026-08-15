@@ -148,8 +148,10 @@ export interface ActiveDomain {
 export type EligibilityReason =
   | "NOT_INSTALLED"
   | "DISABLED"
+  | "ACTIVE"
   | "IDENTITY_MISMATCH"
   | "UNSUPPORTED_ABI"
+  | "UNDECLARED_CAPABILITY"
   | "CAPABILITY_DENIED"
   | "RESOURCE_EXCEEDED"
   | "UNAVAILABLE";
@@ -224,6 +226,18 @@ export interface DomainLifecycle {
   deactivate(): DomainFailure | null;
 }
 
+/**
+ * The requested capabilities absent from the installed package's
+ * declaration, in canonical request order. The package declaration is
+ * the authority ceiling for its own activation requests: a request may
+ * only narrow it, never broaden it.
+ */
+function undeclaredCapabilities(request: ActivationRequest, package_: DomainPackage): string[] {
+  return request.capabilities.ids.filter(
+    (capability) => !package_.requestedCapabilities.ids.includes(capability),
+  );
+}
+
 function deepReasons(
   package_: DomainPackage,
   request: ActivationRequest,
@@ -237,6 +251,9 @@ function deepReasons(
   }
   if (!abiIsCompatible(request.abi, supportedAbi)) {
     reasons.push("UNSUPPORTED_ABI");
+  }
+  if (undeclaredCapabilities(request, package_).length > 0) {
+    reasons.push("UNDECLARED_CAPABILITY");
   }
   if (!decideGrant(request.capabilities, authority).granted) {
     reasons.push("CAPABILITY_DENIED");
@@ -336,6 +353,8 @@ export function createDomainLifecycle(): DomainLifecycle {
         reasons = ["NOT_INSTALLED"];
       } else if (state.kind === "installed") {
         reasons = ["DISABLED"];
+      } else if (state.kind === "active") {
+        reasons = ["ACTIVE"];
       } else {
         reasons = deepReasons(state.package, request, supportedAbi, authority, runtime);
       }
@@ -347,6 +366,9 @@ export function createDomainLifecycle(): DomainLifecycle {
       }
       if (state.kind === "installed") {
         return { ok: false, failure: { code: "DISABLED" } };
+      }
+      if (state.kind === "active") {
+        return { ok: false, failure: { code: "ACTIVE" } };
       }
       if (request.packageId !== state.package.id) {
         return {
@@ -371,6 +393,10 @@ export function createDomainLifecycle(): DomainLifecycle {
           ok: false,
           failure: { code: "UNSUPPORTED_ABI", expected: supportedAbi, found: request.abi },
         };
+      }
+      const undeclared = undeclaredCapabilities(request, state.package);
+      if (undeclared.length > 0) {
+        return { ok: false, failure: { code: "UNDECLARED_CAPABILITY", missing: undeclared } };
       }
       const decision = decideGrant(request.capabilities, authority);
       if (!decision.granted) {

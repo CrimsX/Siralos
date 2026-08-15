@@ -206,6 +206,16 @@ describe("domain lifecycle", () => {
     });
     expect(activation.active.grant.ids).toEqual(["workspace-read"]);
     expect(lifecycle.state()).toBe("active");
+    // Active -> Active is rejected and the session is preserved.
+    const again = lifecycle.activate(request("conformance-domain", digest1), ABI, authority(), {
+      kind: "ready",
+    });
+    expect(again.ok).toBe(false);
+    if (!again.ok) {
+      expect(again.failure.code).toBe("ACTIVE");
+    }
+    expect(lifecycle.active()?.sessionId).toBe(1);
+    expect(lifecycle.deactivate()).toBeNull();
     // Wrong digest fails before any semantic work.
     const wrong = lifecycle.activate(request("conformance-domain", digest(2)), ABI, authority(), {
       kind: "ready",
@@ -291,10 +301,152 @@ describe("domain lifecycle", () => {
     });
     expect(eligibility).toEqual({
       ready: false,
-      reasons: ["IDENTITY_MISMATCH", "CAPABILITY_DENIED", "RESOURCE_EXCEEDED"],
+      reasons: [
+        "IDENTITY_MISMATCH",
+        "UNDECLARED_CAPABILITY",
+        "CAPABILITY_DENIED",
+        "RESOURCE_EXCEEDED",
+      ],
     });
   });
 
+  it("rejects active-to-active and reports active eligibility", () => {
+    const lifecycle = createDomainLifecycle();
+    const digest1 = digest(1);
+    expect(lifecycle.install(packageDescriptor("conformance-domain", digest1))).toBeNull();
+    expect(lifecycle.enable()).toBeNull();
+    const first = lifecycle.activate(request("conformance-domain", digest1), ABI, authority(), {
+      kind: "ready",
+    });
+    expect(first.ok && first.active.sessionId === 1).toBe(true);
+    const second = lifecycle.activate(request("conformance-domain", digest1), ABI, authority(), {
+      kind: "ready",
+    });
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.failure.code).toBe("ACTIVE");
+    }
+    // The original session is preserved exactly.
+    const preserved = lifecycle.active();
+    expect(preserved?.sessionId).toBe(1);
+    expect(preserved?.binding.digest).toBe(digest1);
+    // Active eligibility is explicitly not ready.
+    const eligibility = lifecycle.eligibility(
+      request("conformance-domain", digest1),
+      ABI,
+      authority(),
+      { kind: "ready" },
+    );
+    expect(eligibility).toEqual({ ready: false, reasons: ["ACTIVE"] });
+    // Reactivation works only after explicit deactivate.
+    expect(lifecycle.deactivate()).toBeNull();
+    const third = lifecycle.activate(request("conformance-domain", digest1), ABI, authority(), {
+      kind: "ready",
+    });
+    expect(third.ok && third.active.sessionId === 2).toBe(true);
+  });
+
+  it("bounds activation requests by the package declaration", () => {
+    const lifecycle = createDomainLifecycle();
+    const digest1 = digest(1);
+    const declared = parseDomainPackage("conformance-domain", digest1, ABI, [
+      "workspace-read",
+      "process-exec",
+    ]);
+    expect(declared.ok).toBe(true);
+    if (!declared.ok) {
+      return;
+    }
+    expect(lifecycle.install(declared.value)).toBeNull();
+    expect(lifecycle.enable()).toBeNull();
+    const bothAuthority = parseHostAuthority(["workspace-read", "process-exec"]);
+    expect(bothAuthority.ok).toBe(true);
+    if (!bothAuthority.ok) {
+      return;
+    }
+    // Equal set succeeds.
+    const equal = parseActivationRequest("conformance-domain", digest1, ABI, [
+      "workspace-read",
+      "process-exec",
+    ]);
+    expect(equal.ok).toBe(true);
+    if (!equal.ok) {
+      return;
+    }
+    const active = lifecycle.activate(equal.value, ABI, bothAuthority.value, { kind: "ready" });
+    expect(active.ok).toBe(true);
+    if (active.ok) {
+      expect(active.active.grant.ids).toEqual(["process-exec", "workspace-read"]);
+    }
+    expect(lifecycle.deactivate()).toBeNull();
+    // Strict subset succeeds.
+    const subset = parseActivationRequest("conformance-domain", digest1, ABI, ["workspace-read"]);
+    expect(subset.ok).toBe(true);
+    if (!subset.ok) {
+      return;
+    }
+    const narrowed = lifecycle.activate(subset.value, ABI, bothAuthority.value, { kind: "ready" });
+    expect(narrowed.ok).toBe(true);
+    if (narrowed.ok) {
+      expect(narrowed.active.grant.ids).toEqual(["workspace-read"]);
+    }
+    expect(lifecycle.deactivate()).toBeNull();
+    // Exceeding the declaration fails typed even when authority allows it.
+    const exceeding = parseActivationRequest("conformance-domain", digest1, ABI, [
+      "workspace-read",
+      "process-exec",
+      "network-access",
+    ]);
+    expect(exceeding.ok).toBe(true);
+    if (!exceeding.ok) {
+      return;
+    }
+    const denied = lifecycle.activate(exceeding.value, ABI, bothAuthority.value, { kind: "ready" });
+    expect(denied.ok).toBe(false);
+    if (!denied.ok && denied.failure.code === "UNDECLARED_CAPABILITY") {
+      expect(denied.failure.missing).toEqual(["network-access"]);
+    }
+    expect(lifecycle.state()).toBe("enabled");
+    // Host authority narrows independently.
+    const narrowAuthority = parseHostAuthority(["workspace-read"]);
+    expect(narrowAuthority.ok).toBe(true);
+    if (!narrowAuthority.ok) {
+      return;
+    }
+    const both = parseActivationRequest("conformance-domain", digest1, ABI, [
+      "workspace-read",
+      "process-exec",
+    ]);
+    expect(both.ok).toBe(true);
+    if (!both.ok) {
+      return;
+    }
+    const policyDenied = lifecycle.activate(both.value, ABI, narrowAuthority.value, {
+      kind: "ready",
+    });
+    expect(policyDenied.ok).toBe(false);
+    if (!policyDenied.ok && policyDenied.failure.code === "CAPABILITY_DENIED") {
+      expect(policyDenied.failure.missing).toEqual(["process-exec"]);
+    }
+    // Undeclared capabilities are reported in canonical order.
+    const unordered = parseActivationRequest("conformance-domain", digest1, ABI, [
+      "network-access",
+      "workspace-read",
+      "process-exec",
+      "telemetry",
+    ]);
+    expect(unordered.ok).toBe(true);
+    if (!unordered.ok) {
+      return;
+    }
+    const ordered = lifecycle.activate(unordered.value, ABI, bothAuthority.value, {
+      kind: "ready",
+    });
+    expect(ordered.ok).toBe(false);
+    if (!ordered.ok && ordered.failure.code === "UNDECLARED_CAPABILITY") {
+      expect(ordered.failure.missing).toEqual(["network-access", "telemetry"]);
+    }
+  });
   it("workspace files are opaque and never acquire", () => {
     const files = ["scene.project", "main.ts", "README.md"];
     for (const file of files) {

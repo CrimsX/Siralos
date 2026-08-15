@@ -33,6 +33,10 @@ export type DomainFailure =
       readonly code: "CAPABILITY_DENIED";
       readonly missing: readonly string[];
     }
+  | {
+      readonly code: "UNDECLARED_CAPABILITY";
+      readonly missing: readonly string[];
+    }
   | { readonly code: "RESOURCE_EXCEEDED"; readonly kind: ResourceKind }
   | { readonly code: "INVALID_INPUT"; readonly reason: string }
   | { readonly code: "INVALID_OUTPUT"; readonly reason: string }
