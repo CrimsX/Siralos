@@ -18,5 +18,9 @@ harness = false
 name = "task_baseline"
 harness = false
 
+[[bench]]
+name = "language_normalization"
+harness = false
+
 [lints]
 workspace = true

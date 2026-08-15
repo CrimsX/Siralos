@@ -9,6 +9,7 @@
 //! Adapters may depend on core; core must never depend on adapters
 //! (enforced by `npm run check:rust`).
 
+pub mod language;
 pub mod paths;
 pub mod workspace;
 

@@ -12,6 +12,7 @@
 //! rules this crate follows.
 
 pub mod identity;
+pub mod language;
 pub mod task;
 pub mod version;
 pub mod workspace;

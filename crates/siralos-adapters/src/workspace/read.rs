@@ -7,11 +7,14 @@
 //! decoding, whole-file SHA-256, revision issuance, and deterministic
 //! line-range slicing with UTF-16-aware content truncation (whole-file
 //! identity is never derived from truncated returned text).
-//! Structural/summary modes are R5-owned
-//! language surfaces: for non-GDScript files the reference returns an
-//! explicit `supported: false` success; for GDScript files this R4
-//! adapter reports the typed unsupported disposition and R5 owns the
-//! language extraction.
+//! Structural/summary modes are language
+//! surfaces: for non-GDScript files the reference returns an explicit
+//! `supported: false` success; for GDScript files this adapter reports
+//! the typed unsupported disposition. The generic structural
+//! representation and advisory summary formatter are verified in R5
+//! (siralos-core::language); the GDScript scanner itself is Godot-domain
+//! language intelligence (R8/R9) and remains the TypeScript
+//! reference's surface.
 
 use crate::workspace::fs::{
     BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8, looks_binary,
@@ -32,9 +35,9 @@ use std::path::Path;
 pub enum ReadMode {
     /// Authoritative exact source read.
     Exact,
-    /// Structural mode (R5-owned language surface).
+    /// Structural mode (language surface).
     Structural,
-    /// Summary mode (R5-owned language surface).
+    /// Summary mode (language surface).
     Summary,
 }
 
@@ -180,7 +183,9 @@ pub enum ReadOutcome {
     },
     /// Explicit typed unsupported disposition for language modes: the
     /// reference returns `supported: false` success for non-GDScript
-    /// files, and GDScript structural/summary extraction is R5-owned.
+    /// files, and GDScript structural/summary extraction is Godot-domain
+    /// language intelligence (R8/R9); extraction itself is not ported
+    /// at R5.
     Unsupported {
         /// Canonical workspace-relative path.
         path: String,
@@ -189,7 +194,7 @@ pub enum ReadOutcome {
         /// Issued revision handle (when a registry is provided).
         revision: Option<String>,
         /// True when the file type is structurally supported (`.gd`);
-        /// extraction itself is not ported at R4.
+        /// extraction itself is not ported at R5.
         supported: bool,
         /// Stable reason string.
         reason: String,
@@ -307,7 +312,7 @@ pub fn read_file(
                 mode,
                 revision,
                 supported: true,
-                reason: "GDScript structural/summary extraction is R5-owned language intelligence and is not ported at R4.".to_owned(),
+                reason: "GDScript structural/summary extraction is Godot-domain language intelligence (R8/R9) and is not ported in R5.".to_owned(),
             };
         }
         ReadMode::Exact => {}

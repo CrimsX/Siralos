@@ -29,6 +29,18 @@ fuzz_target!(|data: &[u8]| {
     }
     match scenario.subject.as_str() {
         "state-dir" | "version-identity" | "task-contract" => {}
+        // R4 subjects decode through the same validated scenario shape.
+        "workspace-read"
+        | "workspace-list"
+        | "workspace-search"
+        | "workspace-revision"
+        | "workspace-prepare"
+        | "checkpoint"
+        | "git-inspection" => {}
+        // R5 subjects: generic language intelligence (Stage 3R R5).
+        "language-diagnostics"
+        | "language-structure"
+        | "language-definition" => {}
         _ => return,
     }
 });
