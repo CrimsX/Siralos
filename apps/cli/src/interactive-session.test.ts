@@ -722,7 +722,12 @@ function createFakeSecurity(status?: SandboxBackendStatus): SiralosSecurity {
   });
 }
 
-describe("runInteractiveSession", () => {
+describe("runInteractiveSession", { timeout: 30_000 }, () => {
+  // These tests compose the full application per test; under a loaded
+  // parallel vitest run the default 5s timeout intermittently cuts
+  // them off (observed on three different tests across repeated full
+  // gates, all passing in isolation). The larger bound acknowledges
+  // the composition cost; it never weakens assertions.
   it("submits a prompt and renders the streamed response", async () => {
     const { io, application, sessionInfo } = await createComposedSession(["hello", "/exit"]);
     const exitCode = await runInteractiveSession(io, application, sessionInfo);
