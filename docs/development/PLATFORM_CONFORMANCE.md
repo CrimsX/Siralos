@@ -36,7 +36,7 @@ checkpoint, or process-execution capability exists in Rust): atomic
 writes, permission failures, read-only files, symlink traversal,
 deletion/rename semantics, cancellation, and child-process cleanup.
 These receive platform conformance tests when the corresponding
-subsystems are ported (R3+) — policy will represent semantic platform
+subsystems are ported (R4+) — policy will represent semantic platform
 differences explicitly rather than normalizing them away.
 
 ## Path correctness (contract Part 10)

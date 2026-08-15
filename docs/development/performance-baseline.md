@@ -66,7 +66,7 @@ before/after comparison when the task kernel gains consumers.
 ## Future workloads
 
 Stage 1–3 operations that will gain benchmarks when their subsystems
-are ported (R3+): repository discovery, file search, structural read,
+are ported (R4+): repository discovery, file search, structural read,
 revision hashing, prepared mutation generation, TaskState transitions,
 ContextProjector/ToolProjector/EvidenceProjector, planning policy,
 knowledge selection, and scene/resource parsing.

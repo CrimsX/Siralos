@@ -65,5 +65,5 @@ for version round-trip/ordering (proptest) and canonical JSON
 idempotence (deterministic generator). Remaining HIGH-priority TS
 boundaries (provider messages, model responses, scene/resource parsing)
 receive fuzz/property coverage when the corresponding subsystems are
-ported to Rust (R3+), at which point the corpus and fuzz targets grow
+ported to Rust (R4+), at which point the corpus and fuzz targets grow
 with them.

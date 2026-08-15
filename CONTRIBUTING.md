@@ -11,8 +11,8 @@ boundaries are deliberate.
 2. Read the [project context](docs/development/PROJECT_CONTEXT.md).
 3. Follow the scoped `AGENTS.md` files, accepted ADRs, and the
    [Rust style guide](docs/development/RUST_STYLE.md) relevant to your change.
-4. Verify the current milestone from repository evidence. R3 is next; do not
-   pull later migration or product work forward implicitly.
+4. Verify the current milestone from repository evidence. R3 is complete and
+   R4 is next; do not pull later migration or product work forward implicitly.
 
 ## Development setup
 
