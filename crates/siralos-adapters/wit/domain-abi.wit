@@ -1,0 +1,74 @@
+// The production Siralos Domain boundary world (ADR 0034, Stage 3R
+// R6). Generic and product-neutral: the domain component exports its
+// own semantic API and imports the host-effects interface for every
+// mediated effect. The component holds no filesystem, network, or
+// process authority: the linker grants exactly these imports, and the
+// host mediates each request against the active capability grant.
+//
+// Versioning: the WIT package version is part of the component's
+// interface names. A component built against any other version fails
+// instantiation explicitly; there is no silent downgrade or
+// reinterpretation (docs/development/PROTOCOL_VERSIONING.md).
+
+package siralos:domain-abi@1.0.0;
+
+interface domain-api {
+    /// Domain package identity, bound per activation.
+    record package-identity {
+        package-id: string,
+        package-digest: string,
+        abi: string,
+    }
+
+    /// One deterministic semantic query result.
+    record semantic-result {
+        package-id: string,
+        query: string,
+        node-count: u32,
+        source-bytes: u32,
+    }
+
+    /// The host's typed answer to a mediated effect request.
+    variant host-answer {
+        ok(string),
+        denied(string),
+        cancelled,
+        error(string),
+    }
+
+    /// One mediated effect request. The capability vocabulary is
+    /// structural and deliberately tiny; adding a capability is a
+    /// hard-incompatible WIT change.
+    variant effect-request {
+        /// Bounded workspace read (path is workspace-relative, max
+        /// bytes bounds the returned content).
+        workspace-read(tuple<string, u32>),
+        /// Process/runtime execution (denied by Host policy).
+        process-exec(string),
+    }
+
+    /// Bind the exact activation identity for this instance. The host
+    /// calls this immediately after instantiation.
+    bind: func(identity: package-identity) -> result<_, string>;
+
+    /// One semantic query executed locally in the domain.
+    query: func(text: string) -> result<semantic-result, string>;
+
+    /// The domain asks the host to perform a mediated effect. The
+    /// host validates the request, checks the capability grant,
+    /// applies its bounds/policy, and returns the typed answer; the
+    /// domain receives only the result.
+    request-effect: func(request: effect-request) -> host-answer;
+}
+
+interface host-effects {
+    use domain-api.{effect-request, host-answer};
+
+    /// The host implementation of a mediated effect request.
+    perform: func(request: effect-request) -> host-answer;
+}
+
+world siralos-domain {
+    export domain-api;
+    import host-effects;
+}

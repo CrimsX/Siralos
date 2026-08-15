@@ -8,6 +8,28 @@ publish = false
 
 [dependencies]
 siralos-core = { workspace = true }
+# The retained Component Model runtime line (ADR 0034, Stage 3R R6):
+# the experiment pinned wasmtime 47.0.3 with the minimal feature set
+# that provides components, JIT compilation, and the sync runtime; the
+# production host keeps that exact line until evidence justifies a
+# change. No WASI surface is granted to domain components: the world
+# declares exactly the host-effects import, so any additional import
+# fails instantiation (no ambient authority).
+wasmtime = { version = "=47.0.3", default-features = false, features = [
+    "component-model",
+    "cranelift",
+    "runtime",
+    "std",
+] }
+# The wasm32-wasip2 std plumbing of domain components imports the
+# wasi:cli/io/clocks interfaces (stdout/stderr/stdin plumbing, empty
+# environment, exit). The host grants exactly those interfaces with an
+# empty context: no filesystem, network, process, or ambient WASI
+# capability is ever exposed (the conformance component's import list
+# is asserted in tests).
+wasmtime-wasi = { version = "=47.0.3", default-features = false, features = [
+    "p2",
+] }
 # `dirs` provides the OS user-database home fallback (Windows
 # FOLDERID_Profile, POSIX getpwuid) behind a safe wrapper; the standard
 # library has no equivalent and hand-rolling it would require unsafe FFI.
