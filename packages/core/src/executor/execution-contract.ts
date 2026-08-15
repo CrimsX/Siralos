@@ -363,6 +363,14 @@ export const DEFAULT_EXECUTION_CONTRACT: ExecutionContract = createExecutionCont
         "Never weaken the fail-closed posture with pathname rechecks or private filenames.",
       enforcedBy: "AGENTS.md fail-closed posture; architecture checks",
     },
+    {
+      id: "CORE.SECURITY.RECOVERY_AUTHORITY",
+      kind: "security",
+      requirement:
+        "RECOVERY STANDARD: Prefer deterministic recovery for known recoverable failures. Any automatic recovery must be bounded, use only existing Host authority, preserve all validation/revision/security gates, and verify its result. Capability denial, unavailable enforcement, uncertain state, or an exhausted recovery budget stop recovery rather than weakening policy. Model-assisted recovery proposes ordinary actions through the same Host boundary; it receives no special authority.",
+      enforcedBy:
+        "Security contract bounded-recovery invariant (SECURITY.md); Host authority precedence",
+    },
   ],
   architectureRules: [
     {

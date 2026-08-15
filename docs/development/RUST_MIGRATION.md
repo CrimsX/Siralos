@@ -129,6 +129,16 @@ execution-dependent language intelligence reports typed unavailable
 dispositions. R5 verification does not authorize R6 work or satisfy
 any later migration or Stage-4 entry gate.
 
+Bounded recovery is a Host/run design property, not a milestone subsystem.
+R11 remains the owner of full recovery parity (table row R11). Earlier
+milestones preserve typed failure information needed by later recovery:
+typed Host-observed failure state must stay distinguishable
+(retryable / non-retryable / capability denied / stale/conflict / resource
+exceeded / unavailable/unsupported / uncertain / invalid / terminal) so
+recovery decisions never depend on substring matching or model judgment.
+R6 inherits only typed-failure and recovery-readiness constraints for its
+Domain boundary and does not implement recovery orchestration.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:

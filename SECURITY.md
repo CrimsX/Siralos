@@ -41,6 +41,20 @@ When the requested policy cannot be enforced the process does not run:
 
 The sandbox backend reports `setup-required`, `dependency-missing`, `unsupported`, `degraded`, or `failed` states; none of them are treated as secure. Live conformance probes run only when the backend reports `available`, and an unavailable backend is reported loudly rather than passed as secure.
 
+## Bounded recovery
+
+Recovery uses existing authority; recovery never creates authority. Any
+automatic recovery is bounded, observable, and followed by verification;
+verification failure or budget exhaustion stops recovery and reports the
+unresolved failure with retained evidence. Recovery never converts
+CapabilityDenied into a grant, modifies Permission/Capability policy, disables
+protected-path checks, bypasses approval, checkpoint, exact revision/digest,
+or sandbox gates, turns `unavailable` into an unsafe fallback, treats model
+confidence as Host verification, promotes uncertain state to accepted state,
+or silently changes Frozen state. If recovery needs authority not already
+granted, it stops and reports the requirement for a new explicit user
+decision.
+
 ## Provider network separation
 
 The model-provider adapter may contact its configured API endpoint from the Siralos host process. Sandboxed child processes never inherit that permission. All built-in sandbox profiles deny outbound network access (`network.outbound: deny`); there is no networked profile. Selecting any provider must never allow a child process to reach the internet.

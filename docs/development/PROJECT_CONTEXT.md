@@ -355,6 +355,25 @@ replay semantics
 Configuration may change what environment is requested. It may never disable
 the Host mechanisms that make authoritative behavior verifiable.
 
+### Bounded recovery
+
+Recovery is a Host/run behavior and design property, never a foundational
+product subsystem. Siralos may automatically recover from a failure only
+through bounded actions already permitted by the current Host authority and
+Run policy. Recovery uses existing authority and never creates authority: it
+never broadens capabilities, never weakens validation, never bypasses
+revision/staleness, approval, checkpoint, sandbox, or verification gates,
+never alters an authoritative Goal silently, never converts uncertain state
+into accepted state, never mutates Frozen state, and never retries
+indefinitely. Every recovery attempt is observable and bounded, prefers
+deterministic recovery and uses model-assisted recovery only when reasoning
+is actually required (receiving no special authority), and is followed by
+verification; if verification fails or the recovery budget is exhausted,
+Siralos stops and reports the unresolved failure with retained evidence.
+Recovery repairs or continues the current Run; long-term learned change
+belongs to Evolve (Stage 6). Full recovery parity remains R11-owned; R6
+inherits only typed-failure/recovery-readiness constraints.
+
 ## 8. Mutation model
 
 The required mutation sequence is:

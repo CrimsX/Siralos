@@ -128,6 +128,7 @@ describe("execution contract", () => {
     expect(ids).toContain("CORE.SECURITY.POLICY_AUTHORITATIVE");
     expect(ids).toContain("CORE.SECURITY.NO_BROADENING");
     expect(ids).toContain("CORE.SECURITY.NO_SECRET_LEAK");
+    expect(ids).toContain("CORE.SECURITY.RECOVERY_AUTHORITY");
     expect(ids).toContain("CORE.ARCH.BOUNDARIES_AUTHORITATIVE");
     expect(ids).toContain("CORE.ARCH.TASKSTATE_AUTHORITATIVE");
     expect(ids).toContain("CORE.TEST.FINAL_BOUNDARY");
