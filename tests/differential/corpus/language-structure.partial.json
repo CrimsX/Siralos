@@ -1,0 +1,50 @@
+{
+  "id": "language-structure.partial",
+  "subject": "language-structure",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-structure",
+    "documents": [
+      {
+        "path": "src/broken.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "structure": {
+          "path": "src/broken.gd",
+          "extendsType": "Node",
+          "className": null,
+          "fileAnnotations": [],
+          "signals": [],
+          "enums": [],
+          "constants": [],
+          "properties": [],
+          "functions": [
+            {
+              "name": "_ready",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 3,
+              "multilineSignature": false
+            }
+          ],
+          "dependencies": [],
+          "status": "partial",
+          "parserErrors": [
+            {
+              "line": 2,
+              "message": "Unterminated string literal."
+            },
+            {
+              "line": 8,
+              "message": "Malformed function declaration (no name)."
+            }
+          ],
+          "truncated": false
+        }
+      }
+    ]
+  }
+}

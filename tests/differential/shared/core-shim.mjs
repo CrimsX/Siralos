@@ -11,6 +11,12 @@
 export { buildWorkspaceSummary } from "../../../packages/core/src/workspace/workspace-summary.js";
 export { extractGDScriptStructure } from "../../../packages/core/src/workspace/gdscript-structure.js";
 export { isWorkspaceReadMode } from "../../../packages/core/src/workspace/workspace-read-mode.js";
+export { GODOT_LIMITS } from "../../../packages/core/src/godot/limits.js";
+export { normalizeDefinitionLocations } from "../../../packages/core/src/language/definition.js";
+export { normalizeDiagnosticPayload } from "../../../packages/core/src/language/diagnostic.js";
+export { sanitizeControlCharacters } from "../../../packages/core/src/language/sanitize.js";
+export { toOneBasedRange } from "../../../packages/core/src/language/position.js";
+export { truncateUtf8Bytes } from "../../../packages/core/src/language/truncate.js";
 export { isProtectedBehavioralConfigPath } from "../../../packages/core/src/security/behavioral-config.js";
 export { GitError } from "../../../packages/core/src/git/git-errors.js";
 export { VALIDATION_OFFLINE_PROFILE } from "../../../packages/core/src/security/profile.js";

@@ -1,0 +1,181 @@
+{
+  "id": "language-definition.external",
+  "subject": "language-definition",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "root": "/work/project",
+    "queries": [
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": [
+          {
+            "targetUri": "file:///elsewhere/engine/core.gd",
+            "targetRange": {
+              "start": {
+                "line": 100,
+                "character": 0
+              },
+              "end": {
+                "line": 100,
+                "character": 4
+              }
+            }
+          },
+          {
+            "targetUri": "file:///work/project/inside.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 4
+              }
+            }
+          },
+          {
+            "targetUri": "file:///work/project/sub/deep.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 4
+              }
+            }
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": [
+          {
+            "targetUri": "file:///elsewhere/a.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "targetUri": "file:///elsewhere/deep/b.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "targetUri": "https://example.org/lib.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "targetUri": "file:///elsewhere/engine/internal.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "targetUri": "file:///work/project/../../escape.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "targetUri": "file:///elsewhere/",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": [
+          {},
+          {
+            "targetUri": 42,
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "targetUri": "file:///work/project/x.gd"
+          },
+          {
+            "targetUri": "file:///work/project/x.gd",
+            "targetRange": "bad"
+          },
+          {
+            "targetUri": "file:///work/project/x.gd",
+            "targetRange": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

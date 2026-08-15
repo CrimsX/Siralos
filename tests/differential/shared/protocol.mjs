@@ -617,6 +617,171 @@ function validateGitResult(record, label) {
   }
 }
 
+const LANGUAGE_SEVERITY_VALUES = new Set(["error", "warning", "info", "unknown"]);
+
+function validateDiagnosticEntry(entry, label) {
+  if (!isObject(entry)) {
+    throw new Error(`${label} diagnostics entries must be objects`);
+  }
+  assertExactKeys(
+    entry,
+    ["source", "severity", "path", "line", "column", "code", "message", "rawCategory"],
+    label,
+  );
+  if (typeof entry.source !== "string" || !LANGUAGE_SEVERITY_VALUES.has(entry.severity)) {
+    throw new Error(`${label} diagnostic severity is invalid`);
+  }
+  if (entry.path !== null && typeof entry.path !== "string") {
+    throw new Error(`${label} diagnostic path is invalid`);
+  }
+  if (entry.line !== null && !Number.isSafeInteger(entry.line)) {
+    throw new Error(`${label} diagnostic line is invalid`);
+  }
+  if (entry.column !== null && !Number.isSafeInteger(entry.column)) {
+    throw new Error(`${label} diagnostic column is invalid`);
+  }
+  if (entry.code !== null && typeof entry.code !== "string") {
+    throw new Error(`${label} diagnostic code is invalid`);
+  }
+  if (typeof entry.message !== "string") {
+    throw new Error(`${label} diagnostic message is invalid`);
+  }
+  if (entry.rawCategory !== null && typeof entry.rawCategory !== "string") {
+    throw new Error(`${label} diagnostic rawCategory is invalid`);
+  }
+}
+
+function validateRangeValue(range, label) {
+  if (!isObject(range) || !isObject(range.start) || !isObject(range.end)) {
+    throw new Error(`${label} range is invalid`);
+  }
+  assertExactKeys(range.start, ["line", "column"], label);
+  assertExactKeys(range.end, ["line", "column"], label);
+  if (
+    ![range.start.line, range.start.column, range.end.line, range.end.column].every(
+      Number.isSafeInteger,
+    ) ||
+    [range.start.line, range.start.column, range.end.line, range.end.column].some(
+      (value) => value < 1,
+    )
+  ) {
+    throw new Error(`${label} range coordinates must be positive integers`);
+  }
+}
+
+function validateLanguageDiagnosticsResult(record, label) {
+  assertExactKeys(record.result, ["documents", "aggregate"], `${label}.result`);
+  if (!Array.isArray(record.result.documents) || record.result.documents.length > 64) {
+    throw new Error(`${label}.result.documents must be a bounded array`);
+  }
+  for (const entry of record.result.documents) {
+    if (!isObject(entry) || typeof entry.uri !== "string") {
+      throw new Error(`${label}.result.documents entries must carry a uri`);
+    }
+    if (entry.status === "rejected") {
+      assertExactKeys(entry, ["uri", "status"], `${label}.document`);
+      continue;
+    }
+    if (entry.status === "normalized") {
+      assertExactKeys(
+        entry,
+        ["uri", "status", "path", "revision", "diagnostics", "truncated"],
+        `${label}.document`,
+      );
+      if (typeof entry.path !== "string") {
+        throw new Error(`${label}.document path is invalid`);
+      }
+      if (entry.revision !== null && !/^rev_[0-9a-f]{32}$/u.test(entry.revision)) {
+        throw new Error(`${label}.document revision is invalid`);
+      }
+      if (typeof entry.truncated !== "boolean" || !Array.isArray(entry.diagnostics)) {
+        throw new Error(`${label}.document payload is invalid`);
+      }
+      for (const diagnostic of entry.diagnostics) {
+        validateDiagnosticEntry(diagnostic, `${label}.document`);
+      }
+      continue;
+    }
+    throw new Error(`${label}.result.documents has an unsupported status`);
+  }
+  if (!isObject(record.result.aggregate)) {
+    throw new Error(`${label}.result.aggregate must be an object`);
+  }
+  assertExactKeys(
+    record.result.aggregate,
+    ["diagnostics", "truncated"],
+    `${label}.result.aggregate`,
+  );
+  if (
+    typeof record.result.aggregate.truncated !== "boolean" ||
+    !Array.isArray(record.result.aggregate.diagnostics)
+  ) {
+    throw new Error(`${label}.result.aggregate is invalid`);
+  }
+  for (const diagnostic of record.result.aggregate.diagnostics) {
+    validateDiagnosticEntry(diagnostic, `${label}.result.aggregate`);
+  }
+}
+
+function validateLanguageStructureResult(record, label) {
+  assertExactKeys(record.result, ["summaries"], `${label}.result`);
+  if (!Array.isArray(record.result.summaries) || record.result.summaries.length > 64) {
+    throw new Error(`${label}.result.summaries must be a bounded array`);
+  }
+  for (const entry of record.result.summaries) {
+    assertExactKeys(
+      entry,
+      ["path", "revision", "mode", "advisory", "truncated", "bytes", "text"],
+      `${label}.summary`,
+    );
+    if (typeof entry.path !== "string" || typeof entry.text !== "string") {
+      throw new Error(`${label}.summary text is invalid`);
+    }
+    if (entry.revision !== null && !/^rev_[0-9a-f]{32}$/u.test(entry.revision)) {
+      throw new Error(`${label}.summary revision is invalid`);
+    }
+    if (entry.mode !== "summary" || entry.advisory !== true) {
+      throw new Error(`${label}.summary advisory semantics are invalid`);
+    }
+    if (
+      typeof entry.truncated !== "boolean" ||
+      !Number.isSafeInteger(entry.bytes) ||
+      entry.bytes < 0
+    ) {
+      throw new Error(`${label}.summary bounds are invalid`);
+    }
+  }
+}
+
+function validateLanguageDefinitionResult(record, label) {
+  assertExactKeys(record.result, ["queries"], `${label}.result`);
+  if (!Array.isArray(record.result.queries) || record.result.queries.length > 64) {
+    throw new Error(`${label}.result.queries must be a bounded array`);
+  }
+  for (const entry of record.result.queries) {
+    assertExactKeys(entry, ["uri", "path", "locations", "truncated"], `${label}.query`);
+    if (
+      typeof entry.uri !== "string" ||
+      typeof entry.path !== "string" ||
+      typeof entry.truncated !== "boolean"
+    ) {
+      throw new Error(`${label}.query is invalid`);
+    }
+    if (!Array.isArray(entry.locations) || entry.locations.length > 128) {
+      throw new Error(`${label}.query locations must be a bounded array`);
+    }
+    for (const location of entry.locations) {
+      if (
+        !isObject(location) ||
+        typeof location.path !== "string" ||
+        typeof location.external !== "boolean"
+      ) {
+        throw new Error(`${label}.query location is invalid`);
+      }
+      validateRangeValue(location.range, `${label}.query location`);
+    }
+  }
+}
 function validateCompletedResult(record, label) {
   if (!isObject(record.result)) {
     throw new Error(`${label}.result must be an object`);
@@ -661,6 +826,18 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "git-inspection") {
     validateGitResult(record, label);
+    return;
+  }
+  if (record.subject === "language-diagnostics") {
+    validateLanguageDiagnosticsResult(record, label);
+    return;
+  }
+  if (record.subject === "language-structure") {
+    validateLanguageStructureResult(record, label);
+    return;
+  }
+  if (record.subject === "language-definition") {
+    validateLanguageDefinitionResult(record, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

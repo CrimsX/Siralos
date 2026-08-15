@@ -1,0 +1,70 @@
+{
+  "id": "language-diagnostics.uri-rejection",
+  "subject": "language-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-diagnostics",
+    "root": "/work/project",
+    "source": "langsvc",
+    "documents": [
+      {
+        "uri": "file:///elsewhere/outside.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "x"
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "diagnostics": "not-an-array"
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd"
+      },
+      {
+        "uri": "res://scripts/player.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "x"
+          }
+        ]
+      },
+      {
+        "uri": "file://evil/project/player.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "x"
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/../secret.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "x"
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "diagnostics": []
+      },
+      {
+        "uri": "file:///work/project/scripts/my%20file.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "decoded space"
+          }
+        ]
+      }
+    ]
+  }
+}

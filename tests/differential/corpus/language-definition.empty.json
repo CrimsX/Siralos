@@ -1,0 +1,31 @@
+{
+  "id": "language-definition.empty",
+  "subject": "language-definition",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "root": "/work/project",
+    "queries": [
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": []
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": null
+      },
+      {
+        "uri": "file:///elsewhere/player.gd",
+        "path": "fallback.gd",
+        "locations": []
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd"
+      }
+    ]
+  }
+}

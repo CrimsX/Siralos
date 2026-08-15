@@ -1,0 +1,30 @@
+{
+  "id": "language-structure.empty",
+  "subject": "language-structure",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-structure",
+    "documents": [
+      {
+        "path": "src/empty.gd",
+        "structure": {
+          "path": "src/empty.gd",
+          "extendsType": null,
+          "className": null,
+          "fileAnnotations": [],
+          "signals": [],
+          "enums": [],
+          "constants": [],
+          "properties": [],
+          "functions": [],
+          "dependencies": [],
+          "status": "complete",
+          "parserErrors": [],
+          "truncated": false
+        }
+      }
+    ]
+  }
+}

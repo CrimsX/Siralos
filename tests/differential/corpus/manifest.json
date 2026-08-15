@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 7,
+  "corpusVersion": 8,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -29,6 +29,70 @@
     {
       "file": "git-inspection.unavailable.json",
       "sha256": "849255a4af7d0002c06874723c25de42990799d8bcee04b043e037be1ec78bd9"
+    },
+    {
+      "file": "language-definition.bounded.json",
+      "sha256": "341cee6639c1ad03126d214498d1df1fef0185dd601ad0eae6912cb11b787db9"
+    },
+    {
+      "file": "language-definition.empty.json",
+      "sha256": "ff29ade34fe4e6d3242d67ad7a2c36e3d9c98af3b0306e1ca570795eb0774f85"
+    },
+    {
+      "file": "language-definition.external.json",
+      "sha256": "011a6d0de0c6f740f3a29141dc368dc412f402e615a1ca5a93fbef88b95294f4"
+    },
+    {
+      "file": "language-definition.single.json",
+      "sha256": "2417bef912a5dd61c315c28c3b93c8820f63d848792d3b3cc3d2f94fac4d8c96"
+    },
+    {
+      "file": "language-diagnostics.empty.json",
+      "sha256": "a2653d6e3e665e5b889e6951942a2ebcd65cdc14bd15fa698ab71e270548f9f6"
+    },
+    {
+      "file": "language-diagnostics.missing-location.json",
+      "sha256": "d189f77c3f8afbb4756094c3cd40d401cdda7d0962f7fc1abcc71fc6d9b11fd4"
+    },
+    {
+      "file": "language-diagnostics.ordering-dedup.json",
+      "sha256": "29e607171ed5711813b1cdd4d466302ac0f1419030d5fb22ebe9c77643f244c2"
+    },
+    {
+      "file": "language-diagnostics.revision-binding.json",
+      "sha256": "08d8092087208836134c102cd8fc418f7858a87462c33963f56b9d3d388d29c5"
+    },
+    {
+      "file": "language-diagnostics.sanitization.json",
+      "sha256": "47261a028b8dae0b8cfc09e03697e8bc019eb37fadd360dff56cf645136842b3"
+    },
+    {
+      "file": "language-diagnostics.severity-mapping.json",
+      "sha256": "c60da30bd9b9bc91c89c81054cc634491843723c42ac517cee6e5725d784ba53"
+    },
+    {
+      "file": "language-diagnostics.truncation.json",
+      "sha256": "52bbf5b5f74babc05c897236ba2e0b243da2ff9accaa2ee8df4602ac6c9df011"
+    },
+    {
+      "file": "language-diagnostics.uri-rejection.json",
+      "sha256": "8909e030182b1b8b508b35fa638b1cf3bfcb0a830dd836c83de2d86bc1ecfa52"
+    },
+    {
+      "file": "language-structure.empty.json",
+      "sha256": "d27e4b74f36947961ec9009a178b077628dd8c20fbce6937deb91f05348051f1"
+    },
+    {
+      "file": "language-structure.partial.json",
+      "sha256": "9932d22bfd66215a642f698e95a11ea26ad748cf558142f2a275c92b2e1aea8a"
+    },
+    {
+      "file": "language-structure.truncation.json",
+      "sha256": "3149c0d663938c3bd30f500aefda70c29aee6782b5c0a748d044d133649c9848"
+    },
+    {
+      "file": "language-structure.typical.json",
+      "sha256": "a5317788fb4b8980f1b6992ebe8cf69811572803fb5a07dede09e70de7f2974a"
     },
     {
       "file": "state-dir.fallback.posix.json",
@@ -191,5 +255,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "e46966cf874b9cebc9544fcf8167e8614325287e472e0f669d72f04c07f85e39"
+  "corpusSha256": "76412eebc2c2ca3c62d9916e4093e22b27ea8dd7c29551b82bb8001af8721bb7"
 }

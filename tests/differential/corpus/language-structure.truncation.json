@@ -1,0 +1,156 @@
+{
+  "id": "language-structure.truncation",
+  "subject": "language-structure",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-structure",
+    "documents": [
+      {
+        "path": "src/big.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "maxBytes": 260,
+        "notableMethods": 8,
+        "structure": {
+          "path": "src/big.gd",
+          "extendsType": null,
+          "className": null,
+          "fileAnnotations": [],
+          "signals": [
+            {
+              "name": "sig_a",
+              "parameters": [],
+              "line": 1
+            },
+            {
+              "name": "sig_b",
+              "parameters": [],
+              "line": 2
+            }
+          ],
+          "enums": [],
+          "constants": [
+            {
+              "name": "C_A",
+              "type": "int",
+              "line": 3,
+              "multiline": false
+            },
+            {
+              "name": "C_B",
+              "type": "int",
+              "line": 4,
+              "multiline": false
+            }
+          ],
+          "properties": [
+            {
+              "name": "p_a",
+              "type": "float",
+              "annotations": ["export"],
+              "line": 5,
+              "multiline": false
+            }
+          ],
+          "functions": [
+            {
+              "name": "fn_0",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 6,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_1",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 7,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_2",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 8,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_3",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 9,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_4",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 10,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_5",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 11,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_6",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 12,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_7",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 13,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_8",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 14,
+              "multilineSignature": false
+            },
+            {
+              "name": "fn_9",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 15,
+              "multilineSignature": false
+            }
+          ],
+          "dependencies": ["res://dep_a.tscn", "res://dep_b.tscn", "res://dep_c.tscn"],
+          "status": "complete",
+          "parserErrors": [],
+          "truncated": true
+        }
+      }
+    ]
+  }
+}

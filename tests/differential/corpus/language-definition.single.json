@@ -1,0 +1,80 @@
+{
+  "id": "language-definition.single",
+  "subject": "language-definition",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "root": "/work/project",
+    "queries": [
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": [
+          {
+            "targetUri": "file:///work/project/scripts/player.gd",
+            "targetRange": {
+              "start": {
+                "line": 10,
+                "character": 4
+              },
+              "end": {
+                "line": 10,
+                "character": 12
+              }
+            }
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": {
+          "uri": "file:///work/project/scripts/move.gd",
+          "range": {
+            "start": {
+              "line": 2,
+              "character": 0
+            },
+            "end": {
+              "line": 2,
+              "character": 4
+            }
+          }
+        }
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "path": "scripts/player.gd",
+        "locations": [
+          {
+            "uri": "file:///work/project/scripts/a.gd",
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 0
+              },
+              "end": {
+                "line": 0,
+                "character": 1
+              }
+            }
+          },
+          {
+            "targetUri": "file:///work/project/scripts/b.gd",
+            "targetRange": {
+              "start": {
+                "line": 5,
+                "character": 1
+              },
+              "end": {
+                "line": 5,
+                "character": 2
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

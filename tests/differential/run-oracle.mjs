@@ -39,6 +39,9 @@ const WORKSPACE_PROBE_TIMEOUT_MS = 30_000;
 const WORKSPACE_PROBE = join(HERE, "probes", "workspace-oracle.mjs");
 const REVISION_PROBE = join(HERE, "probes", "revision-oracle.mjs");
 const CHECKPOINT_PROBE = join(HERE, "probes", "checkpoint-oracle.mjs");
+const LANGUAGE_DIAGNOSTICS_PROBE = join(HERE, "probes", "language-diagnostics-oracle.mjs");
+const LANGUAGE_STRUCTURE_PROBE = join(HERE, "probes", "language-structure-oracle.mjs");
+const LANGUAGE_DEFINITION_PROBE = join(HERE, "probes", "language-definition-oracle.mjs");
 
 function optionValue(args, name) {
   const index = args.indexOf(name);
@@ -245,6 +248,30 @@ export function runScenario(scenario, root) {
       subject: scenario.subject,
       outcome: SCENARIO_OUTCOME.COMPLETED,
       result: runWorkspaceProbe(CHECKPOINT_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "language-diagnostics") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(LANGUAGE_DIAGNOSTICS_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "language-structure") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(LANGUAGE_STRUCTURE_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "language-definition") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(LANGUAGE_DEFINITION_PROBE, scenario.subject, scenario.input),
     };
   }
   if (scenario.subject === "version-identity") {

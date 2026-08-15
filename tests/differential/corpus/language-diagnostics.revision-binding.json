@@ -1,0 +1,73 @@
+{
+  "id": "language-diagnostics.revision-binding",
+  "subject": "language-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-diagnostics",
+    "root": "/work/project",
+    "source": "langsvc",
+    "documents": [
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "bound to revision A",
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "bound to revision B",
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/ui/menu.gd",
+        "diagnostics": [
+          {
+            "severity": 2,
+            "message": "unbound",
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "id": "language-structure.typical",
+  "subject": "language-structure",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-structure",
+    "documents": [
+      {
+        "path": "src/player.gd",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "maxBytes": 4096,
+        "notableMethods": 12,
+        "structure": {
+          "path": "src/player.gd",
+          "extendsType": "CharacterBody2D",
+          "className": "Player",
+          "fileAnnotations": [
+            {
+              "name": "tool",
+              "arguments": [],
+              "line": 1
+            },
+            {
+              "name": "icon",
+              "arguments": ["res://icon.svg"],
+              "line": 2
+            }
+          ],
+          "signals": [
+            {
+              "name": "died",
+              "parameters": [],
+              "line": 5
+            },
+            {
+              "name": "scored",
+              "parameters": [
+                {
+                  "name": "points",
+                  "type": "int"
+                }
+              ],
+              "line": 6
+            }
+          ],
+          "enums": [
+            {
+              "name": "State",
+              "members": ["IDLE", "RUN", "JUMP"],
+              "line": 8,
+              "multiline": true
+            }
+          ],
+          "constants": [
+            {
+              "name": "MAX_SPEED",
+              "type": "float",
+              "line": 12,
+              "multiline": false
+            }
+          ],
+          "properties": [
+            {
+              "name": "speed",
+              "type": "float",
+              "annotations": ["export"],
+              "line": 14,
+              "multiline": false
+            },
+            {
+              "name": "jump_force",
+              "type": "float",
+              "annotations": ["export_range", "100", "1000"],
+              "line": 15,
+              "multiline": false
+            },
+            {
+              "name": "internal",
+              "type": "int",
+              "annotations": [],
+              "line": 16,
+              "multiline": false
+            }
+          ],
+          "functions": [
+            {
+              "name": "_ready",
+              "parameters": [],
+              "returnType": null,
+              "isStatic": false,
+              "annotations": [],
+              "line": 20,
+              "multilineSignature": false
+            },
+            {
+              "name": "move",
+              "parameters": [
+                {
+                  "name": "delta",
+                  "type": "float"
+                }
+              ],
+              "returnType": "void",
+              "isStatic": false,
+              "annotations": [],
+              "line": 24,
+              "multilineSignature": false
+            },
+            {
+              "name": "spawn",
+              "parameters": [],
+              "returnType": "Node",
+              "isStatic": true,
+              "annotations": ["rpc"],
+              "line": 40,
+              "multilineSignature": true
+            }
+          ],
+          "dependencies": ["res://scenes/player.tscn", "res://assets/icon.svg"],
+          "status": "complete",
+          "parserErrors": [],
+          "truncated": false
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "language-diagnostics.empty",
+  "subject": "language-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-diagnostics",
+    "root": "/work/project",
+    "source": "langsvc",
+    "documents": [
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "diagnostics": []
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "diagnostics": []
+      }
+    ]
+  }
+}

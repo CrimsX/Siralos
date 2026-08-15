@@ -1,0 +1,128 @@
+{
+  "id": "language-diagnostics.ordering-dedup",
+  "subject": "language-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-diagnostics",
+    "root": "/work/project",
+    "source": "langsvc",
+    "documents": [
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "zebra error",
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 2,
+                "character": 1
+              }
+            }
+          },
+          {
+            "severity": 1,
+            "message": "alpha error",
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "severity": 2,
+            "message": "alpha error",
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "severity": 1,
+            "message": "alpha error",
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            }
+          },
+          {
+            "severity": 1,
+            "message": "no location",
+            "code": "x"
+          },
+          {
+            "severity": 1,
+            "message": "no location",
+            "code": null
+          },
+          {
+            "severity": 1,
+            "message": "no location",
+            "code": null
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/ui/menu.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "menu error",
+            "range": {
+              "start": {
+                "line": 9,
+                "character": 0
+              },
+              "end": {
+                "line": 9,
+                "character": 1
+              }
+            }
+          }
+        ]
+      },
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "zebra error",
+            "range": {
+              "start": {
+                "line": 2,
+                "character": 0
+              },
+              "end": {
+                "line": 2,
+                "character": 1
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

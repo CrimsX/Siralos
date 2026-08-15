@@ -31,8 +31,12 @@ const SUBJECT_WORKSPACE_REVISION: &str = "workspace-revision";
 const SUBJECT_WORKSPACE_PREPARE: &str = "workspace-prepare";
 const SUBJECT_CHECKPOINT: &str = "checkpoint";
 const SUBJECT_GIT_INSPECTION: &str = "git-inspection";
+const SUBJECT_LANGUAGE_DIAGNOSTICS: &str = "language-diagnostics";
+const SUBJECT_LANGUAGE_STRUCTURE: &str = "language-structure";
+const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 7;
+const CORPUS_VERSION: u64 = 8;
+const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -351,6 +355,9 @@ fn validate_scenario(
             | SUBJECT_WORKSPACE_PREPARE
             | SUBJECT_CHECKPOINT
             | SUBJECT_GIT_INSPECTION
+            | SUBJECT_LANGUAGE_DIAGNOSTICS
+            | SUBJECT_LANGUAGE_STRUCTURE
+            | SUBJECT_LANGUAGE_DEFINITION
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -430,7 +437,10 @@ fn validate_scenario(
         | SUBJECT_WORKSPACE_REVISION
         | SUBJECT_WORKSPACE_PREPARE
         | SUBJECT_CHECKPOINT
-        | SUBJECT_GIT_INSPECTION => {
+        | SUBJECT_GIT_INSPECTION
+        | SUBJECT_LANGUAGE_DIAGNOSTICS
+        | SUBJECT_LANGUAGE_STRUCTURE
+        | SUBJECT_LANGUAGE_DEFINITION => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -455,9 +465,20 @@ fn validate_scenario(
                     scenario.id
                 ))
             })?;
-            if serialized.len() > MAX_WORKSPACE_INPUT_BYTES {
+            let language_subject = matches!(
+                scenario.subject.as_str(),
+                SUBJECT_LANGUAGE_DIAGNOSTICS
+                    | SUBJECT_LANGUAGE_STRUCTURE
+                    | SUBJECT_LANGUAGE_DEFINITION
+            );
+            let max_input_bytes = if language_subject {
+                MAX_LANGUAGE_INPUT_BYTES
+            } else {
+                MAX_WORKSPACE_INPUT_BYTES
+            };
+            if serialized.len() > max_input_bytes {
                 return Err(HarnessError::corpus(format!(
-                    "scenario {} input exceeds {MAX_WORKSPACE_INPUT_BYTES} bytes",
+                    "scenario {} input exceeds {max_input_bytes} bytes",
                     scenario.id
                 )));
             }
@@ -929,6 +950,42 @@ fn run_scenario(
                 "workspace input was validated while loading the corpus",
             );
             let result = checkpoint_record(&scenario.id, input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_LANGUAGE_DIAGNOSTICS => {
+            let input = scenario.input.as_ref().expect(
+                "language input was validated while loading the corpus",
+            );
+            let result = language_diagnostics_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_LANGUAGE_STRUCTURE => {
+            let input = scenario.input.as_ref().expect(
+                "language input was validated while loading the corpus",
+            );
+            let result = language_structure_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_LANGUAGE_DEFINITION => {
+            let input = scenario.input.as_ref().expect(
+                "language input was validated while loading the corpus",
+            );
+            let result = language_definition_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -3096,6 +3153,550 @@ fn checkpoint_record(
     let _ = std::fs::remove_dir_all(&store_root);
     Ok(json!({ "ops": ops }))
 }
+// Stage 3R R5 subjects: language-diagnostics / language-structure /
+// language-definition (generic language intelligence parity).
+// ---------------------------------------------------------------------------
+//
+// Executes each R5 scenario against the real siralos-core language
+// modules (plus the generic URI mapping in siralos-adapters) and builds
+// the canonical R5 observation object that the TypeScript oracle probe
+// emits for the same inputs. The observation is semantic parity data,
+// never a TypeScript object layout.
+
+use siralos_adapters::language::uri::map_uri_to_workspace_relative;
+use siralos_core::language::definition::{
+    DefinitionLimits, RawDefinitionEntry, normalize_definition_locations,
+};
+use siralos_core::language::diagnostic::{
+    Diagnostic, RawDiagnostic, RawDiagnosticCode,
+    normalize_diagnostic_payload, normalize_diagnostic_set,
+};
+use siralos_core::language::limits::LANGUAGE_LIMITS;
+use siralos_core::language::position::{RawPosition, RawRange};
+use siralos_core::language::structure::{
+    AnnotationInfo, ConstantInfo, EnumInfo, FunctionInfo, ParameterInfo,
+    PropertyInfo, SignalInfo, StructuralDocument, StructuralIssue,
+    StructureStatus, SummaryOptions, build_structural_summary,
+};
+
+/// One normalized diagnostic as a canonical record value.
+fn diagnostic_value(diagnostic: &Diagnostic) -> Value {
+    json!({
+        "source": diagnostic.source,
+        "severity": diagnostic.severity.as_str(),
+        "path": diagnostic.path,
+        "line": diagnostic.line,
+        "column": diagnostic.column,
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "rawCategory": diagnostic.raw_category,
+    })
+}
+
+/// Extract a raw 0-based position (None fields for malformed values,
+/// mirroring the reference typeof/integer checks).
+fn raw_position(value: &Value) -> RawPosition {
+    let line = match value.get("line") {
+        Some(Value::Number(number)) => {
+            number.as_i64().filter(|line| *line >= 0)
+        }
+        _ => None,
+    };
+    let column = match value.get("character") {
+        Some(Value::Number(number)) => {
+            number.as_i64().filter(|column| *column >= 0)
+        }
+        _ => None,
+    };
+    RawPosition { line, column }
+}
+
+/// Extract a raw 0-based range; None when the value is not an object or
+/// a position is absent.
+fn raw_range(value: &Value) -> Option<RawRange> {
+    let object = value.as_object()?;
+    Some(RawRange {
+        start: raw_position(object.get("start")?),
+        end: raw_position(object.get("end")?),
+    })
+}
+
+/// Parse one raw LSP-shaped diagnostic entry from the scenario input.
+fn parse_raw_diagnostic(entry: &Value) -> Result<RawDiagnostic, HarnessError> {
+    let severity = entry.get("severity").and_then(Value::as_i64);
+    let code = match entry.get("code") {
+        Some(Value::String(text)) => {
+            Some(RawDiagnosticCode::Text(text.clone()))
+        }
+        Some(Value::Number(number)) => match number.as_i64() {
+            Some(value) => Some(RawDiagnosticCode::Number(value)),
+            None => Some(RawDiagnosticCode::Text(number.to_string())),
+        },
+        _ => None,
+    };
+    let message =
+        entry.get("message").and_then(Value::as_str).map(str::to_owned);
+    let source =
+        entry.get("source").and_then(Value::as_str).map(str::to_owned);
+    let range = entry.get("range").and_then(raw_range);
+    Ok(RawDiagnostic { range, severity, code, message, source })
+}
+
+/// Canonical record for one language-diagnostics scenario.
+fn language_diagnostics_record(input: &Value) -> Result<Value, HarnessError> {
+    let fingerprint = scenario_string(input, "fingerprint")?;
+    let root = scenario_string(input, "root")?;
+    let source = scenario_string(input, "source")?;
+    let run_max = scenario_u64(input, "runMax").map(|value| value as usize);
+    let mut documents: Vec<Value> = Vec::new();
+    let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
+    for document in scenario_array(input, "documents")? {
+        let uri = scenario_string(document, "uri")?;
+        let raw_entries = match document.get("diagnostics") {
+            Some(Value::Array(entries)) => entries,
+            _ => {
+                // A non-array payload is rejected exactly like the
+                // reference publish-diagnostics normalization.
+                documents.push(json!({ "uri": uri, "status": "rejected" }));
+                continue;
+            }
+        };
+        let Some(path) = map_uri_to_workspace_relative(&uri, &root) else {
+            // Out-of-workspace URIs are rejected, never guessed.
+            documents.push(json!({ "uri": uri, "status": "rejected" }));
+            continue;
+        };
+        let raw = raw_entries
+            .iter()
+            .map(parse_raw_diagnostic)
+            .collect::<Result<Vec<_>, _>>()?;
+        let per_set = scenario_u64(document, "max")
+            .map(|value| value as usize)
+            .unwrap_or(LANGUAGE_LIMITS.max_diagnostics_per_set);
+        let limits = siralos_core::language::limits::LanguageLimits {
+            max_diagnostics_per_set: per_set,
+            ..LANGUAGE_LIMITS
+        };
+        let payload = normalize_diagnostic_payload(
+            &raw,
+            &source,
+            &path,
+            Some(&root),
+            &limits,
+        );
+        let revision = match document.get("sha256") {
+            Some(Value::String(sha256)) => {
+                Some(compute_workspace_revision_handle(
+                    &fingerprint,
+                    &payload.path,
+                    sha256,
+                ))
+            }
+            _ => None,
+        };
+        let diagnostics = payload
+            .diagnostics
+            .iter()
+            .map(diagnostic_value)
+            .collect::<Vec<_>>();
+        documents.push(json!({
+            "uri": uri,
+            "status": "normalized",
+            "path": payload.path,
+            "revision": revision,
+            "diagnostics": diagnostics,
+            "truncated": payload.truncated,
+        }));
+        all_diagnostics.extend(payload.diagnostics);
+    }
+    let run_bound = run_max.unwrap_or(LANGUAGE_LIMITS.max_diagnostics_per_run);
+    let (aggregated, aggregated_truncated) =
+        normalize_diagnostic_set(all_diagnostics, run_bound);
+    let aggregate = json!({
+        "diagnostics": aggregated.iter().map(diagnostic_value).collect::<Vec<_>>(),
+        "truncated": aggregated_truncated,
+    });
+    Ok(json!({ "documents": documents, "aggregate": aggregate }))
+}
+
+fn parse_parameter(value: &Value) -> ParameterInfo {
+    ParameterInfo {
+        name: value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        type_name: value
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    }
+}
+
+fn parse_parameters(value: &Value) -> Vec<ParameterInfo> {
+    value
+        .get("parameters")
+        .and_then(Value::as_array)
+        .map(|entries| entries.iter().map(parse_parameter).collect())
+        .unwrap_or_default()
+}
+
+fn parse_annotations(value: &Value) -> Vec<String> {
+    value
+        .get("annotations")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_structure(value: &Value) -> StructuralDocument {
+    let line_of = |entry: &Value| -> u64 {
+        entry.get("line").and_then(Value::as_u64).unwrap_or(0)
+    };
+    let file_annotations = value
+        .get("fileAnnotations")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| AnnotationInfo {
+                    name: entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                    arguments: entry
+                        .get("arguments")
+                        .and_then(Value::as_array)
+                        .map(|args| {
+                            args.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_owned)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    line: line_of(entry),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let signals = value
+        .get("signals")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| SignalInfo {
+                    name: entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                    parameters: parse_parameters(entry),
+                    line: line_of(entry),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let enums = value
+        .get("enums")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| EnumInfo {
+                    name: entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    members: entry
+                        .get("members")
+                        .and_then(Value::as_array)
+                        .map(|members| {
+                            members
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_owned)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    line: line_of(entry),
+                    multiline: entry
+                        .get("multiline")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let constants = value
+        .get("constants")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| ConstantInfo {
+                    name: entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                    type_name: entry
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    line: line_of(entry),
+                    multiline: entry
+                        .get("multiline")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let properties = value
+        .get("properties")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| PropertyInfo {
+                    name: entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                    type_name: entry
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    annotations: parse_annotations(entry),
+                    line: line_of(entry),
+                    multiline: entry
+                        .get("multiline")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let functions = value
+        .get("functions")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| FunctionInfo {
+                    name: entry
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                    parameters: parse_parameters(entry),
+                    return_type: entry
+                        .get("returnType")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    is_static: entry
+                        .get("isStatic")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    annotations: parse_annotations(entry),
+                    line: line_of(entry),
+                    multiline_signature: entry
+                        .get("multilineSignature")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let dependencies = value
+        .get("dependencies")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let issues = value
+        .get("parserErrors")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| StructuralIssue {
+                    line: line_of(entry),
+                    message: entry
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let status = match value.get("status").and_then(Value::as_str) {
+        Some("partial") => StructureStatus::Partial,
+        _ => StructureStatus::Complete,
+    };
+    StructuralDocument {
+        path: value
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        revision: None,
+        base_type: value
+            .get("extendsType")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        declared_name: value
+            .get("className")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        file_annotations,
+        signals,
+        enums,
+        constants,
+        properties,
+        functions,
+        dependencies,
+        status,
+        issues,
+        truncated: value
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+/// Canonical record for one language-structure scenario.
+fn language_structure_record(input: &Value) -> Result<Value, HarnessError> {
+    let fingerprint = scenario_string(input, "fingerprint")?;
+    let mut summaries: Vec<Value> = Vec::new();
+    for document in scenario_array(input, "documents")? {
+        let structure_value = document.get("structure").ok_or_else(|| {
+            HarnessError::corpus(
+                "language-structure document requires a structure object",
+            )
+        })?;
+        let mut structure = parse_structure(structure_value);
+        let path = structure.path.clone();
+        let revision = match document.get("sha256") {
+            Some(Value::String(sha256)) => Some(
+                compute_workspace_revision_handle(&fingerprint, &path, sha256),
+            ),
+            _ => None,
+        };
+        structure.revision = revision.clone();
+        let options = SummaryOptions {
+            max_bytes: scenario_u64(document, "maxBytes")
+                .map(|value| value as usize),
+            notable_methods: scenario_u64(document, "notableMethods")
+                .map(|value| value as usize),
+        };
+        let summary = build_structural_summary(
+            &structure,
+            revision.as_deref(),
+            &options,
+        );
+        summaries.push(json!({
+            "path": summary.path,
+            "revision": summary.revision,
+            "mode": "summary",
+            "advisory": true,
+            "truncated": summary.truncated,
+            "bytes": summary.bytes,
+            "text": summary.text,
+        }));
+    }
+    Ok(json!({ "summaries": summaries }))
+}
+
+fn parse_raw_definition_entry(entry: &Value) -> RawDefinitionEntry {
+    let uri = match entry.get("targetUri") {
+        Some(Value::String(value)) => Some(value.clone()),
+        _ => match entry.get("uri") {
+            Some(Value::String(value)) => Some(value.clone()),
+            _ => None,
+        },
+    };
+    let range = match entry.get("targetRange") {
+        Some(value) => raw_range(value),
+        None => entry.get("range").and_then(raw_range),
+    };
+    RawDefinitionEntry { uri, range }
+}
+
+/// Canonical record for one language-definition scenario.
+fn language_definition_record(input: &Value) -> Result<Value, HarnessError> {
+    let root = scenario_string(input, "root")?;
+    let mut queries: Vec<Value> = Vec::new();
+    for query in scenario_array(input, "queries")? {
+        let uri = scenario_string(query, "uri")?;
+        let fallback = scenario_string(query, "path")?;
+        let query_path =
+            map_uri_to_workspace_relative(&uri, &root).unwrap_or(fallback);
+        let entries = query
+            .get("locations")
+            .map(|locations| match locations {
+                Value::Array(items) => items
+                    .iter()
+                    .map(parse_raw_definition_entry)
+                    .collect::<Vec<_>>(),
+                Value::Null => Vec::new(),
+                _ => vec![parse_raw_definition_entry(locations)],
+            })
+            .unwrap_or_default();
+        let result = normalize_definition_locations(
+            &entries,
+            &query_path,
+            |target| map_uri_to_workspace_relative(target, &root),
+            DefinitionLimits {
+                max_locations: scenario_u64(query, "max")
+                    .map(|value| value as usize)
+                    .unwrap_or(LANGUAGE_LIMITS.max_definition_locations),
+            },
+        );
+        let locations = result
+            .locations
+            .iter()
+            .map(|location| {
+                json!({
+                    "path": location.path,
+                    "range": {
+                        "start": {
+                            "line": location.range.start.line,
+                            "column": location.range.start.column,
+                        },
+                        "end": {
+                            "line": location.range.end.line,
+                            "column": location.range.end.column,
+                        },
+                    },
+                    "external": location.external,
+                })
+            })
+            .collect::<Vec<_>>();
+        queries.push(json!({
+            "uri": uri,
+            "path": result.path,
+            "locations": locations,
+            "truncated": result.truncated,
+        }));
+    }
+    Ok(json!({ "queries": queries }))
+}
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3239,7 +3840,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 47);
+        assert_eq!(loaded.len(), 63);
     }
 
     #[test]
@@ -3397,3 +3998,5 @@ mod tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------

@@ -1,0 +1,101 @@
+{
+  "id": "language-diagnostics.missing-location",
+  "subject": "language-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-language-diagnostics",
+    "root": "/work/project",
+    "source": "langsvc",
+    "documents": [
+      {
+        "uri": "file:///work/project/scripts/player.gd",
+        "diagnostics": [
+          {
+            "severity": 1,
+            "message": "no range at all"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            },
+            "severity": 1,
+            "message": "valid range"
+          },
+          {
+            "range": {
+              "start": {
+                "line": -1,
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            },
+            "severity": 2,
+            "message": "negative line yields no location"
+          },
+          {
+            "range": {
+              "start": {
+                "line": "1",
+                "character": 0
+              },
+              "end": {
+                "line": 1,
+                "character": 1
+              }
+            },
+            "severity": 2,
+            "message": "string line yields no location"
+          },
+          {
+            "range": {
+              "start": {
+                "line": 1,
+                "character": 1.5
+              },
+              "end": {
+                "line": 1,
+                "character": 2
+              }
+            },
+            "severity": 2,
+            "message": "fractional character yields no location"
+          },
+          {
+            "severity": 1,
+            "message": "   \u0000  "
+          },
+          {
+            "severity": 1
+          },
+          "not an object",
+          42,
+          null,
+          {
+            "severity": 2,
+            "message": ""
+          },
+          {
+            "severity": 2,
+            "message": "  "
+          },
+          {
+            "severity": 2,
+            "message": "kept after trim"
+          }
+        ]
+      }
+    ]
+  }
+}
