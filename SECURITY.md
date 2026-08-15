@@ -1,4 +1,4 @@
-﻿# Siralos security
+# Siralos security
 
 This document describes the Siralos security model: how provider-driven capabilities are gated, how sandboxed processes are confined, and what is deliberately not implemented yet.
 
@@ -93,6 +93,35 @@ The Sandbox Runtime manager is shared; Siralos never lets a later request execut
 ## Protected paths
 
 The `develop-offline` profile denies writes to `.git/`, `.siralos/`, `.env`, `.env.*`, `*.pem`, and `*.key` inside the workspace even though the workspace is writable. Protected-path matching folds case on Windows and macOS (macOS volumes are treated conservatively as case-insensitive), so `.GIT`, `.Git`, `.ENV` and equivalent variants cannot address protected paths; the fold applies during preparation and again immediately before mutation, including for new files whose final component does not yet exist. Windows junctions and reparse points cannot alias protected directories because mutation targets must resolve canonically inside the workspace. Environment filtering remains mandatory regardless; filename protection is defense in depth, not the primary safeguard. Where a backend cannot protect creation of a previously nonexistent matching file (a documented Windows glob-expansion limitation), that platform difference is documented and the backend's own behaviour governs.
+
+## Workspace read containment
+
+Provider-accessible workspace reads (`workspace.read`, `workspace.list`,
+`workspace.search`, and checkpoint reconciliation file-state inspection)
+are contained by validation-time resolution: every model-facing path is
+lexically validated (NUL, empty, absolute, drive, parent traversal),
+joined against the canonical workspace root, canonicalized, and re-checked
+for containment, so traversal, absolute paths, and symlink/junction/reparse
+escapes that exist at resolution time are rejected. Listing and search
+never follow symlink entries discovered during traversal (they are
+reported or skipped), and a symlinked parent is allowed only when its
+canonical target stays inside the workspace. Exact reads use a bounded
+complete read (EOF-verified): one short read is never treated as EOF, a
+partial prefix is never returned as complete content, a file over the
+bound is rejected with the typed too-large outcome, and the returned
+SHA-256 covers exactly the accepted bytes.
+
+The canonicalize-then-open mechanism validates the path before the
+operation; it does not bind the opened object against a same-user process
+that replaces the target or a parent directory between validation and
+open. That identity-bound guarantee requires directory-relative
+primitives and is provided only where this document says so (checkpoint
+preimage verification is handle-bound as described above; mutation,
+Git, and probe surfaces that need identity-bound writes or launches
+remain unavailable). Checkpoint records can never widen read scope:
+reconciliation file-state reads resolve the canonical parent inside the
+workspace and fail closed (`sha256: null`) on any escape, exactly like a
+linked target.
 
 ## Instructions, knowledge, and security authority (ADR 0017)
 

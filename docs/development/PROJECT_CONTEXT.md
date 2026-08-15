@@ -94,8 +94,9 @@ the typed prepared create/edit/delete effect models, the checkpoint model
 with operation-state invariants, undo planning, and reconciliation
 classification, and the read-only Git error/disposition contract;
 `siralos-adapters` owns canonical root resolution, containment-safe path
-resolution (symlink/junction escapes rejected), bounded exact reads with
-whole-file SHA-256 identity, deterministic bounded listing and search,
+resolution (symlink/junction escapes rejected), bounded complete exact
+reads with EOF-verified whole-file SHA-256 identity, deterministic
+bounded listing and search,
 the fail-closed mutation-preparation boundary (prepare/apply report
 unavailable; nothing is written, approved, or checkpointed), checkpoint
 storage inspection and startup reconciliation over the reference metadata

@@ -64,16 +64,26 @@ typed prepared create/edit/delete effect models, the checkpoint model with
 operation-state invariants, undo planning, and reconciliation
 classification, and the read-only Git error/disposition contract) and
 `siralos-adapters` (canonical root resolution, containment-safe resolution
-that rejects symlink/junction escapes, bounded exact reads with
-whole-file SHA-256 identity, deterministic bounded listing and search,
-the fail-closed mutation-preparation boundary, checkpoint storage
-inspection and startup reconciliation over the reference metadata layout,
-and the typed unavailable Git inspection boundary). The differential
-corpus gained 19 scenarios across the `workspace-read`, `workspace-list`,
-`workspace-search`, `workspace-revision`, `workspace-prepare`,
-`checkpoint`, and `git-inspection` subjects, executed by both
-implementations under the R2 protocol (corpus schema 3, corpus version 6);
-all required applicable scenarios match, the harness self-tests and replay
+that rejects symlink/junction escapes, bounded complete exact reads with
+EOF-verified whole-file SHA-256 identity, deterministic bounded listing
+and search, the fail-closed mutation-preparation boundary, checkpoint
+storage inspection and startup reconciliation over the reference metadata
+layout, and the typed unavailable Git inspection boundary). The exact-read
+hardening gate corrected the one-shot read assumption on both sides: the
+TypeScript reference and the Rust candidate now use bounded complete-read
+semantics (one short read is never treated as EOF, a partial prefix is
+never returned as complete, and files over the bound yield the typed
+too-large outcome), with deterministic short-read regression, boundary,
+and whole-file identity tests on both implementations. Workspace
+file-state reads for checkpoint reconciliation and undo inspection
+resolve the canonical parent inside the workspace and fail closed on any
+escape, so a corrupted or malicious checkpoint record can never widen
+read scope. The differential corpus gained 23 scenarios across the
+`workspace-read`, `workspace-list`, `workspace-search`,
+`workspace-revision`, `workspace-prepare`, `checkpoint`, and
+`git-inspection` subjects, executed by both implementations under the R2
+protocol (corpus schema 3, corpus version 7, 47 scenario files); all
+required applicable scenarios match, the harness self-tests and replay
 stress pass, and the complete local repository gate passes. Deliberately
 unavailable effects (mutation application, new checkpoint creation, Git
 inspection) report the same typed outcomes on both sides. R4 verification
