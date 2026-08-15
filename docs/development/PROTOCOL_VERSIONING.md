@@ -40,19 +40,24 @@ Status: authoritative (pre-Stage-4 assurance, contract Part 20 / Part 21).
 
 ## Versioned schemas today
 
-| Schema                                         | Location                                  | Version                                | Rule                           |
-| ---------------------------------------------- | ----------------------------------------- | -------------------------------------- | ------------------------------ |
-| Differential corpus manifest                   | `tests/differential/corpus/manifest.json` | `schemaVersion: 1`, `corpusVersion: 1` | hard incompatible              |
-| Differential outcome records                   | emitted by both runners                   | tied to corpus schema                  | hard incompatible              |
-| User configuration schema                      | `schemas/user-config.schema.json`         | draft 2020-12 `$id`                    | backward compatible (additive) |
-| Cargo manifest / package.json version identity | differential `version.identity` scenario  | product version                        | parity-gated                   |
+| Schema                                         | Location                                     | Version                                | Rule                                                             |
+| ---------------------------------------------- | -------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------- |
+| Differential corpus manifest                   | `tests/differential/corpus/manifest.json`    | `schemaVersion: 1`, `corpusVersion: 1` | hard incompatible                                                |
+| Differential outcome records                   | emitted by both runners                      | tied to corpus schema                  | hard incompatible                                                |
+| User configuration schema                      | `schemas/user-config.schema.json`            | draft 2020-12 `$id`                    | backward compatible (additive)                                   |
+| Domain ABI world (R6, ADR 0034)                | `crates/siralos-adapters/wit/domain-abi.wit` | `siralos:domain-abi@1.0.0`             | hard incompatible (exact equality; unknown versions fail closed) |
+| Cargo manifest / package.json version identity | differential `version.identity` scenario     | product version                        | parity-gated                                                     |
 
 ## Host/domain contracts
 
-The future domain boundary's protocol versioning (capability model,
+The domain boundary's protocol versioning (capability model,
 package identity, request/response schemas) is defined by the domain ABI
-ADR (ADR 0034) and follows the rules above. Unknown domain protocol
-versions must fail closed, never silently deserialize as current.
+ADR (ADR 0034) and follows the rules above. The production world is
+versioned (`siralos:domain-abi@1.0.0`); the lifecycle checks the ABI
+identity exactly, and the host additionally verifies the versioned
+export name in the component bytes before instantiation, so unknown or
+incompatible domain protocol versions fail closed — never silently
+deserialized, downgraded, or reinterpreted.
 
 ## Public Rust API compatibility (contract Part 21)
 

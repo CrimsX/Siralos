@@ -289,7 +289,16 @@ siralos-cli ─────────→ siralos-adapters ─→ siralos-core
   semantics (source-invalid never conflated with infrastructure
   failure), reference-extracted generic limits, and R4 revision
   binding — no GDScript grammar, LSP transport, process execution, or
-  domain-registry concepts (enforced by the architecture check).
+  domain-registry concepts (enforced by the architecture check). The
+  `domain` module owns the generic R6 lifecycle/capability foundation:
+  validated package identity (stable id, exact SHA-256 digest, versioned
+  ABI), the explicit absent/installed/enabled/active lifecycle state
+  machine with typed transitions, declared capability requests and the
+  Host-authoritative grant decision (enablement never implies
+  authority), exact activation binding, typed recovery-ready failure
+  outcomes with stable codes, and the explicit absence of implicit
+  acquisition (workspace contents are opaque to the lifecycle) — no
+  component runtime, filesystem, or process semantics.
 - `siralos-adapters` owns infrastructure/adapters; it may depend only on
   core. Its `workspace` module implements the R4 filesystem surface:
   canonical root resolution, containment-safe path resolution,
@@ -301,7 +310,18 @@ siralos-cli ─────────→ siralos-adapters ─→ siralos-core
   language-service boundary: URI mapping from service URIs to
   workspace-relative paths (out-of-workspace URIs rejected, decoded
   escapes refused, native separators normalized), with no process
-  execution and no LSP transport.
+  execution and no LSP transport. Its `domain` module owns the R6
+  executable Domain boundary (ADR 0034): the versioned
+  `siralos:domain-abi@1.0.0` WIT world, component loading and
+  instantiation with the versioned export-identity check
+  (unknown/incompatible ABI versions fail closed), exact-byte package
+  digest verification at install and activation (the host computes the
+  digest itself; stale or wrong bytes fail before any semantic work),
+  fuel/memory/input/output/host-call bounds, guest-call supervision with
+  typed trap outcomes and session stop, and the host-mediated effect
+  boundary (grant-checked bounded workspace reads; process execution
+  denied) — the component receives no ambient filesystem/network/process
+  authority.
 - `siralos-cli` is the composition boundary and the `siralos` binary; it
   may depend only on core and adapters.
 - Exactly three crates exist; no placeholder or hypothetical domain

@@ -29,7 +29,7 @@ repository concepts never satisfy those identifiers by implication.
 | R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Verified       |
 | R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified       |
 | R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified       |
-| R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Not due        |
+| R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Verified       |
 | R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Not due        |
 | R8        | Optional Godot Stage-2 parity                                                                                                   | Not due        |
 | R9        | Optional Godot Stage-3 parity                                                                                                   | Not due        |
@@ -138,6 +138,37 @@ exceeded / unavailable/unsupported / uncertain / invalid / terminal) so
 recovery decisions never depend on substring matching or model judgment.
 R6 inherits only typed-failure and recovery-readiness constraints for its
 Domain boundary and does not implement recovery orchestration.
+
+R6 is verified: the minimal Domain capability architecture lives in
+`siralos-core::domain` (validated package identity: stable id, exact
+SHA-256 package digest, versioned ABI; the explicit
+absent/installed/enabled/active state machine with typed transitions;
+declared capability requests and the Host-authoritative grant decision;
+exact activation binding; typed recovery-ready failure outcomes with
+stable codes; and the explicit absence of implicit acquisition —
+workspace contents are opaque to the lifecycle) and the production
+Component Model / WIT boundary lives in `siralos-adapters::domain`
+(the versioned `siralos:domain-abi@1.0.0` world in
+`crates/siralos-adapters/wit/domain-abi.wit`; component
+loading/instantiation with the versioned export-identity check so
+unknown or incompatible ABI versions fail closed; exact-byte digest
+verification at install and activation; fuel/memory/input/output/
+host-call bounds; trap containment with typed fault outcomes and
+session stop; and host-mediated effects: grant-checked bounded
+workspace reads, process execution denied). The deterministic synthetic
+conformance Domain (`tests/domain-conformance/`) is product-neutral and
+proves the production boundary on the checked-in component bytes,
+including trap and unbounded-loop pathological behaviors. The
+differential corpus gained 16 scenarios across the `domain-lifecycle`
+and `domain-capability` subjects (corpus schema 3, corpus version 10,
+79 scenario files) executed by both implementations under the R2
+protocol; all required applicable scenarios match, the Rust Component
+conformance suite passes, and the complete local repository gate
+passes. R6 implements no Plugin system, no marketplace, no automatic
+acquisition, no provider/tool integration, and no Godot Domain; it
+makes the Domain boundary recovery-ready without implementing recovery.
+R6 verification does not authorize R7 work or satisfy any later
+migration or Stage-4 entry gate.
 
 ## Porting gate
 

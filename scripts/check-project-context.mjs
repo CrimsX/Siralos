@@ -35,11 +35,8 @@ const REQUIRED_METADATA = new Map([
   ["Status", "Active development"],
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
-  ["Current completed milestone", "R5"],
-  [
-    "Next milestone",
-    "R6 - Minimal Domain Capability Architecture and Synthetic Conformance Domain",
-  ],
+  ["Current completed milestone", "R6"],
+  ["Next milestone", "R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity"],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
 
@@ -108,9 +105,10 @@ export function validateProjectContext(input) {
   if (
     !input.context.includes("R4      COMPLETE") ||
     !input.context.includes("R5      COMPLETE") ||
-    !input.context.includes("R6      NEXT")
+    !input.context.includes("R6      COMPLETE") ||
+    !input.context.includes("R7      NEXT")
   ) {
-    violations.push("project context does not record R4/R5 complete and R6 next");
+    violations.push("project context does not record R4/R5/R6 complete and R7 next");
   }
 
   const sources = {

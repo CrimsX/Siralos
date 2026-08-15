@@ -21,15 +21,22 @@ configuration, Skills, and explicitly installed Plugins
 > Generic Workspace / Project Foundation — is complete (bounded reads,
 > listing, search, revisions, prepared-effect contracts, checkpoint
 > inspection/reconciliation, and the typed unavailable Git disposition at
-> differential parity), and **R5 — Generic Language Intelligence** is
+> differential parity), **R5 — Generic Language Intelligence** is
 > complete (one-based positions/ranges, bounded sanitized diagnostics
 > with deterministic ordering and explicit truncation, generic
 > symbol/definition/reference models, the language-neutral structural
 > representation with the deterministic advisory summary formatter,
 > typed validation results, revision binding, and the generic
-> language-service URI mapping at differential parity); **R6 — Minimal
-> Domain Capability Architecture and Synthetic Conformance Domain** is
-> next and has not begun.
+> language-service URI mapping at differential parity), and **R6 —
+> Minimal Domain Capability Architecture and Synthetic Conformance
+> Domain** is complete (the domain-neutral lifecycle/capability
+> semantics in `siralos-core::domain`, the production Component Model /
+> WIT boundary in `siralos-adapters::domain` with exact-byte package
+> identity, fail-closed ABI versioning, resource bounds, trap
+> containment, and host-mediated effects, and the deterministic
+> product-neutral synthetic conformance Domain proving the boundary);
+> **R7 — Provider, Tool-Loop, Projection, Configuration, and CLI
+> Parity** is next and has not begun.
 
 ## Status vocabulary
 
@@ -252,12 +259,12 @@ separate, explicit concerns.
 
 - Public product stages 1–3 have a broad TypeScript reference surface; effectful
   capabilities retain truthful availability reporting
-- Stage 3R R1 through R5 are complete (R5: generic language intelligence —
+- Stage 3R R1 through R6 are complete (R6: minimal Domain capability architecture and synthetic conformance Domain —
   one-based positions/ranges, bounded sanitized diagnostics, generic
   symbol/definition/reference models, the language-neutral structural
   representation, typed validation results, revision binding, and the
   generic language-service URI mapping — at differential parity)
-- **Next:** Stage 3R R6 — Minimal Domain Capability Architecture and
+- **Next:** Stage 3R R7 — Provider, Tool-Loop, Projection, Configuration, and CLI Parity
   Synthetic Conformance Domain
 - Stage 4 has not begun
 

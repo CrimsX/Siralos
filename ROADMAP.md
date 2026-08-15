@@ -108,7 +108,23 @@ unsafe filesystem or process boundary intentionally fails closed.
   all required applicable scenarios match. R5 ports no GDScript/Godot
   parsing, no LSP transport, no process execution, no provider tools,
   and no Domain architecture. R6 (Minimal Domain Capability Architecture
-  and Synthetic Conformance Domain) is next.
+  and Synthetic Conformance Domain) is complete: `siralos-core::domain`
+  owns the domain-neutral lifecycle/capability semantics (validated
+  package identity with exact digest and versioned ABI, the explicit
+  absent/installed/enabled/active state machine, Host-authoritative
+  capability grants, exact activation binding, typed recovery-ready
+  failures, and no implicit acquisition), `siralos-adapters::domain`
+  owns the production Component Model / WIT boundary (versioned
+  `siralos:domain-abi@1.0.0` world, exact-byte digest verification,
+  fail-closed ABI identity, resource bounds, trap containment, and
+  host-mediated effects), and the deterministic product-neutral
+  synthetic conformance Domain proves the boundary on the checked-in
+  component bytes. The differential corpus gained 16 scenarios across
+  the `domain-lifecycle` and `domain-capability` subjects (corpus
+  version 10, 79 scenario files); all required applicable scenarios
+  match, and the Rust Component conformance suite passes. R6 implements
+  no Plugin system and no Godot Domain. R7 (Provider, Tool-Loop,
+  Projection, Configuration, and CLI Parity) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation

@@ -2,7 +2,15 @@
 id: ADR-0034
 status: accepted
 domains: [architecture, security]
-paths: [experiments/domain-abi/**, docs/development/PROTOCOL_VERSIONING.md]
+paths:
+  [
+    experiments/domain-abi/**,
+    docs/development/PROTOCOL_VERSIONING.md,
+    crates/siralos-adapters/wit/**,
+    crates/siralos-adapters/src/domain/**,
+    crates/siralos-core/src/domain/**,
+    tests/domain-conformance/**,
+  ]
 supersedes: []
 ---
 

@@ -6,8 +6,8 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R5
-Next milestone: R6 - Minimal Domain Capability Architecture and Synthetic Conformance Domain
+Current completed milestone: R6
+Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
 Last verified commit: 9979e123fe3caacf76ce2ee8c02d1c6c7f0013e4
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
@@ -139,6 +139,35 @@ scenarios match on both implementations. R5 ports no Godot/GDScript
 parsing (the GDScript scanner remains the TypeScript reference for
 R8/R9), no LSP transport, no process execution, no provider tool
 surface, and no Domain architecture.
+R6 added the minimal Domain capability architecture and synthetic
+conformance Domain: `siralos-core::domain` owns the domain-neutral
+lifecycle/capability semantics (validated package identity: stable id,
+exact SHA-256 package digest, versioned ABI; the explicit state machine
+absent/installed/enabled/active with typed transitions; declared
+capability requests with the Host-authoritative grant decision; exact
+activation binding; typed recovery-ready failure outcomes; and the
+explicit absence of implicit acquisition — workspace contents are
+opaque to the lifecycle). `siralos-adapters::domain` owns the production
+Component Model / WIT boundary (ADR 0034): the versioned
+`siralos:domain-abi@1.0.0` world
+(`crates/siralos-adapters/wit/domain-abi.wit`), component
+loading/instantiation with the versioned export-identity check
+(unknown/incompatible ABI fails closed), exact-byte digest
+verification at install and activation (stale/wrong bytes rejected
+before any semantic work), fuel/memory/input/output/host-call bounds,
+trap containment with typed fault outcomes and session stop, and the
+host-mediated effect boundary (grant-checked bounded workspace reads;
+process execution denied). The synthetic conformance Domain
+(`tests/domain-conformance/`) is a deterministic, product-neutral
+component fixture proving the production boundary, including
+pathological behaviors (trap, unbounded loop) for containment and
+bounded-execution evidence. The differential corpus gained 16 scenarios
+across the `domain-lifecycle` and `domain-capability` subjects (corpus
+version 10, 79 scenario files); all required applicable scenarios match
+on both implementations, and the Rust Component conformance suite
+passes against the checked-in component bytes. R6 implements no Plugin
+system, no marketplace, no provider/tool integration, and no Godot
+Domain.
 
 ### Target architecture
 
@@ -186,8 +215,9 @@ R2      COMPLETE
 R3      COMPLETE
 R4      COMPLETE
 R5      COMPLETE
-R6      NEXT
-R7-R12  NOT DUE
+R6      COMPLETE
+R7      NEXT
+R8-R12  NOT DUE
 ```
 
 Status changes require executable evidence and an update to
@@ -203,7 +233,7 @@ Status changes require executable evidence and an update to
 | R3        | Domain-Neutral Core                                                     | Verified |
 | R4        | Generic Workspace / Project Foundation                                  | Verified |
 | R5        | Generic Language Intelligence                                           | Verified |
-| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Next     |
+| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified |
 | R7        | Providers / Tools / CLI                                                 |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
@@ -519,12 +549,21 @@ installed or enabled.
 [ADR 0034](../adr/0034-godot-domain-host-boundary.md) accepts the WebAssembly
 Component Model with versioned WIT as the primary host/domain boundary. A
 versioned out-of-process IPC boundary is retained as fallback/reference
-evidence. Domain code receives only structurally granted imports; package
-identity and capability requests remain host-controlled. Reopening the decision
-requires new evidence and a superseding ADR. ADR 0036 records the long-term
-unification target — the same capability-scoped Plugin mechanism preferred for
-ordinary executable Plugins and Domain-contributing Plugins if practical —
-without changing ADR 0034's measured decision.
+evidence. R6 promotes the experiment to the minimum production boundary:
+the versioned world `siralos:domain-abi@1.0.0` lives in
+`crates/siralos-adapters/wit/domain-abi.wit` and is implemented by
+`siralos-adapters::domain` on top of the domain-neutral lifecycle in
+`siralos-core::domain`; the deterministic synthetic conformance Domain
+(`tests/domain-conformance/`) proves the boundary on the real component
+bytes. Domain code receives only structurally granted imports (the world's
+`host-effects` interface plus the minimal wasm32-wasip2 std plumbing; no
+filesystem, network, process, or ambient WASI surface); package identity
+(computed from the exact accepted component bytes) and capability requests
+remain host-controlled. Reopening the decision requires new evidence and a
+superseding ADR. ADR 0036 records the long-term unification target — the
+same capability-scoped Plugin mechanism preferred for ordinary executable
+Plugins and Domain-contributing Plugins if practical — without changing
+ADR 0034's measured decision.
 
 ## 13. R2 differential contract
 
