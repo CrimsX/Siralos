@@ -167,6 +167,21 @@ conformance suite passes, and the complete local repository gate
 passes. R6 implements no Plugin system, no marketplace, no automatic
 acquisition, no provider/tool integration, and no Godot Domain; it
 makes the Domain boundary recovery-ready without implementing recovery.
+
+The R6 remediation gate hardened the activation path: activation is
+transactional (prepare/commit — every fallible runtime step, including
+guest bind, runs before the authoritative Enabled -> Active
+transition, so a failed activation can never leave the lifecycle
+Active without a session), Core rejects Active -> Active with the
+typed active failure and reports active eligibility as not ready,
+activation requests are mechanically bounded by the installed
+package declared capabilities (typed undeclared-capability failure
+with canonical ordering; a request may only narrow the declaration),
+semantic output obeys one aggregate byte bound over the complete
+returned representation (guest rejection reasons and effect-answer
+payloads included), and Host-call exhaustion is a Host-observed
+typed ResourceExceeded(HostCalls) failure independent of the bounded
+guest disposition.
 R6 verification does not authorize R7 work or satisfy any later
 migration or Stage-4 entry gate.
 
