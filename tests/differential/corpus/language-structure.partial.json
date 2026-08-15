@@ -8,31 +8,22 @@
     "fingerprint": "fixture-language-structure",
     "documents": [
       {
-        "path": "src/broken.gd",
+        "path": "src/broken.lang",
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "structure": {
-          "path": "src/broken.gd",
-          "extendsType": "Node",
-          "className": null,
-          "fileAnnotations": [],
-          "signals": [],
-          "enums": [],
-          "constants": [],
-          "properties": [],
-          "functions": [
+          "path": "src/broken.lang",
+          "declarations": [
             {
-              "name": "_ready",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "run",
+              "detail": null,
               "line": 3,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             }
           ],
           "dependencies": [],
-          "status": "partial",
-          "parserErrors": [
+          "issues": [
             {
               "line": 2,
               "message": "Unterminated string literal."
@@ -41,8 +32,7 @@
               "line": 8,
               "message": "Malformed function declaration (no name)."
             }
-          ],
-          "truncated": false
+          ]
         }
       }
     ]

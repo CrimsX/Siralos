@@ -8,147 +8,153 @@
     "fingerprint": "fixture-language-structure",
     "documents": [
       {
-        "path": "src/big.gd",
+        "path": "src/big.lang",
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "maxBytes": 260,
-        "notableMethods": 8,
+        "notableDeclarations": 8,
         "structure": {
-          "path": "src/big.gd",
-          "extendsType": null,
-          "className": null,
-          "fileAnnotations": [],
-          "signals": [
+          "path": "src/big.lang",
+          "declarations": [
             {
-              "name": "sig_a",
-              "parameters": [],
-              "line": 1
+              "kind": "function",
+              "name": "fn_00",
+              "detail": null,
+              "line": 1,
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "sig_b",
-              "parameters": [],
-              "line": 2
-            }
-          ],
-          "enums": [],
-          "constants": [
+              "kind": "function",
+              "name": "fn_01",
+              "detail": null,
+              "line": 2,
+              "attributes": [],
+              "children": []
+            },
             {
-              "name": "C_A",
-              "type": "int",
+              "kind": "function",
+              "name": "fn_02",
+              "detail": null,
               "line": 3,
-              "multiline": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "C_B",
-              "type": "int",
+              "kind": "function",
+              "name": "fn_03",
+              "detail": null,
               "line": 4,
-              "multiline": false
-            }
-          ],
-          "properties": [
+              "attributes": [],
+              "children": []
+            },
             {
-              "name": "p_a",
-              "type": "float",
-              "annotations": ["export"],
+              "kind": "function",
+              "name": "fn_04",
+              "detail": null,
               "line": 5,
-              "multiline": false
-            }
-          ],
-          "functions": [
+              "attributes": [],
+              "children": []
+            },
             {
-              "name": "fn_0",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "fn_05",
+              "detail": null,
               "line": 6,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "fn_1",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "fn_06",
+              "detail": null,
               "line": 7,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "fn_2",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "fn_07",
+              "detail": null,
               "line": 8,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "fn_3",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "fn_08",
+              "detail": null,
               "line": 9,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "fn_4",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "fn_09",
+              "detail": null,
               "line": 10,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "fn_5",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "fn_10",
+              "detail": null,
               "line": 11,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "fn_6",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "function",
+              "name": "fn_11",
+              "detail": null,
               "line": 12,
-              "multilineSignature": false
-            },
-            {
-              "name": "fn_7",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
-              "line": 13,
-              "multilineSignature": false
-            },
-            {
-              "name": "fn_8",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
-              "line": 14,
-              "multilineSignature": false
-            },
-            {
-              "name": "fn_9",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
-              "line": 15,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             }
           ],
-          "dependencies": ["res://dep_a.tscn", "res://dep_b.tscn", "res://dep_c.tscn"],
-          "status": "complete",
-          "parserErrors": [],
-          "truncated": true
+          "dependencies": [
+            "d_00",
+            "d_01",
+            "d_02",
+            "d_03",
+            "d_04",
+            "d_05",
+            "d_06",
+            "d_07",
+            "d_08",
+            "d_09",
+            "d_10",
+            "d_11",
+            "d_12",
+            "d_13",
+            "d_14",
+            "d_15",
+            "d_16",
+            "d_17",
+            "d_18",
+            "d_19",
+            "d_20",
+            "d_21",
+            "d_22",
+            "d_23",
+            "d_24",
+            "d_25",
+            "d_26",
+            "d_27",
+            "d_28",
+            "d_29",
+            "d_30",
+            "d_31",
+            "d_32",
+            "d_33",
+            "d_34",
+            "d_35",
+            "d_36",
+            "d_37",
+            "d_38",
+            "d_39"
+          ],
+          "issues": []
         }
       }
     ]

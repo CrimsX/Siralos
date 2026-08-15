@@ -35,7 +35,7 @@ const SUBJECT_LANGUAGE_DIAGNOSTICS: &str = "language-diagnostics";
 const SUBJECT_LANGUAGE_STRUCTURE: &str = "language-structure";
 const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 8;
+const CORPUS_VERSION: u64 = 9;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
@@ -3174,9 +3174,9 @@ use siralos_core::language::diagnostic::{
 use siralos_core::language::limits::LANGUAGE_LIMITS;
 use siralos_core::language::position::{RawPosition, RawRange};
 use siralos_core::language::structure::{
-    AnnotationInfo, ConstantInfo, EnumInfo, FunctionInfo, ParameterInfo,
-    PropertyInfo, SignalInfo, StructuralDocument, StructuralIssue,
-    StructureStatus, SummaryOptions, build_structural_summary,
+    StructuralDeclaration, StructuralDocument, StructuralIssue,
+    StructuralKind, StructureOptions, StructureStatus, SummaryOptions,
+    build_structural_summary, normalize_structural_document,
 };
 
 /// One normalized diagnostic as a canonical record value.
@@ -3319,31 +3319,31 @@ fn language_diagnostics_record(input: &Value) -> Result<Value, HarnessError> {
     Ok(json!({ "documents": documents, "aggregate": aggregate }))
 }
 
-fn parse_parameter(value: &Value) -> ParameterInfo {
-    ParameterInfo {
-        name: value
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
-        type_name: value
-            .get("type")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    }
-}
-
-fn parse_parameters(value: &Value) -> Vec<ParameterInfo> {
-    value
-        .get("parameters")
+/// Parse one generic structural declaration (language-neutral).
+fn parse_declaration(value: &Value) -> StructuralDeclaration {
+    let kind = value
+        .get("kind")
+        .and_then(Value::as_str)
+        .and_then(StructuralKind::parse)
+        .unwrap_or(StructuralKind::Other);
+    let name = value.get("name").and_then(Value::as_str).map(str::to_owned);
+    let detail =
+        value.get("detail").and_then(Value::as_str).map(str::to_owned);
+    let line =
+        value.get("line").and_then(Value::as_u64).filter(|line| *line >= 1);
+    let attributes = parse_string_array(value.get("attributes"));
+    let children = value
+        .get("children")
         .and_then(Value::as_array)
-        .map(|entries| entries.iter().map(parse_parameter).collect())
-        .unwrap_or_default()
+        .map(|entries| entries.iter().map(parse_declaration).collect())
+        .unwrap_or_default();
+    StructuralDeclaration { kind, name, detail, line, attributes, children }
 }
 
-fn parse_annotations(value: &Value) -> Vec<String> {
+/// Parse an opaque bounded string array (missing or non-array values
+/// are empty; non-string entries are skipped).
+fn parse_string_array(value: Option<&Value>) -> Vec<String> {
     value
-        .get("annotations")
         .and_then(Value::as_array)
         .map(|entries| {
             entries
@@ -3355,187 +3355,29 @@ fn parse_annotations(value: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Parse the generic structural observation facts. Status and
+/// truncation are derived by normalization, never read from the
+/// input (the input carries parser facts only).
 fn parse_structure(value: &Value) -> StructuralDocument {
-    let line_of = |entry: &Value| -> u64 {
-        entry.get("line").and_then(Value::as_u64).unwrap_or(0)
-    };
-    let file_annotations = value
-        .get("fileAnnotations")
+    let path =
+        value.get("path").and_then(Value::as_str).unwrap_or("").to_owned();
+    let declarations = value
+        .get("declarations")
         .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| AnnotationInfo {
-                    name: entry
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    arguments: entry
-                        .get("arguments")
-                        .and_then(Value::as_array)
-                        .map(|args| {
-                            args.iter()
-                                .filter_map(Value::as_str)
-                                .map(str::to_owned)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    line: line_of(entry),
-                })
-                .collect()
-        })
+        .map(|entries| entries.iter().map(parse_declaration).collect())
         .unwrap_or_default();
-    let signals = value
-        .get("signals")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| SignalInfo {
-                    name: entry
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    parameters: parse_parameters(entry),
-                    line: line_of(entry),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let enums = value
-        .get("enums")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| EnumInfo {
-                    name: entry
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    members: entry
-                        .get("members")
-                        .and_then(Value::as_array)
-                        .map(|members| {
-                            members
-                                .iter()
-                                .filter_map(Value::as_str)
-                                .map(str::to_owned)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    line: line_of(entry),
-                    multiline: entry
-                        .get("multiline")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let constants = value
-        .get("constants")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| ConstantInfo {
-                    name: entry
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    type_name: entry
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    line: line_of(entry),
-                    multiline: entry
-                        .get("multiline")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let properties = value
-        .get("properties")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| PropertyInfo {
-                    name: entry
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    type_name: entry
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    annotations: parse_annotations(entry),
-                    line: line_of(entry),
-                    multiline: entry
-                        .get("multiline")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let functions = value
-        .get("functions")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| FunctionInfo {
-                    name: entry
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    parameters: parse_parameters(entry),
-                    return_type: entry
-                        .get("returnType")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    is_static: entry
-                        .get("isStatic")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                    annotations: parse_annotations(entry),
-                    line: line_of(entry),
-                    multiline_signature: entry
-                        .get("multilineSignature")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let dependencies = value
-        .get("dependencies")
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
+    let dependencies = parse_string_array(value.get("dependencies"));
     let issues = value
-        .get("parserErrors")
+        .get("issues")
         .and_then(Value::as_array)
         .map(|entries| {
             entries
                 .iter()
                 .map(|entry| StructuralIssue {
-                    line: line_of(entry),
+                    line: entry
+                        .get("line")
+                        .and_then(Value::as_u64)
+                        .filter(|line| *line >= 1),
                     message: entry
                         .get("message")
                         .and_then(Value::as_str)
@@ -3545,38 +3387,14 @@ fn parse_structure(value: &Value) -> StructuralDocument {
                 .collect()
         })
         .unwrap_or_default();
-    let status = match value.get("status").and_then(Value::as_str) {
-        Some("partial") => StructureStatus::Partial,
-        _ => StructureStatus::Complete,
-    };
     StructuralDocument {
-        path: value
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned(),
+        path,
         revision: None,
-        base_type: value
-            .get("extendsType")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        declared_name: value
-            .get("className")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        file_annotations,
-        signals,
-        enums,
-        constants,
-        properties,
-        functions,
+        declarations,
         dependencies,
-        status,
+        status: StructureStatus::Complete,
         issues,
-        truncated: value
-            .get("truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        truncated: false,
     }
 }
 
@@ -3590,26 +3408,32 @@ fn language_structure_record(input: &Value) -> Result<Value, HarnessError> {
                 "language-structure document requires a structure object",
             )
         })?;
-        let mut structure = parse_structure(structure_value);
-        let path = structure.path.clone();
+        let parsed = parse_structure(structure_value);
+        let path = parsed.path.clone();
         let revision = match document.get("sha256") {
-            Some(Value::String(sha256)) => Some(
+            Some(Value::String(sha256)) if !path.is_empty() => Some(
                 compute_workspace_revision_handle(&fingerprint, &path, sha256),
             ),
             _ => None,
         };
-        structure.revision = revision.clone();
+        let mut normalized = normalize_structural_document(
+            &path,
+            parsed.declarations,
+            parsed.dependencies,
+            parsed.issues,
+            &StructureOptions::default(),
+        );
+        normalized.revision = revision.clone();
         let options = SummaryOptions {
             max_bytes: scenario_u64(document, "maxBytes")
                 .map(|value| value as usize),
-            notable_methods: scenario_u64(document, "notableMethods")
-                .map(|value| value as usize),
+            notable_declarations: scenario_u64(
+                document,
+                "notableDeclarations",
+            )
+            .map(|value| value as usize),
         };
-        let summary = build_structural_summary(
-            &structure,
-            revision.as_deref(),
-            &options,
-        );
+        let summary = build_structural_summary(&normalized, &options);
         summaries.push(json!({
             "path": summary.path,
             "revision": summary.revision,

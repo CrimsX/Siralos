@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 8,
+  "corpusVersion": 9,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -80,19 +80,19 @@
     },
     {
       "file": "language-structure.empty.json",
-      "sha256": "d27e4b74f36947961ec9009a178b077628dd8c20fbce6937deb91f05348051f1"
+      "sha256": "aa350ba051969d93ec4f04b6f69838c8056a5052eacb2132b5f6f0f070c8e2f5"
     },
     {
       "file": "language-structure.partial.json",
-      "sha256": "9932d22bfd66215a642f698e95a11ea26ad748cf558142f2a275c92b2e1aea8a"
+      "sha256": "d4cc48db8f7720a73d8df2663cb5a369f8b9d8e5480f0384dd082be67bd51f87"
     },
     {
       "file": "language-structure.truncation.json",
-      "sha256": "3149c0d663938c3bd30f500aefda70c29aee6782b5c0a748d044d133649c9848"
+      "sha256": "52dfdf4504e690d34d97d61f8555c483dbbb1c9cee3738dfc2940c6586c92d5e"
     },
     {
       "file": "language-structure.typical.json",
-      "sha256": "a5317788fb4b8980f1b6992ebe8cf69811572803fb5a07dede09e70de7f2974a"
+      "sha256": "ecf216a9df5385cfb9659d85976d7adad3654903b95ddc37bd68ff4eeaaf4ac4"
     },
     {
       "file": "state-dir.fallback.posix.json",
@@ -255,5 +255,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "76412eebc2c2ca3c62d9916e4093e22b27ea8dd7c29551b82bb8001af8721bb7"
+  "corpusSha256": "43b3491fb80d86e7373928ee66428638e7c87b1e801d152f1f8c17775da31f10"
 }

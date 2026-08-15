@@ -8,120 +8,106 @@
     "fingerprint": "fixture-language-structure",
     "documents": [
       {
-        "path": "src/player.gd",
+        "path": "src/example.lang",
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "maxBytes": 4096,
-        "notableMethods": 12,
+        "notableDeclarations": 12,
         "structure": {
-          "path": "src/player.gd",
-          "extendsType": "CharacterBody2D",
-          "className": "Player",
-          "fileAnnotations": [
+          "path": "src/example.lang",
+          "declarations": [
             {
-              "name": "tool",
-              "arguments": [],
-              "line": 1
-            },
-            {
-              "name": "icon",
-              "arguments": ["res://icon.svg"],
-              "line": 2
-            }
-          ],
-          "signals": [
-            {
-              "name": "died",
-              "parameters": [],
-              "line": 5
-            },
-            {
-              "name": "scored",
-              "parameters": [
+              "kind": "type",
+              "name": "Example",
+              "detail": null,
+              "line": 1,
+              "attributes": ["exported"],
+              "children": [
                 {
-                  "name": "points",
-                  "type": "int"
+                  "kind": "method",
+                  "name": "calculate",
+                  "detail": "(int) -> int",
+                  "line": 3,
+                  "attributes": [],
+                  "children": []
+                },
+                {
+                  "kind": "field",
+                  "name": "value",
+                  "detail": "int",
+                  "line": 4,
+                  "attributes": ["private"],
+                  "children": []
+                },
+                {
+                  "kind": "method",
+                  "name": "reset",
+                  "detail": null,
+                  "line": 6,
+                  "attributes": ["static"],
+                  "children": []
                 }
-              ],
-              "line": 6
-            }
-          ],
-          "enums": [
+              ]
+            },
             {
-              "name": "State",
-              "members": ["IDLE", "RUN", "JUMP"],
-              "line": 8,
-              "multiline": true
-            }
-          ],
-          "constants": [
+              "kind": "function",
+              "name": "run",
+              "detail": "(config) -> void",
+              "line": 9,
+              "attributes": [],
+              "children": []
+            },
             {
-              "name": "MAX_SPEED",
-              "type": "float",
+              "kind": "constant",
+              "name": "LIMIT",
+              "detail": "int",
               "line": 12,
-              "multiline": false
-            }
-          ],
-          "properties": [
-            {
-              "name": "speed",
-              "type": "float",
-              "annotations": ["export"],
-              "line": 14,
-              "multiline": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "jump_force",
-              "type": "float",
-              "annotations": ["export_range", "100", "1000"],
+              "kind": "enum",
+              "name": "State",
+              "detail": "IDLE | RUN | JUMP",
               "line": 15,
-              "multiline": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "internal",
-              "type": "int",
-              "annotations": [],
-              "line": 16,
-              "multiline": false
-            }
-          ],
-          "functions": [
-            {
-              "name": "_ready",
-              "parameters": [],
-              "returnType": null,
-              "isStatic": false,
-              "annotations": [],
+              "kind": "event",
+              "name": "died",
+              "detail": null,
               "line": 20,
-              "multilineSignature": false
+              "attributes": [],
+              "children": []
             },
             {
-              "name": "move",
-              "parameters": [
-                {
-                  "name": "delta",
-                  "type": "float"
-                }
-              ],
-              "returnType": "void",
-              "isStatic": false,
-              "annotations": [],
+              "kind": "variable",
+              "name": "config",
+              "detail": null,
+              "line": 22,
+              "attributes": [],
+              "children": []
+            },
+            {
+              "kind": "module",
+              "name": "utils",
+              "detail": null,
               "line": 24,
-              "multilineSignature": false
-            },
-            {
-              "name": "spawn",
-              "parameters": [],
-              "returnType": "Node",
-              "isStatic": true,
-              "annotations": ["rpc"],
-              "line": 40,
-              "multilineSignature": true
+              "attributes": [],
+              "children": [
+                {
+                  "kind": "function",
+                  "name": "format",
+                  "detail": "(value) -> string",
+                  "line": 25,
+                  "attributes": [],
+                  "children": []
+                }
+              ]
             }
           ],
-          "dependencies": ["res://scenes/player.tscn", "res://assets/icon.svg"],
-          "status": "complete",
-          "parserErrors": [],
-          "truncated": false
+          "dependencies": ["lib/common", "lib/engine"],
+          "issues": []
         }
       }
     ]

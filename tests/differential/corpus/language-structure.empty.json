@@ -8,21 +8,12 @@
     "fingerprint": "fixture-language-structure",
     "documents": [
       {
-        "path": "src/empty.gd",
+        "path": "src/empty.lang",
         "structure": {
-          "path": "src/empty.gd",
-          "extendsType": null,
-          "className": null,
-          "fileAnnotations": [],
-          "signals": [],
-          "enums": [],
-          "constants": [],
-          "properties": [],
-          "functions": [],
+          "path": "src/empty.lang",
+          "declarations": [],
           "dependencies": [],
-          "status": "complete",
-          "parserErrors": [],
-          "truncated": false
+          "issues": []
         }
       }
     ]

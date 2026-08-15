@@ -45,9 +45,11 @@ TypeScript side reaches the real generic language modules
 (`packages/core/src/language`) and the production Godot wrappers/URI
 mapping; the Rust side reaches `siralos-core::language` and
 `siralos-adapters::language::uri`. The language-structure fixtures
-carry pre-structured semantic documents (never raw source), so R5
-proves the generic structural representation and the deterministic
-advisory summary semantics — not GDScript/Godot parsing. Godot-
-specific language parity (engine diagnostics, LSP, the GDScript
-scanner) is deliberately NOT established by this corpus; those
-surfaces remain the later Godot milestones' oracle.
+carry pre-structured, language-neutral semantic documents (never raw
+source; paths like `src/example.lang`, generic declaration kinds,
+opaque attributes, no GDScript/Godot vocabulary), so R5 proves the
+generic structural representation and the deterministic advisory
+summary semantics — not GDScript/Godot parsing. Godot-specific
+language parity (engine diagnostics, LSP, the GDScript scanner) is
+deliberately NOT established by this corpus; those surfaces remain
+the later Godot milestones' oracle.
