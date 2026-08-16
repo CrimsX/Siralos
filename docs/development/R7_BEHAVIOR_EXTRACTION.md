@@ -185,7 +185,7 @@ No repository files were modified during extraction except this document.
 
 ### LATER MILESTONE (explicitly not R7)
 
-- All Godot tools and Godot config semantics (R8/R9); real providers, provider credentials, model routing (R11/ADR 0036 Profile); mutation application, process execution, Git execution (R11 — fail-closed unavailable surfaces already exist in both implementations and only need typed parity, which R4 started); references/research/self-reference tools as effect surfaces; the canonical Context compiler (R10).
+- All `godot.*` tools and Godot-specific config semantics (installation selection, PATH discovery, edition classification, engine profiles) — R8/R9; the generic configuration envelope and its structural validation remain R7 (§2.4.1). Also not R7: real providers, provider credentials, model routing (R11/ADR 0036 Profile); mutation application, process execution, Git execution (R11 — fail-closed unavailable surfaces already exist in both implementations and only need typed parity, which R4 started); references/research/self-reference tools as effect surfaces; the canonical Context compiler (R10).
 
 ## 4. Failure taxonomy
 
@@ -474,8 +474,8 @@ siralos-core       provider-neutral contracts and semantics only:
                    round execution, loop budgets, token estimator, pressure
                    classification, context segment model + sort/serialize +
                    stable fingerprint, conversation trim, evidence
-                   normalization, tool visibility projection, config
-                   validation semantics (Host-owned), failure types
+                   normalization, tool visibility projection, failure
+                   types
 ```
 
 - **Provider trait**: justified — a real behavioral seam exists (core must stay
@@ -528,8 +528,9 @@ model turn** (exactly one task):
 - `siralos-adapters`: deterministic fake provider (echo, 16-codepoint
   chunks, tool-call scenarios, cancellation, determinism).
 - `siralos-cli`: the harness subject dispatch for `provider-turn`.
-- Differential: the ≈ 11 minimal `provider-turn` scenarios (§8.1), corpus
-  version bump + manifest regeneration; `npm run check:differential` green.
+- Differential: the minimal `provider-turn` scenario set defined in §8.1
+  (the authoritative enumeration), corpus version bump + manifest
+  regeneration; `npm run check:differential` green.
 - Rust unit/adapter tests for the adversarial matrix in §9 that concerns the
   turn only.
 - Excluded from R7.1: the application tool loop (R7.2+), projection (R7.3),
