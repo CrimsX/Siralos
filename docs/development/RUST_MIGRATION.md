@@ -194,7 +194,15 @@ identify the installed package ABI (a Host-compatible request can
 never substitute for a differently declared package ABI — typed
 identity mismatch) and must also satisfy Host compatibility (typed
 unsupported-ABI failure), so every successful activation satisfies
-`ActivationBinding::matches(installed_package)` by construction.
+`ActivationBinding::matches(installed_package)` by construction. A
+prepared activation never carries authority across Host policy
+contexts: the final capability grant is recomputed at commit from the
+commit-time Host authority (plus the supported ABI and runtime policy
+of the authorizing Host), so a narrower final authority fails typed
+(`CAPABILITY_DENIED`) with zero mutation and zero session
+consumption, a wider final authority can never widen the activation
+request, and equal lifecycle generations provide no
+authority-transfer power.
 R6 verification does not authorize R7 work or satisfy any later
 migration or Stage-4 entry gate.
 

@@ -271,7 +271,9 @@ separate, explicit concerns.
   `siralos-adapters::domain`, prepared activations bound to the
   validated lifecycle generation with typed stale-commit rejection,
   exact three-dimensional activation identity (id, digest, and ABI
-  against the installed package), and the deterministic
+  against the installed package), final grants authorized by the
+  commit-time Host authority (prepared activations never carry
+  authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
 - **Next:** Stage 3R R7 — Provider, Tool-Loop, Projection, Configuration, and CLI Parity

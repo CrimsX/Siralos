@@ -132,7 +132,12 @@ unsafe filesystem or process boundary intentionally fails closed.
   Host-compatible request can never substitute for a differently
   declared package ABI) and must also satisfy Host compatibility, so
   every successful activation satisfies
-  `ActivationBinding::matches(installed_package)` by construction. R6
+  `ActivationBinding::matches(installed_package)` by construction.
+  Prepared activations never carry authority across Host policy
+  contexts: the final capability grant is recomputed at commit from
+  the commit-time Host authority (a narrower final authority fails
+  typed with zero mutation and zero session consumption; a wider one
+  can never widen the request). R6
   implements
   no Plugin system and no Godot Domain. R7 (Provider, Tool-Loop,
   Projection, Configuration, and CLI Parity) is next.

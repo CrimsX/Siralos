@@ -8,7 +8,7 @@ Public stages: 6
 Migration track: Stage 3R
 Current completed milestone: R6
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Last verified commit: 9e69042a96f208c8d1a576069f5e4485d1c7b2ba
+Last verified commit: 9a8037dd34973d27fe8a431a376bfe7de3dd4bdb
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -176,7 +176,12 @@ dimensions: the request ABI must identify the installed package ABI
 (a Host-compatible request can never substitute for a differently
 declared package ABI) and must also satisfy Host compatibility, so
 every successful activation satisfies
-`ActivationBinding::matches(installed_package)` by construction. R6
+`ActivationBinding::matches(installed_package)` by construction.
+Prepared activations never carry authority across Host policy
+contexts: the final capability grant is recomputed at commit from the
+commit-time Host authority, so a narrower final authority fails typed
+with zero mutation and zero session consumption, and a wider final
+authority can never widen the activation request. R6
 implements no Plugin
 system, no marketplace, no provider/tool integration, and no Godot
 Domain.
