@@ -1,0 +1,62 @@
+{
+  "id": "tool-loop.assistant-text-with-tools",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "mixed",
+        "tools": ["stub.success", "stub.cancelled"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "text_delta",
+              "text": "thinking"
+            },
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.success",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "done"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "mixed-cancel",
+        "tools": ["stub.cancelled"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "text_delta",
+              "text": "thinking"
+            },
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.cancelled",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "id": "tool-loop.invalid-call-pairing",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "invalid",
+        "tools": [],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "",
+              "toolName": "",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "recovered"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

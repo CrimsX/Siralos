@@ -7,6 +7,7 @@
  */
 import { canonicalizeJson } from "./canonical.mjs";
 import { ALLOWED_SUBJECTS, CONTRACT_LIMITS } from "./contract.mjs";
+import { validateToolLoopResult } from "./tool-loop-protocol.mjs";
 
 export const RUNNER_PROTOCOL_SCHEMA_VERSION = 1;
 
@@ -1252,6 +1253,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "provider-turn") {
     validateProviderTurnResult(record, label);
+    return;
+  }
+  if (record.subject === "tool-loop") {
+    validateToolLoopResult(record, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

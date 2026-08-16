@@ -1,0 +1,129 @@
+{
+  "id": "tool-loop.tool-result-statuses",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "stub.success",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.success",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "done"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "stub.invalid_input",
+        "tools": ["stub.invalid_input"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.invalid_input",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "done"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "stub.denied",
+        "tools": ["stub.denied"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.denied",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "done"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "stub.failed",
+        "tools": ["stub.failed"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.failed",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "done"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "stub.cancelled",
+        "tools": ["stub.cancelled"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.cancelled",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

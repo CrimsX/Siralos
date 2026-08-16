@@ -1,0 +1,202 @@
+{
+  "id": "tool-loop.tool-rounds",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "missing-default",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 9
+            }
+          }
+        }
+      },
+      {
+        "prompt": "non-finite",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 9
+            }
+          }
+        },
+        "maxToolRounds": "non-finite"
+      },
+      {
+        "prompt": "negative",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 1
+            }
+          }
+        },
+        "maxToolRounds": -1
+      },
+      {
+        "prompt": "fractional",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 2
+            }
+          }
+        },
+        "maxToolRounds": 1.5
+      },
+      {
+        "prompt": "zero",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 1
+            }
+          }
+        },
+        "maxToolRounds": 0
+      },
+      {
+        "prompt": "eight",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 9
+            }
+          }
+        },
+        "maxToolRounds": 8
+      },
+      {
+        "prompt": "thirty-two",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 33
+            }
+          }
+        },
+        "maxToolRounds": 32
+      },
+      {
+        "prompt": "over-thirty-two",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": {
+            "$eventsRepeat": {
+              "events": [
+                {
+                  "type": "tool_call",
+                  "callId": "c",
+                  "toolName": "stub.success",
+                  "input": {}
+                },
+                {
+                  "type": "completed"
+                }
+              ],
+              "count": 33
+            }
+          }
+        },
+        "maxToolRounds": 40
+      }
+    ]
+  }
+}

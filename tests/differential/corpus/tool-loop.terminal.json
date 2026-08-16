@@ -1,0 +1,18 @@
+{
+  "id": "tool-loop.terminal",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "hello",
+        "tools": [],
+        "provider": {
+          "kind": "fake"
+        }
+      }
+    ]
+  }
+}

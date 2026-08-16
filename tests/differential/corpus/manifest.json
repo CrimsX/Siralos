@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 12,
+  "corpusVersion": 13,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -351,6 +351,70 @@
       "sha256": "d695b13f5feec3c28c0d9942537b15093625720939627833e72369b23f979ceb"
     },
     {
+      "file": "tool-loop.assistant-text-with-tools.json",
+      "sha256": "3750792cbdf15e516471c03486cb5d9a46ab44318cdf039bb616640a64723d5a"
+    },
+    {
+      "file": "tool-loop.authorization.json",
+      "sha256": "2d23f800e0a0d1df779cae5834f97f37c253ff6c33a008696445996862cd9d9d"
+    },
+    {
+      "file": "tool-loop.cancelled-round.json",
+      "sha256": "bb18b7e724327664ea655115b00571580a39ffd193000b2c405f4e808daed205"
+    },
+    {
+      "file": "tool-loop.display-input.json",
+      "sha256": "ff99aa456665353ee80a2ff616af8196426d087af700f29268aa0964430f97b2"
+    },
+    {
+      "file": "tool-loop.duplicate-call-result-pairing.json",
+      "sha256": "122e8da4b98e24aa37643d23db34e1deff4a8ced1f03994864bb11061c3eb036"
+    },
+    {
+      "file": "tool-loop.empty-call-result-pairing.json",
+      "sha256": "0c82da442bfdd431155a534ffacdba838de45f5a3dea878d6f649195a34aa3a7"
+    },
+    {
+      "file": "tool-loop.final-answer-after-last-round.json",
+      "sha256": "6a41eedf3d7b6a2e2a3906d78e0d4314107fd631740f2102aa00a97cc9afdc03"
+    },
+    {
+      "file": "tool-loop.hidden-tool-denied.json",
+      "sha256": "b0003b41b84a737e76a9c10aafd10925423b5c3b344ea65130481f183e4fffa4"
+    },
+    {
+      "file": "tool-loop.invalid-call-pairing.json",
+      "sha256": "34fb89347128d141c012da46779020fda3270d2c816b64ae5260d544b9e9d3f5"
+    },
+    {
+      "file": "tool-loop.one-call-one-result.json",
+      "sha256": "bcffba99a452734b4f0650b4e5ab981b4190b21ec92bc60db0c783ba59d2d320"
+    },
+    {
+      "file": "tool-loop.over-budget-round.json",
+      "sha256": "98ccf959c5b934c4ebb7bfd8d188dfab17e1de7645d534788ada0b263e20405e"
+    },
+    {
+      "file": "tool-loop.provider-fails-after-round.json",
+      "sha256": "00da0bf582a5cef691270b05e0e0953aa49adc9af82e88695aadb883d742c1e6"
+    },
+    {
+      "file": "tool-loop.terminal.json",
+      "sha256": "df52fe358162049d026985e069ac97b467a64ac0337c16f8e97ed18255494e2d"
+    },
+    {
+      "file": "tool-loop.tool-result-statuses.json",
+      "sha256": "9ea1f392e5e70cf3b5fb7ad60cbcaea139d7de6757b2a4dd2408a01a1ae91248"
+    },
+    {
+      "file": "tool-loop.tool-rounds.json",
+      "sha256": "3517475913228f822a7c846f66cc66fadbb88bf613d80411936849424e3296e2"
+    },
+    {
+      "file": "tool-loop.unknown-tool.json",
+      "sha256": "2742dd9c3b070f2ecefb293914ca5ea1c72ffc15cf4ec56272ba1ae782ccbbfb"
+    },
+    {
       "file": "version.identity.json",
       "sha256": "0b4fc21ea2faa518e0b2cf5b73e8e5ca326f1187d69b75ecfa64e17526485158"
     },
@@ -419,5 +483,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "3df5e86b06db55e2b777b53c93c833348292e6779782228a7a9656ae7a28ee07"
+  "corpusSha256": "6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490"
 }

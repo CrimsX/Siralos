@@ -1,0 +1,39 @@
+{
+  "id": "tool-loop.over-budget-round",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "over",
+        "maxToolRounds": 1,
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.success",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "tool_call",
+              "callId": "c2",
+              "toolName": "stub.success",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

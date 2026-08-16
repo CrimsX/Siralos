@@ -1,0 +1,36 @@
+{
+  "id": "tool-loop.unknown-tool",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "lookup",
+        "tools": [],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "mystery.tool",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "recovered"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

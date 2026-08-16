@@ -1,0 +1,104 @@
+{
+  "id": "tool-loop.authorization",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "allow",
+        "tools": ["workspace.read"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "workspace.read",
+              "input": {
+                "path": "fixture.txt"
+              }
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "recovered"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "deny",
+        "tools": ["workspace.read"],
+        "rules": [
+          {
+            "capability": "workspace.read",
+            "decision": "deny"
+          }
+        ],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "workspace.read",
+              "input": {
+                "path": "fixture.txt"
+              }
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "recovered"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      },
+      {
+        "prompt": "ask",
+        "tools": ["workspace.read"],
+        "rules": [
+          {
+            "capability": "workspace.read",
+            "decision": "ask"
+          }
+        ],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "workspace.read",
+              "input": {
+                "path": "fixture.txt"
+              }
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "text_delta",
+              "text": "recovered"
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

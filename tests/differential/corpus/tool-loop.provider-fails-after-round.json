@@ -1,0 +1,33 @@
+{
+  "id": "tool-loop.provider-fails-after-round",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "fail-after",
+        "tools": ["stub.success"],
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.success",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            },
+            {
+              "type": "provider_error",
+              "message": "provider exploded"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -120,6 +120,19 @@ export interface SiralosApplication {
 
   getStatus(): SessionStatus;
 
+  /**
+   * Detached authoritative conversation history.
+   *
+   * R7.2 differential observability only: the Tool-loop oracle records
+   * the final transcript from the same owned history the loop appends
+   * to. The returned array is a fresh copy; callers can never mutate
+   * application state through it.
+   */
+  getHistory(): readonly ConversationItem[];
+
+  /** Number of completed Tool Rounds for the most recent prompt. */
+  getCompletedToolRounds(): number;
+
   /** Bounded in-memory metadata for commands that executed this session. */
   getCommandHistory(): readonly CommandAuditRecord[];
 
@@ -156,6 +169,7 @@ export function createSiralosApplication(
     ...(dependencies.projection === undefined ? {} : { projection: dependencies.projection }),
   };
   let state: "idle" | "responding" = "idle";
+  let completedToolRounds = 0;
   let pendingApproval = false;
   let approvalCounter = 0;
   let activeCommandId: string | null = null;
@@ -215,6 +229,7 @@ export function createSiralosApplication(
           yield { type: "response_cancelled" };
           return;
         }
+        completedToolRounds += 1;
         if (turn.assistantText.length > 0) {
           history.push({ type: "assistant_message", content: turn.assistantText });
         }
@@ -958,6 +973,12 @@ export function createSiralosApplication(
         pendingApproval,
         activeCommandId,
       };
+    },
+    getHistory(): readonly ConversationItem[] {
+      return [...history];
+    },
+    getCompletedToolRounds(): number {
+      return completedToolRounds;
     },
     getCommandHistory(): readonly CommandAuditRecord[] {
       return [...commandHistory];

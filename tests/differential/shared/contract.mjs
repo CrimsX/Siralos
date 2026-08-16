@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 12;
+export const CORPUS_VERSION = 13;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -28,6 +28,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "domain-lifecycle",
   "domain-capability",
   "provider-turn",
+  "tool-loop",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -49,6 +50,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   languageInputBytes: 64 * 1024,
   domainInputBytes: 64 * 1024,
   providerInputBytes: 64 * 1024,
+  toolLoopInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -364,6 +366,159 @@ function validateProviderDetachCase(detach, label) {
   }
 }
 
+const TOOL_LOOP_TOOL_NAMES = new Set([
+  "workspace.read",
+  "stub.success",
+  "stub.invalid_input",
+  "stub.denied",
+  "stub.failed",
+  "stub.cancelled",
+  "b.tool",
+  "a.tool",
+]);
+const TOOL_LOOP_CAPABILITY = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/u;
+
+function validateBoundedToolNameArray(value, maximum, label) {
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw new Error(`${label} must be a bounded array`);
+  }
+  for (const name of value) {
+    if (typeof name !== "string" || name.length === 0 || byteLength(name) > 256) {
+      throw new Error(`${label} entries must be non-empty tool names`);
+    }
+  }
+}
+
+function validateToolLoopProvider(provider, label) {
+  assertPlainObject(provider, label);
+  if (provider.kind === "fake") {
+    assertExactKeys(provider, ["kind"], label);
+    return;
+  }
+  if (provider.kind === "scripted") {
+    assertExactKeys(provider, ["kind", "events"], label);
+    let eventEntries = provider.events;
+    if (isPlainRecord(provider.events) && Object.hasOwn(provider.events, "$eventsRepeat")) {
+      const repeat = provider.events.$eventsRepeat;
+      if (
+        !isPlainRecord(repeat) ||
+        !Array.isArray(repeat.events) ||
+        repeat.events.length === 0 ||
+        !Number.isSafeInteger(repeat.count) ||
+        repeat.count < 1 ||
+        repeat.count > 4096 ||
+        repeat.events.length * repeat.count > 4096
+      ) {
+        throw new Error(`${label}.events $eventsRepeat marker is invalid`);
+      }
+      eventEntries = repeat.events;
+    }
+    if (!Array.isArray(eventEntries) || eventEntries.length === 0 || eventEntries.length > 4096) {
+      throw new Error(`${label}.events must contain 1-4096 raw events`);
+    }
+    for (const [index, event] of eventEntries.entries()) {
+      if (!isPlainRecord(event)) continue;
+      if (event.type === "provider_error") {
+        assertExactKeys(event, ["type", "message"], `${label}.events[${index}]`);
+        if (typeof event.message !== "string" || event.message.length === 0) {
+          throw new Error(`${label}.events[${index}].message must be a non-empty string`);
+        }
+      } else if (event.type === "tool_call" && Object.hasOwn(event, "inputJson")) {
+        if (!validMessageString(event.inputJson)) {
+          throw new Error(`${label}.events[${index}].inputJson must be a string or repeat marker`);
+        }
+      }
+    }
+    return;
+  }
+  throw new Error(`${label}.kind must be fake or scripted`);
+}
+
+/** Validate the strict tool-loop scenario input shape. */
+function validateToolLoopInput(input, label) {
+  assertExactKeys(input, ["cases"], `${label}.input`);
+  if (!Array.isArray(input.cases) || input.cases.length === 0 || input.cases.length > 64) {
+    throw new Error(`${label}.input.cases must contain 1-64 entries`);
+  }
+  for (const [index, entry] of input.cases.entries()) {
+    const caseLabel = `${label}.input.cases[${index}]`;
+    assertPlainObject(entry, caseLabel);
+    const allowed = new Set([
+      "prompt",
+      "maxToolRounds",
+      "tools",
+      "rules",
+      "visibleTools",
+      "provider",
+      "cancelAfterCompletedToolCalls",
+    ]);
+    for (const key of Object.keys(entry)) {
+      if (!allowed.has(key)) {
+        throw new Error(`${caseLabel} has an unknown field ${JSON.stringify(key)}`);
+      }
+    }
+    if (!validMessageString(entry.prompt)) {
+      throw new Error(`${caseLabel}.prompt must be a string or repeat marker`);
+    }
+    if (Object.hasOwn(entry, "maxToolRounds")) {
+      const value = entry.maxToolRounds;
+      const validNumber = typeof value === "number" && Number.isFinite(value);
+      const validDefault = value === null || value === "non-finite";
+      if (!validNumber && !validDefault) {
+        throw new Error(
+          `${caseLabel}.maxToolRounds must be a finite number, null, or "non-finite"`,
+        );
+      }
+    }
+    if (!Object.hasOwn(entry, "tools")) {
+      throw new Error(`${caseLabel} requires the tools field`);
+    }
+    validateBoundedToolNameArray(entry.tools, 32, `${caseLabel}.tools`);
+    for (const name of entry.tools) {
+      if (!TOOL_LOOP_TOOL_NAMES.has(name)) {
+        throw new Error(`${caseLabel}.tools contains unsupported tool ${JSON.stringify(name)}`);
+      }
+    }
+    if (Object.hasOwn(entry, "rules")) {
+      if (!Array.isArray(entry.rules) || entry.rules.length > 32) {
+        throw new Error(`${caseLabel}.rules must be a bounded array`);
+      }
+      for (const [ruleIndex, rule] of entry.rules.entries()) {
+        assertExactKeys(rule, ["capability", "decision"], `${caseLabel}.rules[${ruleIndex}]`);
+        if (
+          typeof rule.capability !== "string" ||
+          rule.capability.length === 0 ||
+          byteLength(rule.capability) > 64 ||
+          !TOOL_LOOP_CAPABILITY.test(rule.capability)
+        ) {
+          throw new Error(`${caseLabel}.rules[${ruleIndex}].capability is invalid`);
+        }
+        if (!["allow", "ask", "deny"].includes(rule.decision)) {
+          throw new Error(`${caseLabel}.rules[${ruleIndex}].decision is invalid`);
+        }
+      }
+    }
+    if (Object.hasOwn(entry, "visibleTools")) {
+      validateBoundedToolNameArray(entry.visibleTools, 32, `${caseLabel}.visibleTools`);
+    }
+    if (Object.hasOwn(entry, "cancelAfterCompletedToolCalls")) {
+      if (
+        !Number.isSafeInteger(entry.cancelAfterCompletedToolCalls) ||
+        entry.cancelAfterCompletedToolCalls < 0 ||
+        entry.cancelAfterCompletedToolCalls > 128
+      ) {
+        throw new Error(
+          `${caseLabel}.cancelAfterCompletedToolCalls must be an integer from 0 to 128`,
+        );
+      }
+    }
+    if (!Object.hasOwn(entry, "provider")) {
+      throw new Error(`${caseLabel} requires the provider field`);
+    }
+    validateToolLoopProvider(entry.provider, `${caseLabel}.provider`);
+  }
+}
+
 function validateSubjectInputs(scenario, label) {
   const platforms = new Set(scenario.platforms);
   const envKeys = new Set(Object.keys(scenario.env));
@@ -455,6 +610,19 @@ function validateSubjectInputs(scenario, label) {
     validateProviderTurnInput(scenario.input, label);
     return;
   }
+  if (scenario.subject === "tool-loop") {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(`${label} tool-loop inputs must use platforms ["*"] and an empty env`);
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.toolLoopInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.toolLoopInputBytes} UTF-8 bytes`);
+    }
+    validateToolLoopInput(scenario.input, label);
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -493,6 +661,7 @@ export function validateScenario(scenario, file) {
     "domain-lifecycle",
     "domain-capability",
     "provider-turn",
+    "tool-loop",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

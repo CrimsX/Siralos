@@ -1,0 +1,36 @@
+{
+  "id": "tool-loop.cancelled-round",
+  "subject": "tool-loop",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "prompt": "cancel",
+        "tools": ["stub.success"],
+        "cancelAfterCompletedToolCalls": 1,
+        "provider": {
+          "kind": "scripted",
+          "events": [
+            {
+              "type": "tool_call",
+              "callId": "c1",
+              "toolName": "stub.success",
+              "input": {}
+            },
+            {
+              "type": "tool_call",
+              "callId": "c2",
+              "toolName": "stub.success",
+              "input": {}
+            },
+            {
+              "type": "completed"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

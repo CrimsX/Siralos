@@ -12,9 +12,12 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+
+mod tool_loop;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use siralos_adapters::provider::DeterministicFakeProvider;
+use siralos_adapters::tool::WorkspaceReadTool;
 use siralos_core::provider::{
     AssistantToolCallInput, CancellationSignal, CancellationToken,
     ConversationItem, LimitClass, ModelProvider, ModelRequest,
@@ -22,6 +25,7 @@ use siralos_core::provider::{
     TurnFailure, TurnOutcome, TurnToolCall, collect_provider_turn,
     detach_bounded_tool_result,
 };
+use tool_loop::{tool_loop_record, validate_tool_loop_input};
 
 /// Scenario platform value for Windows hosts.
 pub const PLATFORM_WINDOWS: &str = "windows";
@@ -45,11 +49,13 @@ const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
 const SUBJECT_DOMAIN_LIFECYCLE: &str = "domain-lifecycle";
 const SUBJECT_DOMAIN_CAPABILITY: &str = "domain-capability";
 const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
+const SUBJECT_TOOL_LOOP: &str = "tool-loop";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 12;
+const CORPUS_VERSION: u64 = 13;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
+const MAX_TOOL_LOOP_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -374,6 +380,7 @@ fn validate_scenario(
             | SUBJECT_DOMAIN_LIFECYCLE
             | SUBJECT_DOMAIN_CAPABILITY
             | SUBJECT_PROVIDER_TURN
+            | SUBJECT_TOOL_LOOP
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -459,7 +466,8 @@ fn validate_scenario(
         | SUBJECT_LANGUAGE_DEFINITION
         | SUBJECT_DOMAIN_LIFECYCLE
         | SUBJECT_DOMAIN_CAPABILITY
-        | SUBJECT_PROVIDER_TURN => {
+        | SUBJECT_PROVIDER_TURN
+        | SUBJECT_TOOL_LOOP => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -489,6 +497,11 @@ fn validate_scenario(
             if provider_subject {
                 validate_provider_turn_input(input)?;
             }
+            let tool_loop_subject =
+                scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
+            if tool_loop_subject {
+                validate_tool_loop_input(input)?;
+            }
             let language_subject = matches!(
                 scenario.subject.as_str(),
                 SUBJECT_LANGUAGE_DIAGNOSTICS
@@ -501,6 +514,8 @@ fn validate_scenario(
             );
             let max_input_bytes = if provider_subject {
                 MAX_PROVIDER_INPUT_BYTES
+            } else if tool_loop_subject {
+                MAX_TOOL_LOOP_INPUT_BYTES
             } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
@@ -1063,6 +1078,18 @@ fn run_scenario(
                 "result": result,
             }))
         }
+        SUBJECT_TOOL_LOOP => {
+            let input = scenario.input.as_ref().expect(
+                "tool-loop input was validated while loading the corpus",
+            );
+            let result = tool_loop_record(&scenario.id, input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
         _ => unreachable!("subject was validated while loading the corpus"),
     }
 }
@@ -1397,6 +1424,41 @@ impl Iterator for ScriptedStream<'_> {
 /// character repeated N times.
 fn materialize_value(value: &Value) -> Result<Value, HarnessError> {
     if let Some(object) = value.as_object() {
+        if let Some(repeat) = object.get("$eventsRepeat") {
+            let repeat_object = repeat.as_object().ok_or_else(|| {
+                HarnessError::corpus("$eventsRepeat marker must be an object")
+            })?;
+            let events = repeat_object
+                .get("events")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "$eventsRepeat marker requires an events array",
+                    )
+                })?;
+            let count = repeat_object
+                .get("count")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "$eventsRepeat marker requires an integer count",
+                    )
+                })? as usize;
+            if count > 4096 || events.len().saturating_mul(count) > 4096 {
+                return Err(HarnessError::corpus(
+                    "$eventsRepeat expands beyond the 4096-event bound",
+                ));
+            }
+            let materialized = events
+                .iter()
+                .map(materialize_value)
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut out = Vec::with_capacity(materialized.len() * count);
+            for _ in 0..count {
+                out.extend(materialized.iter().cloned());
+            }
+            return Ok(Value::Array(out));
+        }
         if let Some(repeat) = object.get("$repeat") {
             let repeat_object = repeat.as_object().ok_or_else(|| {
                 HarnessError::corpus("$repeat marker must be an object")
