@@ -143,9 +143,9 @@ unsafe filesystem or process boundary intentionally fails closed.
   Projection, Configuration, and CLI Parity) is Active: R7A behavior
   extraction and provider-protocol remediation are complete, and R7.1
   (Provider Contract + Deterministic Fake Provider + Bounded Single
-  Model Turn parity) is complete (corpus version 12, 104 scenario
+  Model Turn parity) is complete (corpus version 13, 120 scenario
   files, 18 `provider-turn` scenarios at differential parity); R7.2
-  (Application Tool Loop parity) is next, authorized by the R7.2 entry review.
+  (Application Tool Loop parity) is complete (corpus version 13, 120 scenario files, 16 `tool-loop` scenarios at differential parity, including authorization, displayInput UTF-16, and Tool-result status matrices).
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -354,8 +354,7 @@ Implemented (R4 — Generic Workspace / Project Foundation):
 Current: Stage 3R R7 is Active (R7A behavior extraction and
 provider-protocol remediation complete; R7.1 — Provider Contract +
 Deterministic Fake Provider + Bounded Single Model Turn parity — complete at
-differential parity); next implementation slice is R7.2 — Application Tool
-Loop parity — authorized (entry review PASS, contract frozen). The complete
+differential parity); R7.2 � Application Tool Loop parity � complete and evidence-backed). The complete
 internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 

@@ -397,6 +397,69 @@ differential parity, cancellation authority review, measurement, acceptance);
 R7.2 Authorized (entry review PASS, contract frozen) — next implementation
 slice; R7.3+ not authorized; R8-R12 not due. R7 is not marked Verified.
 
+### R7.2 implementation and acceptance
+
+R7.2 is complete against the frozen §13 contract. `siralos-core::tool`
+owns the domain-neutral capability identifier (`CapabilityId`, validated
+lowercase ASCII letters/digits with `.`/`_`/`-` separators, 64-byte
+bound), the generic allow/ask/deny permission evaluator, the immutable
+registration-ordered Tool Registry (duplicate construction failure, exact
+case-sensitive lookup, fresh detached definitions), the one generic Tool
+seam (`definition` + `capability` + `execute(input, CancellationSignal)`),
+the approved-visible-surface guard, the Tool Round (pre-seeded transcript,
+invalid-call failed pairing, one-call/one-result, cancelled-tail pairing),
+and the synchronous pull-based Application loop (typed single-flight,
+provider iteration, exact budget normalization, history ownership, the
+closed nine-event R7.2 surface). `siralos-adapters::tool` wraps the R4
+workspace primitives as `workspace.list`/`workspace.read`/`workspace.search`
+Tools with owned input validation, read-only cancellation observation, and
+no mutation/process/Godot authority.
+
+The differential corpus gained the `tool-loop` subject with 16 required
+scenarios (corpus schema 3, corpus version 13, 120 scenario files). All
+required applicable scenarios match, including the frozen authorization
+matrix (allow/deny/ask-plain), the displayInput UTF-16 matrix (exactly 200,
+201, supplementary Unicode, surrogate-pair split, and multi-key object
+source order), and the Tool-result status to event matrix. The Rust
+candidate composes the real registry, permission evaluator, approved
+surface, round, application loop, R7.1 provider-turn collector, and the
+production workspace read adapter; harness-local stub Tools enter through
+those real seams. No serde_json feature changed: source-ordered
+`displayInput` uses the narrow `ToolCallInput` ordered-JSON sidecar at the
+typed provider-event boundary, so repository canonicalization remains
+BTreeMap-backed.
+
+Security review (§13.21) is PASS: provider proposals, registry membership,
+and visibility grant no authority; authorization is rechecked per call;
+unknown/hidden/deny/ask/invalid/cancelled calls execute zero Tools; Tools
+receive only read-only cancellation and cannot mutate Host history; no
+automatic retry exists; one-call/one-result always holds; Core has no
+optional-domain semantic capability variants; and no mutation/process/Godot
+authority was pulled forward. No async runtime, threads, Arc, Mutex,
+RwLock, atomics, or unsafe code was introduced. Dynamic dispatch is
+confined to the heterogeneous registry boundary (`Box<dyn Tool>` entry
+storage; the loop receives `&dyn Tool` only at the lookup/call seam).
+
+Measurement (authorization baseline `1812409`, executable range through
+the final R7.2 executable commit): production Rust added 2,287 lines in
+`siralos-core`, 683 lines in `siralos-adapters`, and 1,155 lines in
+`siralos-cli` (differential path), with 50 lines removed across the three
+crates; 41 Core Tool-loop tests, 6 adapter Tool tests, and 2 candidate
+tool-loop harness tests. No new direct dependencies and no serde_json
+feature/dependency change. Async runtime: no. Threads: no. Arc: no.
+Mutex: no. RwLock: no. Atomics: no production use (test counters use
+`Cell`/`Rc` in harness-local fixtures only). Unsafe: no. Dynamic dispatch:
+`Box<dyn Tool>` is confined to the heterogeneous Tool Registry entry
+boundary (and the candidate's instrumentation wrapper); the loop receives
+`&dyn Tool` only at the single lookup/call seam. Differential corpus:
+16 required `tool-loop` scenarios; 120 total scenario files (corpus
+version 13). No performance claim or benchmark is made.
+
+Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete; R7.2
+Complete (evidence-backed); R7.3 next candidate slice pending independent
+review/authorization; R7.4-R7.5 not authorized; R8-R12 not due. R7 is not
+marked Verified.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:

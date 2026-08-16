@@ -1164,6 +1164,22 @@ types; a new Domain capability identifier requires no Core change),
 proportional measurement is recorded, and the complete local repository
 gate passes. R7.2 verification does not authorize R7.3+.
 
+### 13.22.1 R7.2 acceptance evidence (recorded after implementation)
+
+R7.2 PASS. Executable implementation commits (chronological):
+`7d378ad` (Core Tool contracts/registry/round/loop), `14dfa5b`
+(read-only workspace Tool adapters), `d965c4b` (transcript unresolved-window
+pairing remediation), `1396de4` (`tool-loop` differential subject + corpus
+promotion), `0e537c6` (harness integrity hardening), `73db8e8` (security and
+recovery regression coverage). The `tool-loop` subject holds differential
+parity across all 16 required scenarios (corpus schema 3, corpus version
+13, 120 scenario files); `npm run check:differential` exits 0 with
+116 applicable required scenarios matching. The complete local repository
+gate passes (`npm run check`, `cargo deny check`, `git diff --check`).
+Security review §13.21 is PASS, proportional measurement is recorded in
+`docs/development/RUST_MIGRATION.md`, and R7.3 remains not implemented and
+not authorized by this acceptance.
+
 ### 13.23 Implementation sequence (frozen plan)
 
 A plan only — nothing here is executed by this review. The later R7.2
@@ -1212,8 +1228,12 @@ R7.1 — Complete (provider contract + deterministic fake provider + bounded
         including cancellation-authority remediation — providers receive
         only a read-only CancellationSignal and cannot mutate Host
         cancellation state — and proportional measurement)
-R7.2 — Authorized / next (entry review PASS at 4dd8aea; generic Application
-        Tool Loop contract frozen in §13; implementation may begin)
-R7.3-R7.5 — Not authorized
+R7.2 — Complete (generic Application Tool Loop parity; corpus version 13,
+        120 scenario files, 16 tool-loop scenarios at differential parity;
+        domain-neutral CapabilityId; immutable ordered Tool Registry; Tool
+        Round one-call/one-result and cancelled-tail pairing; single-flight
+        Application loop; closed R7.2 event surface; security review PASS)
+R7.3 — Pending independent review / not implemented
+R7.4-R7.5 — Not authorized
 R8-R12 — Not due
 ```

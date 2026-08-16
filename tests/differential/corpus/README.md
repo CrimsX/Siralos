@@ -73,3 +73,19 @@ the Rust conformance suite
 checked-in synthetic conformance component bytes
 (`tests/domain-conformance/`); the differential subjects cover the
 generic semantics only, exactly like the earlier subjects.
+The Stage 3R R7.2 `tool-loop` scenarios execute the generic Application
+Tool Loop through the real TypeScript reference (`createSiralosApplication`,
+Tool Registry, Tool Round, permission evaluator) and the real Rust
+candidate (`siralos-core::tool` registry/round/application loop plus the
+workspace read adapter where selected). The 16 required scenarios cover
+terminal completion, round-budget normalization and the over-budget
+boundary, unknown/hidden-tool denial and provider recovery, invalid and
+duplicate call pairing, one-call/one-result under mixed execute/invalid/
+cancelled calls, Host cancellation during a round, mixed assistant-text
+commit rules, provider failure after a committed round, the five-gate
+authorization matrix (allow/deny/ask-plain), the displayInput UTF-16
+matrix (200/201/supplementary/surrogate-split/source object key order),
+and the Tool-result status to event matrix. Stub Tools are probe-local
+and always enter through the real registry/gates/round/loop; no
+mutation, process, Git, network, or Godot authority is granted or
+exercised.

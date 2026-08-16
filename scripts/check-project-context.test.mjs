@@ -40,7 +40,7 @@ function validInput() {
       "Status: Active development",
       "Public stages: 6",
       "Migration track: Stage 3R",
-      "Current completed milestone: R6",
+      "Current completed milestone: R7.2",
       "Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity",
       `Last verified commit: ${"a".repeat(40)}`,
       "Canonical repository: https://github.com/CrimsX/Siralos",
@@ -53,7 +53,7 @@ function validInput() {
     agents: "Read docs/development/PROJECT_CONTEXT.md first.",
     requirements: [rows("CORE", 20, 3), rows("HAR", 56, 3), rows("AP", 17, 3)].join("\n"),
     rfc: rows("RFC", 20, 4),
-    golden: rows("GT", 18, 3),
+    golden: rows("GT", 19, 3),
     commitExists: () => true,
   };
 }

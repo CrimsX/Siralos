@@ -6,11 +6,11 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R6
+Current completed milestone: R7.2
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 is the next implementation step, authorized by the R7.2 entry review (docs/development/R7_BEHAVIOR_EXTRACTION.md §13)
-Last verified commit: bd335190696f3662e242407c89d7821483d7fa24
+R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 (generic Application Tool Loop parity) is complete and evidence-backed (docs/development/R7_BEHAVIOR_EXTRACTION.md �13)
+Last verified commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -208,6 +208,27 @@ Host-owned: providers receive only a read-only `CancellationSignal`
 observation view and cannot mutate Host cancellation state (the signal
 type exposes no mutation operation). R7.1 implements no Tool Round, no
 projection, no configuration, and no CLI session (R7.2-R7.5).
+R7.2 added the generic Application Tool Loop to the Rust candidate:
+`siralos-core::tool` owns the domain-neutral validated `CapabilityId`,
+allow/ask/deny permission evaluation, the immutable registration-ordered
+Tool Registry, the one generic Tool seam (definition + capability +
+execute with the read-only `CancellationSignal`), the approved-visible
+Tool-surface guard, the Tool Round (pre-seeded transcript, invalid-call
+failed pairing, one-call/one-result, cancelled-tail pairing), the
+synchronous pull-based single-flight Application loop (exact round-budget
+normalization, history ownership, the closed nine-event R7.2 surface),
+and displayInput formatting with exact JavaScript UTF-16 code-unit
+truncation (source-ordered JSON is preserved through a narrow typed-event
+sidecar without changing serde_json canonicalization);
+`siralos-adapters::tool` owns the generic read-only `workspace.list` /
+`workspace.read` / `workspace.search` Tool adapters over the R4
+primitives. The differential corpus gained the `tool-loop` subject with
+16 required scenarios (corpus version 13, 120 scenario files), including
+the authorization, displayInput UTF-16, and Tool-result status matrices;
+all required applicable scenarios match. The complete local repository
+gate passes (verified executable baseline recorded after the executable
+R7.2 commits). R7.2 implements no projection, no approval system, no
+mutation/process/Godot Tools, no async runtime, no threads, and no locks.
 
 ### Target architecture
 
@@ -274,7 +295,7 @@ Status changes require executable evidence and an update to
 | R4        | Generic Workspace / Project Foundation                                  | Verified               |
 | R5        | Generic Language Intelligence                                           | Verified               |
 | R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified               |
-| R7        | Providers / Tools / CLI                                                 | Active (R7.1 complete) |
+| R7        | Providers / Tools / CLI                                                 | Active (R7.2 complete) |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
 | R10       | H1 / H2 / ICM / H3 parity                                               |
