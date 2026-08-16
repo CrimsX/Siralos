@@ -458,9 +458,10 @@ boundary (and the candidate's instrumentation wrapper); the loop receives
 version 13). No performance claim or benchmark is made.
 
 Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete; R7.2
-Complete (evidence-backed); R7.3 next candidate slice pending independent
-review/authorization; R7.4-R7.5 not authorized; R8-R12 not due. R7 is not
-marked Verified.
+Complete (evidence-backed); R7.3 Projection parity contract frozen and
+authorized as the next separately reviewed implementation slice (not
+implemented); R7.4-R7.5 not authorized; R8-R12 not due. R7 is not marked
+Verified.
 
 ### R7.3 pre-port projection oracle correction closure
 
@@ -480,7 +481,27 @@ differential subject, promote the corpus, or authorize R7.3. The latest
 verified executable worktree is `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`;
 the historical R7.2 verified Rust implementation baseline remains
 `73db8e89c8f670454927ca7ed7554e17d33ea606`. Documentation-only reconciliation
-after the executable correction does not replace either evidence pointer.
+after the executable correction does not replace either evidence pointer. The
+completed entry review is recorded in R7_BEHAVIOR_EXTRACTION.md §14.
+
+### R7.3 entry review and authorization
+
+The restarted independent R7.3 projection entry review is recorded in
+`docs/development/R7_BEHAVIOR_EXTRACTION.md` §14. It audited the corrected
+TypeScript oracle, all projection/context/application/security seams and
+relevant tests, and found no additional oracle defect. The review froze the
+generic capacity/estimator/pressure/reduction/segment/evidence/Tool contracts,
+the corrected Unicode-scalar boundary behavior, R7.2 ApprovedToolSurface and
+R7.1 provider-request ownership, the differential/security evidence plan, and
+the minimal domain-neutral Rust ownership proposal. It is **PASS — R7.3
+Projection contract frozen; implementation authorized**.
+
+This authorization is only for the next separately reviewed R7.3 Projection
+Parity implementation. No R7.3 executable code, differential corpus
+promotion, R7.4/R7.5 work, or R8-R12 work is included here. The verified
+executable pointer remains `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`; the
+documentation-only commit containing this review is not an executable
+verification baseline.
 
 ## Porting gate
 

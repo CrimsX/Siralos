@@ -1243,7 +1243,695 @@ differential corpus remains unchanged: schema version 3, corpus version 13,
 This is a pre-port oracle correction only. No R7.3 Rust implementation,
 projection subject, corpus promotion, or R7.3 authorization is included. The
 corrected TypeScript oracle is the source for a restarted independent R7.3
-entry review; R7.3 remains pending review and authorization.
+entry review; at that closure point R7.3 remained pending review and
+authorization. The completed entry review is recorded below.
+
+## 14. R7.3 Entry Review — Projection Contract
+
+Status: **PASS — R7.3 Projection contract frozen; implementation authorized**.
+This section records the independent entry review against the corrected
+TypeScript oracle. It authorizes a future, separately reviewed implementation
+slice; it does not contain that implementation, promote a differential corpus
+subject, or mark R7 Verified.
+
+### 14.1 Scope, entry state, and audit result
+
+The review audited every file under `packages/core/src/projection/`, including
+capacity, estimation, pressure, context segments, conversation reduction,
+evidence projection, Tool projection, projection composition, cache, and stale
+result helpers. It also audited `context/projection.ts`,
+`context/phase-contract.ts`, the provider-turn/application/event seams,
+`tool-registry.ts`, capability/permission/profile policy, CLI context
+observability, all projection/context tests, the projection behavior suite,
+application/provider protocol tests, Tool-loop tests, instructions/knowledge
+behavior tests, and every repository caller of the projection functions.
+
+The verified local entry state was:
+
+| Item                                         | Value                                                              |
+| -------------------------------------------- | ------------------------------------------------------------------ |
+| Branch                                       | `main`                                                             |
+| Starting HEAD and upstream                   | `1ffc3f6411a0386c270789af67917aa7b57b6f93`                         |
+| Starting worktree                            | clean                                                              |
+| Historical R7.2 Rust implementation baseline | `73db8e89c8f670454927ca7ed7554e17d33ea606`                         |
+| Latest verified executable repository SHA    | `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`                         |
+| Later commit after that executable SHA       | `1ffc3f6 docs: record R7.3 projection oracle correction`           |
+| Corpus                                       | schema 3, version 13, 120 scenario files                           |
+| Corpus digest                                | `6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490` |
+| R7.3 executable Rust                         | absent; no R7.3 source or implementation commit exists             |
+
+The only commit after the verified executable correction is the documentation
+closure above. The full starting `npm run check` gate exited 0: 211 TypeScript
+test files passed (3,192 tests, 35 skipped), all 116 applicable required
+differential scenarios matched, and the Rust format, clippy, and workspace
+tests passed. No new TypeScript projection defect remained after the audit.
+
+### 14.2 Co-located classification table
+
+The following table is the complete R7.3 boundary. “MUST PORT” means the
+observable, provider-neutral behavior is part of the next Rust parity slice.
+“GENERIC SEAM ONLY” means R7.3 consumes a bounded, typed, host-owned input but
+does not port the producer or its domain semantics. “LATER” names the owning
+milestone. “DO NOT PORT” is TypeScript implementation structure with no
+independent Rust contract.
+
+| Behavior                                   | Classification                      | Frozen boundary and owner                                                                                                                                                                                                                      |
+| ------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Context capacity                           | **R7.3 MUST PORT**                  | `advertisedMaximum` and `verifiedMaximum` are informational and currently `null`; `workingMaximum` is the authority; `maxOutputTokens` is carried but does not enter projection arithmetic.                                                    |
+| UTF-8 token estimator                      | **R7.3 MUST PORT**                  | Empty text is 0; otherwise `ceil(UTF-8 byte length / 4)`.                                                                                                                                                                                      |
+| Conversation item estimator                | **R7.3 MUST PORT**                  | Count UTF-8 bytes of string fields `content`, `summary`, `message`, `toolName`, `callId`; JSON bytes of `input`; JSON bytes of object `output`; and nested `result.summary`/`result.message`. Non-serializable structured values contribute 0. |
+| Pressure classification                    | **R7.3 MUST PORT**                  | Deterministic ratio/state classification against the working maximum with inclusive `0.70`, `0.85`, and `1.00` thresholds.                                                                                                                     |
+| Automatic reduction                        | **R7.3 MUST PORT**                  | On initial `auto` or `hard`, reserve system and projected Tool tokens, trim only the disposable message copy, then recalculate pressure.                                                                                                       |
+| Hard blocking                              | **R7.3 MUST PORT**                  | A final `hard` result produces a typed blocked outcome and no provider call.                                                                                                                                                                   |
+| Context segment model                      | **R7.3 MUST PORT**                  | Owned value fields are `id`, stability, title, content, content bytes, and content token estimate.                                                                                                                                             |
+| Stable/contextual/volatile classes         | **R7.3 MUST PORT**                  | The three generic classes are the only classification needed by R7.3; volatile data is observable but is not in the stable/contextual provider system prefix.                                                                                  |
+| Segment ordering                           | **R7.3 MUST PORT**                  | Sort by stability rank `stable`, `contextual`, `volatile`, then segment id using the TypeScript default string/code-unit comparison.                                                                                                           |
+| Segment serialization                      | **R7.3 MUST PORT**                  | Each segment is `[Title]\ncontent`; segments join with `\n\n`.                                                                                                                                                                                 |
+| Stable fingerprint                         | **R7.3 MUST PORT**                  | SHA-256 of canonical JSON over stable segments only, retaining ordered `{id,title,content}` values and excluding contextual/volatile segments.                                                                                                 |
+| Stable-prefix byte accounting              | **R7.3 MUST PORT**                  | `stableBytes` is serialized stable content; `stablePrefixBytes` is serialized stable plus contextual content; both use exact UTF-8 bytes.                                                                                                      |
+| System-instruction composition             | **R7.3 GENERIC SEAM ONLY**          | The Host supplies stable instruction text/segments. The historical Godot/GDScript `SIRALOS_SYSTEM_INSTRUCTIONS` body is not a Rust Core constant.                                                                                              |
+| Task-contract segment                      | **R7.3 GENERIC SEAM ONLY**          | R7.3 composes a bounded rendered request/contract value supplied by the Task owner; Task identity and contract authority stay with the task runtime.                                                                                           |
+| Task-state segment                         | **R7.3 GENERIC SEAM ONLY**          | R7.3 consumes a rendered state snapshot; it does not own TaskState transitions, acceptance, evidence authority, or progress.                                                                                                                   |
+| Latest task evidence segment               | **R7.3 GENERIC SEAM ONLY**          | The Task runtime supplies the latest bounded evidence identity/revision reference; R7.3 never becomes the evidence authority or stores raw evidence.                                                                                           |
+| Plan segment                               | **R7.3 GENERIC SEAM ONLY**          | The Host supplies only the current immutable plan/rendering; plan validation, approval, and staleness remain planning/task owners. The current rendered plan cap is 4 KiB.                                                                     |
+| Executor brief                             | **R7.3 GENERIC SEAM ONLY**          | R7.3 consumes the current bounded compiled brief; briefing/compiler semantics remain the executor owner. The current cap is 4 KiB.                                                                                                             |
+| Project instructions                       | **R7.3 GENERIC SEAM ONLY**          | The instruction resolver supplies a selected, rendered set; R7.3 does not discover files or promote instructions to authority.                                                                                                                 |
+| Pinned/retrieved project knowledge         | **R7.3 GENERIC SEAM ONLY**          | The knowledge coordinator owns facts, pinning, retrieval, expiry, and secret isolation; R7.3 consumes bounded rendered facts.                                                                                                                  |
+| Reference evidence segment                 | **R7.3 GENERIC SEAM ONLY**          | Reference identity/materialization owns reference revisions and evidence; R7.3 consumes safe rendered views, at most four recent entries.                                                                                                      |
+| Research evidence segment                  | **R7.3 GENERIC SEAM ONLY**          | Research owns source access, denial, fetch, and normalization; R7.3 consumes bounded rendered evidence, at most four entries and 4 KiB per formatted entry.                                                                                    |
+| Scene evidence producer and semantic types | **LATER MILESTONE / SLICE — R8/R9** | Godot scene/resource intelligence, GDScript semantics, and scene evidence production are not R7.3.                                                                                                                                             |
+| Bounded scene-evidence segment             | **R7.3 GENERIC SEAM ONLY**          | R7.3 may consume an already-rendered bounded scene view, at most four recent entries; no Godot type enters `siralos-core::projection`.                                                                                                         |
+| Tool visibility projection                 | **R7.3 MUST PORT**                  | Registered order plus mode/surface ceiling plus Host permission decision maps to available, gated, or hidden. Visibility never grants authority.                                                                                               |
+| ProjectedRequest/provider composition      | **R7.3 MUST PORT**                  | Projection owns the one transformation from authoritative Host values to a provider-neutral request; R7.1 receives it and the provider does not recompute it.                                                                                  |
+| R7.2 ApprovedToolSurface coupling          | **R7.3 MUST PORT**                  | Provider-visible definitions and approved names are derived from one visible Tool list; R7.2 remains the execution and per-call recheck owner.                                                                                                 |
+| ProjectionMode value                       | **R7.3 MUST PORT**                  | The current route modes are `generic`, `development`, `review`, `inspection`, and `planning`; Rust should use a small validated/opaque mode value, not domain semantics.                                                                       |
+| Mode capability rules                      | **R7.3 GENERIC SEAM ONLY**          | R7.3 consumes Host-supplied allowed capabilities or already-evaluated R7.2 permission decisions; current Godot-oriented TypeScript tables are composition policy, not Core domain.                                                             |
+| Mode Tool-name rules                       | **R7.3 GENERIC SEAM ONLY**          | R7.3 consumes exact allowed Tool names from the Host surface. It must not hard-code a new generic policy framework or copy Godot name tables into Core.                                                                                        |
+| Development native/mixed Godot gating      | **LATER MILESTONE / SLICE — R8/R9** | `script_only`/`none`/undefined fail closed for native prepare names; `native_only`/`mixed` can expose them only in development. R7.3 preserves this as an opaque host surface input and owns no Godot interpretation.                          |
+| Provider Tool-calling compatibility        | **R7.3 MUST PORT**                  | The Host passes provider support; tool-requiring modes fail closed when it is false. Generic mode retains its current non-required behavior.                                                                                                   |
+| ToolResult evidence projection             | **R7.3 MUST PORT**                  | Only provider-facing success summaries or failure messages are transformed; status and output remain structurally intact; raw results/history remain authoritative.                                                                            |
+| ANSI/control sanitization                  | **R7.3 MUST PORT**                  | Exact corrected text sanitizer behavior is part of the model-view contract.                                                                                                                                                                    |
+| Secret redaction                           | **R7.3 MUST PORT**                  | Ordered configured secrets are replaced before reduction; security removal can never be restored by a size rule.                                                                                                                               |
+| Repeated-line collapse                     | **R7.3 MUST PORT**                  | Three or more consecutive exactly equal `\n`-split lines become one `${line} ×${count}` line. The never-worse comparison for this step is JavaScript UTF-16 `.length`.                                                                         |
+| Line bounding                              | **R7.3 MUST PORT**                  | UTF-8 byte bound, split only at valid Unicode-scalar boundaries, with the explicit complete-scalar exception when one scalar cannot fit.                                                                                                       |
+| Final truncation                           | **R7.3 MUST PORT**                  | Use the exact marker `\n… [truncated]`, select the largest valid scalar prefix that fits with it, and retain marker-only output when the marker exceeds the configured bound.                                                                  |
+| Never-worse reduction                      | **R7.3 MUST PORT**                  | Collapse and line-bound reductions are reverted together to the post-security `preReduction` text when the reduced text exceeds the raw UTF-8 byte count; security transforms remain.                                                          |
+| Evidence bounds                            | **R7.3 MUST PORT**                  | Total evidence 32 KiB UTF-8, one line 1 KiB UTF-8, reference/research/scene combined 12 KiB, four recent records per source, and eight task focus paths. Producer-specific budgets remain producer-owned.                                      |
+| Watermark cache                            | **R7.3 MUST PORT**                  | The disposable model-evidence cache is bounded, observable through its size, and never owns durable TaskState evidence. A minimal ordered state value is sufficient.                                                                           |
+| High/low eviction                          | **R7.3 MUST PORT**                  | High 64/low 32; cleanup occurs only when insertion makes size greater than 64 and removes oldest insertion-order entries down to 32.                                                                                                           |
+| Revision-bound cache invalidation          | **R7.3 MUST PORT**                  | A changed Task contract revision clears disposable views before the next view is stored; raw evidence is not changed or deleted.                                                                                                               |
+| RevisionGuard API                          | **SOURCE STRUCTURE — DO NOT PORT**  | The generic TypeScript wrapper is not an independent Rust seam; R7.3 owns the concrete revision comparison needed by the cache.                                                                                                                |
+| `awaitCurrent`                             | **SOURCE STRUCTURE — DO NOT PORT**  | It has tests but no real production projection consumer. Do not introduce async infrastructure for this helper.                                                                                                                                |
+| `lastProjection` observability             | **R7.3 MUST PORT**                  | Expose a detached typed projection snapshot sufficient for later `/context` and `/tools` rendering; it is disposable and never authoritative.                                                                                                  |
+| `/context` data                            | **LATER MILESTONE / SLICE — R7.5**  | R7.3 supplies typed fields; R7.5 owns CLI text and command wiring.                                                                                                                                                                             |
+| `/tools` data                              | **LATER MILESTONE / SLICE — R7.5**  | R7.3 supplies typed Tool counts/fingerprint/approved names; R7.5 owns CLI text and command wiring.                                                                                                                                             |
+| PhaseContract                              | **LATER MILESTONE / SLICE — R10**   | R10 owns full PhaseContract runtime/readiness parity; R7.3 accepts a mode and generic segments rather than executing phase contracts.                                                                                                          |
+| ContextClass                               | **LATER MILESTONE / SLICE — R10**   | R10 owns the declarative context-class artifact model and provenance. R7.3 only retains the three projection stability classes.                                                                                                                |
+| PhaseContextSources                        | **LATER MILESTONE / SLICE — R10**   | R10 owns the richer source registry/compiler; R7.3 accepts already-selected values.                                                                                                                                                            |
+| `projectPhaseContext`                      | **LATER MILESTONE / SLICE — R10**   | The fixed TypeScript helper remains a host routing seam; it is not a Rust R7.3 context compiler.                                                                                                                                               |
+| `toolSurfaceForPhase`                      | **R7.3 GENERIC SEAM ONLY**          | The current fixed host table may supply an opaque mode/surface to R7.3; R7.3 never derives authority from a malformed phase contract. Full phase routing remains R10.                                                                          |
+| ICM context classes/compiler               | **LATER MILESTONE / SLICE — R10**   | No Live/Pinned/Frozen model, artifact registry, provenance compiler, or readiness graph is pulled into R7.3.                                                                                                                                   |
+| Repository-wide-context invariant          | **R7.3 MUST PORT**                  | Every segment is explicit and bounded; no phase or default projection may silently request repository-wide context.                                                                                                                            |
+| Canonical JSON and SHA-256                 | **R7.3 MUST PORT**                  | Reuse the existing domain-neutral identity primitive or prove an equivalent. Do not use ordinary unordered `serde_json` output as a fingerprint ABI.                                                                                           |
+| Context-pressure event hook                | **R7.3 MUST PORT**                  | Emit the existing typed `context_pressure` event only from the Host application boundary when the final projected pressure is non-normal; R7.5 renders it later.                                                                               |
+| CLI context formatting                     | **SOURCE STRUCTURE — DO NOT PORT**  | `apps/cli/src/output/context.ts` is a presentation renderer; its labels and string formatting are R7.5, not Core projection policy.                                                                                                            |
+
+### 14.3 Domain-neutrality and ownership decisions
+
+The Rust Core contract is generic. No `siralos-core::projection` type may own a
+Godot Tool name, Godot capability meaning, scene/resource semantic type,
+GDScript instruction, or native/mixed task interpretation. The current
+TypeScript mode tables and `SIRALOS_SYSTEM_INSTRUCTIONS` are historical
+composition data. A future CLI/domain composition supplies stable instruction
+segments, opaque mode/surface values, allowed Tool names/capabilities, and
+already-rendered source evidence.
+
+R7.2 remains the owner of `CapabilityId`, permission evaluation, registry
+membership, per-call authorization, Tool execution, approval, and the
+`ApprovedToolSurface` execution guard. R7.3 composes with that evaluator; it
+does not create a second policy owner. R7.3 visibility can only remove a Tool
+from a provider request. It cannot add capability or change a R7.2 decision.
+
+TypeScript currently imports canonicalization from the historical
+`packages/core/src/godot/digest.ts` module. The behavior is generic: sorted
+object keys, preserved array order, JSON string escaping, JSON number/null/
+boolean representation, and SHA-256. Rust R7.3 must reuse the existing
+domain-neutral `siralos-core::identity` primitive where it is exact, and add
+parity tests for any JSON value or Unicode-key ordering that the projection
+surface actually admits. The Core contract must not conceptually depend on
+Godot digest code.
+
+### 14.4 Corrected Unicode oracle
+
+The authoritative correction is `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`,
+`fix(core): preserve Unicode boundaries in evidence projection`; the closure
+is `1ffc3f6411a0386c270789af67917aa7b57b6f93`,
+`docs: record R7.3 projection oracle correction`. The correction replaced
+arbitrary UTF-16 prefix candidates with valid Unicode-scalar boundaries for
+both per-line bounding and total truncation.
+
+The exact rule is:
+
+- A valid surrogate pair advances as one scalar and is never split. A lone
+  surrogate already present in source data remains a source scalar; the
+  projector never manufactures a lone surrogate by slicing a valid pair.
+- Line bounds are measured in UTF-8 bytes. Lines are split on LF. The largest
+  scalar-aligned prefix that fits is selected by exact UTF-8 byte count. If
+  even the first complete scalar cannot fit, that complete scalar is retained
+  and the impossible configured bound is exceeded for that scalar rather than
+  producing malformed text.
+- Total truncation uses the exact marker `\n… [truncated]`. The marker costs
+  16 UTF-8 bytes. The largest scalar-aligned prefix whose bytes plus 16 fit is
+  retained. For example, six `😀` values at a 19-byte limit produce the
+  16-byte marker-only result; at 20 bytes one four-byte `😀` plus the marker
+  fits. If the marker itself is larger than the bound, the marker remains the
+  explicit result. Exact-limit input is not truncated; an over-limit input is.
+
+The focused correction tests cover a scalar at the 1,024-byte line boundary,
+a sub-scalar line budget, total truncation below/at the supplementary-scalar
+threshold, and marker-only behavior. The correction changes only the detached
+model view; it does not change raw evidence, history, Tool authority,
+capability, approval, or provider authority.
+
+### 14.5 R7.2 ApprovedToolSurface integration
+
+One projection outcome is the only source for both provider-visible Tool
+definitions and the R7.2 approved execution surface:
+
+```text
+registered Tools + opaque mode/surface + R7.2 permission decisions
+                         |
+                    R7.3 projection
+                         |
+          +--------------+--------------+
+          |                             |
+  provider request definitions       ApprovedToolSurface.names
+  (available + gated, registration    (the same non-hidden names)
+   order; hidden absent)              (membership, deterministically exposed)
+```
+
+`available` and `gated` Tools are visible. `hidden` Tools are absent from the
+provider request, visible Tool fingerprint, and approved surface. A gated Tool
+is not silently executable: the R7.2 per-call permission check remains
+mandatory, and a plain Tool under `ask` is denied without execution because it
+has no reviewable preparation protocol. Prepared approval behavior remains
+with R7.2 and its owning effect milestone. A provider proposal for an unknown
+or hidden Tool is denied before execution even if it names a registered Tool.
+
+The provider definition vector retains registration order. The approved
+surface is a membership set; its canonical observation is sorted by Tool name
+so no map iteration becomes observable. The implementation must build both
+from the same visible list, not independently re-evaluate mode or permission.
+
+### 14.6 Provider-request ownership and application pipeline
+
+The frozen ownership chain is:
+
+```text
+authoritative Host task/history/evidence/policy/capacity inputs
+                         |
+                      Projection
+                         |
+             pressure classification and reduction
+                         |
+                  ProjectedRequest
+                         |
+                  R7.1 ModelRequest
+                         |
+                      Provider
+```
+
+The provider never trims history, selects Tools, chooses limits, sanitizes
+evidence, selects segments, decides relevance, or authoritatively chooses a
+projection mode. The Host validates the authoritative transcript before
+projection through the existing R7.1/R7.2 boundary. An invalid transcript
+blocks the request before provider invocation; projection does not replace
+that validation.
+
+For a valid request, normal pressure sends the projected request without a
+pressure event. Warn sends it and emits `context_pressure` before the provider
+stream. Auto and hard first perform the same deterministic reduction attempt;
+the final pressure is recalculated. The current oracle/application emits a
+pressure event only when that final state is non-normal. Therefore an auto
+reduction that reaches normal proceeds without a pressure event, while a final
+auto or hard state emits one. A final hard state emits `response_failed` after
+the pressure event and never calls the provider. The hard reason is the exact
+projected-token/working-maximum message, with ` (reduction was already
+applied)` only when at least one item was dropped.
+
+The typed event is:
+
+```text
+context_pressure { state, estimatedTokens, workingMaximum }
+```
+
+It is UI-neutral. CLI rendering belongs to R7.5.
+
+When `providerToolCalling` is false, `development`, `review`, `inspection`,
+and `planning` are tool-requiring modes and return a blocked `unsupported`
+outcome with the exact reason:
+
+> The selected provider route does not support tool calling, which this task
+> requires; the session cannot proceed with hidden or missing tools.
+
+The Host still builds the current context and records `lastProjection`; the
+unsupported Tool projection is empty, the copied input messages are retained,
+`estimatedTokens` is 0, and pressure is classified from 0 against the working
+maximum. The provider is not called. `generic` is not in the tool-requiring
+set and retains the current route behavior. R7.1 owns the actual model stream
+and R7.2 owns the loop; R7.3 supplies the already-projected request only.
+
+### 14.7 Capacity, estimator, and pressure contract
+
+The default capacity is:
+
+| Field               | Exact value/meaning                                     |
+| ------------------- | ------------------------------------------------------- |
+| `workingMaximum`    | 32,768 estimated tokens; authoritative decision bound   |
+| `advertisedMaximum` | `null`; informational only                              |
+| `verifiedMaximum`   | `null`; informational only                              |
+| `maxOutputTokens`   | 4,096; carried but not in current projection arithmetic |
+
+For text, `estimateTokens("") = 0`; otherwise it is
+`ceil(utf8Bytes(text) / 4)`. Conversation estimates sum the exact field set
+in the classification table, then apply the same ceiling per item. Structured
+JSON byte accounting follows the current `JSON.stringify` boundary. Object
+insertion order is not a fingerprint ABI; fixtures must not rely on incidental
+key order unless a case explicitly tests the runtime boundary. Fingerprint
+canonicalization is separate and always sorts object keys.
+
+Pressure is:
+
+```text
+ratio = workingMaximum <= 0 ? 1 : estimatedTokens / workingMaximum
+hard  if estimatedTokens >= workingMaximum * 1.00
+auto  if estimatedTokens >= workingMaximum * 0.85
+warn  if estimatedTokens >= workingMaximum * 0.70
+normal otherwise
+```
+
+Thresholds are inclusive. Thus just below each threshold remains in the
+preceding state; exact warn/auto/hard enters that state; above hard remains
+hard. When `workingMaximum <= 0`, every non-negative estimate is hard and the
+reported ratio is 1. Zero estimated tokens is normal for a positive working
+maximum and hard for a non-positive one. Rust may use integer/rational
+comparisons, but the observable classifications and values must match.
+
+### 14.8 Conversation reduction and concrete order
+
+Reduction operates on a detached provider message list only. First, if the
+whole list already fits, return a copied list with the original estimate and
+zero dropped items without validating it. If it exceeds the budget, validate
+the transcript. An invalid transcript is returned unchanged with its original
+estimate and zero dropped items; it is not silently repaired or reduced.
+
+For a valid over-budget list, scan in input order. A Tool call is held by
+`callId` until its matching result arrives. The call and result are then
+treated as one pair: keep both only if their pair estimate fits the cumulative
+budget, otherwise drop both. User messages always survive, even if that makes
+the final estimate exceed the budget. Standalone assistant messages survive
+only when they fit at their encounter point. Other valid items are retained.
+The implementation appends a kept pair as `call` then `result`; it never emits
+one half. In R7.2-generated histories calls/results are adjacent and pair order
+is chronological. For a validator-accepted transcript with multiple pending
+calls, the current oracle resolves a pair at its result encounter; that exact
+completion-order behavior is part of the parity test, while the call/result
+order inside each retained pair remains fixed.
+
+Concrete fixture (the labels are literal two-character contents):
+
+```text
+U1 = user_message("u1")                         1 token
+A1 = assistant_message("a1")                   1 token
+TC1 = callId "c1", toolName "t", input {}      2 tokens
+TR1 = callId "c1", toolName "t", summary "r1"  2 tokens
+A2 = assistant_message("a2")                   1 token
+TC2 = callId "c2", toolName "t", input {}      2 tokens
+TR2 = callId "c2", toolName "t", summary "r2"  2 tokens
+U2 = user_message("u2")                         1 token
+```
+
+The source order is `U1 A1 TC1 TR1 A2 TC2 TR2 U2` and the original estimate is
+12 tokens.
+
+| Message budget | Kept order            | Dropped first/estimate                                                                            |
+| -------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
+| 8              | `U1 A1 TC1 TR1 A2 U2` | `TC2+TR2` is the first pair that cannot fit; dropped 2 items; final estimate 8                    |
+| 5              | `U1 A1 A2 U2`         | `TC1+TR1` is tested and dropped before `TC2+TR2`; dropped 4 items; final estimate 4               |
+| 1              | `U1 U2`               | Both pairs and standalone `A2` are dropped; `U1` and `U2` survive even though final estimate is 2 |
+
+The example makes the selection rule explicit: the oldest complete pair in the
+encounter order is considered first, not the largest pair or a semantic
+relevance score. No authoritative Host history, TaskState evidence, or raw
+Tool result is ever trimmed.
+
+### 14.9 Context segments, source seams, bounds, and fingerprints
+
+R7.3 owns the generic segment value and composition mechanics. The input
+segments are copied, sorted by stability rank then id, and measured from
+content bytes. Stable and contextual segments serialize to the provider
+`system` prefix; volatile segments remain in the typed projection/observability
+snapshot and do not enter that prefix. The request messages are the detached
+history with only ToolResult model views replaced; context is not appended as
+conversation messages.
+
+Current source composition is preserved as a seam: stable instructions,
+project instructions, pinned/retrieved knowledge, task contract/state, current
+plan, executor brief, latest task evidence, and reference/research/scene
+evidence are all already-owned source values rendered into bounded segment
+inputs. The latest reference, research, and scene rings select the four most
+recent entries each. Their combined UTF-8 budget is 12 KiB and reduction is
+deterministically research, then scene, then reference; empty sections are
+omitted. Task focus paths are unique workspace-read paths in encounter order,
+bounded at eight, and are an input to instruction/knowledge resolution only.
+
+The current segment accounting is exact:
+
+| Quantity                  | Definition                                                     |
+| ------------------------- | -------------------------------------------------------------- |
+| Segment `bytes`           | UTF-8 bytes of `content` only                                  |
+| Segment `estimatedTokens` | `ceil(content UTF-8 bytes / 4)` except empty → 0               |
+| `stableBytes`             | UTF-8 bytes of `serializeSegments(stableSegments)`             |
+| `stablePrefixBytes`       | UTF-8 bytes of stable plus contextual serialization            |
+| `totalBytes`              | Sum of content bytes for all three classes                     |
+| `stableFingerprint`       | SHA-256 of canonical JSON array of stable `{id,title,content}` |
+
+The bound matrix is:
+
+| Resource                          |                                                       Byte bound |                            Count bound | Token estimate                       | Exact-limit / limit-plus-one behavior                                                                                                                                                                                                                                                                  |
+| --------------------------------- | ---------------------------------------------------------------: | -------------------------------------: | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Model-visible evidence text       |                                               32,768 UTF-8 bytes |                     one view at a time | `ceil(shownBytes / 4)`               | Exact bytes are retained; an overage enters total truncation. The marker-only exception applies only when a caller supplies a bound smaller than the 16-byte marker.                                                                                                                                   |
+| One evidence line                 |                                     1,024 UTF-8 bytes by default |                    every LF-split line | `ceil(lineBytes / 4)`                | A 1,024-byte line stays intact; a 1,025-byte ASCII line is split. A configured bound smaller than one complete scalar retains that scalar intact, so that individual chunk can exceed the impossible bound.                                                                                            |
+| Current plan segment              |                                                4,096 UTF-8 bytes |                       one current plan | `ceil(segmentBytes / 4)`             | Exact content is not truncated; content over the bound uses the explicit truncation marker and scalar-aligned prefix.                                                                                                                                                                                  |
+| Executor brief segment            |                                                4,096 UTF-8 bytes |                      one current brief | `ceil(segmentBytes / 4)`             | Same exact-limit and over-limit rule as the plan segment.                                                                                                                                                                                                                                              |
+| Reference/research/scene evidence |                               12,288 UTF-8 bytes combined target | four recent views/entries per producer | sum of per-segment `ceil(bytes / 4)` | Exact combined bytes are retained; overage reduces research, then scene, then reference. If a remaining allocation is smaller than the 16-byte marker, the oracle's marker-only exception can exceed that tiny allocation; this is intentional observable behavior, not a second truncation algorithm. |
+| Reference evidence                |                     source-rendered bytes within combined target |                               4 recent | source view bytes / 4 ceiling        | Four are retained; a fifth source observation makes the oldest fall out before rendering (`slice(-4)`).                                                                                                                                                                                                |
+| Research evidence                 | each formatted entry 4,096 UTF-8 bytes before combined reduction |                               4 recent | formatted bytes / 4 ceiling          | Four are retained; a fifth source observation makes the oldest fall out before rendering.                                                                                                                                                                                                              |
+| Scene evidence                    |                     source-rendered bytes within combined target |                               4 recent | rendered bytes / 4 ceiling           | Four are retained; a fifth source observation makes the oldest fall out before rendering.                                                                                                                                                                                                              |
+| Task focus paths                  |                                                              n/a |                         8 unique paths | not estimated by projection          | The first eight unique workspace-read paths in encounter order are retained; a ninth is not used for instruction/knowledge resolution.                                                                                                                                                                 |
+| Disposable evidence cache         |                                                              n/a |               high 64 / low 32 entries | not estimated                        | Size 64 does not evict; insertion number 65 evicts oldest entries down to 32.                                                                                                                                                                                                                          |
+
+Canonical JSON is not ordinary serialization: object keys are sorted, arrays
+retain order, strings use the TypeScript JSON escaping behavior, and numbers,
+booleans, and null retain their JSON representation. The existing Rust
+identity primitive is the starting point, but R7.3 acceptance must include
+Unicode-key and numeric edge cases that are admitted by Tool schemas.
+
+### 14.10 Evidence projection and corrected ToolResult behavior
+
+The provider-visible evidence transform is ordered exactly as follows:
+
+1. Strip valid ANSI CSI sequences and selected C0/DEL controls.
+2. Replace configured non-empty secrets in configured order.
+3. Collapse runs of at least three exactly equal LF-split lines.
+4. Bound each line by UTF-8 bytes at 1,024 by default, using scalar-aligned
+   boundaries and the complete-scalar exception.
+5. Apply the never-worse check to the two non-security reductions together.
+6. Apply total truncation last, with the exact marker and scalar boundary rule.
+
+Sanitization details are frozen. A valid CSI starts with ESC + `[`, ends at a
+final byte in `0x40..0x7e`, and is removed. C0/DEL inside a candidate makes
+the candidate malformed; the ESC is then removed as a control and subsequent
+characters are handled normally. ESC not followed by `[` is removed as a
+control. The sanitizer removes `0x00..0x08`, `0x0b`, `0x0c`, `0x0e..0x1f`,
+and `0x7f`, while preserving tab, LF, CR, and ordinary non-control Unicode
+whitespace. Secret replacement is the fixed token
+`███[REDACTED]███`; empty secrets are skipped, and overlapping/prefix secrets
+follow configured sequential `split/join` order.
+
+Repeated lines use exact JavaScript string equality and UTF-16 `.length` for
+the reduction-size test. The marker is `${line} ×${run}`. Line and total
+limits use exact UTF-8 bytes, never arbitrary UTF-16 offsets. The non-security
+collapse and line-bound transforms are reverted together to `preReduction` if
+the resulting UTF-8 bytes exceed the raw `originalBytes`; the security
+transforms are retained even if their replacement text is larger. Truncation
+always runs after that decision and reports `truncated`, `shownBytes`,
+`originalBytes`, and ordered transformation labels.
+
+For a successful `ToolExecutionResult`, only `summary` is projected. Its
+`output` and status are retained. For every non-success status, only `message`
+is projected. The returned result is a detached result object, while raw
+result data and authoritative history remain unchanged. Workspace revision
+metadata is read from a successful object output when present for the
+disposable model view, never converted into authority. The default evidence
+limits are 32 KiB total and 1 KiB per line; plan and brief segments are 4 KiB;
+reference/research/scene evidence is 12 KiB combined.
+
+### 14.11 Tool visibility, modes, and fingerprints
+
+The exact generic visibility mapping is:
+
+```text
+mode/surface ceiling -> hidden
+permission deny      -> hidden
+permission ask       -> gated (visible, but still Host-gated at execution)
+permission allow     -> available
+```
+
+Registered order is preserved. The provider request contains available and
+gated definitions only. The visible Tool ABI fingerprint is SHA-256 of
+canonical JSON over the visible definitions in registration order, with only
+`name`, `description`, and `inputSchema`. Hidden Tool additions/changes do not
+change it; visible definition/order changes do.
+
+The current TypeScript host tables are frozen as source behavior but are not
+Rust Core domain semantics:
+
+| Mode          | Capability ceiling                                                                                                                                     | Exact Tool-name ceiling                                                                                                                                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `generic`     | workspace read/write, Git inspect, Godot inspect/probe/API/diagnose/LSP/development, process, network, reference inspect, research fetch, self inspect | No exact-name list; capability evaluation applies                                                                                                                                                                                                             |
+| `development` | workspace read/write, Git inspect, Godot inspect/API/development, reference inspect, research fetch, self inspect                                      | `workspace.read`, `workspace.search`, `workspace.apply_text_changeset`, the Godot inspect/API/development names, reference list/read/search, research repository/Godot docs, self read/search; native prepare names additionally require native/mixed surface |
+| `review`      | workspace read, Git inspect, Godot inspect/API/LSP, self inspect                                                                                       | workspace list/read/search, Git status/diff, Godot inspect/API/LSP read names, reference list/read/search, self read/search                                                                                                                                   |
+| `inspection`  | workspace read, Git inspect, Godot inspect/API, reference inspect, research fetch, self inspect                                                        | workspace list/read/search, Godot inspect/API read names, reference list/read/search, research repository/Godot docs, self read/search                                                                                                                        |
+| `planning`    | workspace read, Git inspect, Godot inspect/API, reference inspect, research fetch, self inspect                                                        | The same read-only workspace/Godot/API/reference/research/self names as inspection                                                                                                                                                                            |
+
+The full current exact-name arrays are the executable source of truth in
+`packages/core/src/projection/tool-projector.ts`; R7.3 does not copy those
+Godot names into `siralos-core`. A Host composition supplies the exact allowed
+names/capability decisions. Development native prepare names are visible only
+for `native_only` or `mixed`; script-only, none, or undefined fail closed.
+Review never exposes them regardless of surface.
+
+### 14.12 Cache, staleness, and disposable state
+
+The evidence cache is disposable model-view optimization, not an evidence
+store. Its key is Tool name plus canonical digest of the raw successful
+ToolResult. It uses insertion-order FIFO hysteresis: a set that takes the size
+from 64 to 65 removes the oldest entries until 32 remain. Updating an existing
+Map key does not make it newest under the TypeScript oracle. Failure views are
+not cached. The observable cache surface is `evidenceCacheSize()`; no internal
+Map shape is an ABI.
+
+The cache is bound to the current Task contract revision. On first observation
+or revision change, disposable views are cleared before the new view is stored.
+Raw TaskState evidence, raw Tool results, and Host history are untouched. This
+concrete revision binding is MUST PORT.
+
+The exported `RevisionGuard` and `awaitCurrent` wrappers are not separately
+ported. The only production consumer is the cache's concrete revision change
+check; `awaitCurrent` has no real asynchronous projection caller. The Rust
+candidate therefore must not add an async runtime, task, thread, channel,
+`Arc`, `Mutex`, or `RwLock` merely to reproduce those TypeScript helper names.
+
+### 14.13 R10/ICM and R8/R9 boundaries
+
+R7.3 owns deterministic projection mechanics and accepts explicit generic
+segments/mode/surface/policy inputs. R10 owns the complete Interpretable
+Context Model: PhaseContract runtime/readiness parity, ContextClass artifact
+registry, provenance/staleness compiler, richer `PhaseContextSources`,
+repository-wide policy, and any Live/Pinned/Frozen context model. The current
+`projectPhaseContext` and `toolSurfaceForPhase` helpers remain Host routing
+seams; they are not a license to build the R10 compiler early. No phase may
+default to repository-wide context.
+
+R8/R9 own Godot installation/probe/scene/resource semantic extraction,
+GDScript structure, diagnostics, LSP, native/mixed task meaning, and scene
+evidence production. R7.3 may carry a bounded generic scene-evidence segment
+whose source has already been rendered by those owners. No Godot or GDScript
+semantic type enters `siralos-core::projection`.
+
+### 14.14 Typed observability for later `/context` and `/tools`
+
+R7.3 exposes a detached, provider-neutral snapshot with:
+
+- mode and blocked type/reason;
+- estimated tokens, working maximum, pressure state, ratio, and pressure
+  inputs;
+- whether reduction occurred and the dropped-item count (the current
+  TypeScript request exposes the result indirectly through the projected
+  messages; the typed snapshot makes the observation explicit without
+  changing Host authority);
+- stable, contextual, volatile bytes and segment lists;
+- stable bytes, stable-prefix bytes, and stable fingerprint;
+- Tool availability/gated/hidden counts, visible definitions/order, Tool ABI
+  fingerprint, and ApprovedToolSurface names;
+- projected message/evidence metadata where the caller explicitly requests
+  it, never raw private paths, timestamps, or pointer identity.
+
+Current CLI `/context` renders stable/contextual/volatile bytes, estimated and
+working tokens, pressure, stable fingerprint prefix, and Tool counts/ABI.
+Current `/tools` renders Tool counts and ABI. R7.5 owns those strings and
+commands; R7.3 freezes the typed data only.
+
+### 14.15 Differential plan
+
+The future `context-projection` subject is the only differential subject
+planned for this slice. The corpus is not changed by this review. The final
+scenario set is deliberately compact:
+
+| Scenario id                                   | Required canonical observations                                                                                                                      |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context-projection.estimate`                 | Capacity fields, UTF-8 byte/token estimates, conversation field accounting, and exact structured-value cases                                         |
+| `context-projection.pressure`                 | Inputs, ratio, inclusive threshold matrix, zero/non-positive working maximum, and state                                                              |
+| `context-projection.trim`                     | Original/projected messages, pair order, dropped count, final estimate, invalid transcript behavior, and concrete budgets                            |
+| `context-projection.hard-block`               | Final pressure, blocked type/reason, pressure event, and provider-called `false`                                                                     |
+| `context-projection.segments`                 | Stable/contextual/volatile segments, ordering, serialized system prefix, byte/token fields, stable fingerprint                                       |
+| `context-projection.tool-visibility`          | Visibility states, visible definitions/order, approved names, counts, and Tool fingerprint                                                           |
+| `context-projection.evidence`                 | Projected ToolResult, transformed text, transformation labels, truncation, original/shown UTF-8 bytes, and corrected scalar-boundary cases           |
+| `context-projection.pipeline`                 | Normal/warn/auto/hard application integration, final event order, projected request, and provider-called yes/no                                      |
+| `context-projection.unsupported-tool-calling` | Mode, unsupported blocked outcome/reason, empty Tool projection, projection-recorded yes, and provider-called `false`                                |
+| `context-projection.fingerprints`             | Stable fingerprint invariance under contextual/volatile changes, Tool fingerprint invariance under hidden changes, canonical key/array/Unicode cases |
+
+The canonical record contains only provider-neutral typed values: estimated
+tokens, working maximum, pressure state/inputs, projected messages and drop
+count, blocked type/reason, provider-called yes/no, segments/system prefix,
+byte counts, stable fingerprint, Tool visibility/definitions/order/approved
+names/fingerprint, projected evidence, and evidence metadata. It excludes
+absolute paths, timestamps, pointer identity, Rust Debug output, and
+unordered collection internals. Cache/revision values are included only in a
+scenario when the public cache-size/revision outcome is deliberately under
+test.
+
+These scenarios belong in differential coverage because they compare the
+TypeScript oracle and Rust candidate at the provider/application boundary;
+unit tests alone cannot prove request ownership, event order, provider
+non-invocation, or ApprovedToolSurface coherence.
+
+### 14.16 Evidence assignment
+
+| Boundary/gap                                                  | Evidence layer                                           | Required reason                                                                                                         |
+| ------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Estimator, pressure, trim, segment values/order/serialization | Core unit + differential                                 | Pure deterministic boundaries need exhaustive edge matrices and cross-language outcomes.                                |
+| Evidence sanitization and ToolResult projection               | Core unit + differential + integration                   | Text transforms must match byte-for-byte and must reach the provider-facing copy without changing raw results.          |
+| Secret redaction and control removal                          | Security/adversarial + Core unit + differential          | Secrets and stripped controls must never be restored by never-worse logic.                                              |
+| Corrected Unicode line bounds                                 | Core unit + differential                                 | A valid scalar boundary is the security/correctness property that motivated the oracle correction.                      |
+| Corrected Unicode total truncation                            | Core unit + differential                                 | Marker cost, marker-only output, exact boundary, and supplementary scalar cases must match.                             |
+| Unsupported Tool-calling                                      | Integration + differential                               | It proves the Host blocks before provider invocation with the exact typed reason.                                       |
+| Warn pressure event                                           | Integration + differential                               | It proves event timing and provider continuation at the application boundary.                                           |
+| Auto reduction                                                | Core unit + integration + differential                   | Unit proves selection; integration proves projected request and Host history preservation.                              |
+| Hard block/provider-called `false`                            | Integration + differential + security/adversarial        | No provider or Tool effect may occur after a final hard state.                                                          |
+| Tool visibility/fingerprint                                   | Core unit + differential                                 | Hidden/gated/available states and deterministic registration order are cross-language ABI behavior.                     |
+| R7.2 ApprovedToolSurface coherence                            | Integration + differential + security/adversarial        | The same projected visible list must be used for schema and execution guard; per-call recheck remains tested in R7.2.   |
+| Cache/revision invalidation                                   | Core unit + integration; not differential unless exposed | Cache size and revision clearing are public enough to test locally, but internal Map shape is not a cross-language ABI. |
+| Stable fingerprint invariance                                 | Core unit + differential                                 | Contextual/volatile changes must not change the stable cache identity.                                                  |
+| Tool fingerprint invariance                                   | Core unit + differential                                 | Hidden Tool changes must not change visible ABI; visible schema/order changes must.                                     |
+| Segment canonicalization                                      | Core unit + differential                                 | Canonical JSON and SHA-256 are shared identity behavior, not a Rust debug representation.                               |
+| PhaseContract/ICM and Godot scene semantics                   | Later milestone                                          | R10 and R8/R9 own the producers and richer policy; R7.3 tests only generic seams.                                       |
+
+### 14.17 Minimal Rust ownership proposal
+
+`crates/siralos-core/src/projection/` is the proposed owner of small,
+domain-neutral values and pure functions for capacity, estimation, pressure,
+trim/reduction, segments, ordering, serialization, fingerprints, evidence
+model views, Tool visibility, projected Tool/request outcomes, and the typed
+observability snapshot. It may hold one small explicit disposable cache state
+where the public cache-size and revision invalidation contract requires it.
+
+`siralos-adapters` owns no pure projection policy. It may later adapt an
+external evidence/source producer into the already-rendered generic seam, but
+it does not decide context, pressure, visibility, or authority.
+
+`siralos-cli` owns composition and differential harness wiring only. It does
+not reimplement projection policy or CLI rendering in Core. The dependency
+direction remains `cli → adapters → core`; no new crate is authorized. No
+trait is justified for a single projection implementation, and no async
+runtime or synchronization primitive is justified by the TypeScript object
+graph.
+
+### 14.18 Security acceptance checklist
+
+- [x] Projection is derived, disposable, reconstructable, and model-visible;
+      it never grants capability.
+- [x] Projection never grants Tool execution authority.
+- [x] Provider Tool definitions and R7.2 `ApprovedToolSurface` derive from
+      one projection outcome.
+- [x] Hidden Tools are absent from the request, visible fingerprint, approved
+      names, and execution path.
+- [x] R7.2 permission/approval recheck remains mandatory immediately before
+      invocation.
+- [x] The provider cannot authoritatively choose projection rules, segments,
+      relevance, or pressure limits.
+- [x] Authoritative Host history is never trimmed; only a detached request
+      copy is reduced.
+- [x] Authoritative Tool results and Task evidence are never sanitized in
+      place.
+- [x] Secret redaction and control stripping cannot be reverted by size rules.
+- [x] Cache eviction cannot delete durable evidence.
+- [x] A stale disposable view cannot become authoritative.
+- [x] Core contains no Godot-specific projection semantics.
+- [x] R10/ICM is not pulled into R7.3 prematurely.
+- [x] All ordering, transforms, bounds, fingerprints, and provider decisions
+      are deterministic and time/randomness-free.
+- [x] Capacity, per-line, total, record-count, focus-path, cache, and provider
+      stream bounds remain explicit.
+- [x] No absolute workspace/cache/credential path, timestamp, or private
+      pointer is emitted in a provider-safe canonical differential record.
+
+### 14.19 Post-implementation measurement plan
+
+After implementation, record exactly:
+
+- production Rust LOC by `siralos-core`, `siralos-adapters`, and `siralos-cli`;
+- direct dependency delta;
+- canonical JSON/SHA-256 dependency delta;
+- async runtime, threads, `Arc`, `Mutex`, `RwLock`, and `unsafe`: each yes/no;
+- dynamic dispatch: yes/no, every use, and its concrete justification;
+- stateful projection/cache object count and justification;
+- `context-projection` differential scenario count;
+- Core projection test count;
+- integration/security/adversarial test count;
+- any benchmark only if implementation proves a real hotspot; no benchmark
+  subsystem is authorized by default.
+
+### 14.20 Implementation sequence (frozen plan only)
+
+The authorized future implementation sequence is:
+
+1. Capacity, estimator, and pressure.
+2. Conversation reduction.
+3. ContextSegment values, ordering, serialization, and fingerprints.
+4. Corrected evidence model-view projection.
+5. Generic Tool visibility and ApprovedToolSurface derivation.
+6. ProjectedRequest composition.
+7. R7.2/R7.1 integration.
+8. `context_pressure`, auto-reduction, and hard-block integration.
+9. TypeScript oracle and Rust candidate `context-projection` subject.
+10. Differential corpus promotion with schema/digest regeneration.
+11. Focused Core, integration, security, and adversarial tests.
+12. Full Rust format/clippy/test/architecture gates.
+13. Differential gate.
+14. Full repository gate.
+15. Security and architecture review.
+16. Proportional measurement.
+17. Acceptance/status reconciliation.
+
+This sequence is not executed by the present review.
+
+### 14.21 Authorization
+
+All material projection boundaries are classified; the corrected Unicode
+oracle is explicitly frozen; the Host/R7.1/R7.2 ownership chain, generic Core
+boundary, R10/R8/R9 deferrals, evidence layers, differential record, security
+invariants, Rust ownership, measurement, and implementation sequence are
+unambiguous. No executable file or differential corpus file was changed by
+this review.
+
+**PASS — R7.3 Projection contract frozen; implementation authorized.**
+
+Authorization is limited to the next separately reviewed R7.3 Projection
+Parity implementation. R7.3 remains unimplemented in this commit; R7.4/R7.5
+remain unauthorized; R8-R12 remain not due; R7 remains Active and is not
+marked Verified.
 
 ## Acceptance gates for R7 (evidence design)
 
@@ -1265,6 +1953,7 @@ entry review; R7.3 remains pending review and authorization.
 
 ```text
 R1-R6 — Verified
+R7 — Active
 R7A — Complete (provider protocol contract corrected; evidence boundary frozen)
 R7.1 — Complete (provider contract + deterministic fake provider + bounded
         single model turn at differential parity; corpus version 12, 104
@@ -1277,7 +1966,7 @@ R7.2 — Complete (generic Application Tool Loop parity; corpus version 13,
         domain-neutral CapabilityId; immutable ordered Tool Registry; Tool
         Round one-call/one-result and cancelled-tail pairing; single-flight
         Application loop; closed R7.2 event surface; security review PASS)
-R7.3 — Pending independent review / not implemented
+R7.3 — Authorized / Next (contract frozen; not implemented)
 R7.4-R7.5 — Not authorized
 R8-R12 — Not due
 ```

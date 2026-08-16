@@ -43,7 +43,9 @@ configuration, Skills, and explicitly installed Plugins
 > scenarios at differential parity); **R7.2 � Application Tool Loop
 > parity** is complete (16 `tool-loop` scenarios at differential parity,
 > including the authorization, displayInput UTF-16, and Tool-result
-> status matrices).
+> status matrices); **R7.3 — Projection parity** has a frozen entry
+> contract and is authorized as the next implementation slice, but is not
+> implemented in this checkout.
 
 ## Status vocabulary
 
@@ -283,7 +285,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); R7.2 (Application Tool Loop parity) is complete and evidence-backed (16 `tool-loop` scenarios at differential parity)
+- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); R7.2 (Application Tool Loop parity) is complete and evidence-backed (16 `tool-loop` scenarios at differential parity); R7.3 (Projection parity) has a frozen contract and is authorized as the next implementation slice, but is not implemented.
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the
