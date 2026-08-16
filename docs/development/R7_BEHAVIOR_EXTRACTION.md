@@ -431,7 +431,15 @@ Minimal set required before R7.1 implementation begins:
 `provider-turn.eof-no-completion`, `provider-turn.event-after-completed`,
 `provider-turn.cancelled`, `provider-turn.unknown-event`,
 `provider-turn.malformed-known-variant`, `provider-turn.result-detach.*`
-(≈ 13 scenarios; `result-detach` is a family). Later scenarios for complete
+(≈ 13 scenarios; `result-detach` is a family), plus
+`provider-turn.invalid-transcript` for the frozen transcript-before-use
+acceptance contract.
+
+**R7.1 implementation status:** the minimal set is complete — 18
+`provider-turn` scenarios (including the `result-detach` family and the
+invalid-transcript case) hold differential parity (corpus schema 3, corpus
+version 12, 104 scenario files; verified executable baseline
+3a08a86605f0395244a55eaab1b8db84de22d7f7). Later scenarios for complete
 R7: the rest of `provider-turn`, all `tool-loop` (including the R7.2
 invalid-call pairing scenarios), `context-projection`, `user-config`, and
 `cli-session` (planned ≈ 44 scenario rows; exact counts finalized when each
@@ -584,6 +592,9 @@ model turn** (exactly one task):
 ```text
 R1-R6 — Verified
 R7A — Complete (provider protocol contract corrected; evidence boundary frozen)
-R7.1 — Ready to begin
+R7.1 — Complete (provider contract + deterministic fake provider + bounded
+        single model turn at differential parity; corpus version 12, 104
+        scenario files, 18 provider-turn scenarios)
+R7.2 — Candidate next slice, pending review/authorization
 R8-R12 — Not due
 ```

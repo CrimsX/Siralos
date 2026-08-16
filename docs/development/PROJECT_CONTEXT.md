@@ -9,8 +9,8 @@ Migration track: Stage 3R
 Current completed milestone: R6
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 is the next implementation step
-Last verified commit: 99ee902c1c61927070f1249ee16aa276eff24b2b
+R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 is the next implementation step pending review
+Last verified commit: 3a08a86605f0395244a55eaab1b8db84de22d7f7
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -187,6 +187,24 @@ authority can never widen the activation request. R6
 implements no Plugin
 system, no marketplace, no provider/tool integration, and no Godot
 Domain.
+R7.1 added the provider contract and the bounded single model turn to
+the Rust candidate: `siralos-core::provider` owns the provider-neutral
+request/event/conversation/result types, the external event trust
+boundary (unknown or malformed discriminators fail closed before typed
+acceptance), the seven frozen turn dimensions with inclusive bounds,
+the shared bounded-turn accounting core, the application collector
+(transcript validation before provider use, completion/EOF/cancellation
+precedence, execute/invalid tool-call proposals, typed failures with
+exact reference messages), transcript pairing validation, and the
+bounded tool-result detach boundary; `siralos-adapters::provider` owns
+the deterministic fake provider (id `deterministic-fake`, echo,
+16-code-point chunking, generic list/read/search proposals) and the
+strict bounded-turn collector. The differential corpus gained the
+`provider-turn` subject with 18 required scenarios (corpus version 12,
+104 scenario files); all required applicable scenarios match and the
+complete local repository gate passes (verified executable baseline
+3a08a86605f0395244a55eaab1b8db84de22d7f7). R7.1 implements no Tool
+Round, no projection, no configuration, and no CLI session (R7.2-R7.5).
 
 ### Target architecture
 
@@ -235,7 +253,7 @@ R3      COMPLETE
 R4      COMPLETE
 R5      COMPLETE
 R6      COMPLETE
-R7      NEXT
+R7      ACTIVE
 R8-R12  NOT DUE
 ```
 
@@ -245,15 +263,15 @@ Status changes require executable evidence and an update to
 
 ## 4. Stage 3R migration track
 
-| Milestone | Scope                                                                   | Status   |
-| --------- | ----------------------------------------------------------------------- | -------- |
-| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified |
-| R2        | Differential Behavioral Harness                                         | Verified |
-| R3        | Domain-Neutral Core                                                     | Verified |
-| R4        | Generic Workspace / Project Foundation                                  | Verified |
-| R5        | Generic Language Intelligence                                           | Verified |
-| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified |
-| R7        | Providers / Tools / CLI                                                 |
+| Milestone | Scope                                                                   | Status                 |
+| --------- | ----------------------------------------------------------------------- | ---------------------- |
+| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified               |
+| R2        | Differential Behavioral Harness                                         | Verified               |
+| R3        | Domain-Neutral Core                                                     | Verified               |
+| R4        | Generic Workspace / Project Foundation                                  | Verified               |
+| R5        | Generic Language Intelligence                                           | Verified               |
+| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified               |
+| R7        | Providers / Tools / CLI                                                 | Active (R7.1 complete) |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
 | R10       | H1 / H2 / ICM / H3 parity                                               |

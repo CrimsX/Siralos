@@ -230,6 +230,41 @@ R7.1 to begin under the R7 porting gate. This authorization is limited to
 R7.1: it does not satisfy R7 overall, authorize R7.2+ or R8+, or satisfy any
 Stage-4 entry gate.
 
+R7.1 is complete: the provider contract and the bounded single model turn
+live in `siralos-core::provider` (provider-neutral `ModelRequest`/
+`ModelEvent`/`ConversationItem`/`ToolDefinition`/`ToolExecutionResult`
+types; the external event trust boundary `validate_external_event` — the
+discriminator is authoritative and unknown or malformed runtime events
+fail closed before typed acceptance; the seven frozen turn dimensions with
+inclusive bounds; the shared `BoundedTurnState` accounting core; the
+application collector with transcript validation before provider use,
+strict provider-order consumption, completion/EOF/cancellation precedence,
+execute/invalid tool-call proposals with deterministic `invalid-call-N`
+synthetic ids, and typed failures whose external messages match the
+reference exactly; transcript pairing validation; and the bounded
+tool-result detach boundary), and the deterministic fake provider plus the
+strict bounded-turn collector live in `siralos-adapters::provider`
+(identity `deterministic-fake`, deterministic echo in 16-code-point
+chunks that never split a Unicode scalar value, generic
+workspace.list/read/search proposals gated on tool availability,
+previous-turn result isolation, cooperative cancellation). The
+differential corpus gained the `provider-turn` subject with 18 required
+scenarios (corpus schema 3, corpus version 12, 104 scenario files):
+basic echo/tool-call turns, the exact 64 KiB assistant-text boundary,
+multibyte UTF-8 accounting, the per-dimension tool-call bounds and the
+aggregate 256 KiB boundary, duplicate/empty-call application semantics,
+EOF-without-completion and post-completion rejection, deterministic
+cancellation, unknown/malformed event protocol failures, structurally
+invalid transcript blocking, and the tool-result detach family — all
+required applicable scenarios hold differential parity between the
+TypeScript reference and the Rust candidate
+(`npm run check:differential` exit 0; 100/100 applicable required
+scenarios matched). The complete local repository gate
+(`npm run check`, `cargo deny check`, `git diff --check`) passes with
+verified executable baseline 3a08a86605f0395244a55eaab1b8db84de22d7f7.
+R7.1 verification does not satisfy R7 overall, authorize R7.2+ or R8+, or
+satisfy any Stage-4 entry gate.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:

@@ -106,9 +106,9 @@ export function validateProjectContext(input) {
     !input.context.includes("R4      COMPLETE") ||
     !input.context.includes("R5      COMPLETE") ||
     !input.context.includes("R6      COMPLETE") ||
-    !input.context.includes("R7      NEXT")
+    !input.context.includes("R7      ACTIVE")
   ) {
-    violations.push("project context does not record R4/R5/R6 complete and R7 next");
+    violations.push("project context does not record R4/R5/R6 complete and R7 active");
   }
 
   const sources = {

@@ -47,7 +47,7 @@ function validInput() {
       "R4      COMPLETE",
       "R5      COMPLETE",
       "R6      COMPLETE",
-      "R7      NEXT",
+      "R7      ACTIVE",
       ...sections.map((section, index) => `## ${index + 1}. ${section}`),
     ].join("\n"),
     agents: "Read docs/development/PROJECT_CONTEXT.md first.",
