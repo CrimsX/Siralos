@@ -202,7 +202,14 @@ of the authorizing Host), so a narrower final authority fails typed
 (`CAPABILITY_DENIED`) with zero mutation and zero session
 consumption, a wider final authority can never widen the activation
 request, and equal lifecycle generations provide no
-authority-transfer power.
+authority-transfer power. Provisional-effect authority is
+mechanically proven through the production Component boundary: a
+guest CAN invoke host-mediated effects during bind, before the
+final commit, and those effects are mediated by exactly the grant
+the final commit authorizes, because `DomainHost::activate()` is
+synchronous with an immutable Host authority for the whole call
+(the conformance guest exercises permitted and out-of-grant
+bind-time effects deterministically).
 R6 verification does not authorize R7 work or satisfy any later
 migration or Stage-4 entry gate.
 
