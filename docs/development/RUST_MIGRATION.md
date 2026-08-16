@@ -458,10 +458,10 @@ boundary (and the candidate's instrumentation wrapper); the loop receives
 version 13). No performance claim or benchmark is made.
 
 Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete; R7.2
-Complete (evidence-backed); R7.3 Projection parity contract reconciled;
-oracle corrected and precedence pinned locally; implementation blocked pending
-independent review; R7.4-R7.5 not authorized; R8-R12 not due. R7 is not
-marked Verified.
+Complete (evidence-backed); R7.3 Projection parity contract frozen and
+reconciled, precedence pinned locally; independent review PASS — authorized
+as the next implementation slice, not yet implemented; R7.4-R7.5 not
+authorized; R8-R12 not due. R7 is not marked Verified.
 
 ### R7.3 pre-port projection oracle correction closure
 
@@ -496,11 +496,14 @@ provider-request ownership, the differential/security evidence plan, and the
 minimal domain-neutral Rust ownership proposal. Its original result was
 **PASS — R7.3 Projection contract frozen; implementation authorized**.
 
-That original implementation authorization is superseded locally by the
-integrated oracle remediation below. R7.3 remains otherwise contract-frozen,
-but authorization is temporarily suspended until the remediation is
-independently reviewed. No R7.3 executable Rust code, differential corpus
-promotion, R7.4/R7.5 work, or R8-R12 work is included here.
+The follow-up independent review of the integrated remediation lineage
+(`461f290b3d3d778a3bef4d25a895338efcdf315c` and
+`ea145a14a89fb5e6b9e2988eddb97d65d2e37793` reconciled in §14.4 and pinned in
+`8e5384c6b188cbaf314f9e72daa8b89368bbd1c8`) has now returned **PASS** on that
+lineage and the reconciled §14 contract. R7.3 remains contract-frozen and is
+now authorized as the next implementation slice. No R7.3 executable Rust code,
+differential corpus promotion, R7.4/R7.5 work, or R8-R12 work is included at
+this documentation commit.
 
 ### R7.3 integrated evidence-line oracle remediation
 
@@ -540,8 +543,10 @@ correction remains preserved at
 Rust implementation baseline remains
 `73db8e89c8f670454927ca7ed7554e17d33ea606`. The documentation-only
 reconciliation after this executable/test commit is not the executable
-baseline. R7.3 Rust implementation remains blocked pending independent
-review of the new precedence pin and its predecessors.
+baseline. Independent review of the `461f290`/`ea145a1`/`8e5384c` lineage and
+reconciled §14 contract has now returned PASS; R7.3 is authorized as the next
+implementation slice and remains not yet implemented at this documentation
+commit.
 
 ## Porting gate
 

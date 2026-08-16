@@ -9,8 +9,8 @@ Migration track: Stage 3R
 Current completed milestone: R7.2
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Next implementation slice: R7.3 - Projection parity (contract reconciled; oracle corrected and precedence pinned locally; implementation blocked pending independent review)
-R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 (generic Application Tool Loop parity) is complete and evidence-backed (docs/development/R7_BEHAVIOR_EXTRACTION.md §13); the pre-port R7.3 projection oracle correction, integrated line-bound remediation, and terminal-marker precedence pin are verified locally (docs/development/R7_BEHAVIOR_EXTRACTION.md §14). R7.3 remains reconciled but implementation is blocked pending independent review and is not present.
+Next implementation slice: R7.3 - Projection parity (contract frozen and reconciled; oracle corrected and precedence pinned locally; independent review PASS — authorized as next implementation slice, not yet implemented)
+R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 (generic Application Tool Loop parity) is complete and evidence-backed (docs/development/R7_BEHAVIOR_EXTRACTION.md §13); the pre-port R7.3 projection oracle correction, integrated line-bound remediation, and terminal-marker precedence pin are verified locally (docs/development/R7_BEHAVIOR_EXTRACTION.md §14). Independent review has returned PASS — R7.3 contract frozen and authorized as the next implementation slice; no Rust implementation is present at this documentation commit.
 Last verified commit: ea145a14a89fb5e6b9e2988eddb97d65d2e37793
 Latest verified executable worktree: ea145a14a89fb5e6b9e2988eddb97d65d2e37793
 Historical R7.2 verified Rust implementation commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
@@ -295,15 +295,15 @@ Status changes require executable evidence and an update to
 
 ## 4. Stage 3R migration track
 
-| Milestone | Scope                                                                   | Status                                                                                                        |
-| --------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified                                                                                                      |
-| R2        | Differential Behavioral Harness                                         | Verified                                                                                                      |
-| R3        | Domain-Neutral Core                                                     | Verified                                                                                                      |
-| R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                      |
-| R5        | Generic Language Intelligence                                           | Verified                                                                                                      |
-| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                      |
-| R7        | Providers / Tools / Projection / CLI                                    | Active (R7.3 precedence reconciled locally; implementation blocked pending independent review; R7.2 complete) |
+| Milestone | Scope                                                                   | Status                                                                                                                               |
+| --------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified                                                                                                                             |
+| R2        | Differential Behavioral Harness                                         | Verified                                                                                                                             |
+| R3        | Domain-Neutral Core                                                     | Verified                                                                                                                             |
+| R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                                             |
+| R5        | Generic Language Intelligence                                           | Verified                                                                                                                             |
+| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                                             |
+| R7        | Providers / Tools / Projection / CLI                                    | Active (R7.3 contract frozen and reconciled; independent review PASS — authorized as next slice; R7.2 complete; not yet implemented) |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
 | R10       | H1 / H2 / ICM / H3 parity                                               |

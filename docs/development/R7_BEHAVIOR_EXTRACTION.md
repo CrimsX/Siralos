@@ -1248,14 +1248,14 @@ authorization. The completed entry review is recorded below.
 
 ## 14. R7.3 Entry Review — Projection Contract
 
-Status: **PASS — R7.3 contract frozen; integrated oracle remediation complete
-locally; awaiting independent review**.
+Status: **PASS — R7.3 contract frozen; integrated oracle remediation and
+terminal-marker precedence pinned; independent review PASS — authorized as
+next implementation slice**.
 This section records the independent entry review against the corrected
-TypeScript oracle. The original entry review froze a future, separately
-reviewed implementation slice; its authorization is now suspended pending
-independent review of the integrated oracle remediation below. It does not
-contain the implementation, promote a differential corpus subject, or mark R7
-Verified.
+TypeScript oracle and the follow-up independent review of the integrated
+remediation lineage. The contract is frozen; R7.3 is authorized as the next
+implementation slice. This record does not contain the Rust implementation
+itself, promote a differential corpus subject, or mark R7 Verified.
 
 ### 14.1 Scope, entry state, and audit result
 
@@ -1451,8 +1451,10 @@ terminal-marker precedence case and the normal marker-fits-line case. The
 changes affect only detached model-visible evidence; raw `ToolExecutionResult`
 values, Host history, Task evidence, workspace state, capability, and Tool
 authority are unchanged. No R7.3 Rust implementation or differential corpus
-promotion exists, and implementation remains blocked pending independent
-review of this precedence clarification.
+promotion exists at this documentation commit. The lineage including that
+precedence pin and its documentation reconciliation
+`8e5384c6b188cbaf314f9e72daa8b89368bbd1c8` has been independently reviewed and
+returned PASS (see §14.21).
 
 ### 14.5 R7.2 ApprovedToolSurface integration
 
@@ -1960,10 +1962,10 @@ After implementation, record exactly:
 - any benchmark only if implementation proves a real hotspot; no benchmark
   subsystem is authorized by default.
 
-### 14.20 Implementation sequence (frozen plan only)
+### 14.20 Implementation sequence (frozen, now authorized)
 
-The frozen future implementation sequence is not executable until the
-integrated oracle remediation is independently reviewed:
+The frozen implementation sequence is now authorized following independent review PASS
+of the integrated oracle remediation lineage:
 
 1. Capacity, estimator, and pressure.
 2. Conversation reduction.
@@ -1983,7 +1985,7 @@ integrated oracle remediation is independently reviewed:
 16. Proportional measurement.
 17. Acceptance/status reconciliation.
 
-This sequence is not executed by the present review.
+This sequence is the authorized implementation order for the next slice.
 
 ### 14.21 Authorization
 
@@ -1995,14 +1997,31 @@ unambiguous. The original entry review changed no executable file or
 differential corpus file; the later executable remediation and precedence pin
 are recorded in §14.4.
 
-**PASS — R7.3 evidence-bound precedence clarified; awaiting independent
-review.**
+**PASS — R7.3 contract frozen; independent review PASS — authorized as next
+implementation slice.**
 
-The projection contract is reconciled, but implementation authorization is
-temporarily suspended until an independent review of
-`ea145a14a89fb5e6b9e2988eddb97d65d2e37793` and its predecessors returns PASS.
-R7.3 remains unimplemented; R7.4/R7.5 remain unauthorized; R8-R12 remain not
-due; R7 remains Active and is not marked Verified.
+Independent review of the remediation lineage
+(`461f290b3d3d778a3bef4d25a895338efcdf315c` — integrated evidence line bounds,
+`ea145a14a89fb5e6b9e2988eddb97d65d2e37793` — terminal truncation-marker
+precedence, and `8e5384c6b188cbaf314f9e72daa8b89368bbd1c8` — final
+pre-authorization documentation commit and reconciled §14) has returned **PASS**
+on the reconciled contract and its remediations. Specifically confirmed:
+(1) integrated evidence line bounding is structural and mandatory,
+(2) repeat collapse alone is subject to the never-worse rule,
+(3) security transforms cannot be reverted by later reduction decisions,
+(4) Unicode scalar boundaries and the impossible-sub-scalar exception remain
+correct, (5) final truncation occurs after line bounding,
+(6) the complete terminal marker `\n… [truncated]` is the narrow deliberate
+second line-bound exception, (7) provider-visible Tool definitions and
+`ApprovedToolSurface` derive coherently from one projection while R7.2 retains
+per-call authorization, (8) projection is disposable model context and grants
+no execution authority, (9) R8/R9 retain Godot-specific semantics,
+(10) R10 retains PhaseContract/full ICM/context-compiler work, and
+(11) no R7.3 Rust implementation currently exists.
+
+R7.3 is authorized as the next implementation slice and remains unimplemented
+at this documentation commit; R7.4/R7.5 remain not authorized; R8-R12 remain
+not due; R7 remains Active and is not marked Verified.
 
 ## Acceptance gates for R7 (evidence design)
 
@@ -2037,8 +2056,9 @@ R7.2 — Complete (generic Application Tool Loop parity; corpus version 13,
         domain-neutral CapabilityId; immutable ordered Tool Registry; Tool
         Round one-call/one-result and cancelled-tail pairing; single-flight
         Application loop; closed R7.2 event surface; security review PASS)
-R7.3 — Contract reconciled; oracle corrected and precedence pinned; implementation
-        blocked pending independent review
+R7.3 — Contract frozen and reconciled; oracle corrected and precedence pinned;
+        independent review PASS — authorized as next implementation slice,
+        not yet implemented
 R7.4-R7.5 — Not authorized
 R8-R12 — Not due
 ```

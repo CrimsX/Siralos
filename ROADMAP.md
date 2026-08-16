@@ -145,7 +145,7 @@ unsafe filesystem or process boundary intentionally fails closed.
   (Provider Contract + Deterministic Fake Provider + Bounded Single
   Model Turn parity) is complete (corpus version 13, 120 scenario
   files, 18 `provider-turn` scenarios at differential parity); R7.2
-  (Application Tool Loop parity) is complete (corpus version 13, 120 scenario files, 16 `tool-loop` scenarios at differential parity, including authorization, displayInput UTF-16, and Tool-result status matrices). R7.3 Projection parity has a reconciled contract with terminal-marker precedence pinned locally; implementation is blocked pending independent review and is not implemented.
+  (Application Tool Loop parity) is complete (corpus version 13, 120 scenario files, 16 `tool-loop` scenarios at differential parity, including authorization, displayInput UTF-16, and Tool-result status matrices). R7.3 Projection parity contract is frozen and reconciled with terminal-marker precedence pinned locally; independent review has returned PASS — authorized as the next implementation slice and not yet implemented.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -354,7 +354,7 @@ Implemented (R4 — Generic Workspace / Project Foundation):
 Current: Stage 3R R7 is Active (R7A behavior extraction and
 provider-protocol remediation complete; R7.1 — Provider Contract +
 Deterministic Fake Provider + Bounded Single Model Turn parity — complete at
-differential parity); R7.2 — Application Tool Loop parity — complete and evidence-backed; R7.3 — Projection parity — contract reconciled, terminal-marker precedence pinned locally, and implementation blocked pending independent review). The complete
+differential parity); R7.2 — Application Tool Loop parity — complete and evidence-backed; R7.3 — Projection parity — contract frozen and reconciled, terminal-marker precedence pinned locally; independent review PASS — authorized as the next implementation slice, not yet implemented). The complete
 internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 

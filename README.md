@@ -43,9 +43,10 @@ configuration, Skills, and explicitly installed Plugins
 > scenarios at differential parity); **R7.2 � Application Tool Loop
 > parity** is complete (16 `tool-loop` scenarios at differential parity,
 > including the authorization, displayInput UTF-16, and Tool-result
-> status matrices); **R7.3 — Projection parity** has a reconciled contract and
-> a locally pinned terminal-marker precedence; implementation is blocked pending
-> independent review and is not present in this checkout.
+> status matrices); **R7.3 — Projection parity** contract frozen and
+> reconciled with locally pinned terminal-marker precedence; independent
+> review has returned **PASS** — **authorized as the next implementation slice**, not yet
+> implemented in this checkout.
 
 ## Status vocabulary
 
@@ -285,7 +286,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); R7.2 (Application Tool Loop parity) is complete and evidence-backed (16 `tool-loop` scenarios at differential parity); R7.3 (Projection parity) has a reconciled contract with terminal-marker precedence pinned locally, while implementation remains blocked pending independent review.
+- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); R7.2 (Application Tool Loop parity) is complete and evidence-backed (16 `tool-loop` scenarios at differential parity); R7.3 (Projection parity) contract frozen and reconciled, terminal-marker precedence pinned locally; independent review **PASS** — **authorized as the next implementation slice**, not yet implemented.
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the
