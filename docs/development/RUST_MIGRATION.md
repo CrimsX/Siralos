@@ -462,6 +462,26 @@ Complete (evidence-backed); R7.3 next candidate slice pending independent
 review/authorization; R7.4-R7.5 not authorized; R8-R12 not due. R7 is not
 marked Verified.
 
+### R7.3 pre-port projection oracle correction closure
+
+The independent R7.3 entry review was interrupted by a defect in the
+TypeScript projection oracle before any Rust R7.3 implementation existed.
+Commit `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc` (`fix(core): preserve
+Unicode boundaries in evidence projection`) corrected the reference before
+Rust porting resumed. Its valid-Unicode-boundary search prevents UTF-16
+surrogate-pair splits in UTF-8-bounded line and total-truncation projection;
+the focused projection regressions passed, and the correction changes no
+Host authority, raw evidence/history, tool result, capability, or provider
+contract.
+
+The corrected TypeScript oracle is the source for a restarted independent
+R7.3 entry review. This closure does not implement R7.3, add a projection
+differential subject, promote the corpus, or authorize R7.3. The latest
+verified executable worktree is `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`;
+the historical R7.2 verified Rust implementation baseline remains
+`73db8e89c8f670454927ca7ed7554e17d33ea606`. Documentation-only reconciliation
+after the executable correction does not replace either evidence pointer.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:

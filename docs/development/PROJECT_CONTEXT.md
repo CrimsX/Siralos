@@ -9,17 +9,21 @@ Migration track: Stage 3R
 Current completed milestone: R7.2
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 (generic Application Tool Loop parity) is complete and evidence-backed (docs/development/R7_BEHAVIOR_EXTRACTION.md �13)
-Last verified commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
+R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 (generic Application Tool Loop parity) is complete and evidence-backed (docs/development/R7_BEHAVIOR_EXTRACTION.md �13); the pre-port R7.3 projection oracle correction is verified and R7.3 remains pending independent entry review.
+Last verified commit: 4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc
+Latest verified executable worktree: 4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc
+Historical R7.2 verified Rust implementation commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
-The verified-commit field is an evidence pointer, not a wall-clock status. It
-names the exact baseline whose worktree content passed the full `npm run check`
-gate (verified parent/baseline model): documentation-only metadata
-reconciliation commits after that baseline do not alter executable behavior,
-and the latest successful required CI run on `main` remains the publication
-authority after later documentation-only commits.
+The latest verified executable worktree field is an evidence pointer, not a
+wall-clock status. It names the exact executable baseline whose worktree
+content passed the full `npm run check` gate. The historical R7.2 verified Rust
+implementation commit remains recorded separately because the projection
+oracle correction is a later TypeScript-only executable change. Documentation-
+only metadata reconciliation commits after `4b805d4` do not alter executable
+behavior, and the latest successful required CI run on `main` remains the
+publication authority after later documentation-only commits.
 
 ## 1. Product definition
 

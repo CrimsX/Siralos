@@ -1201,6 +1201,50 @@ implementation change follows this order:
 12. Proportional measurement (§13.20).
 13. Acceptance/evidence reconciliation (status surfaces + evidence record).
 
+### 13.24 R7.3 pre-port projection oracle correction
+
+The independent R7.3 entry review was interrupted before any Rust
+implementation because the TypeScript projection oracle had a Unicode-boundary
+defect. Commit `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc` (`fix(core): preserve
+Unicode boundaries in evidence projection`), with parent
+`da757958bc3cbfd83a37bfb1346ffcbab304a591`, is the complete executable
+correction. It changes only
+`packages/core/src/projection/evidence-projector.ts` and
+`packages/core/src/projection/projection.test.ts`.
+
+The defect was an arbitrary JavaScript UTF-16 code-unit prefix search inside a
+UTF-8 byte bound. A search could stop between the high and low surrogates of a
+supplementary scalar, producing a lone surrogate that `TextEncoder` then
+encoded as a replacement sequence; the retained text and byte accounting were
+therefore not a valid original prefix. The corrected contract enumerates valid
+Unicode-scalar boundaries and binary-searches only those candidates by exact
+UTF-8 byte length. A supplementary pair is never split. An already-lone
+surrogate present in source text remains representable as source data; the
+correction prevents the projector from creating one.
+
+The same boundary rule governs bounded lines and total truncation. If an
+artificial line bound cannot fit the next complete scalar, the scalar is kept
+intact rather than split; the production 1 KiB bound can fit every four-byte
+scalar. Total truncation retains the longest complete scalar prefix that fits
+with the exact `\n… [truncated]` marker, preserving its explicit marker-only
+behavior when the marker itself exceeds the budget. The correction affects
+only the detached model-visible `ModelEvidenceView`/projected message copy;
+raw `ToolExecutionResult` data, Host history, workspace/tool authority,
+capabilities, and provider authority are unchanged.
+
+The correction is covered by focused regressions for a supplementary scalar at
+a line boundary, a sub-scalar line bound, truncation immediately below and at
+the inclusion threshold, no surrogate-pair split, and retained scalar order.
+The focused projection command passed 3 test files and 52 tests. The
+differential corpus remains unchanged: schema version 3, corpus version 13,
+120 scenario files, digest
+`6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490`.
+
+This is a pre-port oracle correction only. No R7.3 Rust implementation,
+projection subject, corpus promotion, or R7.3 authorization is included. The
+corrected TypeScript oracle is the source for a restarted independent R7.3
+entry review; R7.3 remains pending review and authorization.
+
 ## Acceptance gates for R7 (evidence design)
 
 1. All five surfaces traced (this document, §2).
