@@ -366,6 +366,35 @@ describe("evidence projector", () => {
     expect(view.transformations).toEqual(["bound-lines", "truncate"]);
   });
 
+  it("preserves the terminal truncation marker when it exceeds the configured line bound", () => {
+    const raw = "a".repeat(100);
+    const markerLine = "… [truncated]";
+    const markerLineBytes = encoder.encode(markerLine).length;
+    const tinyBound = createEvidenceProjector({
+      maxLineBytes: 3,
+      maxTotalBytes: 1,
+    }).projectForModel({ rawText: raw });
+    const fittingBound = createEvidenceProjector({
+      maxLineBytes: markerLineBytes,
+      maxTotalBytes: 1,
+    }).projectForModel({ rawText: raw });
+
+    expect(tinyBound.truncated).toBe(true);
+    expect(tinyBound.transformations).toEqual(["bound-lines", "truncate"]);
+    expect(tinyBound.text).toBe(`\n${markerLine}`);
+    expect(tinyBound.text).not.toContain("�");
+    expect(lineByteLengths(tinyBound.text)).toEqual([0, markerLineBytes]);
+    expect(lineByteLengths(tinyBound.text)[1]).toBeGreaterThan(3);
+    expect(tinyBound.shownBytes).toBe(encoder.encode(tinyBound.text).length);
+    expect(tinyBound.originalBytes).toBe(encoder.encode(raw).length);
+
+    expect(fittingBound.truncated).toBe(true);
+    expect(fittingBound.text).toBe(`\n${markerLine}`);
+    expect(lineByteLengths(fittingBound.text)).toEqual([0, markerLineBytes]);
+    expect(lineByteLengths(fittingBound.text)[1]).toBeLessThanOrEqual(markerLineBytes);
+    expect(fittingBound.transformations).toEqual(["bound-lines", "truncate"]);
+  });
+
   it("bounds lines at Unicode-scalar boundaries", () => {
     const raw = `${"a".repeat(1021)}😀`;
     const bounded = boundLineLength(raw, 1024);
