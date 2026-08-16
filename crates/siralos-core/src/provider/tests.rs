@@ -1060,6 +1060,43 @@ fn transcript_duplicate_call_id() {
 }
 
 #[test]
+fn resolved_call_ids_can_be_reused_in_a_later_round() {
+    // The reference removes a resolved call from its pending set, so a
+    // later tool round may reuse the same call id while each round keeps
+    // its one-call/one-result pairing.
+    let items = vec![
+        user("hello"),
+        ConversationItem::AssistantToolCall {
+            call_id: "c".to_owned(),
+            tool_name: "a.tool".to_owned(),
+            input: AssistantToolCallInput::Present(json!({})),
+        },
+        ConversationItem::ToolResult {
+            call_id: "c".to_owned(),
+            tool_name: "a.tool".to_owned(),
+            result: ToolExecutionResult::Success {
+                output: json!({}),
+                summary: "one".to_owned(),
+            },
+        },
+        ConversationItem::AssistantToolCall {
+            call_id: "c".to_owned(),
+            tool_name: "a.tool".to_owned(),
+            input: AssistantToolCallInput::Present(json!({})),
+        },
+        ConversationItem::ToolResult {
+            call_id: "c".to_owned(),
+            tool_name: "a.tool".to_owned(),
+            result: ToolExecutionResult::Success {
+                output: json!({}),
+                summary: "two".to_owned(),
+            },
+        },
+    ];
+    assert_eq!(validate_conversation_items(&items), Ok(()));
+}
+
+#[test]
 fn transcript_duplicate_result_reported_as_orphan() {
     // The reference deletes a call from its pending set once resolved, so
     // a second result for the same id is an orphan, not a duplicate.

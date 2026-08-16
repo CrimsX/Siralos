@@ -166,7 +166,14 @@ pub fn validate_conversation_items(
                 if call_id.is_empty() {
                     return Err(TranscriptFailure::EmptyCallId);
                 }
-                if pending.iter().any(|(id, _, _)| id == call_id) {
+                // The reference deletes a call from its pending set as
+                // soon as it is resolved, so reusing a call id in a
+                // later tool round is legal; only an unresolved
+                // duplicate within the current pending window fails.
+                if pending
+                    .iter()
+                    .any(|(id, _, resolved)| id == call_id && !resolved)
+                {
                     return Err(TranscriptFailure::DuplicateCallId {
                         call_id: call_id.clone(),
                     });
@@ -174,24 +181,21 @@ pub fn validate_conversation_items(
                 pending.push((call_id.clone(), tool_name.clone(), false));
             }
             ConversationItem::ToolResult { call_id, .. } => {
+                // The reference removes a call from its pending set as
+                // soon as it is resolved, so only unresolved entries
+                // are eligible for pairing. A result matching an
+                // already-resolved call (including a second result for
+                // the same id) is therefore an orphan result, exactly
+                // like a result without any recorded call.
                 let mut found = false;
-                let mut resolved = false;
                 for (id, _, resolved_flag) in &mut pending {
-                    if id == call_id {
+                    if id == call_id && !*resolved_flag {
+                        *resolved_flag = true;
                         found = true;
-                        if *resolved_flag {
-                            resolved = true;
-                        } else {
-                            *resolved_flag = true;
-                        }
                         break;
                     }
                 }
-                // The reference removes a call from its pending set as
-                // soon as it is resolved, so a second result for the
-                // same id is reported as an orphan result, exactly like
-                // a result without any recorded call.
-                if !found || resolved {
+                if !found {
                     return Err(TranscriptFailure::OrphanResult {
                         call_id: call_id.clone(),
                     });
