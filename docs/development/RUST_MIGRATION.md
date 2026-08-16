@@ -292,6 +292,76 @@ bd335190696f3662e242407c89d7821483d7fa24. R7.1 verification does not
 satisfy R7 overall, authorize R7.2+ or R8+, or satisfy any Stage-4 entry
 gate.
 
+### R7.1 final acceptance
+
+Comparison base: `2c57e8f` (docs: authorize R7.1 after R7A closure) — the
+commit immediately before the R7.1 implementation commits began. Final
+executable: `bd335190696f3662e242407c89d7821483d7fa24` (the cancellation-
+authority remediation commit; the complete repository gate passes on that
+exact worktree).
+
+Production Rust added by R7.1 (`git diff --numstat 2c57e8f..bd33519`):
+
+```text
+siralos-core provider production      1,310 lines (conversation 182, event 445,
+                                      mod 51, result 259, turn 373)
+siralos-adapters provider production    571 lines (deterministic_fake 284,
+                                      mod 23, strict_turn 264)
+siralos-cli provider-turn integration 1,024 added / 6 removed in harness.rs
+                                      (candidate dispatch, validation, and
+                                      canonical records; the file mixes
+                                      production code and unit tests)
+test code (excluded from production): core provider tests.rs 1,350; adapters
+                                      provider tests.rs 833
+```
+
+Dependency delta: one new direct Core dependency — `serde_json` (an existing
+workspace dependency newly referenced directly by siralos-core; already in the
+tree via adapters/cli; no new crate entered Cargo.lock). No new direct
+adapter or CLI dependencies.
+
+Concurrency/authority delta: async runtime — no; threads — no; Arc — no;
+Mutex — no; RwLock — no; atomics — no; unsafe — no (verified by the
+`unsafe_code = "forbid"` lint and a token audit of both provider modules).
+Dynamic dispatch — no (the provider seam uses a generic associated iterator
+type, static dispatch); `Box<dyn>` — none. JSON usage is boundary-justified:
+`serde_json::Value` at the external event validation boundary, serialized
+Tool-argument byte accounting, Tool-result detach size accounting, and
+differential canonicalization — no internal serialize/parse churn.
+
+Determinism: observable ordering is owned by `Vec` order (messages, tools,
+events, tool calls, text deltas), a `BTreeSet` of seen call ids (ordered;
+iteration never observed), and explicit `invalid-call-N` numbering. No
+HashMap-iteration, filesystem-enumeration, wall-clock, randomness,
+environment-ordering, or thread-scheduling dependence.
+
+Evidence counts: 69 siralos-core provider unit tests, 34 siralos-adapters
+provider unit tests (`cargo test -p <crate> --lib provider -- --list`), 18
+`provider-turn` differential scenarios, 104 total corpus scenarios.
+
+Security/architecture review: PASS. Provider output remains untrusted
+proposal/data; raw malformed provider events fail `validate_external_event`
+before typed `ModelEvent` acceptance; the provider cannot grant capability,
+register or execute a Tool, mutate the workspace, mutate Host cancellation
+state, or decide Host Context; the Host owns request composition, Tool
+surface, cancellation control, protocol acceptance, limits, and the turn
+outcome; `TurnToolCall` remains a typed proposal for R7.2. Port-review
+checklist: PASS — states are typed enums, one owner for bounded-turn mutable
+state, borrowing where natural, no internal JSON churn without a boundary,
+no unnecessary heap allocation, no dynamic dispatch, no Arc/Mutex/RwLock,
+no async, deterministic collection/order semantics, no repeated
+parsing/hashing without reason, zero-cost abstractions, no unsafe, providers
+receive least authority, providers cannot mutate Host cancellation, the seam
+stays SDK-free for future real providers, and future R7.3 Context can feed
+`ModelRequest` without providers owning Context selection. No performance
+benchmark was required: R7.1 is not identified as a performance-sensitive
+hotspot.
+
+Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete (implementation,
+differential parity, cancellation authority review, measurement, acceptance);
+R7.2 next candidate slice, pending review/authorization; R8-R12 not due. R7 is
+not marked Verified.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:
