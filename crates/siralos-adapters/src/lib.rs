@@ -12,6 +12,7 @@
 pub mod domain;
 pub mod language;
 pub mod paths;
+pub mod provider;
 pub mod workspace;
 
 pub use paths::state_dir;
