@@ -571,6 +571,476 @@ model turn** (exactly one task):
   requirements; cache identity is derived behavior, never authoritative
   state).
 
+## 13. R7.2 entry review — Application Tool Loop contract freeze
+
+Recorded before any R7.2 implementation. Status: **PASS** — the R7.2
+Application Tool Loop contract is frozen and R7.2 may begin. This review
+ports no Rust code, adds no corpus files, and modifies no executable source.
+
+### 13.1 Review baseline
+
+| Item           | Value                                                                                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Branch         | `main`                                                                                                                                                                                     |
+| HEAD           | `4dd8aea3c6394be3d751890ccb30c8c33a185364` (`docs: record R7.1 measurement and final acceptance`)                                                                                          |
+| Upstream       | `origin/main` (`4dd8aea`, up to date)                                                                                                                                                      |
+| Worktree       | Clean (`git status --short` empty)                                                                                                                                                         |
+| Verified R7.1  | `bd335190696f3662e242407c89d7821483d7fa24` — present in local history; the only commits after it are documentation-only (`a9c7233`, `4dd8aea`)                                             |
+| Baseline check | `npm run check` — **PASS**, exit code 0 (full gate: format, lint, typecheck, unit/integration, architecture, identity ratchet, Rust architecture, full Rust gate) on the starting worktree |
+
+### 13.2 Scope decision
+
+R7.2 owns the **generic Application Tool Loop** only. The TypeScript
+`application.ts` co-locates provider-turn iteration, registry, round
+execution, transcript updates, budgets, unknown/hidden-tool handling,
+per-call capability evaluation, approved-surface defense, the approval
+workflow, prepared workspace mutation, prepared command execution, three
+Godot prepared kinds, checkpoint events, and command audit state. R7.2
+must not mechanically port that file. The smallest owned behavior is:
+
+```text
+Tool registry (one immutable concept)
+    ↓
+provider Tool proposal (R7.1 TurnToolCall)
+    ↓
+Host lookup
+    ↓
+Host authorization decision (approved surface + per-call capability recheck)
+    ↓
+generic Tool execution seam (Tool trait, execute)
+    ↓
+typed ToolExecutionResult (R7.1 value, reused)
+    ↓
+exactly one ToolResult appended to the authoritative transcript
+    ↓
+next provider turn
+```
+
+plus: single-flight prompt ownership, tool-round budget, round sequencing,
+round cancellation, invalid-call pairing, terminal provider answer,
+provider failure/cancellation propagation, and the application event
+semantics of this layer (closed generic event set, §13.10).
+
+### 13.3 TypeScript co-location audit (runToolCall branch classification)
+
+Every branch in `application.ts` `runToolCall` plus the loop branches in
+`sendPrompt`, classified into the four frozen categories.
+
+| Branch (application.ts)                                                                                                          | Classification                 | Owning milestone / note                                                                          |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `tool_started` before lookup with `toDisplayInput` (200-char truncation)                                                         | R7.2 MUST PORT                 | Deterministic loop-emitted event value (bound §5.2); rendering the event is CLI-only.            |
+| Registry lookup; unknown → `tool_failed` + `Failed` result                                                                       | R7.2 MUST PORT                 | Exact message `Unknown tool: <name>.`; recoverable.                                              |
+| Projection-schema guard (`lastProjection` name set)                                                                              | R7.2 GENERIC SEAM ONLY         | Narrow approved-tool-surface seam (§13.8); no projection import (§13.12).                        |
+| Capability re-evaluation (`evaluatePermission` deny/ask)                                                                         | R7.2 MUST PORT                 | Per-call Host authorization recheck (§13.7).                                                     |
+| Plain `Tool.execute` under `ask` (no reviewable preparation)                                                                     | R7.2 MUST PORT                 | `deny without execution` with the frozen message (§13.14); not the approval framework.           |
+| Plain `Tool.execute` success/failure/cancellation catch                                                                          | R7.2 MUST PORT                 | `cancelled` (described) vs `failed` (describeError).                                             |
+| `emitToolOutcome` status → event mapping                                                                                         | R7.2 MUST PORT                 | success→`tool_completed`; cancelled→`tool_cancelled`; every other status→`tool_failed`.          |
+| Invalid TurnToolCall emission in the round (empty/duplicate ids)                                                                 | R7.2 MUST PORT                 | Failed result paired, no lookup, no execution (§13.5).                                           |
+| Budget check before round, round counter, cap failure message                                                                    | R7.2 MUST PORT                 | §13.6.                                                                                           |
+| Round transcript append + mixed-turn assistant text rule                                                                         | R7.2 MUST PORT                 | §13.5, §13.9, §13.14.                                                                            |
+| Single-flight state; `response_started`/cancelled/failed/completed                                                               | R7.2 MUST PORT                 | §13.6, §13.14.                                                                                   |
+| `text_delta` passthrough from the provider turn                                                                                  | R7.2 MUST PORT                 | Replayed in order from the R7.1 turn outcome.                                                    |
+| `onProviderTurnCompleted` hook                                                                                                   | R7.2 GENERIC SEAM ONLY         | The loop exposes the terminal turn outcome; the hook itself is composition glue (CLI), not core. |
+| Prepared mutation (`isPreparedMutationTool` prepare/approval/apply, `checkpoint_applied`)                                        | LATER MILESTONE                | R11 mutation/effect work; R4/R5 typed prepared availability already exists.                      |
+| Prepared command (`runPreparedCommandTool`, `streamPreparedCommand`, audit, `command_*` events)                                  | LATER MILESTONE                | R11 process execution + its owning approval/audit work.                                          |
+| Godot project probe (`runPreparedProbeTool`)                                                                                     | LATER MILESTONE                | R8/R9.                                                                                           |
+| Godot GDScript diagnostics (`runPreparedDiagnosticTool`)                                                                         | LATER MILESTONE                | R8/R9.                                                                                           |
+| Godot LSP session (`runPreparedLSPSessionTool`)                                                                                  | LATER MILESTONE                | R8/R9.                                                                                           |
+| `runApprovedTool` generic one-time approval protocol                                                                             | LATER MILESTONE                | The approval framework belongs to its owning effect milestone (§13.14).                          |
+| `approval_requested` / `tool_awaiting_approval` / `approval_resolved`                                                            | LATER MILESTONE                | Owning effect milestones only.                                                                   |
+| `checkpoint_applied`                                                                                                             | LATER MILESTONE                | R11 checkpoint effects.                                                                          |
+| `context_pressure`                                                                                                               | LATER MILESTONE                | R7.3 projection.                                                                                 |
+| `pendingApproval` / `activeCommandId` / `lastCommandExitCode` / `commandHistory`; `getCommandHistory` / `getLastCommandExitCode` | SOURCE STRUCTURE — DO NOT PORT | Co-located TypeScript state; not generic R7.2 requirements.                                      |
+| `SessionStatus` beyond `state` + message count                                                                                   | SOURCE STRUCTURE — DO NOT PORT | CLI presentation surface; R7.2 keeps `Idle                                                       | Responding` + transcript length only. |
+
+### 13.4 Registry contract
+
+Freeze (R7.2, one registry concept in `siralos-core::tool`):
+
+- duplicate name → construction failure with the exact message
+  `Duplicate tool name: <name>`;
+- lookup → exact, case-sensitive match; unknown name → `None` (never a
+  fuzzy match, never partial);
+- `definitions()` → a fresh, ordered representation (caller mutation
+  cannot affect the registry); registration order retained end-to-end;
+- the registry is immutable after construction;
+- each definition carries its capability metadata (registered info =
+  definition + capability; a plain tool defaults to `workspace.read`);
+- the registry holds one concept only: the ordered immutable tool set with
+  deterministic lookup. No `ToolManager`/ToolService/ToolFactory/plugin
+  loader or dynamic loading is created.
+
+Rust shape: an immutable tool table owning the concrete tools in
+registration order plus an index for O(1) exact lookup; observable
+ordering stays Vec-ordered (no unordered-map iteration is observable).
+
+### 13.5 Tool execution and round contract
+
+- One generic `Tool` execution seam (ADR 0036 §26 — Tool is the one
+  callable operation abstraction): `definition()`, `capability()`, and
+  `execute(input, cancellation) -> ToolExecutionResult`.
+- The result value is the R7.1 `ToolExecutionResult` (reused — no second
+  result enum; §13.15).
+- Round execution (`executeToolRound` contract, exact):
+  - input: ordered `TurnToolCall` values from R7.1;
+  - transcript pre-seeded with one `assistant_tool_call` per retained
+    call in emission order (an invalid retained call is recorded without an
+    input payload — the reference writes `input: undefined`, which
+    serializes as an omitted field; the Rust `ConversationItem` needs an
+    input-presence representation for this case);
+  - execution is strictly sequential in provider emission order;
+  - invalid calls: no lookup, no execution; emit `tool_failed` with the
+    deterministic invalid-call message and store exactly one `Failed`
+    result with the same call id/name; continue to later calls;
+  - every retained `assistant_tool_call` receives exactly one
+    `tool_result` (same call id, same tool name) before the transcript
+    leaves the round — no orphans, no missing, no duplicates, no
+    reordering; cancellation never breaks pairing;
+  - signal already aborted before call N: call N and every later unstarted
+    call receive `Cancelled` with the exact message
+    `The tool call was cancelled before it executed.`;
+  - a tool returns `cancelled`: the round stops; its own result keeps the
+    tool's message; every later call receives the same deterministic
+    skipped-call cancelled result;
+  - no later tool ever executes after cancellation;
+  - round outcome: `completed` or `cancelled`, both carrying the full
+    paired transcript.
+- One small explicit round-state owner (transcript, current call index,
+  cancelled state). No ToolRoundManager / ExecutionScheduler / TaskGraph /
+  workflow engine / event bus / worker pool; sequential stays sequential.
+- Cancellation authority: a Tool receives only the read-only
+  `CancellationSignal` observation view — never the Host
+  `CancellationToken`. The R7.1 authority correction is carried to the
+  Tool boundary by the type (the signal exposes no mutation operation and
+  no accessor that yields the controller). The Tool Round caller (Host)
+  holds the controller; the Tool's execution context exposes no
+  controller path (§13.7).
+- The loop does not JSON-schema-validate tool arguments; Tools own input
+  validation and may return `invalid_input` (§13.9). `ToolDefinition.inputSchema`
+  remains provider-visible metadata, not a runtime validator.
+
+### 13.6 Application loop, budget, and single-flight
+
+- Loop (from `sendPrompt`, exact): append `user_message` → emit
+  `response_started` → repeat: collect one bounded provider turn (R7.1);
+  cancelled → `response_cancelled` → stop; failed → `response_failed`
+  (exact message) → stop; zero tool calls → append `assistant_message`
+  only when text is non-empty → terminal → `response_completed` → stop;
+  tool calls → budget check **before** the round → execute the round →
+  append transcript → continue.
+- Budget (`normalizeMaxToolRounds` + cap check, exact):
+  default 8; hard maximum 32; undefined/non-finite → 8; else
+  `clamp(floor(v), 0, 32)`. Negative → 0; fractional → floor; 0/1/8/32
+  exact; >32 → 32. The requested round that **exceeds** the budget is NOT
+  executed. Cap failure message (exact):
+  `Siralos reached the maximum of <n> tool rounds; the requested tool round was not executed.`
+  — a `response_failed`; history keeps the user message and all prior
+  rounds. Final-answer boundary: with maxToolRounds = 1, round 1 may
+  execute and then a text-only next turn completes; a tool-calling next
+  turn fails and round 2 never executes.
+- Single-flight: one prompt may be actively responding at a time; a second
+  prompt while responding fails deterministically with
+  `Siralos is already responding to a prompt.` A typed
+  AlreadyResponding-style start failure is required. No Mutex/RwLock/async
+  is needed for theoretical concurrency: the observable requires only a
+  typed `Idle|Responding` state plus an event surface that can be
+  consumed stepwise/lazily (the reference is an async generator whose
+  state flips on first pull, which is how the already-responding rejection
+  is observable mid-stream). The Rust loop should expose a pull/stepwise
+  event session so the deterministic harness and unit tests can interleave
+  without threads (§13.16).
+
+### 13.7 Authority model
+
+```text
+Provider proposes a Tool call (proposal only — never authority)
+    ↓
+Host Tool surface (registry definitions + policy filter; optional
+approved-tool-surface seam)
+    ↓
+Host per-call authorization, immediately before execution:
+    registered? (unknown → failed result)
+    approved surface contains name? (hidden → denied result)
+    capability decision rechecked now? (deny → denied result)
+    ↓
+Tool executes only when the Host invokes it
+```
+
+Permanent rules: a Tool can never register itself, never broaden its
+capability, never mutate Host cancellation state (signal only), and never
+mutate Host history directly (inputs move into the loop; history is Host
+owned). Visible/proposed does not imply authorized: the per-call capability
+recheck is part of the R7.2 contract, and the Rust implementation must
+represent the observable decision rule (allow/ask/deny with the exact
+reference reasons) without porting the TypeScript policy/profile object
+graph and without creating a second permission system. The small Rust
+capability/rule/evaluator (§13.17) is Host-loop-owned; the R6
+`domain::capability` types remain the Domain host-boundary vocabulary and
+are not reused here (different identifier vocabulary and boundary).
+
+### 13.8 Projection seam (R7.3 boundary)
+
+R7.2 implements no projection. The loop enforces the model-visible schema
+through one narrow, future-compatible seam:
+
+```text
+HostAuthorizedToolSurface (approved model-visible tool names)
+    = Option<ordered set of tool names>, supplied by the composition root
+
+provided → a provider call whose name is outside the set is denied BEFORE
+           execution: "Tool <name> is not in the projected tool schema for
+           this session and was denied before execution." (message frozen)
+absent   → the R7.1 behavior: the request surface is the policy-filtered
+           registry (no additional guard) — the loop stays unchanged
+```
+
+R7.3 later projects real visible tool names into this exact seam (the
+reference guard reads `lastProjection().tools` names; absent projection
+means no guard). Nothing of the projection service, estimator, pressure
+model, fingerprints, trim, or Context segments is imported by R7.2.
+
+### 13.9 Tool input validation
+
+Tools own their input validation and may return `invalid_input` (stored
+as the result, surfaced as `tool_failed`, provider may recover). The R7.2
+loop does not run a JSON Schema validator; `inputSchema` is
+provider-visible metadata only. No generic schema runtime is invented.
+
+### 13.10 Application event surface
+
+One closed generic event enum for R7.2 only:
+
+```text
+response_started, text_delta, response_completed, response_cancelled,
+response_failed,
+tool_started (callId, toolName, displayInput-truncated),
+tool_completed (summary), tool_failed (message), tool_cancelled
+```
+
+Not ported into the R7.2 type: `tool_awaiting_approval`,
+`approval_requested`/`approval_resolved`, `checkpoint_applied`,
+`context_pressure`, and all `command_*` events (each owned by its later
+milestone, §13.13). Structural copying of the full TypeScript union is not
+required; behavioral parity is. `displayInput` truncation (200 chars +
+`...`, JSON.stringify of the input, `<unprintable>` fallback) is a
+deterministic loop-emitted value and is part of the R7.2 event contract,
+not merely presentation.
+
+### 13.11 Failure taxonomy and recovery
+
+Typed internal loop failures (`siralos-core::tool`), classified as
+terminal-for-the-prompt or recoverable-result:
+
+| Failure                     | Terminal?            | Observable effect                                                                                           |
+| --------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
+| AlreadyResponding           | n/a (start rejected) | `Siralos is already responding to a prompt.` thrown start failure.                                          |
+| ProviderFailed              | terminal for prompt  | `response_failed` with the R7.1 message; nothing of the failed turn committed.                              |
+| ToolRoundLimitExceeded      | terminal for prompt  | `response_failed` with the frozen cap message; user message + prior rounds retained.                        |
+| UnknownTool                 | recoverable result   | `tool_failed` + `Failed` result paired; next provider turn.                                                 |
+| ToolDenied (capability)     | recoverable result   | `tool_failed` + `Denied` result paired; next provider turn.                                                 |
+| ToolDenied (hidden surface) | recoverable result   | `tool_failed` + `Denied` result paired; next provider turn.                                                 |
+| ToolFailed                  | recoverable result   | `tool_failed` + `Failed` result paired; next provider turn.                                                 |
+| ToolCancelled               | terminal for prompt  | `tool_cancelled` + `Cancelled` result; round stops; tail calls get skipped-cancelled; `response_cancelled`. |
+| InvalidToolCall             | recoverable result   | `tool_failed` + `Failed` result paired (no execution); next provider turn.                                  |
+
+The distinction is typed, never parsed from prose. Tool failure / unknown
+Tool → paired failure result → next provider turn → provider may recover is
+**normal Tool-loop continuation**, not R11 recovery orchestration. No
+retries, no backoff, no fallback routing, no self-healing: one provider
+call → at most one execution attempt; the provider decides what to propose
+next.
+
+### 13.12 Projection/prepared-effects boundaries (re-asserted)
+
+- Projection (R7.3): only the approved-tool-surface seam above; no
+  projection implementation, no ToolProjector, no context estimation.
+- Prepared effects (deferred): prepared mutation (R11), prepared commands
+  (R11), Godot probe/diagnostic/LSP (R8/R9), approval workflows (owning
+  effect milestone), checkpoint application (R11), command auditing (R11).
+- `hidden-tool-denied` is modeled through the seam, never through R7.3.
+- No scenario grants or exercises mutation, process, Git, network, or
+  Godot authority.
+
+### 13.13 Deferred effect work (owning milestone)
+
+```text
+workspace mutation application  -> R11 (fail-closed typed unavailable
+                                    already exists from R4/R5)
+process execution               -> R11
+approval workflow               -> its owning effect milestone
+Godot project probes            -> R8/R9
+Godot GDScript diagnostics      -> R8/R9
+Godot LSP sessions              -> R8/R9
+checkpoint application          -> R11
+command auditing                -> R11
+context projection/pressure     -> R7.3
+configuration                   -> R7.4
+interactive CLI session         -> R7.5
+```
+
+### 13.14 Approval boundary
+
+Default expectation confirmed: **no approval behavior is required by the
+generic R7.2 acceptance scenarios.** The loop proves itself with allow,
+deny (capability), unknown tool, invalid input, success, failure, and
+cancelled. The one generic rule that IS R7.2: an `ask` decision for a
+Tool with no reviewable preparation is **denied without execution** (exact
+message frozen: `Capability <cap> requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution.`).
+No approval reviewers or digest-bound prepared-effect execution are ported.
+
+### 13.15 Tool result detachment
+
+The R7.1 typed owned `ToolExecutionResult` and its detach boundary
+(`detach_bounded_tool_result`) are reused; R7.2 adds no second parse
+path. The loop stores the owned result in the transcript and resends it to
+the next provider turn from authoritative history; Rust ownership makes
+detachment natural and the boundary already exists for size accounting.
+For an in-process Rust Tool returning an owned valid result, no additional
+serialization is needed beyond that R7.1 boundary (no JSON churn inside
+the loop).
+
+### 13.16 Determinism
+
+Required ordering: registry definitions in registration order; provider
+proposals in provider order; sequential execution in that order; results
+in call order; transcript appends explicit (user message → [assistant
+text] → round transcript); invalid-call synthetic ids `invalid-call-N` in
+deterministic order; round counter a deterministic integer. No unordered
+map iteration is observable; no wall clock, randomness, threads, or
+environment ordering. Skip-call messages are fixed literals (observable
+parity).
+
+### 13.17 Rust ownership (proposed)
+
+```text
+siralos-core::tool (new module, closed over generic R7.2 only)
+    - ToolDefinition / ToolExecutionResult (reuse from provider module)
+    - ToolRegistry (immutable; duplicate rejection; ordered definitions;
+      exact case-sensitive lookup; capability metadata)
+    - Tool trait (definition, capability, execute(input, CancellationSignal))
+    - Tool round state + execution (pairing, invalid calls, cancelled tail)
+    - Application tool loop (single-flight, round budget, transcript rules)
+    - RoundBudget normalization (exact clamp/floor/default)
+    - Capability / PermissionRule / PermissionDecision + evaluator
+      (reference decision order and exact reasons; no second permission
+      system)
+    - Approved-tool-surface seam (optional ordered name set)
+    - ToolLoopEvent / AppOutcome (closed generic event set)
+    - typed failures (AlreadyResponding ... InvalidToolCall)
+
+siralos-adapters::tool (new module)
+    - concrete workspace.list / workspace.read / workspace.search Tool
+      adapters over the R4 adapter functions (typed input validation →
+      invalid_input; detached results)
+    - no loop policy, no Host authorization decisions
+
+siralos-cli
+    - differential harness composition only: tool-loop subject dispatch,
+      canonical records, and harness-local deterministic stub Tools
+      (success / invalid_input / denied / failed / cancelled) exercised
+      through the real production registry/round/loop
+```
+
+No new crate. No loop semantics in the CLI. Adapters never decide Host
+authorization. Dynamic dispatch only where a real seam requires it
+(static-generic preferred, matching the R7.1 provider seam).
+
+### 13.18 Differential plan (tool-loop subject)
+
+Canonical result record fields (frozen): application event sequence;
+terminal application outcome (completed/cancelled/failed + exact message);
+provider request count / turn count; final authoritative transcript
+(canonical conversation items); Tool execution order (from events and
+transcript); Tool inputs; Tool results; completed round count; whether
+execution occurred for each call. Excluded: wall-clock timings, absolute
+paths, implementation-specific Rust enum names, debug output, pointer
+identities.
+
+Frozen scenario set (added atomically with the implementation):
+
+| Scenario id                               | Required evidence                                                                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `tool-loop.terminal`                      | text-only turn → `response_completed`, one `assistant_message`.                                                    |
+| `tool-loop.tool-rounds`                   | `maxToolRounds` 0/1/8/32 boundaries; requested round at/over the budget never executes; cap message exact.         |
+| `tool-loop.unknown-tool`                  | `Unknown tool: <name>.` failed result paired; provider recovers on a later turn.                                   |
+| `tool-loop.hidden-tool-denied`            | approved surface excludes a registered tool → denied before execution, exact message, provider recovers.           |
+| `tool-loop.one-call-one-result`           | multi-call turn (execute + invalid + cancelled) → exact pairing/order/retention.                                   |
+| `tool-loop.cancelled-round`               | abort during round → cancelled results for every unstarted call; no false completion.                              |
+| `tool-loop.assistant-text-with-tools`     | mixed turn: assistant text precedes the full round transcript; cancelled mixed turn keeps transcript but not text. |
+| `tool-loop.invalid-call-pairing`          | every retained invalid call ↔ exactly one `Failed` result (no lookup/execution).                                   |
+| `tool-loop.duplicate-call-result-pairing` | first occurrence executes with its result; duplicate gets its own failed result; call order preserved.             |
+| `tool-loop.empty-call-result-pairing`     | empty id/name call → exactly one failed result in call order.                                                      |
+| `tool-loop.final-answer-after-last-round` | maxToolRounds = 1, second turn text-only → success.                                                                |
+| `tool-loop.over-budget-round`             | maxToolRounds = 1, second turn tool-calling → `response_failed`; round 2 never executes.                           |
+| `tool-loop.provider-fails-after-round`    | completed round transcript retained; subsequent provider failure → `response_failed`; no completion.               |
+
+Authority assumptions (every scenario): Host-controlled inputs; provider
+is the deterministic fake (or a bounded scripted provider for
+denied/hidden/cancelled paths); default `inspect` policy unless the
+scenario declares rules; no mutation/process/Git/network/Godot authority
+is granted or exercised. Harness mechanics follow §8.2 (subject added to
+`ALLOWED_SUBJECTS`, bounded input validation in `contract.mjs` +
+`harness.rs`, oracle probe composes real `createSiralosApplication` +
+Tool Round, candidate composes real Core loop + adapters, corpus version
+bump + manifest/digest regeneration, `npm run check:differential` exit 0,
+complete repository gate). No expected-output fixture fabrication.
+
+### 13.19 Where each invariant is proven
+
+- **Core unit tests (required)**: single-flight rejection via stepwise
+  interleave; tool returns `invalid_input` (no execution); capability
+  denial recheck; tool throws → `Failed`; tool returns `cancelled`
+  (round stops, tail cancelled, pairing intact); cancellation before call
+  N; budget normalization boundaries (undefined/non-finite/negative/
+  fractional/0/1/8/32/>32); one-call-one-result invariants (orphan,
+  missing, duplicate, reorder); transcript commit rules (mixed turn,
+  cancelled round keeps transcript, failed turn commits nothing);
+  approved-surface denial; ask-on-plain-tool deny-without-execution;
+  registry duplicate/order/case-sensitive lookup/fresh-copy detachment;
+  definitions registration-ordered.
+- **Adapter tests**: workspace list/read/search Tool adapters over real
+  temporary fixture workspaces (typed invalid_input, detached results,
+  determinism).
+- **Differential scenarios**: the 13 frozen `tool-loop` rows above
+  (range/boundary/ordering/recovery/transcript parity against the real
+  reference).
+- **Security/adversarial tests**: hidden tool never executes; unknown tool
+  never executes and acquires no capability; capability deny never
+  executes; cancelled/unstarted calls never execute; invalid calls never
+  execute; a Tool cannot mutate Host cancellation (type boundary: signal
+  has no mutation) nor Host transcript (loop owns history; inputs move);
+  result detachment before provider reuse (R7.1 boundary reused).
+
+### 13.20 Measurement plan (after implementation)
+
+Production Rust LOC added per crate (git diff --numstat against the
+authorization baseline); new direct dependencies; async runtime yes/no;
+threads yes/no; Arc/Mutex/RwLock yes/no; unsafe yes/no; dynamic dispatch
+yes/no + justification; `tool-loop` differential scenario count; Core
+tool-loop unit test count; Adapter tool test count. No benchmarks: R7.2 is
+not identified as a performance-sensitive hotspot.
+
+### 13.21 Security review plan (before R7.2 acceptance)
+
+Explicit verification that: provider Tool proposal grants no authority;
+the registry grants no capability; visibility does not imply
+authorization; authorization is rechecked immediately before execution; a
+hidden Tool cannot execute; an unknown Tool cannot execute;
+cancelled/unstarted Tools cannot execute; invalid Tool calls cannot
+execute; a Tool cannot mutate Host cancellation or Host history directly;
+results are detached/bounded before provider reuse; no later
+mutation/process/Godot authority is pulled forward.
+
+### 13.22 R7.2 acceptance requirements
+
+The implementation may begin only on this frozen contract; R7.2 is
+accepted when: the generic loop/subject exists in `siralos-core::tool`,
+adapter workspace tools exist in `siralos-adapters::tool`, the
+`tool-loop` subject holds differential parity (all required applicable
+scenarios match), the security review checklist passes, proportional
+measurement is recorded, and the complete local repository gate passes.
+R7.2 verification does not authorize R7.3+.
+
 ## Acceptance gates for R7 (evidence design)
 
 1. All five surfaces traced (this document, §2).
@@ -598,6 +1068,8 @@ R7.1 — Complete (provider contract + deterministic fake provider + bounded
         including cancellation-authority remediation — providers receive
         only a read-only CancellationSignal and cannot mutate Host
         cancellation state — and proportional measurement)
-R7.2 — Candidate next slice, pending review/authorization
+R7.2 — Authorized / next (entry review PASS at 4dd8aea; generic Application
+        Tool Loop contract frozen in §13; implementation may begin)
+R7.3-R7.5 — Not authorized
 R8-R12 — Not due
 ```

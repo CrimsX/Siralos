@@ -357,10 +357,36 @@ stays SDK-free for future real providers, and future R7.3 Context can feed
 benchmark was required: R7.1 is not identified as a performance-sensitive
 hotspot.
 
+### R7.2 entry review (authorization)
+
+The R7.2 entry review (docs/development/R7_BEHAVIOR_EXTRACTION.md §13,
+recorded at HEAD 4dd8aea3c6394be3d751890ccb30c8c33a185364) returned
+**PASS**: the generic Application Tool Loop contract is frozen — tool
+registry (immutable, registration-ordered, duplicate rejection, exact
+case-sensitive lookup, capability metadata), the generic Tool execution
+seam (definition + capability + execute with read-only CancellationSignal),
+round execution with the one-call-one-result pairing invariant, invalid-call
+failed-result pairing, round cancellation with deterministic skipped-call
+results, tool-round budget normalization (default 8, hard max 32,
+clamp/floor, the over-budget round never executes, exact cap message),
+single-flight via a typed Idle/Responding state without concurrency
+primitives, terminal response/completion/cancellation/failure propagation,
+per-call Host authorization recheck, the narrow approved-tool-surface
+projection seam (no R7.3 implementation), the closure of the generic event
+surface (response_* + text_delta + tool_* only), and the classification of
+every TypeScript co-located branch (prepared mutation/command → R11; Godot
+probe/diagnostic/LSP → R8/R9; approval/checkpoint/command audit →
+their owning effect milestone; command/audit/pending-approval state →
+not ported). The next implementation slice is R7.2 — Application Tool Loop
+parity — with the frozen `tool-loop` subject (13 required differential
+scenarios) and the Core/Adapter unit-test evidence plan recorded in §13.18-13.19.
+This authorization is limited to R7.2: it does not satisfy R7 overall,
+authorize R7.3+ or R8+, or satisfy any Stage-4 entry gate.
+
 Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete (implementation,
 differential parity, cancellation authority review, measurement, acceptance);
-R7.2 next candidate slice, pending review/authorization; R8-R12 not due. R7 is
-not marked Verified.
+R7.2 Authorized (entry review PASS, contract frozen) — next implementation
+slice; R7.3+ not authorized; R8-R12 not due. R7 is not marked Verified.
 
 ## Porting gate
 
