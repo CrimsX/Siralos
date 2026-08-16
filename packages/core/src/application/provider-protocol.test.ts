@@ -409,6 +409,148 @@ describe("provider stream resource bounds", () => {
   });
 });
 
+describe("provider stream event protocol", () => {
+  it("rejects an unknown event discriminator", async () => {
+    const { provider } = createScriptedProvider([
+      [{ type: "unexpected" } as unknown as ModelEvent],
+    ]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("unknown event type");
+    expect(events.some((event) => event.type === "response_completed")).toBe(false);
+    expect(application.getStatus().messageCount).toBe(1);
+  });
+
+  it("rejects an unknown discriminator with valid-looking tool-call fields", async () => {
+    const { provider } = createScriptedProvider([
+      [
+        {
+          type: "unexpected",
+          callId: "call-1",
+          toolName: "workspace.read",
+          input: { path: "README.md" },
+        } as unknown as ModelEvent,
+      ],
+    ]);
+    const { tool, calls } = createStubTool("workspace.read");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("unknown event type");
+    expect(calls).toHaveLength(0);
+    expect(events.some((event) => event.type === "tool_started")).toBe(false);
+    expect(events.some((event) => event.type === "response_completed")).toBe(false);
+  });
+
+  it("retains no tool call and commits no partial turn from a rejected protocol", async () => {
+    const { provider, requests } = createScriptedProvider([
+      [
+        { type: "text_delta", text: "prefix-" },
+        {
+          type: "unexpected",
+          callId: "call-1",
+          toolName: "a.tool",
+          input: {},
+        } as unknown as ModelEvent,
+      ],
+      [{ type: "completed" }],
+    ]);
+    const { tool } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    // The delta was streamed to presentation...
+    expect(events.some((event) => event.type === "text_delta" && event.text === "prefix-")).toBe(
+      true,
+    );
+    await collectEvents(application.sendPrompt("again"));
+    const items = requests[1]?.messages ?? [];
+    expect(items.some((item) => item.type === "assistant_message")).toBe(false);
+    expect(items.some((item) => item.type === "assistant_tool_call")).toBe(false);
+    expect(items.some((item) => item.type === "tool_result")).toBe(false);
+  });
+
+  it("still reports after-completion for an unknown event after completed", async () => {
+    const { provider } = createScriptedProvider([
+      [
+        { type: "completed" },
+        {
+          type: "unexpected",
+          callId: "c1",
+          toolName: "a.tool",
+          input: {},
+        } as unknown as ModelEvent,
+      ],
+    ]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("after completion");
+  });
+
+  it("still accepts an ordinary valid tool call", async () => {
+    const { provider } = createScriptedProvider([
+      [toolCall("c1", "a.tool", {}), { type: "completed" }],
+      [{ type: "completed" }],
+    ]);
+    const { tool, calls } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(calls).toHaveLength(1);
+    expect(events.some((event) => event.type === "response_completed")).toBe(true);
+  });
+
+  it("still accepts ordinary valid text plus completion", async () => {
+    const { provider } = createScriptedProvider([
+      [{ type: "text_delta", text: "hi" }, { type: "completed" }],
+    ]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toBeNull();
+    expect(events.some((event) => event.type === "response_completed")).toBe(true);
+  });
+
+  it("rejects a text delta with a non-string payload", async () => {
+    const { provider } = createScriptedProvider([
+      [{ type: "text_delta", text: 42 } as unknown as ModelEvent],
+    ]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("text event without a string payload");
+    expect(events.some((event) => event.type === "response_completed")).toBe(false);
+  });
+
+  it("rejects a tool call with a non-string id or name", async () => {
+    const { provider } = createScriptedProvider([
+      [{ type: "tool_call", callId: 7, toolName: "a.tool", input: {} } as unknown as ModelEvent],
+    ]);
+    const { tool, calls } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("non-string id or name");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects a non-object event as malformed", async () => {
+    const { provider } = createScriptedProvider([[null as unknown as ModelEvent]]);
+    const application = makeApplication(provider, []);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("malformed event");
+    expect(events.some((event) => event.type === "response_completed")).toBe(false);
+  });
+
+  it("rejects a tool call with missing input", async () => {
+    const { provider } = createScriptedProvider([
+      [
+        { type: "tool_call", callId: "c1", toolName: "a.tool" } as unknown as ModelEvent,
+        { type: "completed" },
+      ],
+    ]);
+    const { tool, calls } = createStubTool("a.tool");
+    const application = makeApplication(provider, [tool]);
+    const events = await collectEvents(application.sendPrompt("hello"));
+    expect(failReason(events)).toContain("tool-argument JSON validity");
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("tool-round accounting", () => {
   it("cancels cleanly at the boundary before any turn", async () => {
     const controller = new AbortController();

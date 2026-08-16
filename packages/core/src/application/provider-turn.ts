@@ -70,7 +70,14 @@ type ProviderIteratorRead =
   | { readonly kind: "next"; readonly result: IteratorResult<ModelEvent> }
   | { readonly kind: "cancelled" };
 
-/** Collect and validate exactly one provider turn. */
+/**
+ * Collect and validate exactly one provider turn.
+ *
+ * Provider events are externally supplied data: the TypeScript discriminated
+ * union is not a runtime trust boundary. The event discriminator is
+ * authoritative, and unknown or malformed runtime events fail the turn closed
+ * instead of being reinterpreted by field shape.
+ */
 export async function* collectProviderTurn(
   context: ProviderTurnContext,
   signal?: AbortSignal,
@@ -127,6 +134,7 @@ export async function* collectProviderTurn(
   let invalidCallIndex = 0;
   let completionSeen = false;
   let exceeded: string | null = null;
+  let protocolError: string | null = null;
   let iterator: AsyncIterator<ModelEvent> | undefined;
   let iteratorDone = false;
   try {
@@ -140,16 +148,36 @@ export async function* collectProviderTurn(
         iteratorDone = true;
         break;
       }
-      const event = read.result.value;
+      const rawEvent = read.result.value as unknown;
       if (completionSeen) {
         exceeded = "an event after completion";
         break;
       }
+      // Provider events are externally supplied data: the TypeScript
+      // discriminated union is not a runtime trust boundary. The
+      // discriminator is authoritative and everything else fails closed.
+      if (rawEvent === null || typeof rawEvent !== "object" || Array.isArray(rawEvent)) {
+        protocolError = "a malformed event";
+        break;
+      }
+      const event = rawEvent as {
+        readonly type?: unknown;
+        readonly text?: unknown;
+        readonly callId?: unknown;
+        readonly toolName?: unknown;
+        readonly input?: unknown;
+      };
       if (event.type === "completed") {
+        // Extra fields on a completed event are ignored; only the
+        // discriminator is authoritative.
         completionSeen = true;
         continue;
       }
       if (event.type === "text_delta") {
+        if (typeof event.text !== "string") {
+          protocolError = "a text event without a string payload";
+          break;
+        }
         const bytes = utf8ByteLength(event.text);
         textEvents += 1;
         if (textEvents > PROVIDER_TURN_LIMITS.maxTextEvents) {
@@ -170,67 +198,78 @@ export async function* collectProviderTurn(
         yield { type: "text_delta", text: event.text };
         continue;
       }
-      const callIdBytes = utf8ByteLength(event.callId);
-      const nameBytes = utf8ByteLength(event.toolName);
-      let serializedInput: string;
-      try {
-        const serialized = JSON.stringify(event.input);
-        if (serialized === undefined) {
+      if (event.type === "tool_call") {
+        if (typeof event.callId !== "string" || typeof event.toolName !== "string") {
+          protocolError = "a tool call with a non-string id or name";
+          break;
+        }
+        const callId = event.callId;
+        const toolName = event.toolName;
+        const callIdBytes = utf8ByteLength(callId);
+        const nameBytes = utf8ByteLength(toolName);
+        let serializedInput: string;
+        try {
+          const serialized = JSON.stringify(event.input);
+          if (serialized === undefined) {
+            exceeded = "the tool-argument JSON validity";
+            break;
+          }
+          serializedInput = serialized;
+        } catch {
           exceeded = "the tool-argument JSON validity";
           break;
         }
-        serializedInput = serialized;
-      } catch {
-        exceeded = "the tool-argument JSON validity";
-        break;
+        const argumentBytes = utf8ByteLength(serializedInput);
+        if (callIdBytes > PROVIDER_TURN_LIMITS.maxCallIdBytes) {
+          exceeded = "the tool-call id byte limit";
+          break;
+        }
+        if (nameBytes > PROVIDER_TURN_LIMITS.maxToolNameBytes) {
+          exceeded = "the tool-name byte limit";
+          break;
+        }
+        if (argumentBytes > PROVIDER_TURN_LIMITS.maxToolArgumentBytes) {
+          exceeded = "the tool-argument byte limit";
+          break;
+        }
+        turnBytes += callIdBytes + nameBytes + argumentBytes;
+        if (turnBytes > PROVIDER_TURN_LIMITS.maxTurnBytes) {
+          exceeded = "the aggregate turn byte limit";
+          break;
+        }
+        if (toolCalls.length >= PROVIDER_TURN_LIMITS.maxToolCallsPerTurn) {
+          exceeded = "the tool-call count";
+          break;
+        }
+        if (callId.length === 0 || toolName.length === 0) {
+          invalidCallIndex += 1;
+          toolCalls.push({
+            kind: "invalid",
+            callId: `invalid-call-${invalidCallIndex}`,
+            toolName: toolName.length === 0 ? "<empty>" : toolName,
+            message: "Provider emitted a tool call with an empty call id or tool name.",
+          });
+        } else if (seenCallIds.has(callId)) {
+          invalidCallIndex += 1;
+          toolCalls.push({
+            kind: "invalid",
+            callId: `invalid-call-${invalidCallIndex}`,
+            toolName,
+            message: `Duplicate tool call id: ${callId}.`,
+          });
+        } else {
+          seenCallIds.add(callId);
+          toolCalls.push({
+            kind: "execute",
+            callId,
+            toolName,
+            input: JSON.parse(serializedInput) as unknown,
+          });
+        }
+        continue;
       }
-      const argumentBytes = utf8ByteLength(serializedInput);
-      if (callIdBytes > PROVIDER_TURN_LIMITS.maxCallIdBytes) {
-        exceeded = "the tool-call id byte limit";
-        break;
-      }
-      if (nameBytes > PROVIDER_TURN_LIMITS.maxToolNameBytes) {
-        exceeded = "the tool-name byte limit";
-        break;
-      }
-      if (argumentBytes > PROVIDER_TURN_LIMITS.maxToolArgumentBytes) {
-        exceeded = "the tool-argument byte limit";
-        break;
-      }
-      turnBytes += callIdBytes + nameBytes + argumentBytes;
-      if (turnBytes > PROVIDER_TURN_LIMITS.maxTurnBytes) {
-        exceeded = "the aggregate turn byte limit";
-        break;
-      }
-      if (toolCalls.length >= PROVIDER_TURN_LIMITS.maxToolCallsPerTurn) {
-        exceeded = "the tool-call count";
-        break;
-      }
-      if (event.callId.length === 0 || event.toolName.length === 0) {
-        invalidCallIndex += 1;
-        toolCalls.push({
-          kind: "invalid",
-          callId: `invalid-call-${invalidCallIndex}`,
-          toolName: event.toolName.length === 0 ? "<empty>" : event.toolName,
-          message: "Provider emitted a tool call with an empty call id or tool name.",
-        });
-      } else if (seenCallIds.has(event.callId)) {
-        invalidCallIndex += 1;
-        toolCalls.push({
-          kind: "invalid",
-          callId: `invalid-call-${invalidCallIndex}`,
-          toolName: event.toolName,
-          message: `Duplicate tool call id: ${event.callId}.`,
-        });
-      } else {
-        seenCallIds.add(event.callId);
-        toolCalls.push({
-          kind: "execute",
-          callId: event.callId,
-          toolName: event.toolName,
-          input: JSON.parse(serializedInput) as unknown,
-        });
-      }
+      protocolError = "an unknown event type";
+      break;
     }
   } catch (error: unknown) {
     if (signal?.aborted === true || isCancellationError(error)) {
@@ -249,6 +288,12 @@ export async function* collectProviderTurn(
     return {
       kind: "failed",
       message: `The provider exceeded ${exceeded} limit; the response was rejected.`,
+    };
+  }
+  if (protocolError !== null) {
+    return {
+      kind: "failed",
+      message: `The provider emitted ${protocolError}; the response was rejected.`,
     };
   }
   if (!completionSeen) {
