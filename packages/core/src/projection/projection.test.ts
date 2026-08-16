@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   awaitCurrent,
+  boundLineLength,
   classifyPressure,
   createContextProjector,
   createDefaultPolicy,
@@ -10,6 +11,7 @@ import {
   createWatermarkCache,
   estimateTokens,
   trimConversationPreservingPairs,
+  truncateText,
   DEVELOP_OFFLINE_PROFILE,
   type ConversationItem,
   type RegisteredToolInfo,
@@ -232,6 +234,28 @@ describe("evidence projector", () => {
     expect(view.text).toContain("[truncated]");
     expect(view.originalBytes).toBe(10_000);
     expect(view.evidenceId).toBeNull();
+  });
+
+  it("bounds lines at Unicode-scalar boundaries", () => {
+    const raw = `${"a".repeat(1021)}😀`;
+    const bounded = boundLineLength(raw, 1024);
+
+    expect(bounded).toBe(`${"a".repeat(1021)}\n😀`);
+    expect(bounded.split("\n").every((line) => new TextEncoder().encode(line).length <= 1024)).toBe(
+      true,
+    );
+  });
+
+  it("keeps supplementary characters intact when a scalar or marker cannot fit", () => {
+    expect(boundLineLength("😀😀", 3)).toBe("😀\n😀");
+    expect(truncateText("😀".repeat(6), 19)).toEqual({
+      text: "\n… [truncated]",
+      truncated: true,
+    });
+    expect(truncateText("😀".repeat(6), 20)).toEqual({
+      text: "😀\n… [truncated]",
+      truncated: true,
+    });
   });
 
   it("never-worse rule: clean text is not inflated by the reduction path", () => {

@@ -140,7 +140,28 @@ export function redactSecrets(text: string, secrets: readonly string[]): string 
   return out;
 }
 
-/** Split lines longer than the bound; each fragment stays under it. */
+/**
+ * Return UTF-16 code-unit offsets that are safe Unicode-scalar boundaries.
+ *
+ * JavaScript strings may contain lone surrogates, so those remain individual
+ * boundaries. A valid surrogate pair is kept together; slicing between its
+ * two code units would create a new malformed string and would make the
+ * UTF-8 byte bound inaccurate.
+ */
+function unicodeBoundaries(text: string): number[] {
+  const boundaries = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    const next = text.charCodeAt(index + 1);
+    if (code >= 0xd800 && code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+      index += 1;
+    }
+    boundaries.push(index + 1);
+  }
+  return boundaries;
+}
+
+/** Split lines longer than the bound without creating surrogate fragments. */
 export function boundLineLength(text: string, maxLineBytes: number): string {
   const encoder = new TextEncoder();
   const out: string[] = [];
@@ -151,19 +172,34 @@ export function boundLineLength(text: string, maxLineBytes: number): string {
     }
     let remaining = line;
     while (encoder.encode(remaining).length > maxLineBytes) {
-      // Binary search for the largest prefix that fits the bound.
+      const boundaries = unicodeBoundaries(remaining);
+      const firstBoundary = boundaries[1];
+      if (firstBoundary === undefined) {
+        break;
+      }
+      // If even one scalar cannot fit, retain that scalar rather than
+      // splitting it. The bound is impossible for that scalar, but the
+      // returned text remains well-formed and progress is guaranteed.
+      if (encoder.encode(remaining.slice(0, firstBoundary)).length > maxLineBytes) {
+        out.push(remaining.slice(0, firstBoundary));
+        remaining = remaining.slice(firstBoundary);
+        continue;
+      }
+      // Binary search for the largest Unicode-scalar prefix that fits.
       let low = 1;
-      let high = remaining.length;
+      let high = boundaries.length - 1;
       while (low < high) {
         const mid = Math.ceil((low + high) / 2);
-        if (encoder.encode(remaining.slice(0, mid)).length <= maxLineBytes) {
+        const end = boundaries[mid] as number;
+        if (encoder.encode(remaining.slice(0, end)).length <= maxLineBytes) {
           low = mid;
         } else {
           high = mid - 1;
         }
       }
-      out.push(remaining.slice(0, low));
-      remaining = remaining.slice(low);
+      const end = boundaries[low] as number;
+      out.push(remaining.slice(0, end));
+      remaining = remaining.slice(end);
     }
     if (remaining.length > 0) {
       out.push(remaining);
@@ -179,18 +215,23 @@ export function truncateText(text: string, maxBytes: number): { text: string; tr
     return { text, truncated: false };
   }
   const marker = "\n\u2026 [truncated]";
-  // Binary search for the largest prefix that fits with the marker.
+  const boundaries = unicodeBoundaries(text);
+  // Binary search for the largest Unicode-scalar prefix that fits with the
+  // marker. If the marker itself is larger than the budget, preserving the
+  // marker remains the explicit truncation contract.
   let low = 0;
-  let high = text.length;
+  let high = boundaries.length - 1;
   while (low < high) {
     const mid = Math.ceil((low + high) / 2);
-    if (encoder.encode(text.slice(0, mid) + marker).length <= maxBytes) {
+    const end = boundaries[mid] as number;
+    if (encoder.encode(text.slice(0, end) + marker).length <= maxBytes) {
       low = mid;
     } else {
       high = mid - 1;
     }
   }
-  return { text: text.slice(0, low) + marker, truncated: true };
+  const end = boundaries[low] as number;
+  return { text: text.slice(0, end) + marker, truncated: true };
 }
 
 export function createEvidenceProjector(
