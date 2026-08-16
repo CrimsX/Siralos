@@ -193,18 +193,21 @@ impl ActiveDomain {
 }
 
 /// The validated, not-yet-committed outcome of activation preparation:
-/// the exact binding, the effective grant, and the lifecycle
-/// generation that was validated. The authoritative transition happens
-/// only when the Host commits the prepared activation, so no fallible
-/// runtime step can ever leave the lifecycle Active without a session;
-/// the generation fence binds the preparation to the exact lifecycle
-/// episode, so an intervening material transition makes the prepared
-/// activation stale and commit fails typed instead of mutating.
+/// the exact binding, the validated request capabilities, a
+/// NON-AUTHORITATIVE provisional grant, and the lifecycle generation
+/// that was validated. The authoritative transition happens only when
+/// the Host commits the prepared activation, so no fallible runtime
+/// step can ever leave the lifecycle Active without a session; the
+/// generation fence binds the preparation to the exact lifecycle
+/// episode, and the final capability grant is recomputed at commit
+/// from the commit-time Host authority, so a prepared activation is
+/// never a bearer token for authority from its preparation context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedActivation {
     generation: u64,
     binding: ActivationBinding,
-    grant: CapabilityGrant,
+    requested: CapabilityRequest,
+    provisional_grant: CapabilityGrant,
 }
 
 impl PreparedActivation {
@@ -213,9 +216,21 @@ impl PreparedActivation {
         &self.binding
     }
 
-    /// The effective grant that will apply on commit.
-    pub fn grant(&self) -> &CapabilityGrant {
-        &self.grant
+    /// The validated activation request capabilities (bounded by the
+    /// package declaration at preparation). The final grant is
+    /// recomputed from this request and the commit-time Host
+    /// authority; this field is never itself authority.
+    pub fn requested_capabilities(&self) -> &CapabilityRequest {
+        &self.requested
+    }
+
+    /// The provisional grant computed from the PREPARATION-TIME Host
+    /// authority. Non-authoritative: it is offered only for
+    /// provisional runtime setup and is never used for the
+    /// authoritative ActiveDomain grant, which commit recomputes from
+    /// the commit-time Host authority.
+    pub fn provisional_grant(&self) -> &CapabilityGrant {
+        &self.provisional_grant
     }
 }
 
@@ -604,29 +619,47 @@ impl DomainLifecycle {
         Ok(PreparedActivation {
             generation: self.generation,
             binding: ActivationBinding::from_request(request),
-            grant,
+            requested: request.capabilities().clone(),
+            provisional_grant: grant,
         })
     }
 
     /// Commit a prepared activation: the single authoritative
     /// Enabled -> Active transition. Before any mutation the commit
     /// revalidates the prepared activation against the current
-    /// lifecycle: the generation captured at preparation must still
-    /// equal the current generation, the state must still be Enabled,
-    /// and the prepared binding must still exactly match the currently
-    /// enabled package (stable id, exact digest, and ABI). Any
-    /// mismatch is a stale preparation and
-    /// returns [`DomainFailure::StaleActivation`] without changing
-    /// state, allocating a session id, or advancing the generation.
+    /// lifecycle AND the authorizing Host context: the generation
+    /// captured at preparation must still equal the current
+    /// generation, the state must still be Enabled, the prepared
+    /// binding must still exactly match the currently enabled package
+    /// (stable id, exact digest, and ABI), the bound ABI must still be
+    /// supported by this Host, the runtime/resource policy must still
+    /// be ready, and the FINAL capability grant is recomputed from the
+    /// commit-time Host authority over the validated request
+    /// capabilities. Any mismatch is a typed failure without changing
+    /// state, allocating a session id, or advancing the generation:
+    /// [`DomainFailure::StaleActivation`] for lifecycle staleness,
+    /// [`DomainFailure::UnsupportedAbi`] for a Host-incompatible
+    /// bound ABI, [`DomainFailure::CapabilityDenied`] for a narrower
+    /// commit-time authority, and the typed resource failures for a
+    /// runtime that is no longer ready.
+    ///
+    /// Preparation never creates durable authority: the provisional
+    /// grant carried by the prepared activation is never used here,
+    /// so a prepared activation cannot import authority from its
+    /// preparation context into this commit.
     ///
     /// On success the session id is allocated exactly once, the
     /// lifecycle advances to Active, and the generation advances, so
     /// the published [`ActiveDomain`] always carries an exact package
-    /// binding for the enabled package and a session id from a
-    /// committed activation.
+    /// binding for the enabled package, a grant authorized by the
+    /// commit-time Host authority, and a session id from a committed
+    /// activation.
     pub fn commit_activation(
         &mut self,
         prepared: PreparedActivation,
+        supported_abi: &DomainAbi,
+        authority: &HostAuthority,
+        runtime: RuntimeCheckResult,
     ) -> Result<ActiveDomain, DomainFailure> {
         // 1. The prepared activation must still belong to this
         //    lifecycle episode. Every successful material transition
@@ -647,6 +680,40 @@ impl DomainLifecycle {
         if !prepared.binding.matches(package) {
             return Err(DomainFailure::StaleActivation);
         }
+        // 4. The bound ABI must still be supported by the Host that
+        //    authorizes this commit.
+        if !prepared.binding.abi().is_compatible_with(supported_abi) {
+            return Err(DomainFailure::UnsupportedAbi {
+                expected: supported_abi.as_str().to_owned(),
+                found: prepared.binding.abi().as_str().to_owned(),
+            });
+        }
+        // 5. The final capability grant is computed NOW from the
+        //    commit-time Host authority over the validated request
+        //    capabilities: preparation never creates durable
+        //    authority, and a PreparedActivation is never a bearer
+        //    token for the authority of its preparation context. A
+        //    narrower commit authority fails closed with the typed
+        //    denial; a wider one can never widen the request.
+        let grant = match decide_grant(&prepared.requested, authority) {
+            crate::domain::capability::GrantDecision::Granted(grant) => grant,
+            crate::domain::capability::GrantDecision::Denied { missing } => {
+                return Err(DomainFailure::CapabilityDenied { missing });
+            }
+        };
+        // 6. The runtime/resource policy of the authorizing Host must
+        //    still be ready.
+        match runtime {
+            RuntimeCheckResult::Ready => {}
+            RuntimeCheckResult::ResourceExceeded(kind) => {
+                return Err(DomainFailure::ResourceExceeded { kind });
+            }
+            RuntimeCheckResult::Unavailable => {
+                return Err(DomainFailure::Unavailable {
+                    reason: "domain runtime is unavailable".to_owned(),
+                });
+            }
+        }
         let package =
             match std::mem::replace(&mut self.state, DomainState::Absent) {
                 DomainState::Enabled(package) => package,
@@ -658,7 +725,7 @@ impl DomainLifecycle {
         let active = ActiveDomain {
             session_id: self.next_session,
             binding: prepared.binding,
-            grant: prepared.grant,
+            grant,
         };
         self.next_session += 1;
         self.generation += 1;
@@ -685,7 +752,7 @@ impl DomainLifecycle {
             authority,
             &runtime,
         )?;
-        self.commit_activation(prepared)
+        self.commit_activation(prepared, supported_abi, authority, runtime)
     }
     /// End the current run/session-scoped activation. The package
     /// stays installed and enabled.
@@ -1271,7 +1338,12 @@ mod tests {
             .unwrap();
         lifecycle.disable().unwrap();
         let generation_before = lifecycle.generation;
-        assert_stale(lifecycle.commit_activation(prepared));
+        assert_stale(lifecycle.commit_activation(
+            prepared,
+            &DomainAbi::parse(ABI).unwrap(),
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ));
         // No mutation: the lifecycle stays Installed, the session
         // counter is untouched, and the generation did not advance.
         assert_eq!(lifecycle.state(), LifecycleState::Installed);
@@ -1297,7 +1369,12 @@ mod tests {
         lifecycle.uninstall().unwrap();
         lifecycle.install(package("other-domain", &digest_b)).unwrap();
         lifecycle.enable().unwrap();
-        assert_stale(lifecycle.commit_activation(prepared));
+        assert_stale(lifecycle.commit_activation(
+            prepared,
+            &DomainAbi::parse(ABI).unwrap(),
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ));
         // Package B remains Enabled with no A binding attached and no
         // session allocated.
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
@@ -1325,7 +1402,12 @@ mod tests {
         // lifecycle episode changed, so the old preparation is stale.
         lifecycle.disable().unwrap();
         lifecycle.enable().unwrap();
-        assert_stale(lifecycle.commit_activation(prepared));
+        assert_stale(lifecycle.commit_activation(
+            prepared,
+            &DomainAbi::parse(ABI).unwrap(),
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ));
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
         assert!(lifecycle.active().is_none());
         assert_eq!(lifecycle.next_session, 1);
@@ -1344,7 +1426,14 @@ mod tests {
                 &RuntimeCheckResult::Ready,
             )
             .unwrap();
-        lifecycle.commit_activation(first.clone()).unwrap();
+        lifecycle
+            .commit_activation(
+                first.clone(),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
         lifecycle.deactivate().unwrap();
         // A second preparation is bound to the new episode and
         // commits; the first preparation can never cross the completed
@@ -1358,12 +1447,25 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            lifecycle.commit_activation(second).unwrap().session_id(),
+            lifecycle
+                .commit_activation(
+                    second,
+                    &supported,
+                    &authority(),
+                    RuntimeCheckResult::Ready,
+                )
+                .unwrap()
+                .session_id(),
             2,
         );
         assert_eq!(lifecycle.active().unwrap().session_id(), 2);
         lifecycle.deactivate().unwrap();
-        assert_stale(lifecycle.commit_activation(first));
+        assert_stale(lifecycle.commit_activation(
+            first,
+            &supported,
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ));
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
         assert!(lifecycle.active().is_none());
         // Two committed activations, no session consumed by the stale
@@ -1384,7 +1486,14 @@ mod tests {
                 &RuntimeCheckResult::Ready,
             )
             .unwrap();
-        let active = lifecycle.commit_activation(prepared).unwrap();
+        let active = lifecycle
+            .commit_activation(
+                prepared,
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
         // Exact binding, correct grant, exactly one session allocation.
         assert_eq!(active.session_id(), 1);
         assert_eq!(lifecycle.next_session, 2);
@@ -1416,8 +1525,20 @@ mod tests {
                 &RuntimeCheckResult::Ready,
             )
             .unwrap();
-        lifecycle.commit_activation(prepared.clone()).unwrap();
-        assert_stale(lifecycle.commit_activation(prepared));
+        lifecycle
+            .commit_activation(
+                prepared.clone(),
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        assert_stale(lifecycle.commit_activation(
+            prepared,
+            &DomainAbi::parse(ABI).unwrap(),
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ));
         assert_eq!(lifecycle.state(), LifecycleState::Active);
         assert_eq!(lifecycle.active().unwrap().session_id(), 1);
         assert_eq!(lifecycle.next_session, 2);
@@ -1433,7 +1554,12 @@ mod tests {
                 &RuntimeCheckResult::Ready,
             )
             .unwrap();
-        assert_stale(other.commit_activation(foreign));
+        assert_stale(other.commit_activation(
+            foreign,
+            &supported,
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ));
         assert_eq!(other.state(), LifecycleState::Absent);
         assert_eq!(other.next_session, 1);
     }
@@ -1498,7 +1624,12 @@ mod tests {
             .unwrap();
         // A stale commit creates no observable session gap.
         lifecycle.disable().unwrap();
-        assert_stale(lifecycle.commit_activation(prepared));
+        assert_stale(lifecycle.commit_activation(
+            prepared,
+            &DomainAbi::parse(ABI).unwrap(),
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ));
         lifecycle.enable().unwrap();
         let active = lifecycle
             .prepare_activation(
@@ -1508,7 +1639,14 @@ mod tests {
                 &RuntimeCheckResult::Ready,
             )
             .unwrap();
-        let committed = lifecycle.commit_activation(active).unwrap();
+        let committed = lifecycle
+            .commit_activation(
+                active,
+                &supported,
+                &authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
         assert_eq!(committed.session_id(), 1);
         // Deactivate, prepare again, commit: the next monotonic
         // committed session id is 2.
@@ -1522,9 +1660,315 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            lifecycle.commit_activation(active).unwrap().session_id(),
+            lifecycle
+                .commit_activation(
+                    active,
+                    &supported,
+                    &authority(),
+                    RuntimeCheckResult::Ready,
+                )
+                .unwrap()
+                .session_id(),
             2,
         );
+    }
+
+    fn broad_authority() -> HostAuthority {
+        HostAuthority::parse(&ids(&["workspace-read", "process-exec"]))
+            .unwrap()
+    }
+
+    fn read_authority() -> HostAuthority {
+        HostAuthority::parse(&ids(&["workspace-read"])).unwrap()
+    }
+
+    fn package_declaring(
+        capabilities: &[&str],
+        digest: &str,
+    ) -> DomainPackage {
+        DomainPackage::parse(
+            "conformance-domain",
+            digest,
+            ABI,
+            &ids(capabilities),
+        )
+        .unwrap()
+    }
+
+    fn request_capabilities(
+        capabilities: &[&str],
+        digest: &str,
+    ) -> ActivationRequest {
+        ActivationRequest::parse(
+            "conformance-domain",
+            digest,
+            ABI,
+            &ids(capabilities),
+        )
+        .unwrap()
+    }
+
+    fn denied_missing(
+        result: Result<super::ActiveDomain, DomainFailure>,
+    ) -> Vec<String> {
+        match result {
+            Err(DomainFailure::CapabilityDenied { missing }) => {
+                missing.iter().map(|id| id.as_str().to_owned()).collect()
+            }
+            other => panic!("expected capability denial, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn same_lifecycle_authority_narrowing_fails_closed() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let mut lifecycle = DomainLifecycle::new();
+        lifecycle
+            .install(package_declaring(
+                &["workspace-read", "process-exec"],
+                &digest1,
+            ))
+            .unwrap();
+        lifecycle.enable().unwrap();
+        let prepared = lifecycle
+            .prepare_activation(
+                &request_capabilities(
+                    &["workspace-read", "process-exec"],
+                    &digest1,
+                ),
+                &supported,
+                &broad_authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        // The commit-time authority narrows to [read]: the prepared
+        // activation must NOT carry the earlier broader grant. The
+        // generation is unchanged (the failed commit mutates nothing),
+        // so this is a pure authority denial, not lifecycle staleness.
+        let denied = lifecycle.commit_activation(
+            prepared,
+            &supported,
+            &read_authority(),
+            RuntimeCheckResult::Ready,
+        );
+        assert_eq!(denied_missing(denied), vec!["process-exec"]);
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(lifecycle.next_session, 1);
+    }
+
+    #[test]
+    fn prepared_activation_cannot_import_broader_authority_across_lifecycles()
+    {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let request = request_capabilities(
+            &["workspace-read", "process-exec"],
+            &digest1,
+        );
+        let declared =
+            package_declaring(&["workspace-read", "process-exec"], &digest1);
+        // Lifecycle A prepares under broad authority.
+        let mut a = DomainLifecycle::new();
+        a.install(declared.clone()).unwrap();
+        a.enable().unwrap();
+        let prepared = a
+            .prepare_activation(
+                &request,
+                &supported,
+                &broad_authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        // Lifecycle B installs and enables the SAME package, so its
+        // generation numerically equals A's — the security invariant
+        // must not depend on globally unique generations.
+        let mut b = DomainLifecycle::new();
+        b.install(declared).unwrap();
+        b.enable().unwrap();
+        assert_eq!(
+            a.generation, b.generation,
+            "independent lifecycles coincide numerically by design",
+        );
+        // Committing A's preparation through B under B's narrower
+        // authority must fail: preparation never creates durable
+        // authority, and equal generations transfer none.
+        let denied = b.commit_activation(
+            prepared,
+            &supported,
+            &read_authority(),
+            RuntimeCheckResult::Ready,
+        );
+        assert_eq!(denied_missing(denied), vec!["process-exec"]);
+        assert_eq!(b.state(), LifecycleState::Enabled);
+        assert!(b.active().is_none());
+        assert_eq!(b.next_session, 1);
+    }
+
+    #[test]
+    fn cloned_lifecycle_state_does_not_transfer_prepared_authority() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let declared =
+            package_declaring(&["workspace-read", "process-exec"], &digest1);
+        let mut original = DomainLifecycle::new();
+        original.install(declared).unwrap();
+        original.enable().unwrap();
+        let prepared = original
+            .prepare_activation(
+                &request_capabilities(
+                    &["workspace-read", "process-exec"],
+                    &digest1,
+                ),
+                &supported,
+                &broad_authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        // A clone duplicates lifecycle state (same package, same
+        // generation value) but carries no authority of its own.
+        let mut copy = original.clone();
+        assert_eq!(original.generation, copy.generation);
+        let denied = copy.commit_activation(
+            prepared.clone(),
+            &supported,
+            &read_authority(),
+            RuntimeCheckResult::Ready,
+        );
+        assert_eq!(denied_missing(denied), vec!["process-exec"]);
+        assert_eq!(copy.state(), LifecycleState::Enabled);
+        assert!(copy.active().is_none());
+        assert_eq!(copy.next_session, 1);
+        // Positive control: the SAME prepared activation committed
+        // through the copy under an equally broad commit-time
+        // authority is authorized BY THAT AUTHORITY — the gate is the
+        // commit-time Host policy, not provenance.
+        let active = copy
+            .commit_activation(
+                prepared,
+                &supported,
+                &broad_authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let granted: Vec<&str> =
+            active.grant().iter().map(|id| id.as_str()).collect();
+        assert_eq!(granted, vec!["process-exec", "workspace-read"]);
+        assert_eq!(active.session_id(), 1);
+    }
+
+    #[test]
+    fn wider_commit_authority_never_widens_the_activation_request() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        // The request asks only for [read]; preparation happens under
+        // a [read] authority and the commit-time authority is broader.
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &read_authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let active = lifecycle
+            .commit_activation(
+                prepared,
+                &supported,
+                &broad_authority(),
+                RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let granted: Vec<&str> =
+            active.grant().iter().map(|id| id.as_str()).collect();
+        assert_eq!(
+            granted,
+            vec!["workspace-read"],
+            "the activation request is the upper bound",
+        );
+        assert_eq!(active.session_id(), 1);
+    }
+
+    /// Every successful grant satisfies the narrowing chain:
+    /// grant <= request <= package declaration, and grant <= the
+    /// commit-time Host authority.
+    #[test]
+    fn successful_grants_are_subsets_of_request_declaration_and_authority() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        type GrantCase = (
+            Vec<&'static str>,
+            Vec<&'static str>,
+            Vec<&'static str>,
+            Vec<&'static str>,
+        );
+        let cases: Vec<GrantCase> = vec![
+            // request, declaration, prepare+commit authority, expected grant
+            (
+                vec!["workspace-read"],
+                vec!["workspace-read", "process-exec"],
+                vec!["workspace-read", "process-exec"],
+                vec!["workspace-read"],
+            ),
+            (
+                vec!["workspace-read", "process-exec"],
+                vec!["workspace-read", "process-exec"],
+                vec!["workspace-read", "process-exec"],
+                vec!["process-exec", "workspace-read"],
+            ),
+            (
+                vec!["workspace-read"],
+                vec!["workspace-read"],
+                vec!["workspace-read", "process-exec"],
+                vec!["workspace-read"],
+            ),
+        ];
+        for (request_caps, declaration, authority_caps, expected) in cases {
+            let mut lifecycle = DomainLifecycle::new();
+            lifecycle
+                .install(package_declaring(&declaration, &digest1))
+                .unwrap();
+            lifecycle.enable().unwrap();
+            let authority =
+                HostAuthority::parse(&ids(&authority_caps)).unwrap();
+            let prepared = lifecycle
+                .prepare_activation(
+                    &request_capabilities(&request_caps, &digest1),
+                    &supported,
+                    &authority,
+                    &RuntimeCheckResult::Ready,
+                )
+                .unwrap();
+            let active = lifecycle
+                .commit_activation(
+                    prepared,
+                    &supported,
+                    &authority,
+                    RuntimeCheckResult::Ready,
+                )
+                .unwrap();
+            let granted: Vec<&str> =
+                active.grant().iter().map(|id| id.as_str()).collect();
+            assert_eq!(granted, expected);
+            let installed = lifecycle.installed_package().unwrap();
+            assert!(active.binding().matches(installed));
+            for capability in &granted {
+                assert!(
+                    request_caps.contains(capability),
+                    "grant must not exceed the request: {capability}",
+                );
+                assert!(
+                    declaration.contains(capability),
+                    "grant must not exceed the declaration: {capability}",
+                );
+                assert!(
+                    authority_caps.contains(capability),
+                    "grant must not exceed the commit-time authority: {capability}",
+                );
+            }
+        }
     }
 
     /// Table-driven invariant check: whenever the lifecycle is Active,

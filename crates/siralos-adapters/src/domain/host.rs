@@ -383,7 +383,19 @@ impl DomainHost {
         //    explicitly; the component imports exactly host-effects,
         //    so any other import also fails here. The store is created
         //    with the prepared effective grant.
-        let mut store = self.store(prepared.grant().clone(), &engine)?;
+        // The provisional store's mediator is configured with the
+        // NON-AUTHORITATIVE provisional grant (computed from the
+        // prepare-time authority). The authoritative ActiveDomain
+        // grant is recomputed by the final commit from the
+        // commit-time Host authority; the provisional grant is
+        // discarded with the store if that commit fails. Within this
+        // single-threaded activate() call the host authority is
+        // immutable (there is no authority mutator), and the
+        // conformance guest never invokes host effects from bind, so
+        // no guest code can exercise the provisional grant before the
+        // final commit.
+        let mut store =
+            self.store(prepared.provisional_grant().clone(), &engine)?;
         // Instantiation executes the component's canonical-ABI
         // initialization, which also consumes fuel; grant the call
         // budget for it.
@@ -454,7 +466,12 @@ impl DomainHost {
         //    fails typed and publishes no HostSession; the provisional
         //    store and instance are simply dropped with the local
         //    state, so no rollback machinery is needed.
-        let active = self.lifecycle.commit_activation(prepared)?;
+        let active = self.lifecycle.commit_activation(
+            prepared,
+            &self.supported_abi,
+            &self.authority,
+            runtime,
+        )?;
         self.session = Some(HostSession { store, instance, cancelled: false });
         Ok(active)
     }
