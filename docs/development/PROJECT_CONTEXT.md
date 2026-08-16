@@ -10,7 +10,7 @@ Current completed milestone: R6
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
 R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 is the next implementation step pending review
-Last verified commit: 3a08a86605f0395244a55eaab1b8db84de22d7f7
+Last verified commit: bd335190696f3662e242407c89d7821483d7fa24
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -203,8 +203,11 @@ strict bounded-turn collector. The differential corpus gained the
 `provider-turn` subject with 18 required scenarios (corpus version 12,
 104 scenario files); all required applicable scenarios match and the
 complete local repository gate passes (verified executable baseline
-3a08a86605f0395244a55eaab1b8db84de22d7f7). R7.1 implements no Tool
-Round, no projection, no configuration, and no CLI session (R7.2-R7.5).
+bd335190696f3662e242407c89d7821483d7fa24). Cancellation authority is
+Host-owned: providers receive only a read-only `CancellationSignal`
+observation view and cannot mutate Host cancellation state (the signal
+type exposes no mutation operation). R7.1 implements no Tool Round, no
+projection, no configuration, and no CLI session (R7.2-R7.5).
 
 ### Target architecture
 

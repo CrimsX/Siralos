@@ -594,7 +594,10 @@ R1-R6 — Verified
 R7A — Complete (provider protocol contract corrected; evidence boundary frozen)
 R7.1 — Complete (provider contract + deterministic fake provider + bounded
         single model turn at differential parity; corpus version 12, 104
-        scenario files, 18 provider-turn scenarios)
+        scenario files, 18 provider-turn scenarios; final acceptance
+        including cancellation-authority remediation — providers receive
+        only a read-only CancellationSignal and cannot mutate Host
+        cancellation state — and proportional measurement)
 R7.2 — Candidate next slice, pending review/authorization
 R8-R12 — Not due
 ```

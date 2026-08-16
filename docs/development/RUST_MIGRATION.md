@@ -265,6 +265,33 @@ verified executable baseline 3a08a86605f0395244a55eaab1b8db84de22d7f7.
 R7.1 verification does not satisfy R7 overall, authorize R7.2+ or R8+, or
 satisfy any Stage-4 entry gate.
 
+The R7.1 cancellation-authority remediation closed the final known
+authority-boundary defect before R7.2: `ModelProvider::stream` now
+receives the read-only `CancellationSignal` observation view instead of
+`&CancellationToken`, so a provider can observe Host cancellation and
+stop cooperatively but can never invoke the Host `cancel()` mutator —
+enforced by the type boundary (the signal carries no mutation operation
+and no accessor that yields the controller). Host cancellation control
+strictly contains provider cancellation capability; mid-stream
+cancellation tests are Host-driven through a controller-holding test
+wrapper, and the deterministic fake provider, scripted provider, and
+strict collector receive only the signal. Externally observable
+`provider-turn` behavior is unchanged (differential parity holds, corpus
+identity untouched). Proportional R7.1 measurement (from
+`git diff --numstat 2c57e8f..3a08a86`): siralos-core provider production
++1,268 lines (conversation/event/result/turn/mod), siralos-adapters
+provider production +565 lines (deterministic_fake/strict_turn/mod),
+siralos-cli differential provider-turn path +1,015 lines (harness.rs
+dispatch, validation, and records); one new direct dependency
+(serde_json in siralos-core, already in the tree via adapters/cli); no
+async runtime, no Arc/Mutex/RwLock, no unsafe, no dynamic dispatch;
+18 `provider-turn` differential scenarios; 69 siralos-core provider
+unit tests and 34 siralos-adapters provider unit tests. The complete
+local repository gate passes with verified executable baseline
+bd335190696f3662e242407c89d7821483d7fa24. R7.1 verification does not
+satisfy R7 overall, authorize R7.2+ or R8+, or satisfy any Stage-4 entry
+gate.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:
