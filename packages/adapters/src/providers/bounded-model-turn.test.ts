@@ -164,6 +164,96 @@ describe("collectBoundedModelTurn", () => {
     }
   });
 
+  it("rejects an unknown event discriminator, even tool-call-shaped", async () => {
+    await expectFailure(
+      collect([
+        {
+          type: "unexpected",
+          callId: "call-1",
+          toolName: "read",
+          input: { path: "a" },
+        } as unknown as ModelEvent,
+      ]),
+      "unknown event type",
+    );
+  });
+
+  it("still accepts a valid tool call after protocol hardening", async () => {
+    const outcome = await collect([
+      { type: "tool_call", callId: "call-ok", toolName: "read", input: {} },
+      { type: "completed" },
+    ]);
+    expect(outcome).toMatchObject({ kind: "turn" });
+    if (outcome.kind === "turn") {
+      expect(outcome.toolCalls).toHaveLength(1);
+    }
+  });
+
+  it("still rejects a duplicate call id within one turn", async () => {
+    await expectFailure(
+      collect([
+        { type: "tool_call", callId: "call-dupe", toolName: "read", input: {} },
+        { type: "tool_call", callId: "call-dupe", toolName: "read", input: {} },
+        { type: "completed" },
+      ]),
+      "duplicate",
+    );
+  });
+
+  it("still rejects empty call ids and tool names", async () => {
+    await expectFailure(
+      collect([
+        { type: "tool_call", callId: "", toolName: "read", input: {} },
+        { type: "completed" },
+      ]),
+      "empty id or name",
+    );
+    await expectFailure(
+      collect([
+        { type: "tool_call", callId: "call-1", toolName: "", input: {} },
+        { type: "completed" },
+      ]),
+      "empty id or name",
+    );
+  });
+
+  it("rejects a text delta with a non-string payload", async () => {
+    await expectFailure(
+      collect([{ type: "text_delta", text: 42 } as unknown as ModelEvent]),
+      "text event without a string payload",
+    );
+  });
+
+  it("rejects a tool call with a non-string id or name", async () => {
+    await expectFailure(
+      collect([
+        { type: "tool_call", callId: 7, toolName: "read", input: {} } as unknown as ModelEvent,
+      ]),
+      "non-string id or name",
+    );
+    await expectFailure(
+      collect([
+        { type: "tool_call", callId: "call-1", toolName: 9, input: {} } as unknown as ModelEvent,
+      ]),
+      "non-string id or name",
+    );
+  });
+
+  it("rejects a malformed non-object event", async () => {
+    await expectFailure(collect([null as unknown as ModelEvent]), "malformed event");
+    await expectFailure(collect([5 as unknown as ModelEvent]), "malformed event");
+  });
+
+  it("still reports after-completion for an unknown event after completed", async () => {
+    await expectFailure(
+      collect([
+        { type: "completed" },
+        { type: "unexpected", callId: "c1", toolName: "read", input: {} } as unknown as ModelEvent,
+      ]),
+      "after completion",
+    );
+  });
+
   it("rejects non-serializable tool arguments and call-id reuse across turns", async () => {
     const cyclic: { self?: unknown } = {};
     cyclic.self = cyclic;

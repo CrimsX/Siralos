@@ -216,12 +216,33 @@ async function collect(options: CollectBoundedModelTurnOptions): Promise<Bounded
           message: `${actor} stream emitted an event after completion.`,
         };
       }
-      if (event.type === "completed") {
+      const rawEvent = event as unknown;
+      // Provider events are externally supplied data: the discriminator is
+      // authoritative and unknown or malformed runtime events fail closed.
+      if (rawEvent === null || typeof rawEvent !== "object" || Array.isArray(rawEvent)) {
+        return { kind: "failed", message: `${actor} emitted a malformed event.` };
+      }
+      const record = rawEvent as {
+        readonly type?: unknown;
+        readonly text?: unknown;
+        readonly callId?: unknown;
+        readonly toolName?: unknown;
+        readonly input?: unknown;
+      };
+      if (record.type === "completed") {
+        // Extra fields on a completed event are ignored; only the
+        // discriminator is authoritative.
         completionSeen = true;
         continue;
       }
-      if (event.type === "text_delta") {
-        const bytes = utf8ByteLength(event.text);
+      if (record.type === "text_delta") {
+        if (typeof record.text !== "string") {
+          return {
+            kind: "failed",
+            message: `${actor} emitted a text event without a string payload.`,
+          };
+        }
+        const bytes = utf8ByteLength(record.text);
         textEvents += 1;
         if (textEvents > limits.maxTextEvents) {
           return {
@@ -243,85 +264,96 @@ async function collect(options: CollectBoundedModelTurnOptions): Promise<Bounded
             message: `${actor} exceeded the aggregate turn byte limit.`,
           };
         }
-        text += event.text;
+        text += record.text;
         continue;
       }
+      if (record.type === "tool_call") {
+        if (typeof record.callId !== "string" || typeof record.toolName !== "string") {
+          return {
+            kind: "failed",
+            message: `${actor} emitted a tool call with a non-string id or name.`,
+          };
+        }
+        const callId = record.callId;
+        const toolName = record.toolName;
+        if (callId.length === 0 || toolName.length === 0) {
+          return {
+            kind: "failed",
+            message: `${actor} emitted a tool call with an empty id or name.`,
+          };
+        }
+        if (seenCallIds.has(callId)) {
+          return {
+            kind: "failed",
+            message: `${actor} emitted duplicate tool call id ${callId}.`,
+          };
+        }
+        if (toolCalls.length >= limits.maxToolCalls) {
+          return {
+            kind: "failed",
+            message: `${actor} exceeded the per-turn tool-call limit.`,
+          };
+        }
 
-      if (event.callId.length === 0 || event.toolName.length === 0) {
-        return {
-          kind: "failed",
-          message: `${actor} emitted a tool call with an empty id or name.`,
-        };
-      }
-      if (seenCallIds.has(event.callId)) {
-        return {
-          kind: "failed",
-          message: `${actor} emitted duplicate tool call id ${event.callId}.`,
-        };
-      }
-      if (toolCalls.length >= limits.maxToolCalls) {
-        return {
-          kind: "failed",
-          message: `${actor} exceeded the per-turn tool-call limit.`,
-        };
-      }
-
-      const callIdBytes = utf8ByteLength(event.callId);
-      if (callIdBytes > limits.maxCallIdBytes) {
-        return {
-          kind: "failed",
-          message: `${actor} exceeded the tool-call id byte limit.`,
-        };
-      }
-      const toolNameBytes = utf8ByteLength(event.toolName);
-      if (toolNameBytes > limits.maxToolNameBytes) {
-        return {
-          kind: "failed",
-          message: `${actor} exceeded the tool-name byte limit.`,
-        };
-      }
-      let serializedInput: string;
-      try {
-        const serialized = JSON.stringify(event.input);
-        if (serialized === undefined) {
+        const callIdBytes = utf8ByteLength(callId);
+        if (callIdBytes > limits.maxCallIdBytes) {
+          return {
+            kind: "failed",
+            message: `${actor} exceeded the tool-call id byte limit.`,
+          };
+        }
+        const toolNameBytes = utf8ByteLength(toolName);
+        if (toolNameBytes > limits.maxToolNameBytes) {
+          return {
+            kind: "failed",
+            message: `${actor} exceeded the tool-name byte limit.`,
+          };
+        }
+        let serializedInput: string;
+        try {
+          const serialized = JSON.stringify(record.input);
+          if (serialized === undefined) {
+            return {
+              kind: "failed",
+              message: `${actor} emitted a tool argument that is not JSON-serializable.`,
+            };
+          }
+          serializedInput = serialized;
+        } catch {
           return {
             kind: "failed",
             message: `${actor} emitted a tool argument that is not JSON-serializable.`,
           };
         }
-        serializedInput = serialized;
-      } catch {
-        return {
-          kind: "failed",
-          message: `${actor} emitted a tool argument that is not JSON-serializable.`,
-        };
-      }
-      const argumentBytes = utf8ByteLength(serializedInput);
-      if (argumentBytes > limits.maxToolArgumentBytes) {
-        return {
-          kind: "failed",
-          message: `${actor} exceeded the tool-argument byte limit.`,
-        };
-      }
-      turnBytes += callIdBytes + toolNameBytes + argumentBytes;
-      if (turnBytes > limits.maxTurnBytes) {
-        return {
-          kind: "failed",
-          message: `${actor} exceeded the aggregate turn byte limit.`,
-        };
-      }
+        const argumentBytes = utf8ByteLength(serializedInput);
+        if (argumentBytes > limits.maxToolArgumentBytes) {
+          return {
+            kind: "failed",
+            message: `${actor} exceeded the tool-argument byte limit.`,
+          };
+        }
+        turnBytes += callIdBytes + toolNameBytes + argumentBytes;
+        if (turnBytes > limits.maxTurnBytes) {
+          return {
+            kind: "failed",
+            message: `${actor} exceeded the aggregate turn byte limit.`,
+          };
+        }
 
-      let input: unknown;
-      try {
-        input = JSON.parse(serializedInput) as unknown;
-      } catch {
-        return {
-          kind: "failed",
-          message: `${actor} emitted a tool argument that could not be detached as JSON data.`,
-        };
+        let input: unknown;
+        try {
+          input = JSON.parse(serializedInput) as unknown;
+        } catch {
+          return {
+            kind: "failed",
+            message: `${actor} emitted a tool argument that could not be detached as JSON data.`,
+          };
+        }
+        seenCallIds.add(callId);
+        toolCalls.push({ callId, toolName, input });
+        continue;
       }
-      seenCallIds.add(event.callId);
-      toolCalls.push({ callId: event.callId, toolName: event.toolName, input });
+      return { kind: "failed", message: `${actor} emitted an unknown event type.` };
     }
   } catch (error: unknown) {
     if (signal.aborted) {
