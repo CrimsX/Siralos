@@ -690,3 +690,61 @@ pub(super) fn tool_loop_record(
     }
     Ok(json!({ "cases": records }))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{tool_loop_record, validate_tool_loop_input};
+
+    #[test]
+    fn validates_strict_tool_loop_input_shapes() {
+        let valid = json!({
+            "cases": [{
+                "prompt": "hello",
+                "tools": [],
+                "provider": { "kind": "fake" }
+            }]
+        });
+        assert!(validate_tool_loop_input(&valid).is_ok());
+
+        let unknown = json!({
+            "cases": [{
+                "prompt": "hello",
+                "tools": [],
+                "provider": { "kind": "fake" },
+                "unexpected": true
+            }]
+        });
+        assert!(validate_tool_loop_input(&unknown).is_err());
+
+        let unsupported = json!({
+            "cases": [{
+                "prompt": "hello",
+                "tools": ["process.execute"],
+                "provider": { "kind": "fake" }
+            }]
+        });
+        assert!(validate_tool_loop_input(&unsupported).is_err());
+    }
+
+    #[test]
+    fn tool_loop_record_runs_the_real_production_loop() {
+        let input = json!({
+            "cases": [{
+                "prompt": "hello",
+                "tools": [],
+                "provider": { "kind": "fake" }
+            }]
+        });
+        let record =
+            tool_loop_record("tool-loop.record-test", &input).unwrap();
+        let cases = record["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0]["caseIndex"], 0);
+        assert_eq!(cases[0]["terminal"], json!({ "kind": "completed" }));
+        assert_eq!(cases[0]["providerTurnCount"], 1);
+        assert_eq!(cases[0]["completedToolRounds"], 0);
+        assert_eq!(cases[0]["history"].as_array().unwrap().len(), 2);
+    }
+}

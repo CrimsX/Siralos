@@ -403,6 +403,127 @@ describe("provider-turn subject integrity", () => {
     });
     expect(() => loadCorpus(corpus, "posix")).toThrow(/does not match its manifest digest/u);
   });
+
+  it("accepts tool-loop as a corpus subject with the frozen scenario set", () => {
+    const { scenarios } = loadCorpus(CORPUS);
+    const toolLoop = scenarios.filter((scenario) => scenario.subject === "tool-loop");
+    expect(toolLoop).toHaveLength(16);
+    for (const scenario of toolLoop) {
+      expect(scenario.platforms).toEqual(["*"]);
+      expect(scenario.env).toEqual({});
+      expect(scenario.parity).toBe("required");
+      expect(scenario.input.cases.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("rejects unknown tool-loop case keys", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "tool-loop.terminal.json"), (scenario) => {
+      scenario.input.cases[0].unexpected = true;
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/unknown field/u);
+  });
+
+  it("rejects an unsupported tool-loop registry selection", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "tool-loop.terminal.json"), (scenario) => {
+      scenario.input.cases[0].tools = ["process.execute"];
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/unsupported tool/u);
+  });
+
+  it("rejects wrong tool-loop platform or env", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "tool-loop.terminal.json"), (scenario) => {
+      scenario.platforms = ["windows"];
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/platforms \["\*"\] and an empty env/u);
+
+    const corpusEnv = mutableCorpus();
+    mutateJson(join(corpusEnv, "tool-loop.terminal.json"), (scenario) => {
+      scenario.env = { HOME: "/fixture/home" };
+    });
+    expect(() => loadCorpus(corpusEnv, "posix")).toThrow(/empty env/u);
+  });
+
+  it("enforces the tool-loop input byte bound", () => {
+    const oversized = {
+      id: "tool-loop.terminal",
+      subject: "tool-loop",
+      platforms: ["*"],
+      parity: "required",
+      env: {},
+      input: {
+        cases: [
+          {
+            prompt: "x".repeat(CONTRACT_LIMITS.toolLoopInputBytes + 1),
+            tools: [],
+            provider: { kind: "fake" },
+          },
+        ],
+      },
+    };
+    expect(() => validateScenario(oversized, "tool-loop.terminal.json")).toThrow(
+      /exceeds 65536 UTF-8 bytes/u,
+    );
+  });
+
+  it("rejects malformed tool-loop result records", () => {
+    const badTerminal = {
+      scenarioId: "tool-loop.terminal",
+      subject: "tool-loop",
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: {
+        cases: [
+          {
+            caseIndex: 0,
+            events: [{ type: "response_started" }],
+            terminal: { kind: "invented" },
+            providerTurnCount: 0,
+            history: [{ type: "user_message", content: "x" }],
+            completedToolRounds: 0,
+            toolCalls: [],
+          },
+        ],
+      },
+    };
+    expect(() => validateOutcomeRecord(badTerminal, "test")).toThrow(/terminal kind is invalid/u);
+
+    const badUnit = {
+      scenarioId: "tool-loop.terminal",
+      subject: "tool-loop",
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: {
+        cases: [
+          {
+            caseIndex: 0,
+            events: [
+              {
+                type: "tool_started",
+                callId: "c",
+                toolName: "stub.success",
+                displayInputUtf16: [1.5],
+              },
+            ],
+            terminal: { kind: "completed" },
+            providerTurnCount: 0,
+            history: [{ type: "user_message", content: "x" }],
+            completedToolRounds: 0,
+            toolCalls: [],
+          },
+        ],
+      },
+    };
+    expect(() => validateOutcomeRecord(badUnit, "test")).toThrow(/invalid code unit/u);
+  });
+
+  it("detects mutation of a tool-loop fixture digest", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "tool-loop.terminal.json"), (scenario) => {
+      scenario.input.cases[0].prompt = "tampered";
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/does not match its manifest digest/u);
+  });
 });
 describe("oracle determinism", () => {
   it("produces byte-identical records on consecutive runs", { timeout: 120_000 }, () => {

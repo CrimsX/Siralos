@@ -255,17 +255,15 @@ fn validate_tool_loop_provider(
                 };
                 if event_object.get("type").and_then(Value::as_str)
                     == Some("provider_error")
-                {
-                    if event_object.len() != 2
+                    && (event_object.len() != 2
                         || !event_object
                             .get("message")
                             .and_then(Value::as_str)
-                            .is_some_and(|message| !message.is_empty())
-                    {
-                        return Err(HarnessError::corpus(format!(
-                            "{label}.events provider_error is invalid"
-                        )));
-                    }
+                            .is_some_and(|message| !message.is_empty()))
+                {
+                    return Err(HarnessError::corpus(format!(
+                        "{label}.events provider_error is invalid"
+                    )));
                 }
                 if event_object.get("type").and_then(Value::as_str)
                     == Some("tool_call")
