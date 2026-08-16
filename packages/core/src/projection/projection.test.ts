@@ -198,6 +198,10 @@ describe("tool projector", () => {
 });
 
 describe("evidence projector", () => {
+  const encoder = new TextEncoder();
+  const lineByteLengths = (text: string): number[] =>
+    text.split("\n").map((line) => encoder.encode(line).length);
+
   it("redacts configured secrets from model views", () => {
     const projector = createEvidenceProjector({ secrets: ["sk-live-1234"] });
     const view = projector.projectForModel({
@@ -234,6 +238,132 @@ describe("evidence projector", () => {
     expect(view.text).toContain("[truncated]");
     expect(view.originalBytes).toBe(10_000);
     expect(view.evidenceId).toBeNull();
+  });
+
+  it("enforces the ASCII line bound through projectForModel", () => {
+    const raw = "a".repeat(2048);
+    const view = createEvidenceProjector({
+      maxLineBytes: 1024,
+      maxTotalBytes: 32_768,
+    }).projectForModel({
+      rawText: raw,
+    });
+
+    expect(lineByteLengths(view.text)).toEqual([1024, 1024]);
+    expect(view.transformations).toEqual(["bound-lines"]);
+    expect(view.truncated).toBe(false);
+    expect(view.shownBytes).toBe(2049);
+    expect(view.originalBytes).toBe(2048);
+  });
+
+  it("leaves an exact line boundary unchanged", () => {
+    const raw = "a".repeat(1024);
+    const view = createEvidenceProjector({ maxLineBytes: 1024 }).projectForModel({ rawText: raw });
+
+    expect(view.text).toBe(raw);
+    expect(view.transformations).toEqual([]);
+    expect(view.shownBytes).toBe(view.originalBytes);
+  });
+
+  it("splits a line at maxLineBytes plus one", () => {
+    const raw = "a".repeat(1025);
+    const view = createEvidenceProjector({ maxLineBytes: 1024 }).projectForModel({ rawText: raw });
+
+    expect(lineByteLengths(view.text)).toEqual([1024, 1]);
+    expect(view.transformations).toEqual(["bound-lines"]);
+  });
+
+  it("keeps a supplementary scalar intact at the integrated boundary", () => {
+    const raw = `${"a".repeat(1021)}😀`;
+    const view = createEvidenceProjector({ maxLineBytes: 1024 }).projectForModel({ rawText: raw });
+
+    expect(view.text).toBe(`${"a".repeat(1021)}\n😀`);
+    expect(lineByteLengths(view.text)).toEqual([1021, 4]);
+    expect(view.text).not.toContain("\uFFFD");
+    expect(view.transformations).toEqual(["bound-lines"]);
+  });
+
+  it("preserves the complete scalar for an impossible sub-scalar bound", () => {
+    const view = createEvidenceProjector({ maxLineBytes: 3 }).projectForModel({ rawText: "😀😀" });
+
+    expect(view.text).toBe("😀\n😀");
+    expect(lineByteLengths(view.text)).toEqual([4, 4]);
+    expect(view.transformations).toEqual(["bound-lines"]);
+    expect(view.text).not.toContain("\uFFFD");
+  });
+
+  it("keeps redaction while applying the mandatory line bound", () => {
+    const raw = `${"a".repeat(1020)} secret-token`;
+    const view = createEvidenceProjector({
+      secrets: ["secret-token"],
+      maxLineBytes: 1024,
+      maxTotalBytes: 10_000,
+    }).projectForModel({ rawText: raw });
+
+    expect(view.text).not.toContain("secret-token");
+    expect(view.text).toContain("[REDACTED]");
+    expect(lineByteLengths(view.text).every((bytes) => bytes <= 1024)).toBe(true);
+    expect(view.transformations).toEqual(["redact-secrets", "bound-lines"]);
+  });
+
+  it("keeps stripped controls removed while applying the line bound", () => {
+    const raw = `\u001B[31m${"a".repeat(2048)}\u0007`;
+    const view = createEvidenceProjector({ maxLineBytes: 1024 }).projectForModel({ rawText: raw });
+
+    expect(view.text).not.toContain("\u001B");
+    expect(view.text).not.toContain("\u0007");
+    expect(lineByteLengths(view.text)).toEqual([1024, 1024]);
+    expect(view.transformations).toEqual(["strip-ansi-control", "bound-lines"]);
+  });
+
+  it("composes repeat collapse with mandatory line bounding", () => {
+    const line = "a".repeat(1024);
+    const raw = [line, line, line].join("\n");
+    const view = createEvidenceProjector({ maxLineBytes: 1024 }).projectForModel({ rawText: raw });
+
+    expect(view.text).toBe(`${line}\n ×3`);
+    expect(lineByteLengths(view.text)).toEqual([1024, 4]);
+    expect(view.transformations).toEqual(["collapse-repeated-lines", "bound-lines"]);
+  });
+
+  it("reverts optional collapse without restoring secrets or removing the line bound", () => {
+    const view = createEvidenceProjector({
+      secrets: ["s"],
+      maxLineBytes: 20,
+      maxTotalBytes: 1_000,
+    }).projectForModel({ rawText: "s\ns\ns" });
+
+    expect(view.text).not.toContain("s");
+    expect(view.text).toContain("[REDACTED]");
+    expect(lineByteLengths(view.text).every((bytes) => bytes <= 20)).toBe(true);
+    expect(view.transformations).toEqual(["redact-secrets", "bound-lines"]);
+    expect(view.transformations).not.toContain("collapse-repeated-lines");
+  });
+
+  it("rejects a worse collapse without disabling the line bound", () => {
+    const raw = `${"a".repeat(2048)}\n\n\n`;
+    const view = createEvidenceProjector({ maxLineBytes: 1024 }).projectForModel({ rawText: raw });
+
+    expect(view.transformations).toEqual(["bound-lines"]);
+    expect(view.transformations).not.toContain("collapse-repeated-lines");
+    expect(lineByteLengths(view.text).every((bytes) => bytes <= 1024)).toBe(true);
+  });
+
+  it("truncates after line bounding and preserves scalar-safe metadata", () => {
+    const raw = "b".repeat(2048);
+    const view = createEvidenceProjector({
+      maxLineBytes: 1024,
+      maxTotalBytes: 1024,
+    }).projectForModel({
+      rawText: raw,
+    });
+
+    expect(view.truncated).toBe(true);
+    expect(view.shownBytes).toBe(1024);
+    expect(view.originalBytes).toBe(2048);
+    expect(view.text).toContain("[truncated]");
+    expect(lineByteLengths(view.text).every((bytes) => bytes <= 1024)).toBe(true);
+    expect(view.transformations).toEqual(["bound-lines", "truncate"]);
   });
 
   it("bounds lines at Unicode-scalar boundaries", () => {

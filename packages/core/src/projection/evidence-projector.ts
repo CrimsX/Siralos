@@ -8,9 +8,9 @@
  * disposable.
  *
  * Transformations are deterministic text operations — never an LLM
- * summarizer — and the never-worse rule holds: if a reduction path would
- * produce a larger representation than the bounded original, the original
- * representation is retained.
+ * summarizer. Security transforms are non-revertible, repeated-line collapse
+ * is optional reduction, line bounding is a mandatory structural bound, and
+ * total truncation is the final hard bound.
  */
 
 export interface EvidenceProjectionOptions {
@@ -260,26 +260,34 @@ export function createEvidenceProjector(
         text = redactSecrets(text, secrets);
         transformations.push("redact-secrets");
       }
-      // Never-worse rule for size-reduction transforms: a reduction that
-      // would grow the representation is discarded and the bounded
-      // original is retained (security transforms above stay applied).
+      // Never-worse rule for the optional size-reduction transform. Security
+      // transforms above stay applied; the structural line bound below is
+      // never reverted merely because it inserts separators.
       const preReduction = text;
       const collapsed = collapseRepeatedLines(text);
+      let collapseApplied = false;
       if (collapsed !== text && collapsed.length <= text.length) {
         text = collapsed;
         transformations.push("collapse-repeated-lines");
+        collapseApplied = true;
       }
       const bounded = boundLineLength(text, maxLineBytes);
-      if (bounded !== text && bounded.length <= text.length) {
+      if (bounded !== text) {
         text = bounded;
         transformations.push("bound-lines");
       }
-      if (new TextEncoder().encode(text).length > originalBytes) {
-        text = preReduction;
+      if (collapseApplied && new TextEncoder().encode(text).length > originalBytes) {
+        // Discard only the optional collapse. Reapply the mandatory structural
+        // bound to the post-security text so every feasible provider-visible
+        // line remains within maxLineBytes.
+        text = boundLineLength(preReduction, maxLineBytes);
         transformations = transformations.filter(
           (transformation) =>
             transformation !== "collapse-repeated-lines" && transformation !== "bound-lines",
         );
+        if (text !== preReduction) {
+          transformations.push("bound-lines");
+        }
       }
       // Truncation is the final deterministic bound and always shrinks.
       const truncated = truncateText(text, maxTotalBytes);
