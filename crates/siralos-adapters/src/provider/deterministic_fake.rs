@@ -15,7 +15,7 @@
 use serde_json::{Value, json};
 use siralos_core::provider::{
     CancellationSignal, ConversationItem, ModelEvent, ModelProvider,
-    ModelRequest, ProviderEvent, ToolExecutionResult,
+    ModelRequest, ProviderEvent, ToolCallInput, ToolExecutionResult,
 };
 
 /// Stable provider identity.
@@ -139,7 +139,7 @@ impl ModelProvider for DeterministicFakeProvider {
                 pending_call = Some(ModelEvent::ToolCall {
                     call_id: "call-1".to_owned(),
                     tool_name: scenario.tool_name().to_owned(),
-                    input: scenario.input(),
+                    input: ToolCallInput::from_value(scenario.input()),
                 });
             }
         }

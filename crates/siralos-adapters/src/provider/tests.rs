@@ -3,9 +3,10 @@
 
 use serde_json::{Value, json};
 use siralos_core::provider::{
-    CancellationSignal, CancellationToken, ConversationItem, ModelEvent,
-    ModelProvider, ModelRequest, ProviderEvent, ToolDefinition,
-    ToolExecutionResult, validate_external_event,
+    AssistantToolCallInput, CancellationSignal, CancellationToken,
+    ConversationItem, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
+    ToolCallInput, ToolDefinition, ToolExecutionResult,
+    validate_external_event,
 };
 
 use super::deterministic_fake::{
@@ -56,7 +57,7 @@ fn assistant_call(
     ConversationItem::AssistantToolCall {
         call_id: call_id.to_owned(),
         tool_name: tool_name.to_owned(),
-        input,
+        input: AssistantToolCallInput::Present(input),
     }
 }
 
@@ -235,7 +236,7 @@ fn workspace_list_scenario() {
         Some(&ModelEvent::ToolCall {
             call_id: "call-1".to_owned(),
             tool_name: "workspace.list".to_owned(),
-            input: json!({"path": "."}),
+            input: ToolCallInput::from_value(json!({"path": "."})),
         })
     );
     assert_eq!(events.last(), Some(&ModelEvent::Completed));
@@ -282,7 +283,7 @@ fn workspace_read_scenario() {
         Some(&ModelEvent::ToolCall {
             call_id: "call-1".to_owned(),
             tool_name: "workspace.read".to_owned(),
-            input: json!({"path": "README.md"}),
+            input: ToolCallInput::from_value(json!({"path": "README.md"})),
         })
     );
 }
@@ -301,7 +302,9 @@ fn workspace_search_scenario() {
         Some(&ModelEvent::ToolCall {
             call_id: "call-1".to_owned(),
             tool_name: "workspace.search".to_owned(),
-            input: json!({"query": "modular monolith", "path": "."}),
+            input: ToolCallInput::from_value(
+                json!({"query": "modular monolith", "path": "."})
+            ),
         })
     );
 }
@@ -317,7 +320,10 @@ fn search_scenario_trims_query() {
     let events = collect_fake(&request, &token);
     match first_tool_call(&events) {
         Some(ModelEvent::ToolCall { input, .. }) => {
-            assert_eq!(input, &json!({"query": "spaced query", "path": "."}));
+            assert_eq!(
+                input.value(),
+                &json!({"query": "spaced query", "path": "."})
+            );
         }
         other => panic!("expected a search tool call, got {other:?}"),
     }
@@ -388,7 +394,7 @@ fn previous_turn_result_is_not_reused() {
         Some(&ModelEvent::ToolCall {
             call_id: "call-1".to_owned(),
             tool_name: "workspace.read".to_owned(),
-            input: json!({"path": "README.md"}),
+            input: ToolCallInput::from_value(json!({"path": "README.md"})),
         })
     );
 }
@@ -506,7 +512,7 @@ fn strict_call(call_id: &str, tool_name: &str, input: Value) -> ProviderEvent {
     ProviderEvent::Event(ModelEvent::ToolCall {
         call_id: call_id.to_owned(),
         tool_name: tool_name.to_owned(),
-        input,
+        input: ToolCallInput::from_value(input),
     })
 }
 

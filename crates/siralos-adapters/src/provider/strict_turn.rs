@@ -240,9 +240,7 @@ fn apply_strict_event(
                     ),
                 });
             }
-            let argument_bytes = serde_json::to_string(&input)
-                .expect("serde_json::Value is always serializable")
-                .len();
+            let argument_bytes = input.serialized_json().len();
             if let Err(failure) = state.push_tool_call(
                 call_id.len(),
                 tool_name.len(),
@@ -256,7 +254,7 @@ fn apply_strict_event(
             tool_calls.push(BoundedModelToolCall {
                 call_id,
                 tool_name,
-                input,
+                input: input.value().clone(),
             });
             Ok(())
         }
