@@ -828,3 +828,114 @@ fn display_input_uses_host_supplied_object_key_order() {
     let expected = r#"{"z":2,"a":1}"#.encode_utf16().collect::<Vec<_>>();
     assert_eq!(started.unwrap().units(), expected);
 }
+
+struct PanicTool;
+
+impl Tool for PanicTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "panic.tool".to_owned(),
+            description: "panic stub".to_owned(),
+            input_schema: json!({}),
+        }
+    }
+
+    fn capability(&self) -> &CapabilityId {
+        static_workspace_read()
+    }
+
+    fn execute(
+        &self,
+        _input: &Value,
+        _cancellation: crate::provider::CancellationSignal<'_>,
+    ) -> ToolExecutionResult {
+        panic!("tool implementation panic")
+    }
+}
+
+#[test]
+fn over_budget_round_executes_zero_tools() {
+    let tool = FixedTool::new("a.tool", success_result());
+    let calls = tool.calls.clone();
+    let registry = registry(vec![boxed(tool)]);
+    let provider = TurnScriptProvider::new(vec![
+        vec![tool_call("c1", "a.tool", json!({})), completed()],
+        vec![tool_call("c2", "a.tool", json!({})), completed()],
+    ]);
+    let mut app = SiralosApplication::new(
+        &provider,
+        &registry,
+        default_policy(),
+        None,
+        Some(1.0),
+    );
+    app.send_prompt("hello".to_owned()).unwrap();
+    let events = run_to_end(&mut app);
+    assert_eq!(calls.get(), 1);
+    assert!(matches!(
+        events.last(),
+        Some(ToolLoopEvent::ResponseFailed { message })
+            if message == "Siralos reached the maximum of 1 tool rounds; the requested tool round was not executed."
+    ));
+    assert_eq!(app.history().len(), 3);
+}
+
+#[test]
+fn provider_failure_after_a_round_retains_the_paired_transcript() {
+    let tool = FixedTool::new("a.tool", success_result());
+    let registry = registry(vec![boxed(tool)]);
+    let provider = TurnScriptProvider::new(vec![
+        vec![tool_call("c1", "a.tool", json!({})), completed()],
+        vec![ProviderEvent::Failed("provider exploded".to_owned())],
+    ]);
+    let mut app = SiralosApplication::new(
+        &provider,
+        &registry,
+        default_policy(),
+        None,
+        None,
+    );
+    app.send_prompt("hello".to_owned()).unwrap();
+    let events = run_to_end(&mut app);
+    assert_eq!(
+        events.last(),
+        Some(&ToolLoopEvent::ResponseFailed {
+            message: "provider exploded".to_owned()
+        })
+    );
+    assert_eq!(app.history().len(), 3);
+    assert!(matches!(
+        result_in_history(app.history(), "c1"),
+        Some(ToolExecutionResult::Success { .. })
+    ));
+}
+
+#[test]
+fn panicking_tool_becomes_a_recoverable_failed_result() {
+    let registry = registry(vec![boxed(PanicTool)]);
+    let provider = TurnScriptProvider::new(vec![
+        vec![tool_call("c1", "panic.tool", json!({})), completed()],
+        vec![text("recovered"), completed()],
+    ]);
+    let mut app = SiralosApplication::new(
+        &provider,
+        &registry,
+        default_policy(),
+        None,
+        None,
+    );
+    app.send_prompt("hello".to_owned()).unwrap();
+    let events = run_to_end(&mut app);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ToolLoopEvent::ToolFailed { call_id, message, .. }
+            if call_id == "c1"
+                && message == "The provider failed with an unknown error."
+    )));
+    assert!(matches!(
+        result_in_history(app.history(), "c1"),
+        Some(ToolExecutionResult::Failed { message })
+            if message == "The provider failed with an unknown error."
+    ));
+    assert_eq!(events.last(), Some(&ToolLoopEvent::ResponseCompleted));
+}

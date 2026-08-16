@@ -631,4 +631,34 @@ mod tests {
         ));
         fixture.assert_unchanged();
     }
+    #[test]
+    fn core_capability_ids_are_opaque_future_optional_domain_data() {
+        // A future optional-domain identifier must enter the generic
+        // CapabilityId + policy path without teaching Core any domain
+        // semantics. The adapter test intentionally uses the real
+        // optional-domain vocabulary: Core only validates and compares
+        // the identifier.
+        use siralos_core::tool::{
+            CapabilityId, PermissionDecision, PermissionPolicy,
+            PermissionRule, PolicyRule, evaluate_permission,
+        };
+        let id = CapabilityId::parse("godot.inspect").expect("opaque id");
+        assert_eq!(id.as_str(), "godot.inspect");
+        let policy = PermissionPolicy::from_rules([PolicyRule {
+            capability: id.clone(),
+            rule: PermissionRule::Allow,
+        }]);
+        assert_eq!(
+            evaluate_permission(&id, &policy),
+            PermissionDecision::Allow
+        );
+        let deny = PermissionPolicy::from_rules([PolicyRule {
+            capability: id.clone(),
+            rule: PermissionRule::Deny,
+        }]);
+        assert!(matches!(
+            evaluate_permission(&id, &deny),
+            PermissionDecision::Deny { .. }
+        ));
+    }
 }
