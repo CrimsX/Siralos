@@ -97,13 +97,14 @@ pub struct ModelRequest {
     pub system: Option<String>,
 }
 
-/// Host-owned cooperative cancellation seam.
+/// Host-owned cooperative cancellation control.
 ///
-/// Synchronous single-threaded control only: 'cancel' marks the token
-/// and every collector checks 'is_cancelled' between provider pulls
-/// and before committing an outcome. The interior 'Cell' lets the
-/// provider stream and the collector share one immutable handle while
-/// the host (or a deterministic scripted cancellation point) marks it.
+/// Only the Host may hold and mutate this value: 'cancel' is the single
+/// mutation operation and it is not reachable from the read-only
+/// observation view handed to providers. Synchronous single-threaded
+/// control only — the interior 'Cell' lets the Host and the collectors
+/// share one immutable handle while a deterministic Host-side
+/// cancellation point marks it.
 #[derive(Debug, Default)]
 pub struct CancellationToken {
     cancelled: Cell<bool>,
@@ -115,7 +116,7 @@ impl CancellationToken {
         Self::default()
     }
 
-    /// Mark the token cancelled (idempotent).
+    /// Mark the token cancelled (idempotent). Host control only.
     pub fn cancel(&self) {
         self.cancelled.set(true);
     }
@@ -123,6 +124,36 @@ impl CancellationToken {
     /// Whether the token is cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.get()
+    }
+
+    /// The read-only observation view handed to providers.
+    ///
+    /// The signal borrows this controller and exposes observation only:
+    /// a provider holding the signal cannot mutate Host cancellation
+    /// state, because the signal type has no mutation operation and no
+    /// accessor that yields the controller.
+    pub fn signal(&self) -> CancellationSignal<'_> {
+        CancellationSignal { token: self }
+    }
+}
+
+/// Read-only provider-visible cancellation observation.
+///
+/// Providers may observe Host cancellation ('is_cancelled') and stop
+/// cooperatively; they must never mutate Host cancellation state. This
+/// is enforced by the type itself: the signal is a zero-cost wrapper
+/// around the Host controller and carries no 'cancel' operation and no
+/// way to reach one. Host cancellation capability therefore strictly
+/// contains provider cancellation capability.
+#[derive(Debug, Clone, Copy)]
+pub struct CancellationSignal<'a> {
+    token: &'a CancellationToken,
+}
+
+impl CancellationSignal<'_> {
+    /// Whether the Host has cancelled the turn.
+    pub fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled()
     }
 }
 
@@ -333,6 +364,12 @@ pub enum ProviderEvent {
 /// The minimal provider seam: identity, tool-calling capability, and one
 /// pull-based event iterator per request. No provider SDK types, no
 /// factories, no registries, no managers.
+///
+/// Cancellation authority: the provider receives only the read-only
+/// 'CancellationSignal' observation view ('is_cancelled') and can never
+/// mutate Host cancellation state, because the signal type exposes no
+/// mutation operation. Host cancellation capability strictly contains
+/// provider cancellation capability by construction.
 pub trait ModelProvider {
     /// The concrete iterator type for one request stream.
     type Stream<'a>: Iterator<Item = ProviderEvent> + 'a
@@ -348,10 +385,13 @@ pub trait ModelProvider {
     }
 
     /// Begin one bounded turn stream for the Host-selected request.
+    ///
+    /// The 'cancellation' argument is the read-only provider observation
+    /// view; the Host retains the controller and all mutation authority.
     fn stream<'a>(
         &'a self,
         request: &'a ModelRequest,
-        cancellation: &'a CancellationToken,
+        cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a>;
 }
 

@@ -14,7 +14,7 @@
 
 use serde_json::{Value, json};
 use siralos_core::provider::{
-    CancellationToken, ConversationItem, ModelEvent, ModelProvider,
+    CancellationSignal, ConversationItem, ModelEvent, ModelProvider,
     ModelRequest, ProviderEvent, ToolExecutionResult,
 };
 
@@ -75,8 +75,12 @@ impl Scenario {
 }
 
 /// The deterministic stream for one request.
+///
+/// Holds only the read-only cancellation observation view: the fake
+/// provider can observe Host cancellation and stop cooperatively, but it
+/// cannot mutate Host cancellation state.
 pub struct FakeStream<'a> {
-    cancellation: &'a CancellationToken,
+    cancellation: CancellationSignal<'a>,
     pending_call: Option<ModelEvent>,
     chunks: std::vec::IntoIter<String>,
     completed_emitted: bool,
@@ -120,7 +124,7 @@ impl ModelProvider for DeterministicFakeProvider {
     fn stream<'a>(
         &'a self,
         request: &'a ModelRequest,
-        cancellation: &'a CancellationToken,
+        cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
         let prompt = latest_user_prompt(&request.messages);
         let scenario = find_scenario(&prompt);

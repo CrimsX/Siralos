@@ -104,7 +104,9 @@ pub fn collect_bounded_model_turn<P: ModelProvider>(
         tools: tools.to_vec(),
         system: None,
     };
-    let mut stream = provider.stream(&request, cancellation);
+    // The provider receives only the read-only observation view; the
+    // Host keeps the controller and all cancellation authority.
+    let mut stream = provider.stream(&request, cancellation.signal());
     let mut state = BoundedTurnState::new(ProviderTurnLimits::from(limits));
     let mut tool_calls: Vec<BoundedModelToolCall> = Vec::new();
     let mut local_seen: BTreeSet<String> = BTreeSet::new();

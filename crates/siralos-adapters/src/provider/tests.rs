@@ -3,9 +3,9 @@
 
 use serde_json::{Value, json};
 use siralos_core::provider::{
-    CancellationToken, ConversationItem, ModelEvent, ModelProvider,
-    ModelRequest, ProviderEvent, ToolDefinition, ToolExecutionResult,
-    validate_external_event,
+    CancellationSignal, CancellationToken, ConversationItem, ModelEvent,
+    ModelProvider, ModelRequest, ProviderEvent, ToolDefinition,
+    ToolExecutionResult, validate_external_event,
 };
 
 use super::deterministic_fake::{
@@ -79,7 +79,7 @@ fn collect_fake(
     token: &CancellationToken,
 ) -> Vec<ModelEvent> {
     let provider = DeterministicFakeProvider::new();
-    let mut stream = provider.stream(request, token);
+    let mut stream = provider.stream(request, token.signal());
     let mut events = Vec::new();
     loop {
         match stream.next() {
@@ -415,7 +415,7 @@ fn cancellation_between_events_prevents_completion() {
         system: None,
     };
     let provider = DeterministicFakeProvider::new();
-    let mut stream = provider.stream(&request, &token);
+    let mut stream = provider.stream(&request, token.signal());
     let mut events = Vec::new();
     let mut cancelled = false;
     loop {
@@ -492,7 +492,7 @@ impl ModelProvider for StrictProvider {
     fn stream<'a>(
         &'a self,
         _request: &'a ModelRequest,
-        _cancellation: &'a CancellationToken,
+        _cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
         self.events.clone().into_iter()
     }

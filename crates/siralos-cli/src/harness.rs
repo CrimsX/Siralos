@@ -16,10 +16,10 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_core::provider::{
-    CancellationToken, ConversationItem, LimitClass, ModelProvider,
-    ModelRequest, ProtocolFailure, ProviderEvent, ToolDefinition,
-    ToolExecutionResult, TurnFailure, TurnOutcome, TurnToolCall,
-    collect_provider_turn, detach_bounded_tool_result,
+    CancellationSignal, CancellationToken, ConversationItem, LimitClass,
+    ModelProvider, ModelRequest, ProtocolFailure, ProviderEvent,
+    ToolDefinition, ToolExecutionResult, TurnFailure, TurnOutcome,
+    TurnToolCall, collect_provider_turn, detach_bounded_tool_result,
 };
 
 /// Scenario platform value for Windows hosts.
@@ -1281,8 +1281,14 @@ fn collect_with_cancellation_script<P: ModelProvider>(
 ) -> TurnOutcome {
     match cancel_after {
         Some(cancel_after) => {
-            let provider =
-                CancelAfterProvider { inner: provider, cancel_after };
+            // The wrapper holds the Host controller: the cancellation
+            // point is Host/test-harness authority. The wrapped provider
+            // receives only the read-only observation signal.
+            let provider = CancelAfterProvider {
+                inner: provider,
+                controller: token,
+                cancel_after,
+            };
             collect_provider_turn(&provider, messages, tools, system, token)
         }
         None => {
@@ -1291,11 +1297,14 @@ fn collect_with_cancellation_script<P: ModelProvider>(
     }
 }
 
-/// Harness-local host cancellation wrapper: cancels the Host token after
-/// exactly 'cancel_after' events have been emitted (0 = before the first
-/// event). The production collector and token decide the outcome.
+/// Harness-local host cancellation wrapper: cancels the Host controller
+/// after exactly 'cancel_after' events have been emitted (0 = before the
+/// first event). The production collector and controller decide the
+/// outcome; the wrapped provider receives only the read-only
+/// 'CancellationSignal' observation view.
 struct CancelAfterProvider<'a, P: ModelProvider> {
     inner: &'a P,
+    controller: &'a CancellationToken,
     cancel_after: usize,
 }
 
@@ -1312,11 +1321,11 @@ impl<P: ModelProvider> ModelProvider for CancelAfterProvider<'_, P> {
     fn stream<'a>(
         &'a self,
         request: &'a ModelRequest,
-        cancellation: &'a CancellationToken,
+        cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
         CancelAfterStream {
             inner: self.inner.stream(request, cancellation),
-            cancellation,
+            controller: self.controller,
             emitted: 0,
             cancel_after: self.cancel_after,
         }
@@ -1325,7 +1334,7 @@ impl<P: ModelProvider> ModelProvider for CancelAfterProvider<'_, P> {
 
 struct CancelAfterStream<'a, S> {
     inner: S,
-    cancellation: &'a CancellationToken,
+    controller: &'a CancellationToken,
     emitted: usize,
     cancel_after: usize,
 }
@@ -1335,7 +1344,7 @@ impl<S: Iterator<Item = ProviderEvent>> Iterator for CancelAfterStream<'_, S> {
 
     fn next(&mut self) -> Option<ProviderEvent> {
         if self.emitted == self.cancel_after {
-            self.cancellation.cancel();
+            self.controller.cancel();
             return None;
         }
         let event = self.inner.next()?;
@@ -1363,7 +1372,7 @@ impl ModelProvider for ScriptedProvider {
     fn stream<'a>(
         &'a self,
         _request: &'a ModelRequest,
-        _cancellation: &'a CancellationToken,
+        _cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
         ScriptedStream { events: self.events.iter() }
     }

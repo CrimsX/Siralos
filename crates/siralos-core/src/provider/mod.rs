@@ -39,9 +39,9 @@ pub use conversation::{
     ConversationItem, TranscriptFailure, validate_conversation_items,
 };
 pub use event::{
-    CancellationToken, LimitClass, ModelEvent, ModelProvider, ModelRequest,
-    ProtocolFailure, ProviderEvent, ProviderTurnLimits, ToolDefinition,
-    TurnFailure, validate_external_event,
+    CancellationSignal, CancellationToken, LimitClass, ModelEvent,
+    ModelProvider, ModelRequest, ProtocolFailure, ProviderEvent,
+    ProviderTurnLimits, ToolDefinition, TurnFailure, validate_external_event,
 };
 pub use result::{
     DetachFailure, ToolExecutionResult, detach_bounded_tool_result,

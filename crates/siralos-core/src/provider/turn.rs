@@ -287,7 +287,9 @@ pub fn collect_provider_turn<P: ModelProvider>(
     if cancellation.is_cancelled() {
         return TurnOutcome::Cancelled;
     }
-    let mut stream = provider.stream(&request, cancellation);
+    // The provider receives only the read-only observation view; the
+    // Host keeps the controller and all cancellation authority.
+    let mut stream = provider.stream(&request, cancellation.signal());
     let mut state = BoundedTurnState::new(ProviderTurnLimits::default());
     let mut tool_calls: Vec<TurnToolCall> = Vec::new();
     let mut seen_call_ids: BTreeSet<String> = BTreeSet::new();

@@ -8,8 +8,8 @@ use super::conversation::{
     ConversationItem, TranscriptFailure, validate_conversation_items,
 };
 use super::event::{
-    CancellationToken, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
-    TurnFailure, validate_external_event,
+    CancellationSignal, CancellationToken, ModelEvent, ModelProvider,
+    ModelRequest, ProviderEvent, TurnFailure, validate_external_event,
 };
 use super::result::{
     DetachFailure, ToolExecutionResult, detach_bounded_tool_result,
@@ -34,59 +34,66 @@ impl ModelProvider for ScriptedProvider {
     fn stream<'a>(
         &'a self,
         _request: &'a ModelRequest,
-        _cancellation: &'a CancellationToken,
+        _cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
         self.events.clone().into_iter()
     }
 }
 
-/// A provider that cancels the Host token after a fixed number of
-/// emitted events (deterministic harness-style cancellation point).
-struct CancellingProvider {
-    events: Vec<ProviderEvent>,
+/// Host-driven test harness wrapper: cancels the Host controller after
+/// exactly 'cancel_after' events have been emitted (0 = before the first
+/// event).
+///
+/// The wrapped provider receives only the read-only observation signal;
+/// the 'cancel' call here is Host/test-harness authority, never provider
+/// authority. This proves deterministic mid-stream Host cancellation
+/// without giving any provider implementation a mutation operation.
+struct CancelAfterProvider<'a, P: ModelProvider> {
+    inner: &'a P,
+    controller: &'a CancellationToken,
     cancel_after: usize,
 }
 
-impl ModelProvider for CancellingProvider {
+impl<P: ModelProvider> ModelProvider for CancelAfterProvider<'_, P> {
     type Stream<'a>
-        = CancellingStream<'a>
+        = CancelAfterStream<'a, P::Stream<'a>>
     where
         Self: 'a;
 
     fn id(&self) -> &str {
-        "cancelling-test"
+        self.inner.id()
     }
 
     fn stream<'a>(
         &'a self,
-        _request: &'a ModelRequest,
-        cancellation: &'a CancellationToken,
+        request: &'a ModelRequest,
+        cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
-        CancellingStream {
-            events: self.events.clone().into_iter(),
-            cancellation,
+        CancelAfterStream {
+            inner: self.inner.stream(request, cancellation),
+            controller: self.controller,
             emitted: 0,
             cancel_after: self.cancel_after,
         }
     }
 }
 
-struct CancellingStream<'a> {
-    events: std::vec::IntoIter<ProviderEvent>,
-    cancellation: &'a CancellationToken,
+struct CancelAfterStream<'a, S> {
+    inner: S,
+    controller: &'a CancellationToken,
     emitted: usize,
     cancel_after: usize,
 }
 
-impl Iterator for CancellingStream<'_> {
+impl<S: Iterator<Item = ProviderEvent>> Iterator for CancelAfterStream<'_, S> {
     type Item = ProviderEvent;
 
     fn next(&mut self) -> Option<ProviderEvent> {
         if self.emitted == self.cancel_after {
-            self.cancellation.cancel();
+            self.controller.cancel();
             return None;
         }
-        let event = self.events.next()?;
+        let event = self.inner.next()?;
         self.emitted += 1;
         Some(event)
     }
@@ -125,8 +132,13 @@ fn collect_with_cancellation(
     events: Vec<ProviderEvent>,
     cancel_after: usize,
 ) -> TurnOutcome {
-    let provider = CancellingProvider { events, cancel_after };
+    let provider = ScriptedProvider { events };
     let token = CancellationToken::new();
+    let provider = CancelAfterProvider {
+        inner: &provider,
+        controller: &token,
+        cancel_after,
+    };
     collect_provider_turn(&provider, &[user("hello")], &[], None, &token)
 }
 
@@ -681,6 +693,44 @@ fn unknown_event_after_completion_is_after_completion() {
         vec![user("hello")],
     );
     assert_failed(&outcome, TurnFailure::EventAfterCompletion);
+}
+
+#[test]
+fn fresh_signal_is_not_cancelled() {
+    let token = CancellationToken::new();
+    assert!(!token.signal().is_cancelled());
+}
+
+#[test]
+fn host_controller_can_cancel() {
+    let token = CancellationToken::new();
+    token.cancel();
+    assert!(token.is_cancelled());
+}
+
+#[test]
+fn provider_observation_sees_host_cancellation() {
+    // A signal created before Host cancellation reflects the Host
+    // mutation once it happens: observation is live, mutation is not.
+    let token = CancellationToken::new();
+    let signal = token.signal();
+    assert!(!signal.is_cancelled());
+    token.cancel();
+    assert!(signal.is_cancelled());
+}
+
+#[test]
+fn provider_signal_exposes_no_mutation_operation() {
+    // The authority boundary is enforced by the type: the read-only
+    // 'CancellationSignal' handed to providers exposes only
+    // 'is_cancelled'. There is no 'cancel' method on the signal and no
+    // accessor that yields the Host controller, so provider code cannot
+    // mutate Host cancellation state — the signature itself is the
+    // regression evidence. Providers may still report their own
+    // cancellation through 'ProviderEvent::Cancelled'.
+    let token = CancellationToken::new();
+    let signal = token.signal();
+    let _ = signal.is_cancelled();
 }
 
 #[test]
