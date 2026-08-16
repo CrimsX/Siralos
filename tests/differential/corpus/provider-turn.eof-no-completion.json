@@ -1,0 +1,31 @@
+{
+  "id": "provider-turn.eof-no-completion",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "text_delta",
+                "text": "partial"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "tools": []
+        }
+      }
+    ]
+  }
+}

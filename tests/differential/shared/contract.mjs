@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 11;
+export const CORPUS_VERSION = 12;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -27,6 +27,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "language-definition",
   "domain-lifecycle",
   "domain-capability",
+  "provider-turn",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -47,6 +48,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   workspaceInputBytes: 64 * 1024,
   languageInputBytes: 64 * 1024,
   domainInputBytes: 64 * 1024,
+  providerInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -216,6 +218,152 @@ export function validateProbeEnvironment(env, label = "probe environment") {
   }
 }
 
+/** A valid deterministic '$repeat' materialization marker. */
+function isRepeatMarker(value) {
+  if (!isPlainRecord(value) || !Object.hasOwn(value, "$repeat")) {
+    return false;
+  }
+  const repeat = value.$repeat;
+  if (
+    !isPlainRecord(repeat) ||
+    !Object.hasOwn(repeat, "character") ||
+    !Object.hasOwn(repeat, "count")
+  ) {
+    return false;
+  }
+  if (typeof repeat.character !== "string" || [...repeat.character].length !== 1) {
+    return false;
+  }
+  return Number.isSafeInteger(repeat.count) && repeat.count >= 0 && repeat.count <= 1_048_576;
+}
+
+/** Validate the strict provider-turn scenario input shape. */
+function validateProviderTurnInput(input, label) {
+  assertExactKeys(input, ["cases"], `${label}.input`);
+  if (!Array.isArray(input.cases) || input.cases.length === 0 || input.cases.length > 32) {
+    throw new Error(`${label}.input.cases must contain 1-32 entries`);
+  }
+  for (const [index, entry] of input.cases.entries()) {
+    const caseLabel = `${label}.input.cases[${index}]`;
+    assertPlainObject(entry, caseLabel);
+    const hasTurn = Object.hasOwn(entry, "turn");
+    const hasDetach = Object.hasOwn(entry, "detach");
+    if (hasTurn === hasDetach) {
+      throw new Error(`${caseLabel} must have exactly one of turn/detach`);
+    }
+    if (hasTurn) {
+      validateProviderTurnCase(entry.turn, caseLabel);
+    } else {
+      validateProviderDetachCase(entry.detach, caseLabel);
+    }
+  }
+}
+
+function validateProviderTurnCase(caseValue, label) {
+  assertPlainObject(caseValue, label);
+  const allowed = new Set(["provider", "messages", "tools", "cancelAfterEvents"]);
+  for (const key of Object.keys(caseValue)) {
+    if (!allowed.has(key)) {
+      throw new Error(`${label} has an unknown field ${JSON.stringify(key)}`);
+    }
+  }
+  for (const required of ["provider", "messages", "tools"]) {
+    if (!Object.hasOwn(caseValue, required)) {
+      throw new Error(`${label} requires the ${required} field`);
+    }
+  }
+  if (Object.hasOwn(caseValue, "cancelAfterEvents")) {
+    if (
+      !Number.isSafeInteger(caseValue.cancelAfterEvents) ||
+      caseValue.cancelAfterEvents < 0 ||
+      caseValue.cancelAfterEvents > 1024
+    ) {
+      throw new Error(`${label}.cancelAfterEvents must be an integer from 0 to 1024`);
+    }
+  }
+  const provider = caseValue.provider;
+  assertPlainObject(provider, `${label}.provider`);
+  if (provider.kind === "fake") {
+    assertExactKeys(provider, ["kind"], `${label}.provider`);
+  } else if (provider.kind === "scripted") {
+    assertExactKeys(provider, ["kind", "events"], `${label}.provider`);
+    if (!Array.isArray(provider.events) || provider.events.length > 4096) {
+      throw new Error(`${label}.provider.events must be a bounded array`);
+    }
+    // Events are untrusted raw data: any JSON value is admissible and
+    // the production collector validation decides malformed events.
+  } else {
+    throw new Error(`${label}.provider.kind must be fake or scripted`);
+  }
+  if (!Array.isArray(caseValue.messages) || caseValue.messages.length > 128) {
+    throw new Error(`${label}.messages must be a bounded array`);
+  }
+  for (const [index, item] of caseValue.messages.entries()) {
+    validateProviderMessage(item, `${label}.messages[${index}]`);
+  }
+  if (!Array.isArray(caseValue.tools) || caseValue.tools.length > 128) {
+    throw new Error(`${label}.tools must be a bounded array`);
+  }
+  for (const [index, tool] of caseValue.tools.entries()) {
+    assertExactKeys(tool, ["name", "description", "inputSchema"], `${label}.tools[${index}]`);
+    if (typeof tool.name !== "string" || typeof tool.description !== "string") {
+      throw new Error(`${label}.tools[${index}] name and description must be strings`);
+    }
+  }
+}
+
+function validMessageString(value) {
+  return typeof value === "string" || isRepeatMarker(value);
+}
+
+function validateProviderMessage(item, label) {
+  assertPlainObject(item, label);
+  const itemType = item.type;
+  if (itemType === "user_message" || itemType === "assistant_message") {
+    assertExactKeys(item, ["type", "content"], label);
+    if (!validMessageString(item.content)) {
+      throw new Error(`${label}.content must be a string or repeat marker`);
+    }
+    return;
+  }
+  if (itemType === "assistant_tool_call") {
+    assertExactKeys(item, ["type", "callId", "toolName", "input"], label);
+    if (!validMessageString(item.callId) || !validMessageString(item.toolName)) {
+      throw new Error(`${label} requires string callId and toolName`);
+    }
+    return;
+  }
+  if (itemType === "tool_result") {
+    assertExactKeys(item, ["type", "callId", "toolName", "result"], label);
+    if (!validMessageString(item.callId) || !validMessageString(item.toolName)) {
+      throw new Error(`${label} requires string callId and toolName`);
+    }
+    if (!isPlainRecord(item.result)) {
+      throw new Error(`${label}.result must be an object`);
+    }
+    return;
+  }
+  throw new Error(`${label} has an unknown type ${JSON.stringify(itemType)}`);
+}
+
+function validateProviderDetachCase(detach, label) {
+  assertExactKeys(detach, ["value", "maxBytes", "actor"], label);
+  if (
+    !Number.isSafeInteger(detach.maxBytes) ||
+    detach.maxBytes < 1 ||
+    detach.maxBytes > 1_048_576
+  ) {
+    throw new Error(`${label}.maxBytes must be an integer from 1 to 1048576`);
+  }
+  if (
+    typeof detach.actor !== "string" ||
+    detach.actor.length === 0 ||
+    byteLength(detach.actor) > 128
+  ) {
+    throw new Error(`${label}.actor must be a non-empty string of at most 128 UTF-8 bytes`);
+  }
+}
+
 function validateSubjectInputs(scenario, label) {
   const platforms = new Set(scenario.platforms);
   const envKeys = new Set(Object.keys(scenario.env));
@@ -294,6 +442,19 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  if (scenario.subject === "provider-turn") {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(`${label} provider-turn inputs must use platforms ["*"] and an empty env`);
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.providerInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.providerInputBytes} UTF-8 bytes`);
+    }
+    validateProviderTurnInput(scenario.input, label);
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -331,6 +492,7 @@ export function validateScenario(scenario, file) {
     "language-definition",
     "domain-lifecycle",
     "domain-capability",
+    "provider-turn",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

@@ -1,0 +1,22 @@
+{
+  "id": "provider-turn.result-detach.failure",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "detach": {
+          "value": {
+            "status": "denied",
+            "message": "The change was denied by the user.",
+            "extra": 1
+          },
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "id": "provider-turn.cancelled",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "text_delta",
+                "text": "one"
+              },
+              {
+                "type": "text_delta",
+                "text": "two"
+              },
+              {
+                "type": "completed"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "tools": [],
+          "cancelAfterEvents": 1
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "fake"
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "tools": [],
+          "cancelAfterEvents": 0
+        }
+      }
+    ]
+  }
+}

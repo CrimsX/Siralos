@@ -1,0 +1,251 @@
+{
+  "id": "provider-turn.tool-call-bounds",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              { "type": "tool_call", "callId": "c0", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c1", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c2", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c3", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c4", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c5", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c6", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c7", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c8", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c9", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c10", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c11", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c12", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c13", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c14", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c15", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c16", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c17", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c18", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c19", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c20", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c21", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c22", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c23", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c24", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c25", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c26", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c27", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c28", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c29", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c30", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c31", "toolName": "a.tool", "input": {} },
+              { "type": "completed" }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              { "type": "tool_call", "callId": "c0", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c1", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c2", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c3", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c4", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c5", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c6", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c7", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c8", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c9", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c10", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c11", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c12", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c13", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c14", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c15", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c16", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c17", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c18", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c19", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c20", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c21", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c22", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c23", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c24", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c25", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c26", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c27", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c28", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c29", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c30", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c31", "toolName": "a.tool", "input": {} },
+              { "type": "tool_call", "callId": "c32", "toolName": "a.tool", "input": {} }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": { "$repeat": { "character": "c", "count": 256 } },
+                "toolName": "a.tool",
+                "input": {}
+              },
+              { "type": "completed" }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": { "$repeat": { "character": "c", "count": 257 } },
+                "toolName": "a.tool",
+                "input": {}
+              }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "c1",
+                "toolName": { "$repeat": { "character": "t", "count": 256 } },
+                "input": {}
+              },
+              { "type": "completed" }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "c1",
+                "toolName": { "$repeat": { "character": "t", "count": 257 } },
+                "input": {}
+              }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "c1",
+                "toolName": "a.tool",
+                "input": { "payload": { "$repeat": { "character": "z", "count": 131058 } } }
+              },
+              { "type": "completed" }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "c1",
+                "toolName": "a.tool",
+                "input": { "payload": { "$repeat": { "character": "z", "count": 131059 } } }
+              }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "c1",
+                "toolName": "a.tool",
+                "input": { "payload": { "$repeat": { "character": "z", "count": 131042 } } }
+              },
+              {
+                "type": "tool_call",
+                "callId": "c2",
+                "toolName": "a.tool",
+                "input": { "payload": { "$repeat": { "character": "z", "count": 131058 } } }
+              },
+              { "type": "completed" }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "c1",
+                "toolName": "a.tool",
+                "input": { "payload": { "$repeat": { "character": "z", "count": 131058 } } }
+              },
+              {
+                "type": "tool_call",
+                "callId": "c2",
+                "toolName": "a.tool",
+                "input": { "payload": { "$repeat": { "character": "z", "count": 131058 } } }
+              }
+            ]
+          },
+          "messages": [{ "type": "user_message", "content": "hello" }],
+          "tools": []
+        }
+      }
+    ]
+  }
+}

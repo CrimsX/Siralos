@@ -1,0 +1,24 @@
+{
+  "id": "provider-turn.result-detach.oversize",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "detach": {
+          "value": {
+            "status": "success",
+            "output": {
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            },
+            "summary": "large"
+          },
+          "maxBytes": 32,
+          "actor": "test.tool"
+        }
+      }
+    ]
+  }
+}

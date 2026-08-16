@@ -14,6 +14,13 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use siralos_adapters::provider::DeterministicFakeProvider;
+use siralos_core::provider::{
+    CancellationToken, ConversationItem, LimitClass, ModelProvider,
+    ModelRequest, ProtocolFailure, ProviderEvent, ToolDefinition,
+    ToolExecutionResult, TurnFailure, TurnOutcome, TurnToolCall,
+    collect_provider_turn, detach_bounded_tool_result,
+};
 
 /// Scenario platform value for Windows hosts.
 pub const PLATFORM_WINDOWS: &str = "windows";
@@ -36,10 +43,12 @@ const SUBJECT_LANGUAGE_STRUCTURE: &str = "language-structure";
 const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
 const SUBJECT_DOMAIN_LIFECYCLE: &str = "domain-lifecycle";
 const SUBJECT_DOMAIN_CAPABILITY: &str = "domain-capability";
+const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 11;
+const CORPUS_VERSION: u64 = 12;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
+const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -363,6 +372,7 @@ fn validate_scenario(
             | SUBJECT_LANGUAGE_DEFINITION
             | SUBJECT_DOMAIN_LIFECYCLE
             | SUBJECT_DOMAIN_CAPABILITY
+            | SUBJECT_PROVIDER_TURN
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -447,7 +457,8 @@ fn validate_scenario(
         | SUBJECT_LANGUAGE_STRUCTURE
         | SUBJECT_LANGUAGE_DEFINITION
         | SUBJECT_DOMAIN_LIFECYCLE
-        | SUBJECT_DOMAIN_CAPABILITY => {
+        | SUBJECT_DOMAIN_CAPABILITY
+        | SUBJECT_PROVIDER_TURN => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -472,6 +483,11 @@ fn validate_scenario(
                     scenario.id
                 ))
             })?;
+            let provider_subject =
+                scenario.subject.as_str() == SUBJECT_PROVIDER_TURN;
+            if provider_subject {
+                validate_provider_turn_input(input)?;
+            }
             let language_subject = matches!(
                 scenario.subject.as_str(),
                 SUBJECT_LANGUAGE_DIAGNOSTICS
@@ -482,7 +498,9 @@ fn validate_scenario(
                 scenario.subject.as_str(),
                 SUBJECT_DOMAIN_LIFECYCLE | SUBJECT_DOMAIN_CAPABILITY
             );
-            let max_input_bytes = if language_subject {
+            let max_input_bytes = if provider_subject {
+                MAX_PROVIDER_INPUT_BYTES
+            } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
                 MAX_DOMAIN_INPUT_BYTES
@@ -1032,8 +1050,798 @@ fn run_scenario(
                 "result": result,
             }))
         }
+        SUBJECT_PROVIDER_TURN => {
+            let input = scenario.input.as_ref().expect(
+                "provider input was validated while loading the corpus",
+            );
+            let result = provider_turn_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
         _ => unreachable!("subject was validated while loading the corpus"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3R R7.1 subject: provider-turn.
+// ---------------------------------------------------------------------------
+
+/// Canonical provider-turn record: one canonical observation per input
+/// case (turn and/or detach).
+fn provider_turn_record(input: &Value) -> Result<Value, HarnessError> {
+    let mut records = Vec::new();
+    for case in scenario_array(input, "cases")? {
+        let record = match (case.get("turn"), case.get("detach")) {
+            (Some(turn), None) => {
+                json!({ "turn": run_provider_turn_case(turn)? })
+            }
+            (None, Some(detach)) => {
+                json!({ "detach": run_provider_detach_case(detach)? })
+            }
+            _ => {
+                return Err(HarnessError::corpus(
+                    "provider-turn case must have exactly one of turn/detach",
+                ));
+            }
+        };
+        records.push(record);
+    }
+    Ok(json!({ "cases": records }))
+}
+
+/// Run one provider-turn case through the production core collector.
+fn run_provider_turn_case(case: &Value) -> Result<Value, HarnessError> {
+    let case = materialize_value(case)?;
+    let provider_spec = case.get("provider").ok_or_else(|| {
+        HarnessError::corpus("provider-turn turn case requires a provider")
+    })?;
+    let kind = scenario_string(provider_spec, "kind")?;
+    let messages =
+        parse_conversation_items(scenario_array(&case, "messages")?)?;
+    let tools = parse_tool_definitions(scenario_array(&case, "tools")?)?;
+    // The provider request system is Host-projection-owned (R7.3); the
+    // R7.1 differential input does not carry it.
+    let system = None;
+    let cancel_after =
+        scenario_u64(&case, "cancelAfterEvents").map(|value| value as usize);
+    let token = CancellationToken::new();
+    let outcome = match kind.as_str() {
+        "fake" => {
+            let provider = DeterministicFakeProvider::new();
+            collect_with_cancellation_script(
+                &provider,
+                &messages,
+                &tools,
+                system,
+                &token,
+                cancel_after,
+            )
+        }
+        "scripted" => {
+            let events = scenario_array(provider_spec, "events")?;
+            let provider = ScriptedProvider { events: events.clone() };
+            collect_with_cancellation_script(
+                &provider,
+                &messages,
+                &tools,
+                system,
+                &token,
+                cancel_after,
+            )
+        }
+        _ => {
+            return Err(HarnessError::corpus(
+                "provider-turn provider kind must be fake or scripted",
+            ));
+        }
+    };
+    Ok(provider_turn_value(outcome))
+}
+
+/// Run one tool-result detach case through the production core boundary.
+fn run_provider_detach_case(detach: &Value) -> Result<Value, HarnessError> {
+    let detach = materialize_value(detach)?;
+    let value = detach.get("value").ok_or_else(|| {
+        HarnessError::corpus("provider-turn detach case requires a value")
+    })?;
+    let max_bytes =
+        detach.get("maxBytes").and_then(Value::as_u64).ok_or_else(|| {
+            HarnessError::corpus(
+                "provider-turn detach case requires an integer maxBytes",
+            )
+        })? as usize;
+    let actor = scenario_string(&detach, "actor")?;
+    match detach_bounded_tool_result(value, max_bytes) {
+        Ok((result, byte_length)) => Ok(json!({
+            "ok": true,
+            "result": tool_execution_result_value(&result),
+            "byteLength": byte_length,
+        })),
+        Err(failure) => {
+            Ok(json!({ "ok": false, "message": failure.message(&actor) }))
+        }
+    }
+}
+
+/// The canonical turn observation for one outcome.
+fn provider_turn_value(outcome: TurnOutcome) -> Value {
+    match outcome {
+        TurnOutcome::Cancelled => json!({ "kind": "cancelled" }),
+        TurnOutcome::Failed { failure } => json!({
+            "kind": "failed",
+            "failure": provider_failure_code(&failure),
+            "message": failure.application_message(),
+        }),
+        TurnOutcome::Turn { assistant_text, text_deltas, tool_calls } => {
+            json!({
+                "kind": "turn",
+                "assistantText": assistant_text,
+                "textDeltas": text_deltas,
+                "toolCalls": tool_calls
+                    .iter()
+                    .map(tool_call_value)
+                    .collect::<Vec<_>>(),
+            })
+        }
+    }
+}
+
+/// Stable failure category for a typed turn failure.
+fn provider_failure_code(failure: &TurnFailure) -> &'static str {
+    match failure {
+        TurnFailure::LimitExceeded(LimitClass::AssistantTextBytes) => {
+            "LIMIT_ASSISTANT_TEXT_BYTES"
+        }
+        TurnFailure::LimitExceeded(LimitClass::TextEventCount) => {
+            "LIMIT_TEXT_EVENT_COUNT"
+        }
+        TurnFailure::LimitExceeded(LimitClass::ToolCallCount) => {
+            "LIMIT_TOOL_CALL_COUNT"
+        }
+        TurnFailure::LimitExceeded(LimitClass::CallIdBytes) => {
+            "LIMIT_CALL_ID_BYTES"
+        }
+        TurnFailure::LimitExceeded(LimitClass::ToolNameBytes) => {
+            "LIMIT_TOOL_NAME_BYTES"
+        }
+        TurnFailure::LimitExceeded(LimitClass::ToolArgumentBytes) => {
+            "LIMIT_TOOL_ARGUMENT_BYTES"
+        }
+        TurnFailure::LimitExceeded(LimitClass::AggregateTurnBytes) => {
+            "LIMIT_AGGREGATE_TURN_BYTES"
+        }
+        TurnFailure::EventAfterCompletion => "EVENT_AFTER_COMPLETION",
+        TurnFailure::EofWithoutCompletion => "EOF_WITHOUT_COMPLETION",
+        TurnFailure::Protocol(ProtocolFailure::UnknownEventType) => {
+            "UNKNOWN_EVENT_TYPE"
+        }
+        TurnFailure::Protocol(ProtocolFailure::MalformedEvent) => {
+            "MALFORMED_EVENT"
+        }
+        TurnFailure::Protocol(ProtocolFailure::MalformedTextEvent) => {
+            "MALFORMED_TEXT_EVENT"
+        }
+        TurnFailure::Protocol(ProtocolFailure::MalformedToolCall) => {
+            "MALFORMED_TOOL_CALL"
+        }
+        TurnFailure::Protocol(ProtocolFailure::InvalidToolArgumentJson) => {
+            "INVALID_TOOL_ARGUMENT_JSON"
+        }
+        TurnFailure::ProviderFailed(_) => "PROVIDER_FAILED",
+        TurnFailure::InvalidTranscript(_) => "INVALID_TRANSCRIPT",
+    }
+}
+
+/// The canonical tool-call proposal observation.
+fn tool_call_value(call: &TurnToolCall) -> Value {
+    match call {
+        TurnToolCall::Execute { call_id, tool_name, input } => json!({
+            "kind": "execute",
+            "callId": call_id,
+            "toolName": tool_name,
+            "input": input,
+        }),
+        TurnToolCall::Invalid { call_id, tool_name, message } => json!({
+            "kind": "invalid",
+            "callId": call_id,
+            "toolName": tool_name,
+            "message": message,
+        }),
+    }
+}
+
+/// The canonical typed tool-result value.
+fn tool_execution_result_value(result: &ToolExecutionResult) -> Value {
+    match result {
+        ToolExecutionResult::Success { output, summary } => json!({
+            "status": "success",
+            "output": output,
+            "summary": summary,
+        }),
+        other => json!({
+            "status": other.status_str(),
+            "message": other.message(),
+        }),
+    }
+}
+
+/// Collect one turn, optionally wrapping the provider stream with a
+/// deterministic host-scripted cancellation point.
+fn collect_with_cancellation_script<P: ModelProvider>(
+    provider: &P,
+    messages: &[ConversationItem],
+    tools: &[ToolDefinition],
+    system: Option<String>,
+    token: &CancellationToken,
+    cancel_after: Option<usize>,
+) -> TurnOutcome {
+    match cancel_after {
+        Some(cancel_after) => {
+            let provider =
+                CancelAfterProvider { inner: provider, cancel_after };
+            collect_provider_turn(&provider, messages, tools, system, token)
+        }
+        None => {
+            collect_provider_turn(provider, messages, tools, system, token)
+        }
+    }
+}
+
+/// Harness-local host cancellation wrapper: cancels the Host token after
+/// exactly 'cancel_after' events have been emitted (0 = before the first
+/// event). The production collector and token decide the outcome.
+struct CancelAfterProvider<'a, P: ModelProvider> {
+    inner: &'a P,
+    cancel_after: usize,
+}
+
+impl<P: ModelProvider> ModelProvider for CancelAfterProvider<'_, P> {
+    type Stream<'a>
+        = CancelAfterStream<'a, P::Stream<'a>>
+    where
+        Self: 'a;
+
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    fn stream<'a>(
+        &'a self,
+        request: &'a ModelRequest,
+        cancellation: &'a CancellationToken,
+    ) -> Self::Stream<'a> {
+        CancelAfterStream {
+            inner: self.inner.stream(request, cancellation),
+            cancellation,
+            emitted: 0,
+            cancel_after: self.cancel_after,
+        }
+    }
+}
+
+struct CancelAfterStream<'a, S> {
+    inner: S,
+    cancellation: &'a CancellationToken,
+    emitted: usize,
+    cancel_after: usize,
+}
+
+impl<S: Iterator<Item = ProviderEvent>> Iterator for CancelAfterStream<'_, S> {
+    type Item = ProviderEvent;
+
+    fn next(&mut self) -> Option<ProviderEvent> {
+        if self.emitted == self.cancel_after {
+            self.cancellation.cancel();
+            return None;
+        }
+        let event = self.inner.next()?;
+        self.emitted += 1;
+        Some(event)
+    }
+}
+
+/// Harness-local scripted provider: yields untrusted raw events that the
+/// production collector validates through the real trust boundary.
+struct ScriptedProvider {
+    events: Vec<Value>,
+}
+
+impl ModelProvider for ScriptedProvider {
+    type Stream<'a>
+        = ScriptedStream<'a>
+    where
+        Self: 'a;
+
+    fn id(&self) -> &str {
+        "scripted-provider"
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: &'a ModelRequest,
+        _cancellation: &'a CancellationToken,
+    ) -> Self::Stream<'a> {
+        ScriptedStream { events: self.events.iter() }
+    }
+}
+
+struct ScriptedStream<'a> {
+    events: std::slice::Iter<'a, Value>,
+}
+
+impl Iterator for ScriptedStream<'_> {
+    type Item = ProviderEvent;
+
+    fn next(&mut self) -> Option<ProviderEvent> {
+        self.events.next().map(|raw| ProviderEvent::Raw(raw.clone()))
+    }
+}
+
+/// Materialize deterministic '$repeat' fixture markers into strings
+/// (mirroring the oracle probe), recursively. A marker object
+/// {"$repeat": {"character": <one scalar>, "count": N}} becomes the
+/// character repeated N times.
+fn materialize_value(value: &Value) -> Result<Value, HarnessError> {
+    if let Some(object) = value.as_object() {
+        if let Some(repeat) = object.get("$repeat") {
+            let repeat_object = repeat.as_object().ok_or_else(|| {
+                HarnessError::corpus("$repeat marker must be an object")
+            })?;
+            let character = repeat_object
+                .get("character")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "$repeat marker requires a string character",
+                    )
+                })?;
+            if character.chars().count() != 1 {
+                return Err(HarnessError::corpus(
+                    "$repeat character must be a single Unicode scalar value",
+                ));
+            }
+            let count = repeat_object
+                .get("count")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "$repeat marker requires an integer count",
+                    )
+                })? as usize;
+            if count > 1_048_576 {
+                return Err(HarnessError::corpus(
+                    "$repeat count exceeds the materialization bound",
+                ));
+            }
+            return Ok(Value::String(character.repeat(count)));
+        }
+        let mut out = serde_json::Map::new();
+        for (key, child) in object {
+            out.insert(key.clone(), materialize_value(child)?);
+        }
+        return Ok(Value::Object(out));
+    }
+    if let Some(array) = value.as_array() {
+        let entries = array
+            .iter()
+            .map(materialize_value)
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(Value::Array(entries));
+    }
+    Ok(value.clone())
+}
+
+/// Parse conversation items from validated fixture JSON.
+fn parse_conversation_items(
+    items: &[Value],
+) -> Result<Vec<ConversationItem>, HarnessError> {
+    let mut parsed = Vec::with_capacity(items.len());
+    for item in items {
+        let item = match scenario_string(item, "type")?.as_str() {
+            "user_message" => ConversationItem::UserMessage {
+                content: scenario_string(item, "content")?,
+            },
+            "assistant_message" => ConversationItem::AssistantMessage {
+                content: scenario_string(item, "content")?,
+            },
+            "assistant_tool_call" => ConversationItem::AssistantToolCall {
+                call_id: scenario_string(item, "callId")?,
+                tool_name: scenario_string(item, "toolName")?,
+                input: item.get("input").cloned().ok_or_else(|| {
+                    HarnessError::corpus(
+                        "assistant_tool_call item requires an input",
+                    )
+                })?,
+            },
+            "tool_result" => ConversationItem::ToolResult {
+                call_id: scenario_string(item, "callId")?,
+                tool_name: scenario_string(item, "toolName")?,
+                result: parse_tool_result(item.get("result").ok_or_else(
+                    || {
+                        HarnessError::corpus(
+                            "tool_result item requires a result",
+                        )
+                    },
+                )?)?,
+            },
+            other => {
+                return Err(HarnessError::corpus(format!(
+                    "provider-turn conversation item has an unknown type {other}"
+                )));
+            }
+        };
+        parsed.push(item);
+    }
+    Ok(parsed)
+}
+
+/// Parse a typed tool-result value from fixture JSON.
+fn parse_tool_result(
+    value: &Value,
+) -> Result<ToolExecutionResult, HarnessError> {
+    let object = value.as_object().ok_or_else(|| {
+        HarnessError::corpus("tool result must be an object")
+    })?;
+    let status =
+        object.get("status").and_then(Value::as_str).ok_or_else(|| {
+            HarnessError::corpus("tool result requires a string status")
+        })?;
+    let string_field = |key: &str| {
+        object.get(key).and_then(Value::as_str).map(str::to_owned).ok_or_else(
+            || {
+                HarnessError::corpus(format!(
+                    "tool result requires a string {key}"
+                ))
+            },
+        )
+    };
+    let result = match status {
+        "success" => ToolExecutionResult::Success {
+            output: object.get("output").cloned().ok_or_else(|| {
+                HarnessError::corpus("success tool result requires an output")
+            })?,
+            summary: string_field("summary")?,
+        },
+        "invalid_input" => ToolExecutionResult::InvalidInput {
+            message: string_field("message")?,
+        },
+        "denied" => {
+            ToolExecutionResult::Denied { message: string_field("message")? }
+        }
+        "conflict" => {
+            ToolExecutionResult::Conflict { message: string_field("message")? }
+        }
+        "failed" => {
+            ToolExecutionResult::Failed { message: string_field("message")? }
+        }
+        "cancelled" => ToolExecutionResult::Cancelled {
+            message: string_field("message")?,
+        },
+        "timed_out" => {
+            ToolExecutionResult::TimedOut { message: string_field("message")? }
+        }
+        "output_limit" => ToolExecutionResult::OutputLimit {
+            message: string_field("message")?,
+        },
+        "sandbox_denied" => ToolExecutionResult::SandboxDenied {
+            message: string_field("message")?,
+        },
+        "sandbox_unavailable" => ToolExecutionResult::SandboxUnavailable {
+            message: string_field("message")?,
+        },
+        "workspace_violation" => ToolExecutionResult::WorkspaceViolation {
+            message: string_field("message")?,
+        },
+        "unavailable" => ToolExecutionResult::Unavailable {
+            message: string_field("message")?,
+        },
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "tool result has an unknown status {other}"
+            )));
+        }
+    };
+    Ok(result)
+}
+
+/// Parse tool definitions from validated fixture JSON.
+fn parse_tool_definitions(
+    tools: &[Value],
+) -> Result<Vec<ToolDefinition>, HarnessError> {
+    let mut parsed = Vec::with_capacity(tools.len());
+    for tool in tools {
+        parsed.push(ToolDefinition {
+            name: scenario_string(tool, "name")?,
+            description: scenario_string(tool, "description")?,
+            input_schema: tool.get("inputSchema").cloned().ok_or_else(
+                || {
+                    HarnessError::corpus(
+                        "tool definition requires an inputSchema",
+                    )
+                },
+            )?,
+        });
+    }
+    Ok(parsed)
+}
+
+/// Whether a value is a valid '$repeat' materialization marker.
+fn is_repeat_marker(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let Some(repeat) = object.get("$repeat") else {
+        return false;
+    };
+    let Some(repeat_object) = repeat.as_object() else {
+        return false;
+    };
+    match repeat_object.get("character") {
+        Some(Value::String(character)) if character.chars().count() == 1 => {
+            repeat_object
+                .get("count")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count <= 1_048_576)
+        }
+        _ => false,
+    }
+}
+
+/// Strict provider-turn input shape validation (mirrors contract.mjs).
+fn validate_provider_turn_input(input: &Value) -> Result<(), HarnessError> {
+    let input_object = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("provider-turn input must be an object")
+    })?;
+    if input_object.len() != 1 || !input_object.contains_key("cases") {
+        return Err(HarnessError::corpus(
+            "provider-turn input must contain exactly the cases field",
+        ));
+    }
+    let cases =
+        input_object.get("cases").and_then(Value::as_array).ok_or_else(
+            || HarnessError::corpus("provider-turn cases must be an array"),
+        )?;
+    if cases.is_empty() || cases.len() > 32 {
+        return Err(HarnessError::corpus(
+            "provider-turn cases must contain 1-32 entries",
+        ));
+    }
+    for case in cases {
+        validate_provider_turn_case(case)?;
+    }
+    Ok(())
+}
+
+fn validate_provider_turn_case(case: &Value) -> Result<(), HarnessError> {
+    let case_object = case.as_object().ok_or_else(|| {
+        HarnessError::corpus("provider-turn cases must contain objects")
+    })?;
+    let has_turn = case_object.contains_key("turn");
+    let has_detach = case_object.contains_key("detach");
+    if has_turn == has_detach {
+        return Err(HarnessError::corpus(
+            "provider-turn case must have exactly one of turn/detach",
+        ));
+    }
+    if has_turn {
+        validate_provider_turn_case_input(
+            case_object.get("turn").ok_or_else(|| {
+                HarnessError::corpus("provider-turn case turn is missing")
+            })?,
+        )?;
+    } else {
+        validate_provider_detach_case_input(
+            case_object.get("detach").ok_or_else(|| {
+                HarnessError::corpus("provider-turn case detach is missing")
+            })?,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_provider_turn_case_input(
+    case: &Value,
+) -> Result<(), HarnessError> {
+    let case_object = case.as_object().ok_or_else(|| {
+        HarnessError::corpus("provider-turn turn case must be an object")
+    })?;
+    for key in case_object.keys() {
+        if !matches!(
+            key.as_str(),
+            "provider" | "messages" | "tools" | "cancelAfterEvents"
+        ) {
+            return Err(HarnessError::corpus(format!(
+                "provider-turn turn case has an unknown field {key}"
+            )));
+        }
+    }
+    for required in ["provider", "messages", "tools"] {
+        if !case_object.contains_key(required) {
+            return Err(HarnessError::corpus(format!(
+                "provider-turn turn case requires the {required} field"
+            )));
+        }
+    }
+    if let Some(cancel) = case_object.get("cancelAfterEvents") {
+        let value = cancel.as_u64().ok_or_else(|| {
+            HarnessError::corpus(
+                "provider-turn cancelAfterEvents must be an integer",
+            )
+        })?;
+        if value > 1024 {
+            return Err(HarnessError::corpus(
+                "provider-turn cancelAfterEvents exceeds the bound",
+            ));
+        }
+    }
+    let provider = case_object
+        .get("provider")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            HarnessError::corpus("provider-turn provider must be an object")
+        })?;
+    match provider.get("kind").and_then(Value::as_str) {
+        Some("fake") => {}
+        Some("scripted") => {
+            let events = provider
+                .get("events")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "scripted provider requires an events array",
+                    )
+                })?;
+            if events.len() > 4096 {
+                return Err(HarnessError::corpus(
+                    "scripted provider events exceed the bound",
+                ));
+            }
+            // Events are untrusted raw data: any JSON value is
+            // admissible and the production collector validation decides
+            // malformed events.
+        }
+        _ => {
+            return Err(HarnessError::corpus(
+                "provider-turn provider kind must be fake or scripted",
+            ));
+        }
+    }
+    let messages =
+        case_object.get("messages").and_then(Value::as_array).ok_or_else(
+            || HarnessError::corpus("provider-turn messages must be an array"),
+        )?;
+    if messages.len() > 128 {
+        return Err(HarnessError::corpus(
+            "provider-turn messages exceed the bound",
+        ));
+    }
+    for item in messages {
+        validate_provider_message(item)?;
+    }
+    let tools =
+        case_object.get("tools").and_then(Value::as_array).ok_or_else(
+            || HarnessError::corpus("provider-turn tools must be an array"),
+        )?;
+    if tools.len() > 128 {
+        return Err(HarnessError::corpus(
+            "provider-turn tools exceed the bound",
+        ));
+    }
+    for tool in tools {
+        let object = tool.as_object().ok_or_else(|| {
+            HarnessError::corpus("provider-turn tools must be objects")
+        })?;
+        for required in ["name", "description", "inputSchema"] {
+            if !object.contains_key(required) {
+                return Err(HarnessError::corpus(format!(
+                    "provider-turn tool requires the {required} field"
+                )));
+            }
+        }
+        if !object.get("name").is_some_and(Value::is_string)
+            || !object.get("description").is_some_and(Value::is_string)
+        {
+            return Err(HarnessError::corpus(
+                "provider-turn tool name and description must be strings",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate one conversation item (strings may be '$repeat' markers).
+fn validate_provider_message(item: &Value) -> Result<(), HarnessError> {
+    let object = item.as_object().ok_or_else(|| {
+        HarnessError::corpus("provider-turn messages must contain objects")
+    })?;
+    let valid_string = |value: Option<&Value>| {
+        value.is_some_and(|value| value.is_string() || is_repeat_marker(value))
+    };
+    match object.get("type").and_then(Value::as_str) {
+        Some("user_message") | Some("assistant_message") => {
+            if !valid_string(object.get("content")) {
+                return Err(HarnessError::corpus(
+                    "provider-turn message content must be a string or repeat marker",
+                ));
+            }
+        }
+        Some("assistant_tool_call") => {
+            if !valid_string(object.get("callId"))
+                || !valid_string(object.get("toolName"))
+            {
+                return Err(HarnessError::corpus(
+                    "provider-turn tool call requires string callId and toolName",
+                ));
+            }
+            if !object.contains_key("input") {
+                return Err(HarnessError::corpus(
+                    "provider-turn tool call requires an input",
+                ));
+            }
+        }
+        Some("tool_result") => {
+            if !valid_string(object.get("callId"))
+                || !valid_string(object.get("toolName"))
+            {
+                return Err(HarnessError::corpus(
+                    "provider-turn tool result requires string callId and toolName",
+                ));
+            }
+            if !object.get("result").is_some_and(Value::is_object) {
+                return Err(HarnessError::corpus(
+                    "provider-turn tool result requires a result object",
+                ));
+            }
+        }
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "provider-turn message has an unknown type {other:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_provider_detach_case_input(
+    detach: &Value,
+) -> Result<(), HarnessError> {
+    let object = detach.as_object().ok_or_else(|| {
+        HarnessError::corpus("provider-turn detach case must be an object")
+    })?;
+    if object.len() != 3
+        || !object.contains_key("value")
+        || !object.contains_key("maxBytes")
+        || !object.contains_key("actor")
+    {
+        return Err(HarnessError::corpus(
+            "provider-turn detach case must contain exactly value, maxBytes, and actor",
+        ));
+    }
+    let max_bytes =
+        object.get("maxBytes").and_then(Value::as_u64).ok_or_else(|| {
+            HarnessError::corpus(
+                "provider-turn detach maxBytes must be an integer",
+            )
+        })?;
+    if max_bytes == 0 || max_bytes > 1_048_576 {
+        return Err(HarnessError::corpus(
+            "provider-turn detach maxBytes is outside the bound",
+        ));
+    }
+    let actor =
+        object.get("actor").and_then(Value::as_str).ok_or_else(|| {
+            HarnessError::corpus("provider-turn detach actor must be a string")
+        })?;
+    if actor.is_empty() || actor.len() > 128 {
+        return Err(HarnessError::corpus(
+            "provider-turn detach actor is outside the bound",
+        ));
+    }
+    Ok(())
 }
 
 /// Run every applicable scenario and return exact canonical record bytes.
@@ -3982,8 +4790,8 @@ mod tests {
         HarnessErrorKind, PLATFORM_POSIX, PLATFORM_WINDOWS,
         canonical_records_text, canonical_scenario_digest,
         cargo_workspace_version, execute_bounded_child, load_corpus,
-        platform_name, probe_state_dir_bytes, state_dir_record,
-        validate_scenario,
+        platform_name, probe_state_dir_bytes, provider_turn_record,
+        state_dir_record, validate_provider_turn_input, validate_scenario,
     };
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -4119,7 +4927,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 86);
+        assert_eq!(loaded.len(), 104);
     }
 
     #[test]
@@ -4266,6 +5074,207 @@ mod tests {
     #[test]
     fn probe_reports_a_nonempty_outcome() {
         assert!(!probe_state_dir_bytes().expect("probe bytes").is_empty());
+    }
+
+    #[test]
+    fn provider_turn_record_runs_turn_and_detach_cases() {
+        let input = json!({
+            "cases": [
+                {
+                    "turn": {
+                        "provider": {"kind": "fake"},
+                        "messages": [{"type": "user_message", "content": "hello"}],
+                        "tools": []
+                    }
+                },
+                {
+                    "detach": {
+                        "value": {"status": "success", "output": 1, "summary": "s"},
+                        "maxBytes": 1024,
+                        "actor": "test.tool"
+                    }
+                }
+            ]
+        });
+        let record = provider_turn_record(&input).expect("record");
+        assert_eq!(record["cases"][0]["turn"]["kind"], "turn");
+        assert_eq!(
+            record["cases"][0]["turn"]["assistantText"],
+            "Siralos received: hello"
+        );
+        assert_eq!(record["cases"][1]["detach"]["ok"], true);
+        assert_eq!(
+            record["cases"][1]["detach"]["result"]["status"],
+            "success"
+        );
+    }
+
+    #[test]
+    fn provider_turn_repeat_markers_materialize() {
+        let input = json!({
+            "cases": [
+                {
+                    "turn": {
+                        "provider": {"kind": "fake"},
+                        "messages": [{
+                            "type": "user_message",
+                            "content": {"$repeat": {"character": "a", "count": 5}}
+                        }],
+                        "tools": []
+                    }
+                }
+            ]
+        });
+        let record = provider_turn_record(&input).expect("record");
+        assert_eq!(
+            record["cases"][0]["turn"]["assistantText"],
+            "Siralos received: aaaaa"
+        );
+    }
+
+    #[test]
+    fn provider_turn_failure_records_typed_category_and_message() {
+        let input = json!({
+            "cases": [
+                {
+                    "turn": {
+                        "provider": {"kind": "scripted", "events": [
+                            {"type": "text_delta", "text": {"$repeat": {"character": "a", "count": 65537}}}
+                        ]},
+                        "messages": [{"type": "user_message", "content": "hello"}],
+                        "tools": []
+                    }
+                }
+            ]
+        });
+        let record = provider_turn_record(&input).expect("record");
+        let turn = &record["cases"][0]["turn"];
+        assert_eq!(turn["kind"], "failed");
+        assert_eq!(turn["failure"], "LIMIT_ASSISTANT_TEXT_BYTES");
+        assert_eq!(
+            turn["message"],
+            "The provider exceeded the assistant-text byte limit limit; the response was rejected."
+        );
+    }
+
+    #[test]
+    fn provider_turn_cancellation_script_produces_cancelled() {
+        let input = json!({
+            "cases": [
+                {
+                    "turn": {
+                        "provider": {"kind": "scripted", "events": [
+                            {"type": "text_delta", "text": "one"},
+                            {"type": "completed"}
+                        ]},
+                        "messages": [{"type": "user_message", "content": "hello"}],
+                        "tools": [],
+                        "cancelAfterEvents": 1
+                    }
+                }
+            ]
+        });
+        let record = provider_turn_record(&input).expect("record");
+        assert_eq!(record["cases"][0]["turn"]["kind"], "cancelled");
+    }
+
+    #[test]
+    fn provider_turn_input_validation_is_strict() {
+        let input = json!({ "cases": [], "extra": true });
+        assert!(validate_provider_turn_input(&input).is_err());
+        let input = json!({
+            "cases": [{
+                "turn": {"provider": {"kind": "fake"}, "messages": [], "tools": []},
+                "detach": {"value": 1, "maxBytes": 10, "actor": "a"}
+            }]
+        });
+        assert!(validate_provider_turn_input(&input).is_err());
+        let input = json!({
+            "cases": [{
+                "turn": {
+                    "provider": {"kind": "fake"},
+                    "messages": [],
+                    "tools": [],
+                    "unexpected": 1
+                }
+            }]
+        });
+        assert!(validate_provider_turn_input(&input).is_err());
+        let input = json!({
+            "cases": [{
+                "turn": {
+                    "provider": {"kind": "openai"},
+                    "messages": [],
+                    "tools": []
+                }
+            }]
+        });
+        assert!(validate_provider_turn_input(&input).is_err());
+        let input = json!({
+            "cases": [{
+                "turn": {
+                    "provider": {"kind": "scripted"},
+                    "messages": [],
+                    "tools": []
+                }
+            }]
+        });
+        assert!(validate_provider_turn_input(&input).is_err());
+        let input = json!({
+            "cases": [{
+                "turn": {
+                    "provider": {"kind": "fake"},
+                    "messages": [{"type": "system_message", "content": "x"}],
+                    "tools": []
+                }
+            }]
+        });
+        assert!(validate_provider_turn_input(&input).is_err());
+        let input = json!({
+            "cases": [{
+                "turn": {
+                    "provider": {"kind": "fake"},
+                    "messages": [{"type": "user_message", "content": "hello"}],
+                    "tools": []
+                }
+            }]
+        });
+        assert!(validate_provider_turn_input(&input).is_ok());
+        let input = json!({
+            "cases": [{
+                "detach": {
+                    "value": {"status": "failed", "message": "boom"},
+                    "maxBytes": 128,
+                    "actor": "test.tool"
+                }
+            }]
+        });
+        assert!(validate_provider_turn_input(&input).is_ok());
+    }
+
+    #[test]
+    fn provider_turn_scripted_raw_events_use_the_validation_seam() {
+        let input = json!({
+            "cases": [
+                {
+                    "turn": {
+                        "provider": {"kind": "scripted", "events": [
+                            {"type": "unexpected", "callId": "call-1", "toolName": "workspace.read", "input": {"path": "README.md"}}
+                        ]},
+                        "messages": [{"type": "user_message", "content": "hello"}],
+                        "tools": []
+                    }
+                }
+            ]
+        });
+        let record = provider_turn_record(&input).expect("record");
+        let turn = &record["cases"][0]["turn"];
+        assert_eq!(turn["kind"], "failed");
+        assert_eq!(turn["failure"], "UNKNOWN_EVENT_TYPE");
+        assert_eq!(
+            turn["message"],
+            "The provider emitted an unknown event type; the response was rejected."
+        );
     }
 
     #[test]

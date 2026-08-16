@@ -44,6 +44,7 @@ const LANGUAGE_STRUCTURE_PROBE = join(HERE, "probes", "language-structure-oracle
 const LANGUAGE_DEFINITION_PROBE = join(HERE, "probes", "language-definition-oracle.mjs");
 const DOMAIN_LIFECYCLE_PROBE = join(HERE, "probes", "domain-lifecycle-oracle.mjs");
 const DOMAIN_CAPABILITY_PROBE = join(HERE, "probes", "domain-capability-oracle.mjs");
+const PROVIDER_TURN_PROBE = join(HERE, "probes", "provider-turn-oracle.mjs");
 
 function optionValue(args, name) {
   const index = args.indexOf(name);
@@ -290,6 +291,14 @@ export function runScenario(scenario, root) {
       subject: scenario.subject,
       outcome: SCENARIO_OUTCOME.COMPLETED,
       result: runWorkspaceProbe(DOMAIN_CAPABILITY_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "provider-turn") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(PROVIDER_TURN_PROBE, scenario.subject, scenario.input),
     };
   }
   if (scenario.subject === "version-identity") {

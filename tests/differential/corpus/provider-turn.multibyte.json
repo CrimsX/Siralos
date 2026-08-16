@@ -1,0 +1,49 @@
+{
+  "id": "provider-turn.multibyte",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "fake"
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": {
+                "$repeat": {
+                  "character": "é",
+                  "count": 100
+                }
+              }
+            }
+          ],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "fake"
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": {
+                "$repeat": {
+                  "character": "é",
+                  "count": 32768
+                }
+              }
+            }
+          ],
+          "tools": []
+        }
+      }
+    ]
+  }
+}

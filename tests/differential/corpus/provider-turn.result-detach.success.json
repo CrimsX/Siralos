@@ -1,0 +1,25 @@
+{
+  "id": "provider-turn.result-detach.success",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "detach": {
+          "value": {
+            "status": "success",
+            "output": {
+              "ok": true
+            },
+            "summary": "ok",
+            "unknown": "discarded"
+          },
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "provider-turn.duplicate-call-id",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "call-dup",
+                "toolName": "a.tool",
+                "input": {
+                  "first": true
+                }
+              },
+              {
+                "type": "tool_call",
+                "callId": "call-dup",
+                "toolName": "a.tool",
+                "input": {
+                  "again": true
+                }
+              },
+              {
+                "type": "completed"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "tools": []
+        }
+      }
+    ]
+  }
+}

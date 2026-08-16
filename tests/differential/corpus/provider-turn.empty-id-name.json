@@ -1,0 +1,48 @@
+{
+  "id": "provider-turn.empty-id-name",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "tool_call",
+                "callId": "",
+                "toolName": "a.tool",
+                "input": {}
+              },
+              {
+                "type": "tool_call",
+                "callId": "c1",
+                "toolName": "",
+                "input": {}
+              },
+              {
+                "type": "tool_call",
+                "callId": "c2",
+                "toolName": "a.tool",
+                "input": {}
+              },
+              {
+                "type": "completed"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "tools": []
+        }
+      }
+    ]
+  }
+}

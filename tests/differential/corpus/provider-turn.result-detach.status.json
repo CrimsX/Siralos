@@ -1,0 +1,21 @@
+{
+  "id": "provider-turn.result-detach.status",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "detach": {
+          "value": {
+            "status": "invented",
+            "message": "bad"
+          },
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      }
+    ]
+  }
+}

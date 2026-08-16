@@ -1,0 +1,32 @@
+{
+  "id": "provider-turn.result-detach.invalid",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "detach": {
+          "value": "plain text",
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      },
+      {
+        "detach": {
+          "value": [1, 2],
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      },
+      {
+        "detach": {
+          "value": null,
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      }
+    ]
+  }
+}

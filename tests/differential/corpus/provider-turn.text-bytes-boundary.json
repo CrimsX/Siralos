@@ -1,0 +1,49 @@
+{
+  "id": "provider-turn.text-bytes-boundary",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "fake"
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": {
+                "$repeat": {
+                  "character": "a",
+                  "count": 65518
+                }
+              }
+            }
+          ],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "fake"
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": {
+                "$repeat": {
+                  "character": "a",
+                  "count": 65519
+                }
+              }
+            }
+          ],
+          "tools": []
+        }
+      }
+    ]
+  }
+}

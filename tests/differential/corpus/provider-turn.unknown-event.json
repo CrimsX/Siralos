@@ -1,0 +1,35 @@
+{
+  "id": "provider-turn.unknown-event",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "scripted",
+            "events": [
+              {
+                "type": "unexpected",
+                "callId": "call-1",
+                "toolName": "workspace.read",
+                "input": {
+                  "path": "README.md"
+                }
+              }
+            ]
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "tools": []
+        }
+      }
+    ]
+  }
+}

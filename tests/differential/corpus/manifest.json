@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 11,
+  "corpusVersion": 12,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -187,6 +187,78 @@
       "sha256": "ecf216a9df5385cfb9659d85976d7adad3654903b95ddc37bd68ff4eeaaf4ac4"
     },
     {
+      "file": "provider-turn.basic.json",
+      "sha256": "cba641a6aa3036348dd300034ca483039a1a8881ba457b5715ff2d56347f4fe0"
+    },
+    {
+      "file": "provider-turn.cancelled.json",
+      "sha256": "9fa3987a965e93659ac2d2c952cc38c39cea80715d3a75af5cf6d6b703905eff"
+    },
+    {
+      "file": "provider-turn.duplicate-call-id.json",
+      "sha256": "e8890a1c6576c3c08158814e639d2afd29d4bd9927e0fd2894dfa1fbf64a4dad"
+    },
+    {
+      "file": "provider-turn.empty-id-name.json",
+      "sha256": "c02e0ece45c5d2b4514f8317b97613844e9e9f552ce38d02832d93187bce4ef7"
+    },
+    {
+      "file": "provider-turn.eof-no-completion.json",
+      "sha256": "e404148d1c2f5feddfcfc6fed2a93d2b709e214752f68f9ef221d0e68905a932"
+    },
+    {
+      "file": "provider-turn.event-after-completed.json",
+      "sha256": "88b8232e82b4fe7cb22db6e6a178b80562b63f56b17a5972aaece3fec14515cb"
+    },
+    {
+      "file": "provider-turn.invalid-transcript.json",
+      "sha256": "ba9b050b4fd30df6f6090aafe6fa00086e7557590bb71b066ff35e50dc62483c"
+    },
+    {
+      "file": "provider-turn.malformed-known-variant.json",
+      "sha256": "4028f94163248db2e5eaa7b7298307bdcc47a554690c9547b33558d7cc18c325"
+    },
+    {
+      "file": "provider-turn.multibyte.json",
+      "sha256": "e2a7effc3b121a51be8fcc44245bd7755eed5ac8327912711ecaa5de4762f978"
+    },
+    {
+      "file": "provider-turn.result-detach.failure.json",
+      "sha256": "1f8c594229bf8788164fb9c778dc77e2b3761aad9f2146cca1a75591cc49187c"
+    },
+    {
+      "file": "provider-turn.result-detach.invalid.json",
+      "sha256": "18cd1c8b151f3f04e055830d2bb4775841a7e509bfc2fb20bdf6d65a25b7407f"
+    },
+    {
+      "file": "provider-turn.result-detach.oversize.json",
+      "sha256": "3b3599f0e8954791aa5c83dc4aaf4d3d20065b4b1022445967c0495a889221a1"
+    },
+    {
+      "file": "provider-turn.result-detach.shape.json",
+      "sha256": "5c1cf6db4058784007dca709a8db81b4c115577b2346c5526411669d0c8e3de7"
+    },
+    {
+      "file": "provider-turn.result-detach.status.json",
+      "sha256": "e209999489e7a1fa199fb47836138701dbaa6b3d864e104ada414c78bdaea446"
+    },
+    {
+      "file": "provider-turn.result-detach.success.json",
+      "sha256": "91ff3a252418a2629e23a6f0dff38152b27dc4a1651c902464b475d93e49b4af"
+    },
+    {
+      "file": "provider-turn.text-bytes-boundary.json",
+      "sha256": "21fb41889f52ea81581603dd2044e6e9448d22ce76f12e179555f9fd489142d8"
+    },
+    {
+      "file": "provider-turn.tool-call-bounds.json",
+      "sha256": "11c44e463a887fe6fa254a7625ca6131b127a22dab3b463b4296e5ca71cc944e"
+    },
+    {
+      "file": "provider-turn.unknown-event.json",
+      "sha256": "c996cf643692fd0b7c1eb6ab82d6590f85e4712da86976dfd68aba0033af94ac"
+    },
+    {
       "file": "state-dir.fallback.posix.json",
       "sha256": "232416906832b4a92dfa3729cd2016d9a16254abb21401268cbbec01174a1655"
     },
@@ -347,5 +419,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "e171405642897c3ff1035ca5813a2888c608a73bbc9a0929d240ffbc4457b860"
+  "corpusSha256": "3df5e86b06db55e2b777b53c93c833348292e6779782228a7a9656ae7a28ee07"
 }

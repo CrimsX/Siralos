@@ -1,0 +1,45 @@
+{
+  "id": "provider-turn.basic",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "turn": {
+          "provider": {
+            "kind": "fake"
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "tools": []
+        }
+      },
+      {
+        "turn": {
+          "provider": {
+            "kind": "fake"
+          },
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "list files"
+            }
+          ],
+          "tools": [
+            {
+              "name": "workspace.list",
+              "description": "List one directory within the approved workspace.",
+              "inputSchema": {}
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

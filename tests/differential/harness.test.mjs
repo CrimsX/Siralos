@@ -10,8 +10,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { canonicalizeJson, sha256Hex } from "./shared/canonical.mjs";
-import { CONTRACT_LIMITS, computeCorpusDigest } from "./shared/contract.mjs";
-import { SCENARIO_OUTCOME, canonicalRecordDocument } from "./shared/protocol.mjs";
+import { CONTRACT_LIMITS, computeCorpusDigest, validateScenario } from "./shared/contract.mjs";
+import {
+  SCENARIO_OUTCOME,
+  canonicalRecordDocument,
+  validateOutcomeRecord,
+} from "./shared/protocol.mjs";
 import { superviseRunner } from "./shared/runner-process.mjs";
 import { loadCorpus, runOracle, runStateDirProbe } from "./run-oracle.mjs";
 import {
@@ -120,7 +124,7 @@ describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
     expect(manifest.schemaVersion).toBe(3);
-    expect(manifest.corpusVersion).toBe(11);
+    expect(manifest.corpusVersion).toBe(12);
     expect(manifest.corpusSha256).toBe(computeCorpusDigest(manifest));
     expect(manifest.scenarios.length).toBeGreaterThanOrEqual(6);
     for (const entry of manifest.scenarios) {
@@ -144,6 +148,7 @@ describe("corpus integrity", () => {
         "language-definition",
         "domain-lifecycle",
         "domain-capability",
+        "provider-turn",
       ]).toContain(scenario.subject);
       expect(["required", "informational"]).toContain(scenario.parity);
       expect(Array.isArray(scenario.platforms)).toBe(true);
@@ -217,7 +222,7 @@ describe("corpus integrity", () => {
   it("rejects unsupported corpus and schema versions and unknown manifest fields", () => {
     for (const [field, value, expected] of [
       ["schemaVersion", 4, /unsupported corpus schemaVersion/u],
-      ["corpusVersion", 12, /unsupported corpusVersion/u],
+      ["corpusVersion", 13, /unsupported corpusVersion/u],
       ["unexpected", true, /unknown or missing fields/u],
     ]) {
       const corpus = mutableCorpus();
@@ -289,6 +294,115 @@ describe("corpus integrity", () => {
   });
 });
 
+describe("provider-turn subject integrity", () => {
+  it("accepts provider-turn as a corpus subject", () => {
+    const { scenarios } = loadCorpus(CORPUS);
+    const providerTurn = scenarios.filter((scenario) => scenario.subject === "provider-turn");
+    expect(providerTurn.length).toBeGreaterThanOrEqual(12);
+    for (const scenario of providerTurn) {
+      expect(scenario.platforms).toEqual(["*"]);
+      expect(scenario.env).toEqual({});
+      expect(scenario.parity).toBe("required");
+      expect(scenario.input.cases.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("enforces the provider input byte bound", () => {
+    // The 16 KiB scenario-file bound dominates inline content, so the
+    // 64 KiB provider input budget is exercised through the validator
+    // directly on an oversized constructed scenario.
+    const oversized = {
+      id: "provider-turn.basic",
+      subject: "provider-turn",
+      platforms: ["*"],
+      parity: "required",
+      env: {},
+      input: {
+        cases: [
+          {
+            turn: {
+              provider: { kind: "fake" },
+              messages: [
+                {
+                  type: "user_message",
+                  content: "x".repeat(CONTRACT_LIMITS.providerInputBytes + 1),
+                },
+              ],
+              tools: [],
+            },
+          },
+        ],
+      },
+    };
+    expect(() => validateScenario(oversized, "provider-turn.basic.json")).toThrow(
+      /exceeds 65536 UTF-8 bytes/u,
+    );
+  });
+
+  it("rejects unknown provider-turn case keys", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "provider-turn.basic.json"), (scenario) => {
+      scenario.input.cases[0].turn.unexpected = true;
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/unknown field/u);
+  });
+
+  it("rejects a provider-turn case with both turn and detach", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "provider-turn.basic.json"), (scenario) => {
+      scenario.input.cases[0].detach = { value: 1, maxBytes: 10, actor: "a" };
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/exactly one of turn\/detach/u);
+  });
+
+  it("rejects an unknown provider kind", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "provider-turn.basic.json"), (scenario) => {
+      scenario.input.cases[0].turn.provider.kind = "openai";
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/fake or scripted/u);
+  });
+
+  it("rejects wrong provider-turn platform or env", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "provider-turn.basic.json"), (scenario) => {
+      scenario.platforms = ["windows"];
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/platforms \["\*"\] and an empty env/u);
+
+    const corpusEnv = mutableCorpus();
+    mutateJson(join(corpusEnv, "provider-turn.basic.json"), (scenario) => {
+      scenario.env = { HOME: "/fixture/home" };
+    });
+    expect(() => loadCorpus(corpusEnv, "posix")).toThrow(/empty env/u);
+  });
+
+  it("rejects a malformed provider-turn result record", () => {
+    const record = {
+      scenarioId: "provider-turn.basic",
+      subject: "provider-turn",
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: { cases: [{ turn: { kind: "invented" } }] },
+    };
+    expect(() => validateOutcomeRecord(record, "test")).toThrow(/turn kind is invalid/u);
+
+    const badDetach = {
+      scenarioId: "provider-turn.result-detach.success",
+      subject: "provider-turn",
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: { cases: [{ detach: { ok: "yes" } }] },
+    };
+    expect(() => validateOutcomeRecord(badDetach, "test")).toThrow(/ok flag is invalid/u);
+  });
+
+  it("detects mutation of a provider-turn fixture digest", () => {
+    const corpus = mutableCorpus();
+    mutateJson(join(corpus, "provider-turn.basic.json"), (scenario) => {
+      scenario.input.cases[1].turn.messages[0].content = "tampered";
+    });
+    expect(() => loadCorpus(corpus, "posix")).toThrow(/does not match its manifest digest/u);
+  });
+});
 describe("oracle determinism", () => {
   it("produces byte-identical records on consecutive runs", { timeout: 120_000 }, () => {
     const first = runOracle(CORPUS, ROOT);

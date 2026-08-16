@@ -1,0 +1,40 @@
+{
+  "id": "provider-turn.result-detach.shape",
+  "subject": "provider-turn",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "detach": {
+          "value": {
+            "status": "success",
+            "summary": "ok"
+          },
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      },
+      {
+        "detach": {
+          "value": {
+            "status": "failed"
+          },
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      },
+      {
+        "detach": {
+          "value": {
+            "status": "failed",
+            "message": 42
+          },
+          "maxBytes": 1024,
+          "actor": "test.tool"
+        }
+      }
+    ]
+  }
+}
