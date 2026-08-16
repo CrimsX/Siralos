@@ -90,5 +90,5 @@ Run checks relevant to each cohesive change before committing, then run `npm run
   are not committed.
 - Siralos is a minimal, declarative AI coding harness with an inspectable execution environment, a domain-neutral core, and explicitly installed optional domain intelligence (Godot is the first and only optional domain).
 - The TypeScript implementation is the behavioral reference; later Stage 3R milestones port subsystems to idiomatic Rust under behavioral parity, refactoring-during-port, and evidence-driven optimization rules (ADR 0032, `docs/development/RUST_STYLE.md`).
-- Next: Stage 3R R7 — Provider, Tool-Loop, Projection, Configuration, and CLI Parity. Do not implement R7+ porting work in the current milestone.
+- Current: Stage 3R R7 is Active. R7A behavior extraction and provider-protocol remediation are complete. The next implementation slice is R7.1 — Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity. During R7.1, do not implement R7.2+ or R8+ work.
 - Do not add real provider integrations, persistence, multi-agent functionality, or `/evolve` outside their planned milestones.

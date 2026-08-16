@@ -225,8 +225,10 @@ event discriminators deterministically with regression coverage; the
 differential corpus is unchanged (corpus version 11, schema 3, 86 scenario
 files — the `provider-turn` subject lands with R7.1); and the complete local
 repository gate passes with verified executable baseline
-99ee902c1c61927070f1249ee16aa276eff24b2b. R7A completion does not authorize
-the R7.1 implementation or satisfy any later migration or Stage-4 entry gate.
+99ee902c1c61927070f1249ee16aa276eff24b2b. R7A is complete and authorizes
+R7.1 to begin under the R7 porting gate. This authorization is limited to
+R7.1: it does not satisfy R7 overall, authorize R7.2+ or R8+, or satisfy any
+Stage-4 entry gate.
 
 ## Porting gate
 

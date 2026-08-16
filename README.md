@@ -279,7 +279,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Next:** Stage 3R R7 — Provider, Tool-Loop, Projection, Configuration, and CLI Parity
+- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; next implementation slice is R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity)
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

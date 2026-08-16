@@ -140,7 +140,10 @@ unsafe filesystem or process boundary intentionally fails closed.
   can never widen the request). R6
   implements
   no Plugin system and no Godot Domain. R7 (Provider, Tool-Loop,
-  Projection, Configuration, and CLI Parity) is next.
+  Projection, Configuration, and CLI Parity) is Active: R7A behavior
+  extraction and provider-protocol remediation are complete, and R7.1
+  (Provider Contract + Deterministic Fake Provider + Bounded Single
+  Model Turn parity) is next.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -346,8 +349,10 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   application, new checkpoint creation, Git inspection) report the same
   typed outcomes on both sides.
 
-Next: Stage 3R — R7: Provider, Tool-Loop, Projection, Configuration,
-and CLI Parity. The complete internal sequence is recorded
+Current: Stage 3R R7 is Active (R7A behavior extraction and
+provider-protocol remediation complete); next implementation slice is R7.1 —
+Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn
+parity. The complete internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution
