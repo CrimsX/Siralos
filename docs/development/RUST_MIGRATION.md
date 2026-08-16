@@ -16,6 +16,8 @@ repository concepts never satisfy those identifiers by implication.
 ## Status vocabulary
 
 - **Verified**: implemented, wired, and supported by executable evidence.
+- **Active**: sequenced and currently in progress (behavior extraction,
+  remediation, or implementation); not yet Verified.
 - **Remediation**: implemented surface exists, but a blocking acceptance or
   verification defect remains.
 - **Not due**: sequenced after the active milestone.
@@ -30,7 +32,7 @@ repository concepts never satisfy those identifiers by implication.
 | R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified       |
 | R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified       |
 | R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Verified       |
-| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Not due        |
+| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Active         |
 | R8        | Optional Godot Stage-2 parity                                                                                                   | Not due        |
 | R9        | Optional Godot Stage-3 parity                                                                                                   | Not due        |
 | R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Not due        |
@@ -212,6 +214,19 @@ synchronous with an immutable Host authority for the whole call
 bind-time effects deterministically).
 R6 verification does not authorize R7 work or satisfy any later
 migration or Stage-4 entry gate.
+
+R7 is Active. Its first stage, R7A, is complete: the R7 behavior extraction
+(`docs/development/R7_BEHAVIOR_EXTRACTION.md`) freezes the five R7 surfaces
+(provider, tool loop, projection, configuration, CLI) with the R7.1/R7.2
+evidence boundary; the provider runtime-event boundary was hardened in the
+TypeScript reference before porting (reference protocol hardening discovered
+during R7 behavior extraction) so both collectors reject unknown or malformed
+event discriminators deterministically with regression coverage; the
+differential corpus is unchanged (corpus version 11, schema 3, 86 scenario
+files — the `provider-turn` subject lands with R7.1); and the complete local
+repository gate passes with verified executable baseline
+99ee902c1c61927070f1249ee16aa276eff24b2b. R7A completion does not authorize
+the R7.1 implementation or satisfy any later migration or Stage-4 entry gate.
 
 ## Porting gate
 

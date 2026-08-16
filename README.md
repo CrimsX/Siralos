@@ -36,7 +36,10 @@ configuration, Skills, and explicitly installed Plugins
 > containment, and host-mediated effects, and the deterministic
 > product-neutral synthetic conformance Domain proving the boundary);
 > **R7 — Provider, Tool-Loop, Projection, Configuration, and CLI
-> Parity** is next and has not begun.
+> Parity** is active: R7A behavior extraction and provider protocol
+> remediation are complete, and **R7.1 — Provider contract +
+> deterministic fake provider + bounded single model turn parity** is
+> next.
 
 ## Status vocabulary
 
