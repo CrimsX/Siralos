@@ -440,11 +440,13 @@ RwLock, atomics, or unsafe code was introduced. Dynamic dispatch is
 confined to the heterogeneous registry boundary (`Box<dyn Tool>` entry
 storage; the loop receives `&dyn Tool` only at the lookup/call seam).
 
-Measurement (authorization baseline `1812409`, executable range through
-the final R7.2 executable commit): production Rust added 2,287 lines in
+Measurement (`git diff --numstat 1812409..<final executable SHA>`,
+authorization baseline `1812409`): production Rust added 2,287 lines in
 `siralos-core`, 683 lines in `siralos-adapters`, and 1,155 lines in
 `siralos-cli` (differential path), with 50 lines removed across the three
-crates; 41 Core Tool-loop tests, 6 adapter Tool tests, and 2 candidate
+crates (dedicated `tests.rs` files are excluded; the small inline test
+modules in `workspace_tools.rs` and `tool_loop.rs` remain in their file
+totals); 41 Core Tool-loop tests, 6 adapter Tool tests, and 2 candidate
 tool-loop harness tests. No new direct dependencies and no serde_json
 feature/dependency change. Async runtime: no. Threads: no. Arc: no.
 Mutex: no. RwLock: no. Atomics: no production use (test counters use
