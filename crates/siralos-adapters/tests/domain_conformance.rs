@@ -30,7 +30,7 @@ const ABI: &str = "siralos:domain-abi@1.0.0";
 
 /// Exact SHA-256 of `fixtures/conformance-domain.component.wasm`.
 const CONFORMANCE_DIGEST: &str =
-    "e8fc793632a9a1050364e1c5eed0eb16b55c645ccd589f472cf06a80039ac8f8";
+    "2958cbb7154830511f98fc4ee60ed5d6a9e591c13871c3e79a7ae47731643210";
 
 /// Exact SHA-256 of `fixtures/incompatible-domain.component.wasm`.
 const INCOMPATIBLE_DIGEST: &str =
@@ -443,6 +443,82 @@ fn descriptor_abi_cannot_be_substituted_by_the_host_abi() {
         )
         .expect_err("descriptor ABI is not Host-supported");
     assert_eq!(failure.code(), "UNSUPPORTED_ABI");
+    assert_eq!(host.state().as_str(), "enabled");
+    assert!(host.active().is_none());
+}
+
+#[test]
+fn bind_time_host_effects_use_the_final_grant_authority() {
+    let root = temp_dir("effect-bind");
+    fs::write(root.join("notes.txt"), "fixture line one\nfixture line two\n")
+        .expect("fixture write");
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        default_bounds(),
+    );
+    host.install(package("effect-bind", CONFORMANCE_DIGEST, ABI))
+        .expect("install");
+    host.enable().expect("enable");
+    // The guest performs a workspace read DURING bind, before the
+    // authoritative commit. The provisional mediator must grant it
+    // under the same immutable Host authority that authorizes the
+    // final commit: bind succeeds, the activation commits, and the
+    // final ActiveDomain grant is exactly the authority used for the
+    // pre-commit effect.
+    let active = host
+        .activate(
+            ActivationRequest::parse(
+                "effect-bind",
+                CONFORMANCE_DIGEST,
+                ABI,
+                &["workspace-read".to_owned()],
+            )
+            .expect("request parses"),
+            RuntimeCheckResult::Ready,
+        )
+        .expect("bind-time effect activation succeeds");
+    let granted: Vec<&str> =
+        active.grant().iter().map(|id| id.as_str()).collect();
+    assert_eq!(granted, vec!["workspace-read"]);
+    assert_eq!(host.state().as_str(), "active");
+    // The published session serves queries normally after the
+    // bind-time effect.
+    match host.query("still alive") {
+        QueryOutcome::Ok { node_count, .. } => assert_eq!(node_count, 2),
+        other => panic!("unexpected query outcome: {other:?}"),
+    }
+}
+
+#[test]
+fn bind_time_effect_outside_the_grant_is_denied_and_activation_fails() {
+    let root = temp_dir("exec-bind");
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        default_bounds(),
+    );
+    host.install(package("exec-bind", CONFORMANCE_DIGEST, ABI))
+        .expect("install");
+    host.enable().expect("enable");
+    // The guest requests process-exec during bind. The provisional
+    // mediator holds exactly the grant that the final commit would
+    // authorize (workspace-read only), so the out-of-grant effect is
+    // denied, bind rejects, and activation fails with NO HostSession
+    // and the lifecycle still Enabled.
+    let failure = host
+        .activate(
+            ActivationRequest::parse(
+                "exec-bind",
+                CONFORMANCE_DIGEST,
+                ABI,
+                &["workspace-read".to_owned()],
+            )
+            .expect("request parses"),
+            RuntimeCheckResult::Ready,
+        )
+        .expect_err("out-of-grant bind effect must reject activation");
+    assert_eq!(failure.code(), "INVALID_OUTPUT");
     assert_eq!(host.state().as_str(), "enabled");
     assert!(host.active().is_none());
 }

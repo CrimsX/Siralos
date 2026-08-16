@@ -388,12 +388,19 @@ impl DomainHost {
         // prepare-time authority). The authoritative ActiveDomain
         // grant is recomputed by the final commit from the
         // commit-time Host authority; the provisional grant is
-        // discarded with the store if that commit fails. Within this
-        // single-threaded activate() call the host authority is
-        // immutable (there is no authority mutator), and the
-        // conformance guest never invokes host effects from bind, so
-        // no guest code can exercise the provisional grant before the
-        // final commit.
+        // discarded with the store if that commit fails.
+        //
+        // Provisional-effect authority is mechanically safe: activate()
+        // is synchronous, `authority` is an immutable private field
+        // with no mutator (so no concurrent policy change exists), and
+        // the SAME authority feeds both prepare (the provisional
+        // grant) and the final commit (the final grant). A guest that
+        // invokes host effects during instantiation or bind is
+        // therefore mediated by exactly the grant the final commit
+        // authorizes: the conformance guest deliberately exercises
+        // bind-time effects (effect-bind / exec-bind markers) and the
+        // conformance suite proves both the permitted and the
+        // out-of-grant-denied paths.
         let mut store =
             self.store(prepared.provisional_grant().clone(), &engine)?;
         // Instantiation executes the component's canonical-ABI

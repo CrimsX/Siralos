@@ -14,7 +14,12 @@ product-specific semantics.
   `host-effects`; its `query` accepts deterministic markers:
   `trap` (guest fault), `loop` (unbounded execution), `denied`
   (guest-initiated denied effect), and any other text (deterministic
-  semantic query: token count and byte length).
+  semantic query: token count and byte length). Its `bind` accepts
+  deterministic provisional-effect markers: `effect-bind` (performs a
+  permitted workspace read during bind and succeeds only when the
+  provisional mediator grants it), `exec-bind` (requests an
+  out-of-grant process-exec during bind and rejects when denied), plus
+  the failure markers `reject-bind`, `trap-bind`, and `loop-bind`.
 - `guest-incompatible/` — fixture guest built against a 1.1.0 WIT with
   an added interface member; the production 1.0.0 host must refuse to
   instantiate it (unknown/incompatible ABI fails explicitly).

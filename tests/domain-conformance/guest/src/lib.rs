@@ -48,6 +48,58 @@ impl Guest for ConformanceDomain {
                 std::hint::spin_loop();
             }
         }
+        // Provisional-effect markers (conformance only): prove that an
+        // arbitrary component CAN invoke host-mediated effects during
+        // bind, BEFORE the authoritative commit, and that the
+        // provisional mediator enforces exactly the grant that the
+        // final commit authorizes.
+        if identity.package_id == "effect-bind" {
+            // A permitted workspace read during bind: bind succeeds
+            // only when the provisional mediator grants it and returns
+            // the bounded content.
+            let answer = perform(&imports::EffectRequest::WorkspaceRead((
+                "notes.txt".to_string(),
+                4096,
+            )));
+            return match answer {
+                imports::HostAnswer::Ok(_) => {
+                    *STATE.lock().expect("guest state lock") =
+                        Some(identity);
+                    Ok(())
+                }
+                imports::HostAnswer::Denied(reason) => {
+                    Err(format!("denied:{reason}"))
+                }
+                imports::HostAnswer::Cancelled => {
+                    Err("cancelled".to_string())
+                }
+                imports::HostAnswer::Error(reason) => {
+                    Err(format!("error:{reason}"))
+                }
+            };
+        }
+        if identity.package_id == "exec-bind" {
+            // An out-of-grant process-exec request during bind: the
+            // provisional mediator must deny it, so bind rejects
+            // deterministically and activation must fail with no
+            // HostSession.
+            let answer =
+                perform(&imports::EffectRequest::ProcessExec("whoami".to_string()));
+            return match answer {
+                imports::HostAnswer::Denied(reason) => {
+                    Err(format!("denied:{reason}"))
+                }
+                imports::HostAnswer::Ok(_) => {
+                    Err("unexpected grant".to_string())
+                }
+                imports::HostAnswer::Cancelled => {
+                    Err("cancelled".to_string())
+                }
+                imports::HostAnswer::Error(reason) => {
+                    Err(format!("error:{reason}"))
+                }
+            };
+        }
         *STATE.lock().expect("guest state lock") = Some(identity);
         Ok(())
     }

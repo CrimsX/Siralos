@@ -1756,6 +1756,9 @@ mod tests {
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
         assert!(lifecycle.active().is_none());
         assert_eq!(lifecycle.next_session, 1);
+        // The denial is a pure authority decision: the lifecycle
+        // generation is untouched (install + enable = 2).
+        assert_eq!(lifecycle.generation, 2);
     }
 
     #[test]
@@ -2190,6 +2193,97 @@ mod tests {
             "successful activation must bind the installed package exactly",
         );
         assert_eq!(active.binding().abi().as_str(), ABI);
+    }
+
+    /// The commit-time Host-supported ABI is a final authorization
+    /// condition: a preparation validated against one Host ABI cannot
+    /// be committed while the authorizing Host supports a different
+    /// ABI. This is the unsupported-ABI class, distinct from a
+    /// package/request ABI mismatch.
+    #[test]
+    fn commit_time_abi_revalidation_fails_before_mutation() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
+        let prepared = lifecycle
+            .prepare_activation(
+                &request("conformance-domain", &digest1),
+                &supported,
+                &authority(),
+                &RuntimeCheckResult::Ready,
+            )
+            .unwrap();
+        let other_host_abi =
+            DomainAbi::parse("siralos:domain-abi@1.1.0").unwrap();
+        match lifecycle.commit_activation(
+            prepared,
+            &other_host_abi,
+            &authority(),
+            RuntimeCheckResult::Ready,
+        ) {
+            Err(DomainFailure::UnsupportedAbi { expected, found }) => {
+                assert_eq!(expected, "siralos:domain-abi@1.1.0");
+                assert_eq!(found, ABI);
+            }
+            other => panic!("unexpected commit outcome: {other:?}"),
+        }
+        assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+        assert!(lifecycle.active().is_none());
+        assert_eq!(lifecycle.next_session, 1);
+        assert_eq!(lifecycle.generation, 2);
+    }
+
+    /// The commit-time runtime/resource policy is a final
+    /// authorization condition: after a successful preparation, a
+    /// commit whose runtime is no longer ready fails typed with zero
+    /// authoritative mutation and zero session consumption.
+    #[test]
+    fn commit_time_runtime_conditions_fail_before_mutation() {
+        let digest1 = digest(1);
+        let supported = DomainAbi::parse(ABI).unwrap();
+        let cases = [
+            RuntimeCheckResult::ResourceExceeded(ResourceExceededKind::Fuel),
+            RuntimeCheckResult::Unavailable,
+        ];
+        for runtime in cases {
+            let mut lifecycle =
+                enabled_lifecycle("conformance-domain", &digest1);
+            let prepared = lifecycle
+                .prepare_activation(
+                    &request("conformance-domain", &digest1),
+                    &supported,
+                    &authority(),
+                    &RuntimeCheckResult::Ready,
+                )
+                .unwrap();
+            let result = lifecycle.commit_activation(
+                prepared,
+                &supported,
+                &authority(),
+                runtime,
+            );
+            match runtime {
+                RuntimeCheckResult::ResourceExceeded(_) => {
+                    assert!(matches!(
+                        result,
+                        Err(DomainFailure::ResourceExceeded {
+                            kind: ResourceExceededKind::Fuel
+                        })
+                    ));
+                }
+                RuntimeCheckResult::Unavailable => {
+                    assert!(matches!(
+                        result,
+                        Err(DomainFailure::Unavailable { .. })
+                    ));
+                }
+                RuntimeCheckResult::Ready => panic!("unreachable case"),
+            }
+            assert_eq!(lifecycle.state(), LifecycleState::Enabled);
+            assert!(lifecycle.active().is_none());
+            assert_eq!(lifecycle.next_session, 1);
+            assert_eq!(lifecycle.generation, 2);
+        }
     }
 
     #[test]
