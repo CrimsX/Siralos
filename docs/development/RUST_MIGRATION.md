@@ -458,10 +458,10 @@ boundary (and the candidate's instrumentation wrapper); the loop receives
 version 13). No performance claim or benchmark is made.
 
 Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete; R7.2
-Complete (evidence-backed); R7.3 Projection parity contract frozen and
-authorized as the next separately reviewed implementation slice (not
-implemented); R7.4-R7.5 not authorized; R8-R12 not due. R7 is not marked
-Verified.
+Complete (evidence-backed); R7.3 Projection parity contract frozen; integrated
+oracle remediation complete locally; implementation blocked pending
+independent review; R7.4-R7.5 not authorized; R8-R12 not due. R7 is not
+marked Verified.
 
 ### R7.3 pre-port projection oracle correction closure
 
@@ -489,19 +489,49 @@ completed entry review is recorded in R7_BEHAVIOR_EXTRACTION.md §14.
 The restarted independent R7.3 projection entry review is recorded in
 `docs/development/R7_BEHAVIOR_EXTRACTION.md` §14. It audited the corrected
 TypeScript oracle, all projection/context/application/security seams and
-relevant tests, and found no additional oracle defect. The review froze the
-generic capacity/estimator/pressure/reduction/segment/evidence/Tool contracts,
-the corrected Unicode-scalar boundary behavior, R7.2 ApprovedToolSurface and
-R7.1 provider-request ownership, the differential/security evidence plan, and
-the minimal domain-neutral Rust ownership proposal. It is **PASS — R7.3
-Projection contract frozen; implementation authorized**.
+relevant tests. The review froze the generic
+capacity/estimator/pressure/reduction/segment/evidence/Tool contracts, the
+corrected Unicode-scalar boundary behavior, R7.2 ApprovedToolSurface and R7.1
+provider-request ownership, the differential/security evidence plan, and the
+minimal domain-neutral Rust ownership proposal. Its original result was
+**PASS — R7.3 Projection contract frozen; implementation authorized**.
 
-This authorization is only for the next separately reviewed R7.3 Projection
-Parity implementation. No R7.3 executable code, differential corpus
-promotion, R7.4/R7.5 work, or R8-R12 work is included here. The verified
-executable pointer remains `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`; the
-documentation-only commit containing this review is not an executable
-verification baseline.
+That original implementation authorization is superseded locally by the
+integrated oracle remediation below. R7.3 remains otherwise contract-frozen,
+but authorization is temporarily suspended until the remediation is
+independently reviewed. No R7.3 executable Rust code, differential corpus
+promotion, R7.4/R7.5 work, or R8-R12 work is included here.
+
+### R7.3 integrated evidence-line oracle remediation
+
+Independent review of `c474d725f1c66ea78030c382e33fc06382b5728b` found that
+`boundLineLength()` enforced its scalar-safe split in isolation, while
+`projectForModel()` could discard that split because inserted newlines increase
+JavaScript string length and the never-worse guard restored the pre-reduction
+text. The remediation classifies line bounding as a mandatory structural
+model-view bound and keeps repeated-line collapse as the only optional
+never-worse reduction. Security transforms remain non-revertible; the final
+order is strip controls, redact secrets, optionally collapse, enforce the
+UTF-8 line bound, then truncate total bytes.
+
+Executable commit `461f290b3d3d778a3bef4d25a895338efcdf315c`
+(`fix(core): enforce integrated evidence line bounds`) adds integrated
+`projectForModel()` regressions for the hard bound, exact and over-limit
+boundaries, Unicode scalar behavior, security composition, optional collapse,
+and terminal truncation. The full required gate passed on that clean
+executable tree; the differential corpus remains unchanged at schema version
+3, corpus version 13, 120 scenario files, digest
+`6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490`.
+
+The latest verified executable worktree is now
+`461f290b3d3d778a3bef4d25a895338efcdf315c`. The earlier Unicode helper
+correction remains preserved as historical evidence at
+`4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`, and the historical R7.2 verified
+Rust implementation baseline remains
+`73db8e89c8f670454927ca7ed7554e17d33ea606`. The documentation-only
+reconciliation after this executable commit is not the executable baseline.
+R7.3 Rust implementation remains blocked pending independent review of the
+remediation.
 
 ## Porting gate
 

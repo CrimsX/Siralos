@@ -1248,11 +1248,14 @@ authorization. The completed entry review is recorded below.
 
 ## 14. R7.3 Entry Review — Projection Contract
 
-Status: **PASS — R7.3 Projection contract frozen; implementation authorized**.
+Status: **PASS — R7.3 contract frozen; integrated oracle remediation complete
+locally; awaiting independent review**.
 This section records the independent entry review against the corrected
-TypeScript oracle. It authorizes a future, separately reviewed implementation
-slice; it does not contain that implementation, promote a differential corpus
-subject, or mark R7 Verified.
+TypeScript oracle. The original entry review froze a future, separately
+reviewed implementation slice; its authorization is now suspended pending
+independent review of the integrated oracle remediation below. It does not
+contain the implementation, promote a differential corpus subject, or mark R7
+Verified.
 
 ### 14.1 Scope, entry state, and audit result
 
@@ -1268,23 +1271,26 @@ behavior tests, and every repository caller of the projection functions.
 
 The verified local entry state was:
 
-| Item                                         | Value                                                              |
-| -------------------------------------------- | ------------------------------------------------------------------ |
-| Branch                                       | `main`                                                             |
-| Starting HEAD and upstream                   | `1ffc3f6411a0386c270789af67917aa7b57b6f93`                         |
-| Starting worktree                            | clean                                                              |
-| Historical R7.2 Rust implementation baseline | `73db8e89c8f670454927ca7ed7554e17d33ea606`                         |
-| Latest verified executable repository SHA    | `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`                         |
-| Later commit after that executable SHA       | `1ffc3f6 docs: record R7.3 projection oracle correction`           |
-| Corpus                                       | schema 3, version 13, 120 scenario files                           |
-| Corpus digest                                | `6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490` |
-| R7.3 executable Rust                         | absent; no R7.3 source or implementation commit exists             |
+| Item                                            | Value                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------ |
+| Branch                                          | `main`                                                             |
+| Starting HEAD and upstream                      | `1ffc3f6411a0386c270789af67917aa7b57b6f93`                         |
+| Starting worktree                               | clean                                                              |
+| Historical R7.2 Rust implementation baseline    | `73db8e89c8f670454927ca7ed7554e17d33ea606`                         |
+| Entry-review verified executable repository SHA | `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`                         |
+| Current verified executable remediation SHA     | `461f290b3d3d778a3bef4d25a895338efcdf315c`                         |
+| Later commit after that executable SHA          | `1ffc3f6 docs: record R7.3 projection oracle correction`           |
+| Corpus                                          | schema 3, version 13, 120 scenario files                           |
+| Corpus digest                                   | `6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490` |
+| R7.3 executable Rust                            | absent; no R7.3 source or implementation commit exists             |
 
-The only commit after the verified executable correction is the documentation
-closure above. The full starting `npm run check` gate exited 0: 211 TypeScript
-test files passed (3,192 tests, 35 skipped), all 116 applicable required
-differential scenarios matched, and the Rust format, clippy, and workspace
-tests passed. No new TypeScript projection defect remained after the audit.
+At the entry review, the only commit after the verified executable correction
+was the documentation closure above. The full starting `npm run check` gate
+exited 0: 211 TypeScript test files passed (3,192 tests, 35 skipped), all 116
+applicable required differential scenarios matched, and the Rust format,
+clippy, and workspace tests passed. The later independent review found the
+integrated line-bound defect recorded in §14.4 and it is corrected by the
+current executable remediation SHA above.
 
 ### 14.2 Co-located classification table
 
@@ -1335,7 +1341,7 @@ independent Rust contract.
 | Repeated-line collapse                     | **R7.3 MUST PORT**                  | Three or more consecutive exactly equal `\n`-split lines become one `${line} ×${count}` line. The never-worse comparison for this step is JavaScript UTF-16 `.length`.                                                                         |
 | Line bounding                              | **R7.3 MUST PORT**                  | UTF-8 byte bound, split only at valid Unicode-scalar boundaries, with the explicit complete-scalar exception when one scalar cannot fit.                                                                                                       |
 | Final truncation                           | **R7.3 MUST PORT**                  | Use the exact marker `\n… [truncated]`, select the largest valid scalar prefix that fits with it, and retain marker-only output when the marker exceeds the configured bound.                                                                  |
-| Never-worse reduction                      | **R7.3 MUST PORT**                  | Collapse and line-bound reductions are reverted together to the post-security `preReduction` text when the reduced text exceeds the raw UTF-8 byte count; security transforms remain.                                                          |
+| Never-worse reduction                      | **R7.3 MUST PORT**                  | Repeat collapse is the only optional reduction governed by the never-worse check; if discarded, the mandatory line bound is reapplied to post-security text and retained. Security transforms and final truncation are never reverted.         |
 | Evidence bounds                            | **R7.3 MUST PORT**                  | Total evidence 32 KiB UTF-8, one line 1 KiB UTF-8, reference/research/scene combined 12 KiB, four recent records per source, and eight task focus paths. Producer-specific budgets remain producer-owned.                                      |
 | Watermark cache                            | **R7.3 MUST PORT**                  | The disposable model-evidence cache is bounded, observable through its size, and never owns durable TaskState evidence. A minimal ordered state value is sufficient.                                                                           |
 | High/low eviction                          | **R7.3 MUST PORT**                  | High 64/low 32; cleanup occurs only when insertion makes size greater than 64 and removes oldest insertion-order entries down to 32.                                                                                                           |
@@ -1412,6 +1418,32 @@ a sub-scalar line budget, total truncation below/at the supplementary-scalar
 threshold, and marker-only behavior. The correction changes only the detached
 model view; it does not change raw evidence, history, Tool authority,
 capability, approval, or provider authority.
+
+#### Integrated line-bound remediation
+
+Independent review of `c474d725f1c66ea78030c382e33fc06382b5728b` found that the
+helper-level line bound was not necessarily enforced by the integrated
+`projectForModel()` path. The root cause was treating the newline-producing
+line split as though it had to be a size reduction, allowing the never-worse
+guard to restore the pre-reduction text. The corrected contract classifies
+line bounding as a mandatory structural model-view bound, while repeated-line
+collapse remains the only optional reduction. Security transforms are
+non-revertible; the order is strip controls, redact secrets, optionally
+collapse repeated lines, enforce the UTF-8 line bound, then apply final total
+truncation. For every feasible scalar bound, every final provider-visible LF
+line is at most `maxLineBytes` UTF-8 bytes; if the bound is smaller than one
+complete scalar, that scalar remains intact as the established exception.
+
+The executable remediation is `461f290b3d3d778a3bef4d25a895338efcdf315c`
+(`fix(core): enforce integrated evidence line bounds`). Eleven integrated
+`projectForModel()` regressions cover ASCII, exact and over-limit boundaries,
+supplementary scalars, the impossible sub-scalar bound, security transforms,
+repeated-line composition, rejected collapse, and total truncation after line
+bounding. The change affects only detached model-visible evidence; raw
+`ToolExecutionResult` values, Host history, Task evidence, workspace state,
+capability, and Tool authority are unchanged. No R7.3 Rust implementation or
+differential corpus promotion exists, and implementation remains blocked
+pending independent review of this remediation.
 
 ### 14.5 R7.2 ApprovedToolSurface integration
 
@@ -1643,10 +1675,13 @@ The provider-visible evidence transform is ordered exactly as follows:
 
 1. Strip valid ANSI CSI sequences and selected C0/DEL controls.
 2. Replace configured non-empty secrets in configured order.
-3. Collapse runs of at least three exactly equal LF-split lines.
-4. Bound each line by UTF-8 bytes at 1,024 by default, using scalar-aligned
-   boundaries and the complete-scalar exception.
-5. Apply the never-worse check to the two non-security reductions together.
+3. Optionally collapse runs of at least three exactly equal LF-split lines;
+   this is the only transform governed by the never-worse reduction check.
+4. Enforce the mandatory per-line UTF-8 byte bound at 1,024 by default, using
+   scalar-aligned boundaries and the complete-scalar exception.
+5. If optional collapse is discarded because it is worse by the reference
+   comparison metric, reapply the mandatory line bound to the post-security
+   text. Never disable or revert the structural line bound.
 6. Apply total truncation last, with the exact marker and scalar boundary rule.
 
 Sanitization details are frozen. A valid CSI starts with ESC + `[`, ends at a
@@ -1660,13 +1695,19 @@ whitespace. Secret replacement is the fixed token
 follow configured sequential `split/join` order.
 
 Repeated lines use exact JavaScript string equality and UTF-16 `.length` for
-the reduction-size test. The marker is `${line} ×${run}`. Line and total
-limits use exact UTF-8 bytes, never arbitrary UTF-16 offsets. The non-security
-collapse and line-bound transforms are reverted together to `preReduction` if
-the resulting UTF-8 bytes exceed the raw `originalBytes`; the security
-transforms are retained even if their replacement text is larger. Truncation
-always runs after that decision and reports `truncated`, `shownBytes`,
-`originalBytes`, and ordered transformation labels.
+the optional reduction-size test. The marker is `${line} ×${run}`. Line and
+total limits use exact UTF-8 bytes, never arbitrary UTF-16 offsets. The
+never-worse check may discard an applied repeat collapse when the resulting
+representation exceeds the raw `originalBytes`; it may never revert security
+transforms, the mandatory line bound, or final truncation. If collapse is
+discarded, line bounding is reapplied to the post-security text. The
+`bound-lines` label appears if and only if retained integrated line bounding
+materially changed the provider-visible text; discarded candidates do not
+leave a label. Truncation always runs after that decision and reports
+`truncated`, `shownBytes`, `originalBytes`, and ordered transformation labels.
+For every feasible `maxLineBytes`, each final provider-visible LF line is at
+most that many UTF-8 bytes; the complete-scalar exception applies when the
+configured bound cannot fit one scalar.
 
 For a successful `ToolExecutionResult`, only `summary` is projected. Its
 `output` and status are retained. For every non-success status, only `message`
@@ -1866,6 +1907,11 @@ graph.
 - [x] Authoritative Tool results and Task evidence are never sanitized in
       place.
 - [x] Secret redaction and control stripping cannot be reverted by size rules.
+- [x] Line bounding is a mandatory structural bound and cannot be disabled by
+      never-worse size logic.
+- [x] The final feasible-bound invariant holds for every provider-visible LF
+      line, with the complete-scalar exception preserved.
+- [x] `bound-lines` reports only a retained integrated line-bound change.
 - [x] Cache eviction cannot delete durable evidence.
 - [x] A stale disposable view cannot become authoritative.
 - [x] Core contains no Godot-specific projection semantics.
@@ -1895,7 +1941,8 @@ After implementation, record exactly:
 
 ### 14.20 Implementation sequence (frozen plan only)
 
-The authorized future implementation sequence is:
+The frozen future implementation sequence is not executable until the
+integrated oracle remediation is independently reviewed:
 
 1. Capacity, estimator, and pressure.
 2. Conversation reduction.
@@ -1923,15 +1970,18 @@ All material projection boundaries are classified; the corrected Unicode
 oracle is explicitly frozen; the Host/R7.1/R7.2 ownership chain, generic Core
 boundary, R10/R8/R9 deferrals, evidence layers, differential record, security
 invariants, Rust ownership, measurement, and implementation sequence are
-unambiguous. No executable file or differential corpus file was changed by
-this review.
+unambiguous. The original entry review changed no executable file or
+differential corpus file; the later executable remediation is recorded in
+§14.4.
 
-**PASS — R7.3 Projection contract frozen; implementation authorized.**
+**PASS — R7.3 integrated evidence-line oracle remediation complete; awaiting
+independent review.**
 
-Authorization is limited to the next separately reviewed R7.3 Projection
-Parity implementation. R7.3 remains unimplemented in this commit; R7.4/R7.5
-remain unauthorized; R8-R12 remain not due; R7 remains Active and is not
-marked Verified.
+The projection contract remains frozen, but implementation authorization is
+temporarily suspended until an independent review of
+`461f290b3d3d778a3bef4d25a895338efcdf315c` returns PASS. R7.3 remains
+unimplemented; R7.4/R7.5 remain unauthorized; R8-R12 remain not due; R7
+remains Active and is not marked Verified.
 
 ## Acceptance gates for R7 (evidence design)
 
@@ -1966,7 +2016,8 @@ R7.2 — Complete (generic Application Tool Loop parity; corpus version 13,
         domain-neutral CapabilityId; immutable ordered Tool Registry; Tool
         Round one-call/one-result and cancelled-tail pairing; single-flight
         Application loop; closed R7.2 event surface; security review PASS)
-R7.3 — Authorized / Next (contract frozen; not implemented)
+R7.3 — Contract frozen; oracle remediation complete locally; implementation
+        blocked pending independent review
 R7.4-R7.5 — Not authorized
 R8-R12 — Not due
 ```
