@@ -9,7 +9,7 @@ Migration track: Stage 3R
 Current completed milestone: R6
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 is the next implementation step pending review
+R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 is the next implementation step, authorized by the R7.2 entry review (docs/development/R7_BEHAVIOR_EXTRACTION.md §13)
 Last verified commit: bd335190696f3662e242407c89d7821483d7fa24
 Canonical repository: https://github.com/CrimsX/Siralos
 ```

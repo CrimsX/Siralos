@@ -41,7 +41,7 @@ configuration, Skills, and explicitly installed Plugins
 > deterministic fake provider + bounded single model turn parity** is
 > complete (corpus version 12, 104 scenario files, 18 `provider-turn`
 > scenarios at differential parity); R7.2 — Application Tool Loop
-> parity — is next, pending review.
+> parity — is next, authorized by the R7.2 entry review.
 
 ## Status vocabulary
 
@@ -281,7 +281,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); next implementation slice is R7.2 (Application Tool Loop parity), pending review
+- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); next implementation slice is R7.2 (Application Tool Loop parity), authorized by the R7.2 entry review
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

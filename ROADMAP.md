@@ -145,7 +145,7 @@ unsafe filesystem or process boundary intentionally fails closed.
   (Provider Contract + Deterministic Fake Provider + Bounded Single
   Model Turn parity) is complete (corpus version 12, 104 scenario
   files, 18 `provider-turn` scenarios at differential parity); R7.2
-  (Application Tool Loop parity) is next, pending review.
+  (Application Tool Loop parity) is next, authorized by the R7.2 entry review.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -355,7 +355,8 @@ Current: Stage 3R R7 is Active (R7A behavior extraction and
 provider-protocol remediation complete; R7.1 — Provider Contract +
 Deterministic Fake Provider + Bounded Single Model Turn parity — complete at
 differential parity); next implementation slice is R7.2 — Application Tool
-Loop parity — pending review. The complete internal sequence is recorded
+Loop parity — authorized (entry review PASS, contract frozen). The complete
+internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution
