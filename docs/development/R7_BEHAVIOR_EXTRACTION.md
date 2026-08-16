@@ -778,6 +778,26 @@ capability/rule/evaluator (§13.17) is Host-loop-owned; the R6
 `domain::capability` types remain the Domain host-boundary vocabulary and
 are not reused here (different identifier vocabulary and boundary).
 
+**Capability representation — domain-neutral by construction (R7.2
+independent-review remediation).** `siralos-core` MUST NOT contain
+Godot/domain-specific capability semantic types: no `Capability` enum with
+Godot (or any optional-domain) variants, no optional-domain semantic
+capability types, and no requirement to modify Core merely because a future
+Domain adds capability identifiers. The selected representation is a small
+validated domain-neutral capability identifier: an opaque `CapabilityId`
+whose grammar accepts the reference identifier format (non-empty, bounded
+length, lowercase ASCII letters/digits and `.`/`_`/`-` separators) and whose
+Core semantics know nothing about any optional domain — `godot.inspect` is
+an identifier to Core, never a semantic type. Core may compare and evaluate
+identifiers; it must not understand domain semantics. A type materially
+like `enum Capability { WorkspaceRead, GodotInspect, GodotLsp, ... }` is
+explicitly prohibited in Core. The R6 `domain::capability` types (dash-only
+identifier grammar, Domain host-boundary vocabulary) are deliberately not
+reused for the Tool Loop because their grammar rejects the reference
+`dot`/`underscore` identifier format and they are bound to the Domain
+boundary. Future optional-domain Tool capabilities enter through the same
+generic `CapabilityId` + policy path with zero Core changes.
+
 ### 13.8 Projection seam (R7.3 boundary)
 
 R7.2 implements no projection. The loop enforces the model-visible schema
@@ -801,10 +821,30 @@ model, fingerprints, trim, or Context segments is imported by R7.2.
 
 ### 13.9 Tool input validation
 
-Tools own their input validation and may return `invalid_input` (stored
-as the result, surfaced as `tool_failed`, provider may recover). The R7.2
-loop does not run a JSON Schema validator; `inputSchema` is
-provider-visible metadata only. No generic schema runtime is invented.
+The R7.2 loop performs no generic JSON-Schema validation of Tool
+arguments; `ToolDefinition.inputSchema` is provider-visible metadata only,
+and the Tool implementation owns authoritative runtime validation. Exact
+`invalid_input` boundary (independent-review remediation):
+
+```text
+Host (after registry / visible-surface / capability gates):
+    invokes Tool.execute(input, cancellation_signal)
+        ↓
+Tool:
+    validates its own input at the execution boundary
+    invalid input → returns ToolExecutionResult::InvalidInput
+        BEFORE any substantive/effectful Tool work
+        ↓
+Tool Loop:
+    emits tool_failed
+    stores the paired invalid_input result
+    provider may recover on the next turn
+```
+
+`Tool.execute` IS invoked for an invalid input — "no execution" is never a
+valid paraphrase; only the substantive/effectful Tool work body is not
+entered after the validation failure. No generic schema runtime is
+invented and no loop-side validator is added.
 
 ### 13.10 Application event surface
 
@@ -821,10 +861,39 @@ Not ported into the R7.2 type: `tool_awaiting_approval`,
 `approval_requested`/`approval_resolved`, `checkpoint_applied`,
 `context_pressure`, and all `command_*` events (each owned by its later
 milestone, §13.13). Structural copying of the full TypeScript union is not
-required; behavioral parity is. `displayInput` truncation (200 chars +
-`...`, JSON.stringify of the input, `<unprintable>` fallback) is a
+required; behavioral parity is. `displayInput` truncation is a
 deterministic loop-emitted value and is part of the R7.2 event contract,
-not merely presentation.
+not merely presentation. Exact algorithm (independent-review remediation):
+
+```text
+text = JSON.stringify(input)
+
+if serialization returns undefined:
+    displayInput = "<unprintable>"
+else if text.length <= 200:
+    displayInput = text
+else:
+    displayInput = text.slice(0, 200) + "..."
+```
+
+The truncation unit is the JavaScript UTF-16 code unit: `String.length`
+counts UTF-16 code units and `String.slice(0, 200)` cuts at UTF-16 code
+unit boundaries. Rust must reproduce exactly this semantics for the
+serialized JSON string — it must NOT silently substitute 200 UTF-8 bytes,
+200 Unicode scalar values, or 200 grapheme clusters unless executable
+differential evidence proves equivalence over the accepted input domain.
+When the boundary splits a UTF-16 surrogate pair, the observable canonical
+record carries the reference's serialized form (JSON escape), which the
+Rust formatter must reproduce at the boundary.
+
+Reachability of `<unprintable>`: through the accepted R7.2 input protocol
+the fallback is structurally impossible on BOTH implementations — the R7.1
+application collector retains only `JSON.parse(JSON.stringify(input))`
+values (always JSON-serializable), and the Rust typed input is
+`serde_json::Value` (always serializable). The fallback stays in the
+contract for algorithmic completeness; no fixture is required, and Rust
+must not weaken its typed input merely to create an impossible internal
+state.
 
 ### 13.11 Failure taxonomy and recovery
 
@@ -921,9 +990,11 @@ siralos-core::tool (new module, closed over generic R7.2 only)
     - Tool round state + execution (pairing, invalid calls, cancelled tail)
     - Application tool loop (single-flight, round budget, transcript rules)
     - RoundBudget normalization (exact clamp/floor/default)
-    - Capability / PermissionRule / PermissionDecision + evaluator
-      (reference decision order and exact reasons; no second permission
-      system)
+    - CapabilityId (validated opaque identifier, generic grammar, no
+      optional-domain semantics — never an enum with domain variants)
+    - PermissionRule / PermissionDecision + evaluator (reference decision
+      order and exact reasons; no second permission system; no domain
+      semantic types)
     - Approved-tool-surface seam (optional ordered name set)
     - ToolLoopEvent / AppOutcome (closed generic event set)
     - typed failures (AlreadyResponding ... InvalidToolCall)
@@ -967,26 +1038,42 @@ exercises mutation, process, Git, network, or Godot authority.
 Per-scenario detail (frozen; inputs are Host-controlled, parity required on
 every host):
 
-| Scenario id                               | Input / Tool registry                                                                                                  | Host authority / visible surface                                | Provider script                                                                                          | Observable outcome (required evidence)                                                                                                                                                                         | Why R7.2                                                                    |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `tool-loop.terminal`                      | prompt without any tool scenario; registry empty or workspace.read tools                                               | default `inspect`; surface = policy-filtered registry           | deterministic fake echo text + `completed`                                                               | `response_started`, `text_delta`s, `response_completed`; transcript = user_message + one non-empty assistant_message                                                                                           | terminal completion contract                                                |
-| `tool-loop.tool-rounds`                   | `maxToolRounds` 0/1/8/32 (+ normalization cases: missing/non-finite/negative/fractional/>32); registry = one stub tool | default `inspect`; surface = registry                           | scripted: tool_call turn(s) then a final text turn (or another tool_call turn at the cap)                | executed-round count; at/over budget the requested round executes nothing; exact cap message `Siralos reached the maximum of <n> tool rounds; ...`; `response_failed`                                          | round-budget normalization and cap boundary                                 |
-| `tool-loop.unknown-tool`                  | prompt; registry without the requested name                                                                            | default `inspect`; surface = registry                           | scripted turn 1: `tool_call("c1", "mystery.tool")` + `completed`; turn 2: text `recovered` + `completed` | `tool_started` then `tool_failed` with `Unknown tool: mystery.tool.`; paired `Failed` result; turn 2 completes the prompt                                                                                      | unknown-Tool recovery = paired result + next provider turn                  |
-| `tool-loop.hidden-tool-denied`            | registry registers `b.tool`; approved visible surface excludes it                                                      | default `inspect`; surface = approved-name set without `b.tool` | scripted: `tool_call("c1", "b.tool")` + `completed`, then recovery text turn                             | denied BEFORE execution with the exact message `Tool b.tool is not in the projected tool schema for this session and was denied before execution.`; paired `Denied` result; no execute call; provider recovers | approved-surface execution guard (projection seam)                          |
-| `tool-loop.one-call-one-result`           | one turn mixing execute + invalid + cancelled-tail calls; registry = stubs                                             | default `inspect`; surface = registry                           | scripted: `tool_call` c1, empty/duplicate call (invalid), tool returning `cancelled`, plus later calls   | exact pairing/order/retention; every retained call ↔ exactly one result (same call id and tool name); no orphans/missing/duplicates/reorder                                                                    | one-call/one-result invariant                                               |
-| `tool-loop.cancelled-round`               | multi-call turn; Host cancellation during the round                                                                    | default `inspect`; surface = registry                           | scripted: two tool calls; cancellation after the first call completes                                    | first call executed with its result; every unstarted retained call gets `Cancelled` with `The tool call was cancelled before it executed.`; no later execution; no `response_completed`; `response_cancelled`  | round cancellation + cancelled-tail pairing                                 |
-| `tool-loop.assistant-text-with-tools`     | mixed turn (assistant text + tool calls)                                                                               | default `inspect`; surface = registry                           | scripted: text deltas, `tool_call`, `completed`; next turn terminal text                                 | completed round: assistant_message precedes the round transcript; cancelled round: full paired transcript retained, mixed-turn text NOT committed                                                              | mixed-turn history commit order                                             |
-| `tool-loop.invalid-call-pairing`          | turn containing an empty id/name call (R7.1 `TurnToolCall::Invalid`)                                                   | default `inspect`; surface = registry                           | scripted: invalid call + `completed`, then recovery turn                                                 | exactly one `Failed` result per retained invalid call (deterministic message), no lookup, no authorization, no execution; later calls continue                                                                 | invalid-call → failed-result pairing is R7.2 (R7.1 emits the proposal only) |
-| `tool-loop.duplicate-call-result-pairing` | one turn with a duplicated call id                                                                                     | default `inspect`; surface = registry                           | scripted: `tool_call("c1")` twice + `completed`                                                          | first occurrence executes with its result; the duplicate becomes invalid-call and receives its own `Failed` result (`Duplicate tool call id: c1.`); results in original call order                             | duplicate-call pairing                                                      |
-| `tool-loop.empty-call-result-pairing`     | one turn with an empty id or empty tool name                                                                           | default `inspect`; surface = registry                           | scripted: empty call + `completed`                                                                       | invalid call receives exactly one failed result in call order; no execution                                                                                                                                    | empty-call pairing                                                          |
-| `tool-loop.final-answer-after-last-round` | `maxToolRounds` = 1                                                                                                    | default `inspect`; surface = registry                           | scripted turn 1: `tool_call` + `completed`; turn 2: final text + `completed`                             | round 1 executes; turn 2 is terminal text → `response_completed` success                                                                                                                                       | budget boundary success side                                                |
-| `tool-loop.over-budget-round`             | `maxToolRounds` = 1                                                                                                    | default `inspect`; surface = registry                           | scripted turn 1: `tool_call` + `completed`; turn 2: another `tool_call` + `completed`                    | round 1 executes; turn 2's requested round is NOT executed (zero tools); `response_failed` with the exact cap message                                                                                          | over-budget round executes nothing                                          |
-| `tool-loop.provider-fails-after-round`    | one completed tool round then a failing provider turn                                                                  | default `inspect`; surface = registry                           | scripted turn 1: `tool_call` + `completed`; turn 2: provider throws                                      | completed round transcript retained (call + result); subsequent provider failure → `response_failed` with the R7.1 message; no `response_completed`                                                            | provider-failure propagation after a committed round                        |
+| Scenario id                               | Input / Tool registry                                                                                                                                                     | Host authority / visible surface                                                                                   | Provider script                                                                                          | Observable outcome (required evidence)                                                                                                                                                                                                                                         | Why R7.2                                                                                                                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `tool-loop.terminal`                      | prompt without any tool scenario; registry empty or workspace.read tools                                                                                                  | default `inspect`; surface = policy-filtered registry                                                              | deterministic fake echo text + `completed`                                                               | `response_started`, `text_delta`s, `response_completed`; transcript = user_message + one non-empty assistant_message                                                                                                                                                           | terminal completion contract                                                                                                            |
+| `tool-loop.tool-rounds`                   | `maxToolRounds` 0/1/8/32 (+ normalization cases: missing/non-finite/negative/fractional/>32); registry = one stub tool                                                    | default `inspect`; surface = registry                                                                              | scripted: tool_call turn(s) then a final text turn (or another tool_call turn at the cap)                | executed-round count; at/over budget the requested round executes nothing; exact cap message `Siralos reached the maximum of <n> tool rounds; ...`; `response_failed`                                                                                                          | round-budget normalization and cap boundary                                                                                             |
+| `tool-loop.unknown-tool`                  | prompt; registry without the requested name                                                                                                                               | default `inspect`; surface = registry                                                                              | scripted turn 1: `tool_call("c1", "mystery.tool")` + `completed`; turn 2: text `recovered` + `completed` | `tool_started` then `tool_failed` with `Unknown tool: mystery.tool.`; paired `Failed` result; turn 2 completes the prompt                                                                                                                                                      | unknown-Tool recovery = paired result + next provider turn                                                                              |
+| `tool-loop.hidden-tool-denied`            | registry registers `b.tool`; approved visible surface excludes it                                                                                                         | default `inspect`; surface = approved-name set without `b.tool`                                                    | scripted: `tool_call("c1", "b.tool")` + `completed`, then recovery text turn                             | denied BEFORE execution with the exact message `Tool b.tool is not in the projected tool schema for this session and was denied before execution.`; paired `Denied` result; no execute call; provider recovers                                                                 | approved-surface execution guard (projection seam)                                                                                      |
+| `tool-loop.one-call-one-result`           | one turn mixing execute + invalid + cancelled-tail calls; registry = stubs                                                                                                | default `inspect`; surface = registry                                                                              | scripted: `tool_call` c1, empty/duplicate call (invalid), tool returning `cancelled`, plus later calls   | exact pairing/order/retention; every retained call ↔ exactly one result (same call id and tool name); no orphans/missing/duplicates/reorder                                                                                                                                    | one-call/one-result invariant                                                                                                           |
+| `tool-loop.cancelled-round`               | multi-call turn; Host cancellation during the round                                                                                                                       | default `inspect`; surface = registry                                                                              | scripted: two tool calls; cancellation after the first call completes                                    | first call executed with its result; every unstarted retained call gets `Cancelled` with `The tool call was cancelled before it executed.`; no later execution; no `response_completed`; `response_cancelled`                                                                  | round cancellation + cancelled-tail pairing                                                                                             |
+| `tool-loop.assistant-text-with-tools`     | mixed turn (assistant text + tool calls)                                                                                                                                  | default `inspect`; surface = registry                                                                              | scripted: text deltas, `tool_call`, `completed`; next turn terminal text                                 | completed round: assistant_message precedes the round transcript; cancelled round: full paired transcript retained, mixed-turn text NOT committed                                                                                                                              | mixed-turn history commit order                                                                                                         |
+| `tool-loop.invalid-call-pairing`          | turn containing an empty id/name call (R7.1 `TurnToolCall::Invalid`)                                                                                                      | default `inspect`; surface = registry                                                                              | scripted: invalid call + `completed`, then recovery turn                                                 | exactly one `Failed` result per retained invalid call (deterministic message), no lookup, no authorization, no execution; later calls continue                                                                                                                                 | invalid-call → failed-result pairing is R7.2 (R7.1 emits the proposal only)                                                             |
+| `tool-loop.duplicate-call-result-pairing` | one turn with a duplicated call id                                                                                                                                        | default `inspect`; surface = registry                                                                              | scripted: `tool_call("c1")` twice + `completed`                                                          | first occurrence executes with its result; the duplicate becomes invalid-call and receives its own `Failed` result (`Duplicate tool call id: c1.`); results in original call order                                                                                             | duplicate-call pairing                                                                                                                  |
+| `tool-loop.empty-call-result-pairing`     | one turn with an empty id or empty tool name                                                                                                                              | default `inspect`; surface = registry                                                                              | scripted: empty call + `completed`                                                                       | invalid call receives exactly one failed result in call order; no execution                                                                                                                                                                                                    | empty-call pairing                                                                                                                      |
+| `tool-loop.final-answer-after-last-round` | `maxToolRounds` = 1                                                                                                                                                       | default `inspect`; surface = registry                                                                              | scripted turn 1: `tool_call` + `completed`; turn 2: final text + `completed`                             | round 1 executes; turn 2 is terminal text → `response_completed` success                                                                                                                                                                                                       | budget boundary success side                                                                                                            |
+| `tool-loop.over-budget-round`             | `maxToolRounds` = 1                                                                                                                                                       | default `inspect`; surface = registry                                                                              | scripted turn 1: `tool_call` + `completed`; turn 2: another `tool_call` + `completed`                    | round 1 executes; turn 2's requested round is NOT executed (zero tools); `response_failed` with the exact cap message                                                                                                                                                          | over-budget round executes nothing                                                                                                      |
+| `tool-loop.provider-fails-after-round`    | one completed tool round then a failing provider turn                                                                                                                     | default `inspect`; surface = registry                                                                              | scripted turn 1: `tool_call` + `completed`; turn 2: provider throws                                      | completed round transcript retained (call + result); subsequent provider failure → `response_failed` with the R7.1 message; no `response_completed`                                                                                                                            | provider-failure propagation after a committed round                                                                                    |
+| `tool-loop.authorization`                 | deterministic subcases A allow / B deny / C ask-plain; registry registers one plain Tool (`workspace.read`)                                                               | A/B: default `inspect` (allow / explicit deny rule); C: policy `ask` for the Tool's capability; surface = registry | scripted: `tool_call` + `completed`, then recovery text turn per subcase                                 | A: executes, `tool_completed`; B: zero execute calls, `tool_failed` with the exact policy-denial message, paired `Denied` result, provider recovers; C: zero execute calls, `tool_failed` with the exact ask-no-preparation message, paired `Denied` result, provider recovers | capability deny and plain-Tool ask are distinct Host authorization gates needing direct TS↔Rust parity (independent-review remediation) |
+| `tool-loop.display-input`                 | one matrix case family over `tool_started.displayInput`: exactly 200 units, 201 units, supplementary/multibyte characters crossing the boundary; registry = one stub tool | default `inspect`; surface = registry                                                                              | scripted: `tool_call` whose serialized input hits each boundary case + `completed`                       | `tool_started.displayInput` matches the reference's exact UTF-16-code-unit truncation (JSON.stringify, `slice(0,200)` + `...`) in every matrix case; `<unprintable>` classified structurally unreachable (§13.10) and asserted absent                                          | displayInput is an observable loop-emitted value; cross-language unit semantics must be proven (independent-review remediation)         |
+| `tool-loop.tool-result-statuses`          | registry = deterministic stub Tools returning success / invalid_input / denied / failed / cancelled                                                                       | default `inspect`; surface = registry                                                                              | scripted: one `tool_call` per stub tool + `completed` per turn                                           | through the real production loop: success → `tool_completed`; invalid_input/denied/failed → `tool_failed` with the paired message; cancelled → `tool_cancelled`; every paired ToolResult status/message retained in order                                                      | ordinary Tool-returned status → event mapping is R7.2 MUST PORT (independent-review remediation)                                        |
+
+Host authorization decision matrix (frozen — the five gates are separate
+Host decisions and must never be collapsed; independent-review
+remediation):
+
+| Case                     | Registered? | Visible? | Policy decision                 | Tool executes? | Result status | Event                                           | Provider recovery?               |
+| ------------------------ | ----------- | -------- | ------------------------------- | -------------- | ------------- | ----------------------------------------------- | -------------------------------- |
+| unregistered Tool        | no          | n/a      | n/a (lookup fails)              | no             | `failed`      | `tool_failed`                                   | yes (next turn)                  |
+| registered but hidden    | yes         | no       | n/a (surface gate)              | no             | `denied`      | `tool_failed`                                   | yes (next turn)                  |
+| visible, policy deny     | yes         | yes      | deny                            | no             | `denied`      | `tool_failed`                                   | yes (next turn)                  |
+| visible, plain Tool, ask | yes         | yes      | ask (no reviewable preparation) | no             | `denied`      | `tool_failed`                                   | yes (next turn)                  |
+| visible, policy allow    | yes         | yes      | allow                           | yes            | tool result   | `tool_completed`/`tool_failed`/`tool_cancelled` | n/a (terminal turn or next turn) |
 
 Authority assumptions (every scenario): Host-controlled inputs; provider
 is the deterministic fake (or a bounded scripted provider for
-denied/hidden/cancelled paths); default `inspect` policy unless the
-scenario declares rules; no mutation/process/Git/network/Godot authority
+denied/hidden/cancelled/authorization paths); default `inspect` policy
+unless the scenario declares rules (the authorization scenario declares
+its capability rules); no mutation/process/Git/network/Godot authority
 is granted or exercised. Harness mechanics follow §8.2 (subject added to
 `ALLOWED_SUBJECTS`, bounded input validation in `contract.mjs` +
 `harness.rs`, oracle probe composes real `createSiralosApplication` +
@@ -997,7 +1084,9 @@ complete repository gate). No expected-output fixture fabrication.
 ### 13.19 Where each invariant is proven
 
 - **Core unit tests (required)**: single-flight rejection via stepwise
-  interleave; tool returns `invalid_input` (no execution); capability
+  interleave; tool returns `invalid_input` (regression proves the Tool
+  execution entry point WAS invoked and the substantive/effectful work
+  body was NOT entered after the validation failure — §13.9); capability
   denial recheck; tool throws → `Failed`; tool returns `cancelled`
   (round stops, tail cancelled, pairing intact); cancellation before call
   N; budget normalization boundaries (undefined/non-finite/negative/
@@ -1010,9 +1099,15 @@ complete repository gate). No expected-output fixture fabrication.
 - **Adapter tests**: workspace list/read/search Tool adapters over real
   temporary fixture workspaces (typed invalid_input, detached results,
   determinism).
-- **Differential scenarios**: the 13 frozen `tool-loop` rows above
-  (range/boundary/ordering/recovery/transcript parity against the real
-  reference).
+- **Differential scenarios**: the frozen `tool-loop` scenario set in
+  §13.18 (range/boundary/ordering/recovery/transcript/authorization/
+  display-input/status-mapping parity against the real reference),
+  including the `tool-loop.authorization` subcases (allow/deny/ask-plain)
+  proving capability deny and plain-Tool ask with zero execute calls, the
+  `tool-loop.display-input` matrix proving exact UTF-16-code-unit
+  truncation at the 200/201 and multibyte boundaries, and the
+  `tool-loop.tool-result-statuses` matrix proving the status → event
+  mapping through the real production loop.
 - **Security/adversarial tests**: hidden tool never executes; unknown tool
   never executes and acquires no capability; capability deny never
   executes; cancelled/unstarted calls never execute; invalid calls never
@@ -1043,7 +1138,19 @@ no automatic Tool retry exists (one provider ToolCall → at most one actual
 execution attempt; failure becomes a result and the provider decides the
 next proposal), and deterministic execution/result ordering is preserved
 end-to-end (registry, proposal, execution, result, transcript, and round
-counter orderings from §13.16).
+counter orderings from §13.16). Domain-neutral capability acceptance
+items (independent-review remediation):
+
+- `siralos-core` contains no Godot/domain-specific capability semantic
+  types (no domain capability enum variants, no optional-domain semantic
+  capability types);
+- adding a future optional-domain capability does not require teaching
+  Core that domain's semantics (capabilities are validated opaque
+  identifiers; policy and reasons are generic);
+- R7.2 does not create a second incompatible capability authority system
+  (the R6 `domain::capability` vocabulary remains the Domain host-boundary
+  vocabulary; the Tool Loop uses its own domain-neutral `CapabilityId`
+  with the reference identifier format).
 
 ### 13.22 R7.2 acceptance requirements
 
@@ -1051,9 +1158,11 @@ The implementation may begin only on this frozen contract; R7.2 is
 accepted when: the generic loop/subject exists in `siralos-core::tool`,
 adapter workspace tools exist in `siralos-adapters::tool`, the
 `tool-loop` subject holds differential parity (all required applicable
-scenarios match), the security review checklist passes, proportional
-measurement is recorded, and the complete local repository gate passes.
-R7.2 verification does not authorize R7.3+.
+scenarios match), the security review checklist passes, the Core
+capability representation is domain-neutral (no optional-domain semantic
+types; a new Domain capability identifier requires no Core change),
+proportional measurement is recorded, and the complete local repository
+gate passes. R7.2 verification does not authorize R7.3+.
 
 ### 13.23 Implementation sequence (frozen plan)
 

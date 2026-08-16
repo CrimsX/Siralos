@@ -378,8 +378,17 @@ every TypeScript co-located branch (prepared mutation/command → R11; Godot
 probe/diagnostic/LSP → R8/R9; approval/checkpoint/command audit →
 their owning effect milestone; command/audit/pending-approval state →
 not ported). The next implementation slice is R7.2 — Application Tool Loop
-parity — with the frozen `tool-loop` subject (13 required differential
-scenarios) and the Core/Adapter unit-test evidence plan recorded in §13.18-13.19.
+parity — with the frozen `tool-loop` subject (16 required differential
+scenarios per §13.18: the original set plus `tool-loop.authorization`,
+`tool-loop.display-input`, and `tool-loop.tool-result-statuses`) and the
+Core/Adapter unit-test evidence plan recorded in §13.18-13.19. The
+independent-review remediation (docs: close R7.2 independent-review
+contract gaps) additionally froze the domain-neutral Core capability
+representation (§13.7/§13.17/§13.21), the exact `invalid_input` boundary
+(§13.9), the exact UTF-16-code-unit `displayInput` truncation and its
+200/201/multibyte evidence (§13.10/§13.18), and direct differential
+coverage for capability deny, plain-Tool ask, and the Tool-result status →
+event mapping (§13.18).
 This authorization is limited to R7.2: it does not satisfy R7 overall,
 authorize R7.3+ or R8+, or satisfy any Stage-4 entry gate.
 
