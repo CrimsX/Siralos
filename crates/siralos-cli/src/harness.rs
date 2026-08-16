@@ -16,10 +16,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_core::provider::{
-    CancellationSignal, CancellationToken, ConversationItem, LimitClass,
-    ModelProvider, ModelRequest, ProtocolFailure, ProviderEvent,
-    ToolDefinition, ToolExecutionResult, TurnFailure, TurnOutcome,
-    TurnToolCall, collect_provider_turn, detach_bounded_tool_result,
+    AssistantToolCallInput, CancellationSignal, CancellationToken,
+    ConversationItem, LimitClass, ModelProvider, ModelRequest,
+    ProtocolFailure, ProviderEvent, ToolDefinition, ToolExecutionResult,
+    TurnFailure, TurnOutcome, TurnToolCall, collect_provider_turn,
+    detach_bounded_tool_result,
 };
 
 /// Scenario platform value for Windows hosts.
@@ -1243,7 +1244,7 @@ fn tool_call_value(call: &TurnToolCall) -> Value {
             "kind": "execute",
             "callId": call_id,
             "toolName": tool_name,
-            "input": input,
+            "input": input.value(),
         }),
         TurnToolCall::Invalid { call_id, tool_name, message } => json!({
             "kind": "invalid",
@@ -1460,11 +1461,13 @@ fn parse_conversation_items(
             "assistant_tool_call" => ConversationItem::AssistantToolCall {
                 call_id: scenario_string(item, "callId")?,
                 tool_name: scenario_string(item, "toolName")?,
-                input: item.get("input").cloned().ok_or_else(|| {
-                    HarnessError::corpus(
-                        "assistant_tool_call item requires an input",
-                    )
-                })?,
+                input: AssistantToolCallInput::Present(
+                    item.get("input").cloned().ok_or_else(|| {
+                        HarnessError::corpus(
+                            "assistant_tool_call item requires an input",
+                        )
+                    })?,
+                ),
             },
             "tool_result" => ConversationItem::ToolResult {
                 call_id: scenario_string(item, "callId")?,

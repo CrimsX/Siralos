@@ -1,14 +1,44 @@
-//! Provider-visible generic conversation model (Stage 3R R7.1).
+//! Provider-visible generic conversation model (Stage 3R R7.1, extended
+//! for the R7.2 Tool Round).
 //!
 //! Only the provider-visible items are ported: user messages, assistant
 //! messages, assistant tool calls, and tool results. Ordering is
 //! preserved exactly as supplied; no application Tool Loop is implemented
 //! here (R7.2). The transcript model exists because one model turn
-//! validates existing history before sending a request.
+//! validates existing history before sending a request and because the
+//! Tool Round records the authoritative paired transcript.
+//!
+//! Invalid retained tool calls are recorded with the input field omitted,
+//! matching the TypeScript reference (`input: undefined` is absent from
+//! serialized records). `AssistantToolCallInput` makes that presence
+//! explicit instead of using a sentinel value.
 
 use serde_json::Value;
 
 use super::result::ToolExecutionResult;
+
+/// Input presence for a recorded assistant tool call.
+///
+/// R7.1 always carried a detached JSON value. The R7.2 Tool Round also
+/// records invalid retained calls exactly like the reference does: the
+/// call is present in the transcript but its `input` field is omitted.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssistantToolCallInput {
+    /// A detached JSON tool input is present.
+    Present(Value),
+    /// The reference serialized this call without an input field.
+    Omitted,
+}
+
+impl AssistantToolCallInput {
+    /// The retained input value, when present.
+    pub fn value(&self) -> Option<&Value> {
+        match self {
+            Self::Present(value) => Some(value),
+            Self::Omitted => None,
+        }
+    }
+}
 
 /// One provider-visible conversation item.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,8 +59,8 @@ pub enum ConversationItem {
         call_id: String,
         /// Name of the requested tool.
         tool_name: String,
-        /// Detached JSON tool input.
-        input: Value,
+        /// Detached JSON tool input, or an explicit omitted-input marker.
+        input: AssistantToolCallInput,
     },
     /// The result paired with one recorded assistant tool call.
     ToolResult {

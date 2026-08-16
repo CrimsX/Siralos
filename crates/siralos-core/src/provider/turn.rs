@@ -15,13 +15,11 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::Value;
-
 use super::conversation::{ConversationItem, validate_conversation_items};
 use super::event::{
     CancellationToken, LimitClass, ModelEvent, ModelProvider, ModelRequest,
-    ProviderEvent, ProviderTurnLimits, ToolDefinition, TurnFailure,
-    validate_external_event,
+    ProviderEvent, ProviderTurnLimits, ToolCallInput, ToolDefinition,
+    TurnFailure, validate_external_event,
 };
 
 /// One collected tool-call proposal (R7.1 emits proposals only).
@@ -33,8 +31,8 @@ pub enum TurnToolCall {
         call_id: String,
         /// Name of the requested tool.
         tool_name: String,
-        /// Detached JSON tool input.
-        input: Value,
+        /// Detached JSON tool input plus optional source order.
+        input: ToolCallInput,
     },
     /// A call the application layer marks invalid (empty id/name or a
     /// duplicate call id) with a deterministic synthetic id.
@@ -214,9 +212,7 @@ fn apply_event(
             Ok(())
         }
         ModelEvent::ToolCall { call_id, tool_name, input } => {
-            let argument_bytes = serde_json::to_string(&input)
-                .expect("serde_json::Value is always serializable")
-                .len();
+            let argument_bytes = input.serialized_json().len();
             state.push_tool_call(
                 call_id.len(),
                 tool_name.len(),

@@ -5,11 +5,13 @@ use serde_json::{Value, json};
 
 use super::ProviderTurnLimits;
 use super::conversation::{
-    ConversationItem, TranscriptFailure, validate_conversation_items,
+    AssistantToolCallInput, ConversationItem, TranscriptFailure,
+    validate_conversation_items,
 };
 use super::event::{
     CancellationSignal, CancellationToken, ModelEvent, ModelProvider,
-    ModelRequest, ProviderEvent, TurnFailure, validate_external_event,
+    ModelRequest, ProviderEvent, ToolCallInput, TurnFailure,
+    validate_external_event,
 };
 use super::result::{
     DetachFailure, ToolExecutionResult, detach_bounded_tool_result,
@@ -107,7 +109,7 @@ fn call_event(call_id: &str, tool_name: &str, input: Value) -> ProviderEvent {
     ProviderEvent::Event(ModelEvent::ToolCall {
         call_id: call_id.to_owned(),
         tool_name: tool_name.to_owned(),
-        input,
+        input: ToolCallInput::from_value(input),
     })
 }
 
@@ -227,12 +229,12 @@ fn valid_tool_calls_preserve_order() {
             TurnToolCall::Execute {
                 call_id: "c1".to_owned(),
                 tool_name: "a.tool".to_owned(),
-                input: json!({"n": 1}),
+                input: ToolCallInput::from_value(json!({"n": 1})),
             },
             TurnToolCall::Execute {
                 call_id: "c2".to_owned(),
                 tool_name: "b.tool".to_owned(),
-                input: json!({"n": 2}),
+                input: ToolCallInput::from_value(json!({"n": 2})),
             },
         ]
     );
@@ -570,7 +572,7 @@ fn duplicate_call_application_semantics() {
             TurnToolCall::Execute {
                 call_id: "call-dup".to_owned(),
                 tool_name: "a.tool".to_owned(),
-                input: json!({"first": true}),
+                input: ToolCallInput::from_value(json!({"first": true})),
             },
             TurnToolCall::Invalid {
                 call_id: "invalid-call-1".to_owned(),
@@ -611,7 +613,7 @@ fn empty_id_and_name_application_semantics() {
             TurnToolCall::Execute {
                 call_id: "c2".to_owned(),
                 tool_name: "a.tool".to_owned(),
-                input: json!({}),
+                input: ToolCallInput::from_value(json!({})),
             },
         ]
     );
@@ -960,7 +962,7 @@ fn invalid_transcript_blocks_provider_use() {
             ConversationItem::AssistantToolCall {
                 call_id: "c1".to_owned(),
                 tool_name: "a.tool".to_owned(),
-                input: json!({}),
+                input: AssistantToolCallInput::Present(json!({})),
             },
             ConversationItem::ToolResult {
                 call_id: "c1".to_owned(),
@@ -973,7 +975,7 @@ fn invalid_transcript_blocks_provider_use() {
             ConversationItem::AssistantToolCall {
                 call_id: "c2".to_owned(),
                 tool_name: "b.tool".to_owned(),
-                input: json!({}),
+                input: AssistantToolCallInput::Present(json!({})),
             },
             user("next"),
         ],
@@ -998,7 +1000,7 @@ fn transcript_valid_pairing() {
         ConversationItem::AssistantToolCall {
             call_id: "c1".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
         ConversationItem::ToolResult {
             call_id: "c1".to_owned(),
@@ -1043,12 +1045,12 @@ fn transcript_duplicate_call_id() {
         ConversationItem::AssistantToolCall {
             call_id: "c1".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
         ConversationItem::AssistantToolCall {
             call_id: "c1".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
     ];
     assert_eq!(
@@ -1066,7 +1068,7 @@ fn transcript_duplicate_result_reported_as_orphan() {
         ConversationItem::AssistantToolCall {
             call_id: "c1".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
         ConversationItem::ToolResult {
             call_id: "c1".to_owned(),
@@ -1098,7 +1100,7 @@ fn transcript_empty_call_id() {
         ConversationItem::AssistantToolCall {
             call_id: "".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
     ];
     assert_eq!(
@@ -1114,7 +1116,7 @@ fn transcript_unresolved_before_user() {
         ConversationItem::AssistantToolCall {
             call_id: "c1".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
         user("next"),
     ];
@@ -1134,7 +1136,7 @@ fn transcript_unresolved_at_end() {
         ConversationItem::AssistantToolCall {
             call_id: "c1".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
     ];
     assert_eq!(
@@ -1154,12 +1156,12 @@ fn transcript_first_unresolved_failure_is_deterministic() {
         ConversationItem::AssistantToolCall {
             call_id: "first".to_owned(),
             tool_name: "a.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
         ConversationItem::AssistantToolCall {
             call_id: "second".to_owned(),
             tool_name: "b.tool".to_owned(),
-            input: json!({}),
+            input: AssistantToolCallInput::Present(json!({})),
         },
         user("next"),
     ];

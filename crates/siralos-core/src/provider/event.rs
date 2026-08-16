@@ -1,5 +1,6 @@
 //! Provider-neutral request/event contract and the external trust
-//! boundary (Stage 3R R7.1).
+//! boundary (Stage 3R R7.1, extended for the R7.2 displayInput
+//! contract).
 //!
 //! 'ModelEvent' is the validated, trusted typed event set — exactly
 //! three variants, with no Unknown/Malformed/Raw escape hatches. Unknown
@@ -8,10 +9,70 @@
 //! 'ModelEvent': the runtime discriminator is authoritative, an unknown
 //! discriminator is never reinterpreted from its field shape, and
 //! malformed values of known variants are rejected deterministically.
+//!
+//! `ToolCallInput` is the narrow source-order-preserving representation
+//! used by the R7.2 `tool_started.displayInput` contract. Ordinary
+//! provider paths carry only the detached JSON value; a Host that has
+//! the canonical source-ordered JSON text (for example a deterministic
+//! fixture provider) may attach it so `JSON.stringify` object-key order
+//! is preserved without enabling a global serde_json feature that would
+//! change canonicalization semantics for the whole repository.
 
 use std::cell::Cell;
 
 use serde_json::Value;
+
+/// Detached tool-call input plus optional source-ordered JSON text.
+///
+/// The `ordered_json` sidecar exists only on the trusted typed-event
+/// path; external raw provider data is validated into `ToolCallInput`
+/// without a sidecar, so an untrusted provider can never claim a source
+/// ordering the Host did not observe. `serde_json::Value` (BTreeMap-
+/// backed in this workspace) remains the executable input value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCallInput {
+    value: Value,
+    ordered_json: Option<String>,
+}
+
+impl ToolCallInput {
+    /// A detached value with no preserved source order (ordinary path).
+    pub fn from_value(value: Value) -> Self {
+        Self { value, ordered_json: None }
+    }
+
+    /// A detached value whose canonical JSON text is known to the Host.
+    ///
+    /// `ordered_json` must be the exact compact serialization of `value`
+    /// with JavaScript object-key insertion order; it is Host-supplied
+    /// fixture data on the trusted typed-event path only.
+    pub fn from_ordered_json(value: Value, ordered_json: String) -> Self {
+        Self { value, ordered_json: Some(ordered_json) }
+    }
+
+    /// The detached executable JSON value.
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    /// The source-ordered canonical JSON text, when the Host supplied it.
+    pub fn ordered_json(&self) -> Option<&str> {
+        self.ordered_json.as_deref()
+    }
+
+    /// The JSON text used for byte accounting and displayInput.
+    ///
+    /// Source order is preserved when the Host attached it; otherwise
+    /// the detached value is serialized with the workspace's canonical
+    /// serde_json semantics.
+    pub fn serialized_json(&self) -> String {
+        match &self.ordered_json {
+            Some(json) => json.clone(),
+            None => serde_json::to_string(&self.value)
+                .expect("serde_json::Value is always serializable"),
+        }
+    }
+}
 
 /// One validated provider-neutral model event (trusted typed Host data).
 #[derive(Debug, Clone, PartialEq)]
@@ -28,7 +89,7 @@ pub enum ModelEvent {
         /// Name of the requested tool.
         tool_name: String,
         /// Detached JSON tool input.
-        input: Value,
+        input: ToolCallInput,
     },
     /// The provider's completion signal.
     Completed,
@@ -427,7 +488,7 @@ pub fn validate_external_event(
                     _ => return Err(ProtocolFailure::MalformedToolCall),
                 };
                 let input = match object.get("input") {
-                    Some(value) => value.clone(),
+                    Some(value) => ToolCallInput::from_value(value.clone()),
                     None => {
                         return Err(ProtocolFailure::InvalidToolArgumentJson);
                     }

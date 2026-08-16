@@ -16,6 +16,7 @@ pub mod identity;
 pub mod language;
 pub mod provider;
 pub mod task;
+pub mod tool;
 pub mod version;
 pub mod workspace;
 
