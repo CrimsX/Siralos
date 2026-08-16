@@ -9,12 +9,13 @@ Migration track: Stage 3R
 Current completed milestone: R7.2
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Next implementation slice: R7.3 - Projection parity (contract frozen; oracle remediation complete locally; implementation blocked pending independent review)
-R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 (generic Application Tool Loop parity) is complete and evidence-backed (docs/development/R7_BEHAVIOR_EXTRACTION.md §13); the pre-port R7.3 projection oracle correction and integrated line-bound remediation are verified locally (docs/development/R7_BEHAVIOR_EXTRACTION.md §14). R7.3 remains contract-frozen but implementation is blocked pending independent review and is not present.
-Last verified commit: 461f290b3d3d778a3bef4d25a895338efcdf315c
-Latest verified executable worktree: 461f290b3d3d778a3bef4d25a895338efcdf315c
+Next implementation slice: R7.3 - Projection parity (contract reconciled; oracle corrected and precedence pinned locally; implementation blocked pending independent review)
+R7A behavior extraction/protocol remediation: complete (see docs/development/R7_BEHAVIOR_EXTRACTION.md); R7.1 (provider contract + deterministic fake provider + bounded single model turn) is complete and evidence-backed; R7.2 (generic Application Tool Loop parity) is complete and evidence-backed (docs/development/R7_BEHAVIOR_EXTRACTION.md §13); the pre-port R7.3 projection oracle correction, integrated line-bound remediation, and terminal-marker precedence pin are verified locally (docs/development/R7_BEHAVIOR_EXTRACTION.md §14). R7.3 remains reconciled but implementation is blocked pending independent review and is not present.
+Last verified commit: ea145a14a89fb5e6b9e2988eddb97d65d2e37793
+Latest verified executable worktree: ea145a14a89fb5e6b9e2988eddb97d65d2e37793
 Historical R7.2 verified Rust implementation commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
 Earlier R7.3 Unicode helper correction: 4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc
+R7.3 integrated line-bound production correction: 461f290b3d3d778a3bef4d25a895338efcdf315c
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -22,11 +23,11 @@ The latest verified executable worktree field is an evidence pointer, not a
 wall-clock status. It names the exact executable baseline whose worktree
 content passed the full required gate. The historical R7.2 verified Rust
 implementation commit and the earlier Unicode helper correction remain
-recorded separately because the integrated line-bound remediation is a later
-TypeScript-only executable change. Documentation-only metadata reconciliation
-commits after `461f290` do not alter executable behavior, and the latest
-successful required CI run on `main` remains the publication authority after
-later documentation-only commits.
+recorded separately because the integrated line-bound remediation and its
+precedence test pin are later TypeScript-only executable changes.
+Documentation-only metadata reconciliation commits after `ea145a1` do not
+alter executable behavior, and the latest successful required CI run on `main`
+remains the publication authority after later documentation-only commits.
 
 ## 1. Product definition
 
@@ -294,15 +295,15 @@ Status changes require executable evidence and an update to
 
 ## 4. Stage 3R migration track
 
-| Milestone | Scope                                                                   | Status                                                                                                       |
-| --------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified                                                                                                     |
-| R2        | Differential Behavioral Harness                                         | Verified                                                                                                     |
-| R3        | Domain-Neutral Core                                                     | Verified                                                                                                     |
-| R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                     |
-| R5        | Generic Language Intelligence                                           | Verified                                                                                                     |
-| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                     |
-| R7        | Providers / Tools / Projection / CLI                                    | Active (R7.3 remediation complete locally; implementation blocked pending independent review; R7.2 complete) |
+| Milestone | Scope                                                                   | Status                                                                                                        |
+| --------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified                                                                                                      |
+| R2        | Differential Behavioral Harness                                         | Verified                                                                                                      |
+| R3        | Domain-Neutral Core                                                     | Verified                                                                                                      |
+| R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                      |
+| R5        | Generic Language Intelligence                                           | Verified                                                                                                      |
+| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                      |
+| R7        | Providers / Tools / Projection / CLI                                    | Active (R7.3 precedence reconciled locally; implementation blocked pending independent review; R7.2 complete) |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
 | R10       | H1 / H2 / ICM / H3 parity                                               |

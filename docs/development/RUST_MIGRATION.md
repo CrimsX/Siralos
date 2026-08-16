@@ -458,8 +458,8 @@ boundary (and the candidate's instrumentation wrapper); the loop receives
 version 13). No performance claim or benchmark is made.
 
 Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete; R7.2
-Complete (evidence-backed); R7.3 Projection parity contract frozen; integrated
-oracle remediation complete locally; implementation blocked pending
+Complete (evidence-backed); R7.3 Projection parity contract reconciled;
+oracle corrected and precedence pinned locally; implementation blocked pending
 independent review; R7.4-R7.5 not authorized; R8-R12 not due. R7 is not
 marked Verified.
 
@@ -523,15 +523,25 @@ executable tree; the differential corpus remains unchanged at schema version
 3, corpus version 13, 120 scenario files, digest
 `6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490`.
 
+The follow-up executable/test commit is
+`ea145a14a89fb5e6b9e2988eddb97d65d2e37793`
+(`test(core): pin truncation-marker line-bound precedence`). It pins the
+terminal-marker exception without changing production projector behavior: the
+marker remains whole even when its LF-delimited line exceeds a deliberately
+tiny `maxLineBytes`, while ordinary pre-truncation evidence remains bounded.
+The complete required gate passed on that exact clean executable/test tree.
+
 The latest verified executable worktree is now
-`461f290b3d3d778a3bef4d25a895338efcdf315c`. The earlier Unicode helper
-correction remains preserved as historical evidence at
+`ea145a14a89fb5e6b9e2988eddb97d65d2e37793`. The integrated line-bound
+production correction remains preserved at
+`461f290b3d3d778a3bef4d25a895338efcdf315c`, the earlier Unicode helper
+correction remains preserved at
 `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`, and the historical R7.2 verified
 Rust implementation baseline remains
 `73db8e89c8f670454927ca7ed7554e17d33ea606`. The documentation-only
-reconciliation after this executable commit is not the executable baseline.
-R7.3 Rust implementation remains blocked pending independent review of the
-remediation.
+reconciliation after this executable/test commit is not the executable
+baseline. R7.3 Rust implementation remains blocked pending independent
+review of the new precedence pin and its predecessors.
 
 ## Porting gate
 

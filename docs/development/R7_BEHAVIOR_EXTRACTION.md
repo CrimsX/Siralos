@@ -1278,8 +1278,9 @@ The verified local entry state was:
 | Starting worktree                               | clean                                                              |
 | Historical R7.2 Rust implementation baseline    | `73db8e89c8f670454927ca7ed7554e17d33ea606`                         |
 | Entry-review verified executable repository SHA | `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`                         |
-| Current verified executable remediation SHA     | `461f290b3d3d778a3bef4d25a895338efcdf315c`                         |
-| Later commit after that executable SHA          | `1ffc3f6 docs: record R7.3 projection oracle correction`           |
+| Integrated line-bound SHA                       | `461f290b3d3d778a3bef4d25a895338efcdf315c`                         |
+| Current verified test SHA                       | `ea145a14a89fb5e6b9e2988eddb97d65d2e37793`                         |
+| Entry-review docs closure                       | `1ffc3f6 docs: record R7.3 projection oracle correction`           |
 | Corpus                                          | schema 3, version 13, 120 scenario files                           |
 | Corpus digest                                   | `6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490` |
 | R7.3 executable Rust                            | absent; no R7.3 source or implementation commit exists             |
@@ -1339,7 +1340,7 @@ independent Rust contract.
 | ANSI/control sanitization                  | **R7.3 MUST PORT**                  | Exact corrected text sanitizer behavior is part of the model-view contract.                                                                                                                                                                    |
 | Secret redaction                           | **R7.3 MUST PORT**                  | Ordered configured secrets are replaced before reduction; security removal can never be restored by a size rule.                                                                                                                               |
 | Repeated-line collapse                     | **R7.3 MUST PORT**                  | Three or more consecutive exactly equal `\n`-split lines become one `${line} ×${count}` line. The never-worse comparison for this step is JavaScript UTF-16 `.length`.                                                                         |
-| Line bounding                              | **R7.3 MUST PORT**                  | UTF-8 byte bound, split only at valid Unicode-scalar boundaries, with the explicit complete-scalar exception when one scalar cannot fit.                                                                                                       |
+| Line bounding                              | **R7.3 MUST PORT**                  | Ordinary evidence lines use the feasible UTF-8 bound; an unfit scalar and an over-bound terminal marker are the only explicit exceptions.                                                                                                      |
 | Final truncation                           | **R7.3 MUST PORT**                  | Use the exact marker `\n… [truncated]`, select the largest valid scalar prefix that fits with it, and retain marker-only output when the marker exceeds the configured bound.                                                                  |
 | Never-worse reduction                      | **R7.3 MUST PORT**                  | Repeat collapse is the only optional reduction governed by the never-worse check; if discarded, the mandatory line bound is reapplied to post-security text and retained. Security transforms and final truncation are never reverted.         |
 | Evidence bounds                            | **R7.3 MUST PORT**                  | Total evidence 32 KiB UTF-8, one line 1 KiB UTF-8, reference/research/scene combined 12 KiB, four recent records per source, and eight task focus paths. Producer-specific budgets remain producer-owned.                                      |
@@ -1430,20 +1431,28 @@ line bounding as a mandatory structural model-view bound, while repeated-line
 collapse remains the only optional reduction. Security transforms are
 non-revertible; the order is strip controls, redact secrets, optionally
 collapse repeated lines, enforce the UTF-8 line bound, then apply final total
-truncation. For every feasible scalar bound, every final provider-visible LF
-line is at most `maxLineBytes` UTF-8 bytes; if the bound is smaller than one
-complete scalar, that scalar remains intact as the established exception.
+truncation. Ordinary projected content obeys `maxLineBytes` for every feasible
+scalar bound. If the bound is smaller than one complete scalar, that scalar
+remains intact as the established Unicode exception. Final truncation is the
+terminal operation and preserves the complete explicit marker
+`\n… [truncated]`; its LF-delimited marker line is a second, deliberate
+exception when that line cannot fit the configured line bound. No second line
+bound is applied after the marker.
 
 The executable remediation is `461f290b3d3d778a3bef4d25a895338efcdf315c`
 (`fix(core): enforce integrated evidence line bounds`). Eleven integrated
 `projectForModel()` regressions cover ASCII, exact and over-limit boundaries,
 supplementary scalars, the impossible sub-scalar bound, security transforms,
 repeated-line composition, rejected collapse, and total truncation after line
-bounding. The change affects only detached model-visible evidence; raw
-`ToolExecutionResult` values, Host history, Task evidence, workspace state,
-capability, and Tool authority are unchanged. No R7.3 Rust implementation or
-differential corpus promotion exists, and implementation remains blocked
-pending independent review of this remediation.
+bounding. Follow-up executable/test commit
+`ea145a14a89fb5e6b9e2988eddb97d65d2e37793`
+(`test(core): pin truncation-marker line-bound precedence`) adds the integrated
+terminal-marker precedence case and the normal marker-fits-line case. The
+changes affect only detached model-visible evidence; raw `ToolExecutionResult`
+values, Host history, Task evidence, workspace state, capability, and Tool
+authority are unchanged. No R7.3 Rust implementation or differential corpus
+promotion exists, and implementation remains blocked pending independent
+review of this precedence clarification.
 
 ### 14.5 R7.2 ApprovedToolSurface integration
 
@@ -1653,7 +1662,7 @@ The bound matrix is:
 | Resource                          |                                                       Byte bound |                            Count bound | Token estimate                       | Exact-limit / limit-plus-one behavior                                                                                                                                                                                                                                                                  |
 | --------------------------------- | ---------------------------------------------------------------: | -------------------------------------: | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Model-visible evidence text       |                                               32,768 UTF-8 bytes |                     one view at a time | `ceil(shownBytes / 4)`               | Exact bytes are retained; an overage enters total truncation. The marker-only exception applies only when a caller supplies a bound smaller than the 16-byte marker.                                                                                                                                   |
-| One evidence line                 |                                     1,024 UTF-8 bytes by default |                    every LF-split line | `ceil(lineBytes / 4)`                | A 1,024-byte line stays intact; a 1,025-byte ASCII line is split. A configured bound smaller than one complete scalar retains that scalar intact, so that individual chunk can exceed the impossible bound.                                                                                            |
+| One evidence line                 |                                     1,024 UTF-8 bytes by default |                    every LF-split line | `ceil(lineBytes / 4)`                | A 1,024-byte line stays intact; a 1,025-byte ASCII line is split. A bound smaller than one scalar retains it intact; if the final marker line cannot fit, that explicit marker line also remains whole and may exceed the bound.                                                                       |
 | Current plan segment              |                                                4,096 UTF-8 bytes |                       one current plan | `ceil(segmentBytes / 4)`             | Exact content is not truncated; content over the bound uses the explicit truncation marker and scalar-aligned prefix.                                                                                                                                                                                  |
 | Executor brief segment            |                                                4,096 UTF-8 bytes |                      one current brief | `ceil(segmentBytes / 4)`             | Same exact-limit and over-limit rule as the plan segment.                                                                                                                                                                                                                                              |
 | Reference/research/scene evidence |                               12,288 UTF-8 bytes combined target | four recent views/entries per producer | sum of per-segment `ceil(bytes / 4)` | Exact combined bytes are retained; overage reduces research, then scene, then reference. If a remaining allocation is smaller than the 16-byte marker, the oracle's marker-only exception can exceed that tiny allocation; this is intentional observable behavior, not a second truncation algorithm. |
@@ -1701,13 +1710,20 @@ never-worse check may discard an applied repeat collapse when the resulting
 representation exceeds the raw `originalBytes`; it may never revert security
 transforms, the mandatory line bound, or final truncation. If collapse is
 discarded, line bounding is reapplied to the post-security text. The
-`bound-lines` label appears if and only if retained integrated line bounding
-materially changed the provider-visible text; discarded candidates do not
-leave a label. Truncation always runs after that decision and reports
-`truncated`, `shownBytes`, `originalBytes`, and ordered transformation labels.
-For every feasible `maxLineBytes`, each final provider-visible LF line is at
-most that many UTF-8 bytes; the complete-scalar exception applies when the
-configured bound cannot fit one scalar.
+`bound-lines` label means the retained projection pipeline applied a material
+line-bound transformation before later terminal truncation; the
+optional-reduction rollback did not discard it. Later truncation may remove the
+portion where an inserted separator originally occurred, so the label is not
+defined by whether removing line bounding would necessarily change the final
+returned string. Discarded candidates do not leave a label. Truncation always
+runs after that decision and reports `truncated`, `shownBytes`, `originalBytes`,
+and ordered transformation labels. Ordinary final provider-visible evidence
+lines obey feasible `maxLineBytes`; the complete-scalar exception applies when
+the configured bound cannot fit one scalar, and the explicit terminal marker
+line may exceed it only when that marker line cannot fit. The marker remains
+whole and no second line-bound pass occurs after truncation. If the marker
+itself exceeds `maxTotalBytes`, `shownBytes` may exceed that tiny total budget;
+`originalBytes` remains the UTF-8 size of the authoritative raw input.
 
 For a successful `ToolExecutionResult`, only `summary` is projected. Its
 `output` and status are retained. For every non-success status, only `message`
@@ -1828,7 +1844,7 @@ scenario set is deliberately compact:
 | `context-projection.hard-block`               | Final pressure, blocked type/reason, pressure event, and provider-called `false`                                                                     |
 | `context-projection.segments`                 | Stable/contextual/volatile segments, ordering, serialized system prefix, byte/token fields, stable fingerprint                                       |
 | `context-projection.tool-visibility`          | Visibility states, visible definitions/order, approved names, counts, and Tool fingerprint                                                           |
-| `context-projection.evidence`                 | Projected ToolResult, transformed text, transformation labels, truncation, original/shown UTF-8 bytes, and corrected scalar-boundary cases           |
+| `context-projection.evidence`                 | Projected ToolResult, transformed text, labels, truncation, byte metadata, scalar cases, and tiny-line-bound whole-marker precedence                 |
 | `context-projection.pipeline`                 | Normal/warn/auto/hard application integration, final event order, projected request, and provider-called yes/no                                      |
 | `context-projection.unsupported-tool-calling` | Mode, unsupported blocked outcome/reason, empty Tool projection, projection-recorded yes, and provider-called `false`                                |
 | `context-projection.fingerprints`             | Stable fingerprint invariance under contextual/volatile changes, Tool fingerprint invariance under hidden changes, canonical key/array/Unicode cases |
@@ -1909,9 +1925,14 @@ graph.
 - [x] Secret redaction and control stripping cannot be reverted by size rules.
 - [x] Line bounding is a mandatory structural bound and cannot be disabled by
       never-worse size logic.
-- [x] The final feasible-bound invariant holds for every provider-visible LF
-      line, with the complete-scalar exception preserved.
-- [x] `bound-lines` reports only a retained integrated line-bound change.
+- [x] Ordinary evidence content obeys the mandatory feasible per-line UTF-8
+      bound.
+- [x] The only permitted over-bound final lines are one complete scalar under
+      an impossible sub-scalar configuration or the explicit final
+      truncation-marker line when that marker cannot fit the configured bound;
+      arbitrary evidence content has no bypass.
+- [x] `bound-lines` records a retained pre-truncation line-bound transform;
+      later truncation may remove its inserted separator.
 - [x] Cache eviction cannot delete durable evidence.
 - [x] A stale disposable view cannot become authoritative.
 - [x] Core contains no Godot-specific projection semantics.
@@ -1971,17 +1992,17 @@ oracle is explicitly frozen; the Host/R7.1/R7.2 ownership chain, generic Core
 boundary, R10/R8/R9 deferrals, evidence layers, differential record, security
 invariants, Rust ownership, measurement, and implementation sequence are
 unambiguous. The original entry review changed no executable file or
-differential corpus file; the later executable remediation is recorded in
-§14.4.
+differential corpus file; the later executable remediation and precedence pin
+are recorded in §14.4.
 
-**PASS — R7.3 integrated evidence-line oracle remediation complete; awaiting
-independent review.**
+**PASS — R7.3 evidence-bound precedence clarified; awaiting independent
+review.**
 
-The projection contract remains frozen, but implementation authorization is
+The projection contract is reconciled, but implementation authorization is
 temporarily suspended until an independent review of
-`461f290b3d3d778a3bef4d25a895338efcdf315c` returns PASS. R7.3 remains
-unimplemented; R7.4/R7.5 remain unauthorized; R8-R12 remain not due; R7
-remains Active and is not marked Verified.
+`ea145a14a89fb5e6b9e2988eddb97d65d2e37793` and its predecessors returns PASS.
+R7.3 remains unimplemented; R7.4/R7.5 remain unauthorized; R8-R12 remain not
+due; R7 remains Active and is not marked Verified.
 
 ## Acceptance gates for R7 (evidence design)
 
@@ -2016,7 +2037,7 @@ R7.2 — Complete (generic Application Tool Loop parity; corpus version 13,
         domain-neutral CapabilityId; immutable ordered Tool Registry; Tool
         Round one-call/one-result and cancelled-tail pairing; single-flight
         Application loop; closed R7.2 event surface; security review PASS)
-R7.3 — Contract frozen; oracle remediation complete locally; implementation
+R7.3 — Contract reconciled; oracle corrected and precedence pinned; implementation
         blocked pending independent review
 R7.4-R7.5 — Not authorized
 R8-R12 — Not due
