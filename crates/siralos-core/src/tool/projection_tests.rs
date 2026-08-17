@@ -43,13 +43,6 @@ mod tests {
             rule: PermissionRule::Allow,
         }])
     }
-    fn policy_deny(capability: CapabilityId) -> PermissionPolicy {
-        PermissionPolicy::from_rules([PolicyRule {
-            capability,
-            rule: PermissionRule::Deny,
-        }])
-    }
-
     #[derive(Clone)]
     struct FixedTool {
         name: String,
@@ -422,54 +415,26 @@ mod tests {
     }
 
     #[test]
-    fn per_call_authority_recheck_still_denies() {
-        // Tool is in ApprovedSurface at projection time (Allow), but policy changes to Deny before execution
-        let provider = CaptureProvider::new(vec![
-            tool_call("c1", "workspace.read"),
-            completed(),
+    fn projected_surface_is_rechecked_before_tool_execution() {
+        let provider = ScriptedCaptureProvider::new(vec![
+            vec![tool_call("c1", "workspace.read"), completed()],
+            vec![text_delta("done"), completed()],
         ]);
         let tool = FixedTool::new(
             "workspace.read",
             ws_read(),
             ToolExecutionResult::Success {
                 output: json!({}),
-                summary: "ok".to_owned(),
+                summary: "must not execute".to_owned(),
             },
         );
+        let calls = tool.calls.clone();
         let registry =
             ToolRegistry::new(vec![Box::new(tool) as Box<dyn Tool>]).unwrap();
-        // First build app with Allow policy for projection
-        let policy_allow = policy_allow(ws_read());
-        let service = ProjectionService::new();
-        let app = SiralosApplication::new(
+        let mut app = SiralosApplication::new(
             &provider,
             &registry,
-            policy_allow,
-            None,
-            None,
-        )
-        .with_projection(
-            service,
-            ApplicationProjectionConfig {
-                mode: Some(ProjectionMode::Generic),
-                ..Default::default()
-            },
-        );
-        // Mutate the application's policy to Deny before the tool executes (simulates host policy narrowing)
-        // We need to mutate via a hack: the app's policy is private, so we test the underlying HostToolExecutor path
-        // by constructing with Deny directly and verifying that even though the tool was projected as visible,
-        // the per-call check denies it. So: projected with Allow, but execution policy is Deny — we simulate by
-        // creating the app with Deny policy after the projection would have been Allow. Since projection and
-        // execution use the same app.policy, we need to test that a tool rejected at execution returns Denied without calling execute.
-        // Instead, test directly: create app with Deny policy, then the tool should not be in projected surface at all (hidden), so provider cannot propose it.
-        // To test per-call recheck, use a tool whose projection is gated (Ask) but execution requires explicit Deny without Ask support.
-        // The simplest: policy Allow for projection (so tool is available), then before execution the HostToolExecutor evaluates again — if we change policy to Deny after projection, the second check denies.
-        // We simulate by not using SiralosApplication for this sub-test but verifying HostToolExecutor directly is not needed; instead, verify that Ask without preparation is denied.
-        let policy_deny = policy_deny(ws_read());
-        let mut app2 = SiralosApplication::new(
-            &provider,
-            &registry,
-            policy_deny,
+            policy_allow(ws_read()),
             None,
             None,
         )
@@ -477,63 +442,25 @@ mod tests {
             ProjectionService::new(),
             ApplicationProjectionConfig {
                 mode: Some(ProjectionMode::Generic),
+                allowed_tool_names: Some(Vec::new()),
                 ..Default::default()
             },
         );
-        app2.send_prompt("hi".to_owned()).unwrap();
-        let events = drain(&mut app2);
-        // With Deny, the tool is hidden, so provider proposing it is hidden -> denied before execution, execute count remains 0
-        // We cannot easily inspect tool execute count through the same registry instance after move, so assert events contain denial
-        assert!(
-            events.iter().any(|e| matches!(
-                e,
-                ToolLoopEvent::ToolFailed { .. }
-                    | ToolLoopEvent::ResponseFailed { .. }
-            )) || provider.count.get() == 1
-        );
-        // The stronger per-call test: Allow policy but provider proposes hidden tool
-        drop(app);
-        let provider3 = CaptureProvider::new(vec![
-            tool_call("c1", "hidden.tool"),
-            completed(),
-        ]);
-        let t_hidden = FixedTool::new(
-            "hidden.tool",
-            cap("hidden.tool"),
-            ToolExecutionResult::Success {
-                output: json!({}),
-                summary: "ok".to_owned(),
-            },
-        );
-        let reg3 =
-            ToolRegistry::new(vec![Box::new(t_hidden) as Box<dyn Tool>])
-                .unwrap();
-        let policy3 = PermissionPolicy::from_rules([PolicyRule {
-            capability: cap("hidden.tool"),
-            rule: PermissionRule::Deny,
-        }]);
-        let mut app3 =
-            SiralosApplication::new(&provider3, &reg3, policy3, None, None)
-                .with_projection(
-                    ProjectionService::new(),
-                    ApplicationProjectionConfig {
-                        mode: Some(ProjectionMode::Generic),
-                        ..Default::default()
-                    },
-                );
-        app3.send_prompt("hi".to_owned()).unwrap();
-        let events3 = drain(&mut app3);
-        let tool_started = events3
-            .iter()
-            .filter(|e| matches!(e, ToolLoopEvent::ToolStarted { .. }))
-            .count();
-        // Hidden tool: provider proposed it but it should be denied before execution (ToolStarted still emitted, then ToolFailed)
-        assert!(
-            tool_started == 1
-                || events3
-                    .iter()
-                    .any(|e| matches!(e, ToolLoopEvent::ToolFailed { .. }))
-        );
+
+        app.send_prompt("hi".to_owned()).unwrap();
+        let events = drain_scripted(&mut app);
+
+        assert_eq!(provider.count.get(), 2);
+        assert_eq!(calls.get(), 0);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ToolLoopEvent::ToolFailed { message, .. }
+                if message.contains("not in the projected tool schema")
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            ToolLoopEvent::ToolCompleted { .. }
+        )));
     }
 
     #[test]
@@ -667,23 +594,20 @@ mod tests {
         app.send_prompt("u1".to_owned()).unwrap();
         drain(&mut app);
         let before_len = app.history().len();
-        app.send_prompt(
+        let long_prompt =
             "u2 with a very long additional content that pushes over budget x"
-                .repeat(10),
-        )
-        .unwrap();
+                .repeat(10);
+        app.send_prompt(long_prompt.clone()).unwrap();
         drain(&mut app);
-        // Authoritative history must have grown by exactly the new user + assistant messages, not been truncated to the reduced set
+        // The complete authoritative prompt survives even when the provider
+        // receives a reduced disposable copy.
         assert!(app.history().len() > before_len);
+        assert!(app.history().iter().any(|item| matches!(
+            item,
+            ConversationItem::UserMessage { content } if content == &long_prompt
+        )));
         let lp = app.last_projection().unwrap();
-        // LastProjection should record that reduction happened for the auto case
-        // (working 50 with long content may or may not auto; just verify history not destructively trimmed to provider view)
-        assert!(
-            lp.request.messages.len() <= app.history().len()
-                || !lp.reduced
-                || lp.dropped_items > 0
-                || true
-        );
+        assert!(lp.request.messages.len() <= app.history().len());
     }
 
     #[test]
