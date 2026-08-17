@@ -154,6 +154,40 @@
           ],
           "providerToolCalling": true
         }
+      },
+      {
+        "kind": "pipeline",
+        "input": {
+          "mode": "generic",
+          "workingMaximum": 50,
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c1",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c1",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token secret-token  end"
+              }
+            }
+          ],
+          "registeredTools": [],
+          "providerToolCalling": true,
+          "secrets": ["secret-token"],
+          "maxTotalBytes": 64,
+          "maxLineBytes": 1024
+        }
       }
     ]
   }

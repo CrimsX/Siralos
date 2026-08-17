@@ -415,6 +415,16 @@ fn canonical_event(event: &ToolLoopEvent) -> Value {
             "callId": call_id,
             "toolName": tool_name,
         }),
+        ToolLoopEvent::ContextPressure {
+            state,
+            estimated_tokens,
+            working_maximum,
+        } => json!({
+            "type": "context_pressure",
+            "state": state,
+            "estimatedTokens": estimated_tokens,
+            "workingMaximum": working_maximum,
+        }),
     }
 }
 

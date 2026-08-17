@@ -1,12 +1,12 @@
-//! Closed generic Tool-loop event set (frozen R7.2 surface).
+//! Tool-loop event set (R7.2 surface + R7.3 context-pressure).
 
 use crate::tool::display_input::DisplayInput;
 
 /// One generic Tool-loop observable.
 ///
-/// This is the closed R7.2 event surface only. Later milestones own
-/// approval, checkpoint, command, context-pressure, and optional-domain
-/// events; none of those variants exist here.
+/// The R7.2 surface is closed; R7.3 adds the UI-neutral
+/// `ContextPressure` event. Later milestones own approval, checkpoint,
+/// command, and optional-domain events; none of those variants exist here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolLoopEvent {
     /// A prompt response has started.
@@ -59,6 +59,19 @@ pub enum ToolLoopEvent {
         call_id: String,
         /// Name of the requested tool.
         tool_name: String,
+    },
+    /// Context pressure classified for the current turn (R7.3).
+    ///
+    /// Emitted on the Host application boundary when the final
+    /// classified pressure is non-normal; `hard` is followed by
+    /// `ResponseFailed` without a provider call.
+    ContextPressure {
+        /// Final classified state (`warn`/`auto`/`hard`).
+        state: String,
+        /// Estimated tokens that produced the pressure.
+        estimated_tokens: usize,
+        /// Working maximum used for classification.
+        working_maximum: i64,
     },
 }
 

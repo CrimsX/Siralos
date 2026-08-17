@@ -25,6 +25,8 @@ pub mod round;
 pub mod session;
 
 #[cfg(test)]
+mod projection_tests;
+#[cfg(test)]
 mod tests;
 
 pub use budget::{DEFAULT_MAX_TOOL_ROUNDS, MAX_TOOL_ROUNDS, RoundBudget};

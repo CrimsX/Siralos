@@ -146,11 +146,12 @@ pub fn project_request(input: ProjectionInput<'_>) -> ProjectedRequest {
     service.project(input)
 }
 
-/// Stateful projection service holding the disposable evidence cache and
-/// revision binding. One instance per session/Host.
+/// Stateful projection service holding the disposable evidence cache,
+/// revision binding, and the detached last projection snapshot.
 #[derive(Debug, Clone)]
 pub struct ProjectionService {
     cache: RevisionBoundCache<ModelEvidenceView>,
+    last_projection: Option<LastProjection>,
 }
 
 impl Default for ProjectionService {
@@ -162,7 +163,7 @@ impl Default for ProjectionService {
 impl ProjectionService {
     /// Create a fresh service with an empty cache.
     pub fn new() -> Self {
-        Self { cache: RevisionBoundCache::new() }
+        Self { cache: RevisionBoundCache::new(), last_projection: None }
     }
 
     /// Current disposable cache size.
@@ -173,6 +174,11 @@ impl ProjectionService {
     /// Bound revision.
     pub fn bound_revision(&self) -> Option<u64> {
         self.cache.bound_revision()
+    }
+
+    /// Detached last projection snapshot (disposable, for future /context).
+    pub fn last_projection(&self) -> Option<&LastProjection> {
+        self.last_projection.as_ref()
     }
 
     /// Project a Host request into a provider-neutral request.
@@ -195,20 +201,27 @@ impl ProjectionService {
                 input.capacity.working_maximum,
                 input.pressure_limits,
             );
-            return ProjectedRequest {
+            let projected = ProjectedRequest {
                 mode: input.mode,
                 messages: input.messages.to_vec(),
                 tools: Vec::new(),
-                system: Some(system_text),
+                system: Some(system_text.clone()),
                 pressure,
-                tool_projection: empty_projection,
-                context_projection,
+                tool_projection: empty_projection.clone(),
+                context_projection: context_projection.clone(),
                 estimated_tokens: 0,
                 blocked: Some(BlockedReason::Unsupported(
                     "The selected provider route does not support tool calling, which this task requires; the session cannot proceed with hidden or missing tools."
                         .to_owned(),
                 )),
             };
+            self.last_projection = Some(LastProjection {
+                request: projected.clone(),
+                evidence_cache_size: self.cache.len(),
+                reduced: false,
+                dropped_items: 0,
+            });
+            return projected;
         }
 
         // 3. Tool visibility → same visible list for request tools and ApprovedToolSurface.
@@ -292,25 +305,12 @@ impl ProjectionService {
             }
         }
 
-        let estimated_tokens = system_tokens
-            + tool_tokens
-            + estimate_conversation_tokens(&projected_messages);
-        // Reclassify after evidence projection? No — pressure is on the projected
-        // message tokens (tool results already transformed), but the reference
-        // classifies on the original message estimate before evidence projection
-        // (evidence transform is part of the message content). Our messages after
-        // evidence projection may have different tokens, but the reference's
-        // pressure accounts for evidence-transformed bytes via the projected
-        // messages. For parity we recompute pressure from the final estimated.
-        let final_pressure = if reduced {
-            pressure
-        } else {
-            classify_pressure(
-                estimated_tokens,
-                input.capacity.working_maximum,
-                input.pressure_limits,
-            )
-        };
+        // TS oracle classifies pressure BEFORE evidence sanitization and
+        // does not re-derive it from sanitized projected_messages. Sanitization
+        // is a disposable view concern; the already-classified pressure and
+        // its estimatedTokens remain authoritative for hard-block reasoning.
+        let estimated_tokens = pressure.estimated_tokens;
+        let final_pressure = pressure;
 
         let blocked = if final_pressure.state == PressureState::Hard {
             let reason = format!(
@@ -324,19 +324,24 @@ impl ProjectionService {
             None
         };
 
-        // Keep for lastProjection observability: store the final estimated vs final pressure.
-        let _ = dropped_items;
-        ProjectedRequest {
+        let projected = ProjectedRequest {
             mode: input.mode,
             messages: projected_messages,
             tools: tool_projection.request_tools.clone(),
-            system: Some(system_text),
+            system: Some(system_text.clone()),
             pressure: final_pressure,
-            tool_projection,
-            context_projection,
+            tool_projection: tool_projection.clone(),
+            context_projection: context_projection.clone(),
             estimated_tokens,
-            blocked,
-        }
+            blocked: blocked.clone(),
+        };
+        self.last_projection = Some(LastProjection {
+            request: projected.clone(),
+            evidence_cache_size: self.cache.len(),
+            reduced,
+            dropped_items,
+        });
+        projected
     }
 
     /// Project one tool result through the evidence pipeline with caching.
@@ -557,18 +562,9 @@ pub fn project_with_policy(
             other => projected_messages.push(other),
         }
     }
-    let estimated_tokens = system_tokens
-        + tool_tokens
-        + estimate_conversation_tokens(&projected_messages);
-    let final_pressure = if reduced {
-        pressure
-    } else {
-        classify_pressure(
-            estimated_tokens,
-            input.capacity.working_maximum,
-            input.pressure_limits,
-        )
-    };
+    // Same as above: do not re-derive from sanitized projected_messages.
+    let estimated_tokens = pressure.estimated_tokens;
+    let final_pressure = pressure;
     let blocked = if final_pressure.state == PressureState::Hard {
         Some(BlockedReason::Hard(format!(
             "Projected context is {} tokens against a working maximum of {}; the provider call was blocked.{}",
