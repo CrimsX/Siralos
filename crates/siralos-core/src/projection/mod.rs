@@ -17,6 +17,9 @@ pub mod segments;
 pub mod trim;
 pub mod visibility;
 
+#[cfg(test)]
+mod adversarial;
+
 use crate::provider::{ConversationItem, ToolDefinition, ToolExecutionResult};
 use crate::tool::permission::PermissionPolicy;
 use crate::tool::registry::RegisteredToolInfo;
