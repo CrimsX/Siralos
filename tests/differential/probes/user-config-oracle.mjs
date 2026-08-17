@@ -63,7 +63,8 @@ function contentFor(mode) {
       godot: { installations: { stable: { path: "relative/godot" } } },
     });
   }
-  if (mode === "invalid-provider") return JSON.stringify({ quality: { reviewProvider: "reviewer" } });
+  if (mode === "invalid-provider")
+    return JSON.stringify({ quality: { reviewProvider: "reviewer" } });
   if (mode === "invalid-json") return "{not valid json";
   if (mode === "exact-boundary") return `{}${" ".repeat(MAX_CONFIG_FILE_BYTES - 2)}`;
   if (mode === "over-boundary") return `{}${" ".repeat(MAX_CONFIG_FILE_BYTES - 1)}`;
@@ -98,9 +99,8 @@ function setupCase(mode, configPath) {
 function transformReferencesSection(references) {
   const section = {};
   for (const [alias, declaration] of Object.entries(references)) {
-    const description = typeof declaration.description === "string"
-      ? { description: declaration.description }
-      : {};
+    const description =
+      typeof declaration.description === "string" ? { description: declaration.description } : {};
     if (declaration.kind === "local-directory") {
       section[alias] = {
         alias,
@@ -131,7 +131,10 @@ function referenceConfigError(config) {
 
 function errorCategory(message) {
   if (message.includes("not a regular file")) return "NOT_REGULAR";
-  if (message.includes("exceeds the 1048576-byte limit") || message.includes("could not be read within the 1048576-byte limit")) {
+  if (
+    message.includes("exceeds the 1048576-byte limit") ||
+    message.includes("could not be read within the 1048576-byte limit")
+  ) {
     return "TOO_LARGE";
   }
   if (message.includes("not valid JSON")) return "INVALID_JSON";

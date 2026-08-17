@@ -5,8 +5,6 @@
   "parity": "required",
   "env": {},
   "input": {
-    "cases": [
-      { "name": "symlink-rejected", "mode": "symlink" }
-    ]
+    "cases": [{ "name": "symlink-rejected", "mode": "symlink" }]
   }
 }

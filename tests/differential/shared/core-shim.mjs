@@ -20,4 +20,7 @@ export { truncateUtf8Bytes } from "../../../packages/core/src/language/truncate.
 export { isProtectedBehavioralConfigPath } from "../../../packages/core/src/security/behavioral-config.js";
 export { GitError } from "../../../packages/core/src/git/git-errors.js";
 export { VALIDATION_OFFLINE_PROFILE } from "../../../packages/core/src/security/profile.js";
-export { REFERENCE_LIMITS, validateReferenceAlias } from "../../../packages/core/src/reference/reference-model.js";
+export {
+  REFERENCE_LIMITS,
+  validateReferenceAlias,
+} from "../../../packages/core/src/reference/reference-model.js";

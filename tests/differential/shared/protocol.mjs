@@ -1301,12 +1301,15 @@ function validateUserConfigValue(config, label) {
         throw new Error(`${label}.references.${alias}.repository is invalid`);
       }
       if (Object.hasOwn(reference, "ref")) {
-        assertExactKeys(reference.ref, ["kind", reference.ref.kind], `${label}.references.${alias}.ref`);
-        if (![
-          "commit",
-          "tag",
-          "branch",
-        ].includes(reference.ref.kind) || typeof reference.ref[reference.ref.kind] !== "string") {
+        assertExactKeys(
+          reference.ref,
+          ["kind", reference.ref.kind],
+          `${label}.references.${alias}.ref`,
+        );
+        if (
+          !["commit", "tag", "branch"].includes(reference.ref.kind) ||
+          typeof reference.ref[reference.ref.kind] !== "string"
+        ) {
           throw new Error(`${label}.references.${alias}.ref is invalid`);
         }
       }

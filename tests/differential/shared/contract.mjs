@@ -693,10 +693,7 @@ function validateSubjectInputs(scenario, label) {
       platforms.size === 1 &&
       platforms.has("posix") &&
       scenario.input.cases.every((entry) => entry.mode === "symlink");
-    if (
-      (platforms.size !== 1 || (!platforms.has("*") && !posixSymlinkOnly)) ||
-      envKeys.size !== 0
-    ) {
+    if (platforms.size !== 1 || (!platforms.has("*") && !posixSymlinkOnly) || envKeys.size !== 0) {
       throw new Error(
         `${label} user-config inputs must use platforms ["*"] or a POSIX-only symlink case and an empty env`,
       );
