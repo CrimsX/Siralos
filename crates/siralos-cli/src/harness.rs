@@ -11,13 +11,14 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Component, Path};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 mod tool_loop;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use siralos_adapters::config::MAX_CONFIG_FILE_BYTES;
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_adapters::tool::WorkspaceReadTool;
 use siralos_core::provider::{
@@ -53,13 +54,15 @@ const SUBJECT_DOMAIN_CAPABILITY: &str = "domain-capability";
 const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
 const SUBJECT_TOOL_LOOP: &str = "tool-loop";
 const SUBJECT_CONTEXT_PROJECTION: &str = "context-projection";
+const SUBJECT_USER_CONFIG: &str = "user-config";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 14;
+const CORPUS_VERSION: u64 = 15;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TOOL_LOOP_INPUT_BYTES: usize = 64 * 1024;
 const MAX_CONTEXT_PROJECTION_INPUT_BYTES: usize = 64 * 1024;
+const MAX_USER_CONFIG_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -386,6 +389,7 @@ fn validate_scenario(
             | SUBJECT_PROVIDER_TURN
             | SUBJECT_TOOL_LOOP
             | SUBJECT_CONTEXT_PROJECTION
+            | SUBJECT_USER_CONFIG
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -473,13 +477,8 @@ fn validate_scenario(
         | SUBJECT_DOMAIN_CAPABILITY
         | SUBJECT_PROVIDER_TURN
         | SUBJECT_TOOL_LOOP
-        | SUBJECT_CONTEXT_PROJECTION => {
-            if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
-                return Err(HarnessError::corpus(format!(
-                    "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
-                    scenario.id, scenario.subject
-                )));
-            }
+        | SUBJECT_CONTEXT_PROJECTION
+        | SUBJECT_USER_CONFIG => {
             let input = scenario.input.as_ref().ok_or_else(|| {
                 HarnessError::corpus(format!(
                     "scenario {} {} requires an input object",
@@ -489,6 +488,24 @@ fn validate_scenario(
             if !input.is_object() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} input must be an object",
+                    scenario.id, scenario.subject
+                )));
+            }
+            let posix_symlink_only = scenario.subject == SUBJECT_USER_CONFIG
+                && platforms == BTreeSet::from([PLATFORM_POSIX])
+                && input.get("cases").and_then(Value::as_array).is_some_and(
+                    |cases| {
+                        cases.iter().all(|case| {
+                            case.get("mode").and_then(Value::as_str)
+                                == Some("symlink")
+                        })
+                    },
+                );
+            if (platforms != BTreeSet::from(["*"]) && !posix_symlink_only)
+                || !scenario.env.is_empty()
+            {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} {} inputs must use platforms [\"*\"] or a POSIX-only symlink case and an empty env",
                     scenario.id, scenario.subject
                 )));
             }
@@ -520,12 +537,19 @@ fn validate_scenario(
             );
             let context_projection_subject =
                 scenario.subject.as_str() == SUBJECT_CONTEXT_PROJECTION;
+            let user_config_subject =
+                scenario.subject.as_str() == SUBJECT_USER_CONFIG;
+            if user_config_subject {
+                validate_user_config_input(input)?;
+            }
             let max_input_bytes = if provider_subject {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
                 MAX_TOOL_LOOP_INPUT_BYTES
             } else if context_projection_subject {
                 MAX_CONTEXT_PROJECTION_INPUT_BYTES
+            } else if user_config_subject {
+                MAX_USER_CONFIG_INPUT_BYTES
             } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
@@ -1112,11 +1136,297 @@ fn run_scenario(
                 "result": result,
             }))
         }
+        SUBJECT_USER_CONFIG => {
+            let input = scenario.input.as_ref().expect(
+                "user-config input was validated while loading the corpus",
+            );
+            let result = user_config_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
         _ => unreachable!("subject was validated while loading the corpus"),
     }
 }
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Stage 3R R7.4 subject: user-config.
+// ---------------------------------------------------------------------------
+
+fn user_config_record(input: &Value) -> Result<Value, HarnessError> {
+    let cases = scenario_array(input, "cases")?;
+    let mut records = Vec::new();
+    for case in cases {
+        let _name = scenario_string(case, "name")?;
+        let mode = scenario_string(case, "mode")?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| {
+                HarnessError::input(format!("cannot read clock: {error}"))
+            })?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "siralos-r7-4-user-config-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).map_err(|error| {
+            HarnessError::input(format!(
+                "cannot create config probe directory: {error}"
+            ))
+        })?;
+        let path = directory.join("config.json");
+        let setup = setup_user_config_case(&mode, &path);
+        let result = match setup {
+            Ok(()) => {
+                let diagnostics =
+                    crate::configuration::diagnose_user_configuration(Some(
+                        &path,
+                    ))
+                    .map_err(|error| HarnessError::input(error.to_string()))?;
+                match crate::configuration::load_user_configuration(Some(
+                    &path,
+                )) {
+                    Ok(composed) => json!({
+                        "status": "ok",
+                        "config": user_config_value(&composed.config),
+                        "reviewProviderId": composed.review_provider_id,
+                        "referenceConfigError": composed.reference_config_error,
+                        "diagnostics": configuration_diagnostics_value(&diagnostics),
+                    }),
+                    Err(error) => json!({
+                        "status": "error",
+                        "category": error.category(),
+                        "diagnostics": configuration_diagnostics_value(&diagnostics),
+                    }),
+                }
+            }
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&directory);
+                return Err(error);
+            }
+        };
+        records.push(result);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+    Ok(json!({ "cases": records }))
+}
+
+fn setup_user_config_case(
+    mode: &str,
+    path: &Path,
+) -> Result<(), HarnessError> {
+    match mode {
+        "missing" => Ok(()),
+        "directory" => std::fs::create_dir(path).map_err(|error| {
+            HarnessError::input(format!(
+                "cannot create nonregular config fixture: {error}"
+            ))
+        }),
+        "symlink" => {
+            let target = path.with_file_name("target.json");
+            std::fs::write(&target, b"{}").map_err(|error| {
+                HarnessError::input(format!(
+                    "cannot write symlink target: {error}"
+                ))
+            })?;
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&target, path).map_err(
+                    |error| {
+                        HarnessError::input(format!(
+                            "cannot create symlink fixture: {error}"
+                        ))
+                    },
+                )?;
+                Ok(())
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = std::fs::remove_file(target);
+                Err(HarnessError::input(
+                    "symlink fixture is unavailable on this host",
+                ))
+            }
+        }
+        other => {
+            let content = user_config_content(other).ok_or_else(|| {
+                HarnessError::corpus(format!(
+                    "unknown user-config fixture mode {other}"
+                ))
+            })?;
+            std::fs::write(path, content.as_bytes()).map_err(|error| {
+                HarnessError::input(format!(
+                    "cannot write config fixture: {error}"
+                ))
+            })
+        }
+    }
+}
+
+fn user_config_content(mode: &str) -> Option<String> {
+    let content = match mode {
+        "full" => json!({
+            "sandbox": { "profile": "develop-offline", "backend": "anthropic-runtime" },
+            "godot": {
+                "activeInstallation": "stable",
+                "discoverOnPath": false,
+                "installations": {
+                    "stable": { "path": "/opt/godot", "editionHint": "standard" }
+                }
+            },
+            "quality": { "reviewProvider": "deterministic-fake" },
+            "references": {
+                "aa": { "kind": "local-directory", "path": "/srv/assets", "description": "Assets" },
+                "bb": { "kind": "repository", "repository": "godotengine/godot", "ref": { "kind": "commit", "commit": "0123456" } }
+            }
+        }).to_string(),
+        "unknown-top" => json!({ "permissions": {} }).to_string(),
+        "unknown-nested" => json!({ "sandbox": { "credential": "secret" } }).to_string(),
+        "invalid-profile" => json!({ "sandbox": { "profile": "full-access" } }).to_string(),
+        "invalid-backend" => json!({ "sandbox": { "backend": "docker" } }).to_string(),
+        "invalid-edition" => json!({
+            "godot": { "installations": { "stable": { "path": "/opt/godot", "editionHint": "mono" } } }
+        }).to_string(),
+        "installations-bound" => {
+            let mut installations = Map::new();
+            for index in 0..17 {
+                installations.insert(
+                    format!("g{index:02}"),
+                    json!({ "path": "/opt/godot" }),
+                );
+            }
+            json!({ "godot": { "installations": installations } }).to_string()
+        }
+        "references-bound" => {
+            let mut references = Map::new();
+            for index in 0..17 {
+                references.insert(
+                    format!("r{index:02}"),
+                    json!({ "kind": "local-directory", "path": "/srv/assets" }),
+                );
+            }
+            json!({ "references": references }).to_string()
+        }
+        "invalid-godot-path" => json!({
+            "godot": { "installations": { "stable": { "path": "relative/godot" } } }
+        }).to_string(),
+        "invalid-provider" => json!({
+            "quality": { "reviewProvider": "reviewer" }
+        }).to_string(),
+        "invalid-json" => "{not valid json".to_owned(),
+        "exact-boundary" => format!("{{}}{}", " ".repeat(MAX_CONFIG_FILE_BYTES - 2)),
+        "over-boundary" => format!("{{}}{}", " ".repeat(MAX_CONFIG_FILE_BYTES - 1)),
+        "invalid-reference-path" => json!({
+            "references": { "aa": { "kind": "local-directory", "path": "relative" } }
+        }).to_string(),
+        "invalid-repository" => json!({
+            "references": { "aa": { "kind": "repository", "repository": "https://example.com/org/repo" } }
+        }).to_string(),
+        "missing" | "directory" | "symlink" => return None,
+        _ => return None,
+    };
+    Some(content)
+}
+
+fn user_config_value(config: &siralos_adapters::config::UserConfig) -> Value {
+    let installations = config
+        .godot
+        .installations
+        .iter()
+        .map(|(id, installation)| {
+            (
+                id.clone(),
+                json!({
+                    "path": installation.path,
+                    "editionHint": installation.edition_hint.as_str(),
+                }),
+            )
+        })
+        .collect::<Map<String, Value>>();
+    let references = config
+        .references
+        .iter()
+        .map(|(alias, reference)| {
+            (alias.clone(), user_reference_value(reference))
+        })
+        .collect::<Map<String, Value>>();
+    json!({
+        "sandbox": {
+            "profile": config.sandbox.profile.as_str(),
+            "backend": config.sandbox.backend.as_str(),
+        },
+        "godot": {
+            "activeInstallation": config.godot.active_installation,
+            "installations": installations,
+            "discoverOnPath": config.godot.discover_on_path,
+        },
+        "quality": { "reviewProvider": config.quality.review_provider },
+        "references": references,
+    })
+}
+
+fn user_reference_value(
+    reference: &siralos_adapters::config::UserReferenceConfig,
+) -> Value {
+    let mut value = Map::new();
+    value.insert("kind".to_owned(), json!(reference.kind.as_str()));
+    if let Some(path) = &reference.path {
+        value.insert("path".to_owned(), json!(path));
+    }
+    if let Some(repository) = &reference.repository {
+        value.insert("repository".to_owned(), json!(repository));
+    }
+    if let Some(reference_pin) = &reference.reference {
+        value.insert(
+            "ref".to_owned(),
+            json!({
+                "kind": reference_pin.kind(),
+                reference_pin.kind(): reference_pin.value(),
+            }),
+        );
+    }
+    if let Some(description) = &reference.description {
+        value.insert("description".to_owned(), json!(description));
+    }
+    Value::Object(value)
+}
+
+fn configuration_diagnostics_value(
+    diagnostics: &siralos_adapters::config::ConfigurationDiagnostics,
+) -> Value {
+    json!({
+        "loaded": diagnostics.loaded,
+        "sections": diagnostics.sections.iter().map(|section| json!({ "name": section.name, "present": section.present })).collect::<Vec<_>>(),
+        "unknownFields": diagnostics.unknown_fields,
+        "validationErrors": diagnostics.validation_errors.iter().map(|error| configuration_message_category(error)).collect::<Vec<_>>(),
+        "credentialRefs": diagnostics.credential_refs,
+        "overrideInUse": diagnostics.override_in_use,
+        "fileState": diagnostics.file_state.as_str(),
+    })
+}
+
+fn configuration_message_category(message: &str) -> &'static str {
+    if message.contains("not a regular file") {
+        "NOT_REGULAR"
+    } else if message.contains("exceeds the 1048576-byte limit")
+        || message.contains("could not be read within the 1048576-byte limit")
+    {
+        "TOO_LARGE"
+    } else if message.contains("not valid JSON") {
+        "INVALID_JSON"
+    } else if message.contains("not valid UTF-8") {
+        "INVALID_UTF8"
+    } else if message.starts_with("Cannot read Siralos configuration") {
+        "CANNOT_READ"
+    } else {
+        "INVALID_VALUE"
+    }
+}
 // Stage 3R R7.1 subject: provider-turn.
 // ---------------------------------------------------------------------------
 
@@ -3016,6 +3326,82 @@ fn scenario_array<'a>(
             "scenario input missing array field {key}"
         ))
     })
+}
+
+fn validate_user_config_input(input: &Value) -> Result<(), HarnessError> {
+    let object = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("user-config input must be an object")
+    })?;
+    if object.len() != 1 || !object.contains_key("cases") {
+        return Err(HarnessError::corpus(
+            "user-config input must contain only cases",
+        ));
+    }
+    let cases =
+        object.get("cases").and_then(Value::as_array).ok_or_else(|| {
+            HarnessError::corpus("user-config cases must be an array")
+        })?;
+    if cases.is_empty() || cases.len() > 64 {
+        return Err(HarnessError::corpus(
+            "user-config cases must contain 1-64 entries",
+        ));
+    }
+    const MODES: [&str; 18] = [
+        "full",
+        "unknown-top",
+        "unknown-nested",
+        "invalid-profile",
+        "invalid-backend",
+        "invalid-edition",
+        "installations-bound",
+        "references-bound",
+        "invalid-godot-path",
+        "invalid-provider",
+        "invalid-json",
+        "exact-boundary",
+        "over-boundary",
+        "directory",
+        "symlink",
+        "missing",
+        "invalid-reference-path",
+        "invalid-repository",
+    ];
+    for case in cases {
+        let case_object = case.as_object().ok_or_else(|| {
+            HarnessError::corpus("user-config case must be an object")
+        })?;
+        if case_object.len() != 2
+            || !case_object.contains_key("name")
+            || !case_object.contains_key("mode")
+        {
+            return Err(HarnessError::corpus(
+                "user-config case must contain only name and mode",
+            ));
+        }
+        let name = case_object
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HarnessError::corpus("user-config case name must be a string")
+            })?;
+        if name.is_empty() || name.len() > 64 {
+            return Err(HarnessError::corpus(
+                "user-config case name exceeds 64 bytes",
+            ));
+        }
+        let mode = case_object
+            .get("mode")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HarnessError::corpus("user-config case mode must be a string")
+            })?;
+        if !MODES.contains(&mode) {
+            return Err(HarnessError::corpus(format!(
+                "unsupported user-config case mode {mode}"
+            )));
+        }
+    }
+    Ok(())
 }
 /// Scenario string array field (typed corpus-integrity failure).
 fn scenario_string_array(
@@ -5023,7 +5409,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 131);
+        assert_eq!(loaded.len(), 133);
     }
 
     #[test]

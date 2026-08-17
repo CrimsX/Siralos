@@ -1,0 +1,28 @@
+{
+  "id": "user-config-matrix",
+  "subject": "user-config",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      { "name": "missing-defaults", "mode": "missing" },
+      { "name": "full-valid", "mode": "full" },
+      { "name": "unknown-top-level", "mode": "unknown-top" },
+      { "name": "unknown-nested", "mode": "unknown-nested" },
+      { "name": "invalid-profile", "mode": "invalid-profile" },
+      { "name": "invalid-backend", "mode": "invalid-backend" },
+      { "name": "invalid-edition", "mode": "invalid-edition" },
+      { "name": "installation-count-bound", "mode": "installations-bound" },
+      { "name": "reference-count-bound", "mode": "references-bound" },
+      { "name": "invalid-godot-path", "mode": "invalid-godot-path" },
+      { "name": "invalid-review-provider", "mode": "invalid-provider" },
+      { "name": "invalid-json", "mode": "invalid-json" },
+      { "name": "exact-file-boundary", "mode": "exact-boundary" },
+      { "name": "over-file-boundary", "mode": "over-boundary" },
+      { "name": "nonregular-directory", "mode": "directory" },
+      { "name": "invalid-reference-path", "mode": "invalid-reference-path" },
+      { "name": "invalid-repository-origin", "mode": "invalid-repository" }
+    ]
+  }
+}

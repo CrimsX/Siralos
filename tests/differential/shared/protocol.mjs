@@ -1186,6 +1186,171 @@ function validateContextProjectionResult(record, label) {
   }
 }
 
+const USER_CONFIG_ERROR_CATEGORIES = new Set([
+  "CANNOT_READ",
+  "NOT_REGULAR",
+  "TOO_LARGE",
+  "INVALID_UTF8",
+  "INVALID_JSON",
+  "INVALID_VALUE",
+  "UNKNOWN_REVIEW_PROVIDER",
+]);
+
+function validateUserConfigDiagnostics(diagnostics, label) {
+  assertExactKeys(
+    diagnostics,
+    [
+      "loaded",
+      "sections",
+      "unknownFields",
+      "validationErrors",
+      "credentialRefs",
+      "overrideInUse",
+      "fileState",
+    ],
+    label,
+  );
+  if (
+    typeof diagnostics.loaded !== "boolean" ||
+    !Array.isArray(diagnostics.sections) ||
+    diagnostics.sections.length !== 4 ||
+    !Array.isArray(diagnostics.unknownFields) ||
+    !Array.isArray(diagnostics.validationErrors) ||
+    !Array.isArray(diagnostics.credentialRefs) ||
+    typeof diagnostics.overrideInUse !== "boolean" ||
+    !["readable", "missing", "unreadable"].includes(diagnostics.fileState)
+  ) {
+    throw new Error(`${label} has invalid fields`);
+  }
+  const names = ["sandbox", "godot", "quality", "references"];
+  for (const [index, section] of diagnostics.sections.entries()) {
+    assertExactKeys(section, ["name", "present"], `${label}.sections[${index}]`);
+    if (section.name !== names[index] || typeof section.present !== "boolean") {
+      throw new Error(`${label}.sections order or value is invalid`);
+    }
+  }
+  for (const error of diagnostics.validationErrors) {
+    if (!USER_CONFIG_ERROR_CATEGORIES.has(error)) {
+      throw new Error(`${label}.validationErrors contains an unsupported category`);
+    }
+  }
+  for (const value of diagnostics.unknownFields.concat(diagnostics.credentialRefs)) {
+    if (typeof value !== "string") {
+      throw new Error(`${label} string arrays are invalid`);
+    }
+  }
+}
+
+function validateUserConfigValue(config, label) {
+  assertExactKeys(config, ["sandbox", "godot", "quality", "references"], label);
+  assertExactKeys(config.sandbox, ["profile", "backend"], `${label}.sandbox`);
+  if (
+    !["inspect", "develop-offline"].includes(config.sandbox.profile) ||
+    !["auto", "anthropic-runtime"].includes(config.sandbox.backend)
+  ) {
+    throw new Error(`${label}.sandbox is invalid`);
+  }
+  assertExactKeys(
+    config.godot,
+    ["activeInstallation", "installations", "discoverOnPath"],
+    `${label}.godot`,
+  );
+  if (
+    config.godot.activeInstallation !== null &&
+    typeof config.godot.activeInstallation !== "string"
+  ) {
+    throw new Error(`${label}.godot.activeInstallation is invalid`);
+  }
+  if (!isObject(config.godot.installations) || typeof config.godot.discoverOnPath !== "boolean") {
+    throw new Error(`${label}.godot is invalid`);
+  }
+  for (const [id, installation] of Object.entries(config.godot.installations)) {
+    assertExactKeys(installation, ["path", "editionHint"], `${label}.installation.${id}`);
+    if (
+      typeof installation.path !== "string" ||
+      !["standard", "dotnet", "unknown"].includes(installation.editionHint)
+    ) {
+      throw new Error(`${label}.installation.${id} is invalid`);
+    }
+  }
+  assertExactKeys(config.quality, ["reviewProvider"], `${label}.quality`);
+  if (config.quality.reviewProvider !== null && typeof config.quality.reviewProvider !== "string") {
+    throw new Error(`${label}.quality is invalid`);
+  }
+  if (!isObject(config.references)) {
+    throw new Error(`${label}.references is invalid`);
+  }
+  for (const [alias, reference] of Object.entries(config.references)) {
+    if (!isObject(reference) || typeof reference.kind !== "string") {
+      throw new Error(`${label}.references.${alias} is invalid`);
+    }
+    if (reference.kind === "local-directory") {
+      const keys = Object.hasOwn(reference, "description")
+        ? ["kind", "path", "description"]
+        : ["kind", "path"];
+      assertExactKeys(reference, keys, `${label}.references.${alias}`);
+      if (typeof reference.path !== "string") {
+        throw new Error(`${label}.references.${alias}.path is invalid`);
+      }
+    } else if (reference.kind === "repository") {
+      const keys = ["kind", "repository"];
+      if (Object.hasOwn(reference, "ref")) keys.push("ref");
+      if (Object.hasOwn(reference, "description")) keys.push("description");
+      assertExactKeys(reference, keys, `${label}.references.${alias}`);
+      if (typeof reference.repository !== "string") {
+        throw new Error(`${label}.references.${alias}.repository is invalid`);
+      }
+      if (Object.hasOwn(reference, "ref")) {
+        assertExactKeys(reference.ref, ["kind", reference.ref.kind], `${label}.references.${alias}.ref`);
+        if (![
+          "commit",
+          "tag",
+          "branch",
+        ].includes(reference.ref.kind) || typeof reference.ref[reference.ref.kind] !== "string") {
+          throw new Error(`${label}.references.${alias}.ref is invalid`);
+        }
+      }
+    } else {
+      throw new Error(`${label}.references.${alias}.kind is invalid`);
+    }
+  }
+}
+
+function validateUserConfigResult(record, label) {
+  assertExactKeys(record.result, ["cases"], `${label}.result`);
+  if (!Array.isArray(record.result.cases) || record.result.cases.length > 64) {
+    throw new Error(`${label}.result.cases must be a bounded array`);
+  }
+  for (const [index, entry] of record.result.cases.entries()) {
+    const caseLabel = `${label}.result.cases[${index}]`;
+    if (!isObject(entry) || typeof entry.status !== "string") {
+      throw new Error(`${caseLabel} is invalid`);
+    }
+    if (entry.status === "ok") {
+      assertExactKeys(
+        entry,
+        ["status", "config", "reviewProviderId", "referenceConfigError", "diagnostics"],
+        caseLabel,
+      );
+      validateUserConfigValue(entry.config, `${caseLabel}.config`);
+      if (entry.reviewProviderId !== "deterministic-fake") {
+        throw new Error(`${caseLabel}.reviewProviderId is invalid`);
+      }
+      if (entry.referenceConfigError !== null && typeof entry.referenceConfigError !== "string") {
+        throw new Error(`${caseLabel}.referenceConfigError is invalid`);
+      }
+    } else if (entry.status === "error") {
+      assertExactKeys(entry, ["status", "category", "diagnostics"], caseLabel);
+      if (!USER_CONFIG_ERROR_CATEGORIES.has(entry.category)) {
+        throw new Error(`${caseLabel}.category is invalid`);
+      }
+    } else {
+      throw new Error(`${caseLabel}.status is invalid`);
+    }
+    validateUserConfigDiagnostics(entry.diagnostics, `${caseLabel}.diagnostics`);
+  }
+}
+
 function validateProviderTurnResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (!Array.isArray(record.result.cases) || record.result.cases.length > 32) {
@@ -1285,6 +1450,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-projection") {
     validateContextProjectionResult(record, label);
+    return;
+  }
+  if (record.subject === "user-config") {
+    validateUserConfigResult(record, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

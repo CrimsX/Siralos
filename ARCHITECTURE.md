@@ -321,9 +321,17 @@ siralos-cli ─────────→ siralos-adapters ─→ siralos-core
   typed trap outcomes and session stop, and the host-mediated effect
   boundary (grant-checked bounded workspace reads; process execution
   denied) — the component receives no ambient filesystem/network/process
-  authority.
+  authority. Its `config` module owns the R7.4 external user-config file
+  boundary: canonical path resolution support, lstat/symlink and
+  non-regular-file rejection, the one-MiB bounded complete read, UTF-8/JSON
+  decoding, strict nested validation, and non-authoritative reference
+  semantic diagnostics. It does not select an engine, read credentials, or
+  widen sandbox authority.
 - `siralos-cli` is the composition boundary and the `siralos` binary; it
-  may depend only on core and adapters.
+  may depend only on core and adapters. Its R7.4 `configuration` module owns
+  the explicit config-path override, registered review-provider validation,
+  fixed-order diagnostics composition, and the nonfatal reference failure
+  result; no interactive R7.5 session is pulled forward.
 - Exactly three crates exist; no placeholder or hypothetical domain
   crates, no marketplace/plugin infrastructure.
 - `unsafe` Rust is forbidden by workspace lint

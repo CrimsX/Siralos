@@ -89,3 +89,16 @@ and the Tool-result status to event matrix. Stub Tools are probe-local
 and always enter through the real registry/gates/round/loop; no
 mutation, process, Git, network, or Godot authority is granted or
 exercised.
+
+The Stage 3R R7.4 `user-config` scenarios execute the bounded user-level
+configuration boundary through the TypeScript reference loader/diagnostics
+and the Rust adapter plus CLI composition path. The matrix covers missing
+defaults, a full configuration, strict top-level and nested unknown-key
+rejection, sandbox/backend/edition validation, installation and reference
+count bounds, absolute installation paths, registered review-provider
+validation, invalid JSON, the exact one-MiB boundary and one-byte overflow,
+non-regular files, and nonfatal semantic reference failures. Symlink
+rejection is represented by a POSIX-only required scenario because the
+current Windows host cannot expose that filesystem case portably. The
+candidate never creates the default configuration path, reads environment
+credentials, selects an engine, launches Godot, or widens sandbox authority.

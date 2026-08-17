@@ -1,0 +1,12 @@
+{
+  "id": "user-config-symlink.posix",
+  "subject": "user-config",
+  "platforms": ["posix"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      { "name": "symlink-rejected", "mode": "symlink" }
+    ]
+  }
+}

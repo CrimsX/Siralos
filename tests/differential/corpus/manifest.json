@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 14,
+  "corpusVersion": 15,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -459,6 +459,14 @@
       "sha256": "2742dd9c3b070f2ecefb293914ca5ea1c72ffc15cf4ec56272ba1ae782ccbbfb"
     },
     {
+      "file": "user-config-matrix.json",
+      "sha256": "5c50ed7508faa104a8f186043c0ba076c32f97bd8f3c9470fda5bdaeea94ad7f"
+    },
+    {
+      "file": "user-config-symlink.posix.json",
+      "sha256": "114d789fb43cc46dec301a49d31bf373a76b1c1ff366cefb94e45f0dc9e6e85d"
+    },
+    {
       "file": "version.identity.json",
       "sha256": "0b4fc21ea2faa518e0b2cf5b73e8e5ca326f1187d69b75ecfa64e17526485158"
     },
@@ -527,5 +535,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "0e53d5c9076e606747679e576a8d7229b8bbbedeaaf72f051ada561531b0c97c"
+  "corpusSha256": "bd504e6dd991b8e831361ff058010d983eeab96686e8b9b3f774a85f3946437b"
 }

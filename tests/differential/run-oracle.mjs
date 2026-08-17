@@ -47,6 +47,7 @@ const DOMAIN_CAPABILITY_PROBE = join(HERE, "probes", "domain-capability-oracle.m
 const PROVIDER_TURN_PROBE = join(HERE, "probes", "provider-turn-oracle.mjs");
 const TOOL_LOOP_PROBE = join(HERE, "probes", "tool-loop-oracle.mjs");
 const CONTEXT_PROJECTION_PROBE = join(HERE, "probes", "context-projection-oracle.mjs");
+const USER_CONFIG_PROBE = join(HERE, "probes", "user-config-oracle.mjs");
 
 function optionValue(args, name) {
   const index = args.indexOf(name);
@@ -317,6 +318,14 @@ export function runScenario(scenario, root) {
       subject: scenario.subject,
       outcome: SCENARIO_OUTCOME.COMPLETED,
       result: runWorkspaceProbe(CONTEXT_PROJECTION_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "user-config") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(USER_CONFIG_PROBE, scenario.subject, scenario.input),
     };
   }
   if (scenario.subject === "version-identity") {

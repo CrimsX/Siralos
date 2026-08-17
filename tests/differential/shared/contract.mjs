@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 14;
+export const CORPUS_VERSION = 15;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -30,6 +30,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "provider-turn",
   "tool-loop",
   "context-projection",
+  "user-config",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -53,6 +54,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   providerInputBytes: 64 * 1024,
   toolLoopInputBytes: 64 * 1024,
   contextProjectionInputBytes: 64 * 1024,
+  userConfigInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -521,6 +523,42 @@ function validateToolLoopInput(input, label) {
   }
 }
 
+/** Validate the bounded R7.4 user-configuration scenario matrix. */
+function validateUserConfigInput(input, label) {
+  assertExactKeys(input, ["cases"], `${label}.input`);
+  if (!Array.isArray(input.cases) || input.cases.length === 0 || input.cases.length > 64) {
+    throw new Error(`${label}.input.cases must contain 1-64 entries`);
+  }
+  const modes = new Set([
+    "full",
+    "unknown-top",
+    "unknown-nested",
+    "invalid-profile",
+    "invalid-backend",
+    "invalid-edition",
+    "installations-bound",
+    "references-bound",
+    "invalid-godot-path",
+    "invalid-provider",
+    "invalid-json",
+    "exact-boundary",
+    "over-boundary",
+    "directory",
+    "symlink",
+    "missing",
+    "invalid-reference-path",
+    "invalid-repository",
+  ]);
+  for (const [index, entry] of input.cases.entries()) {
+    const caseLabel = `${label}.input.cases[${index}]`;
+    assertExactKeys(entry, ["name", "mode"], caseLabel);
+    assertBoundedString(entry.name, 64, `${caseLabel}.name`);
+    if (typeof entry.mode !== "string" || !modes.has(entry.mode)) {
+      throw new Error(`${caseLabel}.mode is unsupported`);
+    }
+  }
+}
+
 function validateSubjectInputs(scenario, label) {
   const platforms = new Set(scenario.platforms);
   const envKeys = new Set(Object.keys(scenario.env));
@@ -643,6 +681,28 @@ function validateSubjectInputs(scenario, label) {
     validateToolLoopInput(scenario.input, label);
     return;
   }
+  if (scenario.subject === "user-config") {
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.userConfigInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.userConfigInputBytes} UTF-8 bytes`);
+    }
+    validateUserConfigInput(scenario.input, label);
+    const posixSymlinkOnly =
+      platforms.size === 1 &&
+      platforms.has("posix") &&
+      scenario.input.cases.every((entry) => entry.mode === "symlink");
+    if (
+      (platforms.size !== 1 || (!platforms.has("*") && !posixSymlinkOnly)) ||
+      envKeys.size !== 0
+    ) {
+      throw new Error(
+        `${label} user-config inputs must use platforms ["*"] or a POSIX-only symlink case and an empty env`,
+      );
+    }
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -683,6 +743,7 @@ export function validateScenario(scenario, file) {
     "provider-turn",
     "tool-loop",
     "context-projection",
+    "user-config",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

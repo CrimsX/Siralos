@@ -124,7 +124,7 @@ describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
     expect(manifest.schemaVersion).toBe(3);
-    expect(manifest.corpusVersion).toBe(14);
+    expect(manifest.corpusVersion).toBe(15);
     expect(manifest.corpusSha256).toBe(computeCorpusDigest(manifest));
     expect(manifest.scenarios.length).toBeGreaterThanOrEqual(6);
     for (const entry of manifest.scenarios) {

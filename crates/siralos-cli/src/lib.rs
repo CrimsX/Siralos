@@ -10,6 +10,8 @@
 //! `siralos-harness` binary. Neither surface is part of the default product
 //! build.
 
+pub mod configuration;
+
 #[cfg(feature = "differential-harness")]
 pub mod harness;
 
