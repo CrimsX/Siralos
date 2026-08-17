@@ -1,0 +1,92 @@
+{
+  "id": "context-projection.estimate",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "estimate",
+        "input": {
+          "texts": [
+            "",
+            "abcd",
+            "é",
+            "hello world",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "conversationItems": [
+            {
+              "type": "user_message",
+              "content": "u1"
+            },
+            {
+              "type": "assistant_message",
+              "content": "a1"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c1",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c1",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {
+                  "ok": true
+                },
+                "summary": "r1"
+              }
+            },
+            {
+              "type": "tool_result",
+              "callId": "c2",
+              "toolName": "t",
+              "result": {
+                "status": "failed",
+                "message": "boom"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "estimate",
+        "input": {
+          "texts": ["😀", "é", "界"],
+          "conversationItems": [
+            {
+              "type": "assistant_tool_call",
+              "callId": "c3",
+              "toolName": "t",
+              "input": {
+                "nested": {
+                  "key": "value",
+                  "arr": [1, 2]
+                }
+              }
+            },
+            {
+              "type": "tool_result",
+              "callId": "c3",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {
+                  "revision": "rev1",
+                  "data": 1
+                },
+                "summary": "summary with unicode 😀"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

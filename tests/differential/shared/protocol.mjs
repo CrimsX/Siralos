@@ -1162,6 +1162,30 @@ function validateProviderTurnTurnRecord(turn, label) {
   throw new Error(`${label} turn kind is invalid`);
 }
 
+function validateContextProjectionResult(record, label) {
+  assertExactKeys(record.result, ["cases"], `${label}.result`);
+  if (!Array.isArray(record.result.cases) || record.result.cases.length > 32) {
+    throw new Error(`${label}.result.cases must be a bounded array`);
+  }
+  for (const [index, entry] of record.result.cases.entries()) {
+    const caseLabel = `${label}.result.cases[${index}]`;
+    if (!isObject(entry) || typeof entry.kind !== "string") {
+      throw new Error(`${caseLabel} must be an object with string kind`);
+    }
+    // Each context-projection case record contains exactly {kind, result}
+    assertExactKeys(entry, ["kind", "result"], caseLabel);
+    if (!isObject(entry.result)) {
+      throw new Error(`${caseLabel}.result must be an object`);
+    }
+    // Permit arbitrary context-projection result fields; deep validation is
+    // semantic parity (oracle vs candidate byte-identical), not structural rejection.
+    // Bound check: result must be serializable within the probe output bound.
+    if (Buffer.byteLength(canonicalizeJson(entry.result), "utf8") > CONTRACT_LIMITS.recordsBytes) {
+      throw new Error(`${caseLabel}.result exceeds the harness bound`);
+    }
+  }
+}
+
 function validateProviderTurnResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (!Array.isArray(record.result.cases) || record.result.cases.length > 32) {
@@ -1257,6 +1281,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "tool-loop") {
     validateToolLoopResult(record, label);
+    return;
+  }
+  if (record.subject === "context-projection") {
+    validateContextProjectionResult(record, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

@@ -1,0 +1,110 @@
+{
+  "id": "context-projection.fingerprints",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "fingerprints",
+        "input": {
+          "baseSegments": [
+            {
+              "id": "s1",
+              "stability": "stable",
+              "title": "Instructions",
+              "content": "You are Siralos."
+            },
+            {
+              "id": "c1",
+              "stability": "contextual",
+              "title": "Task",
+              "content": "hello"
+            },
+            {
+              "id": "v1",
+              "stability": "volatile",
+              "title": "Diag",
+              "content": "err"
+            }
+          ],
+          "variantSegments": [
+            {
+              "id": "s1",
+              "stability": "stable",
+              "title": "Instructions",
+              "content": "You are Siralos."
+            },
+            {
+              "id": "c1",
+              "stability": "contextual",
+              "title": "Task",
+              "content": "hello changed"
+            },
+            {
+              "id": "v1",
+              "stability": "volatile",
+              "title": "Diag",
+              "content": "err changed"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "fingerprints",
+        "input": {
+          "baseSegments": [
+            {
+              "id": "s1",
+              "stability": "stable",
+              "title": "Instructions",
+              "content": "You are Siralos."
+            }
+          ],
+          "variantSegments": [
+            {
+              "id": "s1",
+              "stability": "stable",
+              "title": "Instructions",
+              "content": "You are Siralos modified."
+            }
+          ]
+        }
+      },
+      {
+        "kind": "fingerprints",
+        "input": {
+          "baseSegments": [
+            {
+              "id": "s1",
+              "stability": "stable",
+              "title": "Instructions",
+              "content": "You are Siralos."
+            },
+            {
+              "id": "é",
+              "stability": "stable",
+              "title": "Key",
+              "content": "val"
+            }
+          ],
+          "variantSegments": [
+            {
+              "id": "s1",
+              "stability": "stable",
+              "title": "Instructions",
+              "content": "You are Siralos."
+            },
+            {
+              "id": "é",
+              "stability": "stable",
+              "title": "Key",
+              "content": "val2"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

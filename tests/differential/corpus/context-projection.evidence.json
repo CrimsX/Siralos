@@ -1,0 +1,93 @@
+{
+  "id": "context-projection.evidence",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": "hello\nhello\nhello\n",
+          "secrets": [],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 1024
+        }
+      },
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": "a\nb\nc",
+          "secrets": [],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 1024
+        }
+      },
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": "secret-token is here: secret-token",
+          "secrets": ["secret-token"],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 1024
+        }
+      },
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": "\u001b[31mred\u001b[0m line\u0007",
+          "secrets": [],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 1024
+        }
+      },
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": {
+            "$repeat": {
+              "character": "a",
+              "count": 1024
+            }
+          },
+          "secrets": [],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 1024
+        }
+      },
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": {
+            "$repeat": {
+              "character": "a",
+              "count": 1025
+            }
+          },
+          "secrets": [],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 1024
+        }
+      },
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀",
+          "secrets": [],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 1024
+        }
+      },
+      {
+        "kind": "evidence",
+        "input": {
+          "rawText": "😀😀",
+          "secrets": [],
+          "maxTotalBytes": 32768,
+          "maxLineBytes": 3
+        }
+      }
+    ]
+  }
+}

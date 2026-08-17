@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 //! Differential behavioral harness candidate runner (ADR 0033).
 //!
 //! The checked-in corpus is parsed as a strict, bounded protocol. Each
@@ -50,12 +52,14 @@ const SUBJECT_DOMAIN_LIFECYCLE: &str = "domain-lifecycle";
 const SUBJECT_DOMAIN_CAPABILITY: &str = "domain-capability";
 const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
 const SUBJECT_TOOL_LOOP: &str = "tool-loop";
+const SUBJECT_CONTEXT_PROJECTION: &str = "context-projection";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 13;
+const CORPUS_VERSION: u64 = 14;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TOOL_LOOP_INPUT_BYTES: usize = 64 * 1024;
+const MAX_CONTEXT_PROJECTION_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -381,6 +385,7 @@ fn validate_scenario(
             | SUBJECT_DOMAIN_CAPABILITY
             | SUBJECT_PROVIDER_TURN
             | SUBJECT_TOOL_LOOP
+            | SUBJECT_CONTEXT_PROJECTION
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -467,7 +472,8 @@ fn validate_scenario(
         | SUBJECT_DOMAIN_LIFECYCLE
         | SUBJECT_DOMAIN_CAPABILITY
         | SUBJECT_PROVIDER_TURN
-        | SUBJECT_TOOL_LOOP => {
+        | SUBJECT_TOOL_LOOP
+        | SUBJECT_CONTEXT_PROJECTION => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -512,10 +518,14 @@ fn validate_scenario(
                 scenario.subject.as_str(),
                 SUBJECT_DOMAIN_LIFECYCLE | SUBJECT_DOMAIN_CAPABILITY
             );
+            let context_projection_subject =
+                scenario.subject.as_str() == SUBJECT_CONTEXT_PROJECTION;
             let max_input_bytes = if provider_subject {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
                 MAX_TOOL_LOOP_INPUT_BYTES
+            } else if context_projection_subject {
+                MAX_CONTEXT_PROJECTION_INPUT_BYTES
             } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
@@ -1083,6 +1093,18 @@ fn run_scenario(
                 "tool-loop input was validated while loading the corpus",
             );
             let result = tool_loop_record(&scenario.id, input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_PROJECTION => {
+            let input = scenario.input.as_ref().expect(
+                "context-projection input was validated while loading the corpus",
+            );
+            let result = context_projection_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -5001,7 +5023,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 120);
+        assert_eq!(loaded.len(), 131);
     }
 
     #[test]
@@ -5358,6 +5380,716 @@ mod tests {
             cargo_workspace_version(&root).expect("workspace version"),
             "0.0.0"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3R R7.3 subject: context-projection.
+// ---------------------------------------------------------------------------
+
+fn context_projection_record(input: &Value) -> Result<Value, HarnessError> {
+    let cases = scenario_array(input, "cases")?;
+    let mut records = Vec::new();
+    for case in cases {
+        let case = materialize_value(case)?;
+        let kind = scenario_string(&case, "kind")?;
+        let entry = case.get("input").ok_or_else(|| {
+            HarnessError::corpus("context-projection case requires an input")
+        })?;
+        let record = match kind.as_str() {
+            "estimate" => run_context_estimate_case(entry)?,
+            "pressure" => run_context_pressure_case(entry)?,
+            "trim" => run_context_trim_case(entry)?,
+            "segments" => run_context_segments_case(entry)?,
+            "tool-visibility" => run_context_tool_visibility_case(entry)?,
+            "evidence" => run_context_evidence_case(entry)?,
+            "fingerprints" => run_context_fingerprints_case(entry)?,
+            "pipeline" => run_context_pipeline_case(entry)?,
+            "unsupported-tool-calling" => run_context_unsupported_case(entry)?,
+            other => {
+                return Err(HarnessError::corpus(format!(
+                    "unknown context-projection kind {other}"
+                )));
+            }
+        };
+        records.push(json!({ "kind": kind, "result": record }));
+    }
+    Ok(json!({ "cases": records }))
+}
+
+fn run_context_estimate_case(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::projection::estimator::{
+        estimate_conversation_item_tokens, estimate_tokens,
+    };
+    let input = materialize_value(input)?;
+    let texts = input
+        .get("texts")
+        .and_then(Value::as_array)
+        .ok_or_else(|| HarnessError::corpus("estimate requires texts"))?;
+    let mut text_estimates = Vec::new();
+    for text in texts {
+        let text = text.as_str().ok_or_else(|| {
+            HarnessError::corpus("estimate texts must be strings")
+        })?;
+        let bytes = text.len();
+        let tokens = estimate_tokens(text);
+        text_estimates
+            .push(json!({ "text": text, "bytes": bytes, "tokens": tokens }));
+    }
+    let mut item_estimates = Vec::new();
+    if let Some(items) =
+        input.get("conversationItems").and_then(Value::as_array)
+    {
+        for item in items {
+            let ci = parse_conversation_items(std::slice::from_ref(item))?
+                .into_iter()
+                .next()
+                .unwrap();
+            let est = estimate_conversation_item_tokens(&ci);
+            item_estimates.push(json!({ "item": item, "bytes": est.bytes, "tokens": est.tokens }));
+        }
+    }
+    Ok(
+        json!({ "textEstimates": text_estimates, "itemEstimates": item_estimates }),
+    )
+}
+
+fn ratio_value(ratio: f64) -> Value {
+    if ratio.fract() == 0.0
+        && ratio.is_finite()
+        && ratio >= i64::MIN as f64
+        && ratio <= i64::MAX as f64
+    {
+        Value::Number(serde_json::Number::from(ratio as i64))
+    } else if let Some(n) = serde_json::Number::from_f64(ratio) {
+        Value::Number(n)
+    } else {
+        Value::Number(serde_json::Number::from(0))
+    }
+}
+
+fn run_context_pressure_case(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::projection::pressure::{
+        PressureLimits, classify_pressure,
+    };
+    let input = materialize_value(input)?;
+    let cases = input
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| HarnessError::corpus("pressure requires cases"))?;
+    let limits =
+        if let Some(limits) = input.get("limits").and_then(Value::as_object) {
+            PressureLimits {
+                warn_ratio: limits
+                    .get("warnRatio")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.70),
+                auto_ratio: limits
+                    .get("autoRatio")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.85),
+                hard_ratio: limits
+                    .get("hardRatio")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0),
+            }
+        } else {
+            PressureLimits::default()
+        };
+    let mut results = Vec::new();
+    for entry in cases {
+        let estimated = entry
+            .get("estimatedTokens")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                HarnessError::corpus("pressure case requires estimatedTokens")
+            })? as usize;
+        let working = entry
+            .get("workingMaximum")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| {
+                HarnessError::corpus("pressure case requires workingMaximum")
+            })?;
+        let p = classify_pressure(estimated, working, limits);
+        results.push(json!({ "estimatedTokens": p.estimated_tokens, "workingMaximum": p.working_maximum, "ratio": ratio_value(p.ratio), "state": p.state.as_str() }));
+    }
+    Ok(json!({ "results": results }))
+}
+
+fn run_context_trim_case(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::projection::estimator::estimate_conversation_tokens;
+    use siralos_core::projection::trim::trim_conversation_preserving_pairs;
+    let input = materialize_value(input)?;
+    let max_tokens = input
+        .get("maxTokens")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| HarnessError::corpus("trim requires maxTokens"))?
+        as usize;
+    let messages =
+        parse_conversation_items(scenario_array(&input, "messages")?)?;
+    let original_tokens = estimate_conversation_tokens(&messages);
+    let trimmed = trim_conversation_preserving_pairs(&messages, max_tokens);
+    Ok(json!({
+        "originalTokens": original_tokens,
+        "maxTokens": max_tokens,
+        "kept": trimmed.items.iter().map(conversation_item_value).collect::<Vec<_>>(),
+        "droppedItems": trimmed.dropped_items,
+        "estimatedTokens": trimmed.estimated_tokens,
+    }))
+}
+
+fn run_context_segments_case(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::projection::segments::{
+        SegmentInput, Stability, project_segments, serialize_prefix,
+    };
+    let input = materialize_value(input)?;
+    let segments = scenario_array(&input, "segments")?;
+    let mut inputs = Vec::new();
+    for seg in segments {
+        let obj = seg
+            .as_object()
+            .ok_or_else(|| HarnessError::corpus("segments must be objects"))?;
+        let stability = match obj.get("stability").and_then(Value::as_str) {
+            Some("stable") => Stability::Stable,
+            Some("contextual") => Stability::Contextual,
+            Some("volatile") => Stability::Volatile,
+            _ => {
+                return Err(HarnessError::corpus(
+                    "segments stability must be stable/contextual/volatile",
+                ));
+            }
+        };
+        inputs.push(SegmentInput {
+            id: scenario_string(seg, "id")?,
+            stability,
+            title: scenario_string(seg, "title")?,
+            content: seg
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        });
+    }
+    let proj = project_segments(inputs);
+    let prefix = serialize_prefix(&proj);
+    Ok(json!({
+        "stableSegments": proj.stable_segments.iter().map(segment_value).collect::<Vec<_>>(),
+        "contextualSegments": proj.contextual_segments.iter().map(segment_value).collect::<Vec<_>>(),
+        "volatileSegments": proj.volatile_segments.iter().map(segment_value).collect::<Vec<_>>(),
+        "stableFingerprint": proj.stable_fingerprint,
+        "stableBytes": proj.stable_bytes,
+        "stablePrefixBytes": proj.stable_prefix_bytes,
+        "totalBytes": proj.total_bytes,
+        "estimatedTokens": proj.estimated_tokens,
+        "systemPrefix": prefix,
+        "systemPrefixBytes": prefix.len(),
+    }))
+}
+
+fn segment_value(
+    seg: &siralos_core::projection::segments::ContextSegment,
+) -> Value {
+    json!({ "id": seg.id, "stability": seg.stability.as_str(), "title": seg.title, "content": seg.content, "bytes": seg.bytes, "estimatedTokens": seg.estimated_tokens })
+}
+
+fn run_context_tool_visibility_case(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::projection::visibility::{
+        ProjectionMode, ToolProjectionInput, project_tools,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    let input = materialize_value(input)?;
+    let mode = ProjectionMode::parse(input.get("mode").and_then(Value::as_str).unwrap_or("generic"))
+        .ok_or_else(|| HarnessError::corpus("tool-visibility mode must be generic/development/review/inspection/planning"))?;
+    let registered =
+        parse_registered_tools(scenario_array(&input, "registeredTools")?)?;
+    let policy = if let Some(rules) =
+        input.get("policyRules").and_then(Value::as_array)
+    {
+        let mut policy_rules = Vec::new();
+        for rule in rules {
+            let cap = scenario_string(rule, "capability")?;
+            let decision = scenario_string(rule, "decision")?;
+            let r = match decision.as_str() {
+                "allow" => PermissionRule::Allow,
+                "ask" => PermissionRule::Ask,
+                "deny" => PermissionRule::Deny,
+                _ => {
+                    return Err(HarnessError::corpus(
+                        "policy decision must be allow/ask/deny",
+                    ));
+                }
+            };
+            policy_rules.push(PolicyRule {
+                capability: CapabilityId::parse(&cap).map_err(|e| {
+                    HarnessError::corpus(format!(
+                        "invalid capability {cap}: {e}"
+                    ))
+                })?,
+                rule: r,
+            });
+        }
+        PermissionPolicy::from_rules(policy_rules)
+    } else {
+        PermissionPolicy::default()
+    };
+    let allowed_names: Option<Vec<String>> =
+        input.get("allowedToolNames").and_then(Value::as_array).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+                .collect()
+        });
+    let proj = project_tools(ToolProjectionInput {
+        registered_tools: &registered,
+        policy: &policy,
+        allowed_tool_names: allowed_names.as_deref(),
+        mode,
+    });
+    Ok(json!({
+        "tools": proj.tools.iter().map(|t| json!({ "name": t.name, "visibility": t.visibility.as_str() })).collect::<Vec<_>>(),
+        "counts": { "available": proj.counts.available, "gated": proj.counts.gated, "hidden": proj.counts.hidden },
+        "fingerprint": proj.fingerprint,
+        "requestTools": proj.request_tools.iter().map(|t| json!({ "description": t.description, "name": t.name })).collect::<Vec<_>>(),
+        "approvedNames": proj.approved_names,
+    }))
+}
+
+fn parse_registered_tools(
+    tools: &[Value],
+) -> Result<Vec<siralos_core::tool::registry::RegisteredToolInfo>, HarnessError>
+{
+    let mut out = Vec::new();
+    for tool in tools {
+        let name = scenario_string(tool, "name")?;
+        let description = tool
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        let input_schema = tool
+            .get("inputSchema")
+            .cloned()
+            .unwrap_or(json!({"type":"object"}));
+        let capability_str = scenario_string(tool, "capability")?;
+        let capability = siralos_core::tool::capability::CapabilityId::parse(
+            &capability_str,
+        )
+        .map_err(|e| {
+            HarnessError::corpus(format!(
+                "invalid capability {capability_str}: {e}"
+            ))
+        })?;
+        out.push(siralos_core::tool::registry::RegisteredToolInfo {
+            definition: siralos_core::provider::ToolDefinition {
+                name,
+                description,
+                input_schema,
+            },
+            capability,
+        });
+    }
+    Ok(out)
+}
+
+fn run_context_evidence_case(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::projection::evidence::{
+        EvidenceProjectorOptions, project_for_model,
+    };
+    let input = materialize_value(input)?;
+    let options = EvidenceProjectorOptions {
+        secrets: input
+            .get("secrets")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        max_total_bytes: input
+            .get("maxTotalBytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(32768) as usize,
+        max_line_bytes: input
+            .get("maxLineBytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(1024) as usize,
+    };
+    let raw_text =
+        input.get("rawText").and_then(Value::as_str).unwrap_or("").to_owned();
+    let view = project_for_model(None, None, &raw_text, &options);
+    let mut result = json!({
+        "text": view.text,
+        "truncated": view.truncated,
+        "shownBytes": view.shown_bytes,
+        "originalBytes": view.original_bytes,
+        "transformations": view.transformations,
+        "toolResultView": Value::Null,
+    });
+    if let Some(tr) = input.get("toolResult").and_then(Value::as_object) {
+        let status =
+            tr.get("status").and_then(Value::as_str).unwrap_or("failed");
+        let source_text = if status == "success" {
+            tr.get("summary").and_then(Value::as_str).unwrap_or("")
+        } else {
+            tr.get("message").and_then(Value::as_str).unwrap_or("")
+        };
+        let v2 = project_for_model(None, None, source_text, &options);
+        if status == "success" {
+            result["toolResultView"] = json!({ "status": status, "summary": v2.text, "truncated": v2.truncated, "transformations": v2.transformations, "shownBytes": v2.shown_bytes, "originalBytes": v2.original_bytes });
+        } else {
+            result["toolResultView"] = json!({ "status": status, "message": v2.text, "truncated": v2.truncated, "transformations": v2.transformations });
+        }
+    }
+    Ok(result)
+}
+
+fn run_context_fingerprints_case(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::projection::segments::{
+        SegmentInput, Stability, project_segments,
+    };
+    let input = materialize_value(input)?;
+    let base_segments = scenario_array(&input, "baseSegments")?;
+    let variant_segments = scenario_array(&input, "variantSegments")?;
+    let parse = |segments: &[Value]| -> Result<
+        siralos_core::projection::segments::ContextProjection,
+        HarnessError,
+    > {
+        let mut inputs = Vec::new();
+        for seg in segments {
+            let stability = match seg.get("stability").and_then(Value::as_str)
+            {
+                Some("stable") => Stability::Stable,
+                Some("contextual") => Stability::Contextual,
+                Some("volatile") => Stability::Volatile,
+                _ => {
+                    return Err(HarnessError::corpus(
+                        "stability must be stable/contextual/volatile",
+                    ));
+                }
+            };
+            inputs.push(SegmentInput {
+                id: scenario_string(seg, "id")?,
+                stability,
+                title: scenario_string(seg, "title")?,
+                content: seg
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            });
+        }
+        Ok(project_segments(inputs))
+    };
+    let base = parse(base_segments)?;
+    let variant = parse(variant_segments)?;
+    Ok(json!({
+        "stableFingerprint": base.stable_fingerprint,
+        "variantStableFingerprint": variant.stable_fingerprint,
+        "stableFingerprintUnchanged": base.stable_fingerprint == variant.stable_fingerprint,
+        "stableBytesUnchanged": base.stable_bytes == variant.stable_bytes,
+        "stablePrefixBytesUnchanged": base.stable_prefix_bytes == variant.stable_prefix_bytes,
+    }))
+}
+
+fn run_context_pipeline_case(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::projection::{
+        ProjectionInput, ProjectionService,
+        capacity::ContextCapacity,
+        evidence::EvidenceProjectorOptions,
+        pressure::PressureLimits,
+        segments::{SegmentInput, Stability},
+        visibility::ProjectionMode,
+    };
+    let input = materialize_value(input)?;
+    let mode = ProjectionMode::parse(
+        input.get("mode").and_then(Value::as_str).unwrap_or("generic"),
+    )
+    .ok_or_else(|| HarnessError::corpus("pipeline mode invalid"))?;
+    let working_maximum =
+        input.get("workingMaximum").and_then(Value::as_i64).unwrap_or(32768);
+    let capacity = ContextCapacity::with_working_maximum(working_maximum);
+    let messages =
+        if let Some(arr) = input.get("messages").and_then(Value::as_array) {
+            parse_conversation_items(arr)?
+        } else {
+            Vec::new()
+        };
+    let registered = if let Some(arr) =
+        input.get("registeredTools").and_then(Value::as_array)
+    {
+        parse_registered_tools(arr)?
+    } else {
+        Vec::new()
+    };
+    let segments = if let Some(arr) =
+        input.get("segments").and_then(Value::as_array)
+    {
+        let mut v = Vec::new();
+        for seg in arr {
+            let stability = match seg.get("stability").and_then(Value::as_str)
+            {
+                Some("stable") => Stability::Stable,
+                Some("contextual") => Stability::Contextual,
+                Some("volatile") => Stability::Volatile,
+                _ => Stability::Contextual,
+            };
+            v.push(SegmentInput {
+                id: scenario_string(seg, "id")?,
+                stability,
+                title: seg
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or(
+                        seg.get("id").and_then(Value::as_str).unwrap_or("T"),
+                    )
+                    .to_owned(),
+                content: seg
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            });
+        }
+        v
+    } else {
+        // No explicit segments: pipeline without segments is the service-composition path.
+        // The oracle service's default stableInstructions for this fixture is "You are Siralos."
+        // synthesized as one stable segment with the same title/content for byte-identical parity.
+        vec![SegmentInput {
+            id: "siralos-core-instructions".to_owned(),
+            stability: Stability::Stable,
+            title: "Siralos instructions".to_owned(),
+            content: "You are Siralos.".to_owned(),
+        }]
+    };
+    let policy = if let Some(rules) =
+        input.get("policyRules").and_then(Value::as_array)
+    {
+        use siralos_core::tool::capability::CapabilityId;
+        use siralos_core::tool::permission::{
+            PermissionPolicy, PermissionRule, PolicyRule,
+        };
+        let mut prs = Vec::new();
+        for rule in rules {
+            let cap = scenario_string(rule, "capability")?;
+            let dec = scenario_string(rule, "decision")?;
+            let r = match dec.as_str() {
+                "allow" => PermissionRule::Allow,
+                "ask" => PermissionRule::Ask,
+                _ => PermissionRule::Deny,
+            };
+            prs.push(PolicyRule {
+                capability: CapabilityId::parse(&cap)
+                    .map_err(|e| HarnessError::corpus(format!("{e}")))?,
+                rule: r,
+            });
+        }
+        PermissionPolicy::from_rules(prs)
+    } else {
+        siralos_core::tool::permission::PermissionPolicy::default()
+    };
+    let allowed_names: Option<Vec<String>> =
+        input.get("allowedToolNames").and_then(Value::as_array).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+                .collect()
+        });
+    let evidence_options = EvidenceProjectorOptions {
+        secrets: input
+            .get("secrets")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        max_total_bytes: input
+            .get("maxTotalBytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(32768) as usize,
+        max_line_bytes: input
+            .get("maxLineBytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(1024) as usize,
+    };
+    let provider_tool_calling = input
+        .get("providerToolCalling")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let mut service = ProjectionService::new();
+    let req = service.project(ProjectionInput {
+        mode,
+        messages: &messages,
+        registered_tools: &registered,
+        provider_tool_calling,
+        capacity,
+        pressure_limits: PressureLimits::default(),
+        segments,
+        evidence_options,
+        allowed_tool_names: allowed_names,
+        policy: &policy,
+        task_revision: None,
+    });
+    Ok(json!({
+        "blocked": req.blocked.as_ref().map(|b| json!({ "type": b.kind(), "reason": b.message() })),
+        "contextFingerprint": req.context_projection.stable_fingerprint,
+        "estimatedTokens": req.estimated_tokens,
+        "pressure": { "estimatedTokens": req.pressure.estimated_tokens, "workingMaximum": req.pressure.working_maximum, "state": req.pressure.state.as_str(), "ratio": ratio_value(req.pressure.ratio) },
+        "providerCalled": req.blocked.is_none(),
+        "systemPrefixBytes": req.system.as_deref().map(|s| s.len()).unwrap_or(0),
+        "toolProjection": { "counts": { "available": req.tool_projection.counts.available, "gated": req.tool_projection.counts.gated, "hidden": req.tool_projection.counts.hidden }, "fingerprint": req.tool_projection.fingerprint },
+        "workingMaximum": req.pressure.working_maximum,
+    }))
+}
+
+fn run_context_unsupported_case(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::projection::{
+        ProjectionInput, ProjectionService, capacity::ContextCapacity,
+        evidence::EvidenceProjectorOptions, pressure::PressureLimits,
+        visibility::ProjectionMode,
+    };
+    let input = materialize_value(input)?;
+    let mode = ProjectionMode::parse(
+        input.get("mode").and_then(Value::as_str).unwrap_or("development"),
+    )
+    .ok_or_else(|| HarnessError::corpus("unsupported mode invalid"))?;
+    let registered = if let Some(arr) =
+        input.get("registeredTools").and_then(Value::as_array)
+    {
+        parse_registered_tools(arr)?
+    } else {
+        Vec::new()
+    };
+    let messages =
+        if let Some(arr) = input.get("messages").and_then(Value::as_array) {
+            parse_conversation_items(arr)?
+        } else {
+            Vec::new()
+        };
+    let policy = if let Some(rules) =
+        input.get("policyRules").and_then(Value::as_array)
+    {
+        use siralos_core::tool::capability::CapabilityId;
+        use siralos_core::tool::permission::{
+            PermissionPolicy, PermissionRule, PolicyRule,
+        };
+        let mut prs = Vec::new();
+        for rule in rules {
+            let cap = scenario_string(rule, "capability")?;
+            let dec = scenario_string(rule, "decision")?;
+            let r = match dec.as_str() {
+                "allow" => PermissionRule::Allow,
+                "ask" => PermissionRule::Ask,
+                _ => PermissionRule::Deny,
+            };
+            prs.push(PolicyRule {
+                capability: CapabilityId::parse(&cap)
+                    .map_err(|e| HarnessError::corpus(format!("{e}")))?,
+                rule: r,
+            });
+        }
+        PermissionPolicy::from_rules(prs)
+    } else {
+        siralos_core::tool::permission::PermissionPolicy::default()
+    };
+    let segments = if let Some(arr) =
+        input.get("segments").and_then(Value::as_array)
+    {
+        let mut v = Vec::new();
+        for seg in arr {
+            let stability = match seg.get("stability").and_then(Value::as_str)
+            {
+                Some("stable") => {
+                    siralos_core::projection::segments::Stability::Stable
+                }
+                Some("contextual") => {
+                    siralos_core::projection::segments::Stability::Contextual
+                }
+                Some("volatile") => {
+                    siralos_core::projection::segments::Stability::Volatile
+                }
+                _ => siralos_core::projection::segments::Stability::Stable,
+            };
+            v.push(siralos_core::projection::segments::SegmentInput {
+                id: scenario_string(seg, "id")?,
+                stability,
+                title: seg
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Instructions")
+                    .to_owned(),
+                content: seg
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned(),
+            });
+        }
+        v
+    } else {
+        Vec::new()
+    };
+    let mut service = ProjectionService::new();
+    let req = service.project(ProjectionInput {
+        mode,
+        messages: &messages,
+        registered_tools: &registered,
+        provider_tool_calling: false,
+        capacity: ContextCapacity::default(),
+        pressure_limits: PressureLimits::default(),
+        segments,
+        evidence_options: EvidenceProjectorOptions::default(),
+        allowed_tool_names: None,
+        policy: &policy,
+        task_revision: None,
+    });
+    Ok(json!({
+        "mode": req.mode.as_str(),
+        "blocked": req.blocked.as_ref().map(|b| json!({ "type": b.kind(), "reason": b.message() })),
+        "toolCounts": { "available": req.tool_projection.counts.available, "gated": req.tool_projection.counts.gated, "hidden": req.tool_projection.counts.hidden },
+        "fingerprint": req.tool_projection.fingerprint,
+        "requestTools": req.tool_projection.request_tools.iter().map(|t| Value::String(t.name.clone())).collect::<Vec<_>>(),
+        "estimatedTokens": req.estimated_tokens,
+        "providerCalled": false,
+    }))
+}
+
+fn conversation_item_value(
+    item: &siralos_core::provider::ConversationItem,
+) -> Value {
+    match item {
+        siralos_core::provider::ConversationItem::UserMessage { content } => {
+            json!({ "type": "user_message", "content": content })
+        }
+        siralos_core::provider::ConversationItem::AssistantMessage {
+            content,
+        } => json!({ "type": "assistant_message", "content": content }),
+        siralos_core::provider::ConversationItem::AssistantToolCall {
+            call_id,
+            tool_name,
+            input,
+        } => {
+            if let Some(v) = input.value() {
+                json!({ "type": "assistant_tool_call", "callId": call_id, "toolName": tool_name, "input": v })
+            } else {
+                json!({ "type": "assistant_tool_call", "callId": call_id, "toolName": tool_name })
+            }
+        }
+        siralos_core::provider::ConversationItem::ToolResult {
+            call_id,
+            tool_name,
+            result,
+        } => {
+            json!({ "type": "tool_result", "callId": call_id, "toolName": tool_name, "result": tool_execution_result_value(result) })
+        }
     }
 }
 

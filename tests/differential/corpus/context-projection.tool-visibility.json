@@ -1,0 +1,204 @@
+{
+  "id": "context-projection.tool-visibility",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "tool-visibility",
+        "input": {
+          "mode": "generic",
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "read",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            },
+            {
+              "name": "workspace.write",
+              "description": "write",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.write"
+            },
+            {
+              "name": "network.outbound",
+              "description": "net",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "network.outbound"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            },
+            {
+              "capability": "workspace.write",
+              "decision": "allow"
+            },
+            {
+              "capability": "network.outbound",
+              "decision": "deny"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "tool-visibility",
+        "input": {
+          "mode": "generic",
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "read",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            },
+            {
+              "name": "workspace.search",
+              "description": "search",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "tool-visibility",
+        "input": {
+          "mode": "generic",
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "read",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            },
+            {
+              "name": "workspace.write",
+              "description": "write",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.write"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            },
+            {
+              "capability": "workspace.write",
+              "decision": "ask"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "tool-visibility",
+        "input": {
+          "mode": "generic",
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "read",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            },
+            {
+              "name": "workspace.write",
+              "description": "write",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.write"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            },
+            {
+              "capability": "workspace.write",
+              "decision": "deny"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "tool-visibility",
+        "input": {
+          "mode": "generic",
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "read orig",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "tool-visibility",
+        "input": {
+          "mode": "generic",
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "read changed",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              },
+              "capability": "workspace.read"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

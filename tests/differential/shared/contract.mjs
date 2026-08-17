@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 13;
+export const CORPUS_VERSION = 14;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -29,6 +29,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "domain-capability",
   "provider-turn",
   "tool-loop",
+  "context-projection",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -44,13 +45,14 @@ export const CONTRACT_LIMITS = Object.freeze({
   envKeyBytes: 64,
   envValueBytes: 4 * 1024,
   probeOutputBytes: 1024 * 1024,
-  recordsBytes: 1024 * 1024,
+  recordsBytes: 2 * 1024 * 1024,
   taskInputBytes: 8 * 1024,
   workspaceInputBytes: 64 * 1024,
   languageInputBytes: 64 * 1024,
   domainInputBytes: 64 * 1024,
   providerInputBytes: 64 * 1024,
   toolLoopInputBytes: 64 * 1024,
+  contextProjectionInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -610,6 +612,24 @@ function validateSubjectInputs(scenario, label) {
     validateProviderTurnInput(scenario.input, label);
     return;
   }
+  if (scenario.subject === "context-projection") {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} context-projection inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (
+      byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.contextProjectionInputBytes
+    ) {
+      throw new Error(
+        `${label}.input exceeds ${CONTRACT_LIMITS.contextProjectionInputBytes} UTF-8 bytes`,
+      );
+    }
+    return;
+  }
   if (scenario.subject === "tool-loop") {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
       throw new Error(`${label} tool-loop inputs must use platforms ["*"] and an empty env`);
@@ -662,6 +682,7 @@ export function validateScenario(scenario, file) {
     "domain-capability",
     "provider-turn",
     "tool-loop",
+    "context-projection",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

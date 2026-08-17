@@ -1,0 +1,160 @@
+{
+  "id": "context-projection.pipeline",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "pipeline",
+        "input": {
+          "mode": "generic",
+          "workingMaximum": 32768,
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "r",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            }
+          ],
+          "providerToolCalling": true
+        }
+      },
+      {
+        "kind": "pipeline",
+        "input": {
+          "mode": "generic",
+          "workingMaximum": 100,
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "registeredTools": [],
+          "providerToolCalling": true
+        }
+      },
+      {
+        "kind": "pipeline",
+        "input": {
+          "mode": "generic",
+          "workingMaximum": 100,
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "u1"
+            },
+            {
+              "type": "assistant_message",
+              "content": "a1"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c1",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c1",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r1"
+              }
+            },
+            {
+              "type": "assistant_message",
+              "content": "a2"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c2",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c2",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r2"
+              }
+            },
+            {
+              "type": "user_message",
+              "content": "u2"
+            }
+          ],
+          "registeredTools": [],
+          "providerToolCalling": true
+        }
+      },
+      {
+        "kind": "pipeline",
+        "input": {
+          "mode": "generic",
+          "workingMaximum": 10,
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          ],
+          "registeredTools": [],
+          "providerToolCalling": true
+        }
+      },
+      {
+        "kind": "pipeline",
+        "input": {
+          "mode": "generic",
+          "workingMaximum": 11,
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          ],
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "r",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ],
+          "policyRules": [
+            {
+              "capability": "workspace.read",
+              "decision": "allow"
+            }
+          ],
+          "providerToolCalling": true
+        }
+      }
+    ]
+  }
+}

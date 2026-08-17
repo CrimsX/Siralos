@@ -14,6 +14,7 @@
 pub mod domain;
 pub mod identity;
 pub mod language;
+pub mod projection;
 pub mod provider;
 pub mod task;
 pub mod tool;

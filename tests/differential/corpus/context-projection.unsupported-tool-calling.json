@@ -1,0 +1,99 @@
+{
+  "id": "context-projection.unsupported-tool-calling",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "unsupported-tool-calling",
+        "input": {
+          "mode": "development",
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "r",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "unsupported-tool-calling",
+        "input": {
+          "mode": "review",
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "r",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "unsupported-tool-calling",
+        "input": {
+          "mode": "inspection",
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "r",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "unsupported-tool-calling",
+        "input": {
+          "mode": "planning",
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "hello"
+            }
+          ],
+          "registeredTools": [
+            {
+              "name": "workspace.read",
+              "description": "r",
+              "inputSchema": {
+                "type": "object"
+              },
+              "capability": "workspace.read"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

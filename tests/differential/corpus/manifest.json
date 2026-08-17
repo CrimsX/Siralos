@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 13,
+  "corpusVersion": 14,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -21,6 +21,50 @@
     {
       "file": "checkpoint.undo-plan.json",
       "sha256": "d163c153db0e3d27f224818b077620ff3f57ea9bee461cb06bcd14531bc1172e"
+    },
+    {
+      "file": "context-projection.estimate.json",
+      "sha256": "9c4abbc21b942c84c98acd8ed562be79e0eea0cc9df7fa7460e59b32c54f890e"
+    },
+    {
+      "file": "context-projection.evidence-extra.json",
+      "sha256": "9c2f283e6a179ec3968ef36abc42110e04d10fdf417df0424da466055d9d4c87"
+    },
+    {
+      "file": "context-projection.evidence.json",
+      "sha256": "a2aebf4ff0eceb500cc845ddf7331d3591101fe504087e3f7c64c35a4fbb3b5b"
+    },
+    {
+      "file": "context-projection.fingerprints.json",
+      "sha256": "44d53f4ff8f9179be5fea7ad5ac64374966d2b6060036bc0448e252008283b73"
+    },
+    {
+      "file": "context-projection.hard-block.json",
+      "sha256": "39d9a053084600783ec3774a903a3f716f68e9ac0ebaa6e8a845ef5a120899ba"
+    },
+    {
+      "file": "context-projection.pipeline.json",
+      "sha256": "fb4c7d81897c2d7d0ef29fd457cda5c9bd54c8241191fa2e307c4c2d3f9ede94"
+    },
+    {
+      "file": "context-projection.pressure.json",
+      "sha256": "bedcfe71ba7319aff16fb2ddf6cde9106f2468195895a86f7dc149ae9b8a88a9"
+    },
+    {
+      "file": "context-projection.segments.json",
+      "sha256": "ec3327dcea43ac6d57ee6de6222ef8dd06dc8895550284980ea34e4a4a697bab"
+    },
+    {
+      "file": "context-projection.tool-visibility.json",
+      "sha256": "d87a40df0c68fba5f65f377a4af2bfd0ecefb3713f04a22cb8821e9067e2d613"
+    },
+    {
+      "file": "context-projection.trim.json",
+      "sha256": "bf75b7b8ba3f138da1cf23a234aaebcc10700ca820ceda86443b25b2609236df"
+    },
+    {
+      "file": "context-projection.unsupported-tool-calling.json",
+      "sha256": "5a0b47f68aa1f1091673bb3bb720d1d94a7439d3c358ce62dc1ddd3779283168"
     },
     {
       "file": "domain-capability.denied-no-escalation.json",
@@ -483,5 +527,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "6a5be95acb3ff8a714da39aef206770796987ff8910dc9bd8dd58f4b72246490"
+  "corpusSha256": "b1167a6bdf5cd36db06ae18767e4d8956e098ef7c6d5d5b9f83b8812f16eb607"
 }

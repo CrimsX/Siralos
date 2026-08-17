@@ -1,0 +1,214 @@
+{
+  "id": "context-projection.trim",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "trim",
+        "input": {
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "u1"
+            },
+            {
+              "type": "assistant_message",
+              "content": "a1"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c1",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c1",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r1"
+              }
+            },
+            {
+              "type": "assistant_message",
+              "content": "a2"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c2",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c2",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r2"
+              }
+            },
+            {
+              "type": "user_message",
+              "content": "u2"
+            }
+          ],
+          "maxTokens": 1000
+        }
+      },
+      {
+        "kind": "trim",
+        "input": {
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "u1"
+            },
+            {
+              "type": "assistant_message",
+              "content": "a1"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c1",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c1",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r1"
+              }
+            },
+            {
+              "type": "assistant_message",
+              "content": "a2"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c2",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c2",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r2"
+              }
+            },
+            {
+              "type": "user_message",
+              "content": "u2"
+            }
+          ],
+          "maxTokens": 8
+        }
+      },
+      {
+        "kind": "trim",
+        "input": {
+          "messages": [
+            {
+              "type": "user_message",
+              "content": "u1"
+            },
+            {
+              "type": "assistant_message",
+              "content": "a1"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c1",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c1",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r1"
+              }
+            },
+            {
+              "type": "assistant_message",
+              "content": "a2"
+            },
+            {
+              "type": "assistant_tool_call",
+              "callId": "c2",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "tool_result",
+              "callId": "c2",
+              "toolName": "t",
+              "result": {
+                "status": "success",
+                "output": {},
+                "summary": "r2"
+              }
+            },
+            {
+              "type": "user_message",
+              "content": "u2"
+            }
+          ],
+          "maxTokens": 1
+        }
+      },
+      {
+        "kind": "trim",
+        "input": {
+          "messages": [
+            {
+              "type": "tool_result",
+              "callId": "c1",
+              "toolName": "t",
+              "result": {
+                "status": "failed",
+                "message": "orphan"
+              }
+            }
+          ],
+          "maxTokens": 1
+        }
+      },
+      {
+        "kind": "trim",
+        "input": {
+          "messages": [
+            {
+              "type": "assistant_tool_call",
+              "callId": "c1",
+              "toolName": "t",
+              "input": {}
+            },
+            {
+              "type": "user_message",
+              "content": "u1"
+            }
+          ],
+          "maxTokens": 100
+        }
+      }
+    ]
+  }
+}

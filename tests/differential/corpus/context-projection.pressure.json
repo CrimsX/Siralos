@@ -1,0 +1,93 @@
+{
+  "id": "context-projection.pressure",
+  "subject": "context-projection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      {
+        "kind": "pressure",
+        "input": {
+          "cases": [
+            {
+              "estimatedTokens": 0,
+              "workingMaximum": 32768
+            },
+            {
+              "estimatedTokens": 22937,
+              "workingMaximum": 32768
+            },
+            {
+              "estimatedTokens": 22938,
+              "workingMaximum": 32768
+            },
+            {
+              "estimatedTokens": 27852,
+              "workingMaximum": 32768
+            },
+            {
+              "estimatedTokens": 27853,
+              "workingMaximum": 32768
+            },
+            {
+              "estimatedTokens": 32768,
+              "workingMaximum": 32768
+            },
+            {
+              "estimatedTokens": 33000,
+              "workingMaximum": 32768
+            },
+            {
+              "estimatedTokens": 0,
+              "workingMaximum": 0
+            },
+            {
+              "estimatedTokens": 5,
+              "workingMaximum": -10
+            },
+            {
+              "estimatedTokens": 0,
+              "workingMaximum": 1
+            },
+            {
+              "estimatedTokens": 1,
+              "workingMaximum": 1
+            }
+          ]
+        }
+      },
+      {
+        "kind": "pressure",
+        "input": {
+          "cases": [
+            {
+              "estimatedTokens": 6999,
+              "workingMaximum": 10000
+            },
+            {
+              "estimatedTokens": 7000,
+              "workingMaximum": 10000
+            },
+            {
+              "estimatedTokens": 8499,
+              "workingMaximum": 10000
+            },
+            {
+              "estimatedTokens": 8500,
+              "workingMaximum": 10000
+            },
+            {
+              "estimatedTokens": 9999,
+              "workingMaximum": 10000
+            },
+            {
+              "estimatedTokens": 10000,
+              "workingMaximum": 10000
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
