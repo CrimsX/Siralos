@@ -294,6 +294,7 @@ impl ProjectionService {
                         input.task_revision,
                         &tool_name,
                         &result,
+                        &input.evidence_options,
                     );
                     projected_messages.push(ConversationItem::ToolResult {
                         call_id,
@@ -350,6 +351,7 @@ impl ProjectionService {
         revision: Option<u64>,
         tool_name: &str,
         result: &ToolExecutionResult,
+        options: &EvidenceProjectorOptions,
     ) -> ToolExecutionResult {
         match result {
             ToolExecutionResult::Success { output, summary } => {
@@ -370,12 +372,7 @@ impl ProjectionService {
                         summary: cached.text.clone(),
                     };
                 }
-                let view = project_for_model(
-                    None,
-                    None,
-                    summary,
-                    &self.evidence_options_for_revision(revision),
-                );
+                let view = project_for_model(None, None, summary, options);
                 self.cache.insert(revision, key, view.clone());
                 ToolExecutionResult::Success {
                     output: output.clone(),
@@ -383,12 +380,8 @@ impl ProjectionService {
                 }
             }
             other => {
-                let view = project_for_model(
-                    None,
-                    None,
-                    other.message(),
-                    &self.evidence_options_for_revision(revision),
-                );
+                let view =
+                    project_for_model(None, None, other.message(), options);
                 match other {
                     ToolExecutionResult::InvalidInput { .. } => {
                         ToolExecutionResult::InvalidInput {
@@ -435,14 +428,6 @@ impl ProjectionService {
                 }
             }
         }
-    }
-
-    fn evidence_options_for_revision(
-        &self,
-        _revision: Option<u64>,
-    ) -> EvidenceProjectorOptions {
-        // Default options; callers that need secrets should use the policy-aware entry.
-        EvidenceProjectorOptions::default()
     }
 }
 

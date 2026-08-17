@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use serde_json::{Value, json};
@@ -93,6 +93,58 @@ mod tests {
     }
 
     #[derive(Clone)]
+    struct GrowingDefinitionTool {
+        name: String,
+        cap: CapabilityId,
+        result: ToolExecutionResult,
+        calls: Rc<Cell<usize>>,
+    }
+
+    impl GrowingDefinitionTool {
+        fn new(
+            name: &str,
+            cap: CapabilityId,
+            result: ToolExecutionResult,
+        ) -> Self {
+            Self {
+                name: name.to_owned(),
+                cap,
+                result,
+                calls: Rc::new(Cell::new(0)),
+            }
+        }
+    }
+
+    impl Tool for GrowingDefinitionTool {
+        fn definition(&self) -> ToolDefinition {
+            let description = if self.calls.get() == 0 {
+                format!("tool {}", self.name)
+            } else {
+                "definition-expanded-after-tool-round ".to_owned()
+                    + &"x".repeat(4096)
+            };
+            ToolDefinition {
+                name: self.name.clone(),
+                description,
+                input_schema: json!({"type":"object"}),
+            }
+        }
+
+        fn capability(&self) -> &CapabilityId {
+            &self.cap
+        }
+
+        fn execute(
+            &self,
+            _input: &Value,
+            _c: crate::provider::CancellationSignal<'_>,
+        ) -> ToolExecutionResult {
+            self.calls.set(self.calls.get() + 1);
+            self.result.clone()
+        }
+    }
+
+    #[derive(Clone)]
     struct CaptureProvider {
         events: Vec<ProviderEvent>,
         captured: Rc<std::cell::RefCell<Option<ModelRequest>>>,
@@ -127,6 +179,53 @@ mod tests {
                 system: request.system.clone(),
             });
             self.events.clone().into_iter()
+        }
+    }
+
+    #[derive(Clone)]
+    struct ScriptedCaptureProvider {
+        turns: Vec<Vec<ProviderEvent>>,
+        requests: Rc<RefCell<Vec<ModelRequest>>>,
+        count: Rc<Cell<usize>>,
+    }
+
+    impl ScriptedCaptureProvider {
+        fn new(turns: Vec<Vec<ProviderEvent>>) -> Self {
+            Self {
+                turns,
+                requests: Rc::new(RefCell::new(Vec::new())),
+                count: Rc::new(Cell::new(0)),
+            }
+        }
+    }
+
+    impl ModelProvider for ScriptedCaptureProvider {
+        type Stream<'a>
+            = std::vec::IntoIter<ProviderEvent>
+        where
+            Self: 'a;
+
+        fn id(&self) -> &str {
+            "scripted-capture"
+        }
+
+        fn stream<'a>(
+            &'a self,
+            request: &'a ModelRequest,
+            _c: crate::provider::CancellationSignal<'a>,
+        ) -> Self::Stream<'a> {
+            let index = self.count.get();
+            self.count.set(index + 1);
+            self.requests.borrow_mut().push(ModelRequest {
+                messages: request.messages.clone(),
+                tools: request.tools.clone(),
+                system: request.system.clone(),
+            });
+            self.turns
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| vec![completed()])
+                .into_iter()
         }
     }
     fn completed() -> ProviderEvent {
@@ -709,5 +808,367 @@ mod tests {
         assert!(app.last_projection().is_some());
         assert!(app.last_projection().unwrap().request.blocked.is_some());
         assert_eq!(provider.count.get(), 0);
+    }
+
+    #[test]
+    fn projects_each_provider_turn_from_current_authoritative_history() {
+        let provider = ScriptedCaptureProvider::new(vec![
+            vec![tool_call("c1", "workspace.read"), completed()],
+            vec![text_delta("done"), completed()],
+        ]);
+        let raw_summary = "\u{001b}[31mraw-secret\u{001b}[0m\nline-one\nline-two\nline-three-abcdefghijklmnopqrstuvwxyz";
+        let tool = FixedTool::new(
+            "workspace.read",
+            ws_read(),
+            ToolExecutionResult::Success {
+                output: json!({"value": "raw-output"}),
+                summary: raw_summary.to_owned(),
+            },
+        );
+        let registry =
+            ToolRegistry::new(vec![Box::new(tool) as Box<dyn Tool>]).unwrap();
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            policy_allow(ws_read()),
+            None,
+            None,
+        )
+        .with_projection(
+            ProjectionService::new(),
+            ApplicationProjectionConfig {
+                mode: Some(ProjectionMode::Generic),
+                evidence_options: Some(EvidenceProjectorOptions {
+                    secrets: vec!["raw-secret".to_owned()],
+                    max_total_bytes: 64,
+                    max_line_bytes: 32,
+                }),
+                ..Default::default()
+            },
+        );
+
+        app.send_prompt("hello".to_owned()).unwrap();
+        let events = drain_scripted(&mut app);
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                ToolLoopEvent::ResponseCompleted
+            ))
+        );
+        assert_eq!(provider.count.get(), 2);
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests[0].messages.iter().all(|item| !matches!(
+                item,
+                ConversationItem::ToolResult { .. }
+            ))
+        );
+        assert!(requests[1].messages.iter().any(|item| matches!(
+            item,
+            ConversationItem::ToolResult {
+                result: ToolExecutionResult::Success { summary, .. },
+                ..
+            } if summary.contains("[REDACTED]")
+                && !summary.contains("raw-secret")
+                && !summary.contains('\u{001b}')
+                && summary.contains("[truncated]")
+                && summary.lines().all(|line| line.len() <= 32)
+        )));
+        assert!(requests[1].messages.iter().all(|item| match item {
+            ConversationItem::ToolResult {
+                result: ToolExecutionResult::Success { output, summary },
+                ..
+            } => {
+                !summary.contains("raw-secret")
+                    && !output.to_string().contains("raw-secret")
+            }
+            _ => true,
+        }));
+        let request_two_tools: Vec<_> =
+            requests[1].tools.iter().map(|tool| tool.name.clone()).collect();
+        let last_projection = app.last_projection().unwrap();
+        assert_eq!(last_projection.request.messages, requests[1].messages);
+        assert_eq!(
+            request_two_tools,
+            last_projection.request.tool_projection.approved_names
+        );
+        drop(requests);
+        assert!(app.history().iter().any(|item| matches!(
+            item,
+            ConversationItem::ToolResult {
+                result: ToolExecutionResult::Success { summary, .. },
+                ..
+            } if summary == raw_summary
+        )));
+    }
+
+    #[test]
+    fn refreshed_projection_recomputes_pressure_and_last_projection() {
+        let provider = ScriptedCaptureProvider::new(vec![
+            vec![tool_call("c1", "workspace.read"), completed()],
+            vec![text_delta("done"), completed()],
+        ]);
+        let tool = FixedTool::new(
+            "workspace.read",
+            ws_read(),
+            ToolExecutionResult::Success {
+                output: json!({"value": "result"}),
+                summary: "0123456789".to_owned(),
+            },
+        );
+        let registry =
+            ToolRegistry::new(vec![Box::new(tool) as Box<dyn Tool>]).unwrap();
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            policy_allow(ws_read()),
+            None,
+            None,
+        )
+        .with_projection(
+            ProjectionService::new(),
+            ApplicationProjectionConfig {
+                mode: Some(ProjectionMode::Generic),
+                capacity: Some(ContextCapacity::with_working_maximum(32)),
+                ..Default::default()
+            },
+        );
+
+        app.send_prompt("hello".to_owned()).unwrap();
+        let events = drain_scripted(&mut app);
+
+        assert_eq!(provider.count.get(), 2);
+        let pressure = events.iter().find_map(|event| match event {
+            ToolLoopEvent::ContextPressure {
+                state,
+                estimated_tokens,
+                working_maximum,
+            } => Some((state.clone(), *estimated_tokens, *working_maximum)),
+            _ => None,
+        });
+        let (pressure_state, pressure_tokens, working_maximum) =
+            pressure.expect("the ToolResult must pressure the second request");
+        assert_ne!(pressure_state, "normal");
+        assert_eq!(working_maximum, 32);
+
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 2);
+        assert_ne!(requests[0].messages, requests[1].messages);
+        assert!(
+            requests[1].messages.iter().any(|item| matches!(
+                item,
+                ConversationItem::ToolResult { .. }
+            ))
+        );
+        let last_projection = app.last_projection().unwrap();
+        assert_eq!(last_projection.request.messages, requests[1].messages);
+        assert_eq!(
+            last_projection.request.pressure.state.as_str(),
+            pressure_state
+        );
+        assert_eq!(
+            last_projection.request.pressure.estimated_tokens,
+            pressure_tokens
+        );
+    }
+
+    #[test]
+    fn hard_pressure_after_tool_blocks_the_next_provider_turn() {
+        let provider = ScriptedCaptureProvider::new(vec![
+            vec![tool_call("c1", "workspace.read"), completed()],
+            vec![text_delta("must not be called"), completed()],
+        ]);
+        let raw_summary = "authoritative-large-tool-result ".repeat(512);
+        let tool = GrowingDefinitionTool::new(
+            "workspace.read",
+            ws_read(),
+            ToolExecutionResult::Success {
+                output: json!({"value": "raw-result"}),
+                summary: raw_summary.clone(),
+            },
+        );
+        let calls = tool.calls.clone();
+        let registry =
+            ToolRegistry::new(vec![Box::new(tool) as Box<dyn Tool>]).unwrap();
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            policy_allow(ws_read()),
+            None,
+            None,
+        )
+        .with_projection(
+            ProjectionService::new(),
+            ApplicationProjectionConfig {
+                mode: Some(ProjectionMode::Generic),
+                capacity: Some(ContextCapacity::with_working_maximum(128)),
+                ..Default::default()
+            },
+        );
+
+        app.send_prompt("hello".to_owned()).unwrap();
+        let events = drain_scripted(&mut app);
+
+        assert_eq!(calls.get(), 1, "the first Tool must execute normally");
+        assert_eq!(
+            provider.count.get(),
+            1,
+            "hard second projection blocks provider #2"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    ToolLoopEvent::ToolStarted { .. }
+                ))
+                .count(),
+            1,
+            "no additional Tool may execute after the hard projection"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ToolLoopEvent::ContextPressure { state, .. } if state == "hard"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ToolLoopEvent::ResponseFailed { message }
+                if message.contains("provider call was blocked")
+        )));
+        assert!(app.history().iter().any(|item| matches!(
+            item,
+            ConversationItem::ToolResult {
+                result: ToolExecutionResult::Success { summary, .. },
+                ..
+            } if summary == &raw_summary
+        )));
+        let last_projection = app.last_projection().unwrap();
+        assert_eq!(last_projection.request.pressure.state.as_str(), "hard");
+        assert!(last_projection.request.blocked.is_some());
+        assert!(last_projection.reduced);
+        assert!(last_projection.dropped_items > 0);
+    }
+
+    #[test]
+    fn three_provider_turns_project_all_completed_tool_pairs() {
+        let provider = ScriptedCaptureProvider::new(vec![
+            vec![tool_call("c1", "tool.a"), completed()],
+            vec![tool_call("c2", "tool.b"), completed()],
+            vec![text_delta("done"), completed()],
+        ]);
+        let tool_a = FixedTool::new(
+            "tool.a",
+            cap("tool.a"),
+            ToolExecutionResult::Success {
+                output: json!({"tool": "a"}),
+                summary: "result-a".to_owned(),
+            },
+        );
+        let tool_b = FixedTool::new(
+            "tool.b",
+            cap("tool.b"),
+            ToolExecutionResult::Success {
+                output: json!({"tool": "b"}),
+                summary: "result-b".to_owned(),
+            },
+        );
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool_a) as Box<dyn Tool>,
+            Box::new(tool_b) as Box<dyn Tool>,
+        ])
+        .unwrap();
+        let policy = PermissionPolicy::from_rules([
+            PolicyRule {
+                capability: cap("tool.a"),
+                rule: PermissionRule::Allow,
+            },
+            PolicyRule {
+                capability: cap("tool.b"),
+                rule: PermissionRule::Allow,
+            },
+        ]);
+        let mut app =
+            SiralosApplication::new(&provider, &registry, policy, None, None)
+                .with_projection(
+                    ProjectionService::new(),
+                    ApplicationProjectionConfig {
+                        mode: Some(ProjectionMode::Generic),
+                        ..Default::default()
+                    },
+                );
+
+        app.send_prompt("hello".to_owned()).unwrap();
+        let events = drain_scripted(&mut app);
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                ToolLoopEvent::ResponseCompleted
+            ))
+        );
+        assert_eq!(provider.count.get(), 3);
+        let requests = provider.requests.borrow();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests[0]
+                .messages
+                .iter()
+                .filter(|item| matches!(
+                    item,
+                    ConversationItem::ToolResult { .. }
+                ))
+                .count(),
+            0
+        );
+        assert_eq!(
+            requests[1]
+                .messages
+                .iter()
+                .filter(|item| matches!(
+                    item,
+                    ConversationItem::ToolResult { .. }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests[2]
+                .messages
+                .iter()
+                .filter(|item| matches!(
+                    item,
+                    ConversationItem::ToolResult { .. }
+                ))
+                .count(),
+            2
+        );
+        assert!(requests[2].messages.iter().any(|item| matches!(
+            item,
+            ConversationItem::ToolResult {
+                result: ToolExecutionResult::Success { summary, .. },
+                ..
+            } if summary == "result-a"
+        )));
+        assert!(requests[2].messages.iter().any(|item| matches!(
+            item,
+            ConversationItem::ToolResult {
+                result: ToolExecutionResult::Success { summary, .. },
+                ..
+            } if summary == "result-b"
+        )));
+        let last_projection = app.last_projection().unwrap();
+        assert_eq!(last_projection.request.messages, requests[2].messages);
+    }
+
+    fn drain_scripted(
+        app: &mut SiralosApplication<ScriptedCaptureProvider>,
+    ) -> Vec<ToolLoopEvent> {
+        let mut out = Vec::new();
+        while let Some(event) = app.poll_event() {
+            out.push(event);
+        }
+        out
     }
 }

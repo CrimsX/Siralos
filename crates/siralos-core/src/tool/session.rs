@@ -14,7 +14,7 @@ use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::projection::{
-    BlockedReason, LastProjection, ProjectionInput, ProjectionService,
+    LastProjection, ProjectedRequest, ProjectionInput, ProjectionService,
     capacity::ContextCapacity, evidence::EvidenceProjectorOptions,
     pressure::PressureState, segments::SegmentInput,
     visibility::ProjectionMode,
@@ -229,6 +229,12 @@ struct CollectedTurn {
 enum Phase<'a> {
     Start,
     CollectTurn,
+    // This request is disposable: after a Tool round, the machine returns to
+    // CollectTurn and projects again from the current authoritative history.
+    InvokeProvider {
+        request: ProviderRequest,
+        pressure_pending: bool,
+    },
     EmitText {
         turn: CollectedTurn,
     },
@@ -242,6 +248,11 @@ enum Phase<'a> {
     Done,
 }
 
+enum ProviderRequest {
+    Raw,
+    Projected(Box<ProjectedRequest>),
+}
+
 /// One active prompt response machine.
 struct ResponseMachine<'a, P: ModelProvider> {
     provider: &'a P,
@@ -253,14 +264,6 @@ struct ResponseMachine<'a, P: ModelProvider> {
     completed_tool_rounds: u32,
     provider_turns: u32,
     phase: Phase<'a>,
-    /// When Some, this machine was created via projection: provider receives projected history/tools/system, not raw.
-    projected_history: Option<Vec<ConversationItem>>,
-    projected_tools: Option<Vec<ToolDefinition>>,
-    projected_system: Option<String>,
-    /// Pending context_pressure to emit before the next provider turn.
-    pending_pressure: Option<ToolLoopEvent>,
-    /// When Some, the initial projection was hard/unsupported blocked and provider must not be called.
-    blocked: Option<BlockedReason>,
 }
 
 impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
@@ -279,41 +282,6 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
             completed_tool_rounds: 0,
             provider_turns: 0,
             phase: Phase::Start,
-            projected_history: None,
-            projected_tools: None,
-            projected_system: None,
-            pending_pressure: None,
-            blocked: None,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn with_projection(
-        provider: &'a P,
-        host: HostToolExecutor<'a>,
-        max_tool_rounds: RoundBudget,
-        authoritative_history: Vec<ConversationItem>,
-        projected_history: Vec<ConversationItem>,
-        projected_tools: Vec<ToolDefinition>,
-        projected_system: Option<String>,
-        pending_pressure: Option<ToolLoopEvent>,
-        blocked: Option<BlockedReason>,
-    ) -> Self {
-        Self {
-            provider,
-            host,
-            token: CancellationToken::new(),
-            max_tool_rounds,
-            history: authoritative_history,
-            attempted_tool_rounds: 0,
-            completed_tool_rounds: 0,
-            provider_turns: 0,
-            phase: Phase::Start,
-            projected_history: Some(projected_history),
-            projected_tools: Some(projected_tools),
-            projected_system,
-            pending_pressure,
-            blocked,
         }
     }
 
@@ -321,7 +289,11 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
         self.token.cancel();
     }
 
-    fn next_event(&mut self) -> Option<ToolLoopEvent> {
+    fn next_event(
+        &mut self,
+        mut projection_service: Option<&mut ProjectionService>,
+        projection_config: &ApplicationProjectionConfig,
+    ) -> Option<ToolLoopEvent> {
         loop {
             let phase = std::mem::replace(&mut self.phase, Phase::Done);
             match phase {
@@ -336,79 +308,94 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                         };
                         continue;
                     }
-                    // R7.3: emit pending context_pressure before provider when projected.
-                    if let Some(event) = self.pending_pressure.take() {
-                        // Put back CollectTurn to run after pressure event.
-                        self.phase = Phase::CollectTurn;
-                        return Some(event);
+                    if let Some(service) = projection_service.as_deref_mut() {
+                        let request = self.project_current_provider_turn(
+                            service,
+                            projection_config,
+                        );
+                        let pressure_pending =
+                            request.pressure.state != PressureState::Normal;
+                        self.phase = Phase::InvokeProvider {
+                            request: ProviderRequest::Projected(Box::new(
+                                request,
+                            )),
+                            pressure_pending,
+                        };
+                    } else {
+                        self.phase = Phase::InvokeProvider {
+                            request: ProviderRequest::Raw,
+                            pressure_pending: false,
+                        };
                     }
-                    // R7.3: blocked projection never calls provider.
-                    if let Some(blocked) = self.blocked.clone() {
-                        let message = blocked.message().to_owned();
+                }
+                Phase::InvokeProvider { request, pressure_pending } => {
+                    if self.token.is_cancelled() {
                         self.phase = Phase::Terminal {
-                            event: ToolLoopEvent::ResponseFailed { message },
+                            event: ToolLoopEvent::ResponseCancelled,
                         };
                         continue;
                     }
-                    self.provider_turns += 1;
-                    // Use projected history/tools/system when present (R7.3), else raw (R7.2 fallback).
-                    let (
-                        history_for_provider,
-                        system_for_provider,
-                        definitions,
-                    ): (
-                        &[ConversationItem],
-                        Option<String>,
-                        Vec<ToolDefinition>,
-                    ) = if let Some(ref proj_hist) = self.projected_history {
-                        let tools =
-                            self.projected_tools.clone().unwrap_or_else(
-                                || self.host.provider_tool_definitions(),
-                            );
-                        let system = self.projected_system.clone();
-                        (proj_hist.as_slice(), system, tools)
-                    } else {
-                        let definitions =
-                            self.host.provider_tool_definitions();
-                        (&self.history, None, definitions)
-                    };
-                    let outcome = collect_provider_turn(
-                        self.provider,
-                        history_for_provider,
-                        &definitions,
-                        system_for_provider,
-                        &self.token,
-                    );
-                    match outcome {
-                        TurnOutcome::Cancelled => {
-                            self.phase = Phase::Terminal {
-                                event: ToolLoopEvent::ResponseCancelled,
+                    if pressure_pending {
+                        let (state, estimated_tokens, working_maximum) =
+                            match &request {
+                                ProviderRequest::Projected(request) => (
+                                    request.pressure.state.as_str().to_owned(),
+                                    request.pressure.estimated_tokens,
+                                    request.pressure.working_maximum,
+                                ),
+                                ProviderRequest::Raw => {
+                                    unreachable!(
+                                        "raw provider requests have no pressure"
+                                    )
+                                }
                             };
-                        }
-                        TurnOutcome::Failed { failure } => {
+                        self.phase = Phase::InvokeProvider {
+                            request,
+                            pressure_pending: false,
+                        };
+                        return Some(ToolLoopEvent::ContextPressure {
+                            state,
+                            estimated_tokens,
+                            working_maximum,
+                        });
+                    }
+                    if let ProviderRequest::Projected(projected) = &request {
+                        if let Some(blocked) = &projected.blocked {
+                            let message = blocked.message().to_owned();
                             self.phase = Phase::Terminal {
                                 event: ToolLoopEvent::ResponseFailed {
-                                    message: failure.application_message(),
+                                    message,
                                 },
                             };
-                        }
-                        TurnOutcome::Turn {
-                            assistant_text,
-                            text_deltas,
-                            tool_calls,
-                        } => {
-                            let turn = CollectedTurn {
-                                assistant_text,
-                                text_deltas: text_deltas.into(),
-                                tool_calls,
-                            };
-                            if turn.text_deltas.is_empty() {
-                                self.phase = self.handle_collected_turn(turn);
-                            } else {
-                                self.phase = Phase::EmitText { turn };
-                            }
+                            continue;
                         }
                     }
+                    self.provider_turns += 1;
+                    let outcome = match request {
+                        ProviderRequest::Raw => {
+                            let definitions =
+                                self.host.provider_tool_definitions();
+                            collect_provider_turn(
+                                self.provider,
+                                self.history.as_slice(),
+                                &definitions,
+                                None,
+                                &self.token,
+                            )
+                        }
+                        ProviderRequest::Projected(projected) => {
+                            let projected = *projected;
+                            let definitions = projected.tools;
+                            collect_provider_turn(
+                                self.provider,
+                                projected.messages.as_slice(),
+                                &definitions,
+                                projected.system,
+                                &self.token,
+                            )
+                        }
+                    };
+                    self.phase = self.handle_provider_outcome(outcome);
                 }
                 Phase::EmitText { mut turn } => {
                     match turn.text_deltas.pop_front() {
@@ -445,6 +432,62 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                     return Some(event);
                 }
                 Phase::Done => return None,
+            }
+        }
+    }
+
+    fn project_current_provider_turn(
+        &mut self,
+        service: &mut ProjectionService,
+        config: &ApplicationProjectionConfig,
+    ) -> ProjectedRequest {
+        let registered_tools = self.host.registry.definitions();
+        let projected = service.project(ProjectionInput {
+            mode: config.mode.unwrap_or(ProjectionMode::Generic),
+            messages: &self.history,
+            registered_tools: &registered_tools,
+            provider_tool_calling: config
+                .provider_tool_calling
+                .unwrap_or(true),
+            capacity: config.capacity.clone().unwrap_or_default(),
+            pressure_limits:
+                crate::projection::pressure::PressureLimits::default(),
+            segments: config.segments.clone(),
+            evidence_options: config
+                .evidence_options
+                .clone()
+                .unwrap_or_default(),
+            allowed_tool_names: config.allowed_tool_names.clone(),
+            policy: &self.host.policy,
+            task_revision: config.task_revision,
+        });
+        self.host.surface = Some(ApprovedToolSurface::new(
+            projected.tool_projection.approved_names.clone(),
+        ));
+        projected
+    }
+
+    fn handle_provider_outcome(&mut self, outcome: TurnOutcome) -> Phase<'a> {
+        match outcome {
+            TurnOutcome::Cancelled => {
+                Phase::Terminal { event: ToolLoopEvent::ResponseCancelled }
+            }
+            TurnOutcome::Failed { failure } => Phase::Terminal {
+                event: ToolLoopEvent::ResponseFailed {
+                    message: failure.application_message(),
+                },
+            },
+            TurnOutcome::Turn { assistant_text, text_deltas, tool_calls } => {
+                let turn = CollectedTurn {
+                    assistant_text,
+                    text_deltas: text_deltas.into(),
+                    tool_calls,
+                };
+                if turn.text_deltas.is_empty() {
+                    self.handle_collected_turn(turn)
+                } else {
+                    Phase::EmitText { turn }
+                }
             }
         }
     }
@@ -635,87 +678,23 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
         if matches!(&self.state, AppState::Responding(_)) {
             return Err(PromptStartError::AlreadyResponding);
         }
-        // R7.3 projection path: one projection supplies provider-visible
-        // messages/tools/system + ApprovedToolSurface + lastProjection.
-        // The R7.2 direct path (no projection) preserves legacy filtering.
-        let (machine_history, host) = if let Some(ref mut service) =
-            self.projection_service
-        {
-            // Build the full history including the new user message for projection.
-            let mut full_history = std::mem::take(&mut self.history);
-            full_history.push(ConversationItem::UserMessage { content: text });
-            let config = &self.projection_config;
-            let projected = service.project(ProjectionInput {
-                mode: config.mode.unwrap_or(ProjectionMode::Generic),
-                messages: &full_history,
-                registered_tools: &self.registry.definitions(),
-                provider_tool_calling: config
-                    .provider_tool_calling
-                    .unwrap_or(true),
-                capacity: config.capacity.clone().unwrap_or_default(),
-                pressure_limits:
-                    crate::projection::pressure::PressureLimits::default(),
-                segments: config.segments.clone(),
-                evidence_options: config
-                    .evidence_options
-                    .clone()
-                    .unwrap_or_default(),
-                allowed_tool_names: config.allowed_tool_names.clone(),
-                policy: &self.policy,
-                task_revision: config.task_revision,
-            });
-            // Derive ApprovedToolSurface from the same projection that
-            // supplied provider-visible tools.
-            let approved = ApprovedToolSurface::new(
-                projected.tool_projection.approved_names.clone(),
-            );
-            let host = HostToolExecutor {
-                registry: self.registry,
-                policy: self.policy.clone(),
-                surface: Some(approved),
-            };
-            let pending_pressure =
-                if projected.pressure.state != PressureState::Normal {
-                    Some(ToolLoopEvent::ContextPressure {
-                        state: projected.pressure.state.as_str().to_owned(),
-                        estimated_tokens: projected.pressure.estimated_tokens,
-                        working_maximum: projected.pressure.working_maximum,
-                    })
-                } else {
-                    None
-                };
-            let blocked = projected.blocked.clone();
-            let projected_messages = projected.messages.clone();
-            let projected_tools = projected.tools.clone();
-            let projected_system = projected.system.clone();
-            let machine = ResponseMachine::with_projection(
-                self.provider,
-                host,
-                self.max_tool_rounds,
-                full_history, // authoritative (kept for history ownership)
-                projected_messages,
-                projected_tools,
-                projected_system,
-                pending_pressure,
-                blocked,
-            );
-            // Note: service already stored last_projection; SiralosApplication
-            // delegates last_projection() to it.
-            self.state = AppState::Responding(Box::new(machine));
-            return Ok(());
-        } else {
-            let host = HostToolExecutor {
-                registry: self.registry,
-                policy: self.policy.clone(),
-                surface: self.surface.clone(),
-            };
-            let mut history = std::mem::take(&mut self.history);
-            history.push(ConversationItem::UserMessage { content: text });
-            (history, host)
+        let mut history = std::mem::take(&mut self.history);
+        history.push(ConversationItem::UserMessage { content: text });
+        let host = HostToolExecutor {
+            registry: self.registry,
+            policy: self.policy.clone(),
+            // R7.3 refreshes the surface from the current projection before
+            // each provider request. The direct R7.2 path keeps its caller-
+            // supplied surface unchanged.
+            surface: if self.projection_service.is_some() {
+                None
+            } else {
+                self.surface.clone()
+            },
         };
         let mut machine =
             ResponseMachine::new(self.provider, host, self.max_tool_rounds);
-        machine.history = machine_history;
+        machine.history = history;
         self.state = AppState::Responding(Box::new(machine));
         Ok(())
     }
@@ -727,9 +706,13 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
     /// authoritative history and counters are restored to the
     /// application at that point.
     pub fn poll_event(&mut self) -> Option<ToolLoopEvent> {
-        let event = match &mut self.state {
-            AppState::Idle => return None,
-            AppState::Responding(machine) => machine.next_event(),
+        let event = {
+            let projection_service = self.projection_service.as_mut();
+            match &mut self.state {
+                AppState::Idle => return None,
+                AppState::Responding(machine) => machine
+                    .next_event(projection_service, &self.projection_config),
+            }
         };
         if event.is_none() {
             self.restore_machine();
