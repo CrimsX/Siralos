@@ -45,8 +45,12 @@ configuration, Skills, and explicitly installed Plugins
 > including the authorization, displayInput UTF-16, and Tool-result
 > status matrices); **R7.3 — Projection parity** contract frozen and
 > reconciled with locally pinned terminal-marker precedence; independent
-> review has returned **PASS** — **authorized as the next implementation slice**, not yet
-> implemented in this checkout.
+> review has returned **PASS** — implementation is complete and evidence-backed
+> (13 projection/application integration tests plus 11 required
+> `context-projection` scenarios); **R7.4 — Configuration parity** is a
+> completed Rust candidate pending independent completion review (2 required
+> `user-config` scenarios, corpus version 15, 133 scenario files); R7.5 is
+> not started.
 
 ## Status vocabulary
 
@@ -286,7 +290,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); R7.2 (Application Tool Loop parity) is complete and evidence-backed (16 `tool-loop` scenarios at differential parity); R7.3 (Projection parity) contract frozen and reconciled, terminal-marker precedence pinned locally; independent review **PASS** — **authorized as the next implementation slice**, not yet implemented.
+- **Current:** Stage 3R R7 is Active — R7A behavior extraction and provider-protocol remediation are complete; R7.1 (Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn parity) is complete at differential parity (18 `provider-turn` scenarios); R7.2 (Application Tool Loop parity) is complete and evidence-backed (16 `tool-loop` scenarios at differential parity); R7.3 (Projection parity) is complete and evidence-backed (13 projection/application integration tests plus 11 required `context-projection` scenarios); R7.4 (Configuration parity) is a completed Rust candidate pending independent completion review (2 required `user-config` scenarios, corpus version 15, 133 scenario files); R7.5 is not started.
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

@@ -1,12 +1,17 @@
 # Stage 3R R7 — Provider, Tool Loop, Projection, Configuration, and CLI Behavior Extraction
 
-Status: behavior-extraction record for Stage 3R R7 (implementation not yet
-started). The TypeScript implementation remains the behavioral oracle until
-R12; behavioral parity does not require structural parity (ADR 0032).
+Status: behavior-extraction and acceptance record for Stage 3R R7. R7.3
+Projection parity is complete and evidence-backed; R7.4 Configuration parity
+is a completed Rust candidate pending independent completion review. The
+TypeScript implementation remains the behavioral oracle until R12;
+behavioral parity does not require structural parity (ADR 0032).
 
 This document is the R7 acceptance/evidence design. It freezes the observable
 TypeScript behavioral contract for the five R7 surfaces so that the Rust R7
-implementation is mechanical rather than exploratory. It ports no Rust code.
+implementation is mechanical rather than exploratory. Executable candidate
+implementation and acceptance evidence are recorded in
+`docs/development/RUST_MIGRATION.md`; this document remains the contract and
+review record.
 
 R7A remediation note: this document records one intentional correction to the
 behavioral oracle — **reference protocol hardening discovered during R7
@@ -2017,11 +2022,16 @@ second line-bound exception, (7) provider-visible Tool definitions and
 per-call authorization, (8) projection is disposable model context and grants
 no execution authority, (9) R8/R9 retain Godot-specific semantics,
 (10) R10 retains PhaseContract/full ICM/context-compiler work, and
-(11) no R7.3 Rust implementation currently exists.
+(11) no R7.3 Rust implementation existed at that pre-implementation review
+point.
 
-R7.3 is authorized as the next implementation slice and remains unimplemented
-at this documentation commit; R7.4/R7.5 remain not authorized; R8-R12 remain
-not due; R7 remains Active and is not marked Verified.
+R7.3 Projection parity is complete and evidence-backed (13
+projection/application integration tests and 11 required
+`context-projection` scenarios). R7.4 Configuration parity is a completed
+Rust candidate pending independent completion review (corpus version 15, 133
+scenario files, 128/128 applicable required Windows scenarios matching, four
+explicit platform skips, one accepted informational deviation). R7.5 has not
+started; R8-R12 remain not due; R7 remains Active and is not marked Verified.
 
 ## Acceptance gates for R7 (evidence design)
 
@@ -2056,9 +2066,13 @@ R7.2 — Complete (generic Application Tool Loop parity; corpus version 13,
         domain-neutral CapabilityId; immutable ordered Tool Registry; Tool
         Round one-call/one-result and cancelled-tail pairing; single-flight
         Application loop; closed R7.2 event surface; security review PASS)
-R7.3 — Contract frozen and reconciled; oracle corrected and precedence pinned;
-        independent review PASS — authorized as next implementation slice,
-        not yet implemented
-R7.4-R7.5 — Not authorized
+R7.3 — Complete and evidence-backed (13 projection/application integration
+        tests; 11 required context-projection scenarios; independent review
+        PASS on the contract and implementation lineage)
+R7.4 — Completed Rust candidate pending independent completion review
+        (corpus version 15; 133 scenario files; 128/128 applicable required
+        Windows scenarios matching; four explicit platform skips; one accepted
+        informational deviation)
+R7.5 — Not started
 R8-R12 — Not due
 ```

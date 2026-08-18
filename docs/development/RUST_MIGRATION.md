@@ -392,10 +392,12 @@ event mapping (§13.18).
 This authorization is limited to R7.2: it does not satisfy R7 overall,
 authorize R7.3+ or R8+, or satisfy any Stage-4 entry gate.
 
-Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete (implementation,
-differential parity, cancellation authority review, measurement, acceptance);
-R7.2 Authorized (entry review PASS, contract frozen) — next implementation
-slice; R7.3+ not authorized; R8-R12 not due. R7 is not marked Verified.
+Status at the R7.2 entry-review point: R1-R6 Verified; R7 Active; R7A
+Complete; R7.1 Complete (implementation, differential parity, cancellation
+authority review, measurement, acceptance); R7.2 Authorized (entry review
+PASS, contract frozen) — next implementation slice; R7.3+ not authorized;
+R8-R12 not due. The current status is recorded after the implementation
+sections below; R7 is not marked Verified.
 
 ### R7.2 implementation and acceptance
 
@@ -458,10 +460,10 @@ boundary (and the candidate's instrumentation wrapper); the loop receives
 version 13). No performance claim or benchmark is made.
 
 Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete; R7.2
-Complete (evidence-backed); R7.3 Projection parity contract frozen and
-reconciled, precedence pinned locally; independent review PASS — authorized
-as the next implementation slice, not yet implemented; R7.4-R7.5 not
-authorized; R8-R12 not due. R7 is not marked Verified.
+Complete (evidence-backed); R7.3 Projection parity Complete
+(evidence-backed); R7.4 Configuration parity is a completed Rust candidate
+pending independent completion review; R7.5 is not started; R8-R12 not due.
+R7 is not marked Verified.
 
 ### R7.3 pre-port projection oracle correction closure
 
@@ -476,8 +478,9 @@ Host authority, raw evidence/history, tool result, capability, or provider
 contract.
 
 The corrected TypeScript oracle is the source for a restarted independent
-R7.3 entry review. This closure does not implement R7.3, add a projection
-differential subject, promote the corpus, or authorize R7.3. The latest
+R7.3 entry review. At the time of this historical entry, this closure did
+not implement R7.3, add a projection differential subject, promote the corpus,
+or authorize R7.3. The latest
 verified executable worktree is `4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc`;
 the historical R7.2 verified Rust implementation baseline remains
 `73db8e89c8f670454927ca7ed7554e17d33ea606`. Documentation-only reconciliation
@@ -500,10 +503,10 @@ The follow-up independent review of the integrated remediation lineage
 (`461f290b3d3d778a3bef4d25a895338efcdf315c` and
 `ea145a14a89fb5e6b9e2988eddb97d65d2e37793` reconciled in §14.4 and pinned in
 `8e5384c6b188cbaf314f9e72daa8b89368bbd1c8`) has now returned **PASS** on that
-lineage and the reconciled §14 contract. R7.3 remains contract-frozen and is
-now authorized as the next implementation slice. No R7.3 executable Rust code,
-differential corpus promotion, R7.4/R7.5 work, or R8-R12 work is included at
-this documentation commit.
+lineage and the reconciled §14 contract. At that documentation point, R7.3
+remained contract-frozen and was authorized as the next implementation slice;
+no R7.3 executable Rust code, differential corpus promotion, R7.4/R7.5 work,
+or R8-R12 work was included. The current implementation is recorded below.
 
 ### R7.3 integrated evidence-line oracle remediation
 
@@ -544,9 +547,66 @@ Rust implementation baseline remains
 `73db8e89c8f670454927ca7ed7554e17d33ea606`. The documentation-only
 reconciliation after this executable/test commit is not the executable
 baseline. Independent review of the `461f290`/`ea145a1`/`8e5384c` lineage and
-reconciled §14 contract has now returned PASS; R7.3 is authorized as the next
-implementation slice and remains not yet implemented at this documentation
-commit.
+reconciled §14 contract had returned PASS; R7.3 was authorized as the next
+implementation slice and remained not yet implemented at that documentation
+point. The current implementation and acceptance are recorded below.
+
+### R7.3 implementation and acceptance
+
+R7.3 Projection parity is complete and evidence-backed. The reviewed
+implementation beginning at `8d70f7b2f0dc1b43339dc20b2a986daba6f185d3` was
+closed by `51ed40d` (`fix(core): close R7.3 projection evidence`), which
+removed the vacuous acceptance fallback and replaced the inaccurate policy
+mutation test with a precise projected-surface recheck assertion. The
+focused `siralos-core` projection suite passes 13 application/integration
+tests; the differential corpus carries 11 required `context-projection`
+scenarios. The production path remains disposable projection over
+authoritative history, with no execution authority, mutation, async runtime,
+threads, locks, or new direct dependencies.
+
+The §14.19 proportional measurement is recorded from the reviewed
+implementation range `1a3aceb..8d70f7b`: 3,208 added Rust source-file lines
+in `siralos-core`, no added `siralos-adapters` lines, and 745 added
+`siralos-cli` differential/harness lines; the range removes 43 Core lines and
+3 CLI lines. Those file totals include the reviewed projection test modules
+(`projection_tests.rs` and `adversarial.rs`); the production projection
+surface is the `projection` module plus the integrated `tool/session.rs`
+seam. The range adds no direct Cargo dependency and changes no canonical JSON
+or SHA-256 dependency. Production async runtime, threads, `Arc`, `Mutex`,
+`RwLock`, atomics, and unsafe code: none. Dynamic dispatch remains confined
+to the pre-existing heterogeneous Tool Registry seam; projection itself is
+static. Stateful projection/cache ownership is one application-held
+`ProjectionService` containing one revision-bound cache and one last-
+projection record; provider-turn projections are recomputed from current
+authoritative history. No benchmark is claimed because no projection
+hotspot was established.
+
+Security and architecture review remains PASS: the projected tool schema and
+`ApprovedToolSurface` are derived coherently, per-call authorization is
+rechecked, reduced context never mutates history, and projection never
+grants capability.
+
+### R7.4 configuration parity candidate
+
+R7.4 is implemented as a completed candidate pending independent completion
+review. `siralos-adapters::config` owns the canonical user-config path
+support, lstat/symlink and non-regular-file policy, bounded complete
+EOF-verified reads at the one-MiB bound, UTF-8/JSON parsing, strict nested
+validation, and nonfatal semantic reference diagnostics.
+`siralos-cli::configuration` owns the explicit path override, registered
+`deterministic-fake` review-provider validation, fixed-order diagnostics
+composition, and reference failure reporting. `siralos-core` gains no
+generic configuration subsystem.
+
+The corpus is version 15 with 133 scenario files and two required
+`user-config` scenarios: the matrix covers missing/default and full values,
+unknown top-level/nested keys, invalid enums, installation/reference counts,
+absolute-path rejection, provider registration, invalid JSON, exact/over
+one-MiB boundaries, non-regular files, and nonfatal reference failures; a
+POSIX-only required symlink scenario is explicit and skipped on Windows.
+The current Windows audit holds at 128/128 applicable required scenarios,
+with one accepted informational deviation. R7.5 interactive CLI parity has
+not started.
 
 ## Porting gate
 
