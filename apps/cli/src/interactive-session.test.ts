@@ -901,6 +901,22 @@ describe("runInteractiveSession", { timeout: 30_000 }, () => {
 });
 
 describe("runInteractiveSession tool activity", () => {
+  it("renders the current projection for /context", async () => {
+    const { io, application, sessionInfo } = await createComposedSession([
+      "hello",
+      "/context",
+      "/exit",
+    ]);
+    await runInteractiveSession(io, application, sessionInfo);
+    expect(io.text).toContain("Context projection (mode generic)");
+    expect(io.text).toContain("Stable:");
+    expect(io.text).toContain("Contextual:");
+    expect(io.text).toContain("Volatile:");
+    expect(io.text).toContain("Estimated:");
+    expect(io.text).toContain("Pressure:");
+    expect(io.text).toContain("Tool ABI:");
+  });
+
   it("lists the registered tools with classifications for /tools", async () => {
     const { io, application, sessionInfo } = await createComposedSession(["/tools", "/exit"]);
     await runInteractiveSession(io, application, sessionInfo);
