@@ -1,8 +1,9 @@
 # Stage 3R R7 — Provider, Tool Loop, Projection, Configuration, and CLI Behavior Extraction
 
 Status: behavior-extraction and acceptance record for Stage 3R R7. R7.3
-Projection parity is complete and evidence-backed; R7.4 Configuration parity
-is a completed Rust candidate pending independent completion review. The
+Projection parity and R7.4 Configuration parity are complete and
+evidence-backed; R7.5 `/context` and `/tools` CLI rendering is a completed
+Rust candidate pending independent review. The
 TypeScript implementation remains the behavioral oracle until R12;
 behavioral parity does not require structural parity (ADR 0032).
 
@@ -2027,11 +2028,14 @@ point.
 
 R7.3 Projection parity is complete and evidence-backed (13
 projection/application integration tests and 11 required
-`context-projection` scenarios). R7.4 Configuration parity is a completed
-Rust candidate pending independent completion review (corpus version 15, 133
-scenario files, 128/128 applicable required Windows scenarios matching, four
-explicit platform skips, one accepted informational deviation). R7.5 has not
-started; R8-R12 remain not due; R7 remains Active and is not marked Verified.
+`context-projection` scenarios). R7.4 Configuration parity is complete and
+evidence-backed (corpus version 15, 133 scenario files, 128/128 applicable
+required Windows scenarios matching, four explicit platform skips, one
+accepted informational deviation). R7.5 `/context` and `/tools` CLI
+rendering is a completed Rust candidate pending independent review, with 16
+focused Rust CLI tests and TypeScript oracle coverage; its CLI-owned strings
+add no differential subject. R8-R12 remain not due; R7 remains Active and is
+not marked Verified.
 
 ## Acceptance gates for R7 (evidence design)
 
@@ -2069,10 +2073,11 @@ R7.2 — Complete (generic Application Tool Loop parity; corpus version 13,
 R7.3 — Complete and evidence-backed (13 projection/application integration
         tests; 11 required context-projection scenarios; independent review
         PASS on the contract and implementation lineage)
-R7.4 — Completed Rust candidate pending independent completion review
-        (corpus version 15; 133 scenario files; 128/128 applicable required
-        Windows scenarios matching; four explicit platform skips; one accepted
-        informational deviation)
-R7.5 — Not started
+R7.4 — Complete and evidence-backed (corpus version 15; 133 scenario files;
+        128/128 applicable required Windows scenarios matching; four explicit
+        platform skips; one accepted informational deviation)
+R7.5 — Completed Rust CLI candidate pending independent review
+        (deterministic `/context` and `/tools` rendering; 16 focused Rust CLI
+        tests; TypeScript oracle coverage; no new differential subject)
 R8-R12 — Not due
 ```

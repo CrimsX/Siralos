@@ -40,7 +40,7 @@ function validInput() {
       "Status: Active development",
       "Public stages: 6",
       "Migration track: Stage 3R",
-      "Current completed milestone: R7.3",
+      "Current completed milestone: R7.4",
       "Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity",
       `Last verified commit: ${"a".repeat(40)}`,
       "Canonical repository: https://github.com/CrimsX/Siralos",

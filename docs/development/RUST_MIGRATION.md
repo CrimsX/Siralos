@@ -459,11 +459,11 @@ boundary (and the candidate's instrumentation wrapper); the loop receives
 16 required `tool-loop` scenarios; 120 total scenario files (corpus
 version 13). No performance claim or benchmark is made.
 
-Status: R1-R6 Verified; R7 Active; R7A Complete; R7.1 Complete; R7.2
-Complete (evidence-backed); R7.3 Projection parity Complete
-(evidence-backed); R7.4 Configuration parity is a completed Rust candidate
-pending independent completion review; R7.5 is not started; R8-R12 not due.
-R7 is not marked Verified.
+Status at the R7.2 acceptance point: R1-R6 Verified; R7 Active; R7A
+Complete; R7.1 Complete; R7.2 Complete (evidence-backed); later R7.3+
+slices were not yet implemented at that historical point. The current status
+is recorded in the closure sections below; R7 remains Active and is not
+marked Verified.
 
 ### R7.3 pre-port projection oracle correction closure
 
@@ -586,10 +586,9 @@ Security and architecture review remains PASS: the projected tool schema and
 rechecked, reduced context never mutates history, and projection never
 grants capability.
 
-### R7.4 configuration parity candidate
+### R7.4 configuration parity closure
 
-R7.4 is implemented as a completed candidate pending independent completion
-review. `siralos-adapters::config` owns the canonical user-config path
+R7.4 is complete and evidence-backed. `siralos-adapters::config` owns the canonical user-config path
 support, lstat/symlink and non-regular-file policy, bounded complete
 EOF-verified reads at the one-MiB bound, UTF-8/JSON parsing, strict nested
 validation, and nonfatal semantic reference diagnostics.
@@ -606,7 +605,40 @@ one-MiB boundaries, non-regular files, and nonfatal reference failures; a
 POSIX-only required symlink scenario is explicit and skipped on Windows.
 The current Windows audit holds at 128/128 applicable required scenarios,
 with one accepted informational deviation. R7.5 interactive CLI parity has
-not started.
+now been implemented as a separate CLI candidate; R7.4 remains closed and
+its configuration semantics are unchanged.
+
+### R7.5 CLI context and Tool rendering candidate
+
+R7.5 owns the CLI presentation/composition slice described by the frozen
+§14.14 and §14.17 contract. The executable candidate is implemented in
+`crates/siralos-cli`: the no-argument `siralos` path composes the existing
+R7.4 configuration, deterministic fake provider, read-only workspace Tool
+adapters, R7.2 `PermissionPolicy`, and R7.3 `ProjectionService`. The
+CLI-owned `output` module ports the exact `/context`, `/tools`, and compact
+Tool-projection strings from the TypeScript oracle. It reads the current
+detached `LastProjection`; it does not duplicate projection policy, create a
+second Tool-authority system, or grant capability.
+
+The application loop remains synchronous and Host-owned. Prompt execution
+drains the existing `SiralosApplication` until its terminal restoration,
+including Tool rounds, so subsequent `/context` and `/tools` commands render
+the latest projection rather than a presentation cache. The candidate adds
+no mutation, process, persistence, async, R8/R9, or R10 behavior.
+
+Focused evidence includes 16 Rust `siralos-cli` tests covering uncomputed and
+normal projection output, pressure, hidden/gated/denied rendering, stable
+registration order, empty Tool surfaces, configuration composition, and a
+real Tool-round refresh, plus the TypeScript interactive-session oracle test
+suite (86 tests). The existing 11 required `context-projection`
+differential scenarios remain the typed-value parity evidence; no new
+differential subject is required for CLI-owned strings. The implementation
+commit is `3f47dcd67f5ff70e286409ca6b60341047cdb7e2`, with focused Rust test
+closure in `b867ca7332f7cac4b289e60d4067f6d9eef1a6d2` and focused oracle
+coverage in `d07ae112cd38bed7fa7a089613f297520842e48c`.
+
+R7.5 is a completed Rust candidate pending independent review. R7 remains
+Active and is not marked Verified.
 
 ## Porting gate
 

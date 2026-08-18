@@ -6,18 +6,21 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R7.3
+Current completed milestone: R7.4
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Next implementation slice: R7.4 - Configuration parity (completed Rust candidate pending independent completion review)
-R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn) and R7.2 (generic Application Tool Loop parity) are complete and evidence-backed; R7.3 (Projection parity) is complete and evidence-backed after independent review PASS, with 13 projection/application integration tests and 11 required `context-projection` scenarios; R7.4 (Configuration parity) is a completed Rust candidate pending independent completion review, with 2 required `user-config` scenarios at corpus version 15 and 133 scenario files. R7.5 is not started.
-Last verified commit: 073bf1adee295d5a6af66c0d57cc4ce0ef68880c
-Latest verified executable worktree: 073bf1adee295d5a6af66c0d57cc4ce0ef68880c
+Next implementation slice: R7.5 - `/context` and `/tools` CLI rendering (completed Rust candidate pending independent review)
+R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn), R7.2 (generic Application Tool Loop parity), R7.3 (Projection parity), and R7.4 (Configuration parity) are complete and evidence-backed. R7.3 retains 13 projection/application integration tests and 11 required `context-projection` scenarios; R7.4 retains 2 required `user-config` scenarios at corpus version 15 and 133 scenario files. R7.5 has a completed Rust CLI candidate pending independent review: the real no-argument session composes the existing projection and Tool authority seams, and `/context` plus `/tools` render deterministic current snapshots. R7.5 adds no new differential subject; the existing projection parity remains the behavioral evidence for typed values.
+Last verified commit: b867ca7332f7cac4b289e60d4067f6d9eef1a6d2
+Latest verified executable worktree: b867ca7332f7cac4b289e60d4067f6d9eef1a6d2
 Historical R7.2 verified Rust implementation commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
 Earlier R7.3 Unicode helper correction: 4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc
 R7.3 integrated line-bound production correction: 461f290b3d3d778a3bef4d25a895338efcdf315c
 R7.3 projection evidence closure: 51ed40d9ddad351aea7398a0b7e0069713f5e053
 R7.4 configuration candidate: c93c736217dc9b7c2734afe7e99c8aa56ca60b93 (differential protocol completion: 073bf1adee295d5a6af66c0d57cc4ce0ef68880c)
+R7.5 CLI implementation candidate: 3f47dcd67f5ff70e286409ca6b60341047cdb7e2
+R7.5 focused Rust test closure: b867ca7332f7cac4b289e60d4067f6d9eef1a6d2
+R7.5 focused oracle test: d07ae112cd38bed7fa7a089613f297520842e48c
 Canonical repository: https://github.com/CrimsX/Siralos
 ```
 
@@ -297,15 +300,15 @@ Status changes require executable evidence and an update to
 
 ## 4. Stage 3R migration track
 
-| Milestone | Scope                                                                   | Status                                                                                                                            |
-| --------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified                                                                                                                          |
-| R2        | Differential Behavioral Harness                                         | Verified                                                                                                                          |
-| R3        | Domain-Neutral Core                                                     | Verified                                                                                                                          |
-| R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                                          |
-| R5        | Generic Language Intelligence                                           | Verified                                                                                                                          |
-| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                                          |
-| R7        | Providers / Tools / Projection / CLI                                    | Active (R7.3 complete and evidence-backed; R7.4 completed Rust candidate pending independent completion review; R7.5 not started) |
+| Milestone | Scope                                                                   | Status                                                                                                   |
+| --------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified                                                                                                 |
+| R2        | Differential Behavioral Harness                                         | Verified                                                                                                 |
+| R3        | Domain-Neutral Core                                                     | Verified                                                                                                 |
+| R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                 |
+| R5        | Generic Language Intelligence                                           | Verified                                                                                                 |
+| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                 |
+| R7        | Providers / Tools / Projection / CLI                                    | Active (R7.4 complete and evidence-backed; R7.5 completed Rust CLI candidate pending independent review) |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
 | R10       | H1 / H2 / ICM / H3 parity                                               |

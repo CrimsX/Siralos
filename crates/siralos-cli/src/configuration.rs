@@ -14,7 +14,7 @@ use siralos_adapters::config::{
     read_configuration_diagnostics, reference_configuration_error,
 };
 
-/// The only provider profile registered by the R7.4 candidate.
+/// The only provider profile registered by the R7.4 composition.
 pub const DEFAULT_REVIEW_PROVIDER_ID: &str = "deterministic-fake";
 
 /// Configuration loaded and composed for the CLI bootstrap boundary.
