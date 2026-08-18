@@ -265,5 +265,19 @@ mod tests {
             format_tools(&definitions, &ask)
                 .contains("(read-only, approval required)")
         );
+        let gated_last = last_projection(
+            Vec::new(),
+            ContextCapacity::default(),
+            &definitions,
+            &ask,
+            None,
+        );
+        assert_eq!(
+            format_tool_projection(Some(&gated_last)),
+            format!(
+                "Tool projection: 0 available, 3 gated, 0 hidden (ABI {})\n",
+                &gated_last.request.tool_projection.fingerprint[..8]
+            )
+        );
     }
 }
