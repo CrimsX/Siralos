@@ -164,13 +164,12 @@ impl std::fmt::Debug for ToolRegistry {
     }
 }
 
-/// Host-approved visible Tool surface (the R7.3 projection seam).
+/// Host-approved visible Tool surface produced by R7.3 projection.
 ///
-/// R7.2 implements no projection. This ordered name set is the only
-/// future-compatible seam: when present, a proposed registered Tool
-/// whose name is absent is denied before execution; when absent, the
-/// policy-filtered registry remains the request surface and no
-/// additional guard applies.
+/// When present, a proposed registered Tool whose name is absent is denied
+/// before execution; when absent, the policy-filtered registry remains the
+/// request surface and no additional guard applies. R7.5 only renders this
+/// detached surface and never changes it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApprovedToolSurface {
     names: std::collections::BTreeSet<String>,

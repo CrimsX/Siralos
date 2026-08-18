@@ -1,9 +1,7 @@
 //! Entry point of the `siralos` binary.
 //!
-//! R1 keeps the binary minimal: it proves the executable identity, the
-//! workspace integration, and the dependency direction (`siralos-cli` →
-//! `siralos-adapters` → `siralos-core`) without reproducing the
-//! TypeScript CLI. The interactive terminal session is a later milestone.
+//! The default invocation enters the synchronous R7.5 interactive session;
+//! fixed flags remain deterministic, non-interactive inspection surfaces.
 
 use std::env;
 use std::process::ExitCode;
@@ -13,6 +11,15 @@ use siralos_cli::{Command, parse_args};
 fn main() -> ExitCode {
     let args = env::args_os().skip(1);
     match parse_args(args) {
+        Ok(Command::Interactive) => {
+            match siralos_cli::interactive::run_interactive_stdio() {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("siralos: {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         Ok(Command::Version) => print_version(),
         Ok(Command::Help) => {
             print_usage();
@@ -56,6 +63,8 @@ fn print_usage() -> ExitCode {
          OPTIONS:\n\
          \x20   -h, --help      Print this usage information\n\
          \x20   -V, --version   Print the version\n\
+         \n\
+         With no arguments, start the interactive terminal session.\n\
          \n\
          User state directory: {state_dir}"
     );

@@ -1,9 +1,10 @@
-//! Argument parsing and harness logic for the `siralos` binaries.
+//! Argument parsing, interactive rendering, and harness logic for the
+//! `siralos` binaries.
 //!
-//! R1 exposes only the version and usage surfaces needed to prove the
-//! binary identity and the workspace dependency direction. The
-//! interactive terminal session of the TypeScript reference
-//! implementation is not ported yet.
+//! The default binary path composes the read-only R7.4 configuration,
+//! deterministic provider, workspace Tools, and R7.3 projection before
+//! handing presentation to the CLI-owned interactive session. The
+//! projection and permission semantics remain in `siralos-core`.
 //!
 //! With the internal `differential-harness` feature enabled, the ADR 0033
 //! candidate runner lives in the `harness` module and is exercised by the
@@ -11,6 +12,8 @@
 //! build.
 
 pub mod configuration;
+pub mod interactive;
+pub mod output;
 
 #[cfg(feature = "differential-harness")]
 pub mod harness;
@@ -20,6 +23,8 @@ use std::ffi::OsString;
 /// Outcome of parsing the command line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
+    /// Start the interactive terminal session.
+    Interactive,
     /// Print the version and exit successfully.
     Version,
     /// Print usage and exit successfully.
@@ -39,7 +44,7 @@ where
 {
     let mut args = args.into_iter();
     let Some(first) = args.next() else {
-        return Ok(Command::Help);
+        return Ok(Command::Interactive);
     };
     if args.next().is_some() {
         return Err(UsageError::new("expected at most one argument"));
@@ -92,8 +97,11 @@ mod tests {
     }
 
     #[test]
-    fn no_arguments_prints_help() {
-        assert_eq!(parse_args(args(&[])).expect("valid"), Command::Help);
+    fn no_arguments_starts_interactive_session() {
+        assert_eq!(
+            parse_args(args(&[])).expect("valid"),
+            Command::Interactive
+        );
     }
 
     #[test]

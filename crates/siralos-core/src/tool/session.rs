@@ -655,7 +655,7 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
         Ok(())
     }
 
-    /// Detached last projection snapshot (disposable, for /context).
+    /// Detached last projection snapshot (disposable, for CLI observability).
     pub fn last_projection(&self) -> Option<&LastProjection> {
         self.projection_service.as_ref().and_then(|svc| svc.last_projection())
     }

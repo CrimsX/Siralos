@@ -5,8 +5,9 @@
 //! fingerprints, evidence model-view pipeline, watermark/revision cache,
 //! generic Tool visibility with `ApprovedToolSurface` coupling,
 //! `ProjectionMode`, and the one Host transformation into a
-//! provider-neutral `ProjectedRequest`. No R7.4/R7.5, R8/R9, or R10
-//! semantics are implemented here.
+//! provider-neutral `ProjectedRequest`. R7.5 consumes the detached
+//! observability snapshot at the CLI boundary; no R8/R9 or R10 semantics
+//! are implemented here.
 
 pub mod cache;
 pub mod capacity;
@@ -95,7 +96,7 @@ pub struct ProjectedRequest {
     pub blocked: Option<BlockedReason>,
 }
 
-/// Typed observability snapshot (future `/context` / `/tools`).
+/// Typed observability snapshot for the CLI `/context` and `/tools` views.
 ///
 /// Disposable, detached, non-authoritative.
 #[derive(Debug, Clone, PartialEq)]
@@ -176,7 +177,7 @@ impl ProjectionService {
         self.cache.bound_revision()
     }
 
-    /// Detached last projection snapshot (disposable, for future /context).
+    /// Detached last projection snapshot (disposable, for CLI observability).
     pub fn last_projection(&self) -> Option<&LastProjection> {
         self.last_projection.as_ref()
     }
