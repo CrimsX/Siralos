@@ -32,7 +32,7 @@ repository concepts never satisfy those identifiers by implication.
 | R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified       |
 | R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified       |
 | R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Verified       |
-| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Active         |
+| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Verified       |
 | R8        | Optional Godot Stage-2 parity                                                                                                   | Not due        |
 | R9        | Optional Godot Stage-3 parity                                                                                                   | Not due        |
 | R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Not due        |
@@ -637,8 +637,23 @@ commit is `3f47dcd67f5ff70e286409ca6b60341047cdb7e2`, with focused Rust test
 closure in `b867ca7332f7cac4b289e60d4067f6d9eef1a6d2` and focused oracle
 coverage in `d07ae112cd38bed7fa7a089613f297520842e48c`.
 
-R7.5 is a completed Rust candidate pending independent review. R7 remains
-Active and is not marked Verified.
+### R7 Verified
+
+R7 is **Verified** — R7A through R7.5 all complete and evidence-backed on
+the same verified worktree (`61fbf997d781377b2501af4057920a2064dd8716`). The Wayfinder map
+(`docs/wayfinder/siralos-roadmap.md`) is decision-ready R7.5 → R12 → Stage 4;
+its 8 decisions (01-r7-5-review-rubric through 08-stage4-entry-sequence)
+closed the R7.5 byte-equal vocabulary gap (advisory
+`09-advisory-terminal-sanitizer` closed by
+`crates/siralos-cli/src/sanitize.rs` port of
+`apps/cli/src/output/sanitize.ts` — stateful `push`+`flush`, now 51
+`siralos-cli` tests) and the 7-surface promotion checklist
+(`docs/wayfinder/decisions/02-r7-verified-promotion.md` §2). Corpus v15
+133 files, 128/128 applicable Windows (4 explicit skips, 1 informational
+deviation); Tier-1 matrix is the audit mechanism (local
+`check:differential` is `EPERM` on `stdio:'pipe'` inside DSH, rerun on CI).
+Verified commit `61fbf997d781377b2501af4057920a2064dd8716` is the new `Last verified commit` and
+`Latest verified executable worktree` in `PROJECT_CONTEXT.md`.
 
 ## Porting gate
 

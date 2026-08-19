@@ -50,10 +50,8 @@ configuration, Skills, and explicitly installed Plugins
 > `context-projection` scenarios); **R7.4 — Configuration parity** is
 > complete and evidence-backed (2 required
 > `user-config` scenarios, corpus version 15, 133 scenario files); **R7.5 —
-> `/context` and `/tools` CLI rendering** is a completed Rust candidate
-> pending independent review (deterministic real-session rendering over the
-> existing projection and Tool authority seams; 16 focused Rust CLI tests
-> plus TypeScript oracle coverage); R8+ remain not due.
+> `/context` and `/tools` CLI rendering** — complete and evidence-backed (deterministic real-session rendering over the
+> existing projection and Tool authority seams; 51 focused Rust CLI tests (10 sanitize) plus TypeScript oracle coverage; advisory P2 closed); R7 **Verified** at 61fbf997d781; R8 awaits entry-review.
 
 ## Status vocabulary
 

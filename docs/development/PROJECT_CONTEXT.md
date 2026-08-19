@@ -6,13 +6,13 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R7.4
+Current completed milestone: R7
 Current active milestone: R7
 Next milestone: R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity
-Next implementation slice: R7.5 - `/context` and `/tools` CLI rendering (completed Rust candidate pending independent review)
-R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn), R7.2 (generic Application Tool Loop parity), R7.3 (Projection parity), and R7.4 (Configuration parity) are complete and evidence-backed. R7.3 retains 13 projection/application integration tests and 11 required `context-projection` scenarios; R7.4 retains 2 required `user-config` scenarios at corpus version 15 and 133 scenario files. R7.5 has a completed Rust CLI candidate pending independent review: the real no-argument session composes the existing projection and Tool authority seams, and `/context` plus `/tools` render deterministic current snapshots. R7.5 adds no new differential subject; the existing projection parity remains the behavioral evidence for typed values.
-Last verified commit: b867ca7332f7cac4b289e60d4067f6d9eef1a6d2
-Latest verified executable worktree: b867ca7332f7cac4b289e60d4067f6d9eef1a6d2
+Next implementation slice: R7 Verified — R8 awaits entry-review
+R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn), R7.2 (generic Application Tool Loop parity), R7.3 (Projection parity), R7.4 (Configuration parity), and R7.5 (/context and /tools CLI rendering) are complete and evidence-backed. R7.3 retains 13 projection/application integration tests and 11 required `context-projection` scenarios; R7.4 retains 2 required `user-config` scenarios and R7.5 retains 51 focused siralos-cli tests (10 sanitize) at corpus version 15 and 133 scenario files (128/128 applicable Windows, 4 skips, 1 deviation). R7.5: the real no-argument session composes the existing projection and Tool authority seams over detached LastProjection (sanitized TextDelta via TerminalSanitizer) and renders deterministic current snapshots; no new differential subject — projection parity remains the typed-value evidence.
+Last verified commit: 61fbf997d781377b2501af4057920a2064dd8716
+Latest verified executable worktree: 61fbf997d781377b2501af4057920a2064dd8716
 Historical R7.2 verified Rust implementation commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
 Earlier R7.3 Unicode helper correction: 4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc
 R7.3 integrated line-bound production correction: 461f290b3d3d778a3bef4d25a895338efcdf315c
@@ -308,7 +308,7 @@ Status changes require executable evidence and an update to
 | R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                 |
 | R5        | Generic Language Intelligence                                           | Verified                                                                                                 |
 | R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                 |
-| R7        | Providers / Tools / Projection / CLI                                    | Active (R7.4 complete and evidence-backed; R7.5 completed Rust CLI candidate pending independent review) |
+| R7        | Providers / Tools / Projection / CLI                                    | Verified                                                                                                 |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
 | R10       | H1 / H2 / ICM / H3 parity                                               |
