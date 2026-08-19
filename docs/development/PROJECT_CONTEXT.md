@@ -300,15 +300,15 @@ Status changes require executable evidence and an update to
 
 ## 4. Stage 3R migration track
 
-| Milestone | Scope                                                                   | Status                                                                                                   |
-| --------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified                                                                                                 |
-| R2        | Differential Behavioral Harness                                         | Verified                                                                                                 |
-| R3        | Domain-Neutral Core                                                     | Verified                                                                                                 |
-| R4        | Generic Workspace / Project Foundation                                  | Verified                                                                                                 |
-| R5        | Generic Language Intelligence                                           | Verified                                                                                                 |
-| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified                                                                                                 |
-| R7        | Providers / Tools / Projection / CLI                                    | Verified                                                                                                 |
+| Milestone | Scope                                                                   | Status   |
+| --------- | ----------------------------------------------------------------------- | -------- |
+| R1        | Siralos rename + Rust engineering/domain-neutral foundation             | Verified |
+| R2        | Differential Behavioral Harness                                         | Verified |
+| R3        | Domain-Neutral Core                                                     | Verified |
+| R4        | Generic Workspace / Project Foundation                                  | Verified |
+| R5        | Generic Language Intelligence                                           | Verified |
+| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified |
+| R7        | Providers / Tools / Projection / CLI                                    | Verified |
 | R8        | Godot Stage-2 parity                                                    |
 | R9        | Godot Stage-3 parity                                                    |
 | R10       | H1 / H2 / ICM / H3 parity                                               |
