@@ -2,7 +2,7 @@
 title: "R8 Entry Review — Freeze R8 Contract, Subjects, Measurement"
 label: "wayfinder:grilling"
 type: HITL
-status: open
+status: closed
 blockedBy: ["02-r7-verified-promotion.md"]
 ---
 
