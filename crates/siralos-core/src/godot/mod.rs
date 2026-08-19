@@ -11,10 +11,14 @@
 //! module may name Godot concepts, but no type outside this module may
 //! depend on them.
 
+pub mod api;
 pub mod capabilities;
 pub mod engine_profile;
+pub mod gdscript;
 pub mod installations;
+pub mod knowledge;
 pub mod limits;
+pub mod lsp;
 pub mod project;
 pub mod selection;
 pub mod version;
@@ -34,7 +38,32 @@ pub use installations::{
     GodotInstallationSource,
 };
 
+pub use api::{
+    GodotApiParameter, GodotApiSearchKind, GodotApiSearchQuery,
+    GodotApiSearchRank, GodotApiSearchResult, GodotApiSymbol,
+    GodotApiSymbolDetails, GodotApiSymbolKind, GodotApiType, godot_symbol_id,
+};
+pub use gdscript::{
+    GdScriptDiagnosticSource, GdScriptSeverity, GodotDiagnosticPreview,
+    GodotDiagnosticScripts, GodotGdScriptDiagnostic, GodotScriptCheckTarget,
+};
+pub use knowledge::{
+    GodotKnowledgeCacheValidation, GodotKnowledgeProfileV1,
+    GodotKnowledgeStatus, GodotKnowledgeSupport, KNOWLEDGE_SCHEMA_VERSION,
+    KnowledgeApi, KnowledgeCacheReason, KnowledgeEngine, KnowledgeIndex,
+    KnowledgeState, KnowledgeSupportState, classify_godot_manual_channel,
+    validate_godot_knowledge_cache,
+};
 pub use limits::{GODOT_LIMITS, GodotLimits};
+pub use lsp::{
+    EMPTY_GDSCRIPT_LSP_CAPABILITIES, GdScriptCompletionItem,
+    GdScriptCompletionResult, GdScriptDefinitionLocation,
+    GdScriptDefinitionResult, GdScriptDiagnosticResult,
+    GdScriptDocumentRequest, GdScriptHoverResult, GdScriptHoverSection,
+    GdScriptLspCapabilities, GdScriptNetworkIsolation, GdScriptPosition,
+    GdScriptPositionRequest, GdScriptQueryOutcome, GdScriptSessionState,
+    GdScriptSessionStatus, GdScriptSourceRange,
+};
 pub use project::{
     GodotAutoloadSummary, GodotExecutableContentInventory,
     GodotGDExtensionSummary, GodotLanguageProfile, GodotPluginLanguage,
