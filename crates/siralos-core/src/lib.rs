@@ -12,6 +12,7 @@
 //! rules this crate follows.
 
 pub mod domain;
+pub mod godot;
 pub mod identity;
 pub mod language;
 pub mod projection;

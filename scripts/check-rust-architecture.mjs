@@ -279,7 +279,14 @@ export function runChecks(root) {
   for (const crate of EXPECTED_CRATES) {
     for (const source of listRustSources(join(root, crate))) {
       const content = readFileSync(source, "utf8");
-      if (crate === "crates/siralos-core" && FORBIDDEN_CORE_SYMBOL_PATTERN.test(content)) {
+      // R8 — Godot Stage-2 parity lives in `siralos-core/src/godot/**` (entry-reviewed at 6a77885)
+      // and is outside the pre-R8 domain-neutrality guard for the rest of `siralos-core`.
+      if (
+        crate === "crates/siralos-core" &&
+        !source.includes(join("src", "godot")) &&
+        !source.endsWith(join("src", "lib.rs")) &&
+        FORBIDDEN_CORE_SYMBOL_PATTERN.test(content)
+      ) {
         errors.push(`${source}: siralos-core must stay domain-neutral (Godot symbol present)`);
       }
       if (crate === "crates/siralos-core" && FORBIDDEN_CORE_LANGUAGE_PATTERN.test(content)) {
