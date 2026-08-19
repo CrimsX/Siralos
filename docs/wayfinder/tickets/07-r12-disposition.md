@@ -20,6 +20,7 @@ Resolve:
 Thin decision/template, not the disposition itself.
 
 Blocked by: `06-r11-gate.md`.
+
 ## Resolution
 
 Closed — template frozen in [decisions/07-r12-disposition.md](../decisions/07-r12-disposition.md). Shared evidence 8 rows + retention 5-field vs retirement retained-audits; disposition execution is the future R12 commit (after R11) advancing 8 surfaces atomically. This was blockedBy 06, which closed before this close. This unblocks [Stage 4 Entry Sequence](../tickets/08-stage4-entry-sequence.md) — frontier now includes 08.

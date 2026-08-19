@@ -20,6 +20,7 @@ Resolve:
 - Gate: blocks any real (non-deterministic-fake) provider integration (R11 or earlier); does not block R7.5 PASS.
 
 Priority P2, type AFK. Create-then-wire after R7.5 Review Rubric decision. Linked from that decision's §3.
+
 ## Resolution
 
 Closed — `crates/siralos-cli/src/sanitize.rs` (port of `apps/cli/src/output/sanitize.ts` TerminalSanitizer: caret/C1/Csi/Osc, stateful push+flush, path helper) + lib.rs registration + `crates/siralos-cli/src/interactive.rs:253` wiring (TextDelta via push, flush on Completed/Cancelled, ResponseFailed/ToolFailed via single-call). 10 sanitizer tests + host_vocab neutrality; 51 siralos-cli tests pass. Gate before real provider unblocked.

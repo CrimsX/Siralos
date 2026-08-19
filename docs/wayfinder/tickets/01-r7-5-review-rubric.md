@@ -21,6 +21,7 @@ Resolve:
 Output is a decision, not code: a written rubric a reviewer can execute with `cargo test`, `npm run check:differential`, and string diff inspection. Link rubric to the 4 `siralos-cli::interactive` tests and 3 `output` tests at `crates/siralos-cli/src/`.
 
 Blocked by: none (frontier). Blocks: `02-r7-verified-promotion`.
+
 ## Resolution
 
 Closed — decision recorded in [decisions/01-r7-5-review-rubric.md](../decisions/01-r7-5-review-rubric.md). Advisory follow-up filed as [09-advisory-terminal-sanitizer.md](09-advisory-terminal-sanitizer.md). Frontier now: [02-r7-verified-promotion.md](02-r7-verified-promotion.md) and [03-godot-boundaries-research.md](03-godot-boundaries-research.md).

@@ -21,6 +21,7 @@ Resolve:
 Decision, not promotion commit. Hand the checklist to the review that closes R7.
 
 Blocked by: `01-r7-5-review-rubric.md`.
+
 ## Resolution
 
 Closed — decision recorded in [decisions/02-r7-verified-promotion.md](../decisions/02-r7-verified-promotion.md). Promotion checklist handed to the close review that lands Verified commit V (see decision §5). Blocked successor: none (this ticket unblocks no further ticket — frontier is now [03-godot-boundaries-research.md](03-godot-boundaries-research.md) plus downstream grilling).

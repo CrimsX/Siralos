@@ -21,6 +21,7 @@ Research inside this repo only (no external API):
 Deliver a fact sheet with paths + line pointers (file:line), not a proposal. Branch `research/godot-boundaries` with a context pointer from this ticket.
 
 Blocked by: none (AFK frontier). Needed by: `04-r8-r9-cut`.
+
 ## Resolution
 
 Closed — fact sheet recorded in [decisions/03-godot-boundaries.md](../decisions/03-godot-boundaries.md). Follow-up branch note: local-markdown fallback, no hosted `research/godot-boundaries` branch created. This unblocks [R8 vs R9 Cut](../tickets/04-r8-r9-cut.md) (which was blocked by this + rubric) — frontier now includes 04.

@@ -20,6 +20,7 @@ Resolve:
 Decision only; no R10 design doc.
 
 Blocked by: `01-r7-5-review-rubric.md`.
+
 ## Resolution
 
 Closed — decision recorded in [decisions/05-r10-scope.md](../decisions/05-r10-scope.md). This was unblocked by the rubric (01) and is read-only-only — no code. This unblocks [R11 Gate](../tickets/06-r11-gate.md) (which was blockedBy this ticket) — frontier now includes 06.

@@ -21,6 +21,7 @@ Resolve:
 Decision, not implementation.
 
 Blocked by: `05-r10-scope.md`.
+
 ## Resolution
 
 Closed — decision recorded in [decisions/06-r11-gate.md](../decisions/06-r11-gate.md). Entry requires R7 Verified (02), R8/R9 (04) and R10a-c (05) all Verified + harness schema 3. This was blockedBy 05, which closed before this close. This unblocks [R12 Disposition](../tickets/07-r12-disposition.md) — frontier now includes 07.
