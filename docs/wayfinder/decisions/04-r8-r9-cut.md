@@ -1,0 +1,104 @@
+# Decision — R8 vs R9 Cut — Which Godot Parity Ships in Which Slice?
+
+**Wayfinder ticket:** [R8 vs R9 Cut — Which Godot Parity Ships in Which Slice?](../tickets/04-r8-r9-cut.md) · label `wayfinder:grilling` HITL
+**Map:** [Siralos Roadmap](../siralos-roadmap.md) · label `wayfinder:map`
+**Blocked by:** [R7.5 Review Rubric](../decisions/01-r7-5-review-rubric.md) + [Godot Boundaries Research](../decisions/03-godot-boundaries.md) (both closed)
+**Needed by:** downstream Godot authoring (none yet — R9 is the last Godot migration milestone; R10+ need the boundary intact)
+**Decided:** 2026-08-18 (resolver session, reads of `ROADMAP.md` §2-3, `ARCHITECTURE.md` Godot chapters L385-520, `AGENTS.md:24-26` lean guardrails, `SECURITY.md:210-228` fail-closed posture, and the Godot-boundaries fact sheet at file:line)
+**Status:** Slice boundary frozen — two-row table with fail-closed postures and an explicit "Not in R8/R9" list; no code is written here.
+**Self-loop ledger:** 4 criteria, one implementation pass (verification below)
+
+> Wayfinder **Plan, don't do** — this is a decision, not code. No `crates/siralos-godot` is created, no differential subject lands, no Rust gate advances.
+
+---
+
+## Summary
+
+Split the optional Godot migration into **two ordered slices that respect the existing Rust enforcement and the fail-closed filesystem posture**:
+
+- **R8 — Optional Godot Stage-2 parity** = static understanding + engine-derived read-only validation (discovery, profiling, API knowledge, diagnostics, language session) — providers gain host-mediated read-only tools, but **no execution of the project and no scene/resource mutation**.
+- **R9 — Optional Godot Stage-3 parity** = authored change + review/impact intelligence on top of R8's static understanding (scene/resource modelling, prepared mutation, impact/regression planning, unified `/develop`) — still **fail-closed on every directory-relative create/replace/delete and on every sandboxed process launch**.
+
+Both slices remain **optional-domain, explicitly installed** (lean product — not auto-installed/detected by default in `siralos-core`). R8 is the entry-review gate before any R8 code; R9 is gated by R8 Verified. The boundary uses the same port pattern that already separates `packages/core/src/godot` contracts from `packages/adapters/src/godot` adapters.
+
+---
+
+## 1. Two-row slice table — what ships where, with fail-closed posture
+
+### How to read the table
+
+Each row names a **surface** (model/contract/adapter/CLI), its **Rust owner** (always `cli → adapters → core`, core stays domain-neutral with no Godot symbol — enforced at `scripts/check-rust-architecture.mjs:29-31/282-283`), and the **fail-closed posture** the future differential subject must prove. "Fail-closed" means the subject reports a typed `unavailable` / `unsupported` / `blocked` (never silent success) and performs **no** filesystem mutation or process launch where the cited primitive is unavailable.
+
+| Slice | Surface (models/ports → adapters → CLI) | Rust owner on port | Fail-closed posture the differential subject must prove |
+|-------|------------------------------------------|--------------------|---------------------------------------------------------|
+| **R8** | **Engine discovery & profiling** — version/release/edition/capability models, deterministic selection policy with recorded rationale (`ROADMAP.md:2.1`, `ARCHITECTURE.md:385-416`) + configured-installations + PATH + `.app` bundle discovery + `.godot-version`–style fingerprints + edition classification + static project detection/profiling (re-scan bounded project each inspection, no profile cache) | `siralos-core` — engine-profile/version/edition models + selection policy + `GodotProbeRunner`/`GodotInspector` ports; `siralos-adapters` — discovery, fingerprinting, project scanning; `siralos-cli` — `/godot*` + `--godot-path` flags | Discovery without engine invocation is **available** (read-only directory scan with symlink/junction containment). Probe-dependent selection ranking falls back to static rationale with typed selection — no probe is required. `tests/differential` subject proves discovery finds configured + PATH entries and ignores reparse/symlink escape (R4 containment). |
+| **R8** | **Recovery contracts** — one-time approval model, diagnostic normalization, truthful unavailable reporting (`ROADMAP.md:2.2`) | `siralos-core` — probe/risk models + approval-bound recovery contracts; `siralos-adapters` — risk manifest + diagnostic normalization | Always `unavailable` for any engine-affecting recovery until process launch is mechanically sound — differential proves typed `unavailable` without creating a mirror or deleting anything. See also | general fail-closed row below. |
+| **R8** | **Version-bound API knowledge** — dump model + deterministic symbol identities + query/result + cache-validation + manual-channel (`ROADMAP.md:2.3`, `ARCHITECTURE.md:420-452`) | `siralos-core` — knowledge-profile/API-symbol/query models + knowledge port; `siralos-adapters` — with-docs dump parser + bounded index/lookup | `api-dump` generation via `--dump-extension-api-with-docs` remains `unavailable` — differential subject proves `godot.api_search/lookup` degrade to typed unavailable rather than fabricated knowledge. |
+| **R8** | **GDScript check-only contracts** — diagnostic model, severity/aggregation, script enumeration/hashing, prepared-check digest (`ROADMAP.md:2.4`, `ARCHITECTURE.md:420-452`) | `siralos-core` — diagnostic model + diagnostics port + prepared-check digest contract; `siralos-adapters` — enumeration, hashing, output normalization | `--check-only` execution (`--headless --path <mirror> --script <mirror-script> --check-only`) remains `unavailable` — differential proves `godot.check_script/check_project_scripts` return typed `unavailable` before any approval/mirror, and that `--script` only ever pairs with `--check-only` + mirror `--path` in the fixed runner (no source-workspace `--path`). |
+| **R8** | **Bounded LSP (language session)** — session port/models/limits/preview/digest + framing/JSON-RPC/URI/port-allocation + `godot.lsp_session` + 4 query tools (`ROADMAP.md:2.5`, `ARCHITECTURE.md:452-490`) | `siralos-core` — session port/status/capability models + prepared-session digest; `siralos-adapters` — Content-Length framing, JSON-RPC, `file-uri` mirror mapping, port allocator, fixed LSP runner | LSP startup remains `unavailable` — differential proves `godot.lsp_session` preparation returns typed `unavailable` before approval/sandbox, and that `--lsp-port` only pairs with `--headless --editor --recovery-mode --path <mirror>` (no DAP/scene/import/quit). Only `src/godot/lsp` + `src/sandbox` may import `node:net` (architecture-enforced). |
+| **R8** | **Scene/resource intelligence — read-only** — bounded `.tscn`/`.tres` tokenizer + conservative Variant parser + `GodotSceneModel`/`GodotResourceModel` + relationship index + project settings/autoload/input (`ROADMAP.md:3.8`) | `siralos-core` — typed semantic models; `siralos-adapters` — tokenizer/Variant parser/relationship index | **Available** — static, process-free bounded parse with revision-bound models (`godot.inspect_scene` / `godot.inspect_resource` / `godot.dependencies`). Differential proves bounded truncation, UID/signal/group preservation, and bounded byte accounting. No mutation surface in R8. |
+| **R9** | **Typed scene/resource prepared mutation** — operations, immutable prepared mutations bound to exact source revision + preview + one-time approval + deterministic serialization + post-apply reparse verification + prepare-only provider tools (`ROADMAP.md:3.10`, ADR 0026) | `siralos-core` — mutation operations + prepared-mutation contract (digest-bound, revision-bound); `siralos-adapters` — preparation, serialization, reparse verification | **Fail-closed** — preparation may be modelled, but `apply` and new checkpoint creation remain `unavailable` (`SECURITY.md:210` + `crates/siralos-adapters/src/workspace/fs.rs:4-83` bounded complete read + `checkpoint.rs:745-1039` parent-link escape check). Differential proves revision-mismatch → typed `available` / stale reason, and that raw `.tscn`/`.tres` text-edit fallback is never offered. |
+| **R9** | **Review context & impact intelligence** — `ReviewContextManifest` derivation (primary changes, inherited/instantiated impact, signal consumers/producers, test surfaces, autoload deps, regression areas, honest `runtime_evidence_unavailable`) (`ROADMAP.md:3.9`, ADR 0025) | `siralos-core` — impact/regression models; `siralos-adapters` — scene-dependency derivation from the static read-only index | **Available without execution** — derived from R8's read-only intelligence + bounded diffs. Differential proves honest `runtime_evidence_unavailable` classification where execution would be required. |
+| **R9** | **Unified native development workflow** — one host-owned `/develop` for script-only / native-only / bounded mixed tasks: deterministic surface routing, unified multi-target change sets, dependency-based apply ordering, one checkpoint-then-apply batch re-validating every target, per-surface verification, cross-surface consistency, impact-driven validation, bounded repair, structured blocked dispositions (`ROADMAP.md:3.11`, ADR 0027) | `siralos-core` — workflow model/phases/statuses/evidence; `siralos-adapters` — change-set preparation/executor, orchestration | **Fail-closed** — pre-execution and workflow-start preview remain reader-facing; actual mixed `/develop` execution that would touch the filesystem or launch the engine stays `unavailable` until the R4 commit primitive and private run-directory primitive exist (same two primitives that block R8). Differential proves unified routing without performing any write/launch. |
+| **Both** | **General fail-closed rows (true for every R8/R9 differential subject)** | — | **Process launch:** private run-directory creation/cleanup stays `unavailable` (Node has no directory-relative/mkdirat-style or delete-by-handle primitive — same-user parent swap between verification and create, or cleanup of a substituted object — `SECURITY.md:224`). Every sandboxed process path (knowledge dump, `--check-only`, LSP) reports typed `unavailable` before spawn. **Filesystem mutation:** `workspace.create_file/edit/delete` + checkpoint creation + `/undo` stay `unavailable` before write/approval/checkpoint (`SECURITY.md:210` + R4 hardening `path.rs:138-197` protected paths + `fs.rs`). |
+
+### Differential subject hint (not authoritative — the entry review freezes it)
+
+- R8 subject family (entry-review will name): `godot-discovery`, `godot-knowledge`, `godot-diagnostics`, `godot-lsp`, `godot-scene-resolve` — all with scripted probe/diagnostic/frame fixtures (no engine binary required).
+- R9 subject family: `godot-mutation-prepare`, `godot-mutation-apply` (prove `unavailable` + digest/revision binding), `godot-review-context`, `godot-develop-unified` (routing without execution).
+- The real corpus version bump lands with the entry review, not with this decision.
+
+---
+
+## 2. Not in R8/R9 — explicitly ruled out (per lean freeze)
+
+Per **ADR 0036 lean product, composition, and extension model** (frozen constitution) + **Wayfinder Out of scope** (`docs/wayfinder/siralos-roadmap.md:Out of scope`) + **guardrails** at `AGENTS.md:25-26` / `ROADMAP.md:Not in R8/R9`:
+
+| Ruled out | Why not R8/R9 | Enforcement | If attempted anyway |
+|-----------|---------------|-------------|---------------------|
+| **Placeholder domains** (slice container or synthetic `siralos-godot` crate before R8 entry-review) | Domain lives only through explicit lifecycle install/activate of a conformance-verified Component, not through empty workspace members | `scripts/check-rust-architecture.mjs:29-31` + `246-247` + `crates/siralos-core/src/lib.rs:14-22` mod list (see fact sheet) | Fails `npm run check:rust` before review |
+| **Plugin/marketplace/skill system** (dependency graph, auto-acquisition, marketplace UI) | Lean freeze: `0 plugin marketplaces` (`docs/adr/0036:§36`), `AGENTS.md:25-26` `"no marketplace/plugin ecosystem"` | Architecture check + Wayfinder Out of scope | Fails architecture review by scope |
+| **Auto-installed / auto-detected Godot domain** (implicit engine discovery granting Godot capability) | Godot is explicitly installed via an optional domain — not auto-installed by default | Lean product prose + `AGENTS.md:25` guardrail | Violates explicit-install doctrine |
+| **GUI/TUI, agent teams/Fleet, TaskGraph, Hooks, workflow-engine** machinery | Lean "Future / Not Due — deliberately not committed" in `ARCHITECTURE.md` | Lean constitution + porting gate | Requires fresh ADR + evidence; not part of migration parity |
+| **Real engine probes, API-dump generation, recovery mirrors, game execution, networked diagnosis** | Operational exit for Stage 2 is not met — probes/mirrors faithfully report `unavailable` because no identity-bound exec-by-handle or run-directory primitive exists | `SECURITY.md:26/145/210/224` fail-closed posture + `crates/siralos-adapters/src/workspace/checkpoint.rs:1011-1039` parent-link escape handling | Differential must prove typed `unavailable`, not success |
+| **Raw `.tscn`/`.tres` text-edit fallback** | R9 mutation owns typed operations + deterministic serialization + reparse verification; no raw text fallback is offered (ADR 0026) | `ROADMAP.md:3.10` last sentence | Mutation applying raw text would fail the R9 subject |
+| **Porting major subsystems ahead of R7** | R7 must become `Verified` before R8 entry-review begins; no Godot package before that gate | Wayfinder `blockedBy` wiring (this ticket unblocks no implementation — implementation still waits on R7 Verified) | Rejected at planning |
+
+---
+
+## 3. Boundary invariants that survive the cut
+
+These do not change across R8 → R9, and any differential corpus for either slice must reassert them:
+
+1. `cli → adapters → core` **direction** and `siralos-core` **no Godot symbol** (`check-rust-architecture` PASS on every slice).
+2. `siralos-core` **has no `pub mod godot`** until a real port — if/when ported, the module stays model/port contracts only; discovery/invocation/parsing stay in adapters.
+3. The **single private `fixedProbeArguments` constructor** remains the only `--dump-extension-api`/`--version` source (no concatenated arrays, no imported argument sets — architecture-enforced).
+4. The **`--script` pairs with `--check-only`** discipline (`ARCHITECTURE.md` check-only section) survives — no `.tscn`-driving engine call appears.
+5. The **LSP `--lsp-port` pairing** with `--editor --recovery-mode` survives.
+6. **R4 hardening**: traversal rejection, bounded complete exact reads (no short-read EOF), and parent-link escape containment remain the typed authority for every file the Godot intelligence touches.
+
+---
+
+## 4. Runnable next step — not code, but the entry-review gate
+
+This decision becomes **actionable** only after **R7 Verified** (decision 02's promotion checklist). The next executable act is the **R8 entry review** (mirrors `R7.3 Projection parity §14` — contract freeze + authorization before any R8 code). The Wayfinder frontier after this close is: R10/R11/R12 tickets remain blocked pending their parents; no R8 code is authorized yet.
+
+---
+
+## Self-loop verification (this decision)
+
+| Criterion | Direct evidence | Status |
+|-----------|-----------------|--------|
+| R8 surfaces identified (which Godot surfaces ship) | §1 rows for discovery, recovery, API knowledge, check-only, bounded LSP, read-only scene/resource — each cited to `ROADMAP.md:2.x` + `ARCHITECTURE.md` L385 section + read of `RUST_MIGRATION.md` head | pass |
+| R9 surfaces identified (which scene/resource/post-R8 surfaces ship) | §1 rows for prepared mutation, review/impact, unified workflow — each cited to `ROADMAP.md:3.9-3.11` + ADRs 0025-0027 | pass |
+| Fail-closed posture per surface stated | §1 "Fail-closed posture" column + "General fail-closed rows" cites `SECURITY.md:210/224` + `path.rs:138-197` + `fs.rs` + `checkpoint.rs:1011-1039` — typed `unavailable` without filesystem mutation or process launch | pass |
+| Not-in-R8/R9 list explicit with enforcement | §2 seven-item table + quotes from `AGENTS.md:25-26` / ADR 0036 §36 + enforcement via `check:rust` pattern | pass |
+| Slice table with differential hint | §1 two-row table (6 R8 rows + 3 R9 rows) + §1 differential subject hint; entry-review freeze noted as authority | pass |
+
+Evidence ladder: L1 reads of `ROADMAP.md`, `ARCHITECTURE.md`, `SECURITY.md`, `AGENTS.md`, fact sheet; L3 architecture guards; L4 diff inspection. No executable code or filesystem mutation.
+
+---
+
+## Out of scope for this decision (per lean ADR 0036)
+
+No implementation, no corpus bump, no new crate, no `siralos-godot` placeholder. The real differential subject freeze and measurement lands with the **R8 entry review**, which itself waits on **R7 Verified**. General Hooks, multi-agent machinery, TaskGraph, workflow engines, marketplaces, GUI/TUI, and placeholder domains remain Future / Not Due.

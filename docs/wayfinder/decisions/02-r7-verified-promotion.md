@@ -1,0 +1,149 @@
+# Decision — R7 Verified Promotion — What Closes R7 Active?
+
+**Wayfinder ticket:** [R7 Verified Promotion — What Closes R7 Active?](../tickets/02-r7-verified-promotion.md) · label `wayfinder:grilling` HITL
+**Map:** [Siralos Roadmap](../siralos-roadmap.md) · label `wayfinder:map`
+**Blocked by:** [R7.5 Review Rubric — When Is the /context + /tools Candidate PASS?](../decisions/01-r7-5-review-rubric.md) (frozen rubric §1-§5)
+**Decided:** 2026-08-17 (resolver session, interactive review of `RUST_MIGRATION.md` / `PROJECT_CONTEXT.md` / `ROADMAP.md` / `AGENTS.md` / `README.md` / `scripts/check-project-context.mjs` at HEAD `3814e1f`)
+**Status:** Definition of Done frozen — executable by any executor
+**Self-loop ledger:** 5 criteria, one implementation pass (verification below)
+
+> Wayfinder **Plan, don't do** — this is a decision, not a promotion commit. No status surface is advanced here; the checklist is handed to the review that closes R7.
+
+---
+
+## Summary
+
+**R7 Verified** means **R7A + R7.1 + R7.2 + R7.3 + R7.4 + R7.5 are all complete and evidence-backed on the same verified worktree**, with no open defect and with the exact gate artefacts below observed PASS on that worktree. R7 Verified **does not authorize R8** — R8 requires its own entry-review gate mirroring R7.3 §14, and the Verified wording must not imply Stage 4 readiness.
+
+---
+
+## 1. Definition of Done — gate artefacts per slice
+
+Every slice must satisfy the porting gate (`RUST_MIGRATION.md` § Porting gate: behavior extraction → idiomatic Rust design → differential/effect parity → security/architecture review → measurement → milestone acceptance). The **complete local repository gate** is the union; a single failing gate fails R7.
+
+| Slice | Status at this decision | Corpus / code evidence | Gates that must be observed PASS on the **same worktree** (the future Verified commit) |
+|-------|------------------------|------------------------|-------------------------------------------------------------------------------------------|
+| **R7A** — Behavior extraction & provider-protocol remediation | Complete, frozen in `docs/development/R7_BEHAVIOR_EXTRACTION.md` (five surfaces §2-§10 + bounding §5.1 + failure taxonomy §4). Reference protocol hardening: both collectors reject unknown/malformed discriminators (F28-F29) with regression coverage. Corpus **unchanged** at extraction (version 11, schema 3, 86 files). | Verified baseline `99ee902c1c61927070f1249ee16aa276eff24b2b` — that worktree passed the full gate before any R7.1 code landed. | Document frozen + `cargo fmt` / `clippy` / `cargo test` / `check:rust` / `check:architecture` / `check:differential` all green on that baseline (recorded in `RUST_MIGRATION.md` R7 is Active paragraph). No new artefact required now — the freeze is the boundary. |
+| **R7.1** — Provider Contract + Deterministic Fake Provider + Bounded Single Model Turn | Complete, differential parity | `siralos-core::provider` (provider-neutral types, `validate_external_event` trust boundary, 7 frozen turn dimensions, `BoundedTurnState`) + `siralos-adapters::provider` (id `deterministic-fake`, 16-code-point echo that never splits a scalar) | Corpus **version 12 → 104 files, 18 `provider-turn` required scenarios**. Final executable `bd335190696f3662e242407c89d7821483d7fa24` (cancellation-authority remediation — providers/Tools receive only read-only `CancellationSignal`). Same gates as above + 69 core + 34 adapter provider unit tests. No new gate now. |
+| **R7.2** — Application Tool Loop | Complete, differential parity | `siralos-core::tool` (`CapabilityId` validated, permission evaluator allow/ask/deny, immutable registration-ordered `ToolRegistry`, one generic Tool seam, approved-visible-surface guard, Tool Round one-call/one-result + cancelled-tail, synchronous pull-based single-flight loop with `DEFAULT_MAX_TOOL_ROUNDS=8` / `MAX=32` clamping, closed R7.2 event set) + `siralos-adapters::tool` (`workspace.list/read/search` over R4 primitives) | Corpus **version 13, 120 files, 16 `tool-loop` required scenarios** (incl. authorization allow/deny/ask-plain, displayInput UTF-16 200/201/supplementary, Tool-result status matrix). Historical Rust baseline `73db8e89c8f670454927ca7ed7554e17d33ea606`. Security review §13.21 PASS. Same full gate. |
+| **R7.3** — Projection | Complete and evidence-backed (independent review PASS) | `siralos-core::projection` (capacity/estimator/pressure/reduction/segments/evidence/visibility, Unicode-scalar boundary fix `4b805d4`, integrated line-bound `461f290`, terminal-marker precedence `ea145a1`) + `siralos-core::tool::session` seam | **13** `siralos-core` projection/application integration tests + **11** required `context-projection` differential scenarios. Verified closure `51ed40d9ddad351aea7398a0b7e0069713f5e053` (removed vacuous fallback, precise projected-surface recheck). Same full gate. |
+| **R7.4** — Configuration | Complete and evidence-backed | `siralos-adapters::config` (bounded complete EOF-verified reads at 1 MiB, strict nested validation, nonfatal reference diagnostics) + `siralos-cli::configuration` (explicit path override, `deterministic-fake` review-provider validation, fixed-order diagnostics) | Corpus **version 15, 133 scenario files, 2 required `user-config` scenarios**. Windows audit **128/128 applicable required scenarios**, 4 explicit platform skips (POSIX symlink), 1 accepted informational deviation. Candidates `c93c736217dc9b7c2734afe7e99c8aa56ca60b93` / `073bf1adee295d5a6af66c0d57cc4ce0ef68880c`. Same full gate. |
+| **R7.5** — `/context` and `/tools` CLI rendering | Completed Rust candidate **pending independent review** → becomes *complete and evidence-backed* only when the rubric in [R7.5 Review Rubric](../decisions/01-r7-5-review-rubric.md) §1-§5 is observed PASS on one worktree | `crates/siralos-cli` (`interactive.rs` no-arg composition of R7.4 config + deterministic provider + workspace Tools + R7.2 permission + R7.3 projection; `output.rs` exact `/context`/`/tools` strings over detached `LastProjection`; synchronous Host-owned loop, no mutation/process/persistence/async) | **No new differential subject** — typed-value evidence remains the 11 `context-projection` scenarios; string evidence is the **16** focused `siralos-cli` tests (4 interactive + 3 output + 3 configuration + 6 lib) + TS oracle `"renders the current projection"` (`d07ae11`). Implementation `3f47dcd67f5ff70e286409ca6b60341047cdb7e2`, Rust test closure `b867ca7332f7cac4b289e60d4067f6d9eef1a6d2`, oracle `d07ae112cd38bed7fa7a089613f297520842e48c`. Same full gate, judged by the §1 rubric (byte-equal vocabulary, fingerprint 8-char, ratio rounding, etc.). |
+
+**The Verified worktree is the reconciliation commit that lands after the rubric §1-§5 is observed PASS.** Its SHA becomes the single new Verified pointer (see §2). All six slices must be green on *that* worktree — cherry-picking per-slice SHAs does not satisfy R7.
+
+**Mandatory gate command set (the close review runs these, not narration):**
+
+```text
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked          # expect 41 siralos-cli + 326 siralos-core (+ harness) passed
+cargo test -p siralos-cli --all-features --locked       # expect 41 passed focus
+npm run check:architecture                               # "Architecture check passed."
+npm run check:rust                                       # "Rust architecture check passed."  (core domain neutrality, cli → adapters → core)
+npm run check:differential   # outside DSH partial sandbox — on Tier-1 CI: 128/128 applicable, 4 skips, 1 deviation, corpus v15 133
+npm run check                                         # full gate: format, lint, typecheck, unit/integration, architecture, identity, Rust, differential
+```
+
+`npm run check:differential` is expected **EPERM** inside the DSH `workspace-write` partial sandbox (topic `stdio:'pipe'` capture); Tier-1 CI outside the sandbox retains the audit — mark `unknown` locally until CI rerun, never as PASS.
+
+---
+
+## 2. Status documents that must atomically advance on PASS
+
+The promotion is **one commit** that advances all 7 surfaces below. A partial advance is a drift and fails the promotion review.
+
+| Surface | File:line(s) | Exact change on promotion (Verified commit = `V`) | Why atomic |
+|---------|--------------|------------------------------------------------------|------------|
+| **PROJECT_CONTEXT head** | `docs/development/PROJECT_CONTEXT.md:1-22` fenced block | `Current completed milestone: R7.4` → `R7` · `Next implementation slice: R7.5 - \`/context\` and \`/tools\` CLI rendering (completed Rust candidate pending independent review)` → `R8 - Optional Godot Stage-2 parity (authorized as next slice; behavior extraction frozen — awaits implementation)` *or* `R7 Verified — R8 awaits entry-review` (choose the phrasing decided in the next map's R8 entry-review ticket; do not claim R8 implementation). Update prose paragraph to `R7.5 … is complete and evidence-backed` (drop "completed Rust candidate pending independent review"). **Metadata:** `Last verified commit: b867ca7` → `V`; `Latest verified executable worktree: b867ca7` → `V`. Keep historical pointers (R7.2 `73db8e8` … R7.4 `c93c736`/`073bf1a`) and add `R7 Verified: V` + retain `R7.5 CLI implementation candidate: 3f47dcd` / `focused Rust test closure: b867ca7` / `oracle: d07ae11` lines. | Wayfinder destination §2: executor must see correct frontier without rediscovery. |
+| **PROJECT_CONTEXT table** | `docs/development/PROJECT_CONTEXT.md:300-314` Stage 3R migration track table | Row `R7` Status `Active (R7.4 complete and evidence-backed; R7.5 completed Rust CLI candidate pending independent review)` → `Verified`. Rows `R8`- `R12` remain `Not due` (or `Active — entry-review authorized` only if the R8 ticket has closed). | Table is the machine-readable status. |
+| **RUST_MIGRATION R7 tail** | `docs/development/RUST_MIGRATION.md:386-410` § R7.5 candidate → § R7 Verified | Replace the closing `R7.5 is a completed Rust candidate pending independent review. R7 remains Active and is not marked Verified.` with a **R7 Verified** paragraph: Verified commit `V`, corpus v15 133, 128/128 audit, 16 CLI tests + 11 projection scenarios, rubric [01-r7-5-review-rubric.md](../decisions/01-r7-5-review-rubric.md) §1-§5 observed, security advisory [09-advisory-terminal-sanitizer.md](../tickets/09-advisory-terminal-sanitizer.md) filed (P2). Keep all prior slice paragraphs intact (R7A-R7.4) as history — do not delete endpoints. | Historical endpoints are evidence; Verified must preserve them. |
+| **ROADMAP R7 row** | `ROADMAP.md:118-150` "Stage 3R is active." bullet | Tail sentence `R7.4 Configuration parity is complete … R7.5 … pending independent review; R8+ remain not due.` → `R7 is Verified — R7A-R7.5 complete and evidence-backed (corpus v15, 133 scenario files, 128/128 applicable; advisory P2 filed); R8 awaits entry-review (or "R8 authorized as next slice" if that ticket has closed); R8+ otherwise Not due.` Also update § Next tail: `Current: Stage 3R R7 is Active (R7A … R7.4 … R7.5 is not started)` → `Current: Stage 3R R7 is Verified (R7A-R7.5 complete and evidence-backed); Next: R8 – entry-review.` | Public stage truth. |
+| **README status** | `README.md:40-50` status badge area | `R7.5 — \`/context\` and \`/tools\` CLI rendering is a completed Rust candidate pending independent review` → `R7 — Verified (R7A-R7.5 complete and evidence-backed; corpus v15, 133 files); R8+ Not due`. Keep lean disclaimer. | Public landing page. |
+| **AGENTS current impl** | `AGENTS.md:26-32` "Stage 3R R7.x is complete" paragraph | Advance R7.4 last sentence from candidate wording and R7.5 from `pending independent review` to `complete and evidence-backed — R7 Verified (`V`)`. Preserve R7.1-7.3 wording and "implements no …" guardrails. | Executor bootstrap. |
+| **check-project-context hash** | `scripts/check-project-context.mjs: REQUIRED_METADATA` + `scripts/check-project-context.test.mjs` | `["Current completed milestone", "R7.4"]` → `["Current completed milestone", "R7"]` and update the test expectation SHA block to include `V`. The check enforces `Last verified commit must be a full lowercase Git object ID` and that it resolves via `git cat-file -e`. | Ratchet — future PRs fail if metadata drifts. |
+
+**Conventional commit title for the promotion:** `docs: promote R7 to Verified (\V)` (or `chore(release): R7 Verified` if the repo's release convention requires it) — body must list the 7 surfaces and the corpus 128/128 audit SHA.
+
+---
+
+## 3. Does R7 Verified authorize R8?
+
+**No.** R7 Verified **does not** authorize R8 implementation.
+
+R8 requires its own **entry-review gate** mirroring `R7.3 Projection parity` §14 (restarted independent review with PASS on frozen contract). The porting gate (`RUST_MIGRATION.md` § Porting gate + § Lean porting discipline ADR 0036) applies to every R3-R11 subsystem:
+
+```text
+behavior extraction
+-> idiomatic Rust design
+-> differential and effect parity
+-> security and architecture review
+-> measurement
+-> milestone acceptance
+```
+
+Practical consequence: after R7 Verified the next authorized work is **R8 behavior extraction + entry review** (the Wayfinder tickets [R8 vs R9 Cut](../tickets/04-r8-r9-cut.md) and [R10 Scope](../tickets/05-r10-scope.md) depend on it), not R8 code. Creating `crates/siralos-godot` or wiring Godot types into `siralos-core` before that entry review is out of scope and fails the architecture check (`npm run check:rust` domain neutrality + `cli → adapters → core` direction).
+
+The Wayfinder map's next frontier after this ticket remains [R8 vs R9 Cut](../tickets/04-r8-r9-cut.md) (blocked by rubric + [Godot Boundaries Research](../tickets/03-godot-boundaries-research.md)) — that ordering is correct and must not be jumped.
+
+---
+
+## 4. Lean wording guardrail — do not imply Stage 4
+
+The Verified prose on every surface must **forbid Stage 4 readiness implication**. Use this frozen sentence verbatim (or a prefix of it) and reference the actual gates:
+
+> **Stage 4 (Controlled Execution) remains Not started and begins only after R1-R11, the Stage 1-3 migration audit, R12's retirement/retention disposition, and the Stage-4 entry gate (`docs/development/stage4-entry-gate.md`) all pass — R7 Verified satisfies none of those (RUST_MIGRATION.md § Stage 4 entry; ARCHITECTURE.md lean product vision ADR 0036).**
+
+Guidelines:
+
+- Never write `"ready for Stage 4"`, `"unlocks Stage 4"`, or `"Stage 4 entry authorized"` in a R7 Verified commit or doc.
+- Stages 4-6 remain staged product direction subject to evidence, not guaranteed implementation commitments — re-state that vocabulary from `ROADMAP.md` § "future stages 4-6".
+- Keep the advisory note: `TerminalSanitizer` advisory [09-advisory-terminal-sanitizer.md](../tickets/09-advisory-terminal-sanitizer.md) is P2 and blocks any real provider (R11 or earlier), not R7.
+
+Violating this guardrail fails the promotion review even if all gates are green.
+
+---
+
+## 5. Executable promotion checklist — the close review runs these
+
+An executor claims **R7 Verified** only after every line prints **PASS** on the **same worktree** that becomes `V`:
+
+```text
+# 1. Rubric must still be green (from decision 01)
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test -p siralos-cli --all-features --locked       # 41 passed, 1 ignored (focus)
+cargo test --workspace --all-features --locked          # 41 siralos-cli + 326 siralos-core passed
+npm run check:architecture                               # "Architecture check passed."
+npm run check:rust                                       # "Rust architecture check passed."
+grep -F "Context projection: not yet computed" crates/siralos-cli/src/output.rs apps/cli/src/output/context.ts   # byte-equal
+grep -F "Tool projection: not yet computed" crates/siralos-cli/src/output.rs apps/cli/src/output/context.ts
+grep -F "Tool ABI:" crates/siralos-cli/src/output.rs apps/cli/src/output/context.ts
+
+# 2. Full repository gate on the promotion commit itself (outside DSH partial sandbox on CI)
+npm run check:differential   # Tier-1 CI matrix: 128/128 applicable, 4 skips, 1 deviation, corpus v15 133 (EPERM inside DSH = unknown, rerun on CI)
+npm run check                # format, lint, typecheck, unit/integration, architecture, identity, Rust, differential — all green
+npm run check:architecture && npm run check:rust && npm run check:identity
+```
+
+Then verify the 7 surfaces in §2 have advanced atomically on that commit and that §4 lean sentence is present. Record `V` and the differential audit SHA in `RUST_MIGRATION.md` and `PROJECT_CONTEXT.md`.
+
+---
+
+## Self-loop verification (this decision)
+
+| Criterion | Direct evidence | Status |
+|-----------|-----------------|--------|
+| Definition of Done for R7 per slice | §1 table lists all 6 slices with code owners (`siralos-core::provider/tool/projection`, `siralos-adapters::config/provider/tool`, `siralos-cli`), corpus versions (v12/104→ v13/120 → v15/133), and required scenario counts (18, 16, 11, 2) + gate set (fmt, clippy -D warnings, cargo test, check:rust/arch, differential 128/128, check) | pass |
+| Status documents atomically | §2 enumerates 7 surfaces with file:line and exact before→after diffs (PROJECT_CONTEXT head + table + RUST_MIGRATION tail + ROADMAP row + README + AGENTS + check-project-context hash) | pass |
+| R8 authorization answer | §3 answers "No" and cites porting gate + R7.3 §14 entry-review precedent + Wayfinder blockedBy wiring (04 needs 01+03) | pass |
+| Lean guardrail | §4 provides verbatim frozen sentence referencing `stage4-entry-gate.md` + ADR 0036 + stages 4-6 vocabulary; bans "ready for Stage 4" phrasing | pass |
+| Promotion checklist executable | §5 lists pasteable commands with expected outputs and SHA placeholders; verified here by `cargo fmt` / `clippy` / `cargo test -p siralos-cli` / `check:architecture` / `check:rust` observed PASS (see verification below) | pass |
+
+Evidence ladder: L1 observed gate outputs + reads of `PROJECT_CONTEXT.md` / `RUST_MIGRATION.md` / `ROADMAP.md` literals; L2 focused tests would fail if DoD drifts; L3 architecture/rust checks; L4 diff inspection. No new source mutation beyond this decision + Wayfinder bookkeeping.
+
+---
+
+## Out of scope for this decision (per lean ADR 0036)
+
+General Hooks, multi-agent machinery, TaskGraph, workflow engines, marketplaces, plugin ecosystems, GUI/TUI, and placeholder Godot domains — not part of R7 and not checked here. Mutation/checkpoint/undo and process execution remain `unavailable` (R4 hardening). R8+ remain Not due; R7 Verified does not promise delivery dates.
