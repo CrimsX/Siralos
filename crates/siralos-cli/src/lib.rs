@@ -14,6 +14,7 @@
 pub mod configuration;
 pub mod interactive;
 pub mod output;
+pub mod sanitize;
 
 #[cfg(feature = "differential-harness")]
 pub mod harness;

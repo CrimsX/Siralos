@@ -33,6 +33,7 @@ use crate::configuration::{
 use crate::output::{
     format_context_status, format_tool_projection, format_tools,
 };
+use crate::sanitize::TerminalSanitizer;
 
 /// The stable product-neutral segment supplied by the CLI composition root.
 ///
@@ -258,31 +259,45 @@ where
     P: siralos_core::provider::ModelProvider,
     W: Write,
 {
+    let mut sanitizer = TerminalSanitizer::new();
     while let Some(event) = application.poll_event() {
         match event {
             ToolLoopEvent::TextDelta { text } => {
                 writer
-                    .write_all(text.as_bytes())
+                    .write_all(sanitizer.push(&text).as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ResponseCompleted => {
+                // Drain any dangling escape that never terminated.
+                writer
+                    .write_all(sanitizer.flush().as_bytes())
+                    .map_err(InteractiveError::Io)?;
                 writer.write_all(b"\n").map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ResponseCancelled => {
+                writer
+                    .write_all(sanitizer.flush().as_bytes())
+                    .map_err(InteractiveError::Io)?;
                 writer
                     .write_all(b"Response cancelled.\n")
                     .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ResponseFailed { message } => {
                 writer
-                    .write_all(
-                        format!("Response failed: {message}\n").as_bytes(),
-                    )
+                    .write_all(sanitizer.flush().as_bytes())
+                    .map_err(InteractiveError::Io)?;
+                let safe = crate::sanitize::sanitize_for_display(&message);
+                writer
+                    .write_all(format!("Response failed: {safe}\n").as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ToolFailed { message, .. } => {
                 writer
-                    .write_all(format!("Tool failed: {message}\n").as_bytes())
+                    .write_all(sanitizer.flush().as_bytes())
+                    .map_err(InteractiveError::Io)?;
+                let safe = crate::sanitize::sanitize_for_display(&message);
+                writer
+                    .write_all(format!("Tool failed: {safe}\n").as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ToolCancelled { .. }
