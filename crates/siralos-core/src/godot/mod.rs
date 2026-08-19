@@ -14,6 +14,9 @@
 pub mod capabilities;
 pub mod engine_profile;
 pub mod installations;
+pub mod limits;
+pub mod project;
+pub mod selection;
 pub mod version;
 
 pub use capabilities::{
@@ -31,6 +34,18 @@ pub use installations::{
     GodotInstallationSource,
 };
 
+pub use limits::{GODOT_LIMITS, GodotLimits};
+pub use project::{
+    GodotAutoloadSummary, GodotExecutableContentInventory,
+    GodotGDExtensionSummary, GodotLanguageProfile, GodotPluginLanguage,
+    GodotPluginSummary, GodotProjectProfile, GodotScanTruncationReason,
+    create_empty_godot_executable_content_inventory,
+    create_empty_godot_project_profile,
+};
+pub use selection::{
+    GodotRankedCandidate, GodotSelectionOutcome, GodotSelectionPreference,
+    godot_selection_ranks, rank_candidate, rank_godot_candidates,
+};
 pub use version::{
     GodotDeclaredVersion, GodotReleaseChannel, GodotVersion,
     GodotVersionStatus, classify_godot_release_channel,
