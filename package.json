@@ -56,6 +56,6 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "0.0.71"
+    "@anthropic-ai/sandbox-runtime": "0.0.73"
   }
 }
