@@ -13,25 +13,44 @@
 
 pub mod api;
 pub mod capabilities;
+pub mod compatibility;
+pub mod diagnostics;
+pub mod digest;
 pub mod engine_profile;
+pub mod events;
 pub mod gdscript;
+pub mod inspector;
 pub mod installations;
 pub mod knowledge;
 pub mod limits;
 pub mod lsp;
+pub mod probe;
 pub mod project;
+pub mod scene;
 pub mod selection;
 pub mod version;
 
 pub use capabilities::{
     GodotCommandCapabilities, empty_godot_command_capabilities,
 };
+pub use compatibility::{
+    CompatibilitySeverity, GodotCompatibilityAssessment,
+    GodotCompatibilityStatus, assess_godot_compatibility,
+};
+pub use diagnostics::{DiagnosticSeverity, SafeDiagnostic};
+pub use digest::{canonicalize_json, sha256_hex_str};
 pub use engine_profile::{
     GodotEdition, GodotEditionClassification, GodotEditionConfidence,
     GodotEditionEvidence, GodotEditionHint, GodotEngineProfile,
     GodotProbesSucceeded, GodotSupportClassificationInput,
     SiralosGodotSupport, classify_godot_edition, classify_godot_support,
     describe_installation_provenance, is_editor_selection_candidate,
+};
+pub use events::GodotApplicationEvent;
+pub use inspector::{
+    GodotDiscoveryConfiguration, GodotDiscoveryResult, GodotDoctorCache,
+    GodotDoctorReport, GodotDoctorSandbox, GodotInstallationOverview,
+    GodotProbeStatusLine, GodotSelectedInstallation, GodotStatusSnapshot,
 };
 pub use installations::{
     GodotEditionHint as InstallEditionHint, GodotInstallation,
@@ -64,12 +83,41 @@ pub use lsp::{
     GdScriptPositionRequest, GdScriptQueryOutcome, GdScriptSessionState,
     GdScriptSessionStatus, GdScriptSourceRange,
 };
+pub use probe::{
+    GodotAuthoredFileManifest, GodotAutoloadRiskEntry, GodotDiagnostic,
+    GodotDiagnosticCategory, GodotFileRiskEntry, GodotGDExtensionRiskEntry,
+    GodotImportState, GodotLibraryRiskEntry, GodotPluginRiskEntry,
+    GodotPreparedProbeDigestParts, GodotProbeEngineSelection,
+    GodotProbeLimits, GodotProbeMirrorEstimate, GodotProbePreview,
+    GodotProbeRiskCounts, GodotProbeStatus, GodotProjectRiskManifest,
+    GodotProjectTrustState, compute_godot_prepared_probe_digest,
+    compute_godot_risk_manifest_digest,
+};
 pub use project::{
     GodotAutoloadSummary, GodotExecutableContentInventory,
     GodotGDExtensionSummary, GodotLanguageProfile, GodotPluginLanguage,
     GodotPluginSummary, GodotProjectProfile, GodotScanTruncationReason,
     create_empty_godot_executable_content_inventory,
     create_empty_godot_project_profile,
+};
+pub use scene::{
+    BalancedScan, DictionaryEntry, ExternalResourceRef, GODOT_SCENE_LIMITS,
+    GodotAutoload, GodotDependencyEdge, GodotDependencyResult,
+    GodotInputAction, GodotInspectionOutcome, GodotIntelligenceStatus,
+    GodotMainSceneReference, GodotParseStatus, GodotProjectRelationshipResult,
+    GodotProperty, GodotRawValue, GodotRelationshipEntry,
+    GodotRelationshipIndex, GodotRelationshipKind,
+    GodotResourceInspectionResult, GodotResourceModel, GodotSceneEvidenceView,
+    GodotSceneInspectionResult, GodotSceneIntelligenceSupport,
+    GodotSceneLimits, GodotSceneModel, GodotSceneNode, GodotSceneNodeTree,
+    GodotSceneTreeNode, GodotSignalConnection, GodotTextDiagnostic,
+    GodotTextDocument, GodotTextDocumentKind, GodotVariantValue,
+    HeaderAttribute, ResPathResolution, ResourceReference, SceneReference,
+    SourceRange, SubResourceRef, VariantParseResult, build_scene_node_tree,
+    is_balanced_text, is_comment_line, is_godot_uid, nodes_in_group,
+    parse_godot_variant, parse_header_attributes, parse_quoted_string,
+    resolve_res_path, scan_balanced, split_key_value,
+    split_top_level_arguments,
 };
 pub use selection::{
     GodotRankedCandidate, GodotSelectionOutcome, GodotSelectionPreference,
