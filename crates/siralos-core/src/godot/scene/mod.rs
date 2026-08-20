@@ -6,6 +6,7 @@
 pub mod intelligence;
 pub mod limits;
 pub mod models;
+pub mod parser;
 pub mod relationship_index;
 pub mod resolution;
 pub mod text;
@@ -27,6 +28,7 @@ pub use models::{
     GodotTextDocumentKind, GodotVariantValue, ResourceReference,
     SceneReference, SourceRange, SubResourceRef,
 };
+pub use parser::{parse_godot_resource, parse_godot_scene};
 pub use relationship_index::{
     GodotRelationshipEntry, GodotRelationshipIndex, GodotRelationshipKind,
 };

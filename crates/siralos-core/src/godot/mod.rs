@@ -115,9 +115,9 @@ pub use scene::{
     HeaderAttribute, ResPathResolution, ResourceReference, SceneReference,
     SourceRange, SubResourceRef, VariantParseResult, build_scene_node_tree,
     is_balanced_text, is_comment_line, is_godot_uid, nodes_in_group,
-    parse_godot_variant, parse_header_attributes, parse_quoted_string,
-    resolve_res_path, scan_balanced, split_key_value,
-    split_top_level_arguments,
+    parse_godot_resource, parse_godot_scene, parse_godot_variant,
+    parse_header_attributes, parse_quoted_string, resolve_res_path,
+    scan_balanced, split_key_value, split_top_level_arguments,
 };
 pub use selection::{
     GodotRankedCandidate, GodotSelectionOutcome, GodotSelectionPreference,
