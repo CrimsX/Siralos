@@ -68,8 +68,17 @@ pub use api::{
     godot_symbol_id,
 };
 pub use gdscript::{
-    GdScriptDiagnosticSource, GdScriptSeverity, GodotDiagnosticPreview,
-    GodotDiagnosticScripts, GodotGdScriptDiagnostic, GodotScriptCheckTarget,
+    GODOT_DIAGNOSTICS_OFFLINE_PROFILE_ID, GdScriptDiagnosticSource,
+    GdScriptSeverity, GodotCheckOnlyCommandDigestParts,
+    GodotCheckPreparationResult, GodotCheckPreparationStatus,
+    GodotDiagnosticPreview, GodotDiagnosticScripts,
+    GodotDiagnosticsExecutionContext, GodotDiagnosticsRequest,
+    GodotDiagnosticsState, GodotDiagnosticsStatus, GodotDiagnosticsSupport,
+    GodotGdScriptDiagnostic, GodotPreparedCheckDigestParts,
+    GodotPreparedCheckLimits, GodotProjectCheckResult,
+    GodotProjectCheckRunStatus, GodotScriptCheckTarget, PreparedGDScriptCheck,
+    compute_godot_check_only_command_digest,
+    compute_godot_prepared_check_digest,
 };
 pub use knowledge::{
     GodotKnowledgeBase, GodotKnowledgeCacheValidation,
