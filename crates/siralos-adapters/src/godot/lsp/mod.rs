@@ -4,6 +4,7 @@ pub mod file_uri;
 pub mod frame_parser;
 pub mod json_rpc;
 pub mod port_allocator;
+pub mod service;
 
 pub use file_uri::{
     file_uri_to_path, mirror_uri_to_workspace_relative, path_to_file_uri,
@@ -14,4 +15,8 @@ pub use json_rpc::{JsonRpcCode, JsonRpcMessage, classify_json_rpc_payload};
 pub use port_allocator::{
     AllocatedLspPort, MAX_ALLOCATION_ATTEMPTS, allocate_loopback_port,
     release_loopback_port,
+};
+pub use service::{
+    GODOT_LSP_EXECUTION_UNAVAILABLE_MESSAGE, GodotLspService,
+    GodotLspServiceCancelled,
 };
