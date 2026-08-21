@@ -6,6 +6,7 @@
 
 pub mod godot_check_only_runner;
 pub mod godot_knowledge_runner;
+pub mod godot_lsp_runner;
 pub mod help_capabilities_parser;
 pub mod probe_runner;
 pub mod recovery_runner;
@@ -22,6 +23,13 @@ pub use godot_knowledge_runner::{
     GODOT_KNOWLEDGE_GENERATION_UNAVAILABLE_MESSAGE, GodotKnowledgeRunOutcome,
     compute_godot_knowledge_command_digest, create_godot_knowledge_runner,
     godot_knowledge_arguments,
+};
+pub use godot_lsp_runner::{
+    GODOT_LSP_BASE_ARGUMENTS, GODOT_LSP_MIRROR_PATH_MARKER,
+    GODOT_LSP_PORT_MARKER, GODOT_LSP_UNAVAILABLE_MESSAGE,
+    GodotLspSessionCommandDigestParts, GodotLspStartOutcome,
+    compute_godot_lsp_session_command_digest, create_godot_lsp_server_runner,
+    godot_lsp_argument_template, godot_lsp_arguments,
 };
 pub use help_capabilities_parser::{
     GodotHelpParseResult, parse_help_capabilities,
