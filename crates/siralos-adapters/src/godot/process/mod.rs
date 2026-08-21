@@ -4,11 +4,17 @@
 //! outcome and never spawns an executable, creates a mirror, or mutates
 //! the filesystem. Pure parsing of recorded engine output is available.
 
+pub mod godot_knowledge_runner;
 pub mod help_capabilities_parser;
 pub mod probe_runner;
 pub mod recovery_runner;
 pub mod version_parser;
 
+pub use godot_knowledge_runner::{
+    GODOT_KNOWLEDGE_GENERATION_UNAVAILABLE_MESSAGE, GodotKnowledgeRunOutcome,
+    compute_godot_knowledge_command_digest, create_godot_knowledge_runner,
+    godot_knowledge_arguments,
+};
 pub use help_capabilities_parser::{
     GodotHelpParseResult, parse_help_capabilities,
 };

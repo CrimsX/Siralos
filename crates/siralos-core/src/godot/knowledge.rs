@@ -171,6 +171,113 @@ pub enum KnowledgeState {
     Unsupported,
 }
 
+/// A fully loaded knowledge base: profile plus built index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GodotKnowledgeBase {
+    /// Version-matched profile metadata.
+    pub profile: GodotKnowledgeProfileV1,
+    /// Deterministic bounded symbol index.
+    pub index: super::api::GodotApiIndex,
+}
+
+/// Outcome of a knowledge refresh.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GodotKnowledgeRefreshResult {
+    /// A new profile replaced any previous one.
+    Ready {
+        /// The newly loaded profile.
+        profile: Box<GodotKnowledgeProfileV1>,
+        /// The previously loaded profile, if any.
+        previous_profile: Option<Box<GodotKnowledgeProfileV1>>,
+    },
+    /// Typed non-ready outcome with its bounded reason.
+    NotReady {
+        /// `unavailable`, `unsupported`, `failed`, or `cancelled`.
+        status: KnowledgeRefreshStatus,
+        /// Bounded truthful reason.
+        message: String,
+    },
+}
+
+/// Non-ready refresh statuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KnowledgeRefreshStatus {
+    /// Generation cannot execute under the current boundary.
+    Unavailable,
+    /// The selected engine cannot generate documentation.
+    Unsupported,
+    /// Generation ran and failed.
+    Failed,
+    /// The operation was cancelled.
+    Cancelled,
+}
+
+/// Outcome of a knowledge search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GodotKnowledgeQueryResult {
+    /// Search served from the loaded base.
+    Ready {
+        /// Exact engine version string.
+        engine_version: String,
+        /// Ranked bounded results.
+        results: Vec<super::api::GodotApiSearchResult>,
+        /// True when results beyond the limit were dropped.
+        truncated: bool,
+    },
+    /// Typed non-ready outcome with its bounded reason.
+    NotReady {
+        /// `unavailable`, `unsupported`, `invalid_input`, `failed`, or
+        /// `cancelled`.
+        status: KnowledgeQueryStatus,
+        /// Bounded truthful reason.
+        message: String,
+    },
+}
+
+/// Non-ready query statuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KnowledgeQueryStatus {
+    /// No base is loaded and generation is unavailable.
+    Unavailable,
+    /// The request was malformed.
+    InvalidInput,
+    /// The operation was cancelled.
+    Cancelled,
+}
+
+/// Outcome of a knowledge lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GodotKnowledgeLookupOutcome {
+    /// Lookup served from the loaded base.
+    Ready {
+        /// Exact engine version string.
+        engine_version: String,
+        /// Full structured symbol result.
+        result: Box<super::api::GodotApiLookupResult>,
+    },
+    /// Typed non-ready outcome with its bounded reason.
+    NotReady {
+        /// `not_found`, `unavailable`, `unsupported`, `invalid_input`,
+        /// `failed`, or `cancelled`.
+        status: KnowledgeLookupStatus,
+        /// Bounded truthful reason.
+        message: String,
+    },
+}
+
+/// Non-ready lookup statuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KnowledgeLookupStatus {
+    /// The symbol identity is not in the loaded index.
+    NotFound,
+    /// No base is loaded and generation is unavailable.
+    Unavailable,
+    /// The request was malformed.
+    InvalidInput,
+    /// The operation was cancelled.
+    Cancelled,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

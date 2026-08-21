@@ -45,17 +45,39 @@ pub struct GodotApiParameter {
     pub default_value: Option<String>,
 }
 
-/// Bounded symbol details.
+/// One named value entry (enum members).
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GodotApiNamedValue {
+    /// Member name.
+    pub name: String,
+    /// String representation of the member value.
+    pub value: String,
+}
+
+/// Bounded symbol details.
+///
+/// Absent optional fields are `None`/empty; property setter/getter keep
+/// the explicit present-but-null state apart from an absent field.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GodotApiSymbolDetails {
-    /// Return type, if any.
+    /// Method/utility return type, if any.
     pub return_type: Option<String>,
+    /// Declared parameters, when the kind has them.
+    pub parameters: Vec<GodotApiParameter>,
     /// Qualifiers (e.g. `static`, `vararg`).
     pub qualifiers: Vec<String>,
     /// Engine-provided method hash, if any.
     pub hash: Option<String>,
     /// Property type, if known.
     pub param_type: Option<String>,
+    /// Property setter name; `Some(None)` records an explicit null.
+    pub setter: Option<Option<String>>,
+    /// Property getter name; `Some(None)` records an explicit null.
+    pub getter: Option<Option<String>>,
+    /// Constant value when representable.
+    pub value: Option<String>,
+    /// Enum member values.
+    pub values: Vec<GodotApiNamedValue>,
 }
 
 /// One bounded indexed API symbol.
@@ -201,6 +223,53 @@ pub struct GodotApiSearchResult {
     pub rank: GodotApiSearchRank,
     /// Native or built-in.
     pub api_type: GodotApiType,
+}
+
+/// Deterministic bounded API index built from one exact dump.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GodotApiIndex {
+    /// Index schema version.
+    pub schema_version: u32,
+    /// Exact engine version string from the dump header.
+    pub engine_version: String,
+    /// Dump SHA-256 the index was built from.
+    pub dump_sha256: String,
+    /// All symbols sorted by id (deterministic).
+    pub symbols: Vec<GodotApiSymbol>,
+    /// Total raw dump bytes the index was built from (bounded).
+    pub dump_bytes: u64,
+}
+
+/// Outcome of an index search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GodotApiSearchOutcome {
+    /// Ranked bounded results.
+    pub results: Vec<GodotApiSearchResult>,
+    /// True when results beyond the limit were dropped.
+    pub truncated: bool,
+}
+
+/// Full structured result of an exact-symbol lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GodotApiLookupResult {
+    /// Symbol id.
+    pub symbol: String,
+    /// Kind.
+    pub kind: GodotApiSymbolKind,
+    /// Name.
+    pub name: String,
+    /// Owner, if any.
+    pub owner: Option<String>,
+    /// Inherited from class, if known.
+    pub inherited_from: Option<String>,
+    /// Canonical signature, if any.
+    pub signature: Option<String>,
+    /// Full description, if any.
+    pub description: Option<String>,
+    /// Native or built-in.
+    pub api_type: GodotApiType,
+    /// Details.
+    pub details: GodotApiSymbolDetails,
 }
 
 #[cfg(test)]

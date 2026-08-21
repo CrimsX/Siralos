@@ -61,18 +61,23 @@ pub use installations::{
 };
 
 pub use api::{
-    GodotApiParameter, GodotApiSearchKind, GodotApiSearchQuery,
-    GodotApiSearchRank, GodotApiSearchResult, GodotApiSymbol,
-    GodotApiSymbolDetails, GodotApiSymbolKind, GodotApiType, godot_symbol_id,
+    GodotApiIndex, GodotApiLookupResult, GodotApiNamedValue,
+    GodotApiParameter, GodotApiSearchKind, GodotApiSearchOutcome,
+    GodotApiSearchQuery, GodotApiSearchRank, GodotApiSearchResult,
+    GodotApiSymbol, GodotApiSymbolDetails, GodotApiSymbolKind, GodotApiType,
+    godot_symbol_id,
 };
 pub use gdscript::{
     GdScriptDiagnosticSource, GdScriptSeverity, GodotDiagnosticPreview,
     GodotDiagnosticScripts, GodotGdScriptDiagnostic, GodotScriptCheckTarget,
 };
 pub use knowledge::{
-    GodotKnowledgeCacheValidation, GodotKnowledgeProfileV1,
+    GodotKnowledgeBase, GodotKnowledgeCacheValidation,
+    GodotKnowledgeLookupOutcome, GodotKnowledgeProfileV1,
+    GodotKnowledgeQueryResult, GodotKnowledgeRefreshResult,
     GodotKnowledgeStatus, GodotKnowledgeSupport, KNOWLEDGE_SCHEMA_VERSION,
     KnowledgeApi, KnowledgeCacheReason, KnowledgeEngine, KnowledgeIndex,
+    KnowledgeLookupStatus, KnowledgeQueryStatus, KnowledgeRefreshStatus,
     KnowledgeState, KnowledgeSupportState, classify_godot_manual_channel,
     validate_godot_knowledge_cache,
 };

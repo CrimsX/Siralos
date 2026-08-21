@@ -100,6 +100,68 @@ pub struct GodotRecoveryCancelled {
     pub message: String,
 }
 
+#[cfg(test)]
+pub(crate) mod test_support {
+    use siralos_core::godot::{
+        GodotCapabilityKey, GodotCommandCapabilities, GodotEdition,
+        GodotEditionConfidence, GodotEngineProfile, GodotInstallation,
+        GodotInstallationSource, GodotReleaseChannel, GodotVersion,
+        GodotVersionStatus, SiralosGodotSupport,
+        empty_godot_command_capabilities,
+    };
+
+    pub(crate) fn installation(status_valid: bool) -> GodotInstallation {
+        GodotInstallation {
+            id: "path-1".to_owned(),
+            source_label: "explicit path".to_owned(),
+            source: GodotInstallationSource::CliPath,
+            canonical_path: "C:\\godot\\Godot.exe".to_owned(),
+            size_bytes: 1000,
+            modified_at_ms: 1000,
+            sha256: "a".repeat(64),
+            edition_hint: siralos_core::godot::InstallEditionHint::Unknown,
+            status_valid,
+            error: None,
+        }
+    }
+
+    fn capabilities() -> GodotCommandCapabilities {
+        let mut capabilities = empty_godot_command_capabilities();
+        GodotCapabilityKey::Editor.apply(&mut capabilities, true);
+        GodotCapabilityKey::Headless.apply(&mut capabilities, true);
+        GodotCapabilityKey::RecoveryMode.apply(&mut capabilities, true);
+        GodotCapabilityKey::ProjectPath.apply(&mut capabilities, true);
+        capabilities
+    }
+
+    pub(crate) fn engine_profile(edition: GodotEdition) -> GodotEngineProfile {
+        GodotEngineProfile {
+            installation_id: "path-1".to_owned(),
+            fingerprint: "b".repeat(8),
+            version: GodotVersion {
+                raw: "4.7.1.stable.official".to_owned(),
+                major: 4,
+                minor: 7,
+                patch: Some(1),
+                status: GodotVersionStatus::Stable,
+                status_number: None,
+                build: Some("official".to_owned()),
+                commit: None,
+            },
+            edition,
+            edition_confidence: GodotEditionConfidence::High,
+            release_channel: GodotReleaseChannel::Stable,
+            capabilities: capabilities(),
+            verified_capabilities: Vec::new(),
+            degraded_capabilities: Vec::new(),
+            executable_sha256: "a".repeat(64),
+            api_dump_sha256: None,
+            support: SiralosGodotSupport::Verified,
+            diagnostics: Vec::new(),
+        }
+    }
+}
+
 /// Observable outcomes of the fail-closed recovery runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GodotRecoveryRunOutcome {
@@ -206,6 +268,7 @@ fn require_recovery_capabilities(
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::{engine_profile, installation};
     use super::{
         GODOT_RECOVERY_BASE_ARGUMENTS, GODOT_RECOVERY_MIRROR_PATH_MARKER,
         GODOT_RECOVERY_RUN_UNAVAILABLE_MESSAGE,
@@ -214,64 +277,7 @@ mod tests {
         create_godot_recovery_runner, godot_recovery_argument_template,
         godot_recovery_arguments,
     };
-    use siralos_core::godot::{
-        GodotCapabilityKey, GodotCommandCapabilities, GodotEdition,
-        GodotEditionConfidence, GodotEngineProfile, GodotInstallation,
-        GodotInstallationSource, GodotReleaseChannel, GodotVersion,
-        GodotVersionStatus, SiralosGodotSupport,
-        empty_godot_command_capabilities,
-    };
-
-    fn installation(status_valid: bool) -> GodotInstallation {
-        GodotInstallation {
-            id: "path-1".to_owned(),
-            source_label: "explicit path".to_owned(),
-            source: GodotInstallationSource::CliPath,
-            canonical_path: "C:\\godot\\Godot.exe".to_owned(),
-            size_bytes: 1000,
-            modified_at_ms: 1000,
-            sha256: "a".repeat(64),
-            edition_hint: siralos_core::godot::InstallEditionHint::Unknown,
-            status_valid,
-            error: None,
-        }
-    }
-
-    fn capabilities() -> GodotCommandCapabilities {
-        let mut capabilities = empty_godot_command_capabilities();
-        GodotCapabilityKey::Editor.apply(&mut capabilities, true);
-        GodotCapabilityKey::Headless.apply(&mut capabilities, true);
-        GodotCapabilityKey::RecoveryMode.apply(&mut capabilities, true);
-        GodotCapabilityKey::ProjectPath.apply(&mut capabilities, true);
-        capabilities
-    }
-
-    fn engine_profile(edition: GodotEdition) -> GodotEngineProfile {
-        GodotEngineProfile {
-            installation_id: "path-1".to_owned(),
-            fingerprint: "b".repeat(8),
-            version: GodotVersion {
-                raw: "4.7.1.stable.official".to_owned(),
-                major: 4,
-                minor: 7,
-                patch: Some(1),
-                status: GodotVersionStatus::Stable,
-                status_number: None,
-                build: Some("official".to_owned()),
-                commit: None,
-            },
-            edition,
-            edition_confidence: GodotEditionConfidence::High,
-            release_channel: GodotReleaseChannel::Stable,
-            capabilities: capabilities(),
-            verified_capabilities: Vec::new(),
-            degraded_capabilities: Vec::new(),
-            executable_sha256: "a".repeat(64),
-            api_dump_sha256: None,
-            support: SiralosGodotSupport::Verified,
-            diagnostics: Vec::new(),
-        }
-    }
+    use siralos_core::godot::GodotEdition;
 
     #[test]
     fn fixed_headless_recovery_mode_editor_tuple() {
