@@ -25,13 +25,16 @@ pub mod knowledge;
 pub mod limits;
 pub mod lsp;
 pub mod probe;
+pub mod probes;
 pub mod project;
 pub mod scene;
 pub mod selection;
 pub mod version;
 
 pub use capabilities::{
-    GodotCommandCapabilities, empty_godot_command_capabilities,
+    FORBIDDEN_GODOT_PROJECT_ARGUMENTS, GODOT_KNOWN_OPTIONS,
+    GodotCapabilityKey, GodotCommandCapabilities, GodotKnownOption,
+    empty_godot_command_capabilities,
 };
 pub use compatibility::{
     CompatibilitySeverity, GodotCompatibilityAssessment,
@@ -92,6 +95,10 @@ pub use probe::{
     GodotProbeRiskCounts, GodotProbeStatus, GodotProjectRiskManifest,
     GodotProjectTrustState, compute_godot_prepared_probe_digest,
     compute_godot_risk_manifest_digest,
+};
+pub use probes::{
+    GodotApiDumpProbe, GodotApiDumpSummary, GodotHelpProbe, GodotProbeRunner,
+    GodotVersionProbe,
 };
 pub use project::{
     GodotAutoloadSummary, GodotExecutableContentInventory,
