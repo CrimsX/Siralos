@@ -157,7 +157,7 @@ pub fn discover_on_path(
     (candidates, truncated)
 }
 
-fn installation_from_identity(
+pub(crate) fn installation_from_identity(
     id: String,
     source: GodotInstallationSource,
     source_label: &str,
@@ -178,7 +178,7 @@ fn installation_from_identity(
     }
 }
 
-fn invalid_installation(
+pub(crate) fn invalid_installation(
     id: String,
     source: GodotInstallationSource,
     source_label: &str,

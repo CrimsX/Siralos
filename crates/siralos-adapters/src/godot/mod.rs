@@ -4,6 +4,7 @@ pub mod diagnostics;
 pub mod discovery;
 pub mod knowledge;
 pub mod process;
+pub mod profile;
 pub mod project;
 pub mod scene;
 
