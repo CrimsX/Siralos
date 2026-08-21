@@ -4,12 +4,20 @@
 //! outcome and never spawns an executable, creates a mirror, or mutates
 //! the filesystem. Pure parsing of recorded engine output is available.
 
+pub mod godot_check_only_runner;
 pub mod godot_knowledge_runner;
 pub mod help_capabilities_parser;
 pub mod probe_runner;
 pub mod recovery_runner;
 pub mod version_parser;
 
+pub use godot_check_only_runner::{
+    GODOT_CHECK_ONLY_BASE_ARGUMENTS, GODOT_CHECK_ONLY_MIRROR_PATH_MARKER,
+    GODOT_CHECK_ONLY_MIRROR_SCRIPT_MARKER,
+    GODOT_CHECK_ONLY_UNAVAILABLE_MESSAGE, GodotCheckOnlyRunOutcome,
+    create_godot_check_only_runner, godot_check_only_argument_template,
+    godot_check_only_arguments,
+};
 pub use godot_knowledge_runner::{
     GODOT_KNOWLEDGE_GENERATION_UNAVAILABLE_MESSAGE, GodotKnowledgeRunOutcome,
     compute_godot_knowledge_command_digest, create_godot_knowledge_runner,

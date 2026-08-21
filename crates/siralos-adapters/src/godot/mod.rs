@@ -1,5 +1,6 @@
 //! Godot adapters (R8).
 
+pub mod diagnostics;
 pub mod discovery;
 pub mod knowledge;
 pub mod process;
