@@ -3,6 +3,7 @@
 pub mod diagnostics;
 pub mod discovery;
 pub mod knowledge;
+pub mod lsp;
 pub mod process;
 pub mod profile;
 pub mod project;
