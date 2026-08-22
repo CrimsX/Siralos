@@ -14,6 +14,7 @@
 pub mod api;
 pub mod capabilities;
 pub mod compatibility;
+pub mod development;
 pub mod diagnostics;
 pub mod digest;
 pub mod engine_profile;
