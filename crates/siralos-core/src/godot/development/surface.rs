@@ -162,40 +162,41 @@ fn literal_alternation_matches(text: &str, alternatives: &[&str]) -> bool {
 fn gd_file_reference_matches(text: &str) -> bool {
     let bytes = text.as_bytes();
     let lower = text.to_lowercase();
-    let needle = ".gd";
-    let mut search_from = 0;
-    while let Some(relative) = lower[search_from..].find(needle) {
-        let end = search_from + relative + needle.len();
-        let mut run_start = search_from + relative;
-        while run_start > 0 {
-            let byte = bytes[run_start - 1];
-            if byte.is_ascii_alphanumeric()
-                || byte == b'_'
-                || byte == b'/'
-                || byte == b'-'
-            {
-                run_start -= 1;
-            } else {
-                break;
-            }
+    let needle = b".gd";
+    let is_run_class = |byte: u8| {
+        byte.is_ascii_alphanumeric()
+            || byte == b'_'
+            || byte == b'/'
+            || byte == b'-'
+    };
+    for index in 0..lower.len().saturating_sub(2) {
+        if &lower.as_bytes()[index..index + 3] != needle {
+            continue;
         }
-        // The run must contain at least one character before ".gd".
-        if run_start < search_from + relative {
-            let before =
-                if run_start == 0 { None } else { Some(bytes[run_start - 1]) };
-            let after = bytes.get(end).copied();
-            let left = before.map(is_word_byte).unwrap_or(false);
-            let right = after.map(is_word_byte).unwrap_or(false);
-            // Run characters may be non-word ('-', '/'), so the leading
-            // `\b` holds when the preceding character is not in the run
-            // class; the trailing `\b` requires a non-word character
-            // after "d".
-            let first_run_is_word = is_word_byte(bytes[run_start]);
-            if left != first_run_is_word && !right {
+        let after = bytes.get(index + 3).copied();
+        let right = after.map(is_word_byte).unwrap_or(false);
+        if right {
+            continue;
+        }
+        // JavaScript tries every start position inside the class run, so
+        // a boundary at ANY run start (with a boundary after `.gd`)
+        // matches — not just the maximal one.
+        let mut start = index;
+        loop {
+            let left = if start == 0 {
+                false
+            } else {
+                is_word_byte(bytes[start - 1])
+            };
+            let first_is_word = is_word_byte(bytes[start]);
+            if left != first_is_word {
                 return true;
             }
+            if start == 0 || !is_run_class(bytes[start - 1]) {
+                break;
+            }
+            start -= 1;
         }
-        search_from = search_from + relative + 1;
     }
     false
 }
