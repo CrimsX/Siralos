@@ -56,6 +56,11 @@ const GODOT_LSP_PROBE = join(HERE, "probes", "godot-lsp-oracle.mjs");
 const GODOT_REVIEW_CONTEXT_PROBE = join(HERE, "probes", "godot-review-context-oracle.mjs");
 const GODOT_MUTATION_PREPARE_PROBE = join(HERE, "probes", "godot-mutation-prepare-oracle.mjs");
 const GODOT_DEVELOP_PLAN_PROBE = join(HERE, "probes", "godot-develop-plan-oracle.mjs");
+const CI_ARTIFACT_DIGEST_PROBE = join(HERE, "probes", "content-identity-artifact-digest-oracle.mjs");
+const CI_CONTRACT_DIGEST_PROBE = join(HERE, "probes", "content-identity-contract-digest-oracle.mjs");
+const CI_MANIFESTS_PROBE = join(HERE, "probes", "content-identity-manifests-oracle.mjs");
+const CI_DELTA_PROBE = join(HERE, "probes", "content-identity-delta-oracle.mjs");
+const DET_REPLAY_PROBE = join(HERE, "probes", "determinism-replay-oracle.mjs");
 const GODOT_PROBES = new Map([
   ["godot-scene-resolve", GODOT_SCENE_RESOLVE_PROBE],
   ["godot-discovery", GODOT_DISCOVERY_PROBE],
@@ -65,6 +70,11 @@ const GODOT_PROBES = new Map([
   ["godot-review-context", GODOT_REVIEW_CONTEXT_PROBE],
   ["godot-mutation-prepare", GODOT_MUTATION_PREPARE_PROBE],
   ["godot-develop-plan", GODOT_DEVELOP_PLAN_PROBE],
+  ["content-identity-artifact-digest", CI_ARTIFACT_DIGEST_PROBE],
+  ["content-identity-contract-digest", CI_CONTRACT_DIGEST_PROBE],
+  ["content-identity-manifests", CI_MANIFESTS_PROBE],
+  ["content-identity-delta", CI_DELTA_PROBE],
+  ["determinism-replay", DET_REPLAY_PROBE],
 ]);
 
 function optionValue(args, name) {

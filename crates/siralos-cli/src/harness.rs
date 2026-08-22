@@ -65,6 +65,11 @@ const SUBJECT_GODOT_MUTATION_PREPARE: &str = "godot-mutation-prepare";
 const SUBJECT_GODOT_DEVELOP_PLAN: &str = "godot-develop-plan";
 /// Fixed task id for review-context records (identical on both sides).
 const GODOT_REVIEW_CONTEXT_TASK_ID: &str = "differential-task";
+const SUBJECT_CI_ARTIFACT_DIGEST: &str = "content-identity-artifact-digest";
+const SUBJECT_CI_CONTRACT_DIGEST: &str = "content-identity-contract-digest";
+const SUBJECT_CI_MANIFESTS: &str = "content-identity-manifests";
+const SUBJECT_CI_DELTA: &str = "content-identity-delta";
+const SUBJECT_DET_REPLAY: &str = "determinism-replay";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
 const CORPUS_VERSION: u64 = 17;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
@@ -409,6 +414,11 @@ fn validate_scenario(
             | SUBJECT_GODOT_REVIEW_CONTEXT
             | SUBJECT_GODOT_MUTATION_PREPARE
             | SUBJECT_GODOT_DEVELOP_PLAN
+            | SUBJECT_CI_ARTIFACT_DIGEST
+            | SUBJECT_CI_CONTRACT_DIGEST
+            | SUBJECT_CI_MANIFESTS
+            | SUBJECT_CI_DELTA
+            | SUBJECT_DET_REPLAY
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -590,7 +600,12 @@ fn validate_scenario(
         | SUBJECT_GODOT_LSP
         | SUBJECT_GODOT_REVIEW_CONTEXT
         | SUBJECT_GODOT_MUTATION_PREPARE
-        | SUBJECT_GODOT_DEVELOP_PLAN => {
+        | SUBJECT_GODOT_DEVELOP_PLAN
+        | SUBJECT_CI_ARTIFACT_DIGEST
+        | SUBJECT_CI_CONTRACT_DIGEST
+        | SUBJECT_CI_MANIFESTS
+        | SUBJECT_CI_DELTA
+        | SUBJECT_DET_REPLAY => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -2021,6 +2036,52 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_CI_ARTIFACT_DIGEST | SUBJECT_CI_CONTRACT_DIGEST => {
+            const CI_KEYS: [&str; 4] =
+                ["artifactType", "schemaVersion", "content", "payload"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !CI_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(artifact_type) = input.get("artifactType") {
+                if artifact_type
+                    .as_str()
+                    .is_none_or(|t| t.is_empty() || t.len() > 64)
+                {
+                    return reject(
+                        "artifactType must be a non-empty bounded string"
+                            .to_owned(),
+                    );
+                }
+            }
+            Ok(())
+        }
+        SUBJECT_CI_MANIFESTS => {
+            if let Some(entries) = input.get("entries") {
+                if !entries.is_array() {
+                    return reject("entries must be an array".to_owned());
+                }
+            }
+            Ok(())
+        }
+        SUBJECT_CI_DELTA => {
+            const DELTA_KEYS: [&str; 3] = ["base", "result", "keys"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !DELTA_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            Ok(())
+        }
+        SUBJECT_DET_REPLAY => {
+            if !input.get("taskId").is_some_and(Value::is_string) {
+                return reject("taskId must be a string".to_owned());
+            }
+            Ok(())
+        }
         _ => unreachable!("godot subject was validated above"),
     }
 }
@@ -2035,6 +2096,15 @@ fn godot_record(subject: &str, input: &Value) -> Result<Value, HarnessError> {
         SUBJECT_GODOT_REVIEW_CONTEXT => godot_review_context_record(input),
         SUBJECT_GODOT_MUTATION_PREPARE => godot_mutation_prepare_record(input),
         SUBJECT_GODOT_DEVELOP_PLAN => godot_develop_plan_record(input),
+        SUBJECT_CI_ARTIFACT_DIGEST => {
+            content_identity_artifact_digest_record(input)
+        }
+        SUBJECT_CI_CONTRACT_DIGEST => {
+            content_identity_contract_digest_record(input)
+        }
+        SUBJECT_CI_MANIFESTS => content_identity_manifests_record(input),
+        SUBJECT_CI_DELTA => content_identity_delta_record(input),
+        SUBJECT_DET_REPLAY => determinism_replay_record(input),
         _ => unreachable!(
             "godot subject was validated while loading the corpus"
         ),
@@ -2825,6 +2895,7 @@ use siralos_core::godot::scene::models::{
 use siralos_core::godot::scene_mutation::{
     MutationOperation, MutationProperty, SemanticExpectation,
 };
+use siralos_core::identity::CanonicalValue;
 
 struct ReviewContextSource {
     edges: Vec<siralos_core::godot::impact::ImpactEdge>,
@@ -3734,6 +3805,254 @@ fn godot_develop_plan_record(input: &Value) -> Result<Value, HarnessError> {
         }
     }
     Ok(serde_json::Value::Object(object))
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3R R10a subjects: content identity + determinism.
+// ---------------------------------------------------------------------------
+
+fn content_identity_artifact_digest_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::identity::compute_artifact_digest_hex;
+    let artifact_type =
+        input.get("artifactType").and_then(Value::as_str).unwrap_or_default();
+    let schema_version =
+        input.get("schemaVersion").and_then(Value::as_u64).unwrap_or(1);
+    let payload =
+        json_to_canonical(input.get("payload").unwrap_or(&Value::Null));
+    match compute_artifact_digest_hex(artifact_type, schema_version, &payload)
+    {
+        Ok(digest) => Ok(json!({ "digest": digest })),
+        Err(e) => Ok(json!({ "error": e.message })),
+    }
+}
+
+fn content_identity_contract_digest_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::identity::{canonicalize, sha256_hex};
+    let artifact_type =
+        input.get("artifactType").and_then(Value::as_str).unwrap_or_default();
+    let schema_version =
+        input.get("schemaVersion").and_then(Value::as_u64).unwrap_or(1);
+    let content =
+        json_to_canonical(input.get("content").unwrap_or(&Value::Null));
+    let canonical = format!(
+        "siralos:{artifact_type}:v{schema_version}\0{}",
+        canonicalize(&content)
+    );
+    let digest = sha256_hex(canonical.as_bytes());
+    Ok(json!({ "digest": digest }))
+}
+
+fn content_identity_manifests_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::identity::{
+        GuidanceEntryKind, GuidanceManifestEntry, create_guidance_manifest,
+    };
+    let entries: Vec<GuidanceManifestEntry> = input
+        .get("entries")
+        .and_then(Value::as_array)
+        .map(|array| {
+            array
+                .iter()
+                .map(|entry| GuidanceManifestEntry {
+                    id: entry
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    kind: entry
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .and_then(GuidanceEntryKind::parse)
+                        .unwrap_or(GuidanceEntryKind::Architecture),
+                    path: entry
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    digest: entry
+                        .get("digest")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let manifest = create_guidance_manifest(entries);
+    Ok(json!({
+        "aggregateDigest": manifest.aggregate_digest,
+        "entryCount": manifest.entries.len(),
+    }))
+}
+
+fn content_identity_delta_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::identity::compute_section_delta;
+    fn to_canonical_map(value: &Value) -> BTreeMap<String, CanonicalValue> {
+        let mut map = BTreeMap::new();
+        if let Some(object) = value.as_object() {
+            for (key, val) in object {
+                map.insert(key.clone(), json_to_canonical(val));
+            }
+        }
+        map
+    }
+    let base = to_canonical_map(input.get("base").unwrap_or(&Value::Null));
+    let result = to_canonical_map(input.get("result").unwrap_or(&Value::Null));
+    let keys: Vec<String> = input
+        .get("keys")
+        .and_then(Value::as_array)
+        .map(|array| {
+            array.iter().filter_map(Value::as_str).map(str::to_owned).collect()
+        })
+        .unwrap_or_default();
+    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let delta = compute_section_delta(&base, &result, &key_refs);
+    Ok(json!({
+        "changed": delta.changed,
+        "unchanged": delta.unchanged,
+    }))
+}
+
+fn determinism_replay_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::determinism::{
+        ClockPolicy, ProviderInputIdentity, RngPolicy, SourceRevision,
+        create_reproducibility_manifest,
+    };
+    fn parse_source_revisions(value: &Value) -> Vec<SourceRevision> {
+        value
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| SourceRevision {
+                        path: entry
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        revision: entry
+                            .get("revision")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    let provider_input = input.get("providerInput").and_then(|value| {
+        if value.is_null() {
+            return None;
+        }
+        Some(ProviderInputIdentity {
+            provider_route: value
+                .get("providerRoute")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            model_identity: value
+                .get("modelIdentity")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            reasoning_mode: value
+                .get("reasoningMode")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            temperature: value.get("temperature").and_then(Value::as_f64),
+            top_p: value.get("topP").and_then(Value::as_f64),
+            seed: value.get("seed").and_then(Value::as_u64),
+            parameters: value
+                .get("parameters")
+                .and_then(Value::as_array)
+                .map(|params| {
+                    params
+                        .iter()
+                        .filter_map(|param| {
+                            Some((
+                                param.get("name")?.as_str()?.to_owned(),
+                                param.get("value")?.as_str()?.to_owned(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    });
+    let clock_policy =
+        match input.pointer("/clockPolicy/mode").and_then(Value::as_str) {
+            Some("fixed") => ClockPolicy::Fixed(
+                input
+                    .pointer("/clockPolicy/fixedMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            ),
+            _ => ClockPolicy::System,
+        };
+    let rng_policy =
+        match input.pointer("/rngPolicy/mode").and_then(Value::as_str) {
+            Some("seeded") => RngPolicy::Seeded(
+                input
+                    .pointer("/rngPolicy/seed")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            ),
+            Some("system") => RngPolicy::System,
+            _ => RngPolicy::None,
+        };
+    let manifest = create_reproducibility_manifest(
+        siralos_core::determinism::ReproducibilityManifestInput {
+            task_id: input
+                .get("taskId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            execution_input_digest: None,
+            environment_digest: None,
+            task_contract_digest: None,
+            task_plan_digest: None,
+            guidance_digest: None,
+            tool_surface_digest: None,
+            capability_digest: None,
+            source_revision_set: parse_source_revisions(
+                input.get("sourceRevisionSet").unwrap_or(&Value::Null),
+            ),
+            validation_profile: None,
+            provider_input,
+            clock_policy,
+            rng_policy,
+        },
+    )
+    .map_err(|error| HarnessError::corpus(error.message))?;
+    Ok(json!({ "digest": manifest.digest }))
+}
+
+fn json_to_canonical(value: &Value) -> CanonicalValue {
+    match value {
+        Value::Null => CanonicalValue::Null,
+        Value::Bool(inner) => CanonicalValue::Bool(*inner),
+        Value::Number(number) => {
+            if let Some(u64_value) = number.as_u64() {
+                CanonicalValue::U64(u64_value)
+            } else {
+                CanonicalValue::Str(number.to_string())
+            }
+        }
+        Value::String(text) => CanonicalValue::Str(text.clone()),
+        Value::Array(items) => CanonicalValue::Array(
+            items.iter().map(json_to_canonical).collect(),
+        ),
+        Value::Object(map) => CanonicalValue::Object(
+            map.iter()
+                .map(|(key, val)| (key.clone(), json_to_canonical(val)))
+                .collect(),
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
