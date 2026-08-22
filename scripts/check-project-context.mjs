@@ -35,8 +35,11 @@ const REQUIRED_METADATA = new Map([
   ["Status", "Active development"],
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
-  ["Current completed milestone", "R7"],
-  ["Next milestone", "R7 - Provider, Tool-Loop, Projection, Configuration, and CLI Parity"],
+  ["Current completed milestone", "R8"],
+  [
+    "Next milestone",
+    "R9 - Godot prepared mutation, review impact intelligence, and unified develop workflow",
+  ],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
 
@@ -106,7 +109,8 @@ export function validateProjectContext(input) {
     !input.context.includes("R4      COMPLETE") ||
     !input.context.includes("R5      COMPLETE") ||
     !input.context.includes("R6      COMPLETE") ||
-    !input.context.includes("R7      ACTIVE")
+    !input.context.includes("R7      COMPLETE") ||
+    !input.context.includes("R8      COMPLETE")
   ) {
     violations.push("project context does not record R4/R5/R6 complete and R7 active");
   }

@@ -655,6 +655,26 @@ deviation); Tier-1 matrix is the audit mechanism (local
 Verified commit `61fbf997d781377b2501af4057920a2064dd8716` is the new `Last verified commit` and
 `Latest verified executable worktree` in `PROJECT_CONTEXT.md`.
 
+### R8 Verified
+
+R8 — Optional Godot Stage-2 parity is **Verified** on worktree
+`c075b3cf5e5240dd275a35cdc1a5a30c3bda9195`. All six frozen surfaces
+(`docs/wayfinder/decisions/10-r8-entry-review.md` §2) are ported:
+discovery/profiling (`siralos-core::godot` models + `siralos-adapters::godot`
+discovery/profiler), fail-closed recovery contracts, version-bound API
+knowledge, GDScript check-only diagnostics, bounded LSP (framing/JSON-RPC/URI/
+port allocation), and read-only scene/resource intelligence. The differential
+corpus advanced to **version 16, 155 scenario files** with all five frozen
+subjects at required parity (`godot-discovery` 4, `godot-knowledge` 5,
+`godot-diagnostics` 4, `godot-lsp` 4, `godot-scene-resolve` 5) — local audit
+**150/150 applicable required scenarios** (4 platform skips). The fail-closed
+posture is mechanically preserved: no Godot module contains a process-spawn
+path. Gates observed PASS on the verified worktree: `cargo fmt`, `clippy -D
+warnings`, `cargo test --workspace` (657 tests), `check:architecture`,
+`check:rust`, `check:differential`. Promotion evidence and atomic surface list:
+`docs/wayfinder/decisions/11-r8-verified-promotion.md`. R9 awaits its own
+entry review.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:

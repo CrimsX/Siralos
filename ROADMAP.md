@@ -145,7 +145,7 @@ unsafe filesystem or process boundary intentionally fails closed.
   (Provider Contract + Deterministic Fake Provider + Bounded Single
   Model Turn parity) is complete (corpus version 13, 120 scenario
   files, 18 `provider-turn` scenarios at differential parity); R7.2
-  (Application Tool Loop parity) is complete (corpus version 13, 120 scenario files, 16 `tool-loop` scenarios at differential parity, including authorization, displayInput UTF-16, and Tool-result status matrices). R7.3 Projection parity is complete and evidence-backed (13 projection/application integration tests plus 11 required `context-projection` scenarios). R7.4 Configuration parity is complete and evidence-backed (2 required `user-config` scenarios, corpus version 15, 133 scenario files). R7.5 `/context` and `/tools` CLI rendering is complete and evidence-backed (deterministic real-session composition over the existing projection and Tool authority seams, 51 focused Rust CLI tests (10 sanitize) plus TypeScript oracle coverage; advisory P2 filed and closed); R7 is **Verified** at `61fbf997d781`; R8 awaits entry-review.
+  (Application Tool Loop parity) is complete (corpus version 13, 120 scenario files, 16 `tool-loop` scenarios at differential parity, including authorization, displayInput UTF-16, and Tool-result status matrices). R7.3 Projection parity is complete and evidence-backed (13 projection/application integration tests plus 11 required `context-projection` scenarios). R7.4 Configuration parity is complete and evidence-backed (2 required `user-config` scenarios, corpus version 15, 133 scenario files). R7.5 `/context` and `/tools` CLI rendering is complete and evidence-backed (deterministic real-session composition over the existing projection and Tool authority seams, 51 focused Rust CLI tests (10 sanitize) plus TypeScript oracle coverage; advisory P2 filed and closed); R7 is **Verified** at `61fbf997d781`. Stage 3R R8 — Optional Godot Stage-2 parity (discovery/profiling, recovery contracts, version-bound API knowledge, GDScript check-only diagnostics, bounded LSP, read-only scene/resource intelligence) is **complete and evidence-backed**: six surfaces ported across `siralos-core::godot` and `siralos-adapters::godot`, corpus **version 16, 155 scenario files**, all five frozen differential subjects (`godot-discovery` ×4, `godot-knowledge` ×5, `godot-diagnostics` ×4, `godot-lsp` ×4, `godot-scene-resolve` ×5) at required parity — **150/150 applicable required scenarios** (4 platform skips); the fail-closed posture is mechanically preserved (zero spawn paths in any Godot module); R8 is **Verified** at `c075b3cf5e52`; R9 awaits entry-review.
 - Stages 4–6 are not started.
 
 ## 1. Harness foundation
@@ -351,10 +351,10 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   application, new checkpoint creation, Git inspection) report the same
   typed outcomes on both sides.
 
-Current: Stage 3R R7 is Active (R7A behavior extraction and
-provider-protocol remediation complete; R7.1 — Provider Contract +
-Deterministic Fake Provider + Bounded Single Model Turn parity — complete at
-differential parity); R7.2 — Application Tool Loop parity — complete and evidence-backed; R7.3 — Projection parity — complete and evidence-backed; R7.4 — Configuration parity — complete and evidence-backed (2 required `user-config` scenarios, corpus version 15, 133 scenario files); R7.5 — `/context` and `/tools` CLI rendering — complete and evidence-backed (51 focused Rust CLI tests (10 sanitize) plus TypeScript oracle coverage; advisory P2 closed); R7 is **Verified** at 61fbf997d781). The complete
+Current: Stage 3R R8 is **Verified** (R1–R7 Verified as recorded above; R8 —
+Optional Godot Stage-2 parity — complete and evidence-backed at corpus version
+16, 155 scenario files, 150/150 applicable required scenarios, verified worktree
+c075b3cf5e52). The complete
 internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 
