@@ -1,0 +1,26 @@
+{
+  "id": "godot-mutation-prepare.scene-property-fingerprint",
+  "subject": "godot-mutation-prepare",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "operations": [
+      {
+        "op": "set_property",
+        "nodePath": "Root/Button",
+        "property": "text",
+        "value": { "kind": "string", "value": "Play" }
+      }
+    ],
+    "targetPath": "res://scenes/player.tscn",
+    "sourceRevision": "rev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "serializedAfter": "[gd_scene]\n",
+    "previewSummary": "set Root/Button.text",
+    "previewDiff": "--- a\n+++ b\n",
+    "kind": "scene",
+    "addedLines": 1,
+    "removedLines": 1
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "godot-review-context.verified-graph-complete",
+  "subject": "godot-review-context",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "taskContractRevision": 2,
+    "changedPaths": ["res://player.gd"],
+    "edges": [
+      {
+        "kind": "script_attachment",
+        "fromPath": "res://player.gd",
+        "toPath": "res://player.tscn",
+        "stale": false
+      }
+    ],
+    "revisions": [{ "path": "res://player.gd", "revision": "rev_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+  }
+}

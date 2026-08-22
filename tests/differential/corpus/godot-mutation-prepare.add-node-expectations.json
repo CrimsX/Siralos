@@ -1,0 +1,26 @@
+{
+  "id": "godot-mutation-prepare.add-node-expectations",
+  "subject": "godot-mutation-prepare",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "operations": [
+      {
+        "op": "add_node",
+        "name": "HUD",
+        "type": "CanvasLayer",
+        "parentPath": "Root",
+        "properties": [{ "name": "visible", "value": { "kind": "boolean", "value": true } }],
+        "groups": ["ui"]
+      }
+    ],
+    "targetPath": "res://scenes/game.tscn",
+    "sourceRevision": "rev_cccccccccccccccccccccccccccccccc",
+    "sourceSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "serializedAfter": "[gd_scene]\n",
+    "previewSummary": "add Root/HUD",
+    "previewDiff": "--- a\n+++ b\n",
+    "kind": "scene"
+  }
+}

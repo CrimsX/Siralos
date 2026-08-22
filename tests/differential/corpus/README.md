@@ -119,3 +119,21 @@ cancellation propagation, invalid-input ordering before availability,
 unknown prepared-check execution failure, and bounded session state.
 No scenario launches an engine, creates files, opens ports, or widens
 sandbox authority.
+
+The Stage 3R R9 `godot-review-context`, `godot-mutation-prepare`, and
+`godot-develop-plan` subjects execute the deterministic cores frozen by
+the R9 entry review through the real TypeScript reference modules and
+the real Rust candidate implementations (`siralos_core::godot::{impact,
+scene_mutation, development}`). Review-context scenarios declare
+relationship evidence (edges, signal connections, autoloads, candidate
+tests, revisions) and derive bounded manifests, including honest stale,
+autoload-global-reach, runtime-evidence-unavailable, and traversal-bound
+classifications. Mutation-prepare scenarios validate typed operation
+sets (opaque values, traversal paths, duplicate properties, missing
+reference targets), derive post-apply semantic expectations, and bind
+deterministic fingerprints over the exact target/revision/operations/
+serialized-output tuple. Develop-plan scenarios classify surfaces from
+host-observed evidence only, resolve cross-target dependency edges, and
+derive the topological apply order with its rationale, including the
+cycle rejection path. No scenario launches an engine, writes a file, or
+widens sandbox authority.

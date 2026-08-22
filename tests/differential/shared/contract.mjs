@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 16;
+export const CORPUS_VERSION = 17;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -779,6 +779,9 @@ export function validateScenario(scenario, file) {
     "godot-knowledge",
     "godot-diagnostics",
     "godot-lsp",
+    "godot-review-context",
+    "godot-mutation-prepare",
+    "godot-develop-plan",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

@@ -1,0 +1,19 @@
+{
+  "id": "godot-review-context.stale-excluded-partial",
+  "subject": "godot-review-context",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "taskContractRevision": 1,
+    "changedPaths": ["res://a.gd"],
+    "edges": [
+      {
+        "kind": "script_dependency",
+        "fromPath": "res://a.gd",
+        "toPath": "res://b.gd",
+        "stale": true
+      }
+    ]
+  }
+}

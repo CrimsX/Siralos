@@ -1,0 +1,16 @@
+{
+  "id": "godot-develop-plan.script-only-path-order",
+  "subject": "godot-develop-plan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "request": "refactor res://enemy.gd helpers",
+    "touchpoints": [{ "path": "res://enemy.gd", "status": "verified" }],
+    "projectSurfaces": null,
+    "targets": [
+      { "targetId": "b", "path": "res://b.gd", "references": [] },
+      { "targetId": "a", "path": "res://a.gd", "references": [] }
+    ]
+  }
+}

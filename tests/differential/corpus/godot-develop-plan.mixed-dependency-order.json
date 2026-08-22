@@ -1,0 +1,19 @@
+{
+  "id": "godot-develop-plan.mixed-dependency-order",
+  "subject": "godot-develop-plan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "request": "add a pressed signal in main.tscn and wire it from hud.gd",
+    "touchpoints": [
+      { "path": "res://hud.gd", "status": "verified" },
+      { "path": "res://main.tscn", "status": "candidate" }
+    ],
+    "projectSurfaces": { "hasScenes": true, "hasResources": false, "hasScripts": true },
+    "targets": [
+      { "targetId": "scene", "path": "res://main.tscn", "references": [] },
+      { "targetId": "script", "path": "res://hud.gd", "references": ["res://main.tscn"] }
+    ]
+  }
+}

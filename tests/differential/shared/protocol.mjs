@@ -1618,6 +1618,241 @@ function validateGodotLspResult(result, label) {
   }
 }
 
+const GODOT_REVIEW_CONTEXT_KINDS = new Set([
+  "script",
+  "scene",
+  "resource",
+  "autoload",
+  "signal-endpoint",
+  "test",
+  "project-config",
+]);
+const GODOT_RELATION_KINDS = new Set([
+  "script_attachment",
+  "scene_inheritance",
+  "scene_instancing",
+  "resource_dependency",
+  "script_dependency",
+  "signal_connection",
+  "autoload_global",
+  "test_covers",
+]);
+
+function validateGodotReviewContextResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    [
+      "taskId",
+      "taskContractRevision",
+      "primaryChanges",
+      "relatedSurfaces",
+      "regressionAreas",
+      "validation",
+      "evidence",
+      "completeness",
+      "diagnostics",
+    ],
+    `${label}.result`,
+  );
+  if (
+    typeof result.taskId !== "string" ||
+    !Number.isSafeInteger(result.taskContractRevision) ||
+    result.taskContractRevision < 1 ||
+    !["complete", "bounded", "partial"].includes(result.completeness)
+  ) {
+    throw new Error(`${label}.result identity is invalid`);
+  }
+  const checkSurface = (surface, surfaceLabel) => {
+    const keys = Object.keys(surface).sort();
+    const required = ["path", "kind", "revision", "confidence", "evidence"].sort();
+    for (const key of keys) {
+      if (!["path", "kind", "revision", "confidence", "evidence", "note"].includes(key)) {
+        throw new Error(`${surfaceLabel} has unknown fields`);
+      }
+    }
+    for (const key of required) {
+      if (!keys.includes(key)) {
+        throw new Error(`${surfaceLabel} has missing fields`);
+      }
+    }
+    if (
+      typeof surface.path !== "string" ||
+      !GODOT_REVIEW_CONTEXT_KINDS.has(surface.kind) ||
+      (surface.revision !== null && typeof surface.revision !== "string") ||
+      !["verified", "candidate"].includes(surface.confidence) ||
+      typeof surface.evidence !== "string" ||
+      (surface.note !== undefined && surface.note !== null && typeof surface.note !== "string")
+    ) {
+      throw new Error(`${surfaceLabel} is invalid`);
+    }
+  };
+  if (!Array.isArray(result.primaryChanges) || result.primaryChanges.length > 16) {
+    throw new Error(`${label}.result.primaryChanges must be bounded`);
+  }
+  for (const surface of result.primaryChanges) {
+    checkSurface(surface, `${label}.result.primaryChanges`);
+  }
+  if (!Array.isArray(result.relatedSurfaces) || result.relatedSurfaces.length > 64) {
+    throw new Error(`${label}.result.relatedSurfaces must be bounded`);
+  }
+  for (const relation of result.relatedSurfaces) {
+    assertExactKeys(
+      relation,
+      [
+        "kind",
+        "sourcePath",
+        "targetPath",
+        "sourceRevision",
+        "targetRevision",
+        "confidence",
+        "evidence",
+      ],
+      `${label}.result.relatedSurfaces`,
+    );
+    if (
+      !GODOT_RELATION_KINDS.has(relation.kind) ||
+      typeof relation.sourcePath !== "string" ||
+      typeof relation.targetPath !== "string" ||
+      (relation.sourceRevision !== null && typeof relation.sourceRevision !== "string") ||
+      (relation.targetRevision !== null && typeof relation.targetRevision !== "string") ||
+      !["verified", "candidate"].includes(relation.confidence) ||
+      typeof relation.evidence !== "string"
+    ) {
+      throw new Error(`${label}.result.relatedSurfaces entry is invalid`);
+    }
+  }
+  for (const key of ["regressionAreas", "validation", "evidence", "diagnostics"]) {
+    if (!Array.isArray(result[key])) {
+      throw new Error(`${label}.result.${key} must be an array`);
+    }
+  }
+  for (const area of result.regressionAreas) {
+    assertExactKeys(area, ["id", "title", "reason", "surfaces"], `${label}.result.regressionAreas`);
+    if (
+      typeof area.id !== "string" ||
+      typeof area.title !== "string" ||
+      typeof area.reason !== "string" ||
+      !Array.isArray(area.surfaces)
+    ) {
+      throw new Error(`${label}.result.regressionAreas entry is invalid`);
+    }
+  }
+  for (const recommendation of result.validation) {
+    assertExactKeys(
+      recommendation,
+      ["kind", "priority", "rationale", "surfaces"],
+      `${label}.result.validation`,
+    );
+    if (typeof recommendation.rationale !== "string" || !Array.isArray(recommendation.surfaces)) {
+      throw new Error(`${label}.result.validation entry is invalid`);
+    }
+  }
+  for (const evidence of result.evidence) {
+    if (typeof evidence !== "string") {
+      throw new Error(`${label}.result.evidence entries are invalid`);
+    }
+  }
+  for (const diagnostic of result.diagnostics) {
+    assertExactKeys(diagnostic, ["code", "message"], `${label}.result.diagnostics`);
+    if (typeof diagnostic.code !== "string" || typeof diagnostic.message !== "string") {
+      throw new Error(`${label}.result.diagnostics entry is invalid`);
+    }
+  }
+}
+
+function validateGodotMutationPrepareResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  const keys = Object.keys(result).sort();
+  if (keys.length === 2 && keys[0] === "error" && keys[1] === "ok") {
+    if (result.ok !== false || typeof result.error !== "string") {
+      throw new Error(`${label}.result failure shape is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(
+    result,
+    ["ok", "fingerprint", "operations", "expectedSemanticEffect", "structuralSummary", "diff"],
+    `${label}.result`,
+  );
+  if (
+    result.ok !== true ||
+    !/^[0-9a-f]{64}$/u.test(result.fingerprint ?? "") ||
+    typeof result.structuralSummary !== "string" ||
+    typeof result.diff !== "string" ||
+    !Array.isArray(result.operations) ||
+    result.operations.some((operation) => !isObject(operation) || typeof operation.op !== "string")
+  ) {
+    throw new Error(`${label}.result prepared shape is invalid`);
+  }
+  for (const expectation of result.expectedSemanticEffect) {
+    if (!isObject(expectation) || typeof expectation.kind !== "string") {
+      throw new Error(`${label}.result.expectedSemanticEffect entry is invalid`);
+    }
+  }
+}
+
+const GODOT_SURFACE_KINDS = new Set(["script_only", "native_only", "mixed", "none"]);
+
+function validateGodotDevelopPlanResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    [
+      "surface",
+      "edges",
+      "unresolvedReferences",
+      ...(Object.hasOwn(result, "applyOrderError") ? ["applyOrderError"] : ["applyOrder"]),
+    ],
+    `${label}.result`,
+  );
+  const surface = result.surface;
+  if (
+    !isObject(surface) ||
+    !GODOT_SURFACE_KINDS.has(surface.kind) ||
+    typeof surface.rationale !== "string" ||
+    !Array.isArray(surface.evidence)
+  ) {
+    throw new Error(`${label}.result.surface is invalid`);
+  }
+  if (!Array.isArray(result.edges)) {
+    throw new Error(`${label}.result.edges must be an array`);
+  }
+  for (const edge of result.edges) {
+    assertExactKeys(edge, ["before", "after"], `${label}.result.edges`);
+    if (typeof edge.before !== "string" || typeof edge.after !== "string") {
+      throw new Error(`${label}.result.edges entry is invalid`);
+    }
+  }
+  if (!Array.isArray(result.unresolvedReferences)) {
+    throw new Error(`${label}.result.unresolvedReferences must be an array`);
+  }
+  for (const reference of result.unresolvedReferences) {
+    assertExactKeys(reference, ["targetId", "path"], `${label}.result.unresolvedReferences`);
+  }
+  if (Object.hasOwn(result, "applyOrderError")) {
+    if (typeof result.applyOrderError !== "string") {
+      throw new Error(`${label}.result.applyOrderError is invalid`);
+    }
+    return;
+  }
+  const applyOrder = result.applyOrder;
+  if (
+    !isObject(applyOrder) ||
+    !Array.isArray(applyOrder.order) ||
+    applyOrder.order.some((id) => typeof id !== "string") ||
+    typeof applyOrder.rationale !== "string"
+  ) {
+    throw new Error(`${label}.result.applyOrder is invalid`);
+  }
+}
+
 function validateCompletedResult(record, label) {
   if (!isObject(record.result)) {
     throw new Error(`${label}.result must be an object`);
@@ -1718,6 +1953,18 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "godot-lsp") {
     validateGodotLspResult(record.result, label);
+    return;
+  }
+  if (record.subject === "godot-review-context") {
+    validateGodotReviewContextResult(record.result, label);
+    return;
+  }
+  if (record.subject === "godot-mutation-prepare") {
+    validateGodotMutationPrepareResult(record.result, label);
+    return;
+  }
+  if (record.subject === "godot-develop-plan") {
+    validateGodotDevelopPlanResult(record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

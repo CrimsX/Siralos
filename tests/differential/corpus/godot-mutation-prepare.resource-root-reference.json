@@ -1,0 +1,20 @@
+{
+  "id": "godot-mutation-prepare.resource-root-reference",
+  "subject": "godot-mutation-prepare",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "operations": [
+      { "op": "remove_property", "property": "legacy" },
+      { "op": "change_resource_reference", "resourceId": "1_abcde", "newUid": "uid://cv1x2y3z4" }
+    ],
+    "targetPath": "res://materials/metal.tres",
+    "sourceRevision": "rev_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "serializedAfter": "[gd_resource type=\"Material\"]\n",
+    "previewSummary": "drop legacy; retarget 1_abcde",
+    "previewDiff": "--- a\n+++ b\n",
+    "kind": "resource"
+  }
+}

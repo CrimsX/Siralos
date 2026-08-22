@@ -1,0 +1,13 @@
+{
+  "id": "godot-develop-plan.none-empty-targets",
+  "subject": "godot-develop-plan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "request": "summarize the repository",
+    "touchpoints": [],
+    "projectSurfaces": null,
+    "targets": []
+  }
+}

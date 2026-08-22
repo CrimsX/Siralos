@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 16,
+  "corpusVersion": 17,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -167,6 +167,22 @@
       "sha256": "849255a4af7d0002c06874723c25de42990799d8bcee04b043e037be1ec78bd9"
     },
     {
+      "file": "godot-develop-plan.mixed-dependency-order.json",
+      "sha256": "6cc8c80b8f4e08ea85d4ddbed08f39d816feda0bd0ff94518266610230c40977"
+    },
+    {
+      "file": "godot-develop-plan.native-only-unresolved-reference.json",
+      "sha256": "4e1e417863770d8d2ed958e4a03ede412d19e7269693bc7d8fd87185ba0c0192"
+    },
+    {
+      "file": "godot-develop-plan.none-empty-targets.json",
+      "sha256": "3f5a879aebcb5767a862837a9ae27363f8cd063bfcd174303de5124e87cb2b15"
+    },
+    {
+      "file": "godot-develop-plan.script-only-path-order.json",
+      "sha256": "8a0568f44ad54e163e46049a38778b55c8d5f328a9533e5d4d98311a66b94f96"
+    },
+    {
       "file": "godot-diagnostics.execute-fails-unknown-handle.json",
       "sha256": "64010b18f2704c3567c8677245318fd5f0767e1587d52fb44452449bea43e56b"
     },
@@ -233,6 +249,38 @@
     {
       "file": "godot-lsp.support-unavailable.json",
       "sha256": "3e10681d06d907ca9f7f6362d0e2da52840eb0aadd71872c53f7add188dfe3de"
+    },
+    {
+      "file": "godot-mutation-prepare.add-node-expectations.json",
+      "sha256": "d69ba102aefc1ad6dad0a6fabc3fabccfc61e33dfb0254d25f8845ddc4a99575"
+    },
+    {
+      "file": "godot-mutation-prepare.invalid-node-path-error.json",
+      "sha256": "72ef0e5f3407937e81c37dcdf942893b93177ba180dd4f073db669b0391bceac"
+    },
+    {
+      "file": "godot-mutation-prepare.resource-root-reference.json",
+      "sha256": "e5f23f7344a1fd77a8e8d2c2983b72e5ef88938c9e22322cd1892ac3cce16afa"
+    },
+    {
+      "file": "godot-mutation-prepare.scene-property-fingerprint.json",
+      "sha256": "aa445c764274ccb27b7105ffa47b1060fbdc2a75e54903e0fa95da57245957f6"
+    },
+    {
+      "file": "godot-review-context.autoload-runtime-gap-partial.json",
+      "sha256": "0ab358839b1fbecd77ef3a98701a17d2da14c70370972121e0598a0b2ddb34eb"
+    },
+    {
+      "file": "godot-review-context.depth-bound-bounded.json",
+      "sha256": "b86a1dcfa50542d4039a26e1fb9b2248ff7032e9913baa6c161f3be22ab8b2d3"
+    },
+    {
+      "file": "godot-review-context.stale-excluded-partial.json",
+      "sha256": "d6da7e3240aa549035cd684af23e6ae033e71cbd7c38d91327e06445639cf9e4"
+    },
+    {
+      "file": "godot-review-context.verified-graph-complete.json",
+      "sha256": "25f58fea2804ab53c180ed244689f6280793753f1a42554bd26ddbc32df0800a"
     },
     {
       "file": "godot-scene-resolve.complete-scene.json",
@@ -623,5 +671,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "16efa1c3def3d6a272f9635173fe971259be29edb6b54942d845668d9944a862"
+  "corpusSha256": "7b061e4246165679887cfb6edb799f22b3d90393372b1de09733af3c654deb43"
 }

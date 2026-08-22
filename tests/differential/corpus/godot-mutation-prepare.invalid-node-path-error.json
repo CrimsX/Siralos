@@ -1,0 +1,17 @@
+{
+  "id": "godot-mutation-prepare.invalid-node-path-error",
+  "subject": "godot-mutation-prepare",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "operations": [{ "op": "remove_node", "nodePath": "Root/../Old" }],
+    "targetPath": "res://scenes/old.tscn",
+    "sourceRevision": "rev_dddddddddddddddddddddddddddddddd",
+    "sourceSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "serializedAfter": "",
+    "previewSummary": "remove Old",
+    "previewDiff": "diff",
+    "kind": "scene"
+  }
+}

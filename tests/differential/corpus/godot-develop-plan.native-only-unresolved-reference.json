@@ -1,0 +1,15 @@
+{
+  "id": "godot-develop-plan.native-only-unresolved-reference",
+  "subject": "godot-develop-plan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "request": "retexture the scene resource",
+    "touchpoints": [{ "path": "res://skin.tres", "status": "candidate" }],
+    "projectSurfaces": null,
+    "targets": [
+      { "targetId": "skin", "path": "res://skin.tres", "references": ["res://missing.tres"] }
+    ]
+  }
+}

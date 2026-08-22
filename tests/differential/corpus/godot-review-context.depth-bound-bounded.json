@@ -1,0 +1,31 @@
+{
+  "id": "godot-review-context.depth-bound-bounded",
+  "subject": "godot-review-context",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "taskContractRevision": 1,
+    "changedPaths": ["res://a.gd"],
+    "edges": [
+      {
+        "kind": "script_dependency",
+        "fromPath": "res://a.gd",
+        "toPath": "res://b.gd",
+        "stale": false
+      },
+      {
+        "kind": "script_dependency",
+        "fromPath": "res://b.gd",
+        "toPath": "res://c.gd",
+        "stale": false
+      },
+      {
+        "kind": "script_dependency",
+        "fromPath": "res://c.gd",
+        "toPath": "res://d.gd",
+        "stale": false
+      }
+    ]
+  }
+}

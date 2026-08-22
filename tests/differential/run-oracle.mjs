@@ -53,12 +53,18 @@ const GODOT_DISCOVERY_PROBE = join(HERE, "probes", "godot-discovery-oracle.mjs")
 const GODOT_KNOWLEDGE_PROBE = join(HERE, "probes", "godot-knowledge-oracle.mjs");
 const GODOT_DIAGNOSTICS_PROBE = join(HERE, "probes", "godot-diagnostics-oracle.mjs");
 const GODOT_LSP_PROBE = join(HERE, "probes", "godot-lsp-oracle.mjs");
+const GODOT_REVIEW_CONTEXT_PROBE = join(HERE, "probes", "godot-review-context-oracle.mjs");
+const GODOT_MUTATION_PREPARE_PROBE = join(HERE, "probes", "godot-mutation-prepare-oracle.mjs");
+const GODOT_DEVELOP_PLAN_PROBE = join(HERE, "probes", "godot-develop-plan-oracle.mjs");
 const GODOT_PROBES = new Map([
   ["godot-scene-resolve", GODOT_SCENE_RESOLVE_PROBE],
   ["godot-discovery", GODOT_DISCOVERY_PROBE],
   ["godot-knowledge", GODOT_KNOWLEDGE_PROBE],
   ["godot-diagnostics", GODOT_DIAGNOSTICS_PROBE],
   ["godot-lsp", GODOT_LSP_PROBE],
+  ["godot-review-context", GODOT_REVIEW_CONTEXT_PROBE],
+  ["godot-mutation-prepare", GODOT_MUTATION_PREPARE_PROBE],
+  ["godot-develop-plan", GODOT_DEVELOP_PLAN_PROBE],
 ]);
 
 function optionValue(args, name) {

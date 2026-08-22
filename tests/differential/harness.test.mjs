@@ -78,7 +78,7 @@ describe("canonical serialization properties", () => {
     return values[seed % values.length];
   }
 
-  it("is idempotent over parsed values (parse → canonicalize → parse → canonicalize)", () => {
+  it("is idempotent over parsed values (parse â†’ canonicalize â†’ parse â†’ canonicalize)", () => {
     for (let seed = 0; seed < 64; seed += 1) {
       const value = generateValue(seed);
       const once = canonicalizeJson(value);
@@ -124,7 +124,7 @@ describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
     expect(manifest.schemaVersion).toBe(3);
-    expect(manifest.corpusVersion).toBe(16);
+    expect(manifest.corpusVersion).toBe(17);
     expect(manifest.corpusSha256).toBe(computeCorpusDigest(manifest));
     expect(manifest.scenarios.length).toBeGreaterThanOrEqual(6);
     for (const entry of manifest.scenarios) {
@@ -157,6 +157,9 @@ describe("corpus integrity", () => {
         "godot-knowledge",
         "godot-diagnostics",
         "godot-lsp",
+        "godot-review-context",
+        "godot-mutation-prepare",
+        "godot-develop-plan",
       ]).toContain(scenario.subject);
       expect(["required", "informational"]).toContain(scenario.parity);
       expect(Array.isArray(scenario.platforms)).toBe(true);
@@ -230,7 +233,7 @@ describe("corpus integrity", () => {
   it("rejects unsupported corpus and schema versions and unknown manifest fields", () => {
     for (const [field, value, expected] of [
       ["schemaVersion", 4, /unsupported corpus schemaVersion/u],
-      ["corpusVersion", 17, /unsupported corpusVersion/u],
+      ["corpusVersion", 18, /unsupported corpusVersion/u],
       ["unexpected", true, /unknown or missing fields/u],
     ]) {
       const corpus = mutableCorpus();
@@ -672,6 +675,186 @@ describe("godot subject integrity", () => {
         ROOT,
       ).result,
     ).toEqual({ status: "partial", diagnostics: 1, truncated: false });
+  });
+});
+
+describe("godot r9 subject integrity", () => {
+  const R9_SUBJECTS = ["godot-review-context", "godot-mutation-prepare", "godot-develop-plan"];
+
+  function r9Scenario(subject, input) {
+    return {
+      id: `${subject}.basic`,
+      subject,
+      platforms: ["*"],
+      parity: "required",
+      env: {},
+      input,
+    };
+  }
+
+  const REPRESENTATIVE_INPUTS = {
+    "godot-review-context": {
+      taskContractRevision: 1,
+      changedPaths: ["res://player.gd"],
+      edges: [
+        {
+          kind: "script_attachment",
+          fromPath: "res://player.gd",
+          toPath: "res://player.tscn",
+          stale: false,
+        },
+      ],
+    },
+    "godot-mutation-prepare": {
+      operations: [
+        {
+          op: "set_property",
+          nodePath: "Root/Button",
+          property: "text",
+          value: { kind: "string", value: "Play" },
+        },
+      ],
+      targetPath: "res://scenes/player.tscn",
+      sourceRevision: `rev_${"a".repeat(32)}`,
+      sourceSha256: "b".repeat(64),
+      serializedAfter: "[gd_scene]\n",
+      previewSummary: "set Root/Button.text",
+      previewDiff: "--- a\n+++ b\n",
+      kind: "scene",
+    },
+    "godot-develop-plan": {
+      request: "wire hud.gd into main.tscn",
+      touchpoints: [
+        { path: "res://hud.gd", status: "verified" },
+        { path: "res://main.tscn", status: "candidate" },
+      ],
+      projectSurfaces: null,
+      targets: [
+        { targetId: "scene", path: "res://main.tscn", references: [] },
+        {
+          targetId: "script",
+          path: "res://hud.gd",
+          references: ["res://main.tscn"],
+        },
+      ],
+    },
+  };
+
+  it("accepts every r9 subject through the contract validator", () => {
+    for (const subject of R9_SUBJECTS) {
+      expect(() =>
+        validateScenario(
+          r9Scenario(subject, REPRESENTATIVE_INPUTS[subject]),
+          `${subject}.basic.json`,
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects r9 scenarios with concrete platforms or a non-empty env", () => {
+    const platformError = /platforms \["\*"\] and an empty env/u;
+    const windows = r9Scenario("godot-review-context", {
+      taskContractRevision: 1,
+    });
+    windows.platforms = ["windows"];
+    expect(() => validateScenario(windows, "godot-review-context.basic.json")).toThrow(
+      platformError,
+    );
+    const withEnv = r9Scenario("godot-mutation-prepare", {
+      operations: [{ op: "remove_subresource", id: "sub" }],
+    });
+    withEnv.env = { HOME: "/home/x" };
+    expect(() => validateScenario(withEnv, "godot-mutation-prepare.basic.json")).toThrow(
+      platformError,
+    );
+  });
+
+  it("derives review-context manifests through the real analyzer", () => {
+    const outcome = runScenario(
+      {
+        id: "rc.probe",
+        subject: "godot-review-context",
+        input: REPRESENTATIVE_INPUTS["godot-review-context"],
+      },
+      ROOT,
+    );
+    expect(outcome.outcome).toBe(SCENARIO_OUTCOME.COMPLETED);
+    expect(outcome.result.completeness).toBe("complete");
+    expect(outcome.result.relatedSurfaces).toHaveLength(1);
+    expect(outcome.result.relatedSurfaces[0].evidence).toBe("index:script_attachment");
+    expect(outcome.result.validation.some((rec) => rec.kind === "gdscript_check_only")).toBe(true);
+  });
+
+  it("rejects traversal node paths and binds deterministic fingerprints", () => {
+    const valid = runScenario(
+      {
+        id: "mp.ok",
+        subject: "godot-mutation-prepare",
+        input: REPRESENTATIVE_INPUTS["godot-mutation-prepare"],
+      },
+      ROOT,
+    );
+    expect(valid.result.ok).toBe(true);
+    expect(valid.result.fingerprint).toMatch(/^[0-9a-f]{64}$/u);
+
+    const traversal = structuredClone(REPRESENTATIVE_INPUTS["godot-mutation-prepare"]);
+    traversal.operations = [{ op: "remove_node", nodePath: "Root/../Old" }];
+    const invalid = runScenario(
+      { id: "mp.bad", subject: "godot-mutation-prepare", input: traversal },
+      ROOT,
+    );
+    expect(invalid.result).toEqual({
+      ok: false,
+      error: "Invalid node path: Root/../Old",
+    });
+  });
+
+  it("routes mixed surfaces and orders targets by declared dependencies", () => {
+    const outcome = runScenario(
+      {
+        id: "dp.probe",
+        subject: "godot-develop-plan",
+        input: REPRESENTATIVE_INPUTS["godot-develop-plan"],
+      },
+      ROOT,
+    );
+    expect(outcome.result.surface.kind).toBe("mixed");
+    expect(outcome.result.edges).toEqual([{ before: "scene", after: "script" }]);
+    expect(outcome.result.applyOrder.order).toEqual(["scene", "script"]);
+    expect(outcome.result.applyOrder.rationale).toContain(
+      "1 resolved cross-target dependency edge",
+    );
+  });
+
+  it("reports cycles through applyOrderError instead of throwing", () => {
+    const outcome = runScenario(
+      {
+        id: "dp.cycle",
+        subject: "godot-develop-plan",
+        input: {
+          request: "swap two scenes",
+          touchpoints: [],
+          projectSurfaces: null,
+          targets: [
+            {
+              targetId: "x",
+              path: "res://x.gd",
+              references: ["res://y.gd"],
+            },
+            {
+              targetId: "y",
+              path: "res://y.gd",
+              references: ["res://x.gd"],
+            },
+          ],
+        },
+      },
+      ROOT,
+    );
+    expect(outcome.outcome).toBe(SCENARIO_OUTCOME.COMPLETED);
+    expect(outcome.result.applyOrderError).toBe(
+      "The unified apply order contains a dependency cycle: x, y.",
+    );
   });
 });
 

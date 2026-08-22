@@ -1,0 +1,12 @@
+{
+  "id": "godot-review-context.autoload-runtime-gap-partial",
+  "subject": "godot-review-context",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "taskContractRevision": 1,
+    "changedPaths": ["res://globals/state.gd"],
+    "autoloads": [{ "path": "res://globals/state.gd", "name": "State" }]
+  }
+}
