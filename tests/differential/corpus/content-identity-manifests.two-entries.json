@@ -1,0 +1,23 @@
+{
+  "id": "content-identity-manifests.two-entries",
+  "subject": "content-identity-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "entries": [
+      {
+        "id": "e2",
+        "kind": "adr",
+        "path": "docs/adr/0001.md",
+        "digest": "digest-b"
+      },
+      {
+        "id": "e1",
+        "kind": "root-agents",
+        "path": "AGENTS.md",
+        "digest": "digest-a"
+      }
+    ]
+  }
+}

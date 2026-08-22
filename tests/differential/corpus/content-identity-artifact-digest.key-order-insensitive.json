@@ -1,0 +1,16 @@
+{
+  "id": "content-identity-artifact-digest.key-order-insensitive",
+  "subject": "content-identity-artifact-digest",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "artifactType": "TestPlan",
+    "schemaVersion": 1,
+    "payload": {
+      "objective": "ship",
+      "scope": "bounded",
+      "nonGoals": []
+    }
+  }
+}

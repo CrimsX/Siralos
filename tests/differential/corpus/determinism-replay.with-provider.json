@@ -1,0 +1,33 @@
+{
+  "id": "determinism-replay.with-provider",
+  "subject": "determinism-replay",
+  "platforms": ["*"],
+  "parity": "informational",
+  "env": {},
+  "input": {
+    "taskId": "task-2",
+    "sourceRevisionSet": [],
+    "providerInput": {
+      "providerRoute": "fake",
+      "modelIdentity": "det-v1",
+      "reasoningMode": null,
+      "temperature": 0.5,
+      "topP": 1,
+      "seed": 42,
+      "parameters": [
+        {
+          "name": "maxTokens",
+          "value": "1024"
+        }
+      ]
+    },
+    "clockPolicy": {
+      "mode": "fixed",
+      "fixedMs": 1000
+    },
+    "rngPolicy": {
+      "mode": "seeded",
+      "seed": 7
+    }
+  }
+}

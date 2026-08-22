@@ -1,0 +1,42 @@
+{
+  "id": "determinism-replay.full",
+  "subject": "determinism-replay",
+  "platforms": ["*"],
+  "parity": "informational",
+  "env": {},
+  "input": {
+    "taskId": "task-3",
+    "executionInputDigest": "exec",
+    "environmentDigest": "env",
+    "taskContractDigest": "contract",
+    "guidanceDigest": "guide",
+    "toolSurfaceDigest": "surface",
+    "capabilityDigest": "cap",
+    "sourceRevisionSet": [
+      {
+        "path": "res://a.gd",
+        "revision": "rev_a"
+      },
+      {
+        "path": "res://b.tscn",
+        "revision": "rev_b"
+      }
+    ],
+    "validationProfile": "develop-offline",
+    "providerInput": {
+      "providerRoute": "fake",
+      "modelIdentity": "det-v1",
+      "temperature": 0,
+      "topP": 0.9,
+      "seed": 7
+    },
+    "clockPolicy": {
+      "mode": "fixed",
+      "fixedMs": 5000
+    },
+    "rngPolicy": {
+      "mode": "seeded",
+      "seed": 123
+    }
+  }
+}

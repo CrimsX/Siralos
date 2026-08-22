@@ -1,0 +1,17 @@
+{
+  "id": "content-identity-manifests.development",
+  "subject": "content-identity-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "entries": [
+      {
+        "id": "dev-guide",
+        "kind": "development",
+        "path": "docs/development/RUST_STYLE.md",
+        "digest": "digest-dev"
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "content-identity-delta.mixed",
+  "subject": "content-identity-delta",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "base": {
+      "x": "old-x",
+      "y": "same-y",
+      "z": "old-z"
+    },
+    "result": {
+      "x": "new-x",
+      "y": "same-y",
+      "z": "changed-z"
+    },
+    "keys": ["x", "y", "z"]
+  }
+}

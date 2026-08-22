@@ -1,0 +1,15 @@
+{
+  "id": "content-identity-artifact-digest.basic",
+  "subject": "content-identity-artifact-digest",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "artifactType": "TaskContract",
+    "schemaVersion": 1,
+    "payload": {
+      "id": "t1",
+      "request": "do it"
+    }
+  }
+}

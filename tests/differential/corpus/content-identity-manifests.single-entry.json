@@ -1,0 +1,17 @@
+{
+  "id": "content-identity-manifests.single-entry",
+  "subject": "content-identity-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "entries": [
+      {
+        "id": "arch",
+        "kind": "architecture",
+        "path": "docs/architecture/README.md",
+        "digest": "digest-arch"
+      }
+    ]
+  }
+}

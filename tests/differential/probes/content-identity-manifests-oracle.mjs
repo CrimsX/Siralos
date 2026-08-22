@@ -29,12 +29,7 @@ const manifest = createGuidanceManifest(
 
 process.stdout.write(
   JSON.stringify({
-    entries: manifest.entries.map((entry) => ({
-      id: entry.id,
-      kind: entry.kind,
-      path: entry.path,
-      digest: entry.digest,
-    })),
     aggregateDigest: manifest.aggregateDigest,
+    entryCount: manifest.entries.length,
   }),
 );

@@ -71,7 +71,7 @@ const SUBJECT_CI_MANIFESTS: &str = "content-identity-manifests";
 const SUBJECT_CI_DELTA: &str = "content-identity-delta";
 const SUBJECT_DET_REPLAY: &str = "determinism-replay";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 17;
+const CORPUS_VERSION: u64 = 18;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -1229,7 +1229,12 @@ fn run_scenario(
         | SUBJECT_GODOT_LSP
         | SUBJECT_GODOT_REVIEW_CONTEXT
         | SUBJECT_GODOT_MUTATION_PREPARE
-        | SUBJECT_GODOT_DEVELOP_PLAN => {
+        | SUBJECT_GODOT_DEVELOP_PLAN
+        | SUBJECT_CI_ARTIFACT_DIGEST
+        | SUBJECT_CI_CONTRACT_DIGEST
+        | SUBJECT_CI_MANIFESTS
+        | SUBJECT_CI_DELTA
+        | SUBJECT_DET_REPLAY => {
             let input = scenario
                 .input
                 .as_ref()
@@ -2096,6 +2101,15 @@ fn godot_record(subject: &str, input: &Value) -> Result<Value, HarnessError> {
         SUBJECT_GODOT_REVIEW_CONTEXT => godot_review_context_record(input),
         SUBJECT_GODOT_MUTATION_PREPARE => godot_mutation_prepare_record(input),
         SUBJECT_GODOT_DEVELOP_PLAN => godot_develop_plan_record(input),
+        SUBJECT_CI_ARTIFACT_DIGEST => {
+            content_identity_artifact_digest_record(input)
+        }
+        SUBJECT_CI_CONTRACT_DIGEST => {
+            content_identity_contract_digest_record(input)
+        }
+        SUBJECT_CI_MANIFESTS => content_identity_manifests_record(input),
+        SUBJECT_CI_DELTA => content_identity_delta_record(input),
+        SUBJECT_DET_REPLAY => determinism_replay_record(input),
         SUBJECT_CI_ARTIFACT_DIGEST => {
             content_identity_artifact_digest_record(input)
         }
@@ -8037,7 +8051,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 167);
+        assert_eq!(loaded.len(), 182);
     }
 
     #[test]

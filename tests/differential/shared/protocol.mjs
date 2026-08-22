@@ -1967,6 +1967,32 @@ function validateCompletedResult(record, label) {
     validateGodotDevelopPlanResult(record.result, label);
     return;
   }
+  const R10A_DIGEST_SUBJECTS = new Set([
+    "content-identity-artifact-digest",
+    "content-identity-contract-digest",
+    "determinism-replay",
+  ]);
+  if (R10A_DIGEST_SUBJECTS.has(record.subject)) {
+    assertExactKeys(record.result, ["digest"], `${label}.result`);
+    return;
+  }
+  if (record.subject === "content-identity-manifests") {
+    assertExactKeys(record.result, ["aggregateDigest", "entryCount"], `${label}.result`);
+    return;
+  }
+  if (record.subject === "content-identity-delta") {
+    assertExactKeys(record.result, ["changed", "unchanged"], `${label}.result`);
+    if (
+      !Array.isArray(record.result.changed) ||
+      !Array.isArray(record.result.unchanged) ||
+      record.result.changed
+        .concat(record.result.unchanged)
+        .some((entry) => typeof entry !== "string")
+    ) {
+      throw new Error(`${label}.result delta arrays are invalid`);
+    }
+    return;
+  }
   assertExactKeys(record.result, ["version"], `${label}.result`);
   if (
     typeof record.result.version !== "string" ||

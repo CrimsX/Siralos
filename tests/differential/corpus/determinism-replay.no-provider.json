@@ -1,0 +1,24 @@
+{
+  "id": "determinism-replay.no-provider",
+  "subject": "determinism-replay",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "taskId": "task-1",
+    "sourceRevisionSet": [
+      {
+        "path": "res://a.gd",
+        "revision": "rev_a"
+      }
+    ],
+    "clockPolicy": {
+      "mode": "system",
+      "fixedMs": null
+    },
+    "rngPolicy": {
+      "mode": "none",
+      "seed": null
+    }
+  }
+}

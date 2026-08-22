@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 17,
+  "corpusVersion": 18,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -21,6 +21,54 @@
     {
       "file": "checkpoint.undo-plan.json",
       "sha256": "d163c153db0e3d27f224818b077620ff3f57ea9bee461cb06bcd14531bc1172e"
+    },
+    {
+      "file": "content-identity-artifact-digest.basic.json",
+      "sha256": "12948ecd17348760d87e1e89bc57ca425ac357b7be9436da0245417b231b0042"
+    },
+    {
+      "file": "content-identity-artifact-digest.empty-payload.json",
+      "sha256": "5a6e3bb43bb6ed0ec11b04eaf0633b07483f890855c978d8dc97e1fb89cd6bc5"
+    },
+    {
+      "file": "content-identity-artifact-digest.key-order-insensitive.json",
+      "sha256": "21ea5c0078371f16a83e84afb6061279492cd3afe4ea98faa50b7c8bb2742e35"
+    },
+    {
+      "file": "content-identity-contract-digest.basic.json",
+      "sha256": "3eae02a50a3cb0706b328a281a0e493006567963a6b08bb52ccd0d98f993d3ee"
+    },
+    {
+      "file": "content-identity-contract-digest.guidance.json",
+      "sha256": "f9a64f81b6f1d3e127a690a47745b622de1749c490241a9e254d34f8a816e356"
+    },
+    {
+      "file": "content-identity-contract-digest.plan.json",
+      "sha256": "25527bb57514c4c5518b22162545b596ed0814ef150a35c19c7a4f50b4f93727"
+    },
+    {
+      "file": "content-identity-delta.all-unchanged.json",
+      "sha256": "f5f032b03a067383f6d568e008804d1506ba9a268b79b165e27379fbd28bbb64"
+    },
+    {
+      "file": "content-identity-delta.mixed.json",
+      "sha256": "3df23ea3df3f42e2787546d715f8000e2bb06c1a50d12987678e9e6f2e1da7fa"
+    },
+    {
+      "file": "content-identity-delta.one-changed.json",
+      "sha256": "b86a6e95210356848500e517c5b39f6ddb56c93c3b7882afe3ae5a8844052dec"
+    },
+    {
+      "file": "content-identity-manifests.development.json",
+      "sha256": "3c86b6d3d72f38586e550131f08577ea7720294a67f428afb27e404167892e4e"
+    },
+    {
+      "file": "content-identity-manifests.single-entry.json",
+      "sha256": "4f97db96f20ce31c7de7fb697d05cd0cfb8f236735fbd6a64f41d3f4cd7ad77d"
+    },
+    {
+      "file": "content-identity-manifests.two-entries.json",
+      "sha256": "ac91ebf5b4749699e6cdb7d27cdf70fa0b193ccaba179cb8bdd30b6aab0244ac"
     },
     {
       "file": "context-projection.estimate.json",
@@ -65,6 +113,18 @@
     {
       "file": "context-projection.unsupported-tool-calling.json",
       "sha256": "5a0b47f68aa1f1091673bb3bb720d1d94a7439d3c358ce62dc1ddd3779283168"
+    },
+    {
+      "file": "determinism-replay.full.json",
+      "sha256": "cebcacee9544bd9a8f6e190c1930d5b9c770aac9a8bd0025ad68a034f4fca820"
+    },
+    {
+      "file": "determinism-replay.no-provider.json",
+      "sha256": "901a3a9a4803549c2b1feec10f6ab26f65742f642516a28d25fd886ffe7d8d02"
+    },
+    {
+      "file": "determinism-replay.with-provider.json",
+      "sha256": "043f56ced3c78909328546d0c82f7af6dff6fa93c163090c7908fefc213b3c11"
     },
     {
       "file": "domain-capability.denied-no-escalation.json",
@@ -671,5 +731,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "7b061e4246165679887cfb6edb799f22b3d90393372b1de09733af3c654deb43"
+  "corpusSha256": "aaf73cc49715681c260be39d3a70910bcc92f5b96dc03ee4e66715f1235dac33"
 }

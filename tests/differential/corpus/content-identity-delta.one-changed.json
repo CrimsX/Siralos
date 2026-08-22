@@ -1,0 +1,16 @@
+{
+  "id": "content-identity-delta.one-changed",
+  "subject": "content-identity-delta",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "base": {
+      "request": "old"
+    },
+    "result": {
+      "request": "new"
+    },
+    "keys": ["request"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "content-identity-delta.all-unchanged",
+  "subject": "content-identity-delta",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "base": {
+      "a": 1,
+      "b": 2
+    },
+    "result": {
+      "a": 1,
+      "b": 2
+    },
+    "keys": ["a", "b"]
+  }
+}

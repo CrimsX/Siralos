@@ -1,0 +1,21 @@
+{
+  "id": "content-identity-contract-digest.plan",
+  "subject": "content-identity-contract-digest",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "artifactType": "TaskPlan",
+    "schemaVersion": 1,
+    "content": {
+      "objective": "ship",
+      "scope": "all",
+      "nonGoals": [],
+      "touchpoints": [],
+      "constraints": [],
+      "risks": [],
+      "steps": [],
+      "validation": "manual"
+    }
+  }
+}
