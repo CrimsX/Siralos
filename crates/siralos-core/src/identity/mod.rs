@@ -24,6 +24,7 @@
 
 mod artifact;
 mod canonical;
+mod manifests;
 mod sha256;
 mod staleness;
 
@@ -36,6 +37,24 @@ pub use artifact::{
     validate_artifact_digest,
 };
 pub use canonical::{CanonicalValue, canonicalize, json_escape};
+pub use manifests::{
+    AcceptanceEvidenceEntry, AcceptanceEvidenceManifest,
+    CreateAcceptanceEvidenceManifest, CreateReviewInputManifest,
+    ExecutionInputChange, ExecutionInputDelta, ExecutionInputManifest,
+    ExecutionInputReference, GuidanceDelta, GuidanceEntryKind,
+    GuidanceManifest, GuidanceManifestEntry, ReviewInputManifest,
+    ReviewSourceRevision, ToolSurfaceDefinition, ToolSurfaceDelta,
+    ToolSurfaceEntry, ToolSurfaceManifest, ToolSurfacePhase, ToolSurfaceRole,
+    ValidationDelta, ValidationEvidenceEntry, ValidationObservation,
+    ValidationResultIdentity, canonical_changeset_identity,
+    compute_acceptance_criteria_digest, compute_capability_snapshot_digest,
+    compute_execution_input_delta, compute_guidance_delta,
+    compute_tool_surface_delta, compute_validation_delta,
+    compute_validation_evidence_digest, create_acceptance_evidence_manifest,
+    create_execution_input_manifest, create_guidance_manifest,
+    create_review_input_manifest, create_tool_surface_manifest,
+    create_validation_result_identity,
+};
 pub use sha256::{Sha256, sha256_hex};
 pub use staleness::{
     IdentityStaleness, IdentityStalenessInput, derive_identity_staleness,
