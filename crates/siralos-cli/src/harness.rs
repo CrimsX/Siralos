@@ -2110,15 +2110,6 @@ fn godot_record(subject: &str, input: &Value) -> Result<Value, HarnessError> {
         SUBJECT_CI_MANIFESTS => content_identity_manifests_record(input),
         SUBJECT_CI_DELTA => content_identity_delta_record(input),
         SUBJECT_DET_REPLAY => determinism_replay_record(input),
-        SUBJECT_CI_ARTIFACT_DIGEST => {
-            content_identity_artifact_digest_record(input)
-        }
-        SUBJECT_CI_CONTRACT_DIGEST => {
-            content_identity_contract_digest_record(input)
-        }
-        SUBJECT_CI_MANIFESTS => content_identity_manifests_record(input),
-        SUBJECT_CI_DELTA => content_identity_delta_record(input),
-        SUBJECT_DET_REPLAY => determinism_replay_record(input),
         _ => unreachable!(
             "godot subject was validated while loading the corpus"
         ),
