@@ -22,11 +22,24 @@
 //! identity) stay distinct: the contract payload deliberately excludes
 //! the revision number, so content-identical revisions share a digest.
 
+mod artifact;
 mod canonical;
 mod sha256;
+mod staleness;
 
+pub use artifact::{
+    ArtifactDigest, ArtifactIdentityError, ItemListDelta, SectionDelta,
+    abbreviate_digest, abbreviate_hex_digest, canonical_artifact_payload,
+    canonical_values_equal, compute_artifact_digest,
+    compute_artifact_digest_hex, compute_item_list_delta,
+    compute_section_delta, digest_item_list, digest_reference,
+    validate_artifact_digest,
+};
 pub use canonical::{CanonicalValue, canonicalize, json_escape};
 pub use sha256::{Sha256, sha256_hex};
+pub use staleness::{
+    IdentityStaleness, IdentityStalenessInput, derive_identity_staleness,
+};
 
 /// Schema version of the R3 TaskContract canonical payload.
 pub const TASK_CONTRACT_IDENTITY_SCHEMA: u64 = 1;
