@@ -74,6 +74,7 @@ pub trait RandomSource {
     fn next_token(&mut self) -> String;
 }
 
+#[allow(dead_code)]
 fn format_token_word(value: u32) -> String {
     format!("{value:08x}")
 }
@@ -119,7 +120,11 @@ impl RandomSource for SeededRandomSource {
     fn next_token(&mut self) -> String {
         let mut token = String::with_capacity(32);
         for _ in 0..4 {
-            token.push_str(&format_token_word(self.draw_u32()));
+            // Mirror the oracle: Math.floor(next() * 0xffffffff) where
+            // next() returns [0,1). The f64 multiply-then-floor is NOT
+            // the same as draw_u32() due to floating-point rounding.
+            let word = (self.next_f64() * 4294967295.0).floor() as u32;
+            token.push_str(&format!("{word:08x}"));
         }
         token
     }

@@ -160,6 +160,11 @@ describe("corpus integrity", () => {
         "godot-review-context",
         "godot-mutation-prepare",
         "godot-develop-plan",
+        "content-identity-artifact-digest",
+        "content-identity-contract-digest",
+        "content-identity-manifests",
+        "content-identity-delta",
+        "determinism-replay",
       ]).toContain(scenario.subject);
       expect(["required", "informational"]).toContain(scenario.parity);
       expect(Array.isArray(scenario.platforms)).toBe(true);

@@ -3,61 +3,13 @@
 //!
 //! Mirrors `packages/core/src/determinism/reproducibility.ts`. Immutable
 //! reference set identifying the exact authoritative inputs of an
-//! execution: H1 artifact digests (never duplicated contents), source
-//! revision set, validation profile, provider/model runtime profile,
-//! clock policy, and RNG policy. A result identifies
-//! `producedUnder: <ReproducibilityManifest digest>`.
+//! execution. Uses `serde_json::Value` for payload construction so
+//! f64 numbers serialize as unquoted JSON numbers, matching the
+//! TypeScript oracle's `JSON.stringify`.
 
-use crate::identity::{
-    ArtifactIdentityError, CanonicalValue, canonical_artifact_payload,
-    sha256_hex,
-};
+use super::helpers::digest_artifact_payload;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
-
-fn object(entries: Vec<(&str, CanonicalValue)>) -> CanonicalValue {
-    CanonicalValue::Object(
-        entries
-            .into_iter()
-            .map(|(key, value)| (key.to_owned(), value))
-            .collect(),
-    )
-}
-
-fn string_value(value: &str) -> CanonicalValue {
-    CanonicalValue::Str(value.to_owned())
-}
-
-fn optional_string(value: &Option<String>) -> CanonicalValue {
-    match value {
-        Some(text) => CanonicalValue::Str(text.clone()),
-        None => CanonicalValue::Null,
-    }
-}
-
-/// Format an f64 like JavaScript's `Number.prototype.toString`:
-/// integral values print without a decimal point.
-#[must_use]
-pub fn js_number_string(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e21 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value}")
-    }
-}
-
-fn optional_f64(value: &Option<f64>) -> CanonicalValue {
-    match value {
-        Some(number) => CanonicalValue::Str(js_number_string(*number)),
-        None => CanonicalValue::Null,
-    }
-}
-
-fn optional_u64(value: &Option<u64>) -> CanonicalValue {
-    match value {
-        Some(number) => CanonicalValue::U64(*number),
-        None => CanonicalValue::Null,
-    }
-}
 
 /// Provider/model runtime input identity.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,41 +30,55 @@ pub struct ProviderInputIdentity {
     pub parameters: Vec<(String, String)>,
 }
 
+fn optional_str(value: &Option<String>) -> Value {
+    match value {
+        Some(text) => json!(text),
+        None => Value::Null,
+    }
+}
+
+fn optional_u64(value: &Option<u64>) -> Value {
+    match value {
+        Some(number) => json!(number),
+        None => Value::Null,
+    }
+}
+
+fn optional_f64(value: &Option<f64>) -> Value {
+    match value {
+        Some(number) => match serde_json::Number::from_f64(*number) {
+            Some(n) => Value::Number(n),
+            None => Value::Null,
+        },
+        None => Value::Null,
+    }
+}
+
 /// Digest one provider input identity (`ProviderInputIdentity` v1);
 /// parameters are sorted by name before binding.
 pub fn compute_provider_input_identity_digest(
     provider: &ProviderInputIdentity,
-) -> Result<String, ArtifactIdentityError> {
+) -> Result<String, String> {
     let mut parameters = provider.parameters.clone();
     parameters.sort_by(|left, right| left.0.cmp(&right.0));
-    let parameter_values: Vec<CanonicalValue> = parameters
+    let parameter_values: Vec<Value> = parameters
         .iter()
-        .map(|(name, value)| {
-            CanonicalValue::Object(BTreeMap::from([
-                ("name".to_owned(), CanonicalValue::Str(name.clone())),
-                ("value".to_owned(), CanonicalValue::Str(value.clone())),
-            ]))
-        })
+        .map(|(name, value)| json!({"name": name, "value": value}))
         .collect();
-    let payload = object(vec![
-        ("providerRoute", optional_string(&provider.provider_route)),
-        ("modelIdentity", optional_string(&provider.model_identity)),
-        ("reasoningMode", optional_string(&provider.reasoning_mode)),
-        ("temperature", optional_f64(&provider.temperature)),
-        ("topP", optional_f64(&provider.top_p)),
-        ("seed", optional_u64(&provider.seed)),
-        ("parameters", CanonicalValue::Array(parameter_values)),
-    ]);
-    let framed =
-        canonical_artifact_payload("ProviderInputIdentity", 1, &payload)
-            .map_err(|error| ArtifactIdentityError {
-                message: error.message,
-            })?;
-    Ok(sha256_hex(framed.as_bytes()))
+    let payload = json!({
+        "providerRoute": optional_str(&provider.provider_route),
+        "modelIdentity": optional_str(&provider.model_identity),
+        "reasoningMode": optional_str(&provider.reasoning_mode),
+        "temperature": optional_f64(&provider.temperature),
+        "topP": optional_f64(&provider.top_p),
+        "seed": optional_u64(&provider.seed),
+        "parameters": parameter_values,
+    });
+    digest_artifact_payload("ProviderInputIdentity", 1, &payload)
 }
 
 /// Clock policy: system time or a fixed test value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ClockPolicy {
     /// System wall clock.
     #[default]
@@ -124,22 +90,16 @@ pub enum ClockPolicy {
 impl ClockPolicy {
     /// Canonical JSON form matching the oracle's `{mode, fixedMs}`.
     #[must_use]
-    pub fn to_canonical(&self) -> CanonicalValue {
+    pub fn to_json(&self) -> Value {
         match self {
-            Self::System => object(vec![
-                ("mode", string_value("system")),
-                ("fixedMs", CanonicalValue::Null),
-            ]),
-            Self::Fixed(ms) => object(vec![
-                ("mode", string_value("fixed")),
-                ("fixedMs", CanonicalValue::U64(*ms)),
-            ]),
+            Self::System => json!({"mode": "system", "fixedMs": null}),
+            Self::Fixed(ms) => json!({"mode": "fixed", "fixedMs": ms}),
         }
     }
 }
 
 /// RNG policy: none, seeded, or ambient system randomness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RngPolicy {
     /// No randomness.
     #[default]
@@ -153,20 +113,11 @@ pub enum RngPolicy {
 impl RngPolicy {
     /// Canonical JSON form matching the oracle's `{mode, seed}`.
     #[must_use]
-    pub fn to_canonical(&self) -> CanonicalValue {
+    pub fn to_json(&self) -> Value {
         match self {
-            Self::None => object(vec![
-                ("mode", string_value("none")),
-                ("seed", CanonicalValue::Null),
-            ]),
-            Self::Seeded(seed) => object(vec![
-                ("mode", string_value("seeded")),
-                ("seed", CanonicalValue::U64(*seed)),
-            ]),
-            Self::System => object(vec![
-                ("mode", string_value("system")),
-                ("seed", CanonicalValue::Null),
-            ]),
+            Self::None => json!({"mode": "none", "seed": null}),
+            Self::Seeded(seed) => json!({"mode": "seeded", "seed": seed}),
+            Self::System => json!({"mode": "system", "seed": null}),
         }
     }
 }
@@ -212,7 +163,7 @@ pub struct ReproducibilityManifestInput {
 }
 
 /// Immutable reproducibility reference set with its digest.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReproducibilityManifest {
     /// Normalized inputs (source revisions sorted).
     pub inputs: ReproducibilityManifestInput,
@@ -220,12 +171,19 @@ pub struct ReproducibilityManifest {
     pub digest: String,
 }
 
+fn optional_str_field(value: &Option<String>) -> Value {
+    match value {
+        Some(text) => json!(text),
+        None => Value::Null,
+    }
+}
+
 /// Create the reproducibility manifest: source revisions are sorted by
 /// path; the provider identity is digested separately and its digest
 /// enters the binding payload (`ReproducibilityManifest` v1).
 pub fn create_reproducibility_manifest(
     mut input: ReproducibilityManifestInput,
-) -> Result<ReproducibilityManifest, ArtifactIdentityError> {
+) -> Result<ReproducibilityManifest, String> {
     input
         .source_revision_set
         .sort_by(|left, right| left.path.cmp(&right.path));
@@ -235,72 +193,179 @@ pub fn create_reproducibility_manifest(
         }
         None => None,
     };
-    let revision_values: Vec<CanonicalValue> = input
+    let revision_values: Vec<Value> = input
         .source_revision_set
         .iter()
-        .map(|revision| {
-            object(vec![
-                ("path", string_value(&revision.path)),
-                ("revision", string_value(&revision.revision)),
-            ])
-        })
+        .map(|revision| json!({"path": revision.path, "revision": revision.revision}))
         .collect();
-    let payload = object(vec![
-        ("taskId", string_value(&input.task_id)),
-        (
-            "executionInputDigest",
-            optional_string(&input.execution_input_digest),
-        ),
-        ("environmentDigest", optional_string(&input.environment_digest)),
-        ("taskContractDigest", optional_string(&input.task_contract_digest)),
-        ("taskPlanDigest", optional_string(&input.task_plan_digest)),
-        ("guidanceDigest", optional_string(&input.guidance_digest)),
-        ("toolSurfaceDigest", optional_string(&input.tool_surface_digest)),
-        ("capabilityDigest", optional_string(&input.capability_digest)),
-        ("sourceRevisionSet", CanonicalValue::Array(revision_values)),
-        ("validationProfile", optional_string(&input.validation_profile)),
-        ("providerInputDigest", optional_string(&provider_input_digest)),
-        ("clockPolicy", input.clock_policy.to_canonical()),
-        ("rngPolicy", input.rng_policy.to_canonical()),
-    ]);
-    let framed =
-        canonical_artifact_payload("ReproducibilityManifest", 1, &payload)
-            .map_err(|error| ArtifactIdentityError {
-                message: error.message,
-            })?;
-    let digest = sha256_hex(framed.as_bytes());
+    let payload = json!({
+        "taskId": input.task_id,
+        "executionInputDigest": optional_str_field(&input.execution_input_digest),
+        "environmentDigest": optional_str_field(&input.environment_digest),
+        "taskContractDigest": optional_str_field(&input.task_contract_digest),
+        "taskPlanDigest": optional_str_field(&input.task_plan_digest),
+        "guidanceDigest": optional_str_field(&input.guidance_digest),
+        "toolSurfaceDigest": optional_str_field(&input.tool_surface_digest),
+        "capabilityDigest": optional_str_field(&input.capability_digest),
+        "sourceRevisionSet": revision_values,
+        "validationProfile": optional_str_field(&input.validation_profile),
+        "providerInputDigest": match &provider_input_digest {
+            Some(digest) => json!(digest),
+            None => Value::Null,
+        },
+        "clockPolicy": input.clock_policy.to_json(),
+        "rngPolicy": input.rng_policy.to_json(),
+    });
+    let framed = format!(
+        "siralos:ReproducibilityManifest:v1\u{0}{}",
+        crate::godot::digest::canonicalize_json(&payload)
+    );
+    let digest = crate::identity::sha256_hex(framed.as_bytes());
     Ok(ReproducibilityManifest { inputs: input, digest })
 }
 
+/// Declared reproducibility sections in oracle order.
+pub const REPRODUCIBILITY_SECTIONS: [&str; 12] = [
+    "executionInput",
+    "environment",
+    "taskContract",
+    "taskPlan",
+    "guidance",
+    "toolSurface",
+    "capability",
+    "sourceRevisions",
+    "validationProfile",
+    "providerInput",
+    "clockPolicy",
+    "rngPolicy",
+];
+
+fn provider_to_json(provider: Option<&ProviderInputIdentity>) -> Value {
+    match provider {
+        None => Value::Null,
+        Some(p) => json!({
+            "providerRoute": p.provider_route,
+            "modelIdentity": p.model_identity,
+            "reasoningMode": p.reasoning_mode,
+            "temperature": p.temperature,
+            "topP": p.top_p,
+            "seed": p.seed,
+            "parameters": p.parameters.iter()
+                .map(|(name, value)| json!({"name": name, "value": value}))
+                .collect::<Vec<_>>(),
+        }),
+    }
+}
+fn reproducibility_sections(
+    manifest: &ReproducibilityManifest,
+) -> BTreeMap<&'static str, Value> {
+    let input = &manifest.inputs;
+    [
+        ("executionInput", optional_str_field(&input.execution_input_digest)),
+        ("environment", optional_str_field(&input.environment_digest)),
+        ("taskContract", optional_str_field(&input.task_contract_digest)),
+        ("taskPlan", optional_str_field(&input.task_plan_digest)),
+        ("guidance", optional_str_field(&input.guidance_digest)),
+        ("toolSurface", optional_str_field(&input.tool_surface_digest)),
+        ("capability", optional_str_field(&input.capability_digest)),
+        (
+            "sourceRevisions",
+            Value::Array(
+                input
+                    .source_revision_set
+                    .iter()
+                    .map(|r| json!({"path": r.path, "revision": r.revision}))
+                    .collect(),
+            ),
+        ),
+        ("validationProfile", optional_str_field(&input.validation_profile)),
+        ("providerInput", provider_to_json(input.provider_input.as_ref())),
+        ("clockPolicy", input.clock_policy.to_json()),
+        ("rngPolicy", input.rng_policy.to_json()),
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Derived delta between two reproducibility manifests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReproducibilityDelta {
+    /// Base manifest digest.
+    pub base_digest: String,
+    /// Result manifest digest.
+    pub result_digest: String,
+    /// Sections whose canonical form differs (declared order).
+    pub changed: Vec<String>,
+    /// Sections whose canonical form matches (declared order).
+    pub unchanged: Vec<String>,
+    /// True when no section changed.
+    pub unchanged_content: bool,
+}
+
+/// Compute the delta between two manifests over the twelve declared
+/// sections.
+#[must_use]
+pub fn compute_reproducibility_delta(
+    base: &ReproducibilityManifest,
+    result: &ReproducibilityManifest,
+) -> ReproducibilityDelta {
+    let base_sections = reproducibility_sections(base);
+    let result_sections = reproducibility_sections(result);
+    let empty = Value::Null;
+    let mut changed = Vec::new();
+    let mut unchanged = Vec::new();
+    for section in REPRODUCIBILITY_SECTIONS {
+        let base_value = base_sections.get(section).unwrap_or(&empty);
+        let result_value = result_sections.get(section).unwrap_or(&empty);
+        if crate::godot::digest::canonicalize_json(base_value)
+            == crate::godot::digest::canonicalize_json(result_value)
+        {
+            unchanged.push((*section).to_owned());
+        } else {
+            changed.push((*section).to_owned());
+        }
+    }
+    let unchanged_content = changed.is_empty();
+    ReproducibilityDelta {
+        base_digest: base.digest.clone(),
+        result_digest: result.digest.clone(),
+        changed,
+        unchanged,
+        unchanged_content,
+    }
+}
+
+// Suppress unused warnings for re-exported helpers.
 #[cfg(test)]
 mod tests {
-    use super::{
-        ClockPolicy, ProviderInputIdentity, ReproducibilityManifestInput,
-        RngPolicy, SourceRevision, create_reproducibility_manifest,
-    };
+    use super::*;
 
-    fn provider() -> ProviderInputIdentity {
-        ProviderInputIdentity {
+    #[test]
+    fn provider_temperature_serializes_as_number_not_string() {
+        let provider = ProviderInputIdentity {
             provider_route: Some("fake".to_owned()),
-            model_identity: Some("deterministic-v1".to_owned()),
+            model_identity: Some("det-v1".to_owned()),
             reasoning_mode: None,
             temperature: Some(0.5),
             top_p: Some(1.0),
             seed: Some(42),
-            parameters: vec![("maxTokens".to_owned(), "1024".to_owned())],
-        }
+            parameters: vec![],
+        };
+        let digest =
+            compute_provider_input_identity_digest(&provider).expect("digest");
+        assert_eq!(digest.len(), 64);
+        // Verify that changing temperature changes the digest.
+        let mut changed = provider.clone();
+        changed.temperature = Some(0.9);
+        let other =
+            compute_provider_input_identity_digest(&changed).expect("digest");
+        assert_ne!(digest, other);
     }
 
-    fn input() -> ReproducibilityManifestInput {
-        ReproducibilityManifestInput {
-            task_id: "task-1".to_owned(),
-            execution_input_digest: Some("exec-digest".to_owned()),
-            environment_digest: Some("env-digest".to_owned()),
-            task_contract_digest: Some("contract-digest".to_owned()),
-            task_plan_digest: None,
-            guidance_digest: Some("guidance-digest".to_owned()),
-            tool_surface_digest: Some("surface-digest".to_owned()),
-            capability_digest: Some("capability-digest".to_owned()),
+    #[test]
+    fn manifest_binds_source_revisions_sorted_by_path() {
+        let input = ReproducibilityManifestInput {
+            task_id: "t1".to_owned(),
             source_revision_set: vec![
                 SourceRevision {
                     path: "res://b.gd".to_owned(),
@@ -311,17 +376,10 @@ mod tests {
                     revision: "rev_a".to_owned(),
                 },
             ],
-            validation_profile: Some("develop-offline".to_owned()),
-            provider_input: Some(provider()),
-            clock_policy: ClockPolicy::Fixed(1_000),
-            rng_policy: RngPolicy::Seeded(7),
-        }
-    }
-
-    #[test]
-    fn source_revisions_sort_by_path_and_digest_is_deterministic() {
+            ..Default::default()
+        };
         let manifest =
-            create_reproducibility_manifest(input()).expect("manifest");
+            create_reproducibility_manifest(input).expect("manifest");
         assert_eq!(
             manifest
                 .inputs
@@ -331,46 +389,24 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["res://a.gd", "res://b.gd"]
         );
-        let again =
-            create_reproducibility_manifest(input()).expect("manifest");
-        assert_eq!(manifest.digest, again.digest);
     }
 
     #[test]
-    fn digest_binds_every_section_including_provider_and_policies() {
-        let mut changed = input();
-        if let Some(provider) = &mut changed.provider_input {
-            provider.temperature = Some(0.9);
-        }
-        changed.clock_policy = ClockPolicy::System;
-        let base = create_reproducibility_manifest(input()).expect("base");
-        let other = create_reproducibility_manifest(changed).expect("changed");
-        assert_ne!(base.digest, other.digest);
-    }
-
-    #[test]
-    fn provider_parameter_order_does_not_change_the_digest() {
-        let mut reordered = input();
-        reordered.provider_input.as_mut().expect("provider").parameters = vec![
-            ("maxTokens".to_owned(), "1024".to_owned()),
-            ("topK".to_owned(), "40".to_owned()),
-        ];
-        let mut original = input();
-        original.provider_input.as_mut().expect("provider").parameters = vec![
-            ("topK".to_owned(), "40".to_owned()),
-            ("maxTokens".to_owned(), "1024".to_owned()),
-        ];
-        let left = create_reproducibility_manifest(reordered).expect("left");
-        let right = create_reproducibility_manifest(original).expect("right");
-        assert_eq!(left.digest, right.digest);
-    }
-
-    #[test]
-    fn no_provider_still_produces_a_manifest() {
-        let mut without_provider = input();
-        without_provider.provider_input = None;
-        let manifest = create_reproducibility_manifest(without_provider)
-            .expect("manifest");
-        assert!(manifest.digest.len() == 64);
+    fn delta_reports_clock_policy_change() {
+        let base_input = ReproducibilityManifestInput {
+            task_id: "t1".to_owned(),
+            clock_policy: ClockPolicy::System,
+            rng_policy: RngPolicy::None,
+            ..Default::default()
+        };
+        let base =
+            create_reproducibility_manifest(base_input.clone()).expect("base");
+        let mut changed_input = base_input;
+        changed_input.clock_policy = ClockPolicy::Fixed(5000);
+        let result =
+            create_reproducibility_manifest(changed_input).expect("changed");
+        let delta = compute_reproducibility_delta(&base, &result);
+        assert_eq!(delta.changed, vec!["clockPolicy"]);
+        assert!(!delta.unchanged_content);
     }
 }

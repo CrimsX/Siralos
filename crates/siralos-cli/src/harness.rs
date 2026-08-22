@@ -2900,7 +2900,6 @@ use siralos_core::godot::scene::models::{
 use siralos_core::godot::scene_mutation::{
     MutationOperation, MutationProperty, SemanticExpectation,
 };
-use siralos_core::identity::CanonicalValue;
 
 struct ReviewContextSource {
     edges: Vec<siralos_core::godot::impact::ImpactEdge>,
@@ -3819,36 +3818,31 @@ fn godot_develop_plan_record(input: &Value) -> Result<Value, HarnessError> {
 fn content_identity_artifact_digest_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
-    use siralos_core::identity::compute_artifact_digest_hex;
     let artifact_type =
         input.get("artifactType").and_then(Value::as_str).unwrap_or_default();
     let schema_version =
         input.get("schemaVersion").and_then(Value::as_u64).unwrap_or(1);
-    let payload =
-        json_to_canonical(input.get("payload").unwrap_or(&Value::Null));
-    match compute_artifact_digest_hex(artifact_type, schema_version, &payload)
-    {
-        Ok(digest) => Ok(json!({ "digest": digest })),
-        Err(e) => Ok(json!({ "error": e.message })),
-    }
+    let payload = input.get("payload").cloned().unwrap_or(Value::Null);
+    let canonical = format!(
+        "siralos:{artifact_type}:v{schema_version}\0{}",
+        siralos_core::godot::digest::canonicalize_json(&payload)
+    );
+    Ok(json!({ "digest": sha256_hex(canonical.as_bytes()) }))
 }
 
 fn content_identity_contract_digest_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
-    use siralos_core::identity::{canonicalize, sha256_hex};
     let artifact_type =
         input.get("artifactType").and_then(Value::as_str).unwrap_or_default();
     let schema_version =
         input.get("schemaVersion").and_then(Value::as_u64).unwrap_or(1);
-    let content =
-        json_to_canonical(input.get("content").unwrap_or(&Value::Null));
+    let content = input.get("content").cloned().unwrap_or(Value::Null);
     let canonical = format!(
         "siralos:{artifact_type}:v{schema_version}\0{}",
-        canonicalize(&content)
+        siralos_core::godot::digest::canonicalize_json(&content)
     );
-    let digest = sha256_hex(canonical.as_bytes());
-    Ok(json!({ "digest": digest }))
+    Ok(json!({ "digest": sha256_hex(canonical.as_bytes()) }))
 }
 
 fn content_identity_manifests_record(
@@ -3898,18 +3892,9 @@ fn content_identity_manifests_record(
 fn content_identity_delta_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
-    use siralos_core::identity::compute_section_delta;
-    fn to_canonical_map(value: &Value) -> BTreeMap<String, CanonicalValue> {
-        let mut map = BTreeMap::new();
-        if let Some(object) = value.as_object() {
-            for (key, val) in object {
-                map.insert(key.clone(), json_to_canonical(val));
-            }
-        }
-        map
-    }
-    let base = to_canonical_map(input.get("base").unwrap_or(&Value::Null));
-    let result = to_canonical_map(input.get("result").unwrap_or(&Value::Null));
+    let empty_map = Value::Object(serde_json::Map::new());
+    let base = input.get("base").unwrap_or(&empty_map);
+    let result = input.get("result").unwrap_or(&empty_map);
     let keys: Vec<String> = input
         .get("keys")
         .and_then(Value::as_array)
@@ -3917,11 +3902,22 @@ fn content_identity_delta_record(
             array.iter().filter_map(Value::as_str).map(str::to_owned).collect()
         })
         .unwrap_or_default();
-    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
-    let delta = compute_section_delta(&base, &result, &key_refs);
+    let mut changed = Vec::new();
+    let mut unchanged = Vec::new();
+    for key in &keys {
+        let base_value = base.get(key).cloned().unwrap_or(Value::Null);
+        let result_value = result.get(key).cloned().unwrap_or(Value::Null);
+        if siralos_core::godot::digest::canonicalize_json(&base_value)
+            == siralos_core::godot::digest::canonicalize_json(&result_value)
+        {
+            unchanged.push(key.clone());
+        } else {
+            changed.push(key.clone());
+        }
+    }
     Ok(json!({
-        "changed": delta.changed,
-        "unchanged": delta.unchanged,
+        "changed": changed,
+        "unchanged": unchanged,
     }))
 }
 
@@ -4033,31 +4029,8 @@ fn determinism_replay_record(input: &Value) -> Result<Value, HarnessError> {
             rng_policy,
         },
     )
-    .map_err(|error| HarnessError::corpus(error.message))?;
+    .map_err(HarnessError::corpus)?;
     Ok(json!({ "digest": manifest.digest }))
-}
-
-fn json_to_canonical(value: &Value) -> CanonicalValue {
-    match value {
-        Value::Null => CanonicalValue::Null,
-        Value::Bool(inner) => CanonicalValue::Bool(*inner),
-        Value::Number(number) => {
-            if let Some(u64_value) = number.as_u64() {
-                CanonicalValue::U64(u64_value)
-            } else {
-                CanonicalValue::Str(number.to_string())
-            }
-        }
-        Value::String(text) => CanonicalValue::Str(text.clone()),
-        Value::Array(items) => CanonicalValue::Array(
-            items.iter().map(json_to_canonical).collect(),
-        ),
-        Value::Object(map) => CanonicalValue::Object(
-            map.iter()
-                .map(|(key, val)| (key.clone(), json_to_canonical(val)))
-                .collect(),
-        ),
-    }
 }
 
 // ---------------------------------------------------------------------------

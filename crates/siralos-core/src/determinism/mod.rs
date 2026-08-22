@@ -18,6 +18,7 @@ pub mod decisions;
 pub mod discovery;
 pub mod doctor;
 pub mod environment;
+pub mod helpers;
 pub mod ownership;
 pub mod ports;
 pub mod reproducibility;
@@ -56,5 +57,4 @@ pub use reproducibility::{
     ClockPolicy, ProviderInputIdentity, ReproducibilityManifest,
     ReproducibilityManifestInput, RngPolicy, SourceRevision,
     compute_provider_input_identity_digest, create_reproducibility_manifest,
-    js_number_string,
 };

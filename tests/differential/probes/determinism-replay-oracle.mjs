@@ -32,18 +32,21 @@ const manifest = createReproducibilityManifest({
     revision: r.revision,
   })),
   validationProfile: input.validationProfile ?? null,
-  providerInput: input.providerInput === null || input.providerInput === undefined ? null : {
-    providerRoute: input.providerInput.providerRoute ?? null,
-    modelIdentity: input.providerInput.modelIdentity ?? null,
-    reasoningMode: input.providerInput.reasoningMode ?? null,
-    temperature: input.providerInput.temperature ?? null,
-    topP: input.providerInput.topP ?? null,
-    seed: input.providerInput.seed ?? null,
-    parameters: (input.providerInput.parameters ?? []).map((p) => ({
-      name: p.name,
-      value: p.value,
-    })),
-  },
+  providerInput:
+    input.providerInput === null || input.providerInput === undefined
+      ? null
+      : {
+          providerRoute: input.providerInput.providerRoute ?? null,
+          modelIdentity: input.providerInput.modelIdentity ?? null,
+          reasoningMode: input.providerInput.reasoningMode ?? null,
+          temperature: input.providerInput.temperature ?? null,
+          topP: input.providerInput.topP ?? null,
+          seed: input.providerInput.seed ?? null,
+          parameters: (input.providerInput.parameters ?? []).map((p) => ({
+            name: p.name,
+            value: p.value,
+          })),
+        },
   clockPolicy: input.clockPolicy ?? { mode: "system", fixedMs: null },
   rngPolicy: input.rngPolicy ?? { mode: "none", seed: null },
 });
