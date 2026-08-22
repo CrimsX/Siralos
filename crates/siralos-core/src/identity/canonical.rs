@@ -96,6 +96,45 @@ pub fn canonicalize(value: &CanonicalValue) -> String {
     value.to_canonical()
 }
 
+/// Serialize a `serde_json::Value` to canonical JSON bytes directly,
+/// without going through [`CanonicalValue`]. This handles all JSON
+/// number types (including negative integers and floats) as unquoted
+/// numbers, matching TypeScript's `JSON.stringify` output.
+pub fn canonical_json_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_owned(),
+        serde_json::Value::Bool(b) => {
+            if *b {
+                "true".to_owned()
+            } else {
+                "false".to_owned()
+            }
+        }
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => json_escape(s),
+        serde_json::Value::Array(items) => {
+            let parts: Vec<String> =
+                items.iter().map(canonical_json_value).collect();
+            format!("[{}]", parts.join(","))
+        }
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let parts: Vec<String> = keys
+                .iter()
+                .map(|key| {
+                    format!(
+                        "{}:{}",
+                        json_escape(key),
+                        canonical_json_value(&map[key.as_str()])
+                    )
+                })
+                .collect();
+            format!("{{{}}}", parts.join(","))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CanonicalValue, canonicalize, json_escape};

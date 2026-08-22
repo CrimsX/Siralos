@@ -74,13 +74,9 @@ pub trait RandomSource {
     fn next_token(&mut self) -> String;
 }
 
-#[allow(dead_code)]
-fn format_token_word(value: u32) -> String {
-    format!("{value:08x}")
-}
-
 /// Deterministic seeded PRNG (mulberry32), bit-exact with the oracle:
-/// `state = state + 0x6D2B79F5`, then the imul/xor cascade, normalized
+/// `state = state + 0x6D2B79F5`, then `Math.imul(t ^ (t >>> 15), t | 1)`
+/// followed by `t ^= t + Math.imul(t ^ (t >>> 7), t | 61)`, normalized
 /// by `2^32`.
 #[derive(Debug, Clone)]
 pub struct SeededRandomSource {
@@ -88,8 +84,8 @@ pub struct SeededRandomSource {
 }
 
 impl SeededRandomSource {
-    /// Seed the generator; a zero seed is replaced with the
-    /// golden-ratio constant, mirroring the oracle.
+    /// Seed the generator; a zero seed is replaced with the golden-ratio
+    /// constant, mirroring the oracle.
     #[must_use]
     pub fn new(seed: u32) -> Self {
         let state = if seed == 0 { 0x9e37_79b9 } else { seed };
@@ -99,7 +95,9 @@ impl SeededRandomSource {
     fn draw_u32(&mut self) -> u32 {
         self.state = self.state.wrapping_add(0x6d2b_79f5);
         let mut t = self.state;
-        t = t.wrapping_mul(t ^ (t >> 15) | 1);
+        // Math.imul(t ^ (t >>> 15), t | 1)
+        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+        // t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
         t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
         t ^ (t >> 14)
     }
@@ -120,9 +118,6 @@ impl RandomSource for SeededRandomSource {
     fn next_token(&mut self) -> String {
         let mut token = String::with_capacity(32);
         for _ in 0..4 {
-            // Mirror the oracle: Math.floor(next() * 0xffffffff) where
-            // next() returns [0,1). The f64 multiply-then-floor is NOT
-            // the same as draw_u32() due to floating-point rounding.
             let word = (self.next_f64() * 4294967295.0).floor() as u32;
             token.push_str(&format!("{word:08x}"));
         }
@@ -158,41 +153,67 @@ pub trait IdKeyed {
 }
 
 /// Normalize an id-keyed result list into canonical order.
+#[must_use]
 pub fn normalize_keyed_results<T: IdKeyed + Clone>(results: &[T]) -> Vec<T> {
     stable_sort_by_key(results, |entry| entry.id_key())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, FixedClock, RandomSource, SeededRandomSource};
+    use super::{
+        Clock, FixedClock, RandomSource, SeededRandomSource,
+        compare_code_units,
+    };
+    use std::cmp::Ordering;
 
     #[test]
-    fn mulberry32_matches_the_oracle_sequence_for_seed_42() {
+    fn mulberry32_seed_42_first_draw_matches_the_oracle() {
         let mut rng = SeededRandomSource::new(42);
         let first = rng.next_f64();
+        assert!(
+            (first - 0.6011037519201636).abs() < 1e-15,
+            "first draw {first} does not match oracle"
+        );
+    }
+
+    #[test]
+    fn mulberry32_second_draw_matches_the_oracle() {
+        let mut rng = SeededRandomSource::new(42);
+        rng.next_f64(); // consume first draw
         let second = rng.next_f64();
-        assert!((0.0..1.0).contains(&first));
-        assert!((0.0..1.0).contains(&second));
-        assert_ne!(first, second);
+        assert!(
+            (second - 0.44829055899754167).abs() < 1e-15,
+            "second draw {second} does not match oracle"
+        );
+    }
+
+    #[test]
+    fn mulberry32_token_sequence_matches_the_oracle() {
+        let mut rng = SeededRandomSource::new(42);
         let token = rng.next_token();
-        assert_eq!(token.len(), 32);
-        assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert_eq!(token, "99e1ef7b72c32b89da3b32bfab73b0ac");
     }
 
     #[test]
     fn zero_seed_is_replaced_with_the_golden_ratio_constant() {
-        let zero_seeded = SeededRandomSource::new(0);
-        let golden_seeded = SeededRandomSource::new(0x9e37_79b9);
-        let mut left = zero_seeded;
-        let mut right = golden_seeded;
-        assert_eq!(left.next_f64(), right.next_f64());
+        let mut zero_seeded = SeededRandomSource::new(0);
+        let mut golden_seeded = SeededRandomSource::new(0x9e37_79b9);
+        assert_eq!(zero_seeded.next_f64(), golden_seeded.next_f64());
     }
 
     #[test]
     fn next_int_rejects_zero_bound() {
         let mut rng = SeededRandomSource::new(42);
         assert!(rng.next_int(0).is_none());
-        assert!(rng.next_int(5).is_some());
+        let value = rng.next_int(5).expect("valid bound");
+        assert!(value < 5);
+    }
+
+    #[test]
+    fn code_unit_comparison_is_locale_independent() {
+        assert_eq!(compare_code_units("a", "b"), Ordering::Less);
+        assert_eq!(compare_code_units("b", "a"), Ordering::Greater);
+        assert_eq!(compare_code_units("a", "a"), Ordering::Equal);
     }
 
     #[test]

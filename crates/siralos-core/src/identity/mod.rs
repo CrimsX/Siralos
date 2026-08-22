@@ -36,7 +36,9 @@ pub use artifact::{
     compute_section_delta, digest_item_list, digest_reference,
     validate_artifact_digest,
 };
-pub use canonical::{CanonicalValue, canonicalize, json_escape};
+pub use canonical::{
+    CanonicalValue, canonical_json_value, canonicalize, json_escape,
+};
 pub use manifests::{
     AcceptanceEvidenceEntry, AcceptanceEvidenceManifest,
     CreateAcceptanceEvidenceManifest, CreateReviewInputManifest,
