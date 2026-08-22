@@ -19,6 +19,7 @@ pub mod digest;
 pub mod engine_profile;
 pub mod events;
 pub mod gdscript;
+pub mod impact;
 pub mod inspector;
 pub mod installations;
 pub mod knowledge;
