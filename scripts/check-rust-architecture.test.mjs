@@ -212,8 +212,28 @@ path = "src/main.rs"
   it("rejects Godot symbols in siralos-core sources", () => {
     const root = writeFixture(
       cleanWorkspaceFixture({
+        "crates/siralos-core/src/task.rs":
+          "//! Task kernel.\n\n/// Godot scene reference must never reach core.\npub fn scene() {}\n",
+      }),
+    );
+    const errors = runChecks(root);
+    expect(errors.some((error) => error.includes("domain-neutral"))).toBe(true);
+  });
+
+  it("allows exactly the godot module declaration in core lib.rs", () => {
+    const root = writeFixture(
+      cleanWorkspaceFixture({
+        "crates/siralos-core/src/lib.rs": "//! Core.\n\npub mod godot;\n",
+      }),
+    );
+    expect(runChecks(root)).toEqual([]);
+  });
+
+  it("rejects Godot vocabulary beyond the module declaration in lib.rs", () => {
+    const root = writeFixture(
+      cleanWorkspaceFixture({
         "crates/siralos-core/src/lib.rs":
-          "//! Core.\n\n/// Godot scene reference must never reach core.\npub fn scene() {}\n",
+          "//! Core.\n\npub mod godot;\n\n/// A .tscn scene reference must never leak here.\npub fn scene() {}\n",
       }),
     );
     const errors = runChecks(root);

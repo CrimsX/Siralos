@@ -279,13 +279,16 @@ export function runChecks(root) {
   for (const crate of EXPECTED_CRATES) {
     for (const source of listRustSources(join(root, crate))) {
       const content = readFileSync(source, "utf8");
-      // R8 — Godot Stage-2 parity lives in `siralos-core/src/godot/**` (entry-reviewed at 6a77885)
-      // and is outside the pre-R8 domain-neutrality guard for the rest of `siralos-core`.
+      // R8 — Godot Stage-2 parity lives in `siralos-core/src/godot/**`
+      // (entry-reviewed at 6a77885) and is outside the pre-R8
+      // domain-neutrality guard for the rest of `siralos-core`. Outside
+      // that subtree, the only allowed Godot mention is the exact module
+      // declaration line; any other occurrence still fails.
+      const coreOutsideGodot =
+        crate === "crates/siralos-core" && !source.includes(join("src", "godot"));
       if (
-        crate === "crates/siralos-core" &&
-        !source.includes(join("src", "godot")) &&
-        !source.endsWith(join("src", "lib.rs")) &&
-        FORBIDDEN_CORE_SYMBOL_PATTERN.test(content)
+        coreOutsideGodot &&
+        FORBIDDEN_CORE_SYMBOL_PATTERN.test(content.replace(/^\s*pub mod godot;\s*$/gm, ""))
       ) {
         errors.push(`${source}: siralos-core must stay domain-neutral (Godot symbol present)`);
       }
