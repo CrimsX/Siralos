@@ -1,0 +1,8 @@
+{
+  "id": "godot-knowledge.status-unavailable",
+  "subject": "godot-knowledge",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "op": "status", "platform": "win32" }
+}

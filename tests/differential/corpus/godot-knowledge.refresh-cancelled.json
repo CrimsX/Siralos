@@ -1,0 +1,8 @@
+{
+  "id": "godot-knowledge.refresh-cancelled",
+  "subject": "godot-knowledge",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "op": "refresh", "cancelled": true }
+}

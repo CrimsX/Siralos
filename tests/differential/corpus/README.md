@@ -102,3 +102,20 @@ rejection is represented by a POSIX-only required scenario because the
 current Windows host cannot expose that filesystem case portably. The
 candidate never creates the default configuration path, reads environment
 credentials, selects an engine, launches Godot, or widens sandbox authority.
+
+The Stage 3R R8 `godot-*` subjects execute Godot Stage-2 parity through
+the real TypeScript reference services and the real Rust adapters and
+core parsers. `godot-scene-resolve` drives the bounded scene/resource
+parsers, including the three selection rules that previously diverged
+(a null `tres` key is a missing key, unknown input keys are ignored,
+and a declared `tres` wins over `tscn`). `godot-discovery` runs the
+engine profiler's discovery generation and selected-profile query over
+declared config and sanitized host PATH/PATHEXT inputs whose entries
+never exist, so outcomes are deterministic with zero filesystem
+effects. `godot-knowledge`, `godot-diagnostics`, and `godot-lsp`
+exercise the production fail-closed service stacks: truthful support
+reasons, preparation refusal before any approval or mirror work,
+cancellation propagation, invalid-input ordering before availability,
+unknown prepared-check execution failure, and bounded session state.
+No scenario launches an engine, creates files, opens ports, or widens
+sandbox authority.

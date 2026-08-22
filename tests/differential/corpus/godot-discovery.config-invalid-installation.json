@@ -1,0 +1,13 @@
+{
+  "id": "godot-discovery.config-invalid-installation",
+  "subject": "godot-discovery",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "discover",
+    "config": {
+      "installations": [{ "id": "cfg-1", "path": "/missing/Godot.exe", "editionHint": "standard" }]
+    }
+  }
+}

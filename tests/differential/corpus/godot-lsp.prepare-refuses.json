@@ -1,0 +1,8 @@
+{
+  "id": "godot-lsp.prepare-refuses",
+  "subject": "godot-lsp",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "op": "prepare" }
+}

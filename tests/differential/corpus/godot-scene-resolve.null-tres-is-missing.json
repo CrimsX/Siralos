@@ -1,0 +1,11 @@
+{
+  "id": "godot-scene-resolve.null-tres-is-missing",
+  "subject": "godot-scene-resolve",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "tres": null,
+    "tscn": "[gd_scene]\n"
+  }
+}

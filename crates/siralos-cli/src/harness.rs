@@ -61,7 +61,7 @@ const SUBJECT_GODOT_KNOWLEDGE: &str = "godot-knowledge";
 const SUBJECT_GODOT_DIAGNOSTICS: &str = "godot-diagnostics";
 const SUBJECT_GODOT_LSP: &str = "godot-lsp";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 15;
+const CORPUS_VERSION: u64 = 16;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -1524,17 +1524,16 @@ fn validate_godot_input(
     }
     match subject {
         SUBJECT_GODOT_SCENE_RESOLVE => {
-            const KEYS: [&str; 3] = ["tscn", "tres", "path"];
-            for key in input.as_object().into_iter().flat_map(|map| map.keys())
-            {
-                if !KEYS.contains(&key.as_str()) {
-                    return reject(format!("unexpected field {key}"));
-                }
-            }
+            // The oracle ignores unknown keys; only the declared keys'
+            // types are constrained here.
             for key in ["tscn", "tres"] {
                 let value = input.get(key);
-                if value.is_some_and(|value| !value.is_string()) {
-                    return reject(format!("field {key} must be a string"));
+                if value.is_some_and(|value| {
+                    !value.is_string() && !value.is_null()
+                }) {
+                    return reject(format!(
+                        "field {key} must be a string or null"
+                    ));
                 }
             }
             if let Ok(path) = string_at("path") {
@@ -6542,7 +6541,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 133);
+        assert_eq!(loaded.len(), 155);
     }
 
     #[test]

@@ -1,0 +1,12 @@
+{
+  "id": "godot-discovery.select-config-active-missing",
+  "subject": "godot-discovery",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "select",
+    "preference": "config-active",
+    "config": { "activeInstallation": "cfg-1" }
+  }
+}

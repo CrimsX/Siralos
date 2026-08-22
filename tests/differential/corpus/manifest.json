@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 15,
+  "corpusVersion": 16,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -165,6 +165,94 @@
     {
       "file": "git-inspection.unavailable.json",
       "sha256": "849255a4af7d0002c06874723c25de42990799d8bcee04b043e037be1ec78bd9"
+    },
+    {
+      "file": "godot-diagnostics.execute-fails-unknown-handle.json",
+      "sha256": "64010b18f2704c3567c8677245318fd5f0767e1587d52fb44452449bea43e56b"
+    },
+    {
+      "file": "godot-diagnostics.prepare-cancelled.json",
+      "sha256": "94bbe4a14e16a833417d97b3ba7c05079fc0c1cd9db6e58460437f22a1797b78"
+    },
+    {
+      "file": "godot-diagnostics.prepare-refuses.json",
+      "sha256": "153e08f986b05cc4517843126065502c544588fb72d61577bda0d8dc46f9c16d"
+    },
+    {
+      "file": "godot-diagnostics.status-untrusted.json",
+      "sha256": "079442e0516f42d822e67b32576fd80199cec9de29b3e16cd2214b1c5084568f"
+    },
+    {
+      "file": "godot-discovery.config-invalid-installation.json",
+      "sha256": "930c951c92e6a013d2f7787954cf51db9fdfa28fe0d424c43bae5c0f46f7638a"
+    },
+    {
+      "file": "godot-discovery.path-scan-no-candidates.json",
+      "sha256": "5ed541db93cf2fe3459cbf2d53afc114ab08d4d472a195070f9ef773daad75d8"
+    },
+    {
+      "file": "godot-discovery.select-config-active-missing.json",
+      "sha256": "15aa16e4d106c5b1f16f2e738683d2412f8c9a5c7d90fd7cc96b8587c0a005c5"
+    },
+    {
+      "file": "godot-discovery.select-explicit-path-missing.json",
+      "sha256": "74c5b7aa568881a97b29e55addef346e2b83b7b5fcbad34077a72246a6a46692"
+    },
+    {
+      "file": "godot-knowledge.lookup-unavailable.json",
+      "sha256": "a13a3d574694edaa4584a1cc264065400f5a477453b334ac820d410b28f67dba"
+    },
+    {
+      "file": "godot-knowledge.refresh-cancelled.json",
+      "sha256": "7e6fcd8dde5489f19c76668fda260b42a50834f639d4e7740a98b5b5184d3318"
+    },
+    {
+      "file": "godot-knowledge.search-invalid-query.json",
+      "sha256": "e0c6448e2149877896517d5fc4b75f6050d1f68fb98da582927e71560a8d026c"
+    },
+    {
+      "file": "godot-knowledge.search-unavailable.json",
+      "sha256": "364b720473eb5e3fe44aa20d60db20e42536c33265a6eb5bf1c4cfb8a83f635f"
+    },
+    {
+      "file": "godot-knowledge.status-unavailable.json",
+      "sha256": "097480d9875e9c6bcc014d4b20345d320aa831d5ce7e3126603d13aa07004893"
+    },
+    {
+      "file": "godot-lsp.prepare-cancelled.json",
+      "sha256": "22bcadb8c9695fa3f8939e113d14d1ad5cc094cd213e2907385e6fa55cc9db83"
+    },
+    {
+      "file": "godot-lsp.prepare-refuses.json",
+      "sha256": "0115e78f1b58964f0d51e8d2e24c703f7dd5229f9e3967e057d90f4551e664c1"
+    },
+    {
+      "file": "godot-lsp.status-empty.json",
+      "sha256": "3fc5775df952275376031ba66202d65964d318305c6605f0faaffee4717f436d"
+    },
+    {
+      "file": "godot-lsp.support-unavailable.json",
+      "sha256": "3e10681d06d907ca9f7f6362d0e2da52840eb0aadd71872c53f7add188dfe3de"
+    },
+    {
+      "file": "godot-scene-resolve.complete-scene.json",
+      "sha256": "007be6e3942f5159520fad865f94638064198dd28ad387600e31559643161116"
+    },
+    {
+      "file": "godot-scene-resolve.null-tres-is-missing.json",
+      "sha256": "9fc6b532078732eb712e872ad03980c400b705729b6a80a6d90b019ff5a908b1"
+    },
+    {
+      "file": "godot-scene-resolve.tres-precedence.json",
+      "sha256": "28af0499cf57c40d059a955f16a1c8d188815ba067a6b7460998730b54070db1"
+    },
+    {
+      "file": "godot-scene-resolve.typed-resource-under-tscn.json",
+      "sha256": "bcae5f21f6baa5bef8698296f1e01215be37c3d9d91e5d00f084289882d6b4d3"
+    },
+    {
+      "file": "godot-scene-resolve.unknown-keys-ignored.json",
+      "sha256": "cd8dc4ed7964e4b570d11877bfe78bf401943450ce4310b1184664d54166ad4c"
     },
     {
       "file": "language-definition.bounded.json",
@@ -535,5 +623,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "bd504e6dd991b8e831361ff058010d983eeab96686e8b9b3f774a85f3946437b"
+  "corpusSha256": "16efa1c3def3d6a272f9635173fe971259be29edb6b54942d845668d9944a862"
 }

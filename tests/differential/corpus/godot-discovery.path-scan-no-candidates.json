@@ -1,0 +1,12 @@
+{
+  "id": "godot-discovery.path-scan-no-candidates",
+  "subject": "godot-discovery",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "discover",
+    "hostPath": "C:/no-such-a;C:/no-such-b",
+    "config": { "discoverOnPath": true }
+  }
+}

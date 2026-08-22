@@ -1,0 +1,8 @@
+{
+  "id": "godot-diagnostics.prepare-refuses",
+  "subject": "godot-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "op": "prepare", "paths": ["src/player.gd"] }
+}

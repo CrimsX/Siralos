@@ -1,0 +1,8 @@
+{
+  "id": "godot-diagnostics.prepare-cancelled",
+  "subject": "godot-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "op": "prepare", "cancelled": true }
+}

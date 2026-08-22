@@ -1,0 +1,8 @@
+{
+  "id": "godot-diagnostics.execute-fails-unknown-handle",
+  "subject": "godot-diagnostics",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "op": "execute" }
+}

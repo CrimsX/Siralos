@@ -1377,6 +1377,247 @@ function validateProviderTurnResult(record, label) {
   }
 }
 
+function validateGodotSceneResolveResult(result, label) {
+  assertExactKeys(result, ["status", "diagnostics", "truncated"], label);
+  if (!["complete", "partial", "invalid"].includes(result.status)) {
+    throw new Error(`${label}.result.status is invalid`);
+  }
+  if (!Number.isSafeInteger(result.diagnostics) || result.diagnostics < 0) {
+    throw new Error(`${label}.result.diagnostics is invalid`);
+  }
+  if (typeof result.truncated !== "boolean") {
+    throw new Error(`${label}.result.truncated is invalid`);
+  }
+}
+
+const GODOT_INSTALLATION_SOURCES = new Set([
+  "user-config",
+  "path",
+  "cli-path",
+  "cli-installation",
+  "environment-path",
+  "environment-installation",
+  "active-config",
+]);
+
+function validateGodotOverview(overview, label) {
+  if (!isObject(overview)) {
+    throw new Error(`${label} overview must be an object`);
+  }
+  assertExactKeys(
+    overview,
+    ["id", "sourceLabel", "source", "invalid", "isDuplicate", "selected"],
+    label,
+  );
+  if (
+    typeof overview.id !== "string" ||
+    typeof overview.sourceLabel !== "string" ||
+    !GODOT_INSTALLATION_SOURCES.has(overview.source)
+  ) {
+    throw new Error(`${label} overview identity is invalid`);
+  }
+  if (
+    (overview.invalid !== null && typeof overview.invalid !== "string") ||
+    typeof overview.isDuplicate !== "boolean" ||
+    typeof overview.selected !== "boolean"
+  ) {
+    throw new Error(`${label} overview fields are invalid`);
+  }
+}
+
+const GODOT_SEVERITY_VALUES = new Set(["info", "warning", "error"]);
+
+function validateGodotDiscoveryResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  const keys = Object.keys(result).sort();
+  if (keys.length === 2 && keys[0] === "error" && keys[1] === "ok") {
+    if (result.ok !== false || typeof result.error !== "string" || result.error.length === 0) {
+      throw new Error(`${label}.result failure shape is invalid`);
+    }
+    return;
+  }
+  if (keys.length === 2 && keys[0] === "ok" && keys[1] === "selected") {
+    if (typeof result.ok !== "boolean" || typeof result.selected !== "boolean") {
+      throw new Error(`${label}.result select shape is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(
+    result,
+    ["ok", "selected", "candidates", "configuration", "rationale", "diagnostics"],
+    `${label}.result`,
+  );
+  if (
+    !Array.isArray(result.candidates) ||
+    result.candidates.length > 64 ||
+    !Array.isArray(result.rationale) ||
+    result.rationale.length > 32 ||
+    !Array.isArray(result.diagnostics) ||
+    result.diagnostics.length > 64
+  ) {
+    throw new Error(`${label}.result arrays must be bounded`);
+  }
+  for (const candidate of result.candidates) {
+    validateGodotOverview(candidate, `${label}.result.candidates`);
+  }
+  validateGodotOverviewOrNothing(result.selected, `${label}.result.selected`);
+  for (const diagnostic of result.diagnostics) {
+    if (
+      !isObject(diagnostic) ||
+      !GODOT_SEVERITY_VALUES.has(diagnostic.severity) ||
+      typeof diagnostic.message !== "string"
+    ) {
+      throw new Error(`${label}.result.diagnostics entry is invalid`);
+    }
+  }
+  if (!isObject(result.configuration)) {
+    throw new Error(`${label}.result.configuration must be an object`);
+  }
+  assertExactKeys(
+    result.configuration,
+    ["activeInstallation", "configuredCount", "discoverOnPath", "overrides"],
+    `${label}.result.configuration`,
+  );
+  validateBoundedStringArray(result.configuration.overrides, 8, `${label}.configuration.overrides`);
+  if (
+    (result.configuration.activeInstallation !== null &&
+      typeof result.configuration.activeInstallation !== "string") ||
+    !Number.isSafeInteger(result.configuration.configuredCount) ||
+    result.configuration.configuredCount < 0 ||
+    typeof result.configuration.discoverOnPath !== "boolean"
+  ) {
+    throw new Error(`${label}.result.configuration is invalid`);
+  }
+}
+
+function validateGodotOverviewOrNothing(value, label) {
+  if (value !== null) {
+    validateGodotOverview(value, label);
+  }
+}
+
+const GODOT_KNOWLEDGE_STATUS_STATES = new Set(["ready", "unavailable", "unsupported"]);
+const GODOT_KNOWLEDGE_NONREADY_STATUSES = new Set([
+  "unavailable",
+  "unsupported",
+  "failed",
+  "cancelled",
+  "invalid_input",
+  "not_found",
+]);
+
+function validateGodotKnowledgeResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (Object.hasOwn(result, "state")) {
+    assertExactKeys(
+      result,
+      ["state", "reason", "platform", "cacheEnabled", "schemaVersion", "profile", "manualChannel"],
+      `${label}.result`,
+    );
+    if (
+      !GODOT_KNOWLEDGE_STATUS_STATES.has(result.state) ||
+      (result.reason !== null && typeof result.reason !== "string") ||
+      typeof result.platform !== "string" ||
+      typeof result.cacheEnabled !== "boolean" ||
+      !Number.isSafeInteger(result.schemaVersion) ||
+      result.profile !== null ||
+      (result.manualChannel !== null && typeof result.manualChannel !== "string")
+    ) {
+      throw new Error(`${label}.result status shape is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(result, ["status", "message"], `${label}.result`);
+  if (!GODOT_KNOWLEDGE_NONREADY_STATUSES.has(result.status) || typeof result.message !== "string") {
+    throw new Error(`${label}.result outcome shape is invalid`);
+  }
+}
+
+const GODOT_PREPARATION_STATUSES = new Set([
+  "unavailable",
+  "unsupported",
+  "invalid_input",
+  "failed",
+  "cancelled",
+]);
+const GODOT_RUN_STATUSES = new Set([
+  ...GODOT_PREPARATION_STATUSES,
+  "conflict",
+  "denied",
+  "timed-out",
+  "sandbox-failed",
+]);
+
+function validateGodotDiagnosticsResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (Object.hasOwn(result, "status")) {
+    assertExactKeys(result, ["status", "message"], `${label}.result`);
+    if (!GODOT_RUN_STATUSES.has(result.status) || typeof result.message !== "string") {
+      throw new Error(`${label}.result outcome shape is invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(result, "reason")) {
+    assertExactKeys(result, ["state", "reason", "platform"], `${label}.result`);
+    if (
+      result.state !== "unavailable" ||
+      (result.reason !== null && typeof result.reason !== "string") ||
+      typeof result.platform !== "string"
+    ) {
+      throw new Error(`${label}.result support shape is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(result, ["state"], `${label}.result`);
+  if (!["untrusted", "check-invalidated"].includes(result.state)) {
+    throw new Error(`${label}.result state is invalid`);
+  }
+}
+
+function validateGodotLspResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (Object.hasOwn(result, "status")) {
+    assertExactKeys(result, ["status", "message"], `${label}.result`);
+    if (!GODOT_PREPARATION_STATUSES.has(result.status) || typeof result.message !== "string") {
+      throw new Error(`${label}.result outcome shape is invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(result, "reason")) {
+    assertExactKeys(result, ["state", "reason", "platform"], `${label}.result`);
+    if (
+      result.state !== "unavailable" ||
+      (result.reason !== null && typeof result.reason !== "string") ||
+      typeof result.platform !== "string"
+    ) {
+      throw new Error(`${label}.result support shape is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(
+    result,
+    ["state", "openDocumentCount", "diagnosticCount", "networkIsolation"],
+    `${label}.result`,
+  );
+  if (
+    !["starting", "ready", "stale", "closed", "unavailable"].includes(result.state) ||
+    ![result.openDocumentCount, result.diagnosticCount].every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) ||
+    !["loopback-only", "unverified", "unavailable"].includes(result.networkIsolation)
+  ) {
+    throw new Error(`${label}.result status shape is invalid`);
+  }
+}
+
 function validateCompletedResult(record, label) {
   if (!isObject(record.result)) {
     throw new Error(`${label}.result must be an object`);
@@ -1457,6 +1698,26 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "user-config") {
     validateUserConfigResult(record, label);
+    return;
+  }
+  if (record.subject === "godot-scene-resolve") {
+    validateGodotSceneResolveResult(record.result, label);
+    return;
+  }
+  if (record.subject === "godot-discovery") {
+    validateGodotDiscoveryResult(record.result, label);
+    return;
+  }
+  if (record.subject === "godot-knowledge") {
+    validateGodotKnowledgeResult(record.result, label);
+    return;
+  }
+  if (record.subject === "godot-diagnostics") {
+    validateGodotDiagnosticsResult(record.result, label);
+    return;
+  }
+  if (record.subject === "godot-lsp") {
+    validateGodotLspResult(record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);
