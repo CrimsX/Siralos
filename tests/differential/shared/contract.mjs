@@ -36,6 +36,9 @@ export const ALLOWED_SUBJECTS = new Set([
   "godot-knowledge",
   "godot-diagnostics",
   "godot-lsp",
+  "godot-review-context",
+  "godot-mutation-prepare",
+  "godot-develop-plan",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -712,6 +715,9 @@ function validateSubjectInputs(scenario, label) {
     "godot-knowledge",
     "godot-diagnostics",
     "godot-lsp",
+    "godot-review-context",
+    "godot-mutation-prepare",
+    "godot-develop-plan",
   ]);
   if (GODOT_SUBJECTS.has(scenario.subject)) {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {

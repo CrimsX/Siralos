@@ -23,7 +23,8 @@ pub use order::{
 };
 pub use surface::{
     DevelopmentSurfaceDecision, DevelopmentSurfaceInput,
-    DevelopmentSurfaceKind, DevelopmentSurfaceTouchpoint, ProjectSurfaces,
+    DevelopmentSurfaceKind, DevelopmentSurfaceTouchpoint,
+    DevelopmentTouchpointStatus, ProjectSurfaces,
     classify_development_surface, classify_development_surface_path,
 };
 
