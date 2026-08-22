@@ -29,6 +29,7 @@ pub mod probe;
 pub mod probes;
 pub mod project;
 pub mod scene;
+pub mod scene_mutation;
 pub mod selection;
 pub mod version;
 
