@@ -55,6 +55,11 @@ const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
 const SUBJECT_TOOL_LOOP: &str = "tool-loop";
 const SUBJECT_CONTEXT_PROJECTION: &str = "context-projection";
 const SUBJECT_USER_CONFIG: &str = "user-config";
+const SUBJECT_GODOT_SCENE_RESOLVE: &str = "godot-scene-resolve";
+const SUBJECT_GODOT_DISCOVERY: &str = "godot-discovery";
+const SUBJECT_GODOT_KNOWLEDGE: &str = "godot-knowledge";
+const SUBJECT_GODOT_DIAGNOSTICS: &str = "godot-diagnostics";
+const SUBJECT_GODOT_LSP: &str = "godot-lsp";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
 const CORPUS_VERSION: u64 = 15;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
@@ -63,6 +68,7 @@ const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TOOL_LOOP_INPUT_BYTES: usize = 64 * 1024;
 const MAX_CONTEXT_PROJECTION_INPUT_BYTES: usize = 64 * 1024;
 const MAX_USER_CONFIG_INPUT_BYTES: usize = 64 * 1024;
+const MAX_GODOT_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
@@ -390,6 +396,11 @@ fn validate_scenario(
             | SUBJECT_TOOL_LOOP
             | SUBJECT_CONTEXT_PROJECTION
             | SUBJECT_USER_CONFIG
+            | SUBJECT_GODOT_SCENE_RESOLVE
+            | SUBJECT_GODOT_DISCOVERY
+            | SUBJECT_GODOT_KNOWLEDGE
+            | SUBJECT_GODOT_DIAGNOSTICS
+            | SUBJECT_GODOT_LSP
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -563,6 +574,43 @@ fn validate_scenario(
                     scenario.id
                 )));
             }
+        }
+        SUBJECT_GODOT_SCENE_RESOLVE
+        | SUBJECT_GODOT_DISCOVERY
+        | SUBJECT_GODOT_KNOWLEDGE
+        | SUBJECT_GODOT_DIAGNOSTICS
+        | SUBJECT_GODOT_LSP => {
+            if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
+                    scenario.id, scenario.subject
+                )));
+            }
+            let input = scenario.input.as_ref().ok_or_else(|| {
+                HarnessError::corpus(format!(
+                    "scenario {} {} requires an input object",
+                    scenario.id, scenario.subject
+                ))
+            })?;
+            if !input.is_object() {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} {} input must be an object",
+                    scenario.id, scenario.subject
+                )));
+            }
+            let serialized = serde_json::to_vec(input).map_err(|error| {
+                HarnessError::corpus(format!(
+                    "scenario {} input cannot be serialized: {error}",
+                    scenario.id
+                ))
+            })?;
+            if serialized.len() > MAX_GODOT_INPUT_BYTES {
+                return Err(HarnessError::corpus(format!(
+                    "scenario {} input exceeds {MAX_GODOT_INPUT_BYTES} bytes",
+                    scenario.id
+                )));
+            }
+            validate_godot_input(&scenario.subject, input)?;
         }
         SUBJECT_STATE_DIR => {
             if platforms.len() != 1 || platforms.contains("*") {
@@ -1148,6 +1196,20 @@ fn run_scenario(
                 "result": result,
             }))
         }
+        SUBJECT_GODOT_SCENE_RESOLVE
+        | SUBJECT_GODOT_DISCOVERY
+        | SUBJECT_GODOT_KNOWLEDGE
+        | SUBJECT_GODOT_DIAGNOSTICS
+        | SUBJECT_GODOT_LSP => {
+            let input = scenario
+                .input
+                .as_ref()
+                .expect("godot input was validated while loading the corpus");
+            let result = godot_record(&scenario.subject, input)?;
+            Ok(
+                json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
+            )
+        }
         _ => unreachable!("subject was validated while loading the corpus"),
     }
 }
@@ -1427,6 +1489,1075 @@ fn configuration_message_category(message: &str) -> &'static str {
         "INVALID_VALUE"
     }
 }
+
+// ---------------------------------------------------------------------------
+// Stage 3R R8 subject: godot.
+// ---------------------------------------------------------------------------
+
+const GODOT_PLATFORMS: [&str; 3] = ["win32", "linux", "darwin"];
+
+/// Schema-level validation for one Godot scenario input. Mirrors the
+/// JS contract: platforms `["*"]`, empty env, a plain object bounded by
+/// `MAX_GODOT_INPUT_BYTES`, plus per-subject key and type checks.
+fn validate_godot_input(
+    subject: &str,
+    input: &Value,
+) -> Result<(), HarnessError> {
+    let reject = |message: String| {
+        Err(HarnessError::corpus(format!(
+            "scenario input rejected for subject {subject}: {message}"
+        )))
+    };
+    let string_at = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("field {key} must be a string"))
+    };
+    if let Some(platform) = input.get("platform") {
+        let Some(text) = platform.as_str() else {
+            return reject("platform must be a string".to_owned());
+        };
+        if !GODOT_PLATFORMS.contains(&text) {
+            return reject(format!("platform {text} is not a Godot platform"));
+        }
+    }
+    match subject {
+        SUBJECT_GODOT_SCENE_RESOLVE => {
+            const KEYS: [&str; 3] = ["tscn", "tres", "path"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            for key in ["tscn", "tres"] {
+                let value = input.get(key);
+                if value.is_some_and(|value| !value.is_string()) {
+                    return reject(format!("field {key} must be a string"));
+                }
+            }
+            if let Ok(path) = string_at("path") {
+                if path.len() > 1024 {
+                    return reject("field path exceeds its bound".to_owned());
+                }
+            } else if input.get("path").is_some() {
+                return reject("field path must be a string".to_owned());
+            }
+            Ok(())
+        }
+        SUBJECT_GODOT_KNOWLEDGE => {
+            match input.get("op").and_then(Value::as_str) {
+                Some("status") | Some("refresh") => {
+                    if let Some(cancelled) = input.get("cancelled") {
+                        if !cancelled.is_boolean() {
+                            return reject(
+                                "cancelled must be a boolean".to_owned(),
+                            );
+                        }
+                    }
+                    Ok(())
+                }
+                Some("search") => {
+                    if let Err(message) = string_at("query") {
+                        return reject(message);
+                    }
+                    if let Some(kinds) = input.get("kinds") {
+                        let Some(entries) = kinds.as_array() else {
+                            return reject(
+                                "kinds must be an array".to_owned(),
+                            );
+                        };
+                        const KINDS: [&str; 8] = [
+                            "class", "method", "property", "signal",
+                            "constant", "enum", "utility", "operator",
+                        ];
+                        if entries.len() > 16
+                            || entries.iter().any(|entry| {
+                                !entry
+                                    .as_str()
+                                    .is_some_and(|text| KINDS.contains(&text))
+                            })
+                        {
+                            return reject(
+                                "kinds must be at most 16 known kind strings"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(limit) = input.get("limit") {
+                        if limit.as_u64().is_none_or(|limit| limit > 1000) {
+                            return reject(
+                                "limit must be an integer in 1..=1000"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    Ok(())
+                }
+                Some("lookup") => {
+                    if let Err(message) = string_at("symbol") {
+                        return reject(message);
+                    }
+                    Ok(())
+                }
+                _ => reject(
+                    "op must be status, refresh, search, or lookup".to_owned(),
+                ),
+            }
+        }
+        SUBJECT_GODOT_DISCOVERY => {
+            match input.get("op").and_then(Value::as_str) {
+                Some("discover" | "select") => {}
+                _ => {
+                    return reject("op must be discover or select".to_owned());
+                }
+            }
+            if let Some(override_source) = input.get("overrideSource") {
+                if !override_source.is_null()
+                    && override_source.as_str() != Some("cli")
+                {
+                    return reject(
+                        "overrideSource must be null or \"cli\"".to_owned(),
+                    );
+                }
+            }
+            for key in ["hostPath", "hostPathExt", "workspaceRoot"] {
+                if let Some(value) = input.get(key) {
+                    if !value.is_null() && value.as_str().is_none() {
+                        return reject(format!(
+                            "field {key} must be a string or null"
+                        ));
+                    }
+                }
+            }
+            let Some(config) = input.get("config") else {
+                return Ok(());
+            };
+            let Some(config) = config.as_object() else {
+                return reject("config must be an object".to_owned());
+            };
+            if let Some(active) = config.get("activeInstallation") {
+                if !active.is_null() && active.as_str().is_none() {
+                    return reject(
+                        "config.activeInstallation must be a string or null"
+                            .to_owned(),
+                    );
+                }
+            }
+            if let Some(discover_on_path) = config.get("discoverOnPath") {
+                if !discover_on_path.is_boolean() {
+                    return reject(
+                        "config.discoverOnPath must be a boolean".to_owned(),
+                    );
+                }
+            }
+            let installations = config.get("installations");
+            if installations.is_some_and(|value| !value.is_array()) {
+                return reject(
+                    "config.installations must be an array".to_owned(),
+                );
+            }
+            for entry in
+                installations.and_then(Value::as_array).into_iter().flatten()
+            {
+                let Some(entry) = entry.as_object() else {
+                    return reject(
+                        "config.installations entries must be objects"
+                            .to_owned(),
+                    );
+                };
+                if let Err(message) = entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty() && id.len() <= 128)
+                    .ok_or("entry id must be a non-empty bounded string")
+                {
+                    return reject(message.to_owned());
+                }
+                if let Err(message) = entry
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .filter(|path| !path.is_empty() && path.len() <= 1024)
+                    .ok_or("entry path must be a non-empty bounded string")
+                {
+                    return reject(message.to_owned());
+                }
+                match entry.get("editionHint").and_then(Value::as_str) {
+                    None | Some("standard") | Some("dotnet")
+                    | Some("unknown") => {}
+                    Some(hint) => {
+                        return reject(format!(
+                            "entry editionHint {hint} is not standard, dotnet, or unknown"
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+        SUBJECT_GODOT_DIAGNOSTICS => {
+            match input.get("op").and_then(Value::as_str) {
+                Some("support" | "status") => Ok(()),
+                Some("prepare") => {
+                    if let Some(paths) = input.get("paths") {
+                        if paths.is_null() {
+                            return Ok(());
+                        }
+                        let Some(entries) = paths.as_array() else {
+                            return reject(
+                                "paths must be an array or null".to_owned(),
+                            );
+                        };
+                        if entries.len() > 64
+                            || entries.iter().any(|entry| !entry.is_string())
+                        {
+                            return reject(
+                                "paths must be at most 64 strings".to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(cancelled) = input.get("cancelled") {
+                        if !cancelled.is_boolean() {
+                            return reject(
+                                "cancelled must be a boolean".to_owned(),
+                            );
+                        }
+                    }
+                    Ok(())
+                }
+                Some("execute") => {
+                    if let Some(digest) = input.get("approvedDigest") {
+                        let Some(text) = digest.as_str() else {
+                            return reject(
+                                "approvedDigest must be a string".to_owned(),
+                            );
+                        };
+                        if text.len() != 64
+                            || !text
+                                .bytes()
+                                .all(|byte| byte.is_ascii_hexdigit())
+                        {
+                            return reject(
+                                "approvedDigest must be a hex SHA-256 digest"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    Ok(())
+                }
+                _ => reject(
+                    "op must be support, prepare, execute, or status"
+                        .to_owned(),
+                ),
+            }
+        }
+        SUBJECT_GODOT_LSP => match input.get("op").and_then(Value::as_str) {
+            Some("support" | "status") => Ok(()),
+            Some("prepare") => {
+                if let Some(cancelled) = input.get("cancelled") {
+                    if !cancelled.is_boolean() {
+                        return reject(
+                            "cancelled must be a boolean".to_owned(),
+                        );
+                    }
+                }
+                Ok(())
+            }
+            _ => reject("op must be support, prepare, or status".to_owned()),
+        },
+        _ => unreachable!("godot subject was validated above"),
+    }
+}
+
+fn godot_record(subject: &str, input: &Value) -> Result<Value, HarnessError> {
+    match subject {
+        SUBJECT_GODOT_SCENE_RESOLVE => godot_scene_resolve_record(input),
+        SUBJECT_GODOT_DISCOVERY => godot_discovery_record(input),
+        SUBJECT_GODOT_KNOWLEDGE => godot_knowledge_record(input),
+        SUBJECT_GODOT_DIAGNOSTICS => godot_diagnostics_record(input),
+        SUBJECT_GODOT_LSP => godot_lsp_record(input),
+        _ => unreachable!(
+            "godot subject was validated while loading the corpus"
+        ),
+    }
+}
+
+/// Transcription of the oracle probe's selection rule
+/// (`godot-scene-resolve-oracle.mjs`): tres wins as a resource; a tscn
+/// payload containing `[gd_resource` parses as a resource; anything else
+/// parses as a scene; missing keys are null, unknown keys are ignored,
+/// and the default path is empty.
+fn godot_scene_resolve_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::godot::scene::{
+        GodotParseStatus, parse_godot_resource, parse_godot_scene,
+    };
+    let tres = input.get("tres").and_then(Value::as_str);
+    let tscn = input.get("tscn").and_then(Value::as_str);
+    let path = input.get("path").and_then(Value::as_str).unwrap_or("");
+    let content;
+    let is_resource;
+    if let Some(tres_text) = tres {
+        content = tres_text;
+        is_resource = true;
+    } else if tscn.is_some_and(|text| text.contains("[gd_resource")) {
+        content = tscn.unwrap_or_default();
+        is_resource = true;
+    } else {
+        content = tscn.unwrap_or("");
+        is_resource = false;
+    }
+    let status_str;
+    let diagnostics_len;
+    let truncated;
+    if is_resource {
+        let doc = parse_godot_resource(content, path, None);
+        status_str = match doc.status {
+            GodotParseStatus::Complete => "complete",
+            GodotParseStatus::Partial => "partial",
+            GodotParseStatus::Invalid => "invalid",
+        };
+        diagnostics_len = doc.diagnostics.len();
+        truncated = doc.truncated;
+    } else {
+        let doc = parse_godot_scene(content, path, None);
+        status_str = match doc.status {
+            GodotParseStatus::Complete => "complete",
+            GodotParseStatus::Partial => "partial",
+            GodotParseStatus::Invalid => "invalid",
+        };
+        diagnostics_len = doc.diagnostics.len();
+        truncated = doc.truncated;
+    }
+    Ok(json!({
+        "status": status_str,
+        "diagnostics": diagnostics_len,
+        "truncated": truncated,
+    }))
+}
+
+fn godot_knowledge_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::godot::knowledge::GodotKnowledgeService;
+    use siralos_core::godot::{
+        GodotApiSearchKind, GodotApiSearchQuery, GodotKnowledgeLookupOutcome,
+        GodotKnowledgeQueryResult, GodotKnowledgeRefreshResult,
+        KnowledgeState,
+    };
+    let platform =
+        input.get("platform").and_then(Value::as_str).unwrap_or("win32");
+    let mut service = GodotKnowledgeService::new(platform);
+    match input.get("op").and_then(Value::as_str) {
+        Some("status") => {
+            let status = service.status();
+            Ok(json!({
+                "state": match status.state {
+                    KnowledgeState::Ready => "ready",
+                    KnowledgeState::Unavailable => "unavailable",
+                    KnowledgeState::Unsupported => "unsupported",
+                },
+                "reason": status.reason,
+                "platform": status.platform,
+                "cacheEnabled": status.cache_enabled,
+                "schemaVersion": status.schema_version,
+            }))
+        }
+        Some("refresh") => {
+            let cancelled = input
+                .get("cancelled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            match service.refresh(cancelled) {
+                GodotKnowledgeRefreshResult::NotReady { status, message } => {
+                    Ok(json!({
+                        "status": refresh_status_str(status),
+                        "message": message,
+                    }))
+                }
+                GodotKnowledgeRefreshResult::Ready { .. } => Err(
+                    HarnessError::corpus(
+                        "knowledge refresh cannot become ready without generation"
+                            .to_owned(),
+                    ),
+                ),
+            }
+        }
+        Some("search") => {
+            let query = GodotApiSearchQuery {
+                query: input
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                kinds: input.get("kinds").and_then(|value| {
+                    value.as_array().map(|entries| {
+                        entries
+                            .iter()
+                            .filter_map(godot_api_search_kind)
+                            .collect::<Vec<GodotApiSearchKind>>()
+                    })
+                }),
+                limit: input
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .map(|limit| limit as usize),
+            };
+            match service.search(&query, false) {
+                GodotKnowledgeQueryResult::NotReady { status, message } => Ok(
+                    json!({
+                        "status": query_status_str(status),
+                        "message": message,
+                    }),
+                ),
+                GodotKnowledgeQueryResult::Ready { .. } => Err(
+                    HarnessError::corpus(
+                        "knowledge search cannot become ready without a loaded base"
+                            .to_owned(),
+                    ),
+                ),
+            }
+        }
+        Some("lookup") => {
+            let symbol = input
+                .get("symbol")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match service.lookup(symbol, false) {
+                GodotKnowledgeLookupOutcome::NotReady { status, message } => {
+                    Ok(json!({
+                        "status": lookup_status_str(status),
+                        "message": message,
+                    }))
+                }
+                GodotKnowledgeLookupOutcome::Ready { .. } => Err(
+                    HarnessError::corpus(
+                        "knowledge lookup cannot become ready without a loaded base"
+                            .to_owned(),
+                    ),
+                ),
+            }
+        }
+        _ => unreachable!("godot knowledge op was validated"),
+    }
+}
+
+fn godot_api_search_kind(
+    value: &Value,
+) -> Option<siralos_core::godot::GodotApiSearchKind> {
+    use siralos_core::godot::GodotApiSearchKind;
+    match value.as_str() {
+        Some("class") => Some(GodotApiSearchKind::Class),
+        Some("method") => Some(GodotApiSearchKind::Method),
+        Some("property") => Some(GodotApiSearchKind::Property),
+        Some("signal") => Some(GodotApiSearchKind::Signal),
+        Some("constant") => Some(GodotApiSearchKind::Constant),
+        Some("enum") => Some(GodotApiSearchKind::Enum),
+        Some("utility") => Some(GodotApiSearchKind::Utility),
+        Some("operator") => Some(GodotApiSearchKind::Operator),
+        _ => None,
+    }
+}
+
+fn refresh_status_str(
+    status: siralos_core::godot::KnowledgeRefreshStatus,
+) -> &'static str {
+    use siralos_core::godot::KnowledgeRefreshStatus;
+    match status {
+        KnowledgeRefreshStatus::Unavailable => "unavailable",
+        KnowledgeRefreshStatus::Unsupported => "unsupported",
+        KnowledgeRefreshStatus::Failed => "failed",
+        KnowledgeRefreshStatus::Cancelled => "cancelled",
+    }
+}
+
+fn query_status_str(
+    status: siralos_core::godot::KnowledgeQueryStatus,
+) -> &'static str {
+    use siralos_core::godot::KnowledgeQueryStatus;
+    match status {
+        KnowledgeQueryStatus::Unavailable => "unavailable",
+        KnowledgeQueryStatus::InvalidInput => "invalid-input",
+        KnowledgeQueryStatus::Cancelled => "cancelled",
+    }
+}
+
+fn lookup_status_str(
+    status: siralos_core::godot::KnowledgeLookupStatus,
+) -> &'static str {
+    use siralos_core::godot::KnowledgeLookupStatus;
+    match status {
+        KnowledgeLookupStatus::NotFound => "not-found",
+        KnowledgeLookupStatus::Unavailable => "unavailable",
+        KnowledgeLookupStatus::InvalidInput => "invalid-input",
+        KnowledgeLookupStatus::Cancelled => "cancelled",
+    }
+}
+
+fn check_run_status_str(
+    status: siralos_core::godot::GodotProjectCheckRunStatus,
+) -> &'static str {
+    use siralos_core::godot::GodotProjectCheckRunStatus;
+    match status {
+        GodotProjectCheckRunStatus::Denied => "denied",
+        GodotProjectCheckRunStatus::Conflict => "conflict",
+        GodotProjectCheckRunStatus::Cancelled => "cancelled",
+        GodotProjectCheckRunStatus::TimedOut => "timed-out",
+        GodotProjectCheckRunStatus::Unsupported => "unsupported",
+        GodotProjectCheckRunStatus::Unavailable => "unavailable",
+        GodotProjectCheckRunStatus::SandboxFailed => "sandbox-failed",
+        GodotProjectCheckRunStatus::Failed => "failed",
+    }
+}
+
+fn diagnostics_state_str(
+    state: siralos_core::godot::GodotDiagnosticsState,
+) -> &'static str {
+    use siralos_core::godot::GodotDiagnosticsState;
+    match state {
+        GodotDiagnosticsState::Untrusted => "untrusted",
+        GodotDiagnosticsState::CheckInvalidated => "check-invalidated",
+    }
+}
+
+fn godot_diagnostics_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::godot::diagnostics::GodotDiagnosticsService;
+    use siralos_core::godot::{
+        GodotCheckPreparationResult, GodotDiagnosticsExecutionContext,
+        GodotDiagnosticsRequest, GodotProjectCheckResult,
+        PreparedGDScriptCheck,
+    };
+    let platform =
+        input.get("platform").and_then(Value::as_str).unwrap_or("win32");
+    let mut service = GodotDiagnosticsService::new(platform);
+    match input.get("op").and_then(Value::as_str) {
+        Some("support") => {
+            let support = service.support();
+            Ok(json!({
+                "state": "unavailable",
+                "reason": support.reason,
+                "platform": support.platform,
+            }))
+        }
+        Some("prepare") => {
+            let paths = input.get("paths").and_then(|value| {
+                value.as_array().map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<String>>()
+                })
+            });
+            let request = GodotDiagnosticsRequest { paths };
+            let cancelled = input
+                .get("cancelled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            match service.prepare(&request, cancelled) {
+                Ok(GodotCheckPreparationResult::NotReady {
+                    status,
+                    message,
+                }) => Ok(json!({
+                    "status": status.as_str(),
+                    "message": message,
+                })),
+                Ok(GodotCheckPreparationResult::Ready { .. }) => Err(
+                    HarnessError::corpus(
+                        "diagnostics prepare cannot become ready without an engine"
+                            .to_owned(),
+                    ),
+                ),
+                Err(cancelled) => Ok(json!({
+                    "status": "cancelled",
+                    "message": cancelled.message,
+                })),
+            }
+        }
+        Some("execute") => {
+            let check = PreparedGDScriptCheck::create(1);
+            let approved_digest = input
+                .get("approvedDigest")
+                .and_then(Value::as_str)
+                .unwrap_or("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .to_owned();
+            let context = GodotDiagnosticsExecutionContext {
+                approved_digest,
+                cancelled: false,
+            };
+            let outcome = service.execute(&check, &context);
+            let GodotProjectCheckResult::NotChecked { status, message } =
+                outcome
+            else {
+                return Err(HarnessError::corpus(
+                    "diagnostics execute cannot produce checked results without an engine"
+                        .to_owned(),
+                ));
+            };
+            Ok(json!({
+                "status": check_run_status_str(status),
+                "message": message,
+            }))
+        }
+        Some("status") => {
+            let status = service.status();
+            Ok(json!({"state": diagnostics_state_str(status.state)}))
+        }
+        _ => unreachable!("godot diagnostics op was validated"),
+    }
+}
+
+fn godot_lsp_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::godot::lsp::GodotLspService;
+    use siralos_core::godot::{
+        GdScriptNetworkIsolation, GdScriptSessionState,
+        GodotCheckPreparationResult,
+    };
+    let platform =
+        input.get("platform").and_then(Value::as_str).unwrap_or("win32");
+    let mut service = GodotLspService::new(platform);
+    match input.get("op").and_then(Value::as_str) {
+        Some("support") => {
+            let support = service.support();
+            Ok(json!({
+                "state": "unavailable",
+                "reason": support.reason,
+                "platform": support.platform,
+            }))
+        }
+        Some("prepare") => {
+            let cancelled = input
+                .get("cancelled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            match service.prepare(cancelled) {
+                Ok(GodotCheckPreparationResult::NotReady { status, message }) => {
+                    Ok(json!({
+                        "status": status.as_str(),
+                        "message": message,
+                    }))
+                }
+                Ok(GodotCheckPreparationResult::Ready { .. }) => Err(
+                    HarnessError::corpus(
+                        "language-session prepare cannot become ready without an engine"
+                            .to_owned(),
+                    ),
+                ),
+                Err(cancelled) => Ok(json!({
+                    "status": "cancelled",
+                    "message": cancelled.message,
+                })),
+            }
+        }
+        Some("status") => {
+            let status = service.status();
+            Ok(json!({
+                "state": match status.state {
+                    GdScriptSessionState::Starting => "starting",
+                    GdScriptSessionState::Ready => "ready",
+                    GdScriptSessionState::Stale => "stale",
+                    GdScriptSessionState::Closed => "closed",
+                    GdScriptSessionState::Unavailable => "unavailable",
+                },
+                "openDocumentCount": status.open_document_count,
+                "diagnosticCount": status.diagnostic_count,
+                "networkIsolation": match status.network_isolation {
+                    GdScriptNetworkIsolation::LoopbackOnly => "loopback-only",
+                    GdScriptNetworkIsolation::Unverified => "unverified",
+                    GdScriptNetworkIsolation::Unavailable => "unavailable",
+                },
+            }))
+        }
+        _ => unreachable!("godot lsp op was validated"),
+    }
+}
+
+fn godot_discovery_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::config::{
+        UserGodotConfig, UserGodotEditionHint, UserGodotInstallationConfig,
+    };
+    use siralos_adapters::godot::profile::engine_profiler::{
+        GodotOverrideSource, GodotProfilerInputs, discover, selected_profile,
+    };
+    use siralos_core::godot::{
+        GodotInstallationSource, GodotSelectionPreference,
+    };
+
+    fn source_str(source: GodotInstallationSource) -> &'static str {
+        match source {
+            GodotInstallationSource::UserConfig => "user-config",
+            GodotInstallationSource::Path => "path",
+            GodotInstallationSource::CliPath => "cli-path",
+            GodotInstallationSource::CliInstallation => "cli-installation",
+            GodotInstallationSource::EnvironmentPath => "environment-path",
+            GodotInstallationSource::EnvironmentInstallation => {
+                "environment-installation"
+            }
+            GodotInstallationSource::ActiveConfig => "active-config",
+        }
+    }
+
+    fn overview_record(
+        overview: &siralos_core::godot::GodotInstallationOverview,
+    ) -> Value {
+        json!({
+            "id": overview.installation_id,
+            "sourceLabel": overview.source_label,
+            "source": source_str(overview.source),
+            "invalid": overview.invalid,
+            "isDuplicate": overview.is_duplicate,
+            "selected": overview.selected,
+        })
+    }
+
+    fn parse_preference(
+        value: Option<&Value>,
+    ) -> Result<GodotSelectionPreference, HarnessError> {
+        match value {
+            None | Some(Value::Null) => Ok(GodotSelectionPreference::Auto),
+            Some(Value::String(text)) => match text.as_str() {
+                "auto" => Ok(GodotSelectionPreference::Auto),
+                "none" => Ok(GodotSelectionPreference::None),
+                "config-active" => Ok(GodotSelectionPreference::ConfigActive),
+                other => Err(HarnessError::corpus(format!(
+                    "scenario input rejected: preference {other} is not auto, none, or config-active"
+                ))),
+            },
+            Some(object) => {
+                if let Some(path) = object.get("path").and_then(Value::as_str)
+                {
+                    return Ok(GodotSelectionPreference::Path(
+                        path.to_owned(),
+                    ));
+                }
+                if let Some(id) =
+                    object.get("installationId").and_then(Value::as_str)
+                {
+                    return Ok(GodotSelectionPreference::InstallationId(
+                        id.to_owned(),
+                    ));
+                }
+                Err(HarnessError::corpus(
+                    "scenario input rejected: preference object must declare path or installationId".to_owned(),
+                ))
+            }
+        }
+    }
+
+    let platform =
+        input.get("platform").and_then(Value::as_str).unwrap_or("win32");
+    let workspace_root = input
+        .get("workspaceRoot")
+        .and_then(Value::as_str)
+        .unwrap_or("/siralos-differential")
+        .to_owned();
+    let host_path =
+        input.get("hostPath").and_then(Value::as_str).map(str::to_owned);
+    let host_path_ext =
+        input.get("hostPathExt").and_then(Value::as_str).map(str::to_owned);
+
+    let mut installations = BTreeMap::new();
+    for entry in input
+        .pointer("/config/installations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let id = entry.get("id").and_then(Value::as_str).unwrap_or_default();
+        let path =
+            entry.get("path").and_then(Value::as_str).unwrap_or_default();
+        let edition_hint =
+            match entry.get("editionHint").and_then(Value::as_str) {
+                Some("dotnet") => UserGodotEditionHint::Dotnet,
+                Some("unknown") => UserGodotEditionHint::Unknown,
+                _ => UserGodotEditionHint::Standard,
+            };
+        installations.insert(
+            id.to_owned(),
+            UserGodotInstallationConfig {
+                path: path.to_owned(),
+                edition_hint,
+            },
+        );
+    }
+    let config = UserGodotConfig {
+        active_installation: input
+            .pointer("/config/activeInstallation")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        installations,
+        discover_on_path: input
+            .pointer("/config/discoverOnPath")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    };
+    let inputs = GodotProfilerInputs {
+        config,
+        preference: parse_preference(input.get("preference"))?,
+        override_source: match input
+            .get("overrideSource")
+            .and_then(Value::as_str)
+        {
+            Some("cli") => Some(GodotOverrideSource::Cli),
+            _ => None,
+        },
+        workspace_root,
+        host_path,
+        host_path_ext,
+        platform: platform.to_owned(),
+    };
+    match input.get("op").and_then(Value::as_str) {
+        Some("discover") => {
+            let result = discover(&inputs);
+            match result {
+                Ok(result) => Ok(json!({
+                    "ok": true,
+                    "selected": result.selected.as_ref().map(overview_record),
+                    "candidates": result
+                        .candidates
+                        .iter()
+                        .map(overview_record)
+                        .collect::<Vec<Value>>(),
+                    "configuration": {
+                        "activeInstallation":
+                            result.configuration.active_installation,
+                        "configuredCount": result.configuration.configured_count,
+                        "discoverOnPath": result.configuration.discover_on_path,
+                        "overrides": result.configuration.overrides,
+                    },
+                    "rationale": result.rationale,
+                    "diagnostics": result
+                        .diagnostics
+                        .iter()
+                        .map(|diagnostic| {
+                            json!({
+                                "severity": diagnostic.severity.as_str(),
+                                "message": diagnostic.message,
+                            })
+                        })
+                        .collect::<Vec<Value>>(),
+                })),
+                Err(error) => Ok(json!({
+                    "ok": false,
+                    "error": error.message,
+                })),
+            }
+        }
+        Some("select") => match selected_profile(&inputs) {
+            Ok(None) => Ok(json!({"ok": true, "selected": false})),
+            Ok(Some(_)) => Ok(json!({"ok": true, "selected": true})),
+            Err(error) => Ok(json!({
+                "ok": false,
+                "error": error.message,
+            })),
+        },
+        _ => unreachable!("godot discovery op was validated"),
+    }
+}
+
+#[cfg(test)]
+mod godot_tests {
+    use super::godot_record;
+    use serde_json::{Value, json};
+
+    fn record(input: Value) -> Value {
+        godot_record("godot-scene-resolve", &input)
+            .expect("scene-resolve record succeeds")
+    }
+
+    #[test]
+    fn scene_resolve_transcribes_the_oracle_selection_rule() {
+        // Null tres is a MISSING key, never a resource marker.
+        assert_eq!(
+            record(json!({"tres": null, "tscn": "[gd_scene]\n"})),
+            json!({"status": "complete", "diagnostics": 0, "truncated": false})
+        );
+        // Unknown keys are ignored; empty scene text parses on default path "".
+        assert_eq!(
+            record(json!({"content": "[gd_resource type=\"Resource\"]"})),
+            json!({"status": "invalid", "diagnostics": 0, "truncated": false})
+        );
+        // tres wins over tscn.
+        assert_eq!(
+            record(json!({"tres": "[gd_resource]", "tscn": "[gd_scene]"})),
+            json!({"status": "partial", "diagnostics": 1, "truncated": false})
+        );
+        // A resource body under tscn parses as a resource; the typed
+        // header alone is complete, while an untyped header is partial.
+        assert_eq!(
+            record(json!({"tscn": "[gd_resource type=\"Resource\"]"})),
+            json!({"status": "complete", "diagnostics": 0, "truncated": false})
+        );
+    }
+
+    #[test]
+    fn knowledge_search_validates_before_availability() {
+        let invalid = godot_record(
+            "godot-knowledge",
+            &json!({"op": "search", "query": "   "}),
+        )
+        .unwrap();
+        assert_eq!(
+            invalid,
+            json!({"status": "invalid-input", "message": "A non-empty query is required."})
+        );
+        let unavailable = godot_record(
+            "godot-knowledge",
+            &json!({"op": "search", "query": "node"}),
+        )
+        .unwrap();
+        assert_eq!(unavailable["status"], "unavailable");
+        assert_eq!(
+            unavailable["message"],
+            "No Godot API knowledge is loaded: exact-engine API generation is unavailable on this platform."
+        );
+    }
+
+    #[test]
+    fn knowledge_status_reports_unavailable_platform_facts() {
+        let status = godot_record(
+            "godot-knowledge",
+            &json!({"op": "status", "platform": "linux"}),
+        )
+        .unwrap();
+        assert_eq!(status["state"], "unavailable");
+        assert_eq!(status["platform"], "linux");
+        assert_eq!(status["cacheEnabled"], false);
+        assert_eq!(status["schemaVersion"], 1);
+    }
+
+    #[test]
+    fn diagnostics_prepare_refuses_before_effects() {
+        let prepared = godot_record(
+            "godot-diagnostics",
+            &json!({"op": "prepare", "paths": ["src/player.gd"]}),
+        )
+        .unwrap();
+        assert_eq!(
+            prepared,
+            json!({
+                "status": "unsupported",
+                "message": "No trusted Godot installation is selected; GDScript diagnostics cannot run."
+            })
+        );
+        let cancelled = godot_record(
+            "godot-diagnostics",
+            &json!({"op": "prepare", "cancelled": true}),
+        )
+        .unwrap();
+        assert_eq!(
+            cancelled,
+            json!({"status": "cancelled", "message": "The Godot project operation was aborted."})
+        );
+        let executed =
+            godot_record("godot-diagnostics", &json!({"op": "execute"}))
+                .unwrap();
+        assert_eq!(
+            executed,
+            json!({
+                "status": "failed",
+                "message": "The prepared check is not valid for this session; prepare a new check."
+            })
+        );
+    }
+
+    #[test]
+    fn lsp_prepare_refuses_and_status_stays_empty() {
+        let prepared =
+            godot_record("godot-lsp", &json!({"op": "prepare"})).unwrap();
+        assert_eq!(
+            prepared,
+            json!({
+                "status": "unsupported",
+                "message": "No trusted Godot installation is selected; the language session cannot start."
+            })
+        );
+        let status =
+            godot_record("godot-lsp", &json!({"op": "status"})).unwrap();
+        assert_eq!(
+            status,
+            json!({
+                "state": "unavailable",
+                "openDocumentCount": 0,
+                "diagnosticCount": 0,
+                "networkIsolation": "unavailable",
+            })
+        );
+    }
+
+    #[test]
+    fn discovery_reports_missing_explicit_paths_fail_closed() {
+        let explicit = godot_record(
+            "godot-discovery",
+            &json!({
+                "op": "select",
+                "preference": {"path": "/no-such-place/godot.exe"}
+            }),
+        )
+        .unwrap();
+        assert_eq!(explicit["ok"], false);
+        assert!(
+            explicit["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("did not resolve"))
+        );
+    }
+
+    #[test]
+    fn discovery_auto_with_no_candidates_stays_deterministic() {
+        let discovered = godot_record(
+            "godot-discovery",
+            &json!({
+                "op": "discover",
+                "hostPath": "/no-such-a:/no-such-b",
+                "config": {"discoverOnPath": true}
+            }),
+        )
+        .unwrap();
+        assert_eq!(discovered["ok"], true);
+        assert_eq!(discovered["selected"], Value::Null);
+        assert_eq!(discovered["candidates"], json!([]),);
+        assert_eq!(
+            discovered["configuration"],
+            json!({
+                "activeInstallation": null,
+                "configuredCount": 0,
+                "discoverOnPath": true,
+                "overrides": [],
+            })
+        );
+        assert_eq!(
+            discovered["rationale"][0],
+            "No selectable Godot installation was discovered."
+        );
+        assert_eq!(discovered["diagnostics"], json!([]));
+    }
+
+    #[test]
+    fn discovery_configured_missing_installation_is_invalid_not_selected() {
+        let discovered = godot_record(
+            "godot-discovery",
+            &json!({
+                "op": "discover",
+                "config": {
+                    "installations": [
+                        {"id": "cfg-1", "path": "/missing/Godot.exe", "editionHint": "standard"}
+                    ]
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(discovered["ok"], true);
+        assert_eq!(discovered["selected"], Value::Null);
+        let candidate = &discovered["candidates"][0];
+        assert_eq!(candidate["id"], "cfg-1");
+        assert_eq!(candidate["source"], "user-config");
+        assert_eq!(candidate["selected"], false);
+        assert!(
+            candidate["invalid"]
+                .as_str()
+                .is_some_and(|message| message.contains("does not exist"))
+        );
+    }
+}
+
 // Stage 3R R7.1 subject: provider-turn.
 // ---------------------------------------------------------------------------
 

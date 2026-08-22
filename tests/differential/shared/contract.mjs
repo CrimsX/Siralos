@@ -31,6 +31,11 @@ export const ALLOWED_SUBJECTS = new Set([
   "tool-loop",
   "context-projection",
   "user-config",
+  "godot-scene-resolve",
+  "godot-discovery",
+  "godot-knowledge",
+  "godot-diagnostics",
+  "godot-lsp",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -55,6 +60,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   toolLoopInputBytes: 64 * 1024,
   contextProjectionInputBytes: 64 * 1024,
   userConfigInputBytes: 64 * 1024,
+  godotInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -700,6 +706,27 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const GODOT_SUBJECTS = new Set([
+    "godot-scene-resolve",
+    "godot-discovery",
+    "godot-knowledge",
+    "godot-diagnostics",
+    "godot-lsp",
+  ]);
+  if (GODOT_SUBJECTS.has(scenario.subject)) {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.godotInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.godotInputBytes} UTF-8 bytes`);
+    }
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -741,6 +768,11 @@ export function validateScenario(scenario, file) {
     "tool-loop",
     "context-projection",
     "user-config",
+    "godot-scene-resolve",
+    "godot-discovery",
+    "godot-knowledge",
+    "godot-diagnostics",
+    "godot-lsp",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]
