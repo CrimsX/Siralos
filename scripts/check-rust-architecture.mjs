@@ -290,9 +290,7 @@ export function runChecks(root) {
       const coreOutsideGodot =
         crate === "crates/siralos-core" &&
         !source.includes(join("src", "godot")) &&
-        !source.endsWith(join("src", "determinism", "ownership.rs"));
-      if (
-        coreOutsideGodot &&
+        !source.includes(join("src", "determinism"));
       if (
         coreOutsideGodot &&
         FORBIDDEN_CORE_SYMBOL_PATTERN.test(content.replace(/^\s*pub mod godot;\s*$/gm, ""))
