@@ -1858,6 +1858,8 @@ fn godot_knowledge_record(input: &Value) -> Result<Value, HarnessError> {
                 "platform": status.platform,
                 "cacheEnabled": status.cache_enabled,
                 "schemaVersion": status.schema_version,
+                "profile": json!(null),
+                "manualChannel": json!(null),
             }))
         }
         Some("refresh") => {
@@ -1974,7 +1976,7 @@ fn query_status_str(
     use siralos_core::godot::KnowledgeQueryStatus;
     match status {
         KnowledgeQueryStatus::Unavailable => "unavailable",
-        KnowledgeQueryStatus::InvalidInput => "invalid-input",
+        KnowledgeQueryStatus::InvalidInput => "invalid_input",
         KnowledgeQueryStatus::Cancelled => "cancelled",
     }
 }
@@ -1984,9 +1986,9 @@ fn lookup_status_str(
 ) -> &'static str {
     use siralos_core::godot::KnowledgeLookupStatus;
     match status {
-        KnowledgeLookupStatus::NotFound => "not-found",
+        KnowledgeLookupStatus::NotFound => "not_found",
         KnowledgeLookupStatus::Unavailable => "unavailable",
-        KnowledgeLookupStatus::InvalidInput => "invalid-input",
+        KnowledgeLookupStatus::InvalidInput => "invalid_input",
         KnowledgeLookupStatus::Cancelled => "cancelled",
     }
 }
@@ -2396,7 +2398,7 @@ mod godot_tests {
         .unwrap();
         assert_eq!(
             invalid,
-            json!({"status": "invalid-input", "message": "A non-empty query is required."})
+            json!({"status": "invalid_input", "message": "A non-empty query is required."})
         );
         let unavailable = godot_record(
             "godot-knowledge",

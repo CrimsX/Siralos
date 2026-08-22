@@ -24,3 +24,36 @@ export {
   REFERENCE_LIMITS,
   validateReferenceAlias,
 } from "../../../packages/core/src/reference/reference-model.js";
+// R8 Godot parity probes: the discovery profiler, knowledge,
+// diagnostics, and LSP services import these values from
+// `@siralos/core`; each aliases its real source module.
+export {
+  classifyGodotEdition,
+  classifyGodotSupport,
+} from "../../../packages/core/src/godot/engine-profile.js";
+export {
+  classifyGodotReleaseChannel,
+  parseDeclaredVersion,
+} from "../../../packages/core/src/godot/version.js";
+export {
+  GODOT_SELECTION_RANKS,
+  rankGodotCandidates,
+} from "../../../packages/core/src/godot/selection.js";
+export { assessGodotCompatibility } from "../../../packages/core/src/godot/compatibility.js";
+export {
+  computeGodotCheckOnlyCommandDigest,
+  computeGodotPreparedCheckDigest,
+  createPreparedGDScriptCheck,
+} from "../../../packages/core/src/godot/gdscript.js";
+export { GODOT_DIAGNOSTICS_OFFLINE_PROFILE } from "../../../packages/core/src/security/profile.js";
+export {
+  KNOWLEDGE_SCHEMA_VERSION,
+  classifyGodotManualChannel,
+} from "../../../packages/core/src/godot/knowledge.js";
+export { computeGDScriptPreparedSessionDigest } from "../../../packages/core/src/godot/lsp.js";
+export { createPreparedGDScriptSession } from "../../../packages/core/src/godot/lsp.js";
+export { GODOT_LSP_LOCAL_PROFILE } from "../../../packages/core/src/security/profile.js";
+export { computeGodotRiskManifestDigest } from "../../../packages/core/src/godot/probe.js";
+export { godotSymbolId } from "../../../packages/core/src/godot/api.js";
+export { isBalancedText } from "../../../packages/core/src/godot/scene/text.js";
+export { parseGodotVariant } from "../../../packages/core/src/godot/scene/variant.js";

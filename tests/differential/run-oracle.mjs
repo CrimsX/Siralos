@@ -48,6 +48,18 @@ const PROVIDER_TURN_PROBE = join(HERE, "probes", "provider-turn-oracle.mjs");
 const TOOL_LOOP_PROBE = join(HERE, "probes", "tool-loop-oracle.mjs");
 const CONTEXT_PROJECTION_PROBE = join(HERE, "probes", "context-projection-oracle.mjs");
 const USER_CONFIG_PROBE = join(HERE, "probes", "user-config-oracle.mjs");
+const GODOT_SCENE_RESOLVE_PROBE = join(HERE, "probes", "godot-scene-resolve-oracle.mjs");
+const GODOT_DISCOVERY_PROBE = join(HERE, "probes", "godot-discovery-oracle.mjs");
+const GODOT_KNOWLEDGE_PROBE = join(HERE, "probes", "godot-knowledge-oracle.mjs");
+const GODOT_DIAGNOSTICS_PROBE = join(HERE, "probes", "godot-diagnostics-oracle.mjs");
+const GODOT_LSP_PROBE = join(HERE, "probes", "godot-lsp-oracle.mjs");
+const GODOT_PROBES = new Map([
+  ["godot-scene-resolve", GODOT_SCENE_RESOLVE_PROBE],
+  ["godot-discovery", GODOT_DISCOVERY_PROBE],
+  ["godot-knowledge", GODOT_KNOWLEDGE_PROBE],
+  ["godot-diagnostics", GODOT_DIAGNOSTICS_PROBE],
+  ["godot-lsp", GODOT_LSP_PROBE],
+]);
 
 function optionValue(args, name) {
   const index = args.indexOf(name);
@@ -326,6 +338,18 @@ export function runScenario(scenario, root) {
       subject: scenario.subject,
       outcome: SCENARIO_OUTCOME.COMPLETED,
       result: runWorkspaceProbe(USER_CONFIG_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (GODOT_PROBES.has(scenario.subject)) {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(
+        GODOT_PROBES.get(scenario.subject),
+        scenario.subject,
+        scenario.input,
+      ),
     };
   }
   if (scenario.subject === "version-identity") {

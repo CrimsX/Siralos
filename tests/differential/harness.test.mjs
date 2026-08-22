@@ -17,7 +17,7 @@ import {
   validateOutcomeRecord,
 } from "./shared/protocol.mjs";
 import { superviseRunner } from "./shared/runner-process.mjs";
-import { loadCorpus, runOracle, runStateDirProbe } from "./run-oracle.mjs";
+import { loadCorpus, runOracle, runScenario, runStateDirProbe } from "./run-oracle.mjs";
 import {
   collectSourceIdentity,
   decodeGitPathList,
@@ -527,6 +527,149 @@ describe("provider-turn subject integrity", () => {
     expect(() => loadCorpus(corpus, "posix")).toThrow(/does not match its manifest digest/u);
   });
 });
+describe("godot subject integrity", () => {
+  const GODOT_SUBJECTS = [
+    "godot-scene-resolve",
+    "godot-discovery",
+    "godot-knowledge",
+    "godot-diagnostics",
+    "godot-lsp",
+  ];
+
+  function godotScenario(subject, input) {
+    return {
+      id: `${subject}.basic`,
+      subject,
+      platforms: ["*"],
+      parity: "required",
+      env: {},
+      input,
+    };
+  }
+
+  it("accepts every godot subject through the contract validator", () => {
+    const inputs = {
+      "godot-scene-resolve": { tscn: "[gd_scene]\n" },
+      "godot-discovery": { op: "select", preference: { path: "/no-such/g" } },
+      "godot-knowledge": { op: "search", query: "node" },
+      "godot-diagnostics": { op: "prepare" },
+      "godot-lsp": { op: "prepare" },
+    };
+    for (const subject of GODOT_SUBJECTS) {
+      expect(() =>
+        validateScenario(godotScenario(subject, inputs[subject]), `${subject}.basic.json`),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects godot scenarios with concrete platforms or a non-empty env", () => {
+    const platformError = /platforms \["\*"\] and an empty env/u;
+    const windows = godotScenario("godot-knowledge", { op: "status" });
+    windows.platforms = ["windows"];
+    expect(() => validateScenario(windows, "godot-knowledge.basic.json")).toThrow(platformError);
+    const withEnv = godotScenario("godot-knowledge", { op: "status" });
+    withEnv.env = { HOME: "/home/x" };
+    expect(() => validateScenario(withEnv, "godot-knowledge.basic.json")).toThrow(platformError);
+  });
+
+  it("rejects a godot scenario whose input is not a plain object or exceeds the bound", () => {
+    const arrayInput = godotScenario("godot-knowledge", ["nope"]);
+    expect(() => validateScenario(arrayInput, "godot-knowledge.basic.json")).toThrow(
+      /plain object/u,
+    );
+    const oversized = godotScenario("godot-knowledge", {
+      op: "search",
+      query: "x".repeat(CONTRACT_LIMITS.godotInputBytes),
+    });
+    expect(() => validateScenario(oversized, "godot-knowledge.basic.json")).toThrow(
+      /exceeds 65536 UTF-8 bytes/u,
+    );
+  });
+
+  it("runs each godot subject through the real oracle reference", () => {
+    const cases = [
+      {
+        subject: "godot-scene-resolve",
+        input: { tscn: "[gd_scene]\n" },
+        check: (result) =>
+          expect(result).toEqual({ status: "complete", diagnostics: 0, truncated: false }),
+      },
+      {
+        subject: "godot-knowledge",
+        input: { op: "search", query: "node" },
+        check: (result) => {
+          expect(result.status).toBe("unavailable");
+          expect(result.message).toMatch(/No Godot API knowledge is loaded/u);
+        },
+      },
+      {
+        subject: "godot-discovery",
+        input: {
+          op: "discover",
+          config: { discoverOnPath: true },
+          hostPath: "/no-such-a",
+        },
+        check: (result) => {
+          expect(result.ok).toBe(true);
+          expect(result.candidates).toEqual([]);
+          expect(result.rationale[0]).toMatch(/No selectable Godot installation/u);
+        },
+      },
+      {
+        subject: "godot-diagnostics",
+        input: { op: "prepare" },
+        check: (result) => expect(result.status).toBe("unsupported"),
+      },
+      {
+        subject: "godot-lsp",
+        input: { op: "prepare" },
+        check: (result) => expect(result.status).toBe("unsupported"),
+      },
+    ];
+    for (const { subject, input, check } of cases) {
+      const outcome = runScenario({ id: `${subject}.probe`, subject, input }, ROOT);
+      expect(outcome.outcome).toBe(SCENARIO_OUTCOME.COMPLETED);
+      check(outcome.result);
+    }
+  });
+
+  it("pins the three scene-resolve selection divergences at the oracle", () => {
+    // Null tres is a missing key, never a resource marker.
+    expect(
+      runScenario(
+        {
+          id: "s1",
+          subject: "godot-scene-resolve",
+          input: { tres: null, tscn: "[gd_scene]\n" },
+        },
+        ROOT,
+      ).result,
+    ).toEqual({ status: "complete", diagnostics: 0, truncated: false });
+    // Unknown keys are ignored; empty scene text parses invalid on path "".
+    expect(
+      runScenario(
+        {
+          id: "s2",
+          subject: "godot-scene-resolve",
+          input: { content: '[gd_resource type="Resource"]' },
+        },
+        ROOT,
+      ).result,
+    ).toEqual({ status: "invalid", diagnostics: 0, truncated: false });
+    // tres wins over tscn.
+    expect(
+      runScenario(
+        {
+          id: "s3",
+          subject: "godot-scene-resolve",
+          input: { tres: "[gd_resource]", tscn: "[gd_scene]" },
+        },
+        ROOT,
+      ).result,
+    ).toEqual({ status: "partial", diagnostics: 1, truncated: false });
+  });
+});
+
 describe("oracle determinism", () => {
   it("produces byte-identical records on consecutive runs", { timeout: 120_000 }, () => {
     const first = runOracle(CORPUS, ROOT);
