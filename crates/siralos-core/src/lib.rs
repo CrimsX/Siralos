@@ -11,6 +11,7 @@
 //! see `docs/development/RUST_STYLE.md` and ADR 0032 for the engineering
 //! rules this crate follows.
 
+pub mod determinism;
 pub mod domain;
 pub mod godot;
 pub mod identity;

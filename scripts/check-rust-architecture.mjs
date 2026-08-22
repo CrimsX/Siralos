@@ -284,8 +284,15 @@ export function runChecks(root) {
       // domain-neutrality guard for the rest of `siralos-core`. Outside
       // that subtree, the only allowed Godot mention is the exact module
       // declaration line; any other occurrence still fails.
+      // R10 — determinism/ownership.rs references Godot paths as
+      // architecture navigation metadata (decision 14); it contains no
+      // domain semantics.
       const coreOutsideGodot =
-        crate === "crates/siralos-core" && !source.includes(join("src", "godot"));
+        crate === "crates/siralos-core" &&
+        !source.includes(join("src", "godot")) &&
+        !source.endsWith(join("src", "determinism", "ownership.rs"));
+      if (
+        coreOutsideGodot &&
       if (
         coreOutsideGodot &&
         FORBIDDEN_CORE_SYMBOL_PATTERN.test(content.replace(/^\s*pub mod godot;\s*$/gm, ""))
