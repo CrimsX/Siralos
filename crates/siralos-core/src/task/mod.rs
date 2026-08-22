@@ -13,6 +13,7 @@
 
 pub mod contract;
 pub mod evidence;
+pub mod identity;
 pub mod model;
 pub mod progress;
 pub mod runtime;
