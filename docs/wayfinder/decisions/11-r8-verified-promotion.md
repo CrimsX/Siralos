@@ -22,29 +22,29 @@ authorize R9 — R9 requires its own entry review.
 
 ## 1. Observed gate artefacts on the verified worktree
 
-| Artefact | Observed result |
-| --- | --- |
-| `cargo fmt --all --check` | PASS |
-| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASS |
-| `cargo test --workspace --all-targets --all-features --locked` | PASS — 204 adapters + 25 conformance + 59 cli (1 ignored) + 369 core = 657 passed |
-| `npm run check:architecture` | "Architecture check passed." |
-| `npm run check:rust` | "Rust architecture check passed." (core domain neutrality incl. narrowed `lib.rs` allowance, cli → adapters → core) |
-| `npm run check:differential` | **parity held: 150/150 applicable required scenarios, 4 explicit platform skips, 0 deviations — corpus schema 3, version 16, 155 files** |
+| Artefact                                                                        | Observed result                                                                                                                          |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `cargo fmt --all --check`                                                       | PASS                                                                                                                                     |
+| `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | PASS                                                                                                                                     |
+| `cargo test --workspace --all-targets --all-features --locked`                  | PASS — 204 adapters + 25 conformance + 59 cli (1 ignored) + 369 core = 657 passed                                                        |
+| `npm run check:architecture`                                                    | "Architecture check passed."                                                                                                             |
+| `npm run check:rust`                                                            | "Rust architecture check passed." (core domain neutrality incl. narrowed `lib.rs` allowance, cli → adapters → core)                      |
+| `npm run check:differential`                                                    | **parity held: 150/150 applicable required scenarios, 4 explicit platform skips, 0 deviations — corpus schema 3, version 16, 155 files** |
 
 Local observation supersedes the R7-era EPERM caveat; Tier-1 CI remains the
 audit mechanism of record.
 
 ## 2. Frozen-contract reconciliation (`10-r8-entry-review.md`)
 
-| Frozen row | Implementation evidence |
-| --- | --- |
-| Engine discovery & profiling | `siralos-core::godot::{selection, installations, capabilities, engine_profile, compatibility}` + `siralos-adapters::godot::{discovery/*, profile/engine_profiler}`; deterministic selection with recorded rationale; `.app` bundle + PATH + configured candidates; differential `godot-discovery` ×4 |
-| Recovery contracts (fail-closed) | `siralos-adapters::godot::process::recovery_runner` — typed unavailable, no mirror, no launch |
-| Version-bound API knowledge | `siralos-core::godot::{knowledge, api}` + `siralos-adapters::godot::knowledge::{api_dump, api_index, service}`; deterministic symbol identities; differential `godot-knowledge` ×5 |
-| GDScript check-only contracts | `siralos-core::godot::gdscript` digests/preparation + `siralos-adapters::godot::{diagnostics/*, process/godot_check_only_runner}`; `--script`↔`--check-only` pairing structurally tested; differential `godot-diagnostics` ×4 |
-| Bounded LSP | `siralos-adapters::godot::lsp::{frame_parser, json_rpc, file_uri, port_allocator, normalizers, service}` + `siralos-core::godot::lsp`; recovery-tuple pairing tested; differential `godot-lsp` ×4 |
-| Read-only scene/resource intelligence | `siralos-core::godot::scene` bounded parsers/Variant/tree/index + `siralos-adapters::godot::scene::service`; differential `godot-scene-resolve` ×5 (incl. the three selection-rule divergence pins) |
-| Probe invocation proves `unavailable` | Differential knowledge/diagnostics/lsp scenarios assert typed `unavailable` outcomes produced by the production service stacks on both implementations |
+| Frozen row                            | Implementation evidence                                                                                                                                                                                                                                                                              |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Engine discovery & profiling          | `siralos-core::godot::{selection, installations, capabilities, engine_profile, compatibility}` + `siralos-adapters::godot::{discovery/*, profile/engine_profiler}`; deterministic selection with recorded rationale; `.app` bundle + PATH + configured candidates; differential `godot-discovery` ×4 |
+| Recovery contracts (fail-closed)      | `siralos-adapters::godot::process::recovery_runner` — typed unavailable, no mirror, no launch                                                                                                                                                                                                        |
+| Version-bound API knowledge           | `siralos-core::godot::{knowledge, api}` + `siralos-adapters::godot::knowledge::{api_dump, api_index, service}`; deterministic symbol identities; differential `godot-knowledge` ×5                                                                                                                   |
+| GDScript check-only contracts         | `siralos-core::godot::gdscript` digests/preparation + `siralos-adapters::godot::{diagnostics/*, process/godot_check_only_runner}`; `--script`↔`--check-only` pairing structurally tested; differential `godot-diagnostics` ×4                                                                        |
+| Bounded LSP                           | `siralos-adapters::godot::lsp::{frame_parser, json_rpc, file_uri, port_allocator, normalizers, service}` + `siralos-core::godot::lsp`; recovery-tuple pairing tested; differential `godot-lsp` ×4                                                                                                    |
+| Read-only scene/resource intelligence | `siralos-core::godot::scene` bounded parsers/Variant/tree/index + `siralos-adapters::godot::scene::service`; differential `godot-scene-resolve` ×5 (incl. the three selection-rule divergence pins)                                                                                                  |
+| Probe invocation proves `unavailable` | Differential knowledge/diagnostics/lsp scenarios assert typed `unavailable` outcomes produced by the production service stacks on both implementations                                                                                                                                               |
 
 Fail-closed sweep: `rg 'std::process::Command|\.spawn\(' crates/{core,adapters}/src/godot`
 returns **zero matches** — no Godot module launches a process or creates
@@ -76,13 +76,13 @@ Nothing here satisfies, scopes, or schedules R10+ or Stage-4 entry.
 
 ## Self-loop verification (this decision)
 
-| Criterion | Direct evidence | Status |
-| --- | --- | --- |
-| Six surfaces ported with owners matching §5 of the entry review | File inventory above; `check:rust` crate-direction + neutrality PASS | pass |
-| Five frozen subjects at required parity, corpus v16 | Manifest counts (discovery 4 / knowledge 5 / diagnostics 4 / lsp 4 / scene-resolve 5); audit 150/150 | pass |
-| Fail-closed posture mechanically intact | Zero spawn-path grep hits; typed `unavailable` differential outcomes from production services both sides | pass |
-| Full gate set observed PASS on one worktree | §1 table, all commands run locally on clean `c075b3c` tree | pass |
-| Promotion atomicity + non-authorization of R9 | §3 surface list advanced in one commit; §4 | pass |
+| Criterion                                                       | Direct evidence                                                                                          | Status |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
+| Six surfaces ported with owners matching §5 of the entry review | File inventory above; `check:rust` crate-direction + neutrality PASS                                     | pass   |
+| Five frozen subjects at required parity, corpus v16             | Manifest counts (discovery 4 / knowledge 5 / diagnostics 4 / lsp 4 / scene-resolve 5); audit 150/150     | pass   |
+| Fail-closed posture mechanically intact                         | Zero spawn-path grep hits; typed `unavailable` differential outcomes from production services both sides | pass   |
+| Full gate set observed PASS on one worktree                     | §1 table, all commands run locally on clean `c075b3c` tree                                               | pass   |
+| Promotion atomicity + non-authorization of R9                   | §3 surface list advanced in one commit; §4                                                               | pass   |
 
 Evidence ladder: L1 observed gates + manifest counts on the verified worktree;
 L2 fail-closed grep sweep; L3 porting-gate precedent (`02-r7-verified-promotion.md`);
