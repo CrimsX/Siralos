@@ -675,6 +675,27 @@ warnings`, `cargo test --workspace` (657 tests), `check:architecture`,
 `docs/wayfinder/decisions/11-r8-verified-promotion.md`. R9 awaits its own
 entry review.
 
+### R9 Verified
+
+R9 — Optional Godot Stage-3 parity (deterministic core) is **Verified** on
+worktree `1623e800f8034d07825d7c6582768c27a91a973e`. All three frozen surfaces (`docs/wayfinder/decisions/12-r9-entry-review.md`)
+are ported: review context & impact intelligence
+(`siralos_core::godot::impact`), prepare-only scene/resource mutation
+contracts (`siralos_core::godot::scene_mutation` plus the
+`siralos-adapters::godot::scene_mutation` orchestration whose apply is
+typed `Unavailable`), and the deterministic unified `/develop` core
+(`siralos_core::godot::development`: surface routing, dependency-based
+apply ordering with cycle rejection, blocked dispositions). The
+differential corpus advanced to **version 17, 167 scenario files** with
+all three frozen subjects at required parity (`godot-review-context` 4,
+`godot-mutation-prepare` 4, `godot-develop-plan` 4) — local audit
+**162/162 applicable required scenarios** (4 platform skips). Gates
+observed PASS on the verified worktree: `cargo fmt`, `clippy -D warnings`,
+`cargo test --workspace` (691 tests), `check:architecture`, `check:rust`,
+`check:differential`. Promotion evidence and atomic surface list:
+`docs/wayfinder/decisions/13-r9-verified-promotion.md`. R10 awaits its own
+entry review.
+
 ## Porting gate
 
 Every R3-R11 subsystem follows the same sequence:

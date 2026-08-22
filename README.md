@@ -51,7 +51,7 @@ configuration, Skills, and explicitly installed Plugins
 > complete and evidence-backed (2 required
 > `user-config` scenarios, corpus version 15, 133 scenario files); **R7.5 —
 > `/context` and `/tools` CLI rendering** — complete and evidence-backed (deterministic real-session rendering over the
-> existing projection and Tool authority seams; 51 focused Rust CLI tests (10 sanitize) plus TypeScript oracle coverage; advisory P2 closed); R7 **Verified** at 61fbf997d781. **R8 — Optional Godot Stage-2 parity** (discovery/profiling, recovery contracts, API knowledge, check-only diagnostics, bounded LSP, read-only scene/resource intelligence) is complete and evidence-backed: corpus version 16, 155 scenario files, all five frozen `godot-*` differential subjects at required parity (150/150 applicable required scenarios), fail-closed posture mechanically preserved; R8 **Verified** at c075b3cf5e52; R9 awaits entry-review.
+> existing projection and Tool authority seams; 51 focused Rust CLI tests (10 sanitize) plus TypeScript oracle coverage; advisory P2 closed); R7 **Verified** at 61fbf997d781. **R8 — Optional Godot Stage-2 parity** (discovery/profiling, recovery contracts, API knowledge, check-only diagnostics, bounded LSP, read-only scene/resource intelligence) is complete and evidence-backed: corpus version 16, 155 scenario files, all five frozen `godot-*` differential subjects at required parity (150/150 applicable required scenarios), fail-closed posture mechanically preserved; R8 **Verified** at c075b3cf5e52. **R9 — Optional Godot Stage-3 parity** (review context & impact intelligence, prepare-only mutation contracts, deterministic `/develop` core) is complete and evidence-backed: corpus version 17, 167 scenario files, all three frozen subjects at required parity (162/162 applicable required scenarios); apply/checkpoints stay typed `unavailable`; R9 **Verified** at 1623e800f8034; R10 awaits entry-review.
 
 ## Status vocabulary
 
@@ -291,7 +291,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R8 is **Verified** — R1–R7 Verified as recorded above; R8 (Optional Godot Stage-2 parity) is complete and evidence-backed: six surfaces ported across `siralos-core::godot` and `siralos-adapters::godot`, corpus version 16, 155 scenario files, all five frozen `godot-*` differential subjects (`godot-discovery`, `godot-knowledge`, `godot-diagnostics`, `godot-lsp`, `godot-scene-resolve`) at required parity (150/150 applicable required scenarios, 4 platform skips), fail-closed posture mechanically preserved; R9+ remain not due pending R9 entry review.
+- **Current:** Stage 3R R9 is **Verified** — R1–R8 Verified as recorded above; R9 (Optional Godot Stage-3 parity, deterministic core) is complete and evidence-backed: three surfaces ported across `siralos_core::godot::{impact, scene_mutation, development}` and `siralos-adapters::godot::scene_mutation`, corpus version 17, 167 scenario files, all three frozen subjects (`godot-review-context`, `godot-mutation-prepare`, `godot-develop-plan`) at required parity (162/162 applicable required scenarios, 4 platform skips), apply/checkpoints typed `unavailable`; R10+ remain not due pending R10 entry review.
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

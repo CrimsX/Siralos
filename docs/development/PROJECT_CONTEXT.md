@@ -6,13 +6,13 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R8
-Current active milestone: R8
-Next milestone: R9 - Godot prepared mutation, review impact intelligence, and unified develop workflow
-Next implementation slice: R8 Verified — R9 awaits entry-review
-R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn), R7.2 (generic Application Tool Loop parity), R7.3 (Projection parity), R7.4 (Configuration parity), and R7.5 (/context and /tools CLI rendering) are complete and evidence-backed at corpus version 15 and 133 scenario files (128/128 applicable Windows). Stage 3R R8 (Optional Godot Stage-2 parity) is complete and evidence-backed: six surfaces ported across `siralos-core::godot` and `siralos-adapters::godot`, corpus version 16 holds 155 scenario files with all five frozen `godot-*` differential subjects (discovery 4, knowledge 5, diagnostics 4, lsp 4, scene-resolve 5) at required parity — 150/150 applicable required scenarios (4 platform skips); the fail-closed posture is mechanically preserved (zero spawn paths in any Godot module).
-Last verified commit: c075b3cf5e5240dd275a35cdc1a5a30c3bda9195
-Latest verified executable worktree: c075b3cf5e5240dd275a35cdc1a5a30c3bda9195
+Current completed milestone: R9
+Current active milestone: R9
+Next milestone: R10 - H1/H2/ICM and H3 runtime-readiness parity
+Next implementation slice: R9 Verified — R10 awaits entry-review
+R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn), R7.2 (generic Application Tool Loop parity), R7.3 (Projection parity), R7.4 (Configuration parity), and R7.5 (/context and /tools CLI rendering) are complete and evidence-backed at corpus version 15 and 133 scenario files (128/128 applicable Windows). Stage 3R R8 (Optional Godot Stage-2 parity) is complete and evidence-backed: six surfaces ported across `siralos-core::godot` and `siralos-adapters::godot`, corpus version 16 holds 155 scenario files with all five frozen `godot-*` differential subjects (discovery 4, knowledge 5, diagnostics 4, lsp 4, scene-resolve 5) at required parity — 150/150 applicable required scenarios (4 platform skips); the fail-closed posture is mechanically preserved (zero spawn paths in any Godot module). Stage 3R R9 (Optional Godot Stage-3 parity — review context & impact intelligence, prepare-only scene/resource mutation contracts, the deterministic unified `/develop` core) is complete and evidence-backed: corpus version 17 holds 167 scenario files with all three frozen subjects (review-context 4, mutation-prepare 4, develop-plan 4) at required parity — 162/162 applicable required scenarios (4 platform skips); apply and new checkpoints stay typed `unavailable` and zero spawn paths exist in any Godot module.
+Last verified commit: 1623e800f8034d07825d7c6582768c27a91a973e
+Latest verified executable worktree: 1623e800f8034d07825d7c6582768c27a91a973e
 Historical R7.2 verified Rust implementation commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
 Earlier R7.3 Unicode helper correction: 4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc
 R7.3 integrated line-bound production correction: 461f290b3d3d778a3bef4d25a895338efcdf315c
@@ -292,7 +292,8 @@ R5      COMPLETE
 R6      COMPLETE
 R7      COMPLETE
 R8      COMPLETE
-R9-R12  NOT DUE
+R9      COMPLETE
+R10-R12 NOT DUE
 ```
 
 Status changes require executable evidence and an update to
@@ -311,7 +312,7 @@ Status changes require executable evidence and an update to
 | R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified |
 | R7        | Providers / Tools / Projection / CLI                                    | Verified |
 | R8        | Godot Stage-2 parity                                                    | Verified |
-| R9        | Godot Stage-3 parity                                                    |
+| R9        | Godot Stage-3 parity                                                    | Verified |
 | R10       | H1 / H2 / ICM / H3 parity                                               |
 | R11       | Full differential/effect parity                                         |
 | R12       | TypeScript reference retirement or explicit retention decision          |
