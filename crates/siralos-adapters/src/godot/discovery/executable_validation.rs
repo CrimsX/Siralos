@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use siralos_core::godot::limits::GODOT_LIMITS;
-use siralos_core::identity::sha256_hex;
+use siralos_core::identity::Sha256;
 
 use super::macos_bundle::enclosing_app_bundle;
 
@@ -155,14 +155,15 @@ pub fn validate_executable(
 
 /// Bounded SHA-256 of the file, reading in 64 KiB chunks. Returns `None`
 /// when the file cannot be opened, exceeds `max_bytes`, or any read
-/// fails (fail-closed, mirrors oracle `hashFile`).
+/// fails (fail-closed, mirrors oracle `hashFile`). Chunks stream through
+/// the incremental hasher, so no candidate ever buffers whole.
 fn hash_file_bounded(path: &Path, max_bytes: usize) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return None;
     }
     let mut file = File::open(path).ok()?;
-    let mut hasher_bytes: Vec<u8> = Vec::new();
+    let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
     let mut total: usize = 0;
     loop {
@@ -174,9 +175,9 @@ fn hash_file_bounded(path: &Path, max_bytes: usize) -> Option<String> {
         if total > max_bytes {
             return None;
         }
-        hasher_bytes.extend_from_slice(&buffer[..n]);
+        hasher.update(&buffer[..n]);
     }
-    Some(sha256_hex(&hasher_bytes))
+    Some(hasher.finish())
 }
 
 fn workspace_prefix_of(workspace_root: &str) -> String {

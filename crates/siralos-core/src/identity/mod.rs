@@ -26,7 +26,7 @@ mod canonical;
 mod sha256;
 
 pub use canonical::{CanonicalValue, canonicalize, json_escape};
-pub use sha256::sha256_hex;
+pub use sha256::{Sha256, sha256_hex};
 
 /// Schema version of the R3 TaskContract canonical payload.
 pub const TASK_CONTRACT_IDENTITY_SCHEMA: u64 = 1;

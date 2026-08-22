@@ -22,77 +22,184 @@ fn rotate_right(value: u32, shift: u32) -> u32 {
     value.rotate_right(shift)
 }
 
+/// One FIPS 180-4 compression step over a full 64-byte message block.
+fn compress(hash: &mut [u32; 8], block: &[u8]) {
+    let mut words = [0u32; 64];
+    for (index, word) in words.iter_mut().enumerate().take(16) {
+        *word = u32::from_be_bytes([
+            block[index * 4],
+            block[index * 4 + 1],
+            block[index * 4 + 2],
+            block[index * 4 + 3],
+        ]);
+    }
+    for index in 16..64 {
+        let w15 = words[index - 15];
+        let w2 = words[index - 2];
+        let s0 = rotate_right(w15, 7) ^ rotate_right(w15, 18) ^ (w15 >> 3);
+        let s1 = rotate_right(w2, 17) ^ rotate_right(w2, 19) ^ (w2 >> 10);
+        words[index] = words[index - 16]
+            .wrapping_add(s0)
+            .wrapping_add(words[index - 7])
+            .wrapping_add(s1);
+    }
+    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *hash;
+    for index in 0..64 {
+        let s1 =
+            rotate_right(e, 6) ^ rotate_right(e, 11) ^ rotate_right(e, 25);
+        let ch = (e & f) ^ ((!e) & g);
+        let temp1 = h
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(K[index])
+            .wrapping_add(words[index]);
+        let s0 =
+            rotate_right(a, 2) ^ rotate_right(a, 13) ^ rotate_right(a, 22);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let temp2 = s0.wrapping_add(maj);
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(temp1);
+        d = c;
+        c = b;
+        b = a;
+        a = temp1.wrapping_add(temp2);
+    }
+    for (state, word) in hash.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+        *state = state.wrapping_add(word);
+    }
+}
+
+/// Incremental SHA-256 state (`update`/`finish`) mirroring the
+/// TypeScript oracle's streaming `createHash("sha256")`, so callers can
+/// hash bounded chunks of a large input without buffering it whole.
+#[derive(Debug, Clone)]
+pub struct Sha256 {
+    hash: [u32; 8],
+    buffer: [u8; 64],
+    buffered: usize,
+    length_bits: u64,
+}
+
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha256 {
+    /// A fresh hasher in the FIPS 180-4 initial state.
+    pub fn new() -> Self {
+        Self {
+            hash: [
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f,
+                0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+            ],
+            buffer: [0; 64],
+            buffered: 0,
+            length_bits: 0,
+        }
+    }
+
+    /// Absorb the next input bytes.
+    pub fn update(&mut self, bytes: &[u8]) -> &mut Self {
+        self.length_bits = self
+            .length_bits
+            .wrapping_add((bytes.len() as u64).wrapping_mul(8));
+        let mut input = bytes;
+        if self.buffered > 0 && !input.is_empty() {
+            let take = usize::min(64 - self.buffered, input.len());
+            self.buffer[self.buffered..self.buffered + take]
+                .copy_from_slice(&input[..take]);
+            self.buffered += take;
+            input = &input[take..];
+            if self.buffered == 64 {
+                let block = self.buffer;
+                compress(&mut self.hash, &block);
+                self.buffered = 0;
+            }
+        }
+        while input.len() >= 64 {
+            let (block, rest) = input.split_at(64);
+            compress(&mut self.hash, block);
+            input = rest;
+        }
+        if !input.is_empty() {
+            self.buffer[..input.len()].copy_from_slice(input);
+            self.buffered = input.len();
+        }
+        self
+    }
+
+    /// Pad the buffered tail (FIPS 180-4 section 5.1) and return the
+    /// lowercase hex digest. The hasher keeps its state, but reuse after
+    /// `finish` is not meaningful.
+    pub fn finish(&self) -> String {
+        let mut hash = self.hash;
+        let mut tail = [0u8; 128];
+        let used = self.buffered;
+        tail[..used].copy_from_slice(&self.buffer[..used]);
+        tail[used] = 0x80;
+        let total = if used < 56 { 64 } else { 128 };
+        tail[total - 8..total]
+            .copy_from_slice(&self.length_bits.to_be_bytes());
+        compress(&mut hash, &tail[..64]);
+        if total == 128 {
+            compress(&mut hash, &tail[64..128]);
+        }
+        let mut out = String::with_capacity(64);
+        for word in hash {
+            out.push_str(&format!("{word:08x}"));
+        }
+        out
+    }
+}
+
 /// Hex SHA-256 digest of the exact input bytes.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let length_bits = (bytes.len() as u64).wrapping_mul(8);
-    let mut padded = Vec::with_capacity((bytes.len() + 9).div_ceil(64) * 64);
-    padded.extend_from_slice(bytes);
-    padded.push(0x80);
-    while padded.len() % 64 != 56 {
-        padded.push(0);
-    }
-    padded.extend_from_slice(&length_bits.to_be_bytes());
+    Sha256::new().update(bytes).finish()
+}
 
-    let mut hash: [u32; 8] = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f,
-        0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
-    ];
-    let mut words = [0u32; 64];
-    for chunk in padded.chunks_exact(64) {
-        for (index, word) in words.iter_mut().enumerate().take(16) {
-            *word = u32::from_be_bytes([
-                chunk[index * 4],
-                chunk[index * 4 + 1],
-                chunk[index * 4 + 2],
-                chunk[index * 4 + 3],
-            ]);
+#[cfg(test)]
+mod tests {
+    use super::{Sha256, sha256_hex};
+
+    #[test]
+    fn incremental_hashing_matches_the_one_shot_digest() {
+        let input: Vec<u8> =
+            (0..1000usize).map(|index| (index % 251) as u8).collect();
+        for chunk in [1usize, 7, 55, 63, 64, 65, 127, 1000] {
+            let mut hasher = Sha256::new();
+            for part in input.chunks(chunk) {
+                hasher.update(part);
+            }
+            assert_eq!(
+                hasher.finish(),
+                sha256_hex(&input),
+                "chunk size {chunk}"
+            );
         }
-        for index in 16..64 {
-            let w15 = words[index - 15];
-            let w2 = words[index - 2];
-            let s0 = rotate_right(w15, 7) ^ rotate_right(w15, 18) ^ (w15 >> 3);
-            let s1 = rotate_right(w2, 17) ^ rotate_right(w2, 19) ^ (w2 >> 10);
-            words[index] = words[index - 16]
-                .wrapping_add(s0)
-                .wrapping_add(words[index - 7])
-                .wrapping_add(s1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = hash;
-        for index in 0..64 {
-            let s1 =
-                rotate_right(e, 6) ^ rotate_right(e, 11) ^ rotate_right(e, 25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = h
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[index])
-                .wrapping_add(words[index]);
-            let s0 =
-                rotate_right(a, 2) ^ rotate_right(a, 13) ^ rotate_right(a, 22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-            h = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-        hash[0] = hash[0].wrapping_add(a);
-        hash[1] = hash[1].wrapping_add(b);
-        hash[2] = hash[2].wrapping_add(c);
-        hash[3] = hash[3].wrapping_add(d);
-        hash[4] = hash[4].wrapping_add(e);
-        hash[5] = hash[5].wrapping_add(f);
-        hash[6] = hash[6].wrapping_add(g);
-        hash[7] = hash[7].wrapping_add(h);
     }
 
-    let mut out = String::with_capacity(64);
-    for word in hash {
-        out.push_str(&format!("{word:08x}"));
+    #[test]
+    fn empty_updates_do_not_change_the_digest() {
+        let mut hasher = Sha256::new();
+        hasher.update(b"");
+        hasher.update(b"abc");
+        hasher.update(b"");
+        assert_eq!(hasher.finish(), sha256_hex(b"abc"));
     }
-    out
+
+    #[test]
+    fn exact_block_and_tail_boundaries_stream_correctly() {
+        for length in [0usize, 55, 56, 63, 64, 65, 119, 120, 128] {
+            let input: Vec<u8> =
+                (0..length).map(|index| (index % 251) as u8).collect();
+            let mut hasher = Sha256::new();
+            hasher.update(&input[..length.min(1)]);
+            hasher.update(&input[length.min(1)..]);
+            assert_eq!(hasher.finish(), sha256_hex(&input), "length {length}");
+        }
+    }
 }
