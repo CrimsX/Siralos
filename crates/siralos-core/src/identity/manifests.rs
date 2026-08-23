@@ -958,7 +958,7 @@ pub fn canonical_changeset_identity(payload: &CanonicalValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        GuidanceEntryKind, GuidanceManifestEntry, ToolSurfaceDefinition,
+        GuidanceManifestEntry, ToolSurfaceDefinition,
         ToolSurfacePhase, ToolSurfaceRole, ValidationObservation,
         compute_acceptance_criteria_digest,
         compute_capability_snapshot_digest, compute_execution_input_delta,
