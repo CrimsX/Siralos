@@ -261,6 +261,7 @@ const WORKSPACE_FILE_SUBJECTS = new Set([
   "workspace-list",
   "workspace-search",
   "workspace-prepare",
+  "workspace-apply",
   "git-inspection",
 ]);
 /** The oracle record for a single scenario. */

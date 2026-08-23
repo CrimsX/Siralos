@@ -20,6 +20,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "workspace-search",
   "workspace-revision",
   "workspace-prepare",
+  "workspace-apply",
   "checkpoint",
   "git-inspection",
   "language-diagnostics",
@@ -606,6 +607,7 @@ function validateSubjectInputs(scenario, label) {
     "workspace-search",
     "workspace-revision",
     "workspace-prepare",
+    "workspace-apply",
     "checkpoint",
     "git-inspection",
   ]);
@@ -830,6 +832,7 @@ export function validateScenario(scenario, file) {
     "workspace-search",
     "workspace-revision",
     "workspace-prepare",
+    "workspace-apply",
     "checkpoint",
     "git-inspection",
     "language-diagnostics",

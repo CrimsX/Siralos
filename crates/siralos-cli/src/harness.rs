@@ -44,6 +44,7 @@ const SUBJECT_WORKSPACE_LIST: &str = "workspace-list";
 const SUBJECT_WORKSPACE_SEARCH: &str = "workspace-search";
 const SUBJECT_WORKSPACE_REVISION: &str = "workspace-revision";
 const SUBJECT_WORKSPACE_PREPARE: &str = "workspace-prepare";
+const SUBJECT_WORKSPACE_APPLY: &str = "workspace-apply";
 const SUBJECT_CHECKPOINT: &str = "checkpoint";
 const SUBJECT_GIT_INSPECTION: &str = "git-inspection";
 const SUBJECT_LANGUAGE_DIAGNOSTICS: &str = "language-diagnostics";
@@ -401,6 +402,7 @@ fn validate_scenario(
             | SUBJECT_WORKSPACE_SEARCH
             | SUBJECT_WORKSPACE_REVISION
             | SUBJECT_WORKSPACE_PREPARE
+            | SUBJECT_WORKSPACE_APPLY
             | SUBJECT_CHECKPOINT
             | SUBJECT_GIT_INSPECTION
             | SUBJECT_LANGUAGE_DIAGNOSTICS
@@ -509,6 +511,7 @@ fn validate_scenario(
         | SUBJECT_WORKSPACE_SEARCH
         | SUBJECT_WORKSPACE_REVISION
         | SUBJECT_WORKSPACE_PREPARE
+        | SUBJECT_WORKSPACE_APPLY
         | SUBJECT_CHECKPOINT
         | SUBJECT_GIT_INSPECTION
         | SUBJECT_LANGUAGE_DIAGNOSTICS
@@ -1093,6 +1096,7 @@ fn run_scenario(
         | SUBJECT_WORKSPACE_LIST
         | SUBJECT_WORKSPACE_SEARCH
         | SUBJECT_WORKSPACE_PREPARE
+        | SUBJECT_WORKSPACE_APPLY
         | SUBJECT_GIT_INSPECTION => {
             let input = scenario.input.as_ref().expect(
                 "workspace input was validated while loading the corpus",
@@ -7094,7 +7098,8 @@ use siralos_adapters::workspace::checkpoint::{
     open_checkpoint_store, reconcile_checkpoints,
 };
 use siralos_adapters::workspace::effects::{
-    MutationTool, PreparationOutcome, prepare_mutation,
+    ApplicationOutcome, MutationTool, PreparationOutcome, apply_mutation,
+    prepare_mutation,
 };
 use siralos_adapters::workspace::git::git_inspection_disposition;
 use siralos_adapters::workspace::list::{ListOutcome, list_directory};
@@ -7114,6 +7119,8 @@ use siralos_core::workspace::revision::{
     ObservedReadMode, WorkspaceRevisionRegistry,
     WorkspaceRevisionRegistryOptions, compute_workspace_revision_handle,
 };
+
+use siralos_core::workspace::is_protected_behavioral_config_path;
 
 use std::path::PathBuf;
 
@@ -7887,6 +7894,77 @@ fn prepare_record(root: &Path, input: &Value) -> Result<Value, HarnessError> {
     }))
 }
 
+fn apply_record(root: &Path, input: &Value) -> Result<Value, HarnessError> {
+    let mut applies: Vec<Value> = Vec::new();
+    for entry in scenario_array(input, "applies")? {
+        let tool_name = scenario_string(entry, "tool")?;
+        let tool = match tool_name.as_str() {
+            "workspace.create_file" => MutationTool::CreateFile,
+            "workspace.edit_file" => MutationTool::EditFile,
+            "workspace.delete_file" => MutationTool::DeleteFile,
+            other => {
+                return Err(HarnessError::corpus(format!(
+                    "unknown mutation tool {other}"
+                )));
+            }
+        };
+        // Binding state is deliberately irrelevant here (see the
+        // oracle probe): the boundary refuses before any input
+        // inspection, so stale or malformed prepared payloads produce
+        // the identical typed outcome.
+        match apply_mutation(tool) {
+            ApplicationOutcome::Unavailable { .. } => {
+                applies.push(json!({
+                    "tool": tool_name,
+                    "status": "unavailable",
+                    "code": "mutation_unavailable",
+                }));
+            }
+        }
+    }
+    let classified: Vec<String> = scenario_array(input, "paths")?
+        .iter()
+        .filter_map(|value| value.as_str())
+        .filter(|path| is_protected_behavioral_config_path(path))
+        .map(str::to_owned)
+        .collect();
+    let verify_path = scenario_string(input, "verifyPath")?;
+    let verify = read_file(
+        root,
+        &ReadInput {
+            path: verify_path,
+            start_line: 1,
+            end_line: None,
+            mode: ReadMode::Exact,
+        },
+        &WORKSPACE_LIMITS,
+        None,
+        false,
+    );
+    let workspace_sha256 = match verify {
+        ReadOutcome::Success { sha256, .. } => sha256,
+        _ => "missing".to_owned(),
+    };
+    let checkpoint_root = std::env::temp_dir()
+        .join(format!("siralos-cand-cp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&checkpoint_root);
+    let store =
+        open_checkpoint_store(root, &checkpoint_root).map_err(|error| {
+            HarnessError::new(
+                HarnessErrorKind::ProbeSpawn,
+                format!("cannot open fixture checkpoint store: {error}"),
+            )
+        })?;
+    let checkpoint_count = store.list(None, None).len();
+    let _ = std::fs::remove_dir_all(&checkpoint_root);
+    Ok(json!({
+        "applies": applies,
+        "classified": classified,
+        "workspaceSha256": workspace_sha256,
+        "checkpointCount": checkpoint_count,
+    }))
+}
+
 fn git_record() -> Value {
     let disposition = git_inspection_disposition();
     match disposition {
@@ -7921,6 +7999,11 @@ fn workspace_record(
         SUBJECT_WORKSPACE_PREPARE => {
             with_fixture_workspace(scenario_id, input, |root| {
                 prepare_record(root, input)
+            })
+        }
+        SUBJECT_WORKSPACE_APPLY => {
+            with_fixture_workspace(scenario_id, input, |root| {
+                apply_record(root, input)
             })
         }
         SUBJECT_GIT_INSPECTION => Ok(git_record()),

@@ -36,6 +36,7 @@ import { createMutationLock } from "../../../packages/adapters/src/tools/workspa
 import { createFilesystemCheckpointStore } from "../../../packages/adapters/src/checkpoints/filesystem/checkpoint-store.js";
 import { createWorkspaceRevisionRegistry } from "../../../packages/core/src/workspace/workspace-revision.js";
 import { createGitCliAdapter } from "../../../packages/adapters/src/git/cli/git-cli-adapter.js";
+import { classifyBehavioralConfigPaths } from "../../../packages/core/src/security/behavioral-config.js";
 
 const MAX_INPUT_BYTES = 64 * 1024;
 
@@ -395,11 +396,55 @@ async function runGit(root, input) {
   }
 }
 
+async function runApplies(root, input) {
+  const lock = createMutationLock();
+  const checkpointRoot = mkdtempSync(join(tmpdir(), "siralos-oracle-cp-"));
+  const store = await createFilesystemCheckpointStore({
+    workspaceRoot: root,
+    rootDirectory: checkpointRoot,
+  });
+  const tools = {
+    "workspace.create_file": createWorkspaceCreateFileTool(root, lock, store),
+    "workspace.edit_file": createWorkspaceEditFileTool(root, lock, store),
+    "workspace.delete_file": createWorkspaceDeleteFileTool(root, lock, store),
+  };
+  const applies = [];
+  for (const request of input.applies ?? []) {
+    const tool = tools[request.tool];
+    if (tool === undefined) {
+      throw new Error(`unknown mutation tool ${request.tool}`);
+    }
+    // The prepared payload carries deliberately stale binding fields:
+    // the boundary refuses before any input inspection, so binding
+    // state must never change the outcome on either implementation.
+    const prepared = {
+      tool: request.tool,
+      path: request.path ?? "src/main.rs",
+      expectedSha256: request.expectedSha256 ?? "0".repeat(64),
+      digest: "f".repeat(64),
+      changes: [],
+    };
+    const result = await tool.apply(prepared, {});
+    applies.push({
+      tool: request.tool,
+      status: result.status,
+      ...(result.status === "unavailable" ? { code: "mutation_unavailable" } : {}),
+    });
+  }
+  const classified = classifyBehavioralConfigPaths(input.paths ?? []);
+  const readTool = createWorkspaceReadTool(root);
+  const verify = await readTool.execute({ path: input.verifyPath }, {});
+  const workspaceSha256 = verify.status === "success" ? verify.output.sha256 : "missing";
+  const checkpointCount = (await store.list()).length;
+  return { applies, classified, workspaceSha256, checkpointCount };
+}
+
 const SUBJECTS = new Set([
   "workspace-read",
   "workspace-list",
   "workspace-search",
   "workspace-prepare",
+  "workspace-apply",
   "git-inspection",
 ]);
 
@@ -423,6 +468,9 @@ async function main() {
         break;
       case "workspace-prepare":
         result = await runPrepares(root, input);
+        break;
+      case "workspace-apply":
+        result = await runApplies(root, input);
         break;
       case "git-inspection":
         result = await runGit(root, input);
