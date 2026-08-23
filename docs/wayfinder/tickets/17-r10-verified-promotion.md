@@ -2,7 +2,7 @@
 
 **Map:** [Siralos Roadmap](../siralos-roadmap.md) · label `wayfinder:grilling` HITL
 **Blocked by:** [R10c Entry Review](../decisions/16-r10c-entry-review.md) (PASS — R10c implemented and landed at corpus v20)
-**Status:** OPEN
+**Status:** RESOLVED by [decision 17 — R10 Verified Promotion](../decisions/17-r10-verified-promotion.md)
 
 ## Questions this ticket resolves
 

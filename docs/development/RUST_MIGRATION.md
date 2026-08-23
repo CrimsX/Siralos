@@ -33,9 +33,9 @@ repository concepts never satisfy those identifiers by implication.
 | R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified       |
 | R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Verified       |
 | R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Verified       |
-| R8        | Optional Godot Stage-2 parity                                                                                                   | Not due        |
-| R9        | Optional Godot Stage-3 parity                                                                                                   | Not due        |
-| R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Not due        |
+| R8        | Optional Godot Stage-2 parity                                                                                                   | Verified       |
+| R9        | Optional Godot Stage-3 parity                                                                                                   | Verified       |
+| R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Verified       |
 | R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Not due        |
 | R12       | TypeScript reference retirement or an explicit evidence-backed retention disposition                                            | Not due        |
 
@@ -693,8 +693,35 @@ all three frozen subjects at required parity (`godot-review-context` 4,
 observed PASS on the verified worktree: `cargo fmt`, `clippy -D warnings`,
 `cargo test --workspace` (691 tests), `check:architecture`, `check:rust`,
 `check:differential`. Promotion evidence and atomic surface list:
-`docs/wayfinder/decisions/13-r9-verified-promotion.md`. R10 awaits its own
+`docs/wayfinder/decisions/13-r9-verified-promotion.md`. R10 awaited its own
 entry review.
+
+### R10 Verified
+
+R10 — H1 content identity, H2 determinism/replay, ICM context, and H3
+runtime-readiness parity — is **Verified** as one milestone with three
+ordered, entry-reviewed sub-slices on executable worktree
+`a456afb71ab64c5504cd19e8eb7988d32d60a9dc`
+(`docs/wayfinder/decisions/14-r10-entry-review.md`,
+`15-r10b-entry-review.md`, `16-r10c-entry-review.md`). R10a ported H1
+content identity and the H2 determinism family (`siralos_core::identity`
+extended with typed digests/deltas/staleness plus
+`siralos_core::determinism`; corpus **version 18**, 177/177 applicable
+required parity). R10b ported the ICM context family
+(`siralos_core::context`: phase contracts with narrowing-only authority,
+digest-bound dependency manifests, targeted staleness, provenance and
+why-diagnostics; corpus **version 19**, 190/190). R10c ported the H3
+runtime-readiness family (`siralos_core::runtime`: causal run identity,
+manifest-bound budgets with typed admission, the pure supervisor
+lifecycle over the 13-kind failure taxonomy, harness-owned fault
+injection under the controlled clock, and the fail-closed readiness
+doctor; corpus **version 20, 210 scenario files**, 205/205 applicable
+required parity, 4 platform skips). No real process is ever launched.
+Gates observed PASS on the verified worktree: `npm run check` (exit 0,
+211/211 TypeScript test files), `cargo fmt`, `clippy -D warnings`,
+`cargo test --workspace`, `check:differential`. Promotion evidence and
+atomic surface list: `docs/wayfinder/decisions/17-r10-verified-promotion.md`.
+R11 requires its own entry review.
 
 ## Porting gate
 
