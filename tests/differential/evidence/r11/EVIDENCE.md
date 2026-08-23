@@ -47,3 +47,38 @@ audit copy.
   running the optional `npx sandbox-runtime windows-install` would change
   that posture and is deliberately NOT part of R11 — the gate closes on
   truthful reporting, not on availability ([R11 Gate] §2.2 exit).
+
+## Open Tier-1 findings (promotion blockers, 2026-08-23)
+
+Surfaced by the first full POSIX/CI execution of the oracle suite —
+these are genuine cross-platform divergences to repair; none may be
+papered over:
+
+1. **Windows (CI): git launch refused via link identity.**
+   `git-cli-adapter.ts` refuses PATH-resolved Git when
+   `samePathIdentity(realpath(git), git)` fails at launch; the runner
+   image's Git layout trips this. The adapter posture is correct;
+   either the discovery must land on a non-link spelling or the tests
+   need environment-adaptive expectations.
+   (`git-adapter.test.ts:248/286`)
+2. **Windows (CI): checkpoint probe crash in replay.**
+   `runWorkspaceProbe` reports the checkpoint oracle exiting nonzero on
+   windows-latest during replay; passes locally. Needs artifact-level
+   diagnosis (`failure.json`/probe stderr).
+3. **macOS: godot-diagnostics prepare returns invalid_input/failed.**
+   `validateCheckScript` → `verifyProjectPathContainment` rejects
+   fixture scripts under macOS tmpdir realpath semantics
+   (`/var/folders` vs `/private/var/folders`) for raw workspace roots.
+   (`godot-diagnostics-service.test.ts:172/201/212/301`)
+4. **macOS: reference-root containment bypassed** — FIXED in
+   `reference-services.ts` (canonicalize workspace root before
+   comparison); covered by `reference-services.test.ts`.
+5. **macOS: sandbox wrapper injects denied `SSH_AUTH_SOCK`.**
+   The pinned sandbox-runtime wrapper's env includes a variable Siralos
+   denies; the fail-closed refusal is correct. Resolution belongs
+   upstream (wrapper env) or as an explicit accepted decision — never
+   by weakening the deny list. (`anthropic-sandbox-runtime-backend.ts`
+   mergeWrapperEnvironment)
+6. **Windows/macOS: reference-path comparisons vs raw tmpdir spelling**
+   (`RUNNER~1`, `/var/...`) — FIXED via canonicalizing
+   `createTempWorkspace`.

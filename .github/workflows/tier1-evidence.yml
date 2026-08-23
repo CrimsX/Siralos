@@ -56,11 +56,6 @@ jobs:
       - name: Install locked npm dependencies
         run: npm ci
 
-      # Replay-stress determinism and the full oracle test suite are part
-      # of the recorded evidence ([R11 Gate] §2.4 replay row).
-      - name: Full TypeScript gate and replay determinism
-        run: npm test
-
       - name: Cache cargo artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -80,6 +75,19 @@ jobs:
       - name: Differential harness (digest-bound audit)
         run: npm run check:differential
 
+      # Replay-stress determinism and the full oracle test suite are part
+      # of the recorded evidence ([R11 Gate] §2.4 replay row). A failure
+      # here is a Tier-1 finding: it must NOT block artifact collection,
+      # but it DOES keep the run red and blocks promotion.
+      - name: Full TypeScript gate and replay determinism
+        id: tsgate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee typescript-gate.txt
+          exit ${PIPESTATUS[0]}
+
       - name: Live sandbox conformance
         shell: bash
         run: |
@@ -90,6 +98,7 @@ jobs:
       # tests/differential/evidence/r11/EVIDENCE.md and derive the corpus
       # version from the manifest so artifact names cannot drift.
       - name: Name evidence files for direct retention
+        if: always()
         shell: bash
         run: |
           case "${{ matrix.os }}" in
@@ -111,8 +120,20 @@ jobs:
           path: |
             audit-*-corpus-v*.json
             sandbox-conformance-*.txt
+            typescript-gate.txt
             tests/differential/out/oracle.json
             tests/differential/out/candidate.json
             tests/differential/out/failure.json
           if-no-files-found: warn
         if: always()
+
+      # The run stays red while any Tier-1 gate fails: evidence collection
+      # never launders a failing platform into a pass.
+      - name: Enforce TypeScript gate result
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.tsgate.outcome }}" != "success" ]; then
+            echo "TypeScript gate failed on ${{ matrix.os }}; see typescript-gate.txt artifact."
+            exit 1
+          fi

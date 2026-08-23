@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -75,11 +75,16 @@ export function stringOf(value: JsonValue | undefined): string {
 }
 
 export async function createTempWorkspace(): Promise<TempWorkspace> {
-  const root = await mkdtemp(join(tmpdir(), "siralos-workspace-"));
+  const created = await mkdtemp(join(tmpdir(), "siralos-workspace-"));
+  // Canonicalize immediately: resolveReferencePath returns realpath'd
+  // targets, so tests comparing against the raw tmpdir string break
+  // wherever tmpdir() is non-canonical (Windows short names like
+  // RUNNER~1, macOS /var -> /private/var).
+  const root = await realpath(created);
   return {
     root,
     async cleanup() {
-      await rm(root, { recursive: true, force: true });
+      await rm(created, { recursive: true, force: true });
     },
   };
 }
