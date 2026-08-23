@@ -1,0 +1,10 @@
+{
+  "id": "icm.phase-contract.registry-digests",
+  "subject": "icm.phase-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "registry"
+  }
+}

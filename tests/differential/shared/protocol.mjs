@@ -1853,6 +1853,127 @@ function validateGodotDevelopPlanResult(result, label) {
   }
 }
 
+function validateIcmPhaseContractResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (result.ok === true) {
+    if (Array.isArray(result.registry)) {
+      assertExactKeys(result, ["ok", "registry"], `${label}.result`);
+      for (const entry of result.registry) {
+        assertExactKeys(entry, ["id", "digest"], `${label}.result.registry`);
+        if (typeof entry.id !== "string" || !LOWER_SHA256.test(entry.digest ?? "")) {
+          throw new Error(`${label}.result.registry entry is invalid`);
+        }
+      }
+      return;
+    }
+    assertExactKeys(result, ["ok", "id", "version", "digest"], `${label}.result`);
+    if (
+      typeof result.id !== "string" ||
+      !Number.isSafeInteger(result.version) ||
+      result.version < 1 ||
+      !LOWER_SHA256.test(result.digest)
+    ) {
+      throw new Error(`${label}.result contract identity is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(result, ["ok", "error"], `${label}.result`);
+  if (typeof result.error !== "string" || result.error.length === 0) {
+    throw new Error(`${label}.result.error is invalid`);
+  }
+}
+
+function validateIcmDependencyManifestsResult(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  // staleness
+  if (isObject(result.stale) && Object.hasOwn(result, "unrelatedChanges")) {
+    assertExactKeys(result, ["stale", "current", "unrelatedChanges", "digest"], `${label}.result`);
+    for (const [id, reason] of Object.entries(result.stale)) {
+      if (typeof id !== "string" || typeof reason !== "string") {
+        throw new Error(`${label}.result.stale entry is invalid`);
+      }
+    }
+    for (const key of ["current", "unrelatedChanges"]) {
+      if (!Array.isArray(result[key]) || result[key].some((entry) => typeof entry !== "string")) {
+        throw new Error(`${label}.result.${key} is invalid`);
+      }
+    }
+    if (!LOWER_SHA256.test(result.digest ?? "")) {
+      throw new Error(`${label}.result.digest is invalid`);
+    }
+    return;
+  }
+  // prepared-mutation-stale
+  if (typeof result.stale === "boolean" && Array.isArray(result.stalePaths)) {
+    assertExactKeys(result, ["stale", "stalePaths"], `${label}.result`);
+    if (result.stalePaths.some((entry) => typeof entry !== "string")) {
+      throw new Error(`${label}.result.stalePaths is invalid`);
+    }
+    return;
+  }
+  // manifest create/build or provenance ref creation failure
+  if (Object.hasOwn(result, "ok")) {
+    if (result.ok === false) {
+      assertExactKeys(result, ["ok", "error"], `${label}.result`);
+      if (typeof result.error !== "string" || result.error.length === 0) {
+        throw new Error(`${label}.result.error is invalid`);
+      }
+      return;
+    }
+    assertExactKeys(result, ["ok", "manifest"], `${label}.result`);
+    if (result.manifest === null) {
+      return;
+    }
+    const manifest = result.manifest;
+    assertExactKeys(
+      manifest,
+      ["artifactType", "artifactId", "dependsOn", "digest"],
+      `${label}.result.manifest`,
+    );
+    if (!Array.isArray(manifest.dependsOn)) {
+      throw new Error(`${label}.result.manifest.dependsOn is invalid`);
+    }
+    for (const dependency of manifest.dependsOn) {
+      assertExactKeys(dependency, ["artifactType", "digest"], `${label}.result.manifest.dependsOn`);
+      if (typeof dependency.artifactType !== "string") {
+        throw new Error(`${label}.result.manifest.dependsOn entry is invalid`);
+      }
+    }
+    return;
+  }
+  // provenance
+  if (isObject(result.created)) {
+    assertExactKeys(result, ["created", "digest"], `${label}.result`);
+    assertExactKeys(result.created, ["item", "source"], `${label}.result.created`);
+    assertExactKeys(
+      result.created.source,
+      ["kind", "id", "digest"],
+      `${label}.result.created.source`,
+    );
+    if (!LOWER_SHA256.test(result.digest ?? "")) {
+      throw new Error(`${label}.result.digest is invalid`);
+    }
+    return;
+  }
+  // why-validation-required
+  if (Object.hasOwn(result, "found")) {
+    assertExactKeys(result, ["found", "itemId", "rendered"], `${label}.result`);
+    if (
+      typeof result.found !== "boolean" ||
+      typeof result.itemId !== "string" ||
+      typeof result.rendered !== "string"
+    ) {
+      throw new Error(`${label}.result why-diagnostic is invalid`);
+    }
+    return;
+  }
+  throw new Error(`${label}.result shape is unsupported`);
+}
+
 function validateCompletedResult(record, label) {
   if (!isObject(record.result)) {
     throw new Error(`${label}.result must be an object`);
@@ -1991,6 +2112,14 @@ function validateCompletedResult(record, label) {
     ) {
       throw new Error(`${label}.result delta arrays are invalid`);
     }
+    return;
+  }
+  if (record.subject === "icm.phase-contract") {
+    validateIcmPhaseContractResult(record.result, label);
+    return;
+  }
+  if (record.subject === "icm.dependency-manifests") {
+    validateIcmDependencyManifestsResult(record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

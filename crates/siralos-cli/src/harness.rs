@@ -73,7 +73,7 @@ const SUBJECT_DET_REPLAY: &str = "determinism-replay";
 const SUBJECT_ICM_PHASE_CONTRACT: &str = "icm.phase-contract";
 const SUBJECT_ICM_DEP_MANIFESTS: &str = "icm.dependency-manifests";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 18;
+const CORPUS_VERSION: u64 = 19;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -8640,7 +8640,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 182);
+        assert_eq!(loaded.len(), 195);
     }
 
     #[test]

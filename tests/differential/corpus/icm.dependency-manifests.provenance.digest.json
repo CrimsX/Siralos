@@ -1,0 +1,25 @@
+{
+  "id": "icm.dependency-manifests.provenance.digest",
+  "subject": "icm.dependency-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "provenance",
+    "refs": [
+      {
+        "item": "ctx.plan",
+        "source": {
+          "kind": "adr",
+          "id": "ADR-0010",
+          "digest": null
+        }
+      }
+    ],
+    "newRef": {
+      "item": "ctx.evidence",
+      "kind": "evidence",
+      "id": "ev-77"
+    }
+  }
+}

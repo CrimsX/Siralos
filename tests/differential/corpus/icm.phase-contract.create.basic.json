@@ -1,0 +1,54 @@
+{
+  "id": "icm.phase-contract.create.basic",
+  "subject": "icm.phase-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "contract": {
+      "id": "impact-review",
+      "version": 2,
+      "phase": "reviewing",
+      "inputs": [
+        {
+          "artifactType": "ChangedSurfaces",
+          "optional": false,
+          "reason": "what changed"
+        },
+        {
+          "artifactType": "RelationshipIndex",
+          "optional": true,
+          "reason": "verified relationships"
+        }
+      ],
+      "authority": {
+        "readOnly": true,
+        "mutation": "none",
+        "approvalGrant": false,
+        "acceptanceAuthority": false,
+        "capabilityNarrowing": ["sandbox.exec"]
+      },
+      "process": [
+        {
+          "id": "derive-impact",
+          "description": "bounded impact analysis"
+        }
+      ],
+      "outputs": [
+        {
+          "artifactType": "ReviewContextManifest",
+          "verificationKind": "host_verified"
+        }
+      ],
+      "verification": [
+        {
+          "id": "impact-derived",
+          "description": "impact manifest derived from evidence",
+          "evidenceClass": "validation_result"
+        }
+      ],
+      "contextClasses": ["working", "phase_contract"]
+    }
+  }
+}

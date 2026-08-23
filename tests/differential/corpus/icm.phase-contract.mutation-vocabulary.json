@@ -1,0 +1,44 @@
+{
+  "id": "icm.phase-contract.mutation-vocabulary",
+  "subject": "icm.phase-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "contract": {
+      "id": "mutation",
+      "version": 1,
+      "phase": "working",
+      "inputs": [
+        {
+          "artifactType": "PreparedChangeset",
+          "optional": false,
+          "reason": "only prepared operations apply"
+        }
+      ],
+      "authority": {
+        "readOnly": false,
+        "mutation": "unrestricted",
+        "approvalGrant": false,
+        "acceptanceAuthority": false,
+        "capabilityNarrowing": []
+      },
+      "process": [],
+      "outputs": [
+        {
+          "artifactType": "MutationResult",
+          "verificationKind": "deterministic"
+        }
+      ],
+      "verification": [
+        {
+          "id": "applied-verified",
+          "description": "per-surface verification after apply",
+          "evidenceClass": "mutation_receipt"
+        }
+      ],
+      "contextClasses": ["working"]
+    }
+  }
+}

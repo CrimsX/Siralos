@@ -1,0 +1,17 @@
+{
+  "id": "icm.dependency-manifests.prepared-mutation-stale",
+  "subject": "icm.dependency-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "prepared-mutation-stale",
+    "preparedSourceRevisions": [
+      { "path": "src/player.gd", "revision": "rev_1" },
+      { "path": "src/hud.gd", "revision": "rev_2" }
+    ],
+    "currentSourceRevisions": {
+      "src/player.gd": "rev_1"
+    }
+  }
+}

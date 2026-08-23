@@ -1,0 +1,44 @@
+{
+  "id": "icm.phase-contract.unknown-context-class",
+  "subject": "icm.phase-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "contract": {
+      "id": "validation",
+      "version": 1,
+      "phase": "validating",
+      "inputs": [
+        {
+          "artifactType": "VerificationEvidence",
+          "optional": false,
+          "reason": "changed surfaces"
+        }
+      ],
+      "authority": {
+        "readOnly": true,
+        "mutation": "none",
+        "approvalGrant": false,
+        "acceptanceAuthority": false,
+        "capabilityNarrowing": []
+      },
+      "process": [],
+      "outputs": [
+        {
+          "artifactType": "ValidationPlan",
+          "verificationKind": "deterministic"
+        }
+      ],
+      "verification": [
+        {
+          "id": "required-completed",
+          "description": "required validation completed",
+          "evidenceClass": "validation_result"
+        }
+      ],
+      "contextClasses": ["working", "bogus"]
+    }
+  }
+}

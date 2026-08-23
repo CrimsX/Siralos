@@ -1,0 +1,51 @@
+{
+  "id": "icm.dependency-manifests.staleness.mixed",
+  "subject": "icm.dependency-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "staleness",
+    "manifests": [
+      {
+        "artifactType": "Derived",
+        "artifactId": "zeta.artifact",
+        "dependsOn": [
+          {
+            "artifactType": "TaskContract",
+            "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      {
+        "artifactType": "Derived",
+        "artifactId": "alpha.artifact",
+        "dependsOn": [
+          {
+            "artifactType": "TaskContract",
+            "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "artifactType": "GuidanceManifest",
+            "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ]
+      },
+      {
+        "artifactType": "Derived",
+        "artifactId": "mike.artifact",
+        "dependsOn": [
+          {
+            "artifactType": "ReviewVerdict",
+            "digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ]
+      }
+    ],
+    "currentInputDigests": {
+      "TaskContract": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "ReviewVerdict": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "Unrelated": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  }
+}

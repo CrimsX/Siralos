@@ -1,0 +1,16 @@
+{
+  "id": "icm.dependency-manifests.manifest.build-unknown",
+  "subject": "icm.dependency-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "manifest",
+    "mode": "build",
+    "artifactType": "Mystery",
+    "artifactId": "m-1",
+    "currentDigests": {
+      "taskContractDigest": "b6318dab846a05df1881a8bd69c0e57f009c2678a0f3ea83fc432fe228364eaf"
+    }
+  }
+}

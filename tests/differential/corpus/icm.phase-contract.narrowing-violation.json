@@ -1,0 +1,44 @@
+{
+  "id": "icm.phase-contract.narrowing-violation",
+  "subject": "icm.phase-contract",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "contract": {
+      "id": "review",
+      "version": 1,
+      "phase": "reviewing",
+      "inputs": [
+        {
+          "artifactType": "TaskContract",
+          "optional": false,
+          "reason": "criteria"
+        }
+      ],
+      "authority": {
+        "readOnly": true,
+        "mutation": "prepared_only",
+        "approvalGrant": false,
+        "acceptanceAuthority": false,
+        "capabilityNarrowing": []
+      },
+      "process": [],
+      "outputs": [
+        {
+          "artifactType": "ReviewVerdict",
+          "verificationKind": "review"
+        }
+      ],
+      "verification": [
+        {
+          "id": "verdict-bound",
+          "description": "verdict bound to review input digest",
+          "evidenceClass": "review_result"
+        }
+      ],
+      "contextClasses": ["working"]
+    }
+  }
+}

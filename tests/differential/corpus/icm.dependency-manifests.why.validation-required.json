@@ -1,0 +1,26 @@
+{
+  "id": "icm.dependency-manifests.why.validation-required",
+  "subject": "icm.dependency-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "why-validation-required",
+    "itemId": "check-syntax",
+    "planItems": [
+      {
+        "id": "check-syntax",
+        "class": "required",
+        "rationale": "applies to changed surface(s): src/a.rs"
+      },
+      {
+        "id": "other-check",
+        "class": "recommended",
+        "rationale": "unrelated check"
+      }
+    ],
+    "changedSurfaces": ["src/a.rs"],
+    "impactRelations": [{ "source": "src/a.rs", "target": "docs/x.md" }],
+    "acceptanceCriteria": ["AC-1"]
+  }
+}

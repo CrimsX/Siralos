@@ -1,0 +1,27 @@
+{
+  "id": "icm.dependency-manifests.manifest.create-ordering",
+  "subject": "icm.dependency-manifests",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "manifest",
+    "mode": "create",
+    "artifactType": "TaskPlan",
+    "artifactId": "plan-9",
+    "dependsOn": [
+      {
+        "artifactType": "SourceRevisions",
+        "digest": "c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"
+      },
+      {
+        "artifactType": "GuidanceManifest",
+        "digest": "185f8db32271fe25f561a6fc938b2e264306ec304eda518007d1764826381969"
+      },
+      {
+        "artifactType": "TaskContract",
+        "digest": "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacd65f65"
+      }
+    ]
+  }
+}

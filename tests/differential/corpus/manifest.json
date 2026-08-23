@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 18,
+  "corpusVersion": 19,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -361,6 +361,58 @@
     {
       "file": "godot-scene-resolve.unknown-keys-ignored.json",
       "sha256": "cd8dc4ed7964e4b570d11877bfe78bf401943450ce4310b1184664d54166ad4c"
+    },
+    {
+      "file": "icm.dependency-manifests.manifest.build-unknown.json",
+      "sha256": "5dc22231c9c4928e80d98bd7c78f1a7a8a7b920c6b791dd329def5523c9cb7b0"
+    },
+    {
+      "file": "icm.dependency-manifests.manifest.build.json",
+      "sha256": "ec8ed28c8baa691925cc1ed9bb4dcbeb8f5525a491b60d919525d2ed6967af0f"
+    },
+    {
+      "file": "icm.dependency-manifests.manifest.create-ordering.json",
+      "sha256": "19b8720e4865e4247216b3c5eafdc3e7bf1978273a0dcd0e0607c511a774793b"
+    },
+    {
+      "file": "icm.dependency-manifests.prepared-mutation-stale.json",
+      "sha256": "4067ae463ad4cafb5111ec76355373475ab08caf5089981d22c99ca5cbddff3b"
+    },
+    {
+      "file": "icm.dependency-manifests.provenance.digest.json",
+      "sha256": "b8f06b137a6fb595c8aa1a9b426f139ca8b357ac187f9bf1f461e09e6fcc0b75"
+    },
+    {
+      "file": "icm.dependency-manifests.staleness.mixed.json",
+      "sha256": "22a49fb5696f6bc434cc64f84af66371120d69fe17dd0eaf83cf86fd0e4f7dc6"
+    },
+    {
+      "file": "icm.dependency-manifests.why.not-found.json",
+      "sha256": "55ce5cd8b4e6b31aaf0c8220d6088f3cfd466541a3a771fbfc95c8996feea785"
+    },
+    {
+      "file": "icm.dependency-manifests.why.validation-required.json",
+      "sha256": "e3af711b4b9e4a334c0a16c76274c12f197c14eea6387bedaaea6513dc02acad"
+    },
+    {
+      "file": "icm.phase-contract.create.basic.json",
+      "sha256": "c24757e86042b7ff6b41e7a6865e0049e6c247768956147071617f5c8107180f"
+    },
+    {
+      "file": "icm.phase-contract.mutation-vocabulary.json",
+      "sha256": "73603e6b4eea298a7d5e07117743e4b9a72120f088285d0dc515c01719a88896"
+    },
+    {
+      "file": "icm.phase-contract.narrowing-violation.json",
+      "sha256": "6dfe39d387304ec7197888cf96f6829fd09964f6a818c11b1e26483a9605e9a3"
+    },
+    {
+      "file": "icm.phase-contract.registry-digests.json",
+      "sha256": "5df8ca1e07f4c0c2ab12a34d699d2dacb2ffcd9648eca13e5f6789c63e7a51ad"
+    },
+    {
+      "file": "icm.phase-contract.unknown-context-class.json",
+      "sha256": "d4ca2f35197a05cc599b80684fe2cdb790c76f2ce2ebfc499d123425ad4e97b3"
     },
     {
       "file": "language-definition.bounded.json",
@@ -731,5 +783,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "2b702e716c8ee3eb5fd006dbb3c3ef0ba8054fb960b880453777602e5648696c"
+  "corpusSha256": "ae609b1719ff813089e6935b48bcfbd5ebdb45aef4120baa2093257c27468ba9"
 }
