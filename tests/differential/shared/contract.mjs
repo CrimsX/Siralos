@@ -44,6 +44,8 @@ export const ALLOWED_SUBJECTS = new Set([
   "content-identity-manifests",
   "content-identity-delta",
   "determinism-replay",
+  "icm.phase-contract",
+  "icm.dependency-manifests",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -759,6 +761,21 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const R10B_SUBJECTS = new Set(["icm.phase-contract", "icm.dependency-manifests"]);
+  if (R10B_SUBJECTS.has(scenario.subject)) {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > 64 * 1024) {
+      throw new Error(`${label}.input exceeds ${64 * 1024} UTF-8 bytes`);
+    }
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -813,6 +830,8 @@ export function validateScenario(scenario, file) {
     "content-identity-manifests",
     "content-identity-delta",
     "determinism-replay",
+    "icm.phase-contract",
+    "icm.dependency-manifests",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

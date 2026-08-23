@@ -70,6 +70,8 @@ const SUBJECT_CI_CONTRACT_DIGEST: &str = "content-identity-contract-digest";
 const SUBJECT_CI_MANIFESTS: &str = "content-identity-manifests";
 const SUBJECT_CI_DELTA: &str = "content-identity-delta";
 const SUBJECT_DET_REPLAY: &str = "determinism-replay";
+const SUBJECT_ICM_PHASE_CONTRACT: &str = "icm.phase-contract";
+const SUBJECT_ICM_DEP_MANIFESTS: &str = "icm.dependency-manifests";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
 const CORPUS_VERSION: u64 = 18;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
@@ -419,6 +421,8 @@ fn validate_scenario(
             | SUBJECT_CI_MANIFESTS
             | SUBJECT_CI_DELTA
             | SUBJECT_DET_REPLAY
+            | SUBJECT_ICM_PHASE_CONTRACT
+            | SUBJECT_ICM_DEP_MANIFESTS
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -605,7 +609,9 @@ fn validate_scenario(
         | SUBJECT_CI_CONTRACT_DIGEST
         | SUBJECT_CI_MANIFESTS
         | SUBJECT_CI_DELTA
-        | SUBJECT_DET_REPLAY => {
+        | SUBJECT_DET_REPLAY
+        | SUBJECT_ICM_PHASE_CONTRACT
+        | SUBJECT_ICM_DEP_MANIFESTS => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1240,6 +1246,21 @@ fn run_scenario(
                 .as_ref()
                 .expect("godot input was validated while loading the corpus");
             let result = godot_record(&scenario.subject, input)?;
+            Ok(
+                json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
+            )
+        }
+        SUBJECT_ICM_PHASE_CONTRACT | SUBJECT_ICM_DEP_MANIFESTS => {
+            let input = scenario
+                .input
+                .as_ref()
+                .expect("icm input was validated while loading the corpus");
+            let result = match scenario.subject.as_str() {
+                SUBJECT_ICM_PHASE_CONTRACT => {
+                    icm_phase_contract_record(input)?
+                }
+                _ => icm_dependency_manifests_record(input)?,
+            };
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
             )
@@ -2086,6 +2107,56 @@ fn validate_godot_input(
                 return reject("taskId must be a string".to_owned());
             }
             Ok(())
+        }
+        SUBJECT_ICM_PHASE_CONTRACT => {
+            const PHASE_KEYS: [&str; 2] = ["op", "contract"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !PHASE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("create" | "registry") => Ok(()),
+                _ => reject("unknown icm.phase-contract op".to_owned()),
+            }
+        }
+        SUBJECT_ICM_DEP_MANIFESTS => {
+            const DEP_KEYS: [&str; 17] = [
+                "op",
+                "mode",
+                "artifactType",
+                "artifactId",
+                "dependsOn",
+                "currentDigests",
+                "manifests",
+                "currentInputDigests",
+                "preparedSourceRevisions",
+                "currentSourceRevisions",
+                "refs",
+                "newRef",
+                "itemId",
+                "planItems",
+                "changedSurfaces",
+                "impactRelations",
+                "acceptanceCriteria",
+            ];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !DEP_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some(
+                    "staleness"
+                    | "prepared-mutation-stale"
+                    | "manifest"
+                    | "provenance"
+                    | "why-validation-required",
+                ) => Ok(()),
+                _ => reject("unknown icm.dependency-manifests op".to_owned()),
+            }
         }
         _ => unreachable!("godot subject was validated above"),
     }
@@ -4051,6 +4122,540 @@ fn determinism_replay_record(input: &Value) -> Result<Value, HarnessError> {
     )
     .map_err(HarnessError::corpus)?;
     Ok(json!({ "digest": manifest.digest }))
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3R R10b subjects: ICM phase contracts + dependency manifests.
+// ---------------------------------------------------------------------------
+
+fn icm_phase_contract_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::context::{
+        CreatePhaseContractInput, PhaseAuthorityProfileInput,
+        PhaseInputRequirement, PhaseOperation, PhaseOutputRequirement,
+        PhaseVerificationRequirement, create_phase_contract, phase_contracts,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("create");
+    if op == "registry" {
+        let registry: Vec<Value> = phase_contracts()
+            .iter()
+            .map(|(id, contract)| {
+                json!({ "id": id, "digest": contract.digest.value })
+            })
+            .collect();
+        return Ok(json!({ "ok": true, "registry": registry }));
+    }
+    let declared = input.get("contract").cloned().unwrap_or(Value::Null);
+    let string_list = |value: Option<&Value>| -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let authority = declared.get("authority").cloned().unwrap_or(Value::Null);
+    let declaration = CreatePhaseContractInput {
+        id: declared
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        version: declared.get("version").and_then(Value::as_u64).unwrap_or(0),
+        phase: declared
+            .get("phase")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        inputs: declared
+            .get("inputs")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| PhaseInputRequirement {
+                        artifact_type: entry
+                            .get("artifactType")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        optional: entry
+                            .get("optional")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        reason: entry
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        authority: PhaseAuthorityProfileInput {
+            read_only: authority
+                .get("readOnly")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            mutation: authority
+                .get("mutation")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            approval_grant: authority
+                .get("approvalGrant")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            acceptance_authority: authority
+                .get("acceptanceAuthority")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            capability_narrowing: string_list(
+                authority.get("capabilityNarrowing"),
+            ),
+        },
+        process: declared
+            .get("process")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| PhaseOperation {
+                        id: entry
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        description: entry
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        outputs: declared
+            .get("outputs")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| PhaseOutputRequirement {
+                        artifact_type: entry
+                            .get("artifactType")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        verification_kind: entry
+                            .get("verificationKind")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        verification: declared
+            .get("verification")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| PhaseVerificationRequirement {
+                        id: entry
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        description: entry
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        evidence_class: entry
+                            .get("evidenceClass")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        context_classes: string_list(declared.get("contextClasses")),
+    };
+    match create_phase_contract(&declaration) {
+        Ok(contract) => Ok(json!({
+            "ok": true,
+            "id": contract.id,
+            "version": contract.version,
+            "digest": contract.digest.value,
+        })),
+        Err(error) => Ok(json!({ "ok": false, "error": error.message })),
+    }
+}
+
+fn icm_parse_dependency(
+    value: &Value,
+) -> siralos_core::context::ArtifactDependency {
+    use siralos_core::context::ArtifactDependency;
+    ArtifactDependency {
+        artifact_type: value
+            .get("artifactType")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        digest: value
+            .get("digest")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    }
+}
+
+fn icm_manifest_value(
+    manifest: &siralos_core::context::ArtifactDependencyManifest,
+) -> Value {
+    json!({
+        "artifactType": manifest.artifact_type,
+        "artifactId": manifest.artifact_id,
+        "dependsOn": manifest.depends_on.iter().map(|entry| json!({
+            "artifactType": entry.artifact_type,
+            "digest": entry.digest,
+        })).collect::<Vec<_>>(),
+        "digest": manifest.digest,
+    })
+}
+
+fn icm_dependency_manifests_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::context::{
+        ArtifactStalenessInput, build_dependency_manifest,
+        compute_provenance_digest, compute_staleness_digest,
+        create_artifact_dependency_manifest, create_context_provenance_ref,
+        derive_artifact_staleness, is_prepared_mutation_stale,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or_default();
+    match op {
+        "staleness" => {
+            let manifests: Vec<_> = input
+                .get("manifests")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .map(|manifest| {
+                            let dependencies: Vec<_> = manifest
+                                .get("dependsOn")
+                                .and_then(Value::as_array)
+                                .map(|dependencies| {
+                                    dependencies
+                                        .iter()
+                                        .map(icm_parse_dependency)
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            create_artifact_dependency_manifest(
+                                manifest
+                                    .get("artifactType")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default(),
+                                manifest
+                                    .get("artifactId")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default(),
+                                &dependencies,
+                            )
+                            .map_err(|error| {
+                                HarnessError::corpus(error.message)
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+            let mut current = std::collections::BTreeMap::new();
+            if let Some(map) =
+                input.get("currentInputDigests").and_then(Value::as_object)
+            {
+                for (key, value) in map {
+                    current.insert(
+                        key.clone(),
+                        value.as_str().unwrap_or_default().to_owned(),
+                    );
+                }
+            }
+            let result = derive_artifact_staleness(&ArtifactStalenessInput {
+                manifests: &manifests,
+                current_input_digests: &current,
+            });
+            let digest = compute_staleness_digest(&result)
+                .map_err(|error| HarnessError::corpus(error.message))?;
+            Ok(json!({
+                "stale": result.stale,
+                "current": result.current,
+                "unrelatedChanges": result.unrelated_changes,
+                "digest": digest,
+            }))
+        }
+        "prepared-mutation-stale" => {
+            let prepared: Vec<siralos_core::determinism::SourceRevision> =
+                input
+                    .get("preparedSourceRevisions")
+                    .and_then(Value::as_array)
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .map(|entry| {
+                                siralos_core::determinism::SourceRevision {
+                                    path: entry
+                                        .get("path")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    revision: entry
+                                        .get("revision")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            let mut current = std::collections::BTreeMap::new();
+            if let Some(map) =
+                input.get("currentSourceRevisions").and_then(Value::as_object)
+            {
+                for (key, value) in map {
+                    current.insert(
+                        key.clone(),
+                        value.as_str().unwrap_or_default().to_owned(),
+                    );
+                }
+            }
+            let result = is_prepared_mutation_stale(&prepared, &current);
+            Ok(json!({
+                "stale": result.stale,
+                "stalePaths": result.stale_paths,
+            }))
+        }
+        "manifest" => {
+            if input.get("mode").and_then(Value::as_str) == Some("build") {
+                let mut digests = std::collections::BTreeMap::new();
+                if let Some(map) =
+                    input.get("currentDigests").and_then(Value::as_object)
+                {
+                    for (key, value) in map {
+                        digests.insert(
+                            key.clone(),
+                            value.as_str().map(str::to_owned),
+                        );
+                    }
+                }
+                let built = build_dependency_manifest(
+                    input
+                        .get("artifactType")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    input
+                        .get("artifactId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    &digests,
+                )
+                .map_err(|error| HarnessError::corpus(error.message))?;
+                return Ok(json!({
+                    "ok": true,
+                    "manifest": built
+                        .as_ref()
+                        .map(icm_manifest_value),
+                }));
+            }
+            let dependencies: Vec<siralos_core::context::ArtifactDependency> =
+                input
+                    .get("dependsOn")
+                    .and_then(Value::as_array)
+                    .map(|entries| {
+                        entries.iter().map(icm_parse_dependency).collect()
+                    })
+                    .unwrap_or_default();
+            match create_artifact_dependency_manifest(
+                input
+                    .get("artifactType")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                input
+                    .get("artifactId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                &dependencies,
+            ) {
+                Ok(manifest) => Ok(
+                    json!({ "ok": true, "manifest": icm_manifest_value(&manifest) }),
+                ),
+                Err(error) => {
+                    Ok(json!({ "ok": false, "error": error.message }))
+                }
+            }
+        }
+        "provenance" => {
+            let new_ref = input.get("newRef").cloned().unwrap_or(Value::Null);
+            let created = match create_context_provenance_ref(
+                new_ref
+                    .get("item")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                new_ref
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                new_ref.get("id").and_then(Value::as_str).unwrap_or_default(),
+                new_ref.get("digest").and_then(Value::as_str),
+            ) {
+                Ok(created) => created,
+                Err(error) => {
+                    return Ok(json!({ "ok": false, "error": error.message }));
+                }
+            };
+            let mut refs: Vec<siralos_core::context::ContextProvenanceRef> =
+                input
+                    .get("refs")
+                    .and_then(Value::as_array)
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .filter_map(|reference| {
+                                let source = reference.get("source")?;
+                                create_context_provenance_ref(
+                                    reference
+                                        .get("item")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default(),
+                                    source
+                                        .get("kind")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default(),
+                                    source
+                                        .get("id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default(),
+                                    source
+                                        .get("digest")
+                                        .and_then(Value::as_str),
+                                )
+                                .ok()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            refs.push(created.clone());
+            let digest = compute_provenance_digest(&refs)
+                .map_err(|error| HarnessError::corpus(error.message))?;
+            Ok(json!({
+                "created": {
+                    "item": created.item,
+                    "source": {
+                        "kind": created.source.kind,
+                        "id": created.source.id,
+                        "digest": created.source.digest,
+                    },
+                },
+                "digest": digest,
+            }))
+        }
+        "why-validation-required" => {
+            use siralos_core::context::render_why_validation_required;
+            use siralos_core::determinism::ImpactRelationship;
+            use siralos_core::determinism::decisions::ValidationRequirementClass;
+            let plan_items: Vec<siralos_core::determinism::ValidationItem> =
+                input
+                    .get("planItems")
+                    .and_then(Value::as_array)
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .map(|entry| {
+                                siralos_core::determinism::ValidationItem {
+                                    id: entry
+                                        .get("id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    class:
+                                        ValidationRequirementClass::Required,
+                                    rationale: entry
+                                        .get("rationale")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            let string_list = |name: &str| -> Vec<String> {
+                input
+                    .get(name)
+                    .and_then(Value::as_array)
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let relations: Vec<ImpactRelationship> = input
+                .get("impactRelations")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .map(|relation| ImpactRelationship {
+                            source: relation
+                                .get("source")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            target: relation
+                                .get("target")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let item_id = input
+                .get("itemId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let diagnostic = siralos_core::context::why_validation_required(
+                item_id,
+                &plan_items,
+                &string_list("changedSurfaces"),
+                &relations,
+                &string_list("acceptanceCriteria"),
+            );
+            Ok(json!({
+                "found": diagnostic.is_some(),
+                "itemId": item_id,
+                "rendered": diagnostic
+                    .as_ref()
+                    .map(render_why_validation_required)
+                    .unwrap_or_default(),
+            }))
+        }
+        _ => Err(HarnessError::corpus(format!(
+            "unknown icm.dependency-manifests op {op}"
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------
