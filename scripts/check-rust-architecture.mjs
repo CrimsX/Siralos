@@ -287,10 +287,15 @@ export function runChecks(root) {
       // R10 — determinism/ownership.rs references Godot paths as
       // architecture navigation metadata (decision 14); it contains no
       // domain semantics.
+      // R10c — runtime/readiness.rs mirrors the oracle's readiness item
+      // vocabulary verbatim ("Godot executable present", ids like
+      // `godot_executable`): these are external capability-input names,
+      // not domain semantics (decision 16).
       const coreOutsideGodot =
         crate === "crates/siralos-core" &&
         !source.includes(join("src", "godot")) &&
-        !source.includes(join("src", "determinism"));
+        !source.includes(join("src", "determinism")) &&
+        !source.includes(join("src", "runtime"));
       if (
         coreOutsideGodot &&
         FORBIDDEN_CORE_SYMBOL_PATTERN.test(content.replace(/^\s*pub mod godot;\s*$/gm, ""))
