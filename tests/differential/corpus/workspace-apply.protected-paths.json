@@ -1,0 +1,32 @@
+{
+  "id": "workspace-apply.protected-paths",
+  "subject": "workspace-apply",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-apply",
+    "files": [
+      {
+        "path": "src/main.rs",
+        "content": "fn main() {}\n"
+      }
+    ],
+    "applies": [],
+    "paths": [
+      "AGENTS.md",
+      "docs/deep/AGENTS.md",
+      ".siralos/config.json",
+      ".siralos/nested/rules.json",
+      "agents.md",
+      "SRC/AGENTS.MD",
+      ".SIRALOS/settings.json",
+      "src/main.rs",
+      "AGENTS.md.bak",
+      ".siralos.json",
+      "siralos/notes.txt",
+      "./nested/AGENTS.md"
+    ],
+    "verifyPath": "src/main.rs"
+  }
+}

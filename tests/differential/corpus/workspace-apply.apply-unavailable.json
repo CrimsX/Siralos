@@ -1,0 +1,23 @@
+{
+  "id": "workspace-apply.apply-unavailable",
+  "subject": "workspace-apply",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-apply",
+    "files": [
+      {
+        "path": "src/main.rs",
+        "content": "fn main() {}\n"
+      }
+    ],
+    "applies": [
+      { "tool": "workspace.create_file" },
+      { "tool": "workspace.edit_file" },
+      { "tool": "workspace.delete_file" }
+    ],
+    "paths": [],
+    "verifyPath": "src/main.rs"
+  }
+}

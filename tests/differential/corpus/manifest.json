@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 20,
+  "corpusVersion": 21,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -779,6 +779,18 @@
       "sha256": "0b4fc21ea2faa518e0b2cf5b73e8e5ca326f1187d69b75ecfa64e17526485158"
     },
     {
+      "file": "workspace-apply.apply-unavailable.json",
+      "sha256": "c05e58ff92ca51e6846144eb16d0d218827bba35c75d48b74190dc610d4e3717"
+    },
+    {
+      "file": "workspace-apply.binding-irrelevant.json",
+      "sha256": "34d81e6d1aa1a5845e9ff923d273d9fa0f840810e5d896f92050395254ccb553"
+    },
+    {
+      "file": "workspace-apply.protected-paths.json",
+      "sha256": "31408cb9f5d5ccf65f49c9c3d7dcb121205f7d0916af9efaf278b1a18ee547c7"
+    },
+    {
       "file": "workspace-list.root.json",
       "sha256": "8abce3171f65e742aca1648f1f291e2cbf915400529fcf9faf157962a006a809"
     },
@@ -843,5 +855,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "01760f30eacf67ff5c9ea577d55bccf650dbcfce81a4c1077d9e9f050c089712"
+  "corpusSha256": "bd53cc6bbcfd14e9d4b2e105d43db3b86e3b7ab218e65d0339c26c66002bc544"
 }

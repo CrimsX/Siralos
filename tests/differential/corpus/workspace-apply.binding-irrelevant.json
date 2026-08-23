@@ -1,0 +1,26 @@
+{
+  "id": "workspace-apply.binding-irrelevant",
+  "subject": "workspace-apply",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "fingerprint": "fixture-workspace-apply",
+    "files": [
+      {
+        "path": "src/main.rs",
+        "content": "fn main() {}\n"
+      }
+    ],
+    "applies": [
+      {
+        "tool": "workspace.edit_file",
+        "path": "src/main.rs",
+        "expectedSha256": "b6318dab846a05df1881a8bd69c0e57f009c2678a0f3ea83fc432fe228364eaf"
+      },
+      { "tool": "workspace.edit_file" }
+    ],
+    "paths": [],
+    "verifyPath": "src/main.rs"
+  }
+}

@@ -551,6 +551,41 @@ function validatePrepareResult(record, label) {
   }
 }
 
+function validateApplyResult(record, label) {
+  assertExactKeys(
+    record.result,
+    ["applies", "classified", "workspaceSha256", "checkpointCount"],
+    `${label}.result`,
+  );
+  if (!Array.isArray(record.result.applies) || record.result.applies.length > 16) {
+    throw new Error(`${label}.result.applies must be a bounded array`);
+  }
+  for (const entry of record.result.applies) {
+    assertExactKeys(entry, ["tool", "status", "code"], `${label}.result.applies`);
+    if (typeof entry.tool !== "string") {
+      throw new Error(`${label}.result.applies entries must carry a tool`);
+    }
+    if (entry.status !== "unavailable") {
+      throw new Error(`${label}.result.applies status is invalid`);
+    }
+    if (entry.code !== "mutation_unavailable") {
+      throw new Error(`${label}.result.applies code is invalid`);
+    }
+  }
+  if (
+    !Array.isArray(record.result.classified) ||
+    record.result.classified.some((entry) => typeof entry !== "string")
+  ) {
+    throw new Error(`${label}.result.classified is invalid`);
+  }
+  if (!LOWER_SHA256.test(record.result.workspaceSha256)) {
+    throw new Error(`${label}.result.workspaceSha256 is invalid`);
+  }
+  if (!Number.isSafeInteger(record.result.checkpointCount) || record.result.checkpointCount < 0) {
+    throw new Error(`${label}.result.checkpointCount is invalid`);
+  }
+}
+
 function validateCheckpointRecord(checkpoint, label) {
   if (!isObject(checkpoint) || typeof checkpoint.id !== "string") {
     throw new Error(`${label} checkpoints must carry an id`);
@@ -2146,6 +2181,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "workspace-prepare") {
     validatePrepareResult(record, label);
+    return;
+  }
+  if (record.subject === "workspace-apply") {
+    validateApplyResult(record, label);
     return;
   }
   if (record.subject === "checkpoint") {
