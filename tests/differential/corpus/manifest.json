@@ -35,16 +35,16 @@
       "sha256": "21ea5c0078371f16a83e84afb6061279492cd3afe4ea98faa50b7c8bb2742e35"
     },
     {
-      "file": "content-identity-contract-digest.basic.json",
-      "sha256": "3eae02a50a3cb0706b328a281a0e493006567963a6b08bb52ccd0d98f993d3ee"
-    },
-    {
-      "file": "content-identity-contract-digest.guidance.json",
-      "sha256": "f9a64f81b6f1d3e127a690a47745b622de1749c490241a9e254d34f8a816e356"
+      "file": "content-identity-contract-digest.contract.json",
+      "sha256": "1f0ae48071e79829c4f3e92991ce713d38b8247b55bce35e555de5e2baf52856"
     },
     {
       "file": "content-identity-contract-digest.plan.json",
-      "sha256": "25527bb57514c4c5518b22162545b596ed0814ef150a35c19c7a4f50b4f93727"
+      "sha256": "c9a5b9c43a72b1ed92451fc6968d087e14f007698fc7d346e7dd8cbe025a04fc"
+    },
+    {
+      "file": "content-identity-contract-digest.plan.optional-absent.json",
+      "sha256": "864f97afb70c747ef22abad219e7cfd658833901afbe77272f726b1f1932ff90"
     },
     {
       "file": "content-identity-delta.all-unchanged.json",
@@ -121,6 +121,10 @@
     {
       "file": "determinism-replay.no-provider.json",
       "sha256": "901a3a9a4803549c2b1feec10f6ab26f65742f642516a28d25fd886ffe7d8d02"
+    },
+    {
+      "file": "determinism-replay.task-plan-digest.json",
+      "sha256": "2b158417d71406e5f0b4496f9c0c9e2bd1090e098228ef6ff462f36431373574"
     },
     {
       "file": "determinism-replay.with-provider.json",
@@ -887,5 +891,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "8b495e001c60965e45527b983e7da56e2c11c0ef2e64592c72b71486d559f2e5"
+  "corpusSha256": "f1a6c1f68eddd99e206473effa2bc8e9eb0275f3901f197350d69ffe121575b3"
 }

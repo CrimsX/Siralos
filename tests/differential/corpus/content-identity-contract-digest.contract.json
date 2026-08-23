@@ -1,0 +1,23 @@
+{
+  "id": "content-identity-contract-digest.contract",
+  "subject": "content-identity-contract-digest",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "contract",
+    "contract": {
+      "id": "contract-1",
+      "request": "Implement the feature end to end",
+      "context": "Stage 3R migration workspace",
+      "constraints": [
+        { "id": "c1", "description": "no new dependencies", "kind": "architecture" },
+        { "id": "c2", "description": "fail closed on ambiguity", "kind": "security" }
+      ],
+      "acceptanceCriteria": [
+        { "id": "AC-1", "description": "tests pass", "verificationKind": "deterministic" }
+      ],
+      "pausePolicy": "on_approval"
+    }
+  }
+}

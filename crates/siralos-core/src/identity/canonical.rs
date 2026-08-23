@@ -98,8 +98,12 @@ pub fn canonicalize(value: &CanonicalValue) -> String {
 
 /// Serialize a `serde_json::Value` to canonical JSON bytes directly,
 /// without going through [`CanonicalValue`]. This handles all JSON
-/// number types (including negative integers and floats) as unquoted
-/// numbers, matching TypeScript's `JSON.stringify` output.
+/// number types exactly like the TypeScript oracle's
+/// `JSON.parse -> Number -> JSON.stringify` round trip: every number
+/// passes through an IEEE-754 double and is formatted by the
+/// ECMAScript `Number::toString` algorithm (shortest round-trip
+/// digits, exponential form outside [1e-6, 1e21), integral doubles
+/// without a fractional suffix).
 pub fn canonical_json_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "null".to_owned(),
@@ -110,21 +114,9 @@ pub fn canonical_json_value(value: &serde_json::Value) -> String {
                 "false".to_owned()
             }
         }
-        serde_json::Value::Number(n) => {
-            // Match TypeScript JSON.stringify number formatting:
-            // whole-number floats drop the trailing ".0" (JS has one
-            // numeric type; 1.0 === 1). serde_json preserves the
-            // distinction, so we must normalize here.
-            if let Some(f) = n.as_f64() {
-                if f.fract() == 0.0 && f.abs() < 1e21 {
-                    format!("{}", f as i64)
-                } else {
-                    n.to_string()
-                }
-            } else {
-                n.to_string()
-            }
-        }
+        serde_json::Value::Number(n) => js_number_to_string(
+            n.as_f64().unwrap_or(f64::NAN),
+        ),
         serde_json::Value::String(s) => json_escape(s),
         serde_json::Value::Array(items) => {
             let parts: Vec<String> =
@@ -149,9 +141,85 @@ pub fn canonical_json_value(value: &serde_json::Value) -> String {
     }
 }
 
+/// ECMAScript `Number::toString(value)` (ECMA-262 §6.1.6.1.20) for a
+/// finite double: shortest decimal digits that round-trip, rendered per
+/// the spec's three ranges (`k <= n <= 21`, `0 < n <= 21`,
+/// `-6 < n <= 0`, else exponential with explicit sign). NaN/-0/±0 are
+/// handled per spec ("NaN" cannot appear in JSON input, "-0" prints as
+/// "0").
+fn js_number_to_string(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    let negative = value < 0.0;
+    let magnitude = if negative { -value } else { value };
+
+    // Rust's LowerExp yields the shortest round-trip digits as
+    // `d[.ddd]e<exp>` with no trailing zeros and no "+" sign.
+    let scientific = format!("{magnitude:e}");
+    let (mantissa, exponent_text) =
+        scientific.split_once('e').unwrap_or((scientific.as_str(), "0"));
+    let exponent: i32 = exponent_text.parse().unwrap_or(0);
+    let mut digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    while digits.ends_with('0') {
+        digits.pop();
+    }
+    if digits.is_empty() {
+        digits.push('0');
+    }
+
+    let digit_count = digits.len() as i32;
+    // Position of the decimal point relative to the first digit.
+    let point = exponent + 1;
+
+    let mut out = String::new();
+    if digit_count <= point && point <= 21 {
+        out.push_str(&digits);
+        for _ in 0..(point - digit_count) {
+            out.push('0');
+        }
+    } else if point > 0 && point <= 21 {
+        out.push_str(&digits[..point as usize]);
+        out.push('.');
+        out.push_str(&digits[point as usize..]);
+    } else if point > -6 && point <= 0 {
+        out.push_str("0.");
+        for _ in 0..(-point) {
+            out.push('0');
+        }
+        out.push_str(&digits);
+    } else {
+        out.push_str(&digits[..1]);
+        if digit_count > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push('e');
+        let order = point - 1;
+        if order >= 0 {
+            out.push('+');
+        } else {
+            out.push('-');
+        }
+        out.push_str(&(order.abs()).to_string());
+    }
+
+    if negative {
+        format!("-{out}")
+    } else {
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CanonicalValue, canonicalize, json_escape};
+    use super::{
+        CanonicalValue, canonical_json_value, canonicalize, js_number_to_string,
+        json_escape,
+    };
     use std::collections::BTreeMap;
 
     fn object(entries: &[(&str, CanonicalValue)]) -> CanonicalValue {
@@ -213,5 +281,45 @@ mod tests {
         assert_eq!(json_escape("a\nb"), "\"a\\nb\"");
         assert_eq!(json_escape("\u{001f}"), "\"\\u001f\"");
         assert_eq!(json_escape("\u{007f}"), "\"\u{007f}\"");
+    }
+
+    #[test]
+    fn numbers_format_exactly_like_ecmascript_string_to_number_to_string() {
+        // Every expectation below was generated by Node
+        // `String(number)` (ECMA-262 Number::toString), including the
+        // two regression cases from the R11 review: sub-normal-range
+        // exponentials and u64 overflow that previously saturated via
+        // `as i64`.
+        let cases: &[(f64, &str)] = &[
+            (0.000_001, "0.000001"),
+            (0.000_000_1, "1e-7"),
+            (1e21, "1e+21"),
+            (18_446_744_073_709_551_615.0, "18446744073709552000"),
+            (-0.0, "0"),
+            (0.1, "0.1"),
+            (123.456, "123.456"),
+            (100.0, "100"),
+            (1.5, "1.5"),
+            (5e-324, "5e-324"),
+            (1.797_693_134_862_315_7e308, "1.7976931348623157e+308"),
+            (2.5, "2.5"),
+            (-12.75, "-12.75"),
+            (9_007_199_254_740_993.0, "9007199254740992"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(&js_number_to_string(*value), expected, "input {value}");
+        }
+    }
+
+    #[test]
+    fn canonical_json_numbers_match_the_oracle_round_trip() {
+        let value = serde_json::from_str::<serde_json::Value>(
+            "{\"tiny\":0.000001,\"huge\":18446744073709551615}",
+        )
+        .expect("valid json");
+        assert_eq!(
+            canonical_json_value(&value),
+            "{\"huge\":18446744073709552000,\"tiny\":0.000001}"
+        );
     }
 }

@@ -5,17 +5,18 @@
   "parity": "required",
   "env": {},
   "input": {
-    "artifactType": "TaskPlan",
-    "schemaVersion": 1,
-    "content": {
-      "objective": "ship",
-      "scope": "all",
-      "nonGoals": [],
-      "touchpoints": [],
-      "constraints": [],
-      "risks": [],
-      "steps": [],
-      "validation": "manual"
+    "op": "plan",
+    "plan": {
+      "objective": "Port the context family",
+      "scope": ["crates/siralos-core"],
+      "nonGoals": ["adapters"],
+      "touchpoints": ["src/context.rs"],
+      "constraints": ["parity first"],
+      "risks": ["drift"],
+      "steps": ["port", "verify"],
+      "validation": ["differential"],
+      "rollback": "revert commit",
+      "rationale": "evidence-driven"
     }
   }
 }

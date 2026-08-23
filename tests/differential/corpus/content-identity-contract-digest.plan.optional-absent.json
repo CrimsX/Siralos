@@ -1,0 +1,20 @@
+{
+  "id": "content-identity-contract-digest.plan.optional-absent",
+  "subject": "content-identity-contract-digest",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "plan",
+    "plan": {
+      "objective": "Minimal plan without optional sections",
+      "scope": [],
+      "nonGoals": [],
+      "touchpoints": [],
+      "constraints": [],
+      "risks": [],
+      "steps": [],
+      "validation": []
+    }
+  }
+}

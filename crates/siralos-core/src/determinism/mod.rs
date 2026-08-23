@@ -56,5 +56,6 @@ pub use ports::{
 pub use reproducibility::{
     ClockPolicy, ProviderInputIdentity, ReproducibilityManifest,
     ReproducibilityManifestInput, RngPolicy, SourceRevision,
-    compute_provider_input_identity_digest, create_reproducibility_manifest,
+    compute_provider_input_identity_digest, compute_reproducibility_delta,
+    create_reproducibility_manifest,
 };

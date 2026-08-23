@@ -1,10 +1,12 @@
 //! Determinism helpers shared across submodules.
 //!
-//! Uses `serde_json::Value` + the godot digest re-exports for canonical
-//! JSON serialization so that f64 numbers serialize as unquoted JSON
-//! numbers (matching TypeScript's `JSON.stringify`), not quoted strings.
+//! Uses `serde_json::Value` + the identity canonicalization primitives
+//! for canonical JSON serialization so that f64 numbers serialize as
+//! unquoted JSON numbers (matching TypeScript's `JSON.stringify`), not
+//! quoted strings.
 
-use crate::godot::digest::{canonicalize_json, sha256_hex_str};
+use crate::identity::canonical_json_value;
+use crate::identity::sha256_hex;
 use serde_json::Value;
 
 /// Digest any JSON payload through the domain-separated artifact
@@ -22,7 +24,7 @@ pub fn digest_artifact_payload(
     }
     let framed = format!(
         "siralos:{artifact_type}:v{schema_version}\u{0}{}",
-        canonicalize_json(payload)
+        canonical_json_value(payload)
     );
-    Ok(sha256_hex_str(&framed))
+    Ok(sha256_hex(framed.as_bytes()))
 }

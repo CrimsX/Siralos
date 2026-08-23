@@ -2101,8 +2101,16 @@ fn validate_godot_input(
             Ok(())
         }
         SUBJECT_CI_ARTIFACT_DIGEST | SUBJECT_CI_CONTRACT_DIGEST => {
-            const CI_KEYS: [&str; 4] =
-                ["artifactType", "schemaVersion", "content", "payload"];
+            const CI_KEYS: [&str; 7] = [
+                "op",
+                "artifactType",
+                "schemaVersion",
+                "content",
+                "payload",
+                "contract",
+                "plan",
+            ];
+            let mut kind_ok = true;
             for key in input.as_object().into_iter().flat_map(|map| map.keys())
             {
                 if !CI_KEYS.contains(&key.as_str()) {
@@ -2119,6 +2127,20 @@ fn validate_godot_input(
                             .to_owned(),
                     );
                 }
+            }
+            if input.get("op").and_then(Value::as_str)
+                == Some("contract")
+            {
+                // The typed seam pins type/schema itself; a fixture may
+                // not smuggle caller-supplied identity strings.
+                kind_ok = input.get("artifactType").is_none()
+                    && input.get("schemaVersion").is_none();
+            }
+            if !kind_ok {
+                return reject(
+                    "typed contract op must not override artifact identity"
+                        .to_owned(),
+                );
             }
             Ok(())
         }
@@ -4063,23 +4085,207 @@ fn content_identity_artifact_digest_record(
 fn content_identity_contract_digest_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
-    let artifact_type =
-        input.get("artifactType").and_then(Value::as_str).unwrap_or_default();
-    let schema_version =
-        input.get("schemaVersion").and_then(Value::as_u64).unwrap_or(1);
-    let content = input.get("content").cloned().unwrap_or(Value::Null);
-    let canonical = format!(
-        "siralos:{artifact_type}:v{schema_version}\0{}",
-        siralos_core::godot::digest::canonicalize_json(&content)
-    );
-    Ok(json!({ "digest": sha256_hex(canonical.as_bytes()) }))
+    use siralos_core::identity::CanonicalValue;
+    use siralos_core::task::identity::{
+        compute_contract_content_digest, compute_plan_content_digest_hex,
+    };
+    fn string_list(value: Option<&Value>) -> Vec<CanonicalValue> {
+        value
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| {
+                        CanonicalValue::Str(entry.as_str().unwrap_or_default().to_owned())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    let op = input.get("op").and_then(Value::as_str).unwrap_or_default();
+    let payload = match op {
+        "contract" => {
+            let contract = input.get("contract").cloned().unwrap_or(Value::Null);
+            let mut object = std::collections::BTreeMap::new();
+            object.insert(
+                "acceptanceCriteria".to_owned(),
+                CanonicalValue::Array(
+                    contract
+                        .get("acceptanceCriteria")
+                        .and_then(Value::as_array)
+                        .map(|entries| {
+                            entries
+                                .iter()
+                                .map(|criterion| {
+                                    CanonicalValue::Object(std::collections::BTreeMap::from([
+                                        (
+                                            "description".to_owned(),
+                                            CanonicalValue::Str(
+                                                criterion
+                                                    .get("description")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default()
+                                                    .to_owned(),
+                                            ),
+                                        ),
+                                        (
+                                            "id".to_owned(),
+                                            CanonicalValue::Str(
+                                                criterion
+                                                    .get("id")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default()
+                                                    .to_owned(),
+                                            ),
+                                        ),
+                                        (
+                                            "verificationKind".to_owned(),
+                                            CanonicalValue::Str(
+                                                criterion
+                                                    .get("verificationKind")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default()
+                                                    .to_owned(),
+                                            ),
+                                        ),
+                                    ]))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                ),
+            );
+            object.insert(
+                "constraints".to_owned(),
+                CanonicalValue::Array(
+                    contract
+                        .get("constraints")
+                        .and_then(Value::as_array)
+                        .map(|entries| {
+                            entries
+                                .iter()
+                                .map(|constraint| {
+                                    CanonicalValue::Object(std::collections::BTreeMap::from([
+                                        (
+                                            "description".to_owned(),
+                                            CanonicalValue::Str(
+                                                constraint
+                                                    .get("description")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default()
+                                                    .to_owned(),
+                                            ),
+                                        ),
+                                        (
+                                            "id".to_owned(),
+                                            CanonicalValue::Str(
+                                                constraint
+                                                    .get("id")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default()
+                                                    .to_owned(),
+                                            ),
+                                        ),
+                                        (
+                                            "kind".to_owned(),
+                                            CanonicalValue::Str(
+                                                constraint
+                                                    .get("kind")
+                                                    .and_then(Value::as_str)
+                                                    .unwrap_or_default()
+                                                    .to_owned(),
+                                            ),
+                                        ),
+                                    ]))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                ),
+            );
+            if let Some(context) =
+                contract.get("context").and_then(Value::as_str)
+            {
+                object.insert(
+                    "context".to_owned(),
+                    CanonicalValue::Str(context.to_owned()),
+                );
+            }
+            object.insert(
+                "id".to_owned(),
+                CanonicalValue::Str(
+                    contract
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+            );
+            object.insert(
+                "pausePolicy".to_owned(),
+                CanonicalValue::Str(
+                    contract
+                        .get("pausePolicy")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+            );
+            object.insert(
+                "request".to_owned(),
+                CanonicalValue::Str(
+                    contract
+                        .get("request")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+            );
+            CanonicalValue::Object(object)
+        }
+        "plan" => {
+            let plan = input.get("plan").cloned().unwrap_or(Value::Null);
+            let section = |name: &str| {
+                CanonicalValue::Array(string_list(plan.get(name)))
+            };
+            let mut object = std::collections::BTreeMap::new();
+            object.insert("objective".to_owned(), CanonicalValue::Str(plan.get("objective").and_then(Value::as_str).unwrap_or_default().to_owned()));
+            object.insert("scope".to_owned(), section("scope"));
+            object.insert("nonGoals".to_owned(), section("nonGoals"));
+            object.insert("touchpoints".to_owned(), section("touchpoints"));
+            object.insert("constraints".to_owned(), section("constraints"));
+            object.insert("risks".to_owned(), section("risks"));
+            object.insert("steps".to_owned(), section("steps"));
+            object.insert("validation".to_owned(), section("validation"));
+            if let Some(rollback) = plan.get("rollback").and_then(Value::as_str) {
+                object.insert("rollback".to_owned(), CanonicalValue::Str(rollback.to_owned()));
+            }
+            if let Some(rationale) = plan.get("rationale").and_then(Value::as_str) {
+                object.insert("rationale".to_owned(), CanonicalValue::Str(rationale.to_owned()));
+            }
+            CanonicalValue::Object(object)
+        }
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "unknown content-identity-contract-digest op {other}"
+            )));
+        }
+    };
+    let digest = match op {
+        "contract" => compute_contract_content_digest(&payload)
+            .map_err(|error| HarnessError::corpus(error.message))?
+            .value,
+        _ => compute_plan_content_digest_hex(&payload)
+            .map_err(|error| HarnessError::corpus(error.message))?,
+    };
+    Ok(json!({ "digest": digest }))
 }
 
 fn content_identity_manifests_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_core::identity::{
-        GuidanceEntryKind, GuidanceManifestEntry, create_guidance_manifest,
+        GuidanceManifestEntry, create_guidance_manifest,
     };
     let entries: Vec<GuidanceManifestEntry> = input
         .get("entries")
@@ -4096,8 +4302,8 @@ fn content_identity_manifests_record(
                     kind: entry
                         .get("kind")
                         .and_then(Value::as_str)
-                        .and_then(GuidanceEntryKind::parse)
-                        .unwrap_or(GuidanceEntryKind::Architecture),
+                        .unwrap_or_default()
+                        .to_owned(),
                     path: entry
                         .get("path")
                         .and_then(Value::as_str)
@@ -4157,10 +4363,9 @@ fn determinism_replay_record(input: &Value) -> Result<Value, HarnessError> {
         create_reproducibility_manifest,
     };
     fn optional_string_field(value: Option<&Value>) -> Option<String> {
-        value
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .filter(|s| !s.is_empty())
+        // The oracle preserves empty strings (`?? null` only replaces
+        // null/undefined), so an explicit "" must reach the manifest.
+        value.and_then(Value::as_str).map(str::to_owned)
     }
     fn parse_source_revisions(value: &Value) -> Vec<SourceRevision> {
         value
@@ -4258,7 +4463,9 @@ fn determinism_replay_record(input: &Value) -> Result<Value, HarnessError> {
             task_contract_digest: optional_string_field(
                 input.get("taskContractDigest"),
             ),
-            task_plan_digest: None,
+            task_plan_digest: optional_string_field(
+                input.get("taskPlanDigest"),
+            ),
             guidance_digest: optional_string_field(
                 input.get("guidanceDigest"),
             ),

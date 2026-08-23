@@ -91,8 +91,10 @@ impl GuidanceEntryKind {
 pub struct GuidanceManifestEntry {
     /// Stable entry id.
     pub id: String,
-    /// Entry kind.
-    pub kind: GuidanceEntryKind,
+    /// Entry kind protocol string. The oracle passes unknown kinds
+    /// through verbatim into the aggregate payload (type-level union
+    /// only), so the candidate keeps the raw string too.
+    pub kind: String,
     /// Workspace-relative document path.
     pub path: String,
     /// SHA-256 of the exact document content.
@@ -119,7 +121,7 @@ pub fn create_guidance_manifest(
         .map(|entry| {
             object(vec![
                 ("id", string(&entry.id)),
-                ("kind", string(entry.kind.as_str())),
+                ("kind", string(&entry.kind)),
                 ("path", string(&entry.path)),
                 ("digest", string(&entry.digest)),
             ])
@@ -970,8 +972,7 @@ mod tests {
     fn guidance_entry(path: &str, digest: &str) -> GuidanceManifestEntry {
         GuidanceManifestEntry {
             id: format!("entry-{path}"),
-            kind: GuidanceEntryKind::parse("architecture")
-                .expect("kind parses"),
+            kind: "architecture".to_owned(),
             path: path.to_owned(),
             digest: digest.to_owned(),
         }

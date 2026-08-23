@@ -1,14 +1,18 @@
 /**
  * content-identity-contract-digest oracle probe (differential harness,
- * ADR 0033, Stage 3R R10a).
+ * ADR 0033, Stage 3R R10a; seam corrected at R11).
  *
- * Computes a domain-separated content digest over a contract/plan
- * payload using the canonical JSON + SHA-256 primitives from the
- * TypeScript reference.
+ * Computes contract/plan content digests through the TYPED identity
+ * seam of the TypeScript reference
+ * (identity/contract-plan-identity.ts): the artifact type and schema
+ * version are pinned by computeTaskContractArtifactDigest /
+ * computeTaskPlanArtifactDigest, never caller-supplied strings.
  */
 import { readFileSync } from "node:fs";
-import { canonicalizeJson } from "../../../packages/core/src/godot/digest.js";
-import { sha256Hex } from "../../../packages/core/src/godot/digest.js";
+import {
+  computeTaskContractArtifactDigest,
+  computeTaskPlanArtifactDigest,
+} from "../../../packages/core/src/identity/contract-plan-identity.js";
 
 const MAX_INPUT_BYTES = 64 * 1024;
 
@@ -20,7 +24,34 @@ const input = (() => {
   return JSON.parse(bytes.toString("utf8"));
 })();
 
-const canonical = `siralos:${input.artifactType}:v${input.schemaVersion}\0${canonicalizeJson(input.content)}`;
-const digest = sha256Hex(canonical);
+const op = input.op;
 
-process.stdout.write(JSON.stringify({ digest }));
+if (op === "contract") {
+  const contract = input.contract;
+  const digest = computeTaskContractArtifactDigest({
+    id: contract.id,
+    request: contract.request,
+    ...(contract.context === undefined ? {} : { context: contract.context }),
+    constraints: contract.constraints ?? [],
+    acceptanceCriteria: contract.acceptanceCriteria ?? [],
+    pausePolicy: contract.pausePolicy ?? "auto",
+  }).value;
+  process.stdout.write(JSON.stringify({ digest }));
+} else if (op === "plan") {
+  const plan = input.plan;
+  const digest = computeTaskPlanArtifactDigest({
+    objective: plan.objective,
+    scope: plan.scope ?? [],
+    nonGoals: plan.nonGoals ?? [],
+    touchpoints: plan.touchpoints ?? [],
+    constraints: plan.constraints ?? [],
+    risks: plan.risks ?? [],
+    steps: plan.steps ?? [],
+    validation: plan.validation ?? [],
+    ...(plan.rollback === undefined ? {} : { rollback: plan.rollback }),
+    ...(plan.rationale === undefined ? {} : { rationale: plan.rationale }),
+  }).value;
+  process.stdout.write(JSON.stringify({ digest }));
+} else {
+  throw new Error(`unknown content-identity-contract-digest op ${JSON.stringify(op)}`);
+}

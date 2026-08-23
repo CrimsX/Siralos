@@ -218,7 +218,7 @@ pub fn create_reproducibility_manifest(
     });
     let framed = format!(
         "siralos:ReproducibilityManifest:v1\u{0}{}",
-        crate::godot::digest::canonicalize_json(&payload)
+        crate::identity::canonical_json_value(&payload)
     );
     let digest = crate::identity::sha256_hex(framed.as_bytes());
     Ok(ReproducibilityManifest { inputs: input, digest })
@@ -317,8 +317,8 @@ pub fn compute_reproducibility_delta(
     for section in REPRODUCIBILITY_SECTIONS {
         let base_value = base_sections.get(section).unwrap_or(&empty);
         let result_value = result_sections.get(section).unwrap_or(&empty);
-        if crate::godot::digest::canonicalize_json(base_value)
-            == crate::godot::digest::canonicalize_json(result_value)
+        if crate::identity::canonical_json_value(base_value)
+            == crate::identity::canonical_json_value(result_value)
         {
             unchanged.push((*section).to_owned());
         } else {

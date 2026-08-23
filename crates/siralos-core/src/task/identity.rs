@@ -66,6 +66,25 @@ pub fn compute_task_contract_artifact_digest(
     )
 }
 
+/// Typed content digest over a declared contract canonical payload.
+/// The payload must be an object over the five contract sections
+/// (`request`, `context`?, `constraints`, `acceptanceCriteria`,
+/// `pausePolicy`; `id` is caller-bound). Callers building it from
+/// untyped JSON keep this function as the single identity seam, exactly
+/// like [`compute_plan_content_digest`] for plans.
+pub fn compute_contract_content_digest(
+    payload: &CanonicalValue,
+) -> Result<ArtifactDigest, ArtifactIdentityError> {
+    compute_artifact_digest("TaskContract", TASK_CONTRACT_IDENTITY_SCHEMA, payload)
+}
+
+/// Hex content digest over a declared contract canonical payload.
+pub fn compute_contract_content_digest_hex(
+    payload: &CanonicalValue,
+) -> Result<String, ArtifactIdentityError> {
+    Ok(compute_contract_content_digest(payload)?.value)
+}
+
 /// Hex content digest of a contract revision.
 pub fn compute_task_contract_content_digest(
     contract: &TaskContract,
