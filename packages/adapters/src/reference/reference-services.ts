@@ -7,6 +7,7 @@ import type {
   ReferenceTrustClass,
 } from "@siralos/core";
 import { createReferenceRegistry } from "@siralos/core";
+import { realpath } from "node:fs/promises";
 import { createReferenceAccess } from "./reference-access.js";
 import { createReferenceCacheStore, type ReferenceCacheStore } from "./reference-cache.js";
 import {
@@ -77,10 +78,20 @@ export async function createReferenceServices(
   const cacheStore: ReferenceCacheStore = options.cacheStore ?? createReferenceCacheStore();
   const trustFor = options.trustFor ?? ((): ReferenceTrustClass => "explicit-user");
 
+  // Defense in depth: callers are documented to pass a canonicalized
+  // workspace root, but symlinked temp roots (macOS /var ->
+  // /private/var) would otherwise let a materialized canonical
+  // reference root escape the containment comparison and compare
+  // against mixed path forms. Canonicalize here so the outside-the-
+  // workspace guarantee cannot be bypassed by an uncanonicalized input.
+  const canonicalWorkspaceRoot = await realpath(options.workspaceRoot).catch(
+    () => options.workspaceRoot,
+  );
+
   const registry = await createReferenceRegistry({
     declarations: options.declarations,
     trustFor,
-    workspaceRoot: options.workspaceRoot,
+    workspaceRoot: canonicalWorkspaceRoot,
     resolver,
     ...(options.now === undefined ? {} : { now: options.now }),
   });
@@ -93,7 +104,7 @@ export async function createReferenceServices(
         return root;
       }
       try {
-        assertReferenceRoot(root.path, options.workspaceRoot);
+        assertReferenceRoot(root.path, canonicalWorkspaceRoot);
       } catch {
         return null;
       }
