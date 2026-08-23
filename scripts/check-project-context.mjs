@@ -36,7 +36,10 @@ const REQUIRED_METADATA = new Map([
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
   ["Current completed milestone", "R10"],
-  ["Next milestone", "R11 - Full differential, effect-boundary, security, recovery, and cross-platform parity"],
+  [
+    "Next milestone",
+    "R11 - Full differential, effect-boundary, security, recovery, and cross-platform parity",
+  ],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
 
