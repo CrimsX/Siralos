@@ -2,7 +2,7 @@
 
 **Map:** [Siralos Roadmap](../siralos-roadmap.md) · label `wayfinder:grilling` HITL
 **Blocked by:** [R10 Entry Review](../decisions/14-r10-entry-review.md) (PASS — R10a authorized and landed)
-**Status:** OPEN
+**Status:** RESOLVED by [decision 15 — R10b Entry Review](../decisions/15-r10b-entry-review.md)
 
 ## Questions this ticket resolves
 
