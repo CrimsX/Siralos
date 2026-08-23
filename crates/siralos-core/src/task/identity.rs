@@ -75,7 +75,11 @@ pub fn compute_task_contract_artifact_digest(
 pub fn compute_contract_content_digest(
     payload: &CanonicalValue,
 ) -> Result<ArtifactDigest, ArtifactIdentityError> {
-    compute_artifact_digest("TaskContract", TASK_CONTRACT_IDENTITY_SCHEMA, payload)
+    compute_artifact_digest(
+        "TaskContract",
+        TASK_CONTRACT_IDENTITY_SCHEMA,
+        payload,
+    )
 }
 
 /// Hex content digest over a declared contract canonical payload.

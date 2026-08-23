@@ -114,9 +114,9 @@ pub fn canonical_json_value(value: &serde_json::Value) -> String {
                 "false".to_owned()
             }
         }
-        serde_json::Value::Number(n) => js_number_to_string(
-            n.as_f64().unwrap_or(f64::NAN),
-        ),
+        serde_json::Value::Number(n) => {
+            js_number_to_string(n.as_f64().unwrap_or(f64::NAN))
+        }
         serde_json::Value::String(s) => json_escape(s),
         serde_json::Value::Array(items) => {
             let parts: Vec<String> =
@@ -207,18 +207,14 @@ fn js_number_to_string(value: f64) -> String {
         out.push_str(&(order.abs()).to_string());
     }
 
-    if negative {
-        format!("-{out}")
-    } else {
-        out
-    }
+    if negative { format!("-{out}") } else { out }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CanonicalValue, canonical_json_value, canonicalize, js_number_to_string,
-        json_escape,
+        CanonicalValue, canonical_json_value, canonicalize,
+        js_number_to_string, json_escape,
     };
     use std::collections::BTreeMap;
 
@@ -307,7 +303,11 @@ mod tests {
             (9_007_199_254_740_993.0, "9007199254740992"),
         ];
         for (value, expected) in cases {
-            assert_eq!(&js_number_to_string(*value), expected, "input {value}");
+            assert_eq!(
+                &js_number_to_string(*value),
+                expected,
+                "input {value}"
+            );
         }
     }
 

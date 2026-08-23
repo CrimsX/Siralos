@@ -2128,9 +2128,7 @@ fn validate_godot_input(
                     );
                 }
             }
-            if input.get("op").and_then(Value::as_str)
-                == Some("contract")
-            {
+            if input.get("op").and_then(Value::as_str) == Some("contract") {
                 // The typed seam pins type/schema itself; a fixture may
                 // not smuggle caller-supplied identity strings.
                 kind_ok = input.get("artifactType").is_none()
@@ -4096,7 +4094,9 @@ fn content_identity_contract_digest_record(
                 entries
                     .iter()
                     .map(|entry| {
-                        CanonicalValue::Str(entry.as_str().unwrap_or_default().to_owned())
+                        CanonicalValue::Str(
+                            entry.as_str().unwrap_or_default().to_owned(),
+                        )
                     })
                     .collect()
             })
@@ -4105,7 +4105,8 @@ fn content_identity_contract_digest_record(
     let op = input.get("op").and_then(Value::as_str).unwrap_or_default();
     let payload = match op {
         "contract" => {
-            let contract = input.get("contract").cloned().unwrap_or(Value::Null);
+            let contract =
+                input.get("contract").cloned().unwrap_or(Value::Null);
             let mut object = std::collections::BTreeMap::new();
             object.insert(
                 "acceptanceCriteria".to_owned(),
@@ -4117,38 +4118,48 @@ fn content_identity_contract_digest_record(
                             entries
                                 .iter()
                                 .map(|criterion| {
-                                    CanonicalValue::Object(std::collections::BTreeMap::from([
-                                        (
-                                            "description".to_owned(),
-                                            CanonicalValue::Str(
-                                                criterion
-                                                    .get("description")
-                                                    .and_then(Value::as_str)
-                                                    .unwrap_or_default()
-                                                    .to_owned(),
+                                    CanonicalValue::Object(
+                                        std::collections::BTreeMap::from([
+                                            (
+                                                "description".to_owned(),
+                                                CanonicalValue::Str(
+                                                    criterion
+                                                        .get("description")
+                                                        .and_then(
+                                                            Value::as_str,
+                                                        )
+                                                        .unwrap_or_default()
+                                                        .to_owned(),
+                                                ),
                                             ),
-                                        ),
-                                        (
-                                            "id".to_owned(),
-                                            CanonicalValue::Str(
-                                                criterion
-                                                    .get("id")
-                                                    .and_then(Value::as_str)
-                                                    .unwrap_or_default()
-                                                    .to_owned(),
+                                            (
+                                                "id".to_owned(),
+                                                CanonicalValue::Str(
+                                                    criterion
+                                                        .get("id")
+                                                        .and_then(
+                                                            Value::as_str,
+                                                        )
+                                                        .unwrap_or_default()
+                                                        .to_owned(),
+                                                ),
                                             ),
-                                        ),
-                                        (
-                                            "verificationKind".to_owned(),
-                                            CanonicalValue::Str(
-                                                criterion
-                                                    .get("verificationKind")
-                                                    .and_then(Value::as_str)
-                                                    .unwrap_or_default()
-                                                    .to_owned(),
+                                            (
+                                                "verificationKind".to_owned(),
+                                                CanonicalValue::Str(
+                                                    criterion
+                                                        .get(
+                                                            "verificationKind",
+                                                        )
+                                                        .and_then(
+                                                            Value::as_str,
+                                                        )
+                                                        .unwrap_or_default()
+                                                        .to_owned(),
+                                                ),
                                             ),
-                                        ),
-                                    ]))
+                                        ]),
+                                    )
                                 })
                                 .collect()
                         })
@@ -4165,38 +4176,46 @@ fn content_identity_contract_digest_record(
                             entries
                                 .iter()
                                 .map(|constraint| {
-                                    CanonicalValue::Object(std::collections::BTreeMap::from([
-                                        (
-                                            "description".to_owned(),
-                                            CanonicalValue::Str(
-                                                constraint
-                                                    .get("description")
-                                                    .and_then(Value::as_str)
-                                                    .unwrap_or_default()
-                                                    .to_owned(),
+                                    CanonicalValue::Object(
+                                        std::collections::BTreeMap::from([
+                                            (
+                                                "description".to_owned(),
+                                                CanonicalValue::Str(
+                                                    constraint
+                                                        .get("description")
+                                                        .and_then(
+                                                            Value::as_str,
+                                                        )
+                                                        .unwrap_or_default()
+                                                        .to_owned(),
+                                                ),
                                             ),
-                                        ),
-                                        (
-                                            "id".to_owned(),
-                                            CanonicalValue::Str(
-                                                constraint
-                                                    .get("id")
-                                                    .and_then(Value::as_str)
-                                                    .unwrap_or_default()
-                                                    .to_owned(),
+                                            (
+                                                "id".to_owned(),
+                                                CanonicalValue::Str(
+                                                    constraint
+                                                        .get("id")
+                                                        .and_then(
+                                                            Value::as_str,
+                                                        )
+                                                        .unwrap_or_default()
+                                                        .to_owned(),
+                                                ),
                                             ),
-                                        ),
-                                        (
-                                            "kind".to_owned(),
-                                            CanonicalValue::Str(
-                                                constraint
-                                                    .get("kind")
-                                                    .and_then(Value::as_str)
-                                                    .unwrap_or_default()
-                                                    .to_owned(),
+                                            (
+                                                "kind".to_owned(),
+                                                CanonicalValue::Str(
+                                                    constraint
+                                                        .get("kind")
+                                                        .and_then(
+                                                            Value::as_str,
+                                                        )
+                                                        .unwrap_or_default()
+                                                        .to_owned(),
+                                                ),
                                             ),
-                                        ),
-                                    ]))
+                                        ]),
+                                    )
                                 })
                                 .collect()
                         })
@@ -4249,7 +4268,15 @@ fn content_identity_contract_digest_record(
                 CanonicalValue::Array(string_list(plan.get(name)))
             };
             let mut object = std::collections::BTreeMap::new();
-            object.insert("objective".to_owned(), CanonicalValue::Str(plan.get("objective").and_then(Value::as_str).unwrap_or_default().to_owned()));
+            object.insert(
+                "objective".to_owned(),
+                CanonicalValue::Str(
+                    plan.get("objective")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+            );
             object.insert("scope".to_owned(), section("scope"));
             object.insert("nonGoals".to_owned(), section("nonGoals"));
             object.insert("touchpoints".to_owned(), section("touchpoints"));
@@ -4257,11 +4284,21 @@ fn content_identity_contract_digest_record(
             object.insert("risks".to_owned(), section("risks"));
             object.insert("steps".to_owned(), section("steps"));
             object.insert("validation".to_owned(), section("validation"));
-            if let Some(rollback) = plan.get("rollback").and_then(Value::as_str) {
-                object.insert("rollback".to_owned(), CanonicalValue::Str(rollback.to_owned()));
+            if let Some(rollback) =
+                plan.get("rollback").and_then(Value::as_str)
+            {
+                object.insert(
+                    "rollback".to_owned(),
+                    CanonicalValue::Str(rollback.to_owned()),
+                );
             }
-            if let Some(rationale) = plan.get("rationale").and_then(Value::as_str) {
-                object.insert("rationale".to_owned(), CanonicalValue::Str(rationale.to_owned()));
+            if let Some(rationale) =
+                plan.get("rationale").and_then(Value::as_str)
+            {
+                object.insert(
+                    "rationale".to_owned(),
+                    CanonicalValue::Str(rationale.to_owned()),
+                );
             }
             CanonicalValue::Object(object)
         }
@@ -4272,9 +4309,11 @@ fn content_identity_contract_digest_record(
         }
     };
     let digest = match op {
-        "contract" => compute_contract_content_digest(&payload)
-            .map_err(|error| HarnessError::corpus(error.message))?
-            .value,
+        "contract" => {
+            compute_contract_content_digest(&payload)
+                .map_err(|error| HarnessError::corpus(error.message))?
+                .value
+        }
         _ => compute_plan_content_digest_hex(&payload)
             .map_err(|error| HarnessError::corpus(error.message))?,
     };
