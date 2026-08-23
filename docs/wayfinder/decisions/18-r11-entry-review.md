@@ -36,6 +36,12 @@ fail-closed boundary operational.
 
 ### `workspace-apply` (new; name verbatim from [R11 Gate](06-r11-gate.md) §2.1)
 
+> Implementation correction (R11.1 landing): this schema anticipated a
+> digest/revision binding check BEFORE the unavailable outcome. The
+> oracle's actual behavior is strictly stronger — the boundary refuses
+> before ANY input inspection, so prepared-payload binding state can
+> never change the outcome. The landed fixtures pin that reality.
+
 Exercises the prepared-effect application boundary of the REAL TypeScript
 reference (`packages/core/src/workspace/**` prepared-mutation/apply
 contracts) against `siralos-adapters::workspace`. Scenarios declare
