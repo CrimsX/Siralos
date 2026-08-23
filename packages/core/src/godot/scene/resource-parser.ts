@@ -83,7 +83,6 @@ export function parseGodotResource(
   let currentSubResource: MutableSubResource | null = null;
   let seenResourceHeader = false;
   let truncated = false;
-  let limitReached = false;
   let sectionCount = 0;
   let resourceCount = 0;
   let propertyCount = 0;
@@ -99,7 +98,7 @@ export function parseGodotResource(
     );
   }
 
-  for (let index = 0; index < lineCount && !limitReached; index += 1) {
+  for (let index = 0; index < lineCount; index += 1) {
     const rawLine = lines[index] ?? "";
     const trimmed = rawLine.trim();
     if (trimmed.length === 0 || isCommentLine(trimmed)) {
@@ -109,7 +108,6 @@ export function parseGodotResource(
       sectionCount += 1;
       if (sectionCount > GODOT_SCENE_LIMITS.maxSections) {
         truncated = true;
-        limitReached = true;
         reportLimit(
           "sections",
           `The section count exceeded the bound (${GODOT_SCENE_LIMITS.maxSections}); parsing stopped.`,

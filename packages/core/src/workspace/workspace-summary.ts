@@ -113,7 +113,7 @@ export function buildWorkspaceSummary(
     "\nadvisory structural summary \u2014 not authoritative source; read exact before editing.";
   const body = lines.join("\n");
   let truncated = false;
-  let bounded = "";
+  let bounded: string;
   if (encoder.encode(body + footer).length <= maxBytes) {
     bounded = body + footer;
   } else {

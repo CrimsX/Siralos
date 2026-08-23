@@ -768,7 +768,9 @@ export async function createFilesystemCheckpointStore(
   try {
     canonicalWorkspace = await realpath(options.workspaceRoot);
   } catch (error: unknown) {
-    throw new Error(`Checkpoint store paths cannot be resolved: ${describeError(error)}`);
+    throw new Error(`Checkpoint store paths cannot be resolved: ${describeError(error)}`, {
+      cause: error,
+    });
   }
   const requestedRoot = options.rootDirectory ?? DEFAULT_CHECKPOINT_ROOT;
   try {
@@ -873,7 +875,9 @@ export async function createFilesystemCheckpointStore(
     try {
       raw = await readFile(metadataPath, "utf8");
     } catch (error: unknown) {
-      throw new Error(`Checkpoint metadata cannot be read: ${describeError(error)}`);
+      throw new Error(`Checkpoint metadata cannot be read: ${describeError(error)}`, {
+        cause: error,
+      });
     }
     // Post-read byte re-check: a metadata file grown or swapped after the
     // lstat is rejected even though it was already read.

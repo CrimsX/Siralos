@@ -639,7 +639,7 @@ function buildGuidanceManifest(
     path: string;
     digest: string;
   }[] = [];
-  let workspaceReal: string | null = null;
+  let workspaceReal: string | null;
   try {
     workspaceReal = realpathSync(workspaceRoot);
   } catch {

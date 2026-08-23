@@ -23,11 +23,11 @@ jobs:
   evidence:
     name: Tier-1 evidence (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       # actions/checkout v7.0.1 (GitHub-owned, immutable SHA pin);
       # credentials are not persisted: no authenticated Git operation
@@ -56,6 +56,11 @@ jobs:
       - name: Install locked npm dependencies
         run: npm ci
 
+      # Replay-stress determinism and the full oracle test suite are part
+      # of the recorded evidence ([R11 Gate] §2.4 replay row).
+      - name: Full TypeScript gate and replay determinism
+        run: npm test
+
       - name: Cache cargo artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -76,16 +81,25 @@ jobs:
         run: npm run check:differential
 
       - name: Live sandbox conformance
-        id: sandbox
+        shell: bash
         run: |
           npm run test:sandbox | tee sandbox-conformance.txt
           exit ${PIPESTATUS[0]}
 
+      # Map the runner OS to the retention names in
+      # tests/differential/evidence/r11/EVIDENCE.md and derive the corpus
+      # version from the manifest so artifact names cannot drift.
       - name: Name evidence files for direct retention
         shell: bash
         run: |
-          platform="$(echo '${{ matrix.os }}' | cut -d- -f1)"
-          cp tests/differential/out/audit.json "audit-${platform}-corpus-v22.json"
+          case "${{ matrix.os }}" in
+            ubuntu*) platform=linux ;;
+            macos*) platform=macos ;;
+            windows*) platform=windows ;;
+            *) echo "unsupported runner os" && exit 1 ;;
+          esac
+          corpus_version="$(node -p "require('./tests/differential/corpus/manifest.json').corpusVersion")"
+          cp tests/differential/out/audit.json "audit-${platform}-corpus-v${corpus_version}.json"
           cp sandbox-conformance.txt "sandbox-conformance-${platform}.txt"
 
       # Retain the exact oracle/candidate/audit records alongside the
@@ -95,7 +109,7 @@ jobs:
         with:
           name: tier1-evidence-${{ matrix.os }}-${{ github.sha }}
           path: |
-            audit-*-corpus-v22.json
+            audit-*-corpus-v*.json
             sandbox-conformance-*.txt
             tests/differential/out/oracle.json
             tests/differential/out/candidate.json

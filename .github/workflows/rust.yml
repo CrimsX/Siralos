@@ -178,6 +178,19 @@ jobs:
       - name: Differential harness
         run: npm run check:differential
 
+      # Synthetic conformance-domain freshness (ADR 0034): the checked-in
+      # component fixtures must be rebuildable from the pinned WIT and
+      # guests exactly. A diff here means a PR changed the WIT/guests but
+      # did not refresh fixture bytes/digests.
+      - name: Install wasm32-wasip2 target
+        run: rustup target add wasm32-wasip2
+
+      - name: Rebuild domain conformance fixtures
+        run: npm run build:domain-conformance
+
+      - name: Verify conformance fixtures are current
+        run: git diff --exit-code -- tests/domain-conformance/fixtures
+
       # The harness output is intentionally gitignored. Retain the exact
       # oracle, candidate, and comparison records as reviewable CI evidence,
       # including on parity failure or harness error.

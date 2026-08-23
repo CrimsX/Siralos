@@ -11,7 +11,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-let home = null;
+let home;
 try {
   home = homedir();
 } catch {

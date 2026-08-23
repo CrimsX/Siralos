@@ -169,7 +169,7 @@ async function readWorkspaceDiagnostics(
   git: GitInspector,
   checkpoints: CheckpointStore,
 ): Promise<WorkspaceDiagnosticResult> {
-  let gitAvailable: boolean | null = null;
+  let gitAvailable: boolean | null;
   let gitState: string | null = null;
   try {
     const status = await git.inspectRepository();
@@ -186,7 +186,7 @@ async function readWorkspaceDiagnostics(
   }
   // A single bounded root listing probes read access without scanning the
   // workspace (the doctor never walks or hashes repository contents).
-  let readable = false;
+  let readable: boolean;
   try {
     await readdir(workspaceRoot, { withFileTypes: false });
     readable = true;
@@ -327,7 +327,7 @@ function readCapabilityDiagnostics(
     const projected = projectedByName.get(tool.definition.name);
     const state = projected?.visibility ?? "hidden";
     const rule = tool.capability === undefined ? null : policy.rules[tool.capability];
-    let reason: string | null = null;
+    let reason: string | null;
     if (state === "available") {
       reason = null;
     } else if (state === "gated") {

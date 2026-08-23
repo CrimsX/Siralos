@@ -280,7 +280,7 @@ async function scanEditorPlugins(
   // deterministic output order.
   const remainingEntries = Math.max(0, budget.maxEntries - budget.entriesExamined);
   const collected: Dirent[] = [];
-  let truncatedListing = false;
+  let truncatedListing: boolean;
   try {
     const outcome = await enumerateDirectoryBounded({
       directory: addonsDirectory,

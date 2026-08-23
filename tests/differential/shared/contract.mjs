@@ -151,6 +151,7 @@ function parseJson(text, label) {
   } catch (error) {
     throw new Error(
       `${label} is not valid JSON: ${error instanceof Error ? error.message : error}`,
+      { cause: error },
     );
   }
 }

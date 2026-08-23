@@ -333,7 +333,7 @@ export function normalizeHtmlToSections(
  * falls back to the raw (bounded) text. Capped by `maxSectionTextBytes`.
  */
 export function normalizeJsonToSections(json: string, bounds: ResearchBounds): NormalizationResult {
-  let parsed: unknown = null;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(json);
   } catch {

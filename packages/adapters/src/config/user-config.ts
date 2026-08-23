@@ -97,6 +97,7 @@ export async function loadUserConfig(configPath: string): Promise<UserConfig> {
     }
     throw new Error(
       `Cannot read Siralos configuration at ${configPath}: ${errorMessage(error, "unknown error")}`,
+      { cause: error },
     );
   }
   if (stats.isSymbolicLink() || !stats.isFile()) {
@@ -120,6 +121,7 @@ export async function loadUserConfig(configPath: string): Promise<UserConfig> {
   } catch (error: unknown) {
     throw new Error(
       `Siralos configuration at ${configPath} is not valid JSON: ${errorMessage(error, "unknown error")}`,
+      { cause: error },
     );
   }
   return parseUserConfig(parsed);

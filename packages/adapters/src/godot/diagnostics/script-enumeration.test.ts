@@ -45,7 +45,7 @@ describe("enumerateGDScriptFiles", () => {
     const root = await withTempRoot();
     await mkdir(path.join(root, "src"), { recursive: true });
     await writeFile(path.join(root, "src", "real.gd"), "extends Node\n");
-    let linkCreated = false;
+    let linkCreated: boolean;
     try {
       await symlink(path.join(root, "src", "real.gd"), path.join(root, "src", "link.gd"));
       linkCreated = true;
@@ -136,7 +136,7 @@ describe("validateCheckScript", () => {
   it("rejects symlinked scripts", async () => {
     const root = await withTempRoot();
     await writeFile(path.join(root, "target.gd"), "extends Node\n");
-    let linkCreated = false;
+    let linkCreated: boolean;
     try {
       await symlink(path.join(root, "target.gd"), path.join(root, "link.gd"));
       linkCreated = true;

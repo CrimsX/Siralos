@@ -2,8 +2,8 @@
 
 **Milestone:** Stage 3R R11 — full differential, effect-boundary,
 security, recovery, and cross-platform parity.
-**Contract:** [R11 Entry Review](../../wayfinder/decisions/18-r11-entry-review.md)
-§3; closure criteria [R11 Gate](../../wayfinder/decisions/06-r11-gate.md)
+**Contract:** [R11 Entry Review](../../../../docs/wayfinder/decisions/18-r11-entry-review.md)
+§3; closure criteria [R11 Gate](../../../../docs/wayfinder/decisions/06-r11-gate.md)
 §2.2/§2.4.
 
 This directory retains the per-platform promotion artefacts required by

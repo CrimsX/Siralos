@@ -1,9 +1,12 @@
 name: Siralos CodeQL
 
-# Static security scanning (Rust) per the pre-Stage-4 assurance
-# contract Part 2. Separate from ordinary validation; the only job that
-# holds security-events: write (required to upload results to the
-# security tab). Never runs untrusted PR code with privileges.
+# Static security scanning (Rust + the TypeScript reference) per the
+# pre-Stage-4 assurance contract Part 2. The TypeScript workspace is a
+# large, security-relevant surface (provider boundary, sanitizer,
+# sandbox conformance), so it is analyzed alongside Rust. Separate from
+# ordinary validation; the only job that holds security-events: write
+# (required to upload results to the security tab). Never runs
+# untrusted PR code with privileges.
 on:
   push:
     branches: ["main"]
@@ -18,9 +21,9 @@ permissions:
 
 jobs:
   analyze:
-    name: CodeQL (Rust)
+    name: CodeQL (Rust + JavaScript/TypeScript)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       security-events: write
@@ -32,7 +35,7 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
-          languages: rust
+          languages: rust, javascript-typescript
           # No paths-ignore: the workspace is small; scan everything.
 
       - name: Build (autobuild)

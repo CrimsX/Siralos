@@ -15,6 +15,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # typescript-eslint (8.x) caps its peer at <6.1.0; a TypeScript 7
+      # bump breaks `npm ci` peer validation on every fresh install
+      # (observed 2026-08-23). Re-allow when typescript-eslint widens.
+      - dependency-name: "typescript"
+        versions: [">=7"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

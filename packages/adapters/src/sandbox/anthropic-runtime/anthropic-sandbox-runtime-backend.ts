@@ -31,7 +31,7 @@ import { resolveNpmCli } from "../../process/trusted-executables.js";
 
 export const ANTHROPIC_SANDBOX_RUNTIME_BACKEND_ID = "anthropic-runtime";
 
-export const ANTHROPIC_SANDBOX_RUNTIME_VERSION = "0.0.70";
+export const ANTHROPIC_SANDBOX_RUNTIME_VERSION = "0.0.71";
 
 export interface AnthropicSandboxRuntimeBackendHooks {
   /**

@@ -147,7 +147,7 @@ async function list(
   // Entries are enumerated incrementally with a hard cap so a hostile
   // directory with millions of entries can never be materialized.
   const names: string[] = [];
-  let truncated = false;
+  let truncated: boolean;
   try {
     const outcome = await enumerateDirectoryBounded({
       directory: resolved.resolved,

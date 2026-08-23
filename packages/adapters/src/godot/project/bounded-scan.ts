@@ -94,7 +94,7 @@ export async function scanProjectFiles(options: BoundedScanOptions): Promise<Bou
     // deterministic output order; entries beyond the budget stop the walk.
     const remainingEntries = Math.max(0, budget.maxEntries - budget.entriesExamined);
     const collected: Array<{ readonly name: string; readonly isDirectory: () => boolean }> = [];
-    let truncatedListing = false;
+    let truncatedListing: boolean;
     try {
       const outcome = await enumerateDirectoryBounded({
         directory,

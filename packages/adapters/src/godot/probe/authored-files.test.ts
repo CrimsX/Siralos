@@ -23,7 +23,7 @@ async function entriesOf(root: string): Promise<readonly AuthoredFileEntry[]> {
 }
 
 function probeSymlinkSupport(): boolean {
-  let supported = false;
+  let supported: boolean;
   let probeDir: string | undefined;
   try {
     probeDir = mkdtempSync(join(tmpdir(), "siralos-authored-symlink-probe-"));

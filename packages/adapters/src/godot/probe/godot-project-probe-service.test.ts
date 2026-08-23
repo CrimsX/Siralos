@@ -42,7 +42,7 @@ async function withTempRoot(): Promise<string> {
 }
 
 function probeSymlinkSupport(): boolean {
-  let supported = false;
+  let supported: boolean;
   let probeDir: string | undefined;
   try {
     probeDir = mkdtempSync(path.join(tmpdir(), "siralos-probe-symlink-"));

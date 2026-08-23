@@ -83,7 +83,7 @@ export function createWorkspaceListTool(workspaceRoot: string): Tool {
       // case-insensitive platforms so a `NODE_MODULES` spelling cannot
       // bypass the filter.
       const names: string[] = [];
-      let truncated = false;
+      let truncated: boolean;
       try {
         const outcome = await enumerateDirectoryBounded({
           directory: resolved.absolutePath,

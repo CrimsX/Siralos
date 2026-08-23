@@ -28,13 +28,17 @@ export async function resolveWorkspaceRoot(cwd: string): Promise<string> {
   try {
     canonical = await realpath(cwd);
   } catch (error: unknown) {
-    throw new Error(`Workspace root is not accessible: ${describeFsError(error)}`);
+    throw new Error(`Workspace root is not accessible: ${describeFsError(error)}`, {
+      cause: error,
+    });
   }
   let stats;
   try {
     stats = await stat(canonical);
   } catch (error: unknown) {
-    throw new Error(`Workspace root is not accessible: ${describeFsError(error)}`);
+    throw new Error(`Workspace root is not accessible: ${describeFsError(error)}`, {
+      cause: error,
+    });
   }
   if (!stats.isDirectory()) {
     throw new Error("Workspace root is not a directory.");

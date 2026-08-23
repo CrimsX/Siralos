@@ -111,7 +111,7 @@ export async function createSymlink(target: string, linkPath: string): Promise<v
 }
 
 export function probeSymlinkSupport(): boolean {
-  let supported = false;
+  let supported: boolean;
   let probeDir: string | undefined;
   try {
     probeDir = mkdtempSync(join(tmpdir(), "siralos-symlink-probe-"));

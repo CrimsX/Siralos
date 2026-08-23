@@ -299,7 +299,7 @@ export function buildStructuralSummary(
   // budget together with the footer.
   const body = lines.join("\n");
   let truncated = false;
-  let bounded = "";
+  let bounded: string;
   if (encoder.encode(body + SUMMARY_FOOTER).length <= maxBytes) {
     bounded = body + SUMMARY_FOOTER;
   } else {

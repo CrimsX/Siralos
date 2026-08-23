@@ -2442,6 +2442,7 @@ export function parseCanonicalRecordDocument(text, source) {
   } catch (error) {
     throw new Error(
       `${source} record file is not JSON: ${error instanceof Error ? error.message : error}`,
+      { cause: error },
     );
   }
   if (!isObject(document)) {
