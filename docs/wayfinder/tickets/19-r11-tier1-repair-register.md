@@ -8,7 +8,7 @@
 ## Context
 
 The first full POSIX/CI execution of the oracle suite surfaced five
-genuine cross-platform findings ([EVIDENCE.md](../../tests/differential/evidence/r11/EVIDENCE.md)
+genuine cross-platform findings ([EVIDENCE.md](../../../tests/differential/evidence/r11/EVIDENCE.md)
 holds the canonical register). Two are already fixed
 (`reference-services.ts` containment canonicalization;
 `createTempWorkspace` realpath). This ticket holds the remaining three
