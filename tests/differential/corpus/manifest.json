@@ -116,7 +116,7 @@
     },
     {
       "file": "determinism-replay.full.json",
-      "sha256": "cebcacee9544bd9a8f6e190c1930d5b9c770aac9a8bd0025ad68a034f4fca820"
+      "sha256": "9fe91c4ac64110a6fc635633f940c42e738976be654c322002c081f4cc9f6c3b"
     },
     {
       "file": "determinism-replay.no-provider.json",
@@ -124,7 +124,7 @@
     },
     {
       "file": "determinism-replay.with-provider.json",
-      "sha256": "043f56ced3c78909328546d0c82f7af6dff6fa93c163090c7908fefc213b3c11"
+      "sha256": "4b6084fe33d229aa50f6dcb84aa987773eb221125f8a0ff7ca3675e3b7aa58ee"
     },
     {
       "file": "domain-capability.denied-no-escalation.json",
@@ -731,5 +731,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "aaf73cc49715681c260be39d3a70910bcc92f5b96dc03ee4e66715f1235dac33"
+  "corpusSha256": "2b702e716c8ee3eb5fd006dbb3c3ef0ba8054fb960b880453777602e5648696c"
 }

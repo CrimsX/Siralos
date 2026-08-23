@@ -2,7 +2,7 @@
   "id": "determinism-replay.with-provider",
   "subject": "determinism-replay",
   "platforms": ["*"],
-  "parity": "informational",
+  "parity": "required",
   "env": {},
   "input": {
     "taskId": "task-2",

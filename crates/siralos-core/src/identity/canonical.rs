@@ -110,7 +110,21 @@ pub fn canonical_json_value(value: &serde_json::Value) -> String {
                 "false".to_owned()
             }
         }
-        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Number(n) => {
+            // Match TypeScript JSON.stringify number formatting:
+            // whole-number floats drop the trailing ".0" (JS has one
+            // numeric type; 1.0 === 1). serde_json preserves the
+            // distinction, so we must normalize here.
+            if let Some(f) = n.as_f64() {
+                if f.fract() == 0.0 && f.abs() < 1e21 {
+                    format!("{}", f as i64)
+                } else {
+                    n.to_string()
+                }
+            } else {
+                n.to_string()
+            }
+        }
         serde_json::Value::String(s) => json_escape(s),
         serde_json::Value::Array(items) => {
             let parts: Vec<String> =

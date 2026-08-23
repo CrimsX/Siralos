@@ -3926,6 +3926,12 @@ fn determinism_replay_record(input: &Value) -> Result<Value, HarnessError> {
         ClockPolicy, ProviderInputIdentity, RngPolicy, SourceRevision,
         create_reproducibility_manifest,
     };
+    fn optional_string_field(value: Option<&Value>) -> Option<String> {
+        value
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .filter(|s| !s.is_empty())
+    }
     fn parse_source_revisions(value: &Value) -> Vec<SourceRevision> {
         value
             .as_array()
@@ -4013,17 +4019,31 @@ fn determinism_replay_record(input: &Value) -> Result<Value, HarnessError> {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned(),
-            execution_input_digest: None,
-            environment_digest: None,
-            task_contract_digest: None,
+            execution_input_digest: optional_string_field(
+                input.get("executionInputDigest"),
+            ),
+            environment_digest: optional_string_field(
+                input.get("environmentDigest"),
+            ),
+            task_contract_digest: optional_string_field(
+                input.get("taskContractDigest"),
+            ),
             task_plan_digest: None,
-            guidance_digest: None,
-            tool_surface_digest: None,
-            capability_digest: None,
+            guidance_digest: optional_string_field(
+                input.get("guidanceDigest"),
+            ),
+            tool_surface_digest: optional_string_field(
+                input.get("toolSurfaceDigest"),
+            ),
+            capability_digest: optional_string_field(
+                input.get("capabilityDigest"),
+            ),
             source_revision_set: parse_source_revisions(
                 input.get("sourceRevisionSet").unwrap_or(&Value::Null),
             ),
-            validation_profile: None,
+            validation_profile: optional_string_field(
+                input.get("validationProfile"),
+            ),
             provider_input,
             clock_policy,
             rng_policy,
