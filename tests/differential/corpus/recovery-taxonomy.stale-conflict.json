@@ -1,0 +1,11 @@
+{
+  "id": "recovery-taxonomy.stale-conflict",
+  "subject": "recovery-taxonomy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "domain-failure",
+    "kind": "STALE_ACTIVATION"
+  }
+}

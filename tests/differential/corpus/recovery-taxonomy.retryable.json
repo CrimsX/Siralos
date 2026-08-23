@@ -1,0 +1,24 @@
+{
+  "id": "recovery-taxonomy.retryable",
+  "subject": "recovery-taxonomy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "retry-classification",
+    "cases": [
+      {
+        "category": "transient_provider_transport",
+        "attemptsUsed": 0
+      },
+      {
+        "category": "transient_provider_transport",
+        "attemptsUsed": 1
+      },
+      {
+        "category": "transient_provider_transport",
+        "attemptsUsed": 3
+      }
+    ]
+  }
+}

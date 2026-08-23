@@ -2145,6 +2145,73 @@ function validateRuntimeReadinessResult(subject, result, label) {
   }
 }
 
+function validateRecoveryTaxonomyResult(record, label) {
+  const result = record;
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (Object.hasOwn(result, "code")) {
+    assertExactKeys(
+      result,
+      [
+        "code",
+        ...(result.code === "CAPABILITY_DENIED"
+          ? ["missing"]
+          : result.code === "RESOURCE_EXCEEDED"
+            ? ["resourceKind"]
+            : result.code === "UNAVAILABLE"
+              ? ["reason"]
+              : []),
+      ],
+      `${label}.result`,
+    );
+    if (Array.isArray(result.missing)) {
+      for (const id of result.missing) {
+        if (typeof id !== "string" || id.length === 0) {
+          throw new Error(`${label}.result.missing is invalid`);
+        }
+      }
+    }
+    return;
+  }
+  if (
+    Object.hasOwn(result, "cases") &&
+    result.cases.every((entry) => Object.hasOwn(entry, "decision"))
+  ) {
+    assertExactKeys(result, ["cases"], `${label}.result`);
+    for (const entry of result.cases) {
+      assertExactKeys(
+        entry,
+        ["category", "attemptsUsed", "decision", "reason", "nextBackoffMs"],
+        `${label}.result.cases`,
+      );
+      if (
+        !["retry", "repair", "no_retry"].includes(entry.decision) ||
+        typeof entry.reason !== "string" ||
+        (entry.nextBackoffMs !== null && !Number.isSafeInteger(entry.nextBackoffMs))
+      ) {
+        throw new Error(`${label}.result.cases classification is invalid`);
+      }
+    }
+    return;
+  }
+  assertExactKeys(result, ["cases"], `${label}.result`);
+  for (const entry of result.cases) {
+    assertExactKeys(
+      entry,
+      ["lastKnownState", "runStateMayExist", "classification", "reason"],
+      `${label}.result.cases`,
+    );
+    if (
+      !["interrupted", "unknown", "cleanup_required"].includes(entry.classification) ||
+      typeof entry.reason !== "string" ||
+      typeof entry.runStateMayExist !== "boolean"
+    ) {
+      throw new Error(`${label}.result.cases reconciliation is invalid`);
+    }
+  }
+}
+
 function validateCompletedResult(record, label) {
   if (!isObject(record.result)) {
     throw new Error(`${label}.result must be an object`);
@@ -2304,6 +2371,10 @@ function validateCompletedResult(record, label) {
     record.subject === "runtime-readiness.doctor"
   ) {
     validateRuntimeReadinessResult(record.subject, record.result, label);
+    return;
+  }
+  if (record.subject === "recovery-taxonomy") {
+    validateRecoveryTaxonomyResult(record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

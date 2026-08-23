@@ -1,0 +1,40 @@
+{
+  "id": "recovery-taxonomy.non-retryable",
+  "subject": "recovery-taxonomy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "retry-classification",
+    "cases": [
+      {
+        "category": "malformed_tool_representation",
+        "attemptsUsed": 0
+      },
+      {
+        "category": "blocking_review_finding",
+        "attemptsUsed": 0
+      },
+      {
+        "category": "approval_denied",
+        "attemptsUsed": 0
+      },
+      {
+        "category": "stale_source_revision",
+        "attemptsUsed": 0
+      },
+      {
+        "category": "infrastructure_unavailable",
+        "attemptsUsed": 0
+      },
+      {
+        "category": "validation_failed",
+        "attemptsUsed": 0
+      },
+      {
+        "category": "unknown",
+        "attemptsUsed": 0
+      }
+    ]
+  }
+}

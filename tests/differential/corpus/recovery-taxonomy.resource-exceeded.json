@@ -1,0 +1,12 @@
+{
+  "id": "recovery-taxonomy.resource-exceeded",
+  "subject": "recovery-taxonomy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "domain-failure",
+    "kind": "RESOURCE_EXCEEDED",
+    "resourceKind": "FUEL"
+  }
+}

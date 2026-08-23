@@ -1,0 +1,36 @@
+{
+  "id": "recovery-taxonomy.uncertain",
+  "subject": "recovery-taxonomy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "incomplete-run",
+    "cases": [
+      {
+        "lastKnownState": "prepared",
+        "runStateMayExist": true
+      },
+      {
+        "lastKnownState": "starting",
+        "runStateMayExist": false
+      },
+      {
+        "lastKnownState": "running",
+        "runStateMayExist": false
+      },
+      {
+        "lastKnownState": "running",
+        "runStateMayExist": true
+      },
+      {
+        "lastKnownState": "terminating",
+        "runStateMayExist": true
+      },
+      {
+        "lastKnownState": "mystery",
+        "runStateMayExist": true
+      }
+    ]
+  }
+}

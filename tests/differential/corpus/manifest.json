@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 21,
+  "corpusVersion": 22,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -551,6 +551,38 @@
       "sha256": "c996cf643692fd0b7c1eb6ab82d6590f85e4712da86976dfd68aba0033af94ac"
     },
     {
+      "file": "recovery-taxonomy.cancelled.json",
+      "sha256": "f2dbc4d043277f370140b9840fec0ab5ed7decbc15c06cc5d1c9b242596d084d"
+    },
+    {
+      "file": "recovery-taxonomy.capability-denied.json",
+      "sha256": "c803d0051bc1d6098155d20f3a31e6a7672336168dbb7a2ef1e93613da4ae362"
+    },
+    {
+      "file": "recovery-taxonomy.non-retryable.json",
+      "sha256": "ffea2115449f40336df3ed6fec56aa5a7950490f680dbaf8b94d5cb4b755a485"
+    },
+    {
+      "file": "recovery-taxonomy.resource-exceeded.json",
+      "sha256": "2b8e8f376d38223d5fd0f24e143f291890895fd04d089729e84ffb44b9bca2c0"
+    },
+    {
+      "file": "recovery-taxonomy.retryable.json",
+      "sha256": "623951bc89538567df8705a0b9cc9a0fa77cd35c706ddedd5dc1641e5555e515"
+    },
+    {
+      "file": "recovery-taxonomy.stale-conflict.json",
+      "sha256": "a727784240266292c3e4f385bc7dfbb8a71e6af58fc77ad2caeed165b8f4a61f"
+    },
+    {
+      "file": "recovery-taxonomy.unavailable.json",
+      "sha256": "b15ac6dee904af3405a3ae31968edba2f3680b0a13e2bd1f1897d83b26a5015c"
+    },
+    {
+      "file": "recovery-taxonomy.uncertain.json",
+      "sha256": "2952a9fca3b1263d18886038ca64eca13aa13c9a9426a036c271f2dfe4bac46a"
+    },
+    {
       "file": "runtime-readiness.budgets.admission-matrix.json",
       "sha256": "9a1256b47b60def5d903a807660d92f03564330fbd238159b71dfdbd4418115b"
     },
@@ -855,5 +887,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "bd53cc6bbcfd14e9d4b2e105d43db3b86e3b7ab218e65d0339c26c66002bc544"
+  "corpusSha256": "8b495e001c60965e45527b983e7da56e2c11c0ef2e64592c72b71486d559f2e5"
 }

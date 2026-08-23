@@ -1,0 +1,12 @@
+{
+  "id": "recovery-taxonomy.capability-denied",
+  "subject": "recovery-taxonomy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "domain-failure",
+    "kind": "CAPABILITY_DENIED",
+    "missing": ["workspace-write", "process-exec"]
+  }
+}

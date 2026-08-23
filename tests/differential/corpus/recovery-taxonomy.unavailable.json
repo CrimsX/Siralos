@@ -1,0 +1,12 @@
+{
+  "id": "recovery-taxonomy.unavailable",
+  "subject": "recovery-taxonomy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "domain-failure",
+    "kind": "UNAVAILABLE",
+    "reason": "no identity-bound commit primitive exists"
+  }
+}
