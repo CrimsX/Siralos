@@ -239,22 +239,20 @@ function runWorkspaceProbe(probe, subject, input, timeoutMs = WORKSPACE_PROBE_TI
   if (result.signal !== null) {
     throw new Error(`${subject} probe terminated by a signal`);
   }
-    if (result.status !== 0) {
-      const stderrTail = result.stderr
-        ? result.stderr
-            .toString("utf8")
-            .split("\n")
-            .filter((line) => line.trim().length > 0)
-            .slice(-6)
-            .join("\n")
-        : "";
-      throw new Error(
-        `${subject} probe exited unsuccessfully (${String(result.status)})` +
-          (stderrTail.length === 0
-            ? ""
-            : `\nprobe stderr (tail):\n${stderrTail}`),
-      );
-    }
+  if (result.status !== 0) {
+    const stderrTail = result.stderr
+      ? result.stderr
+          .toString("utf8")
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .slice(-6)
+          .join("\n")
+      : "";
+    throw new Error(
+      `${subject} probe exited unsuccessfully (${String(result.status)})` +
+        (stderrTail.length === 0 ? "" : `\nprobe stderr (tail):\n${stderrTail}`),
+    );
+  }
   const output = result.stdout;
   if (!Buffer.isBuffer(output) || output.length === 0) {
     throw new Error(`${subject} probe emitted no outcome`);
