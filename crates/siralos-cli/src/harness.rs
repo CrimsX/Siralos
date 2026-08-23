@@ -72,6 +72,10 @@ const SUBJECT_CI_DELTA: &str = "content-identity-delta";
 const SUBJECT_DET_REPLAY: &str = "determinism-replay";
 const SUBJECT_ICM_PHASE_CONTRACT: &str = "icm.phase-contract";
 const SUBJECT_ICM_DEP_MANIFESTS: &str = "icm.dependency-manifests";
+const SUBJECT_RR_IDENTITY: &str = "runtime-readiness.identity";
+const SUBJECT_RR_BUDGETS: &str = "runtime-readiness.budgets";
+const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
+const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
 const CORPUS_VERSION: u64 = 19;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
@@ -423,6 +427,10 @@ fn validate_scenario(
             | SUBJECT_DET_REPLAY
             | SUBJECT_ICM_PHASE_CONTRACT
             | SUBJECT_ICM_DEP_MANIFESTS
+            | SUBJECT_RR_IDENTITY
+            | SUBJECT_RR_BUDGETS
+            | SUBJECT_RR_LIFECYCLE
+            | SUBJECT_RR_DOCTOR
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -611,7 +619,11 @@ fn validate_scenario(
         | SUBJECT_CI_DELTA
         | SUBJECT_DET_REPLAY
         | SUBJECT_ICM_PHASE_CONTRACT
-        | SUBJECT_ICM_DEP_MANIFESTS => {
+        | SUBJECT_ICM_DEP_MANIFESTS
+        | SUBJECT_RR_IDENTITY
+        | SUBJECT_RR_BUDGETS
+        | SUBJECT_RR_LIFECYCLE
+        | SUBJECT_RR_DOCTOR => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1261,6 +1273,16 @@ fn run_scenario(
                 }
                 _ => icm_dependency_manifests_record(input)?,
             };
+            Ok(
+                json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
+            )
+        }
+        SUBJECT_RR_IDENTITY | SUBJECT_RR_BUDGETS | SUBJECT_RR_LIFECYCLE
+        | SUBJECT_RR_DOCTOR => {
+            let input = scenario.input.as_ref().expect(
+                "runtime-readiness input was validated while loading the corpus",
+            );
+            let result = runtime_readiness_record(&scenario.subject, input)?;
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
             )
@@ -2156,6 +2178,96 @@ fn validate_godot_input(
                     | "why-validation-required",
                 ) => Ok(()),
                 _ => reject("unknown icm.dependency-manifests op".to_owned()),
+            }
+        }
+        SUBJECT_RR_IDENTITY => {
+            const IDENTITY_KEYS: [&str; 8] = [
+                "op",
+                "taskId",
+                "phaseId",
+                "sequence",
+                "kind",
+                "runId",
+                "operation",
+                "trace",
+            ];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !IDENTITY_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("run-id" | "operation-id" | "trace-ref") => Ok(()),
+                _ => {
+                    reject("unknown runtime-readiness.identity op".to_owned())
+                }
+            }
+        }
+        SUBJECT_RR_BUDGETS => {
+            const BUDGET_KEYS: [&str; 3] = ["op", "overrides", "cases"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !BUDGET_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("budget" | "admission") => Ok(()),
+                _ => reject("unknown runtime-readiness.budgets op".to_owned()),
+            }
+        }
+        SUBJECT_RR_LIFECYCLE => {
+            const DRIVE_KEYS: [&str; 3] = ["op", "script", "steps"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !DRIVE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("drive")
+                    if input
+                        .get("script")
+                        .and_then(Value::as_str)
+                        .is_some_and(|script| {
+                            siralos_core::runtime::FaultScript::parse(script)
+                                .is_some()
+                        }) =>
+                {
+                    Ok(())
+                }
+                _ => {
+                    reject("unknown runtime-readiness.lifecycle op".to_owned())
+                }
+            }
+        }
+        SUBJECT_RR_DOCTOR => {
+            const DOCTOR_KEYS: [&str; 12] = [
+                "op",
+                "mode",
+                "capabilities",
+                "godotAvailable",
+                "godotFingerprint",
+                "projectIdentity",
+                "sandboxAvailable",
+                "processSupervisionSupported",
+                "filesystemIsolationAvailable",
+                "userDataRedirectAvailable",
+                "networkPolicyResolvable",
+                "artifactStorageAvailable",
+            ];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !DOCTOR_KEYS.contains(&key.as_str())
+                    && key != "displayAvailable"
+                {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("readiness" | "diagnostic") => Ok(()),
+                _ => reject("unknown runtime-readiness.doctor op".to_owned()),
             }
         }
         _ => unreachable!("godot subject was validated above"),
@@ -4655,6 +4767,477 @@ fn icm_dependency_manifests_record(
         _ => Err(HarnessError::corpus(format!(
             "unknown icm.dependency-manifests op {op}"
         ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3R R7.1 subject: provider-turn.
+
+/// Canonical runtime-readiness record (Stage 3R R10c subjects).
+fn runtime_readiness_record(
+    subject: &str,
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    match subject {
+        SUBJECT_RR_IDENTITY => runtime_readiness_identity_record(input),
+        SUBJECT_RR_BUDGETS => runtime_readiness_budgets_record(input),
+        SUBJECT_RR_LIFECYCLE => runtime_readiness_lifecycle_record(input),
+        SUBJECT_RR_DOCTOR => runtime_readiness_doctor_record(input),
+        _ => unreachable!("runtime-readiness subject was routed"),
+    }
+}
+
+fn rr_identity_run_id(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{RunIdentityInput, create_run_id};
+    let outcome = create_run_id(&RunIdentityInput {
+        task_id: input
+            .get("taskId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        phase_id: input
+            .get("phaseId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        sequence: input.get("sequence").and_then(Value::as_u64).unwrap_or(0),
+        kind: input.get("kind").and_then(Value::as_str),
+    });
+    Ok(match outcome {
+        Ok(run_id) => json!({ "ok": true, "runId": run_id }),
+        Err(error) => json!({ "ok": false, "error": error.message }),
+    })
+}
+
+fn rr_identity_operation_id(input: &Value) -> Value {
+    use siralos_core::runtime::create_operation_id;
+    let operation_id = create_operation_id(
+        input.get("runId").and_then(Value::as_str).unwrap_or_default(),
+        input.get("operation").and_then(Value::as_str).unwrap_or_default(),
+    );
+    json!({ "operationId": operation_id })
+}
+
+fn rr_identity_trace_ref(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{create_run_trace_ref, format_run_trace_ref};
+    let trace_value = input.get("trace").cloned().unwrap_or(Value::Null);
+    let trace = create_run_trace_ref(
+        trace_value.get("taskId").and_then(Value::as_str).unwrap_or_default(),
+        trace_value.get("phaseId").and_then(Value::as_str).unwrap_or_default(),
+        trace_value.get("runId").and_then(Value::as_str).unwrap_or_default(),
+        trace_value.get("operationId").and_then(Value::as_str),
+        trace_value
+            .get("producer")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    );
+    Ok(json!({
+        "ref": {
+            "taskId": trace.task_id,
+            "phaseId": trace.phase_id,
+            "runId": trace.run_id,
+            "operationId": trace.operation_id,
+            "producer": trace.producer,
+        },
+        "formatted": format_run_trace_ref(&trace),
+    }))
+}
+
+fn runtime_readiness_identity_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    match input.get("op").and_then(Value::as_str) {
+        Some("run-id") => rr_identity_run_id(input),
+        Some("operation-id") => Ok(rr_identity_operation_id(input)),
+        Some("trace-ref") => rr_identity_trace_ref(input),
+        other => Err(HarnessError::corpus(format!(
+            "unknown runtime-readiness.identity op {other:?}"
+        ))),
+    }
+}
+
+fn rr_parse_budget(value: &Value) -> siralos_core::runtime::ArtifactBudget {
+    use siralos_core::runtime::ArtifactBudget;
+    let zero_or =
+        |key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
+    ArtifactBudget {
+        max_artifact_bytes: zero_or("maxArtifactBytes"),
+        max_artifacts_per_run: zero_or("maxArtifactsPerRun"),
+        max_aggregate_bytes_per_run: zero_or("maxAggregateBytesPerRun"),
+        max_retained_bytes_per_task: zero_or("maxRetainedBytesPerTask"),
+    }
+}
+
+fn runtime_readiness_budgets_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        ArtifactAdmission, RuntimeBudgetInput, create_runtime_budget,
+        enforce_artifact_budget, render_runtime_budget,
+    };
+    match input.get("op").and_then(Value::as_str) {
+        Some("budget") => {
+            let overrides =
+                input.get("overrides").cloned().unwrap_or(Value::Null);
+            let optional_u64 = |key: &str| -> Option<Option<u64>> {
+                overrides.get(key).map(|value| value.as_u64())
+            };
+            let budget = create_runtime_budget(&RuntimeBudgetInput {
+                startup_timeout_ms: optional_u64("startupTimeoutMs").flatten(),
+                idle_timeout_ms: optional_u64("idleTimeoutMs").flatten(),
+                hard_lifetime_ms: optional_u64("hardLifetimeMs").flatten(),
+                stdout_bytes: optional_u64("stdoutBytes").flatten(),
+                stderr_bytes: optional_u64("stderrBytes").flatten(),
+                artifact_bytes: optional_u64("artifactBytes").flatten(),
+                artifact_count: optional_u64("artifactCount").flatten(),
+                child_process_count: optional_u64("childProcessCount")
+                    .flatten(),
+                memory_mb: optional_u64("memoryMb"),
+                cpu_percent: overrides
+                    .get("cpuPercent")
+                    .map(|value| value.as_f64()),
+            });
+            Ok(json!({
+                "digest": budget.digest,
+                "rendered": render_runtime_budget(&budget),
+            }))
+        }
+        Some("admission") => {
+            let mut results = Vec::new();
+            for case in input
+                .get("cases")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
+                let state = case.get("state").cloned().unwrap_or(Value::Null);
+                // An absent budget means the oracle default budget, not
+                // an unlimited one.
+                let budget = match case.get("budget") {
+                    Some(value) => rr_parse_budget(value),
+                    None => {
+                        siralos_core::runtime::DEFAULT_RUNTIME_ARTIFACT_BUDGET
+                    }
+                };
+                let admission = enforce_artifact_budget(
+                    &budget,
+                    &siralos_core::runtime::ArtifactBudgetState {
+                        artifact_count: state
+                            .get("artifactCount")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                        aggregate_bytes: state
+                            .get("aggregateBytes")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                    },
+                    case.get("incomingSize")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                    case.get("incomingCount")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1),
+                );
+                results.push(match admission {
+                    ArtifactAdmission::Admit { truncated } => json!({
+                        "status": "admit",
+                        "truncated": truncated,
+                    }),
+                    ArtifactAdmission::Limit { reason } => json!({
+                        "status": "artifact_limit",
+                        "reason": reason,
+                    }),
+                });
+            }
+            Ok(json!({ "cases": results }))
+        }
+        other => Err(HarnessError::corpus(format!(
+            "unknown runtime-readiness.budgets op {other:?}"
+        ))),
+    }
+}
+
+fn rr_observation_to_json(
+    observation: &siralos_core::runtime::SupervisorObservation,
+) -> Value {
+    use siralos_core::runtime::SupervisorObservation as Observation;
+    match observation {
+        Observation::StartupResult { ok, failure_kind } => json!({
+            "type": "startup_result",
+            "ok": ok,
+            "failureKind": failure_kind.map(siralos_core::runtime::RuntimeFailureKind::as_str),
+        }),
+        Observation::OutputActivity => json!({ "type": "output_activity" }),
+        Observation::Liveness { kind } => json!({
+            "type": "liveness",
+            "kind": kind.as_str(),
+        }),
+        Observation::IdleTimeout => json!({ "type": "idle_timeout" }),
+        Observation::HardTimeout => json!({ "type": "hard_timeout" }),
+        Observation::ResourceLimit { kind } => json!({
+            "type": "resource_limit",
+            "kind": kind.as_str(),
+        }),
+        Observation::CancelRequested => json!({ "type": "cancel_requested" }),
+        Observation::ChildExit { exit_code } => json!({
+            "type": "child_exit",
+            "exitCode": exit_code,
+        }),
+        Observation::KillResult { ok } => json!({
+            "type": "kill_result",
+            "ok": ok,
+        }),
+        Observation::ChildRefusedTermination => {
+            json!({ "type": "child_refused_termination" })
+        }
+    }
+}
+
+fn rr_json_to_observation(
+    value: &Value,
+) -> Result<siralos_core::runtime::SupervisorObservation, HarnessError> {
+    use siralos_core::runtime::{
+        LivenessKind, ResourceLimitKind, RuntimeFailureKind,
+        SupervisorObservation as Observation,
+    };
+    let failure_kind = |raw: Option<&Value>| {
+        raw.and_then(Value::as_str).and_then(RuntimeFailureKind::parse)
+    };
+    match value.get("type").and_then(Value::as_str) {
+        Some("startup_result") => Ok(Observation::StartupResult {
+            ok: value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+            failure_kind: failure_kind(value.get("failureKind")),
+        }),
+        Some("output_activity") => Ok(Observation::OutputActivity),
+        Some("liveness") => Ok(Observation::Liveness {
+            kind: value
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(LivenessKind::parse)
+                .ok_or_else(|| {
+                    HarnessError::corpus("unknown liveness kind".to_owned())
+                })?,
+        }),
+        Some("idle_timeout") => Ok(Observation::IdleTimeout),
+        Some("hard_timeout") => Ok(Observation::HardTimeout),
+        Some("resource_limit") => Ok(Observation::ResourceLimit {
+            kind: value
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(ResourceLimitKind::parse)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "unknown resource limit kind".to_owned(),
+                    )
+                })?,
+        }),
+        Some("cancel_requested") => Ok(Observation::CancelRequested),
+        Some("child_exit") => Ok(Observation::ChildExit {
+            exit_code: value.get("exitCode").and_then(Value::as_i64),
+        }),
+        Some("kill_result") => Ok(Observation::KillResult {
+            ok: value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        }),
+        Some("child_refused_termination") => {
+            Ok(Observation::ChildRefusedTermination)
+        }
+        other => Err(HarnessError::corpus(format!(
+            "unknown supervisor observation type {other:?}"
+        ))),
+    }
+}
+
+fn runtime_readiness_lifecycle_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        expected_failure_kind, initial_supervisor_state, observe_fault_script,
+        transition_supervisor,
+    };
+    if input.get("op").and_then(Value::as_str) != Some("drive") {
+        return Err(HarnessError::corpus(format!(
+            "unknown runtime-readiness.lifecycle op {:?}",
+            input.get("op")
+        )));
+    }
+    let script = input
+        .get("script")
+        .and_then(Value::as_str)
+        .and_then(siralos_core::runtime::FaultScript::parse)
+        .ok_or_else(|| {
+            HarnessError::corpus("unknown fault script".to_owned())
+        })?;
+    let mut view = initial_supervisor_state();
+    let mut steps = Vec::new();
+    for step in input
+        .get("steps")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let at_ms = step.get("atMs").and_then(Value::as_u64).unwrap_or(0);
+        let requested: Vec<String> = step
+            .get("requested")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let borrowed: Vec<&str> =
+            requested.iter().map(String::as_str).collect();
+        let mut observations = observe_fault_script(script, at_ms, &borrowed);
+        if let Some(inject) = step.get("inject") {
+            observations.push(rr_json_to_observation(inject)?);
+        }
+        for observation in &observations {
+            view = transition_supervisor(&view, observation, at_ms);
+        }
+        steps.push(json!({
+            "atMs": at_ms,
+            "observations": observations.iter().map(rr_observation_to_json).collect::<Vec<_>>(),
+            "state": {
+                "state": view.state.as_str(),
+                "startedAtMs": view.started_at_ms,
+                "terminatedAtMs": view.terminated_at_ms,
+                "terminalDisposition": view.terminal_disposition.map(|status| status.as_str()),
+                "failureKind": view.failure_kind.map(|kind| kind.as_str()),
+            },
+        }));
+    }
+    Ok(json!({
+        "steps": steps,
+        "expectedFailureKind":
+            expected_failure_kind(script).map(|kind| kind.as_str()),
+    }))
+}
+
+fn rr_capabilities(
+    input: &Value,
+) -> siralos_core::runtime::DoctorCapabilities {
+    use siralos_core::runtime::DoctorCapabilities;
+    let string_field =
+        |key: &str| input.get(key).and_then(Value::as_str).map(str::to_owned);
+    DoctorCapabilities {
+        godot_executable_available: input
+            .get("godotAvailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        godot_executable_fingerprint: string_field("godotFingerprint"),
+        project_identity: string_field("projectIdentity"),
+        sandbox_available: input
+            .get("sandboxAvailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        process_supervision_supported: input
+            .get("processSupervisionSupported")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        filesystem_isolation_available: input
+            .get("filesystemIsolationAvailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        user_data_redirect_available: input
+            .get("userDataRedirectAvailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        network_policy_resolvable: input
+            .get("networkPolicyResolvable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        artifact_storage_available: input
+            .get("artifactStorageAvailable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        display_available: match input.get("displayAvailable") {
+            Some(Value::Bool(value)) => Some(*value),
+            _ => None,
+        },
+    }
+}
+
+fn runtime_readiness_doctor_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        RuntimeMode, build_runtime_readiness_diagnostic,
+        evaluate_runtime_readiness, execution_allowed,
+        render_runtime_readiness,
+    };
+    let capabilities =
+        rr_capabilities(input.get("capabilities").unwrap_or(&Value::Null));
+    match input.get("op").and_then(Value::as_str) {
+        Some("readiness") => {
+            let mode = input
+                .get("mode")
+                .and_then(Value::as_str)
+                .and_then(RuntimeMode::parse)
+                .ok_or_else(|| {
+                    HarnessError::corpus("unknown runtime mode".to_owned())
+                })?;
+            let manifest = evaluate_runtime_readiness(&{
+                let mut prepared = capabilities_to_readiness(&capabilities);
+                prepared.runtime_mode = Some(mode);
+                prepared
+            })
+            .map_err(|error| HarnessError::corpus(error.message))?;
+            Ok(json!({
+                "ready": manifest.ready,
+                "executionAllowed": execution_allowed(&manifest),
+                "blockedReasons": manifest.blocked_reasons,
+                "items": manifest.items.iter().map(|item| json!({
+                    "id": item.id.as_str(),
+                    "state": item.state.as_str(),
+                    "detail": item.detail,
+                })).collect::<Vec<_>>(),
+                "digest": manifest.digest,
+                "rendered": render_runtime_readiness(&manifest),
+            }))
+        }
+        Some("diagnostic") => {
+            let diagnostic = build_runtime_readiness_diagnostic(&capabilities)
+                .map_err(|error| HarnessError::corpus(error.message))?;
+            Ok(json!({
+                "headless": {
+                    "ready": diagnostic.headless.ready,
+                    "digest": diagnostic.headless.digest,
+                },
+                "visual": {
+                    "ready": diagnostic.visual.ready,
+                    "digest": diagnostic.visual.digest,
+                },
+            }))
+        }
+        other => Err(HarnessError::corpus(format!(
+            "unknown runtime-readiness.doctor op {other:?}"
+        ))),
+    }
+}
+
+fn capabilities_to_readiness(
+    capabilities: &siralos_core::runtime::DoctorCapabilities,
+) -> siralos_core::runtime::RuntimeReadinessInput {
+    use siralos_core::runtime::RuntimeReadinessInput;
+    RuntimeReadinessInput {
+        runtime_mode: None,
+        godot_executable_available: capabilities.godot_executable_available,
+        godot_executable_fingerprint: capabilities
+            .godot_executable_fingerprint
+            .clone(),
+        project_identity: capabilities.project_identity.clone(),
+        sandbox_backend_available: capabilities.sandbox_available,
+        sandbox_supports_process_supervision: capabilities
+            .process_supervision_supported,
+        filesystem_isolation_available: capabilities
+            .filesystem_isolation_available,
+        user_data_redirect_available: capabilities
+            .user_data_redirect_available,
+        network_policy_resolvable: capabilities.network_policy_resolvable,
+        artifact_storage_available: capabilities.artifact_storage_available,
+        display_available: capabilities.display_available,
+        memory_limit_enforced: false,
+        cpu_limit_enforced: false,
     }
 }
 

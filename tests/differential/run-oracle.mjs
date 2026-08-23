@@ -71,6 +71,10 @@ const CI_DELTA_PROBE = join(HERE, "probes", "content-identity-delta-oracle.mjs")
 const DET_REPLAY_PROBE = join(HERE, "probes", "determinism-replay-oracle.mjs");
 const ICM_PHASE_CONTRACT_PROBE = join(HERE, "probes", "icm-phase-contract-oracle.mjs");
 const ICM_DEP_MANIFESTS_PROBE = join(HERE, "probes", "icm-dependency-manifests-oracle.mjs");
+const RR_IDENTITY_PROBE = join(HERE, "probes", "runtime-readiness-identity-oracle.mjs");
+const RR_BUDGETS_PROBE = join(HERE, "probes", "runtime-readiness-budgets-oracle.mjs");
+const RR_LIFECYCLE_PROBE = join(HERE, "probes", "runtime-readiness-lifecycle-oracle.mjs");
+const RR_DOCTOR_PROBE = join(HERE, "probes", "runtime-readiness-doctor-oracle.mjs");
 const GODOT_PROBES = new Map([
   ["godot-scene-resolve", GODOT_SCENE_RESOLVE_PROBE],
   ["godot-discovery", GODOT_DISCOVERY_PROBE],
@@ -87,6 +91,10 @@ const GODOT_PROBES = new Map([
   ["determinism-replay", DET_REPLAY_PROBE],
   ["icm.phase-contract", ICM_PHASE_CONTRACT_PROBE],
   ["icm.dependency-manifests", ICM_DEP_MANIFESTS_PROBE],
+  ["runtime-readiness.identity", RR_IDENTITY_PROBE],
+  ["runtime-readiness.budgets", RR_BUDGETS_PROBE],
+  ["runtime-readiness.lifecycle", RR_LIFECYCLE_PROBE],
+  ["runtime-readiness.doctor", RR_DOCTOR_PROBE],
 ]);
 
 function optionValue(args, name) {
