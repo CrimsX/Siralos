@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile, readFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { tmpdir } from "node:os";
@@ -34,13 +34,18 @@ export async function cleanupTempDirs(): Promise<void> {
 
 export async function createTempRepo(initialBranch = "main"): Promise<TempRepo> {
   const root = await mkdtemp(join(tmpdir(), "siralos-git-test-"));
-  registerTempDir(root);
+  // Canonicalize: the adapter verifies executable identity with
+  // realpath comparisons, so a non-canonical tmpdir spelling (macOS
+  // /var -> /private/var, Windows short names) would refuse the fixture
+  // before the behavior under test is reached.
+  const canonicalRoot = await realpath(root);
+  registerTempDir(canonicalRoot);
   const git = (...args: string[]): { status: number; stdout: string; stderr: string } => {
     const result = spawnSync(
       "git",
       ["-c", "user.name=Siralos Test", "-c", "user.email=test@example.invalid", ...args],
       {
-        cwd: root,
+        cwd: canonicalRoot,
         encoding: "utf8",
         env: {
           ...process.env,
@@ -62,13 +67,13 @@ export async function createTempRepo(initialBranch = "main"): Promise<TempRepo> 
     throw new Error(`git init failed: ${init.stderr}`);
   }
   const repo: TempRepo = {
-    root,
+    root: canonicalRoot,
     async cleanup(): Promise<void> {
       await rm(root, { recursive: true, force: true });
     },
     git,
     async write(relativePath: string, content: string): Promise<void> {
-      await writeFile(join(root, relativePath), content);
+      await writeFile(join(canonicalRoot, relativePath), content);
     },
     commit(message: string): void {
       const result = git("commit", "-m", message);

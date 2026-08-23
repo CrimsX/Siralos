@@ -1,0 +1,778 @@
+
+> siralos@0.0.0 test
+> npm run build && vitest run
+
+
+> siralos@0.0.0 build
+> tsc -b
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/runner/work/Siralos/Siralos[39m
+
+ [32m✓[39m packages/adapters/src/checkpoints/filesystem/checkpoint-store.test.ts [2m([22m[2m147 tests[22m[2m | [22m[33m4 skipped[39m[2m)[22m[33m 3168[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects invalid preview counts [33m 529[2mms[22m[39m
+ [32m✓[39m scripts/check-architecture.test.mjs [2m([22m[2m180 tests[22m[2m)[22m[33m 901[2mms[22m[39m
+ [31m❯[39m tests/behavior/references-research.behavior.test.ts [2m([22m[2m35 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 385[2mms[22m[39m
+     [32m✓[39m 1. the reference alias resolves to the configured reference (registry.get by alias/id)[32m 13[2mms[22m[39m
+     [32m✓[39m 2. a reference path cannot escape the reference root[32m 5[2mms[22m[39m
+     [32m✓[39m 2b. a symlink that escapes the reference root is rejected[32m 4[2mms[22m[39m
+     [32m✓[39m 3. a reference cannot escape into the workspace through a crafted path[32m 6[2mms[22m[39m
+     [32m✓[39m 4. workspace tools cannot address reference content[32m 6[2mms[22m[39m
+     [32m✓[39m 5. a repository reference resolves a mutable ref (branch/tag) to an immutable commit identity[32m 3[2mms[22m[39m
+     [32m✓[39m 6. an existing task keeps reference revision A after the configured branch advances to B[32m 1[2mms[22m[39m
+     [32m✓[39m 7. a new/refreshed task may use revision B after the explicit refresh[32m 2[2mms[22m[39m
+     [32m✓[39m 8. a reference exact read records reference + commit + file identity[32m 6[2mms[22m[39m
+     [32m✓[39m 9. a reference structural GDScript read returns declarations[32m 9[2mms[22m[39m
+     [32m✓[39m 10. reference search is bounded with a disclosed truncation reason[32m 7[2mms[22m[39m
+     [32m✓[39m 11. no reference mutation tool reaches the actual provider schema[32m 25[2mms[22m[39m
+     [32m✓[39m 12. reference content cannot grant capability[32m 22[2mms[22m[39m
+     [32m✓[39m 13. reference content formatted as instructions remains data[32m 15[2mms[22m[39m
+[31m     [31m×[31m 14. a project-declared reference outside the permitted scope is rejected; the user-declared equivalent is accepted[39m[32m 12[2mms[22m[39m
+     [32m✓[39m 15. repository materialization requires an applicable resource/network policy[32m 6[2mms[22m[39m
+     [32m✓[39m 16. research sources enforce result-size limits (document and transport)[32m 23[2mms[22m[39m
+     [32m✓[39m 17. unsupported/binary research content is rejected safely[32m 2[2mms[22m[39m
+     [32m✓[39m 18. research timeout and cancel produce explicit infrastructure results[32m 28[2mms[22m[39m
+     [32m✓[39m 19. a stale async research result does not enter a newer task revision[32m 1[2mms[22m[39m
+     [32m✓[39m 20. a research document records source/fetched/revision provenance[32m 2[2mms[22m[39m
+     [32m✓[39m 21. research evidence reaches the provider through the EvidenceProjector, not the raw network response[32m 4[2mms[22m[39m
+     [32m✓[39m 22. research evidence appears as evidence/data, not instructions[32m 2[2mms[22m[39m
+     [32m✓[39m 23. research evidence does not automatically become persistent knowledge[32m 1[2mms[22m[39m
+     [32m✓[39m 24. a KnowledgeCandidate may explicitly reference research evidence the host verified[32m 3[2mms[22m[39m
+     [32m✓[39m 25. the Godot docs source prefers version-matched evidence[32m 2[2mms[22m[39m
+     [32m✓[39m 26. the Godot docs fallback is explicitly marked when the exact version is unavailable[32m 1[2mms[22m[39m
+     [32m✓[39m 27. reference cache content is excluded from workspace Git/checkpoint/undo scope[32m 10[2mms[22m[39m
+     [32m✓[39m 28. the existing /develop flow works without any configured references (regression)[32m 68[2mms[22m[39m
+     [32m✓[39m 29. /develop can inspect a configured read-only reference without weakening mutation/security behavior[32m 38[2mms[22m[39m
+     [32m✓[39m 30. provider-private continuation/secrets do not enter research evidence[32m 29[2mms[22m[39m
+     [32m✓[39m 51. reference mutation effect: workspace mutation APIs reject reference paths before any write or checkpoint[32m 9[2mms[22m[39m
+     [32m✓[39m 52. network policy effect: denied research never invokes a configured source port[32m 1[2mms[22m[39m
+     [32m✓[39m 53. authority effect: reference/research material appears under evidence sections, never under instruction authority[32m 11[2mms[22m[39m
+     [32m✓[39m 54. task snapshot effect: the task/provider projection keeps identifying commit A until an explicit refresh[32m 3[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/providers/deterministic-fake-provider.test.ts [2m([22m[2m70 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m tests/behavior/self-reference-doctor.behavior.test.ts [2m([22m[2m36 tests[22m[2m)[22m[33m 324[2mms[22m[39m
+ [32m✓[39m apps/cli/src/interactive-session.test.ts [2m([22m[2m86 tests[22m[2m)[22m[33m 6453[2mms[22m[39m
+     [33m[2m✓[22m[39m submits a prompt and renders the streamed response [33m 409[2mms[22m[39m
+     [33m[2m✓[22m[39m /plan runs plan-only planning and stops without executing [33m 338[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves conversation history across prompts [33m 304[2mms[22m[39m
+     [33m[2m✓[22m[39m ignores empty input [33m 314[2mms[22m[39m
+     [33m[2m✓[22m[39m reports an invalid slash command [33m 347[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the milestone manifest and its evidence-backed acceptance status [33m 306[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/process/process-run-tool.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 184[2mms[22m[39m
+ [32m✓[39m tests/behavior/planning.behavior.test.ts [2m([22m[2m24 tests[22m[2m)[22m[33m 407[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/development/gdscript-development-service.test.ts [2m([22m[2m44 tests[22m[2m)[22m[33m 2315[2mms[22m[39m
+     [33m[2m✓[22m[39m reports an infrastructure failure when the fresh LSP session never answers [33m 1017[2mms[22m[39m
+ [31m❯[39m packages/adapters/src/godot/project/project-inspector.test.ts [2m([22m[2m45 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 432[2mms[22m[39m
+     [32m✓[39m reports no project in a non-Godot workspace[32m 6[2mms[22m[39m
+     [32m✓[39m detects a GDScript project and extracts metadata[32m 20[2mms[22m[39m
+     [32m✓[39m reports a missing main scene[32m 3[2mms[22m[39m
+     [32m✓[39m rejects a symbolic-linked project.godot[32m 2[2mms[22m[39m
+     [32m✓[39m handles an empty project file as minimal[32m 4[2mms[22m[39m
+     [32m✓[39m detects a .NET project from root project files and settings[32m 41[2mms[22m[39m
+     [32m✓[39m detects a mixed project[32m 4[2mms[22m[39m
+     [32m✓[39m leaves an empty project language-unknown[32m 4[2mms[22m[39m
+     [32m✓[39m inventories tool scripts, editor plugins, and GDExtensions statically[32m 20[2mms[22m[39m
+     [32m✓[39m reports scan truncation truthfully[32m 59[2mms[22m[39m
+     [32m✓[39m returns workspace-relative paths only[32m 6[2mms[22m[39m
+     [32m✓[39m is deterministic across repeated inspection[32m 4[2mms[22m[39m
+     [32m✓[39m marks results as static and non-authoritative via warnings[32m 0[2mms[22m[39m
+     [32m✓[39m detects @tool in code but not in comments or strings[32m 0[2mms[22m[39m
+     [32m✓[39m warns on an escaping main scene without touching the filesystem outside[32m 3[2mms[22m[39m
+     [32m✓[39m warns on an absolute main scene without constructing a host path[32m 3[2mms[22m[39m
+     [32m✓[39m skips plugin scripts with repeated ../ and absolute spellings, warning without outside access[32m 31[2mms[22m[39m
+     [32m✓[39m warns on GDExtension outside targets without touching them[32m 8[2mms[22m[39m
+     [32m✓[39m skips a symlinked addon directory with a warning[32m 1[2mms[22m[39m
+     [32m✓[39m skips a symlinked plugin.cfg with a warning[32m 5[2mms[22m[39m
+     [32m✓[39m skips a symlinked gdextension descriptor[32m 2[2mms[22m[39m
+[31m     [31m×[31m treats a tool script swapped during inspection as a warning and skips it[39m[32m 18[2mms[22m[39m
+     [32m✓[39m exhausts the entry budget deterministically on a wide directory[32m 16[2mms[22m[39m
+     [32m✓[39m consumes the directory budget on deep empty trees[32m 8[2mms[22m[39m
+     [32m✓[39m stops at the depth bound on a deep chain[32m 6[2mms[22m[39m
+     [32m✓[39m treats case-variant excluded directories as excluded on case-insensitive platforms[32m 2[2mms[22m[39m
+     [32m✓[39m rejects a project file whose raw bytes exceed the limit even when its character count is below it[32m 6[2mms[22m[39m
+     [32m✓[39m hits the plugin-directory bound on huge addon fanout[32m 21[2mms[22m[39m
+     [32m✓[39m reports the file-limit truncation reason exactly[32m 6[2mms[22m[39m
+     [32m✓[39m reports the surfaced-limit truncation reason exactly[32m 3[2mms[22m[39m
+     [32m✓[39m reports the inventory-item bound truncation reason exactly[32m 3[2mms[22m[39m
+     [32m✓[39m reports the descriptor bound truncation reason exactly[32m 8[2mms[22m[39m
+     [32m✓[39m counts raw file bytes for the source byte budget on multibyte content[32m 4[2mms[22m[39m
+     [32m✓[39m skips an oversized plugin descriptor with a warning[32m 3[2mms[22m[39m
+     [32m✓[39m skips an oversized GDExtension descriptor with a warning[32m 9[2mms[22m[39m
+     [32m✓[39m skips a plugin descriptor with an over-long value with a warning[32m 5[2mms[22m[39m
+     [32m✓[39m stops at the shared deadline with the timeout truncation reason[32m 3[2mms[22m[39m
+     [32m✓[39m throws AbortError when the scan is cancelled mid-walk[32m 3[2mms[22m[39m
+     [32m✓[39m throws AbortError when the inventory is cancelled[32m 2[2mms[22m[39m
+     [32m✓[39m rescans every inspection: create, edit, and delete cycles are visible immediately[32m 16[2mms[22m[39m
+     [32m✓[39m reflects a change to a tool script without touching project.godot[32m 25[2mms[22m[39m
+     [32m✓[39m reflects adding, editing, and deleting an editor plugin descriptor[32m 14[2mms[22m[39m
+     [32m✓[39m reflects adding, editing, and deleting a GDExtension descriptor[32m 10[2mms[22m[39m
+     [32m✓[39m reflects a change to the main scene reference without touching project.godot[32m 5[2mms[22m[39m
+     [32m✓[39m reflects a renamed inventoried file[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/quality/quality-stage.test.ts [2m([22m[2m29 tests[22m[2m)[22m[33m 552[2mms[22m[39m
+ [32m✓[39m tests/behavior/instructions-knowledge.behavior.test.ts [2m([22m[2m31 tests[22m[2m)[22m[33m 344[2mms[22m[39m
+ [32m✓[39m packages/core/src/doctor/capability-doctor.test.ts [2m([22m[2m33 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+ [32m✓[39m packages/core/src/application/provider-protocol.test.ts [2m([22m[2m38 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.test.ts [2m([22m[2m40 tests[22m[2m | [22m[33m1 skipped[39m[2m)[22m[33m 699[2mms[22m[39m
+     [33m[2m✓[22m[39m isolates a failing output callback without crashing [33m 582[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/profile/engine-profiler.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 120[2mms[22m[39m
+ [32m✓[39m tests/behavior/projection.behavior.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 424[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/probe/godot-project-probe-service.test.ts [2m([22m[2m29 tests[22m[2m)[22m[33m 590[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/brief-compiler.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m tests/behavior/workspace-revision.behavior.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 447[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/quality/provider-change-reviewer.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m tests/behavior/task-runtime.behavior.test.ts [2m([22m[2m26 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m packages/core/src/application/approval-flow.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/mutations/safe-replacement.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 126[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/intelligence/scene-intelligence-service.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 428[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/scene/scene-parser.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 237[2mms[22m[39m
+ [31m❯[39m packages/adapters/src/git/cli/git-helper-confinement.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 1037[2mms[22m[39m
+     [32m✓[39m requests sandboxed confinement when the repository selects a clean filter[32m 287[2mms[22m[39m
+     [32m✓[39m reports git inspection unavailable and never requests execution when the backend cannot enforce[32m 155[2mms[22m[39m
+     [32m✓[39m never invokes repository Git configuration on the host after the hostile filter is configured[32m 268[2mms[22m[39m
+[31m     [31m×[31m proves the clean filter ran inside the sandbox, wrote only to the permitted result channel, and had its network denied[39m[33m 326[2mms[22m[39m
+ [32m✓[39m packages/core/src/projection/projection.test.ts [2m([22m[2m33 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m packages/core/src/reference/reference-registry.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/core/src/application/command-flow.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/git/cli/git-inspection.test.ts [2m([22m[2m37 tests[22m[2m)[22m[33m 24728[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a clean repository [33m 3782[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a modified tracked file [33m 643[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a staged file [33m 614[2mms[22m[39m
+     [33m[2m✓[22m[39m reports staged and unstaged changes separately [33m 973[2mms[22m[39m
+     [33m[2m✓[22m[39m reports untracked files [33m 673[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a deleted file [33m 688[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a renamed file [33m 690[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a merge conflict [33m 1199[2mms[22m[39m
+     [33m[2m✓[22m[39m handles spaces, tabs, and unicode in filenames [33m 656[2mms[22m[39m
+     [33m[2m✓[22m[39m reports ahead and behind against an upstream [33m 972[2mms[22m[39m
+     [33m[2m✓[22m[39m reports no upstream when none is configured [33m 548[2mms[22m[39m
+     [33m[2m✓[22m[39m returns truncated status without throwing when output is cut mid-record [33m 837[2mms[22m[39m
+     [33m[2m✓[22m[39m returns a working diff [33m 915[2mms[22m[39m
+     [33m[2m✓[22m[39m returns a staged diff [33m 1203[2mms[22m[39m
+     [33m[2m✓[22m[39m returns an empty diff for a clean repository [33m 812[2mms[22m[39m
+     [33m[2m✓[22m[39m handles repositories with no HEAD for the head scope [33m 480[2mms[22m[39m
+     [33m[2m✓[22m[39m filters by path [33m 826[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects invalid relative paths [33m 393[2mms[22m[39m
+     [33m[2m✓[22m[39m treats pathspec-like input as a literal path [33m 550[2mms[22m[39m
+     [33m[2m✓[22m[39m summarizes binary changes without patch content [33m 830[2mms[22m[39m
+     [33m[2m✓[22m[39m summarizes renames [33m 844[2mms[22m[39m
+     [33m[2m✓[22m[39m marks truncated output [33m 605[2mms[22m[39m
+     [33m[2m✓[22m[39m returns a truncated diff without throwing when numstat is cut mid-record [33m 967[2mms[22m[39m
+     [33m[2m✓[22m[39m ignores external diff helpers and textconv configuration [33m 656[2mms[22m[39m
+     [33m[2m✓[22m[39m does not include untracked file contents [33m 781[2mms[22m[39m
+     [33m[2m✓[22m[39m reports exact paths for special filenames in diffs [33m 623[2mms[22m[39m
+     [33m[2m✓[22m[39m classifies tracked type changes as modified [33m 584[2mms[22m[39m
+     [33m[2m✓[22m[39m decodes truncated output as valid UTF-8 without splitting sequences [33m 556[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves rename counts from numstat records [33m 822[2mms[22m[39m
+ [32m✓[39m tests/behavior/godot-intelligence.behavior.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 247[2mms[22m[39m
+ [32m✓[39m packages/core/src/research/research-service.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 75[2mms[22m[39m
+ [32m✓[39m packages/core/src/runtime/runtime.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m packages/core/src/knowledge/knowledge-coordinator.test.ts [2m([22m[2m30 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m tests/behavior/unified-development.behavior.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 524[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/impact/impact-analyzer.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/core/src/domain/domain.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/environment/child-environment.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/workspace-search-tool.test.ts [2m([22m[2m27 tests[22m[2m)[22m[33m 602[2mms[22m[39m
+     [33m[2m✓[22m[39m stops at the file-scan limit [33m 498[2mms[22m[39m
+ [31m❯[39m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts [2m([22m[2m18 tests[22m[2m | [22m[31m8 failed[39m[2m)[22m[33m 479[2mms[22m[39m
+     [32m✓[39m reports support unavailable with an exact reason[32m 9[2mms[22m[39m
+[31m     [31m×[31m prepares a single-script check with the exact relative path and a bounded preview[39m[32m 64[2mms[22m[39m
+[31m     [31m×[31m prepares a project-wide check with deterministic enumeration[39m[32m 15[2mms[22m[39m
+[31m     [31m×[31m supports an explicit bounded paths subset[39m[32m 14[2mms[22m[39m
+     [32m✓[39m bounds the explicit paths subset to the immutable limits[32m 17[2mms[22m[39m
+     [32m✓[39m rejects invalid, absolute, traversing, non-gd, and missing script paths[32m 47[2mms[22m[39m
+     [32m✓[39m refuses without a Godot project[32m 5[2mms[22m[39m
+     [32m✓[39m refuses as unsupported when the engine does not advertise --check-only[32m 20[2mms[22m[39m
+     [32m✓[39m refuses as unsupported without a selected engine[32m 2[2mms[22m[39m
+[31m     [31m×[31m execute requires the approved digest and refuses under any other digest[39m[32m 58[2mms[22m[39m
+[31m     [31m×[31m execute returns a typed unavailable result after revalidation and never spawns[39m[32m 20[2mms[22m[39m
+     [32m✓[39m prepared checks are single-use[32m 8[2mms[22m[39m
+[31m     [31m×[31m a changed script after preparation conflicts with the approval[39m[32m 13[2mms[22m[39m
+[31m     [31m×[31m a changed engine or project manifest after preparation conflicts[39m[32m 33[2mms[22m[39m
+     [32m✓[39m execute on an unknown check fails without claiming success[32m 18[2mms[22m[39m
+     [32m✓[39m propagates cancellation as an abort error and leaves the workspace unchanged[32m 59[2mms[22m[39m
+     [32m✓[39m status is untrusted until an approval conflict invalidates it[32m 35[2mms[22m[39m
+[31m     [31m×[31m disposeAll clears prepared checks[39m[32m 39[2mms[22m[39m
+ [31m❯[39m packages/adapters/src/git/cli/git-adapter.test.ts [2m([22m[2m21 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 4866[2mms[22m[39m
+     [32m✓[39m rejects subcommands outside the allowlist[32m 1[2mms[22m[39m
+     [32m✓[39m builds the fixed invocation with disabling configuration first[32m 1[2mms[22m[39m
+     [32m✓[39m defines the required safety environment[32m 1[2mms[22m[39m
+     [33m[2m✓[22m[39m runs every invocation through the sandbox backend with confinement [33m 743[2mms[22m[39m
+     [33m[2m✓[22m[39m does not execute shell metacharacters in arguments [33m 826[2mms[22m[39m
+     [32m✓[39m maps a backend timeout to git_timeout[32m 37[2mms[22m[39m
+     [32m✓[39m maps a backend cancellation to git_cancelled[32m 25[2mms[22m[39m
+     [32m✓[39m reports git inspection unavailable when the backend cannot enforce the boundary[32m 27[2mms[22m[39m
+     [32m✓[39m reports git inspection unavailable when the backend is not available[32m 44[2mms[22m[39m
+     [32m✓[39m reports git inspection unavailable when the backend cannot be inspected[32m 35[2mms[22m[39m
+     [32m✓[39m fails closed when private run directories are unavailable: git is never launched[32m 46[2mms[22m[39m
+[31m     [31m×[31m refuses to launch when the executable is replaced by a link after discovery[39m[32m 42[2mms[22m[39m
+[31m     [31m×[31m refuses to launch when the executable is removed after discovery[39m[32m 146[2mms[22m[39m
+     [32m✓[39m observes a refused run-directory cleanup and surfaces it explicitly[32m 38[2mms[22m[39m
+     [33m[2m✓[22m[39m detects an available git executable and a matching repository [33m 473[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a non-Git workspace [33m 327[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects a repository root that is a parent of the workspace [33m 413[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a detached HEAD [33m 536[2mms[22m[39m
+     [33m[2m✓[22m[39m reports an unborn branch [33m 776[2mms[22m[39m
+     [32m✓[39m reports git as unavailable when the executable is missing[32m 1[2mms[22m[39m
+     [33m[2m✓[22m[39m reports git errors through the inspector [33m 327[2mms[22m[39m
+ [32m✓[39m tests/behavior/context-scope.behavior.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 236[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/reference/reference-access.test.ts [2m([22m[2m19 tests[22m[2m)[22m[33m 455[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/knowledge/api-dump-with-docs.test.ts [2m([22m[2m26 tests[22m[2m)[22m[32m 132[2mms[22m[39m
+ [32m✓[39m packages/core/src/projection/reference-research-projection.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/config/user-config.test.ts [2m([22m[2m44 tests[22m[2m)[22m[32m 87[2mms[22m[39m
+ [32m✓[39m packages/core/src/context/context.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/planning/planner-executor.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 94[2mms[22m[39m
+ [32m✓[39m packages/core/src/identity/effect-tests.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/development/unified-development-service.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 243[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/reference/reference-resolver.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 86[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/development/change-set-executor.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 347[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/development/unified-development.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m packages/core/src/application/tool-loop.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/core/src/determinism/determinism.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m packages/core/src/identity/manifests.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m tests/behavior/impact-intelligence.behavior.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 138[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/research/normalization.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [31m❯[39m packages/adapters/src/godot/discovery/discovery.test.ts [2m([22m[2m25 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 166[2mms[22m[39m
+     [32m✓[39m accepts a regular executable file and fingerprints it[32m 20[2mms[22m[39m
+     [32m✓[39m fails for a missing executable[32m 8[2mms[22m[39m
+     [32m✓[39m rejects directories[32m 11[2mms[22m[39m
+     [32m✓[39m rejects executables inside the project workspace[32m 6[2mms[22m[39m
+     [32m✓[39m rejects oversized executables[32m 3[2mms[22m[39m
+[31m     [31m×[31m canonicalizes through symlinks and records the target[39m[32m 12[2mms[22m[39m
+[31m     [31m×[31m records the enclosing .app bundle path for bundle executables[39m[32m 3[2mms[22m[39m
+     [32m✓[39m records no bundle for standalone executables[32m 2[2mms[22m[39m
+     [32m✓[39m accepts an unchanged executable (full re-hash)[32m 3[2mms[22m[39m
+     [32m✓[39m rejects a same-size replacement with a restored modification time[32m 5[2mms[22m[39m
+     [32m✓[39m rejects a symlink swapped onto the canonical target[32m 4[2mms[22m[39m
+     [32m✓[39m rejects a canonical target that no longer resolves to itself[32m 3[2mms[22m[39m
+     [32m✓[39m computes a bounded SHA-256 of the file bytes[32m 2[2mms[22m[39m
+     [32m✓[39m fails closed when the file exceeds the byte bound[32m 1[2mms[22m[39m
+     [32m✓[39m returns null for a missing file[32m 1[2mms[22m[39m
+     [32m✓[39m finds fixed candidate names only[32m 15[2mms[22m[39m
+     [32m✓[39m searches multiple PATH entries deterministically[32m 8[2mms[22m[39m
+     [32m✓[39m applies PATHEXT safely on Windows[32m 4[2mms[22m[39m
+     [32m✓[39m deduplicates canonical paths[32m 4[2mms[22m[39m
+     [32m✓[39m bounds candidate count[32m 29[2mms[22m[39m
+     [32m✓[39m handles an empty PATH[32m 1[2mms[22m[39m
+     [32m✓[39m resolves the exact executable from an Info.plist[32m 6[2mms[22m[39m
+     [32m✓[39m falls back to the conventional Godot executable name[32m 13[2mms[22m[39m
+     [32m✓[39m rejects bundles without Contents/MacOS[32m 1[2mms[22m[39m
+     [32m✓[39m rejects non-bundle paths[32m 1[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/git/cli/git-config-hardening.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 10354[2mms[22m[39m
+     [33m[2m✓[22m[39m does not execute a malicious core.fsmonitor hook [33m 678[2mms[22m[39m
+     [33m[2m✓[22m[39m does not execute shell aliases that attempt external execution [33m 1025[2mms[22m[39m
+     [33m[2m✓[22m[39m does not execute pager configuration [33m 1238[2mms[22m[39m
+     [33m[2m✓[22m[39m does not execute an external diff configuration [33m 944[2mms[22m[39m
+     [33m[2m✓[22m[39m does not execute textconv configuration [33m 931[2mms[22m[39m
+     [33m[2m✓[22m[39m does not execute credential helpers or prompt for credentials [33m 848[2mms[22m[39m
+     [33m[2m✓[22m[39m strips hostile environment-based Git configuration injection [33m 380[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects alias and fsmonitor overrides even when combined with later arguments [33m 1891[2mms[22m[39m
+     [33m[2m✓[22m[39m reports unusual filenames exactly [33m 731[2mms[22m[39m
+     [33m[2m✓[22m[39m handles backslash and tab filenames on supported platforms [33m 690[2mms[22m[39m
+     [33m[2m✓[22m[39m never reads configuration from the Siralos repository [33m 994[2mms[22m[39m
+ [32m✓[39m packages/core/src/reference/reference-declaration.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/mutations/mutation-paths.test.ts [2m([22m[2m25 tests[22m[2m | [22m[33m3 skipped[39m[2m)[22m[32m 83[2mms[22m[39m
+ [32m✓[39m packages/core/src/tasks/task-runtime-invariants.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 51[2mms[22m[39m
+ [32m✓[39m packages/core/src/planning/planning-model.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m packages/core/src/determinism/effect-tests.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/quality/quality-review.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m packages/core/src/runtime/effect-tests.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/core/src/identity/content-identity.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/scene-mutation/scene-mutation.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m packages/core/src/workspace/workspace.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/briefing-service.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/lsp/normalizers.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 51[2mms[22m[39m
+ [32m✓[39m packages/core/src/context/effect-tests.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/workspace-read-tool.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/development/change-set-preparation.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 129[2mms[22m[39m
+ [32m✓[39m tests/behavior/mutation-intelligence.behavior.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 118[2mms[22m[39m
+ [32m✓[39m packages/core/src/application/probe-tool-loop.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/research/fake-sources.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/scene-mutation/scene-mutation-service.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 143[2mms[22m[39m
+ [32m✓[39m packages/core/src/planning/planning-runtime.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/acceptance.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/quality/quality-validation-executor.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/probe.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m packages/core/src/language/structure.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/documentation-context.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m apps/cli/src/output.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/behavior/executor-briefing.behavior.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 144[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/lsp/godot-lsp-service.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 159[2mms[22m[39m
+ [32m✓[39m packages/core/src/application/diagnostic-tool-loop.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/research/github-source.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/providers/bounded-model-turn.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/knowledge/godot-knowledge-service.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/process/run-directories.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/quality/quality-conventions.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/research/godot-docs-source.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/workspace-scope.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/reference/reference-tools.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 96[2mms[22m[39m
+ [32m✓[39m apps/cli/src/bootstrap/sandbox-doctor.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/research/http-transport.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/milestone-manifest.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 48[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/development/development-loop-app.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 172[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/godot-inspector.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/execution-contract.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/lsp/json-rpc.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 301[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/workspace-path.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 99[2mms[22m[39m
+ [32m✓[39m packages/core/src/security/permission-evaluator.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/reference/reference-materializer.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m packages/core/src/tasks/task-m5-evidence.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m packages/core/src/language/language.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/reference/reference-path.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/probe/authored-files.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 433[2mms[22m[39m
+     [33m[2m✓[22m[39m truncates at the directory-entry bound without materializing fanout [33m 308[2mms[22m[39m
+ [32m✓[39m apps/cli/src/bootstrap/doctor.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 897[2mms[22m[39m
+     [33m[2m✓[22m[39m exits 0 for a warnings-free area (runtime) and prints the report [33m 467[2mms[22m[39m
+     [33m[2m✓[22m[39m prints a valid JSON report with --json --report-safe [33m 416[2mms[22m[39m
+ [32m✓[39m packages/core/src/self/self-reference.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m tests/differential/harness.test.mjs [2m([22m[2m67 tests[22m[2m)[22m[33m 105874[2mms[22m[39m
+     [33m[2m✓[22m[39m runs each godot subject through the real oracle reference [33m 828[2mms[22m[39m
+     [33m[2m✓[22m[39m pins the three scene-resolve selection divergences at the oracle [33m 344[2mms[22m[39m
+     [33m[2m✓[22m[39m produces byte-identical records on consecutive runs [33m 67158[2mms[22m[39m
+     [33m[2m✓[22m[39m emits only canonical sorted-key JSON [33m 33343[2mms[22m[39m
+     [33m[2m✓[22m[39m binds audit provenance to commit and directly hashed source bytes [33m 351[2mms[22m[39m
+ [32m✓[39m packages/core/src/application/application.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/behavior/development-task.behavior.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 216[2mms[22m[39m
+ [32m✓[39m apps/cli/src/bootstrap/create-application.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 1003[2mms[22m[39m
+     [33m[2m✓[22m[39m builds reference services, registers reference tools, and keeps research tools registered but hidden under the default policy [33m 421[2mms[22m[39m
+     [33m[2m✓[22m[39m surfaces a references config semantic error without crashing (fail closed, empty registry) [33m 306[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/diagnostics/diagnostic-normalizer.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/quality/reviewer-tools.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/engine-profile.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/development/development-tools.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 92[2mms[22m[39m
+ [32m✓[39m packages/core/src/runtime/fault-injection.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/quality/quality-model.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/sandbox/anthropic-runtime/environment-merge.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m apps/cli/src/bootstrap/godot-doctor.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-inspect-tools.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/process/godot-recovery-runner.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/development/development-change-set.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/cache/engine-profile-cache.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m packages/core/src/instructions/instruction-resolver.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/git/cli/git-executable-resolution.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/project/project-scanner.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/probe/prepared-probe-store.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/selection.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [31m❯[39m packages/adapters/src/godot/diagnostics/script-enumeration.test.ts [2m([22m[2m10 tests[22m[2m | [22m[31m3 failed[39m[2m)[22m[32m 49[2mms[22m[39m
+     [32m✓[39m enumerates .gd files deterministically with exclusions applied[32m 8[2mms[22m[39m
+     [32m✓[39m skips symlinked entries without following them[32m 3[2mms[22m[39m
+     [32m✓[39m enforces the file-count limit with explicit truncation[32m 9[2mms[22m[39m
+     [32m✓[39m enforces the total-byte limit with explicit truncation[32m 4[2mms[22m[39m
+[31m     [31m×[31m validates and hashes a workspace-relative .gd file[39m[32m 8[2mms[22m[39m
+     [32m✓[39m rejects absolute paths and parent traversal[32m 1[2mms[22m[39m
+     [32m✓[39m rejects non-.gd extensions[32m 1[2mms[22m[39m
+     [32m✓[39m rejects missing files[32m 1[2mms[22m[39m
+[31m     [31m×[31m rejects symlinked scripts[39m[32m 3[2mms[22m[39m
+[31m     [31m×[31m rejects oversized files[39m[32m 9[2mms[22m[39m
+ [32m✓[39m apps/cli/src/reference-research-commands.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 805[2mms[22m[39m
+     [33m[2m✓[22m[39m renders /references, /reference, /research-status, and the /status research line [33m 305[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/instructions/instruction-discovery.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 65[2mms[22m[39m
+ [32m✓[39m apps/cli/src/approval/approval-reviewer.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/workspace-list-tool.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 259[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-probe-project-tool.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/process/godot-check-only-runner.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-check-script-tool.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/reference/reference-services.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/quality/quality-warnings.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/quality/quality-validation.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-check-project-scripts-tool.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/core/src/research/research-model.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m apps/cli/src/input/input-queue.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/lsp/frame-parser.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/process/godot-lsp-runner.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/core/src/tasks/task-contract.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m packages/core/src/planning/planning-policy.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/compatibility.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/fs/file-read.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m packages/core/src/executor/new-file-discipline.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/lsp.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/knowledge.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/gdscript.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/process/godot-knowledge-runner.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/scene/relationship-index.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/fs-path-identity.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-review-context-tool.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/process/version-parser.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/core/src/security/sandbox-service.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/research/research-service-integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/self/config-schema-summary.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/fs/directory-enumeration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m packages/core/src/commands/command-registry.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/scene/variant.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/environment/command-environment.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-lsp-tools.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/core/src/knowledge/knowledge-coordinator-m5.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m scripts/check-siralos-identity.test.mjs [2m([22m[2m7 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/config/selection-request.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/core/src/checkpoints/undo-plan.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m scripts/check-public-hygiene.test.mjs [2m([22m[2m6 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/probe/recovery-diagnostics.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-api-search-tool.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/api.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/probe/workspace-integrity.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m scripts/check-doc-links.test.mjs [2m([22m[2m5 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/mirror/project-mirror.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m apps/cli/src/input/parse-input.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/mutations/workspace-create-file-tool.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/mutations/workspace-edit-file-tool.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/lsp/file-uri.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/tools/godot-api-lookup-tool.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/mutations/workspace-delete-file-tool.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/self/self-reference-tools.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/mutations/diff.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m scripts/check-project-context.test.mjs [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/development/development-model.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/checkpoints/filesystem/checkpoint-file-state.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m packages/core/src/knowledge/knowledge-seeding.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/reference/reference-cache.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/tools/workspace/mutations/mutation-lock.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/process/runners/npm-script-runner.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m packages/core/src/godot/version.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/knowledge/knowledge-cache.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m scripts/check-rust-architecture.test.mjs [2m([22m[2m3 tests[22m[2m)[22m[32m 94[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/lsp/port-allocator.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m packages/core/src/security/behavioral-config.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/godot/process/godot-probe-runner.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 2[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/process/runners/node-script-runner.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m packages/core/src/tools/tool-registry.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m apps/cli/src/bootstrap/review-provider.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/checkpoints/filesystem/undo-service.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 2[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/support/error-message.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m packages/adapters/src/checkpoints/filesystem/checkpoint-store-public-export.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 2[2mms[22m[39m
+ [32m✓[39m tests/differential/replay.test.mjs [2m([22m[2m3 tests[22m[2m)[22m[33m 252080[2mms[22m[39m
+     [33m[2m✓[22m[39m produces identical records across repeated runs [33m 162844[2mms[22m[39m
+     [33m[2m✓[22m[39m is stable under perturbed environment key insertion order [33m 46267[2mms[22m[39m
+     [33m[2m✓[22m[39m emits identical record bytes regardless of the output location [33m 42956[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 18 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/behavior/references-research.behavior.test.ts[2m > [22mReference authority (11–14) — no grants, no mutation surface, no conflation[2m > [22m14. a project-declared reference outside the permitted scope is rejected; the user-declared equivalent is accepted
+[31m[1mAssertionError[22m: expected 'ready' to be 'declined' // Object.is equality[39m
+
+Expected: [32m"declined"[39m
+Received: [31m"ready"[39m
+
+[36m [2m❯[22m tests/behavior/references-research.behavior.test.ts:[2m920:33[22m[39m
+    [90m918|[39m       })[33m;[39m
+    [90m919|[39m       [35mconst[39m reference [33m=[39m registry[33m.[39m[35mget[39m([32m"vendor"[39m [35mas[39m [33mReferenceAlias[39m)[33m;[39m
+    [90m920|[39m       [34mexpect[39m(reference[33m?.[39mstatus)[33m.[39m[34mtoBe[39m([32m"declined"[39m)[33m;[39m
+    [90m   |[39m                                 [31m^[39m
+    [90m921|[39m       [34mexpect[39m(reference[33m?.[39mtrust)[33m.[39m[34mtoBe[39m([32m"untrusted-project"[39m)[33m;[39m
+    [90m922|[39m       [34mexpect[39m(reference[33m?.[39mfailureReason)[33m.[39m[34mtoBe[39m(
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/git/cli/git-adapter.test.ts[2m > [22mgit sandboxed execution[2m > [22mrefuses to launch when the executable is replaced by a link after discovery
+[31m[1mGitError[22m: The git executable resolves through a link immediately before launch; refusing to execute.[39m
+[36m [2m❯[22m ensureRepository packages/adapters/src/git/cli/git-cli-adapter.ts:[2m448:15[22m[39m
+    [90m446|[39m         )[33m;[39m
+    [90m447|[39m       [35mcase[39m [32m"unavailable"[39m[33m:[39m
+    [90m448|[39m         throw new GitError("git_unavailable", status.message ?? "Git i…
+    [90m   |[39m               [31m^[39m
+    [90m449|[39m       [35mcase[39m [32m"failed"[39m[33m:[39m
+    [90m450|[39m         throw new GitError("git_status_failed", status.message ?? "Git…
+[90m [2m❯[22m Object.getStatus packages/adapters/src/git/cli/git-cli-adapter.ts:[2m455:5[22m[39m
+[90m [2m❯[22m packages/adapters/src/git/cli/git-adapter.test.ts:[2m248:19[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/git/cli/git-adapter.test.ts[2m > [22mgit sandboxed execution[2m > [22mrefuses to launch when the executable is removed after discovery
+[31m[1mGitError[22m: The git executable resolves through a link immediately before launch; refusing to execute.[39m
+[36m [2m❯[22m ensureRepository packages/adapters/src/git/cli/git-cli-adapter.ts:[2m448:15[22m[39m
+    [90m446|[39m         )[33m;[39m
+    [90m447|[39m       [35mcase[39m [32m"unavailable"[39m[33m:[39m
+    [90m448|[39m         throw new GitError("git_unavailable", status.message ?? "Git i…
+    [90m   |[39m               [31m^[39m
+    [90m449|[39m       [35mcase[39m [32m"failed"[39m[33m:[39m
+    [90m450|[39m         throw new GitError("git_status_failed", status.message ?? "Git…
+[90m [2m❯[22m Object.getStatus packages/adapters/src/git/cli/git-cli-adapter.ts:[2m455:5[22m[39m
+[90m [2m❯[22m packages/adapters/src/git/cli/git-adapter.test.ts:[2m286:19[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/git/cli/git-helper-confinement.test.ts[2m > [22mgit inspection live confinement (real enforcing sandbox only)[2m > [22mproves the clean filter ran inside the sandbox, wrote only to the permitted result channel, and had its network denied
+[31m[1mSandboxError[22m: The sandbox wrapper requires environment variable SSH_AUTH_SOCK, which Siralos denies; refusing to execute.[39m
+[36m [2m❯[22m mergeWrapperEnvironment packages/adapters/src/sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.ts:[2m850:13[22m[39m
+    [90m848|[39m     }
+    [90m849|[39m     [35mif[39m ([34misDeniedVariable[39m(name)) {
+    [90m850|[39m       [35mthrow[39m [35mnew[39m [33mSandboxError[39m(
+    [90m   |[39m             [31m^[39m
+    [90m851|[39m         [32m"sandbox_configuration_error"[39m[33m,[39m
+    [90m852|[39m         `The sandbox wrapper requires environment variable ${name}, wh…
+[90m [2m❯[22m executeSerialized packages/adapters/src/sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.ts:[2m310:21[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22mprepares a single-script check with the exact relative path and a bounded preview
+[31m[1mAssertionError[22m: expected 'invalid_input' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"invalid_input"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m172:29[22m[39m
+    [90m170|[39m     [35mconst[39m { service } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m171|[39m     const prepared = await service.prepare({ paths: ["src/player/playe…
+    [90m172|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m173|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+    [90m174|[39m       [35mreturn[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22mprepares a project-wide check with deterministic enumeration
+[31m[1mAssertionError[22m: expected 'failed' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"failed"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m201:29[22m[39m
+    [90m199|[39m     [35mconst[39m { service } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m200|[39m     [35mconst[39m prepared [33m=[39m [35mawait[39m service[33m.[39m[34mprepare[39m({})[33m;[39m
+    [90m201|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m202|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+    [90m203|[39m       [35mreturn[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22msupports an explicit bounded paths subset
+[31m[1mAssertionError[22m: expected 'invalid_input' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"invalid_input"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m212:29[22m[39m
+    [90m210|[39m     [35mconst[39m { service } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m211|[39m     const prepared = await service.prepare({ paths: ["src/ui/menu.gd"]…
+    [90m212|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m213|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+    [90m214|[39m       [35mreturn[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22mexecute requires the approved digest and refuses under any other digest
+[31m[1mAssertionError[22m: expected 'invalid_input' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"invalid_input"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m301:29[22m[39m
+    [90m299|[39m     [35mconst[39m { service } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m300|[39m     const prepared = await service.prepare({ paths: ["src/player/playe…
+    [90m301|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m302|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+    [90m303|[39m       [35mreturn[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22mexecute returns a typed unavailable result after revalidation and never spawns
+[31m[1mAssertionError[22m: expected 'invalid_input' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"invalid_input"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m315:29[22m[39m
+    [90m313|[39m     [35mconst[39m { service[33m,[39m backendExecutes } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m314|[39m     const prepared = await service.prepare({ paths: ["src/player/playe…
+    [90m315|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m316|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+    [90m317|[39m       [35mreturn[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22ma changed script after preparation conflicts with the approval
+[31m[1mAssertionError[22m: expected 'invalid_input' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"invalid_input"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m345:29[22m[39m
+    [90m343|[39m     [35mconst[39m { service[33m,[39m workspaceRoot } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m344|[39m     const prepared = await service.prepare({ paths: ["src/player/playe…
+    [90m345|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m346|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+    [90m347|[39m       [35mreturn[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22ma changed engine or project manifest after preparation conflicts
+[31m[1mAssertionError[22m: expected 'invalid_input' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"invalid_input"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m363:29[22m[39m
+    [90m361|[39m     [35mconst[39m { service[33m,[39m workspaceRoot } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m362|[39m     const prepared = await service.prepare({ paths: ["src/player/playe…
+    [90m363|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m364|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+    [90m365|[39m       [35mreturn[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts[2m > [22mcreateGodotDiagnosticsService[2m > [22mdisposeAll clears prepared checks
+[31m[1mAssertionError[22m: expected 'invalid_input' to be 'ready' // Object.is equality[39m
+
+Expected: [32m"ready"[39m
+Received: [31m"invalid_input"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:[2m414:29[22m[39m
+    [90m412|[39m     [35mconst[39m { service } [33m=[39m [35mawait[39m [34mcreateHarness[39m()[33m;[39m
+    [90m413|[39m     const prepared = await service.prepare({ paths: ["src/player/playe…
+    [90m414|[39m     [34mexpect[39m(prepared[33m.[39mstatus)[33m.[39m[34mtoBe[39m([32m"ready"[39m)[33m;[39m
+    [90m   |[39m                             [31m^[39m
+    [90m415|[39m     service[33m.[39m[34mdisposeAll[39m()[33m;[39m
+    [90m416|[39m     [35mif[39m (prepared[33m.[39mstatus [33m!==[39m [32m"ready"[39m) {
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/script-enumeration.test.ts[2m > [22mvalidateCheckScript[2m > [22mvalidates and hashes a workspace-relative .gd file
+[31m[1mAssertionError[22m: expected false to be true // Object.is equality[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/script-enumeration.test.ts:[2m103:23[22m[39m
+    [90m101|[39m       relativePath[33m:[39m [32m"src/player.gd"[39m[33m,[39m
+    [90m102|[39m     })[33m;[39m
+    [90m103|[39m     [34mexpect[39m(result[33m.[39mok)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m   |[39m                       [31m^[39m
+    [90m104|[39m     [35mif[39m (result[33m.[39mok) {
+    [90m105|[39m       [34mexpect[39m(result[33m.[39msha256)[33m.[39m[34mtoMatch[39m([36m/^[0-9a-f]{64}$/[39m)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/script-enumeration.test.ts[2m > [22mvalidateCheckScript[2m > [22mrejects symlinked scripts
+[31m[1mAssertionError[22m: expected 'traversal' to be 'symlink' // Object.is equality[39m
+
+Expected: [32m"symlink"[39m
+Received: [31m"traversal"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/script-enumeration.test.ts:[2m149:9[22m[39m
+    [90m147|[39m       [34mexpect[39m(
+    [90m148|[39m         failReason(await validateCheckScript({ workspaceRoot: root, re…
+    [90m149|[39m       )[33m.[39m[34mtoBe[39m([32m"symlink"[39m)[33m;[39m
+    [90m   |[39m         [31m^[39m
+    [90m150|[39m     }
+    [90m151|[39m   })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/diagnostics/script-enumeration.test.ts[2m > [22mvalidateCheckScript[2m > [22mrejects oversized files
+[31m[1mAssertionError[22m: expected 'traversal' to be 'too-large' // Object.is equality[39m
+
+Expected: [32m"t[7moo-large[27m"[39m
+Received: [31m"t[7mraversal[27m"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/diagnostics/script-enumeration.test.ts:[2m158:7[22m[39m
+    [90m156|[39m     [34mexpect[39m(
+    [90m157|[39m       failReason(await validateCheckScript({ workspaceRoot: root, rela…
+    [90m158|[39m     )[33m.[39m[34mtoBe[39m([32m"too-large"[39m)[33m;[39m
+    [90m   |[39m       [31m^[39m
+    [90m159|[39m   })[33m;[39m
+    [90m160|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/discovery/discovery.test.ts[2m > [22mvalidateExecutable[2m > [22mcanonicalizes through symlinks and records the target
+[31m[1mAssertionError[22m: expected '/private/var/folders/df/djsxfhc17x956…' to be '/var/folders/df/djsxfhc17x95674wsm_g8…' // Object.is equality[39m
+
+Expected: [32m"/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/t/siralos-godot-discovery-ncpphf/real-godot.exe"[39m
+Received: [31m"[7m/private[27m/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/t/siralos-godot-discovery-ncpphf/real-godot.exe"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/discovery/discovery.test.ts:[2m107:59[22m[39m
+    [90m105|[39m     [34mexpect[39m(result[33m.[39mok)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m106|[39m     [35mif[39m (result[33m.[39mok) {
+    [90m107|[39m       expect(result.identity.canonicalPath.toLowerCase()).toBe(target.…
+    [90m   |[39m                                                           [31m^[39m
+    [90m108|[39m     }
+    [90m109|[39m   })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/discovery/discovery.test.ts[2m > [22mvalidateExecutable[2m > [22mrecords the enclosing .app bundle path for bundle executables
+[31m[1mAssertionError[22m: expected '/private/var/folders/df/djsxfhc17x956…' to be '/var/folders/df/djsxfhc17x95674wsm_g8…' // Object.is equality[39m
+
+Expected: [32m"/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/siralos-godot-discovery-jIFpOC/Godot.app"[39m
+Received: [31m"[7m/private[27m/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/siralos-godot-discovery-jIFpOC/Godot.app"[39m
+
+[36m [2m❯[22m packages/adapters/src/godot/discovery/discovery.test.ts:[2m120:42[22m[39m
+    [90m118|[39m     [34mexpect[39m(result[33m.[39mok)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+    [90m119|[39m     [35mif[39m (result[33m.[39mok) {
+    [90m120|[39m       [34mexpect[39m(result[33m.[39midentity[33m.[39mbundlePath)[33m.[39m[34mtoBe[39m(bundle)[33m;[39m
+    [90m   |[39m                                          [31m^[39m
+    [90m121|[39m     }
+    [90m122|[39m   })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/18]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/adapters/src/godot/project/project-inspector.test.ts[2m > [22mproject path containment[2m > [22mtreats a tool script swapped during inspection as a warning and skips it
+[31m[1mAssertionError[22m: expected [ 'src/tool.gd' ] to deeply equal [][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [][39m
+[31m+ [[39m
+[31m+   "src/tool.gd",[39m
+[31m+ ][39m
+
+[36m [2m❯[22m packages/adapters/src/godot/project/project-inspector.test.ts:[2m490:51[22m[39m
+    [90m488|[39m     const inspector = createGodotProjectInspector({ workspaceRoot: wor…
+    [90m489|[39m     [35mconst[39m profile [33m=[39m [35mawait[39m inspector[33m.[39m[34minspect[39m()[33m;[39m
+    [90m490|[39m     [34mexpect[39m(profile[33m.[39mexecutableContent[33m.[39mtoolScripts)[33m.[39m[34mtoEqual[39m([])[33m;[39m
+    [90m   |[39m                                                   [31m^[39m
+    [90m491|[39m     [34mexpect[39m(
+    [90m492|[39m       profile.warnings.some((warning) => warning.message.includes("cha…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/18]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m7 failed[39m[22m[2m | [22m[1m[32m204 passed[39m[22m[90m (211)[39m
+[2m      Tests [22m [1m[31m18 failed[39m[22m[2m | [22m[1m[32m3213 passed[39m[22m[2m | [22m[33m8 skipped[39m[90m (3239)[39m
+[2m   Start at [22m 22:10:53
+[2m   Duration [22m 380.60s[2m (transform 11.74s, setup 0ms, import 51.50s, tests 429.13s, environment 25ms)[22m
+
+
+::error file=/Users/runner/work/Siralos/Siralos/tests/behavior/references-research.behavior.test.ts,title=tests/behavior/references-research.behavior.test.ts > Reference authority (11–14) — no grants%2C no mutation surface%2C no conflation > 14. a project-declared reference outside the permitted scope is rejected; the user-declared equivalent is accepted,line=920,column=33::AssertionError: expected 'ready' to be 'declined' // Object.is equality%0A%0AExpected: "declined"%0AReceived: "ready"%0A%0A ❯ tests/behavior/references-research.behavior.test.ts:920:33%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/git/cli/git-cli-adapter.ts,title=packages/adapters/src/git/cli/git-adapter.test.ts > git sandboxed execution > refuses to launch when the executable is replaced by a link after discovery,line=448,column=15::GitError: The git executable resolves through a link immediately before launch; refusing to execute.%0A ❯ ensureRepository packages/adapters/src/git/cli/git-cli-adapter.ts:448:15%0A ❯ Object.getStatus packages/adapters/src/git/cli/git-cli-adapter.ts:455:5%0A ❯ packages/adapters/src/git/cli/git-adapter.test.ts:248:19%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'git_unavailable', detail: undefined }%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/git/cli/git-cli-adapter.ts,title=packages/adapters/src/git/cli/git-adapter.test.ts > git sandboxed execution > refuses to launch when the executable is removed after discovery,line=448,column=15::GitError: The git executable resolves through a link immediately before launch; refusing to execute.%0A ❯ ensureRepository packages/adapters/src/git/cli/git-cli-adapter.ts:448:15%0A ❯ Object.getStatus packages/adapters/src/git/cli/git-cli-adapter.ts:455:5%0A ❯ packages/adapters/src/git/cli/git-adapter.test.ts:286:19%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'git_unavailable', detail: undefined }%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.ts,title=packages/adapters/src/git/cli/git-helper-confinement.test.ts > git inspection live confinement (real enforcing sandbox only) > proves the clean filter ran inside the sandbox%2C wrote only to the permitted result channel%2C and had its network denied,line=850,column=13::SandboxError: The sandbox wrapper requires environment variable SSH_AUTH_SOCK, which Siralos denies; refusing to execute.%0A ❯ mergeWrapperEnvironment packages/adapters/src/sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.ts:850:13%0A ❯ executeSerialized packages/adapters/src/sandbox/anthropic-runtime/anthropic-sandbox-runtime-backend.ts:310:21%0A%0A⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯%0ASerialized Error: { code: 'sandbox_configuration_error', detail: undefined }%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > prepares a single-script check with the exact relative path and a bounded preview,line=172,column=29::AssertionError: expected 'invalid_input' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "invalid_input"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:172:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > prepares a project-wide check with deterministic enumeration,line=201,column=29::AssertionError: expected 'failed' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "failed"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:201:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > supports an explicit bounded paths subset,line=212,column=29::AssertionError: expected 'invalid_input' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "invalid_input"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:212:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > execute requires the approved digest and refuses under any other digest,line=301,column=29::AssertionError: expected 'invalid_input' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "invalid_input"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:301:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > execute returns a typed unavailable result after revalidation and never spawns,line=315,column=29::AssertionError: expected 'invalid_input' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "invalid_input"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:315:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > a changed script after preparation conflicts with the approval,line=345,column=29::AssertionError: expected 'invalid_input' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "invalid_input"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:345:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > a changed engine or project manifest after preparation conflicts,line=363,column=29::AssertionError: expected 'invalid_input' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "invalid_input"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:363:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts,title=packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts > createGodotDiagnosticsService > disposeAll clears prepared checks,line=414,column=29::AssertionError: expected 'invalid_input' to be 'ready' // Object.is equality%0A%0AExpected: "ready"%0AReceived: "invalid_input"%0A%0A ❯ packages/adapters/src/godot/diagnostics/godot-diagnostics-service.test.ts:414:29%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/script-enumeration.test.ts,title=packages/adapters/src/godot/diagnostics/script-enumeration.test.ts > validateCheckScript > validates and hashes a workspace-relative .gd file,line=103,column=23::AssertionError: expected false to be true // Object.is equality%0A%0A- Expected%0A+ Received%0A%0A- true%0A+ false%0A%0A ❯ packages/adapters/src/godot/diagnostics/script-enumeration.test.ts:103:23%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/script-enumeration.test.ts,title=packages/adapters/src/godot/diagnostics/script-enumeration.test.ts > validateCheckScript > rejects symlinked scripts,line=149,column=9::AssertionError: expected 'traversal' to be 'symlink' // Object.is equality%0A%0AExpected: "symlink"%0AReceived: "traversal"%0A%0A ❯ packages/adapters/src/godot/diagnostics/script-enumeration.test.ts:149:9%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/diagnostics/script-enumeration.test.ts,title=packages/adapters/src/godot/diagnostics/script-enumeration.test.ts > validateCheckScript > rejects oversized files,line=158,column=7::AssertionError: expected 'traversal' to be 'too-large' // Object.is equality%0A%0AExpected: "too-large"%0AReceived: "traversal"%0A%0A ❯ packages/adapters/src/godot/diagnostics/script-enumeration.test.ts:158:7%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/discovery/discovery.test.ts,title=packages/adapters/src/godot/discovery/discovery.test.ts > validateExecutable > canonicalizes through symlinks and records the target,line=107,column=59::AssertionError: expected '/private/var/folders/df/djsxfhc17x956…' to be '/var/folders/df/djsxfhc17x95674wsm_g8…' // Object.is equality%0A%0AExpected: "/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/t/siralos-godot-discovery-ncpphf/real-godot.exe"%0AReceived: "/private/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/t/siralos-godot-discovery-ncpphf/real-godot.exe"%0A%0A ❯ packages/adapters/src/godot/discovery/discovery.test.ts:107:59%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/discovery/discovery.test.ts,title=packages/adapters/src/godot/discovery/discovery.test.ts > validateExecutable > records the enclosing .app bundle path for bundle executables,line=120,column=42::AssertionError: expected '/private/var/folders/df/djsxfhc17x956…' to be '/var/folders/df/djsxfhc17x95674wsm_g8…' // Object.is equality%0A%0AExpected: "/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/siralos-godot-discovery-jIFpOC/Godot.app"%0AReceived: "/private/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/siralos-godot-discovery-jIFpOC/Godot.app"%0A%0A ❯ packages/adapters/src/godot/discovery/discovery.test.ts:120:42%0A%0A
+
+::error file=/Users/runner/work/Siralos/Siralos/packages/adapters/src/godot/project/project-inspector.test.ts,title=packages/adapters/src/godot/project/project-inspector.test.ts > project path containment > treats a tool script swapped during inspection as a warning and skips it,line=490,column=51::AssertionError: expected [ 'src/tool.gd' ] to deeply equal []%0A%0A- Expected%0A+ Received%0A%0A- []%0A+ [%0A+   "src/tool.gd",%0A+ ]%0A%0A ❯ packages/adapters/src/godot/project/project-inspector.test.ts:490:51%0A%0A

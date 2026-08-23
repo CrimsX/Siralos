@@ -33,6 +33,22 @@ import {
   type GodotCheckOnlyRunner,
 } from "../process/godot-check-only-runner.js";
 import { createAbortError, refreshGodotProjectRiskManifest } from "../probe/risk-manifest.js";
+import { realpathSync } from "node:fs";
+
+/**
+ * The workspace root MUST be canonical before any containment or
+ * identity comparison: symlinked temp roots (macOS /var ->
+ * /private/var) and Windows short names (RUNNER~1) otherwise make
+ * raw-vs-realpath comparisons diverge mid-flow and misreport valid
+ * scripts as invalid input.
+ */
+function canonicalWorkspaceRoot(root: string): string {
+  try {
+    return realpathSync(root);
+  } catch {
+    return root;
+  }
+}
 import {
   enumerateGDScriptFiles,
   hashScriptTarget,
@@ -94,7 +110,11 @@ export interface GodotDiagnosticsServiceDependencies {
 export function createGodotDiagnosticsService(
   dependencies: GodotDiagnosticsServiceDependencies,
 ): GodotDiagnostics {
-  const profiler: GodotEngineProfiler = createGodotEngineProfiler(dependencies);
+  const canonicalDependencies: GodotDiagnosticsServiceDependencies = {
+    ...dependencies,
+    workspaceRoot: canonicalWorkspaceRoot(dependencies.workspaceRoot),
+  };
+  const profiler: GodotEngineProfiler = createGodotEngineProfiler(canonicalDependencies);
   const mirrorAdapter: ProjectMirror = dependencies.mirror ?? createProjectMirror();
   const checkRunner: GodotCheckOnlyRunner =
     dependencies.checkRunner ?? createGodotCheckOnlyRunner({ backend: dependencies.backend });
@@ -138,7 +158,7 @@ export function createGodotDiagnosticsService(
       return { status: "unsupported", message: capability.message };
     }
     const refresh = await refreshGodotProjectRiskManifest({
-      workspaceRoot: dependencies.workspaceRoot,
+      workspaceRoot: canonicalDependencies.workspaceRoot,
       installation: selection.installation,
       profile: selection.profile,
       ...(signal === undefined ? {} : { signal }),
@@ -275,7 +295,7 @@ export function createGodotDiagnosticsService(
       };
     }
     const refresh = await refreshGodotProjectRiskManifest({
-      workspaceRoot: dependencies.workspaceRoot,
+      workspaceRoot: canonicalDependencies.workspaceRoot,
       installation: plan.selection.installation,
       profile: plan.selection.profile,
       ...(signal === undefined ? {} : { signal }),
@@ -291,7 +311,7 @@ export function createGodotDiagnosticsService(
     }
     for (const target of plan.scriptTargets) {
       const current = await hashScriptTarget({
-        workspaceRoot: dependencies.workspaceRoot,
+        workspaceRoot: canonicalDependencies.workspaceRoot,
         relativePath: target.path,
         ...(signal === undefined ? {} : { signal }),
       });
@@ -331,7 +351,7 @@ export function createGodotDiagnosticsService(
           };
         }
         const validated = await validateCheckScript({
-          workspaceRoot: dependencies.workspaceRoot,
+          workspaceRoot: canonicalDependencies.workspaceRoot,
           relativePath: path,
           ...(signal === undefined ? {} : { signal }),
         });
@@ -355,7 +375,7 @@ export function createGodotDiagnosticsService(
       return { ok: true, targets };
     }
     const enumeration = await enumerateGDScriptFiles({
-      workspaceRoot: dependencies.workspaceRoot,
+      workspaceRoot: canonicalDependencies.workspaceRoot,
       ...(signal === undefined ? {} : { signal }),
     });
     if (enumeration.truncated) {
@@ -369,7 +389,7 @@ export function createGodotDiagnosticsService(
     const targets: GodotScriptCheckTarget[] = [];
     for (const entry of enumeration.targets) {
       const hashed = await hashScriptTarget({
-        workspaceRoot: dependencies.workspaceRoot,
+        workspaceRoot: canonicalDependencies.workspaceRoot,
         relativePath: entry.path,
         ...(signal === undefined ? {} : { signal }),
       });

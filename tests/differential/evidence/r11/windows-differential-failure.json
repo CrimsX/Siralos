@@ -1,0 +1,16 @@
+{
+  "parityHeld": false,
+  "runnerFailure": {
+    "category": "HARNESS_INTERNAL_FAILURE",
+    "code": "RUNNER_EXECUTION_FAILURE",
+    "exitCode": 2,
+    "implementation": "reference",
+    "message": "checkpoint probe exited unsuccessfully (1)",
+    "outcome": "HARNESS_ERROR",
+    "scenarioId": "checkpoint.undo-plan",
+    "signal": null,
+    "stderr": "oracle runner: checkpoint probe exited unsuccessfully (1)\nSIRALOS_HARNESS_ERROR {\"category\":\"HARNESS_INTERNAL_FAILURE\",\"code\":\"RUNNER_EXECUTION_FAILURE\",\"message\":\"checkpoint probe exited unsuccessfully (1)\"}\n",
+    "stdout": ""
+  },
+  "schemaVersion": 1
+}
