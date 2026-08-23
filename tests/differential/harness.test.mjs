@@ -124,7 +124,7 @@ describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
     expect(manifest.schemaVersion).toBe(3);
-    expect(manifest.corpusVersion).toBe(19);
+    expect(manifest.corpusVersion).toBe(20);
     expect(manifest.corpusSha256).toBe(computeCorpusDigest(manifest));
     expect(manifest.scenarios.length).toBeGreaterThanOrEqual(6);
     for (const entry of manifest.scenarios) {
@@ -167,6 +167,10 @@ describe("corpus integrity", () => {
         "determinism-replay",
         "icm.phase-contract",
         "icm.dependency-manifests",
+        "runtime-readiness.identity",
+        "runtime-readiness.budgets",
+        "runtime-readiness.lifecycle",
+        "runtime-readiness.doctor",
       ]).toContain(scenario.subject);
       expect(["required", "informational"]).toContain(scenario.parity);
       expect(Array.isArray(scenario.platforms)).toBe(true);
@@ -240,7 +244,7 @@ describe("corpus integrity", () => {
   it("rejects unsupported corpus and schema versions and unknown manifest fields", () => {
     for (const [field, value, expected] of [
       ["schemaVersion", 4, /unsupported corpus schemaVersion/u],
-      ["corpusVersion", 20, /unsupported corpusVersion/u],
+      ["corpusVersion", 21, /unsupported corpusVersion/u],
       ["unexpected", true, /unknown or missing fields/u],
     ]) {
       const corpus = mutableCorpus();

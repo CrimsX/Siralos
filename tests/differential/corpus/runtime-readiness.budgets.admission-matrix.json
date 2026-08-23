@@ -1,0 +1,31 @@
+{
+  "id": "runtime-readiness.budgets.admission-matrix",
+  "subject": "runtime-readiness.budgets",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "admission",
+    "cases": [
+      {
+        "state": { "artifactCount": 0, "aggregateBytes": 0 },
+        "incomingSize": 1024,
+        "incomingCount": 1
+      },
+      {
+        "state": { "artifactCount": 128, "aggregateBytes": 0 },
+        "incomingSize": 10,
+        "incomingCount": 1
+      },
+      {
+        "state": { "artifactCount": 2, "aggregateBytes": 67108856 },
+        "incomingSize": 64,
+        "incomingCount": 1
+      },
+      {
+        "incomingSize": 4194305,
+        "incomingCount": 1
+      }
+    ]
+  }
+}

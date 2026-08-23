@@ -1,0 +1,13 @@
+{
+  "id": "runtime-readiness.identity.run-id",
+  "subject": "runtime-readiness.identity",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "run-id",
+    "taskId": "task-7",
+    "phaseId": "mutation",
+    "sequence": 3
+  }
+}

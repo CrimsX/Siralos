@@ -1974,6 +1974,142 @@ function validateIcmDependencyManifestsResult(result, label) {
   throw new Error(`${label}.result shape is unsupported`);
 }
 
+const RR_FAILURE_KINDS = new Set([
+  "readiness_failed",
+  "spawn_failed",
+  "sandbox_denied",
+  "startup_timeout",
+  "idle_timeout",
+  "hard_timeout",
+  "cancelled",
+  "process_crashed",
+  "kill_failed",
+  "output_limit",
+  "artifact_limit",
+  "environment_unavailable",
+  "cleanup_failed",
+]);
+const RR_TERMINAL_STATUSES = new Set([
+  "success",
+  "failure",
+  "cancelled",
+  "resource_limit",
+  "uncertain",
+]);
+
+function validateRrObservation(observation, label) {
+  if (!isObject(observation) || typeof observation.type !== "string") {
+    throw new Error(`${label} observation is invalid`);
+  }
+}
+
+function validateRrStateView(state, label) {
+  assertExactKeys(
+    state,
+    ["state", "startedAtMs", "terminatedAtMs", "terminalDisposition", "failureKind"],
+    label,
+  );
+  if (
+    typeof state.state !== "string" ||
+    (state.terminalDisposition !== null && !RR_TERMINAL_STATUSES.has(state.terminalDisposition)) ||
+    (state.failureKind !== null && !RR_FAILURE_KINDS.has(state.failureKind))
+  ) {
+    throw new Error(`${label} state view is invalid`);
+  }
+}
+
+function validateRuntimeReadinessResult(subject, result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (subject === "runtime-readiness.identity") {
+    if (result.ok === true) {
+      assertExactKeys(result, ["ok", "runId"], `${label}.result`);
+      return;
+    }
+    if (Object.hasOwn(result, "operationId")) {
+      assertExactKeys(result, ["operationId"], `${label}.result`);
+      return;
+    }
+    if (isObject(result.ref)) {
+      assertExactKeys(result, ["ref", "formatted"], `${label}.result`);
+      assertExactKeys(
+        result.ref,
+        ["taskId", "phaseId", "runId", "operationId", "producer"],
+        `${label}.result.ref`,
+      );
+      return;
+    }
+    assertExactKeys(result, ["ok", "error"], `${label}.result`);
+    return;
+  }
+  if (subject === "runtime-readiness.budgets") {
+    if (Object.hasOwn(result, "digest")) {
+      assertExactKeys(result, ["digest", "rendered"], `${label}.result`);
+      if (!LOWER_SHA256.test(result.digest ?? "")) {
+        throw new Error(`${label}.result.digest is invalid`);
+      }
+      return;
+    }
+    assertExactKeys(result, ["cases"], `${label}.result`);
+    for (const entry of result.cases) {
+      if (entry.status === "admit") {
+        assertExactKeys(entry, ["status", "truncated"], `${label}.result.cases`);
+      } else {
+        assertExactKeys(entry, ["status", "reason"], `${label}.result.cases`);
+        if (typeof entry.reason !== "string") {
+          throw new Error(`${label}.result.cases reason is invalid`);
+        }
+      }
+    }
+    return;
+  }
+  if (subject === "runtime-readiness.lifecycle") {
+    assertExactKeys(result, ["steps", "expectedFailureKind"], `${label}.result`);
+    for (const step of result.steps) {
+      assertExactKeys(step, ["atMs", "observations", "state"], `${label}.result.steps`);
+      for (const observation of step.observations) {
+        validateRrObservation(observation, `${label}.result.steps.observations`);
+      }
+      validateRrStateView(step.state, `${label}.result.steps`);
+    }
+    if (result.expectedFailureKind !== null && !RR_FAILURE_KINDS.has(result.expectedFailureKind)) {
+      throw new Error(`${label}.result.expectedFailureKind is invalid`);
+    }
+    return;
+  }
+  // runtime-readiness.doctor
+  if (Object.hasOwn(result, "headless")) {
+    assertExactKeys(result, ["headless", "visual"], `${label}.result`);
+    for (const key of ["headless", "visual"]) {
+      assertExactKeys(result[key], ["ready", "digest"], `${label}.result.${key}`);
+      if (!LOWER_SHA256.test(result[key].digest ?? "")) {
+        throw new Error(`${label}.result.${key}.digest is invalid`);
+      }
+    }
+    return;
+  }
+  assertExactKeys(
+    result,
+    ["ready", "executionAllowed", "blockedReasons", "items", "digest", "rendered"],
+    `${label}.result`,
+  );
+  if (!LOWER_SHA256.test(result.digest ?? "")) {
+    throw new Error(`${label}.result.digest is invalid`);
+  }
+  if (
+    typeof result.ready !== "boolean" ||
+    typeof result.executionAllowed !== "boolean" ||
+    !Array.isArray(result.blockedReasons) ||
+    !Array.isArray(result.items)
+  ) {
+    throw new Error(`${label}.result readiness summary is invalid`);
+  }
+  for (const item of result.items) {
+    assertExactKeys(item, ["id", "state", "detail"], `${label}.result.items`);
+  }
+}
+
 function validateCompletedResult(record, label) {
   if (!isObject(record.result)) {
     throw new Error(`${label}.result must be an object`);
@@ -2120,6 +2256,15 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "icm.dependency-manifests") {
     validateIcmDependencyManifestsResult(record.result, label);
+    return;
+  }
+  if (
+    record.subject === "runtime-readiness.identity" ||
+    record.subject === "runtime-readiness.budgets" ||
+    record.subject === "runtime-readiness.lifecycle" ||
+    record.subject === "runtime-readiness.doctor"
+  ) {
+    validateRuntimeReadinessResult(record.subject, record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

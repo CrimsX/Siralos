@@ -1,0 +1,13 @@
+{
+  "id": "runtime-readiness.identity.run-id.rejection",
+  "subject": "runtime-readiness.identity",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "run-id",
+    "taskId": "task-7",
+    "phaseId": "",
+    "sequence": 0
+  }
+}

@@ -77,7 +77,7 @@ const SUBJECT_RR_BUDGETS: &str = "runtime-readiness.budgets";
 const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
 const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 19;
+const CORPUS_VERSION: u64 = 20;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -9223,7 +9223,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 195);
+        assert_eq!(loaded.len(), 210);
     }
 
     #[test]

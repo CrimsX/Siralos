@@ -1,0 +1,22 @@
+{
+  "id": "runtime-readiness.doctor.diagnostic-pair",
+  "subject": "runtime-readiness.doctor",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "diagnostic",
+    "capabilities": {
+      "godotAvailable": true,
+      "godotFingerprint": "abcdef1234567890",
+      "projectIdentity": "proj-1",
+      "sandboxAvailable": true,
+      "processSupervisionSupported": true,
+      "filesystemIsolationAvailable": true,
+      "userDataRedirectAvailable": true,
+      "networkPolicyResolvable": true,
+      "artifactStorageAvailable": true,
+      "displayAvailable": false
+    }
+  }
+}

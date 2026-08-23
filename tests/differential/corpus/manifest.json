@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 19,
+  "corpusVersion": 20,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -551,6 +551,66 @@
       "sha256": "c996cf643692fd0b7c1eb6ab82d6590f85e4712da86976dfd68aba0033af94ac"
     },
     {
+      "file": "runtime-readiness.budgets.admission-matrix.json",
+      "sha256": "9a1256b47b60def5d903a807660d92f03564330fbd238159b71dfdbd4418115b"
+    },
+    {
+      "file": "runtime-readiness.budgets.custom.json",
+      "sha256": "08e0404289bf745b365724299797cfb1bf58336f24638952c78db602be27bc84"
+    },
+    {
+      "file": "runtime-readiness.budgets.defaults.json",
+      "sha256": "5c86d96b768cd137302b3c6ca7194c5c3196c3052e8e3eacea303058e3415caf"
+    },
+    {
+      "file": "runtime-readiness.doctor.diagnostic-pair.json",
+      "sha256": "971ef26467a5c5708b105f0541d6339a7854d5f466c5fef64897875d9c968d25"
+    },
+    {
+      "file": "runtime-readiness.doctor.readiness-headless-blocked.json",
+      "sha256": "cbb5b7e23210853a77f5dd322b5fd038866d69cc56abac75375a210c90509926"
+    },
+    {
+      "file": "runtime-readiness.doctor.readiness-headless-ready.json",
+      "sha256": "3d0171eca313041977e6046dfcfd263e91223291ea49ea57f843aa2d22911932"
+    },
+    {
+      "file": "runtime-readiness.doctor.readiness-visual-display-null.json",
+      "sha256": "212f7164fb2d3103c00f1c434184843b4b21497e0da506f95d0c6cbe2ca4a475"
+    },
+    {
+      "file": "runtime-readiness.identity.operation-id.json",
+      "sha256": "8785a75647157fc21191e35b317386dbccb38fad0373a4627699b0fdc71034bc"
+    },
+    {
+      "file": "runtime-readiness.identity.run-id.json",
+      "sha256": "56947a1b934bfb05f076395327975c944a7d2d761a20080648ab49196662842c"
+    },
+    {
+      "file": "runtime-readiness.identity.run-id.rejection.json",
+      "sha256": "2a2ac4e5be168fa23c3508c1a4654ae615531427dfed13f34227010d6663ef9b"
+    },
+    {
+      "file": "runtime-readiness.identity.trace-ref.json",
+      "sha256": "c85320bc8318b5c01a862f6710ebb7e7b8e9a4d4374e57fe17fa359b883099af"
+    },
+    {
+      "file": "runtime-readiness.lifecycle.drive-cancel-while-running.json",
+      "sha256": "fda90d0565778df19bbb246ae7c5b9c0b0eb0849eac3a6cdcdbae3af1d6c5413"
+    },
+    {
+      "file": "runtime-readiness.lifecycle.drive-child-refuses.json",
+      "sha256": "63a14a911baf1347a6e98936c61a4130b5adb4f241d7372ed2978c3e99175f16"
+    },
+    {
+      "file": "runtime-readiness.lifecycle.drive-crash.json",
+      "sha256": "7e2981da5f8f03c4cf622e1218cf55c93ac80fabb3722d481adba17160c56c12"
+    },
+    {
+      "file": "runtime-readiness.lifecycle.drive-normal.json",
+      "sha256": "25f8ffab48fb080a0bcf661fed4d6a91f909f38849511e8757587c92e3865d6e"
+    },
+    {
       "file": "state-dir.fallback.posix.json",
       "sha256": "232416906832b4a92dfa3729cd2016d9a16254abb21401268cbbec01174a1655"
     },
@@ -783,5 +843,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "ae609b1719ff813089e6935b48bcfbd5ebdb45aef4120baa2093257c27468ba9"
+  "corpusSha256": "01760f30eacf67ff5c9ea577d55bccf650dbcfce81a4c1077d9e9f050c089712"
 }

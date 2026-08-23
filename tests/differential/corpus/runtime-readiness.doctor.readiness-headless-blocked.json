@@ -1,0 +1,22 @@
+{
+  "id": "runtime-readiness.doctor.readiness-headless-blocked",
+  "subject": "runtime-readiness.doctor",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "readiness",
+    "mode": "headless",
+    "capabilities": {
+      "godotAvailable": false,
+      "godotFingerprint": null,
+      "projectIdentity": null,
+      "sandboxAvailable": true,
+      "processSupervisionSupported": false,
+      "filesystemIsolationAvailable": false,
+      "userDataRedirectAvailable": true,
+      "networkPolicyResolvable": true,
+      "artifactStorageAvailable": true
+    }
+  }
+}

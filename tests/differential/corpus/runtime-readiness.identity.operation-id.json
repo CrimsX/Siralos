@@ -1,0 +1,12 @@
+{
+  "id": "runtime-readiness.identity.operation-id",
+  "subject": "runtime-readiness.identity",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "operation-id",
+    "runId": "run_runtime_2fe2ef8aa58af47585603d7d",
+    "operation": "checkpoint"
+  }
+}

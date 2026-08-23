@@ -1,0 +1,16 @@
+{
+  "id": "runtime-readiness.budgets.custom",
+  "subject": "runtime-readiness.budgets",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "budget",
+    "overrides": {
+      "idleTimeoutMs": 5000,
+      "artifactCount": 16,
+      "memoryMb": 2048,
+      "cpuPercent": 50
+    }
+  }
+}

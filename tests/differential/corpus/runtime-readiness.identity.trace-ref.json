@@ -1,0 +1,16 @@
+{
+  "id": "runtime-readiness.identity.trace-ref",
+  "subject": "runtime-readiness.identity",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "trace-ref",
+    "trace": {
+      "taskId": "task-7",
+      "phaseId": "mutation",
+      "runId": "run_runtime_2fe2ef8aa58af47585603d7d",
+      "producer": "process-supervisor"
+    }
+  }
+}

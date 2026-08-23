@@ -1,0 +1,16 @@
+{
+  "id": "runtime-readiness.lifecycle.drive-cancel-while-running",
+  "subject": "runtime-readiness.lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "drive",
+    "script": "cancel_while_running",
+    "steps": [
+      { "atMs": 100, "requested": ["start"] },
+      { "atMs": 1500, "requested": [], "inject": { "type": "cancel_requested" } },
+      { "atMs": 1600, "requested": ["terminate"], "inject": { "type": "kill_result", "ok": true } }
+    ]
+  }
+}

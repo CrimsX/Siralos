@@ -1,0 +1,10 @@
+{
+  "id": "runtime-readiness.budgets.defaults",
+  "subject": "runtime-readiness.budgets",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "budget"
+  }
+}

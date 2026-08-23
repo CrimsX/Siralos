@@ -1,0 +1,15 @@
+{
+  "id": "runtime-readiness.lifecycle.drive-normal",
+  "subject": "runtime-readiness.lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "drive",
+    "script": "normal",
+    "steps": [
+      { "atMs": 100, "requested": ["start"] },
+      { "atMs": 5100, "requested": [] }
+    ]
+  }
+}

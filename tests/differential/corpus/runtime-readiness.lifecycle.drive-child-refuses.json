@@ -1,0 +1,16 @@
+{
+  "id": "runtime-readiness.lifecycle.drive-child-refuses",
+  "subject": "runtime-readiness.lifecycle",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "drive",
+    "script": "child_refuses_termination",
+    "steps": [
+      { "atMs": 100, "requested": ["start"] },
+      { "atMs": 1100, "requested": [], "inject": { "type": "cancel_requested" } },
+      { "atMs": 1200, "requested": ["terminate"] }
+    ]
+  }
+}
