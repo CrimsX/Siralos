@@ -22,12 +22,12 @@ exercise the real TypeScript reference and the corresponding Rust port in
 
 ## 1. Entry state
 
-| Item | Value |
-| --- | --- |
-| Branch / worktree | `main`, clean |
+| Item                    | Value                                                                      |
+| ----------------------- | -------------------------------------------------------------------------- |
+| Branch / worktree       | `main`, clean                                                              |
 | Prior verified worktree | `1623e800f8034d07825d7c6582768c27a91a973e` (R9 Verified); R10a core landed |
-| Corpus | schema 3, version 18, 182 files, 175/175 applicable required parity |
-| R10b executable Rust | absent — no `context` module exists under `crates/siralos-core/src` |
+| Corpus                  | schema 3, version 18, 182 files, 175/175 applicable required parity        |
+| R10b executable Rust    | absent — no `context` module exists under `crates/siralos-core/src`        |
 
 ## 2. Frozen subject schemas
 
@@ -36,6 +36,7 @@ exercise the real TypeScript reference and the corresponding Rust port in
 Exercises `createPhaseContract`, `validateAuthorityProfile`, and the
 pre-built `PHASE_CONTRACTS` registry from `phase-contract.ts`. Scenarios
 declare contract inputs and assert:
+
 - digest binds over the canonical payload (`PhaseContract` v1 domain separator)
 - authority narrowing invariant: `readOnly ⇒ mutation === "none"`
 - unknown context classes rejected
@@ -65,6 +66,7 @@ yet ported to Rust. Deferred to a follow-up within or after R10c.
 ## 3. Narrowing-only authority invariant (mechanical)
 
 The fixed vocabulary means a malformed contract is rejected structurally:
+
 - `readOnly == true` requires `mutation == "none"` — any other value fails
 - `mutation` is limited to `"none" | "prepared_only"` — no unrestricted form exists
 - These checks run inside `createPhaseContract` before digest computation
@@ -81,12 +83,12 @@ id/version/phase/inputs/authority/process/outputs/verification/contextClasses
 
 ## 5. Evidence assignment
 
-| Boundary | Evidence layer | Owner |
-| --- | --- | --- |
-| PhaseContract create/validate/digest | Core unit + differential `icm.phase-contract` | `siralos-core::context` |
-| Staleness/provenance helpers | Core unit + differential `icm.dependency-manifests` | `siralos-core::context` |
-| Authority narrowing invariant | Differential rejection scenarios | Harness |
-| Registry contracts produce stable digests | Core unit tests | `siralos-core::context` |
+| Boundary                                  | Evidence layer                                      | Owner                   |
+| ----------------------------------------- | --------------------------------------------------- | ----------------------- |
+| PhaseContract create/validate/digest      | Core unit + differential `icm.phase-contract`       | `siralos-core::context` |
+| Staleness/provenance helpers              | Core unit + differential `icm.dependency-manifests` | `siralos-core::context` |
+| Authority narrowing invariant             | Differential rejection scenarios                    | Harness                 |
+| Registry contracts produce stable digests | Core unit tests                                     | `siralos-core::context` |
 
 ## 6. Measurement
 
@@ -103,10 +105,10 @@ promotion beyond v19.
 
 ## Self-loop verification
 
-| Criterion | Direct evidence | Status |
-| --- | --- | --- |
-| Four `icm.*` schemas grounded against real TS modules | §2 cites `phase-contract.ts`, `staleness.ts`, `provenance.ts` with line counts and exported function names | pass |
-| Narrowing-only authority mechanically tested | §3 specifies rejection fixtures for readOnly+prepared_only contradiction | pass |
-| Digest binding via single primitive | §4 confirms `siralos:PhaseContract:v1\0` framing through H1 primitive | pass |
-| Entry state clean | §1 observed this session (no context module in Rust) | pass |
-| Scope boundary explicit | Projection/briefing deferred; R10c untouched | pass |
+| Criterion                                             | Direct evidence                                                                                            | Status |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------ |
+| Four `icm.*` schemas grounded against real TS modules | §2 cites `phase-contract.ts`, `staleness.ts`, `provenance.ts` with line counts and exported function names | pass   |
+| Narrowing-only authority mechanically tested          | §3 specifies rejection fixtures for readOnly+prepared_only contradiction                                   | pass   |
+| Digest binding via single primitive                   | §4 confirms `siralos:PhaseContract:v1\0` framing through H1 primitive                                      | pass   |
+| Entry state clean                                     | §1 observed this session (no context module in Rust)                                                       | pass   |
+| Scope boundary explicit                               | Projection/briefing deferred; R10c untouched                                                               | pass   |
