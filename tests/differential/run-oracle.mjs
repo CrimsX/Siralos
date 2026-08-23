@@ -75,6 +75,7 @@ const RR_IDENTITY_PROBE = join(HERE, "probes", "runtime-readiness-identity-oracl
 const RR_BUDGETS_PROBE = join(HERE, "probes", "runtime-readiness-budgets-oracle.mjs");
 const RR_LIFECYCLE_PROBE = join(HERE, "probes", "runtime-readiness-lifecycle-oracle.mjs");
 const RR_DOCTOR_PROBE = join(HERE, "probes", "runtime-readiness-doctor-oracle.mjs");
+const RECOVERY_TAXONOMY_PROBE = join(HERE, "probes", "recovery-taxonomy-oracle.mjs");
 const GODOT_PROBES = new Map([
   ["godot-scene-resolve", GODOT_SCENE_RESOLVE_PROBE],
   ["godot-discovery", GODOT_DISCOVERY_PROBE],
@@ -95,6 +96,7 @@ const GODOT_PROBES = new Map([
   ["runtime-readiness.budgets", RR_BUDGETS_PROBE],
   ["runtime-readiness.lifecycle", RR_LIFECYCLE_PROBE],
   ["runtime-readiness.doctor", RR_DOCTOR_PROBE],
+  ["recovery-taxonomy", RECOVERY_TAXONOMY_PROBE],
 ]);
 
 function optionValue(args, name) {

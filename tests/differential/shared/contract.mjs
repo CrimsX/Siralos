@@ -51,6 +51,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "runtime-readiness.budgets",
   "runtime-readiness.lifecycle",
   "runtime-readiness.doctor",
+  "recovery-taxonomy",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -802,6 +803,21 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const R11_SUBJECTS = new Set(["recovery-taxonomy"]);
+  if (R11_SUBJECTS.has(scenario.subject)) {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > 64 * 1024) {
+      throw new Error(`${label}.input exceeds ${64 * 1024} UTF-8 bytes`);
+    }
+    return;
+  }
   if (platforms.size !== 1 || platforms.has("*")) {
     throw new Error(`${label} state-dir inputs must target exactly one concrete platform`);
   }
@@ -863,6 +879,7 @@ export function validateScenario(scenario, file) {
     "runtime-readiness.budgets",
     "runtime-readiness.lifecycle",
     "runtime-readiness.doctor",
+    "recovery-taxonomy",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]

@@ -73,6 +73,7 @@ const SUBJECT_CI_DELTA: &str = "content-identity-delta";
 const SUBJECT_DET_REPLAY: &str = "determinism-replay";
 const SUBJECT_ICM_PHASE_CONTRACT: &str = "icm.phase-contract";
 const SUBJECT_ICM_DEP_MANIFESTS: &str = "icm.dependency-manifests";
+const SUBJECT_RECOVERY_TAXONOMY: &str = "recovery-taxonomy";
 const SUBJECT_RR_IDENTITY: &str = "runtime-readiness.identity";
 const SUBJECT_RR_BUDGETS: &str = "runtime-readiness.budgets";
 const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
@@ -429,6 +430,7 @@ fn validate_scenario(
             | SUBJECT_DET_REPLAY
             | SUBJECT_ICM_PHASE_CONTRACT
             | SUBJECT_ICM_DEP_MANIFESTS
+            | SUBJECT_RECOVERY_TAXONOMY
             | SUBJECT_RR_IDENTITY
             | SUBJECT_RR_BUDGETS
             | SUBJECT_RR_LIFECYCLE
@@ -623,6 +625,7 @@ fn validate_scenario(
         | SUBJECT_DET_REPLAY
         | SUBJECT_ICM_PHASE_CONTRACT
         | SUBJECT_ICM_DEP_MANIFESTS
+        | SUBJECT_RECOVERY_TAXONOMY
         | SUBJECT_RR_IDENTITY
         | SUBJECT_RR_BUDGETS
         | SUBJECT_RR_LIFECYCLE
@@ -1287,6 +1290,15 @@ fn run_scenario(
                 "runtime-readiness input was validated while loading the corpus",
             );
             let result = runtime_readiness_record(&scenario.subject, input)?;
+            Ok(
+                json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
+            )
+        }
+        SUBJECT_RECOVERY_TAXONOMY => {
+            let input = scenario.input.as_ref().expect(
+                "recovery-taxonomy input was validated while loading the corpus",
+            );
+            let result = recovery_taxonomy_record(input)?;
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
             )
@@ -2272,6 +2284,37 @@ fn validate_godot_input(
             match input.get("op").and_then(Value::as_str) {
                 Some("readiness" | "diagnostic") => Ok(()),
                 _ => reject("unknown runtime-readiness.doctor op".to_owned()),
+            }
+        }
+        SUBJECT_RECOVERY_TAXONOMY => {
+            const TAXONOMY_KEYS: [&str; 6] =
+                ["op", "cases", "kind", "missing", "resourceKind", "reason"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !TAXONOMY_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("retry-classification" | "incomplete-run") => Ok(()),
+                Some("domain-failure")
+                    if input
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| {
+                            matches!(
+                                kind,
+                                "CAPABILITY_DENIED"
+                                    | "STALE_ACTIVATION"
+                                    | "RESOURCE_EXCEEDED"
+                                    | "UNAVAILABLE"
+                                    | "CANCELLED"
+                            )
+                        }) =>
+                {
+                    Ok(())
+                }
+                _ => reject("unknown recovery-taxonomy op".to_owned()),
             }
         }
         _ => unreachable!("godot subject was validated above"),
@@ -5242,6 +5285,167 @@ fn capabilities_to_readiness(
         display_available: capabilities.display_available,
         memory_limit_enforced: false,
         cpu_limit_enforced: false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 3R R11.2 subject: recovery taxonomy.
+// ---------------------------------------------------------------------------
+
+fn recovery_taxonomy_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::determinism::{RetryCategory, classify_retry};
+    use siralos_core::domain::capability::CapabilityId;
+    use siralos_core::domain::failure::{
+        DomainFailure, ResourceExceededKind, failure_code,
+    };
+    use siralos_core::runtime::budget::IncompleteRunRecord;
+    use siralos_core::runtime::classify_incomplete_run;
+    let op = input.get("op").and_then(Value::as_str).unwrap_or_default();
+    match op {
+        "retry-classification" => {
+            let mut cases = Vec::new();
+            for entry in scenario_array(input, "cases")? {
+                let category = scenario_string(entry, "category")?;
+                let parsed =
+                    RetryCategory::parse(&category).ok_or_else(|| {
+                        HarnessError::corpus(format!(
+                            "unknown retry category {category}"
+                        ))
+                    })?;
+                let attempts_used = entry
+                    .get("attemptsUsed")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let attempts_used =
+                    u32::try_from(attempts_used).map_err(|_| {
+                        HarnessError::corpus(
+                            "retry attempts out of range".to_owned(),
+                        )
+                    })?;
+                let result = classify_retry(
+                    parsed,
+                    attempts_used,
+                    siralos_core::determinism::DEFAULT_RETRY_POLICY,
+                );
+                cases.push(json!({
+                    "category": category,
+                    "attemptsUsed": attempts_used,
+                    "decision": result.decision.as_str(),
+                    "reason": result.reason,
+                    "nextBackoffMs": result.next_backoff_ms,
+                }));
+            }
+            Ok(json!({ "cases": cases }))
+        }
+        "domain-failure" => {
+            let kind =
+                input.get("kind").and_then(Value::as_str).unwrap_or_default();
+            let failure = match kind {
+                "CAPABILITY_DENIED" => {
+                    let mut missing = Vec::new();
+                    for value in input
+                        .get("missing")
+                        .and_then(Value::as_array)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                    {
+                        let raw = value.as_str().ok_or_else(|| {
+                            HarnessError::corpus(
+                                "capability ids must be strings".to_owned(),
+                            )
+                        })?;
+                        missing.push(CapabilityId::parse(raw).map_err(
+                            |failure| {
+                                HarnessError::corpus(failure.code().to_owned())
+                            },
+                        )?);
+                    }
+                    DomainFailure::CapabilityDenied { missing }
+                }
+                "STALE_ACTIVATION" => DomainFailure::StaleActivation,
+                "RESOURCE_EXCEEDED" => {
+                    let resource_kind = input
+                        .get("resourceKind")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let kind = match resource_kind {
+                        "FUEL" => ResourceExceededKind::Fuel,
+                        "MEMORY" => ResourceExceededKind::Memory,
+                        "INPUT_BYTES" => ResourceExceededKind::InputBytes,
+                        "OUTPUT_BYTES" => ResourceExceededKind::OutputBytes,
+                        "HOST_CALLS" => ResourceExceededKind::HostCalls,
+                        other => {
+                            return Err(HarnessError::corpus(format!(
+                                "unknown resource kind {other}"
+                            )));
+                        }
+                    };
+                    DomainFailure::ResourceExceeded { kind }
+                }
+                "UNAVAILABLE" => DomainFailure::Unavailable {
+                    reason: input
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                },
+                "CANCELLED" => DomainFailure::Cancelled,
+                other => {
+                    return Err(HarnessError::corpus(format!(
+                        "unknown domain-failure kind {other}"
+                    )));
+                }
+            };
+            let mut record = json!({ "code": failure_code(&failure) });
+            if let DomainFailure::CapabilityDenied { missing } = &failure {
+                record["missing"] = json!(
+                    missing.iter().map(|id| id.as_str()).collect::<Vec<_>>()
+                );
+            }
+            if let DomainFailure::ResourceExceeded { kind } = &failure {
+                record["resourceKind"] = json!(kind.code());
+            }
+            if let DomainFailure::Unavailable { reason } = &failure {
+                record["reason"] = json!(reason);
+            }
+            Ok(record)
+        }
+        "incomplete-run" => {
+            let mut cases = Vec::new();
+            for entry in scenario_array(input, "cases")? {
+                let record = IncompleteRunRecord {
+                    run_id: entry
+                        .get("runId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("run_runtime_probe")
+                        .to_owned(),
+                    last_known_state: entry
+                        .get("lastKnownState")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    last_observed_at_ms: entry
+                        .get("lastObservedAtMs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                };
+                let may_exist = entry
+                    .get("runStateMayExist")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let result = classify_incomplete_run(&record, may_exist);
+                cases.push(json!({
+                    "lastKnownState": record.last_known_state,
+                    "runStateMayExist": may_exist,
+                    "classification": result.classification.as_str(),
+                    "reason": result.reason,
+                }));
+            }
+            Ok(json!({ "cases": cases }))
+        }
+        other => Err(HarnessError::corpus(format!(
+            "unknown recovery-taxonomy op {other}"
+        ))),
     }
 }
 
