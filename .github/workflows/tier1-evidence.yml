@@ -1,0 +1,104 @@
+name: Siralos Tier-1 evidence
+
+# R11 promotion evidence generation ([R11 Entry Review] §3): one
+# dispatch-only run per Tier-1 platform produces the digest-bound
+# differential audit and the live sandbox-conformance transcript using
+# the exact repository invocation. Outputs are uploaded as artifacts
+# whose names drop directly into tests/differential/evidence/r11/
+# (see that directory's EVIDENCE.md). This workflow never publishes,
+# never mutates repository state, and treats an unavailable sandbox
+# as a recorded loud skip — never as secure.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  NODE_VERSION: 24.17.0
+  NPM_VERSION: 11.13.0
+
+jobs:
+  evidence:
+    name: Tier-1 evidence (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      # actions/checkout v7.0.1 (GitHub-owned, immutable SHA pin);
+      # credentials are not persisted: no authenticated Git operation
+      # happens after checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pinned npm
+        shell: bash
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Verify JavaScript toolchain identity
+        shell: bash
+        run: |
+          node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npm = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
+
+      - name: Install locked npm dependencies
+        run: npm ci
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Build the candidate harness binary first so the audit step is
+      # exactly the local-gate invocation.
+      - name: Build differential harness candidate
+        run: cargo build --locked -p siralos-cli --bin siralos-harness --features differential-harness
+
+      - name: Differential harness (digest-bound audit)
+        run: npm run check:differential
+
+      - name: Live sandbox conformance
+        id: sandbox
+        run: |
+          npm run test:sandbox | tee sandbox-conformance.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Name evidence files for direct retention
+        shell: bash
+        run: |
+          platform="$(echo '${{ matrix.os }}' | cut -d- -f1)"
+          cp tests/differential/out/audit.json "audit-${platform}-corpus-v22.json"
+          cp sandbox-conformance.txt "sandbox-conformance-${platform}.txt"
+
+      # Retain the exact oracle/candidate/audit records alongside the
+      # named audit copy, including on parity failure or harness error.
+      - name: Upload Tier-1 evidence (${{ matrix.os }})
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tier1-evidence-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            audit-*-corpus-v22.json
+            sandbox-conformance-*.txt
+            tests/differential/out/oracle.json
+            tests/differential/out/candidate.json
+            tests/differential/out/failure.json
+          if-no-files-found: warn
+        if: always()
