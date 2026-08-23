@@ -24,12 +24,12 @@ no real process is ever launched (that remains R11/fail-closed).
 
 ## 1. Entry state
 
-| Item                     | Value                                                                                             |
-| ------------------------ | -------------------------------------------------------------------------------------------------- |
-| Branch / worktree        | `main`, clean                                                                                      |
-| Prior verified worktree  | `1623e800f8034d07825d7c6582768c27a91a973e` (R9 Verified); R10a + R10b core landed                  |
-| Corpus                   | schema 3, version 19, 195 files, 190/190 applicable required parity                                |
-| R10c executable Rust     | absent — no `runtime` module exists under `crates/siralos-core/src`; H1/H2/ICM seams already in place (`siralos_core::identity`, `siralos_core::determinism`, `siralos_core::context`) |
+| Item                    | Value                                                                                                                                                                                  |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch / worktree       | `main`, clean                                                                                                                                                                          |
+| Prior verified worktree | `1623e800f8034d07825d7c6582768c27a91a973e` (R9 Verified); R10a + R10b core landed                                                                                                      |
+| Corpus                  | schema 3, version 19, 195 files, 190/190 applicable required parity                                                                                                                    |
+| R10c executable Rust    | absent — no `runtime` module exists under `crates/siralos-core/src`; H1/H2/ICM seams already in place (`siralos_core::identity`, `siralos_core::determinism`, `siralos_core::context`) |
 
 ## 2. Frozen subject schemas
 
@@ -67,7 +67,7 @@ Scenarios drive FakeProcessDriver scripts under a fixed clock and assert:
 
 - state machine ordering `prepared → starting → running → terminating → terminal`
 - exactly one terminal disposition (`success | failure | cancelled |
-  resource_limit | uncertain`) plus an independent cleanup status
+resource_limit | uncertain`) plus an independent cleanup status
 - the 13-kind failure taxonomy is preserved verbatim
 - same FaultScript + same clock ⇒ same observation sequence and the
   same RunOutcome (H2 replay inside H3)
@@ -81,7 +81,7 @@ declared capabilities and assert:
 
 - readiness manifests are deterministic per mode (headless vs visual)
 - unsupported limits appear as capability state (`memory: false,
-  cpu: false`), never pretended enforcement
+cpu: false`), never pretended enforcement
 - execution is allowed only when every blocking item passes; rendered
   projections match byte-for-byte
 
@@ -106,13 +106,13 @@ canonical JSON payloads. No parallel hash family may be introduced
 
 ## 5. Evidence assignment
 
-| Boundary                                   | Evidence layer                                            | Owner                        |
-| ------------------------------------------ | --------------------------------------------------------- | ---------------------------- |
-| Run/operation identity + trace formatting   | Core unit + differential `runtime-readiness.identity`      | `siralos-core::runtime`      |
-| Budget defaults/digest/render/admission     | Core unit + differential `runtime-readiness.budgets`       | `siralos-core::runtime`      |
-| Supervision lifecycle + fault reproducibility | Core unit + differential `runtime-readiness.lifecycle`   | `siralos-core::runtime`      |
-| Readiness manifest + doctor diagnostic      | Core unit + differential `runtime-readiness.doctor`        | `siralos-core::runtime` (+ doctor area) |
-| Real spawn/sandbox enforcement              | **Out of scope — R11**; nothing here launches a process    | R11                          |
+| Boundary                                      | Evidence layer                                          | Owner                                   |
+| --------------------------------------------- | ------------------------------------------------------- | --------------------------------------- |
+| Run/operation identity + trace formatting     | Core unit + differential `runtime-readiness.identity`   | `siralos-core::runtime`                 |
+| Budget defaults/digest/render/admission       | Core unit + differential `runtime-readiness.budgets`    | `siralos-core::runtime`                 |
+| Supervision lifecycle + fault reproducibility | Core unit + differential `runtime-readiness.lifecycle`  | `siralos-core::runtime`                 |
+| Readiness manifest + doctor diagnostic        | Core unit + differential `runtime-readiness.doctor`     | `siralos-core::runtime` (+ doctor area) |
+| Real spawn/sandbox enforcement                | **Out of scope — R11**; nothing here launches a process | R11                                     |
 
 ## 6. Measurement
 
@@ -132,13 +132,13 @@ Stage-4 remain untouched by this decision.
 
 ## Self-loop verification
 
-| Criterion                                        | Direct evidence                                                                                            | Status |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------ |
-| Four subject schemas grounded against real TS    | §2 cites all nine `runtime/**` modules with line counts and exported entry points                            | pass   |
-| Fault injection harness-owned and reproducible   | §3 specifies the closed script vocabulary + pure-function observation rule under the controlled clock         | pass   |
-| Single-digest binding preserved                  | §4 pins three domain separators through the existing primitive; no new hash family                            | pass   |
-| Entry state audited                              | §1 observed this session (clean tree; corpus v19/195; no `siralos_core::runtime` module)                      | pass   |
-| Authorization limited to R10c                    | §7; R11 effect-boundary/security/recovery explicitly out of scope                                             | pass   |
+| Criterion                                      | Direct evidence                                                                                       | Status |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------ |
+| Four subject schemas grounded against real TS  | §2 cites all nine `runtime/**` modules with line counts and exported entry points                     | pass   |
+| Fault injection harness-owned and reproducible | §3 specifies the closed script vocabulary + pure-function observation rule under the controlled clock | pass   |
+| Single-digest binding preserved                | §4 pins three domain separators through the existing primitive; no new hash family                    | pass   |
+| Entry state audited                            | §1 observed this session (clean tree; corpus v19/195; no `siralos_core::runtime` module)              | pass   |
+| Authorization limited to R10c                  | §7; R11 effect-boundary/security/recovery explicitly out of scope                                     | pass   |
 
 Evidence ladder: L1 observed entry state + TS module inventory with line
 counts; L2 file:line citations (`supervision.ts:19-51`, `budget.ts`,
