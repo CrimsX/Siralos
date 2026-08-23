@@ -73,7 +73,28 @@ jobs:
         run: cargo build --locked -p siralos-cli --bin siralos-harness --features differential-harness
 
       - name: Differential harness (digest-bound audit)
+        id: diff
         run: npm run check:differential
+
+      # On any harness error/deviation, spill the exact failure record
+      # and record tail into the log so cross-platform findings carry
+      # their diagnosis without requiring artifact download.
+      - name: Spill differential failure diagnostics
+        if: always() && steps.diff.outcome != 'success'
+        shell: bash
+        run: |
+          for f in tests/differential/out/failure.json \
+                   tests/differential/out/audit.json \
+                   tests/differential/out/oracle.json \
+                   tests/differential/out/candidate.json; do
+            if [ -f "$f" ]; then
+              echo "===== $f ====="
+              case "$f" in
+                *failure.json*) cat "$f" ;;
+                *) head -c 4000 "$f"; echo ;;
+              esac
+            fi
+          done
 
       # Replay-stress determinism and the full oracle test suite are part
       # of the recorded evidence ([R11 Gate] §2.4 replay row). A failure
