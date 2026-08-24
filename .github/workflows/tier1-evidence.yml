@@ -108,6 +108,14 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
+          # GitHub macOS runners inject an ssh-agent socket that the sandbox
+          # wrapper forwards. Siralos intentionally refuses SSH_AUTH_SOCK
+          # (deny list), so the live confinement tests cannot execute while it
+          # is present. Unset only this CI-injected variable on macOS; the
+          # fail-closed deny-list behavior remains covered by unit tests.
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            unset SSH_AUTH_SOCK
+          fi
           set -o pipefail
           npm test 2>&1 | tee typescript-gate-full.txt
           exit ${PIPESTATUS[0]}
@@ -122,6 +130,9 @@ jobs:
       - name: Live sandbox conformance
         shell: bash
         run: |
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            unset SSH_AUTH_SOCK
+          fi
           npm run test:sandbox | tee sandbox-conformance.txt
           exit ${PIPESTATUS[0]}
 
