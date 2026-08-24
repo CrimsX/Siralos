@@ -99,31 +99,31 @@ jobs:
       # Replay-stress determinism and the full oracle test suite are part
       # of the recorded evidence ([R11 Gate] §2.4 replay row). A failure
       # here is a Tier-1 finding: it must NOT block artifact collection,
-      # but it DOES keep the run red and blocks promotion.
+      # but it DOES keep the run red and blocks promotion. Retention
+      # keeps only the failure list and summary lines — raw vitest output
+      # embeds runner filesystem paths that check:public correctly
+      # rejects in tracked files.
       - name: Full TypeScript gate and replay determinism
         id: tsgate
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          npm test 2>&1 | tee typescript-gate.txt
+          npm test 2>&1 | tee typescript-gate-full.txt
           exit ${PIPESTATUS[0]}
+
+      - name: Extract retention-safe gate record
+        if: always()
+        shell: bash
+        run: |
+          grep -E "(FAIL |Test Files |Tests  )" typescript-gate-full.txt \
+            > typescript-gate.txt || true
 
       - name: Live sandbox conformance
         shell: bash
         run: |
           npm run test:sandbox | tee sandbox-conformance.txt
           exit ${PIPESTATUS[0]}
-
-      # Scrub runner-identifying paths before retention: check:public
-      # correctly rejects raw home/runner paths in tracked evidence.
-      - name: Scrub retained outputs
-        if: always()
-        shell: bash
-        run: |
-          sed -i 's|/Users/runner/work/Siralos/Siralos|<runner-workspace>|g' typescript-gate.txt 2>/dev/null || true
-          sed -i 's|D:\\a\\Siralos\\Siralos|<runner-workspace>|g' typescript-gate.txt 2>/dev/null || true
-          sed -i 's|C:\\Users\\[A-Za-z0-9~-]*\\|C:\\<user>\\|g' typescript-gate.txt 2>/dev/null || true
 
       # Map the runner OS to the retention names in
       # tests/differential/evidence/r11/EVIDENCE.md and derive the corpus
