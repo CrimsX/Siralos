@@ -872,17 +872,27 @@ describe("godot r9 subject integrity", () => {
 });
 
 describe("oracle determinism", () => {
-  it("produces byte-identical records on consecutive runs", { timeout: 120_000 }, () => {
-    const first = runOracle(CORPUS, ROOT);
-    const second = runOracle(CORPUS, ROOT);
-    expect(first).toBe(second);
-  });
+  // Windows probe-process creation costs several times the POSIX rate;
+  // bounds are scaled so the deadline never decides the outcome.
+  it(
+    "produces byte-identical records on consecutive runs",
+    { timeout: process.platform === "win32" ? 480_000 : 120_000 },
+    () => {
+      const first = runOracle(CORPUS, ROOT);
+      const second = runOracle(CORPUS, ROOT);
+      expect(first).toBe(second);
+    },
+  );
 
-  it("emits only canonical sorted-key JSON", { timeout: 120_000 }, () => {
-    const text = runOracle(CORPUS, ROOT);
-    const records = parseCanonicalRecords(text, "oracle");
-    expect(text).toBe(canonicalRecordDocument(records));
-  });
+  it(
+    "emits only canonical sorted-key JSON",
+    { timeout: process.platform === "win32" ? 240_000 : 120_000 },
+    () => {
+      const text = runOracle(CORPUS, ROOT);
+      const records = parseCanonicalRecords(text, "oracle");
+      expect(text).toBe(canonicalRecordDocument(records));
+    },
+  );
 
   it("treats probe timeout, nonzero exit, and empty output as harness errors", () => {
     const directory = tempDirectory("siralos-probes-");
