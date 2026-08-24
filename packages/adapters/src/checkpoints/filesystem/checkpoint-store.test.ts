@@ -8,7 +8,6 @@ import {
   readFile,
   readlink,
   readdir,
-  realpath,
   rename,
   rm,
   stat,
@@ -59,16 +58,13 @@ async function withStore(overrides: Record<string, unknown> = {}): Promise<Store
     rootDirectory,
     ...overrides,
   });
-  // The store fingerprints the CANONICALIZED workspace root (macOS
-  // tmpdirs live behind the /var -> /private/var symlink), so derive
-  // the expected fingerprint the same way or direct file assertions
-  // target a directory that was never written.
-  const canonicalWorkspaceRoot = await realpath(workspaceRoot);
+  // The store's own fingerprint is the single source of truth for its
+  // namespace directory; recomputing it diverged on windows-latest CI.
   return {
     store,
     workspaceRoot,
     rootDirectory,
-    fingerprint: createHash("sha256").update(canonicalWorkspaceRoot).digest("hex"),
+    fingerprint: store.fingerprint,
   };
 }
 

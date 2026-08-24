@@ -7,6 +7,9 @@ import type {
 } from "./checkpoint-model.js";
 
 export interface CheckpointStore {
+  /** The store's own workspace fingerprint — names the checkpoint namespace directory; single source of truth for direct-inspection callers. */
+  readonly fingerprint: string;
+
   prepare(checkpoint: PreparedCheckpoint, signal?: AbortSignal): Promise<FileCheckpoint>;
 
   finalizeApplied(checkpointId: string, result: AppliedCheckpointResult): Promise<FileCheckpoint>;

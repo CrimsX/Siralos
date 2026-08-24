@@ -9,7 +9,6 @@
  * (a machine identity derived from the absolute workspace path) and
  * report fingerprint validity instead.
  */
-import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   mkdirSync,
@@ -130,19 +129,18 @@ async function run(input) {
     workspaceRoot: workspace,
     rootDirectory: storeRoot,
   });
-  const canonicalWorkspace = realpathSync(workspace);
-  const fingerprint = createHash("sha256").update(canonicalWorkspace).digest("hex");
-  // Tier-1 finding #2 fix: write fixtures through the SAME canonical
-  // spelling the store derives internally, so raw-vs-realpath divergent
-  // spellings (windows short names, macOS /var symlink) can never make
-  // written fixtures invisible to the store's own reader.
+  // Tier-1 finding #2 fix: the store's own fingerprint is the single
+  // source of truth for its namespace directory. Recomputing it from a
+  // realpath'd workspace diverged on windows-latest (hash mismatch for
+  // reasons invisible to string inspection), making written fixtures
+  // invisible to list()/get().
+  const fingerprint = store.fingerprint;
   const canonicalStoreRoot = realpathSync(storeRoot);
   for (const spec of input.checkpoints ?? []) {
     writeFixtureCheckpoint(canonicalStoreRoot, fingerprint, spec);
   }
-  // Tier-1 diagnostics (finding #2): emit both spellings and the
-  // store's own view so a failing dispatch carries its diagnosis in
-  // stderr/failure.json.
+  // Tier-1 diagnostics: emit both spellings and the store's own view so
+  // a failing dispatch carries its diagnosis in stderr/failure.json.
   {
     const listed = await store.list();
     process.stderr.write(

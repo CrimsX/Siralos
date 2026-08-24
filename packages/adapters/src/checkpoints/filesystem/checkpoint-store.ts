@@ -1323,7 +1323,17 @@ export async function createFilesystemCheckpointStore(
     return new Uint8Array(outcome.bytes);
   }
 
-  return { prepare, finalizeApplied, markUndone, markState, get, list, loadPreimage };
+  return {
+    /** The store's own workspace fingerprint — the single source of truth for the checkpoint namespace directory name. */
+    fingerprint: workspaceFingerprint,
+    prepare,
+    finalizeApplied,
+    markUndone,
+    markState,
+    get,
+    list,
+    loadPreimage,
+  };
 }
 
 /**

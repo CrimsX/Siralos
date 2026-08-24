@@ -246,6 +246,7 @@ function createStubWorkspaceRead(): Tool {
 
 function createStubCheckpointStore(): CheckpointStore {
   return {
+    fingerprint: "stub-fingerprint",
     prepare(): Promise<FileCheckpoint> {
       return Promise.reject(new Error("Not used in session tests."));
     },
@@ -1288,6 +1289,7 @@ describe("runInteractiveSession git and checkpoint commands", () => {
     const io = new ScriptedIO(["/checkpoints", "/exit"]);
     const sessionInfo: SessionInfo = buildSessionInfo({
       checkpoints: {
+        fingerprint: "stub-fingerprint",
         prepare() {
           return Promise.reject(new Error("not used"));
         },
