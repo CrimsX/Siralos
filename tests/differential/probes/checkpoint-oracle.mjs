@@ -135,6 +135,22 @@ async function run(input) {
   for (const spec of input.checkpoints ?? []) {
     writeFixtureCheckpoint(storeRoot, fingerprint, spec);
   }
+  // Tier-1 diagnostics (finding #2): on windows-latest the store's get()
+  // returned null for a fixture written moments earlier via the raw
+  // mkdtemp spelling. Emit both spellings and the store's own view so a
+  // failing dispatch carries its diagnosis in stderr/failure.json.
+  {
+    const canonicalStoreRoot = realpathSync(storeRoot);
+    const listed = await store.list();
+    process.stderr.write(
+      `[checkpoint-diag] storeRoot=${storeRoot}\n` +
+        `[checkpoint-diag] realpath(storeRoot)=${canonicalStoreRoot}\n` +
+        `[checkpoint-diag] fingerprint=${fingerprint}\n` +
+        `[checkpoint-diag] store.list count=${listed.length} ids=[${listed
+          .map((entry) => entry.id)
+          .join(",")}]\n`,
+    );
+  }
   const ops = [];
   for (const op of input.ops ?? []) {
     if (op.op === "list" || op.op === "list-after") {
@@ -166,7 +182,13 @@ async function run(input) {
     if (op.op === "undo-plan") {
       const checkpoint = await store.get(op.id);
       if (checkpoint === null) {
-        throw new Error(`undo-plan requires a valid checkpoint ${op.id}`);
+        const listed = await store.list();
+        throw new Error(
+          `undo-plan requires a valid checkpoint ${op.id}` +
+            ` (store.list count=${listed.length} ids=[${listed
+              .map((entry) => entry.id)
+              .join(",")}])`,
+        );
       }
       ops.push({
         op: "undo-plan",
