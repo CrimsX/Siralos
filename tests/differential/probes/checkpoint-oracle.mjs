@@ -185,12 +185,20 @@ async function run(input) {
     if (op.op === "undo-plan") {
       const checkpoint = await store.get(op.id);
       if (checkpoint === null) {
+        const { existsSync } = await import("node:fs");
         const listed = await store.list();
+        const probe = (base) =>
+          existsSync(join(base, fingerprint, op.id, "metadata.json")) ? "present" : "absent";
         throw new Error(
           `undo-plan requires a valid checkpoint ${op.id}` +
             ` (store.list count=${listed.length} ids=[${listed
               .map((entry) => entry.id)
-              .join(",")}])`,
+              .join(",")}];` +
+            ` fixture metadata ${probe(storeRoot)} at raw storeRoot` +
+            `, ${probe(canonicalStoreRoot)} at canonical storeRoot` +
+            `; storeRoot=${storeRoot}` +
+            `; canonicalStoreRoot=${canonicalStoreRoot}` +
+            `; fingerprint=${fingerprint})`,
         );
       }
       ops.push({
