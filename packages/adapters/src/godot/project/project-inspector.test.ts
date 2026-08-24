@@ -25,7 +25,9 @@ import { isWithinPathIdentity, samePathIdentity } from "../../fs-path-identity.j
 const tempDirectories: string[] = [];
 
 async function withWorkspace(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "siralos-godot-project-"));
+  const created = await mkdtemp(join(tmpdir(), "siralos-godot-project-"));
+  // Canonical: containment/identity checks compare realpath spellings.
+  const directory = await realpath(created);
   tempDirectories.push(directory);
   return directory;
 }

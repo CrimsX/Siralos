@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { GODOT_LIMITS } from "@siralos/core";
 import type { GodotScriptCheckTarget } from "@siralos/core";
@@ -160,7 +160,17 @@ export async function validateCheckScript(options: {
   readonly relativePath: string;
   readonly signal?: AbortSignal;
 }): Promise<GodotCheckScriptValidation> {
-  const { workspaceRoot, relativePath, signal } = options;
+  // Canonicalize the root so containment walks operate on the same
+  // spelling the fs reports for realpaths (macOS /var -> /private/var,
+  // Windows short names); a raw tmpdir spelling would misclassify valid
+  // scripts as invalid input.
+  let workspaceRoot = options.workspaceRoot;
+  try {
+    workspaceRoot = await realpath(workspaceRoot);
+  } catch {
+    // Unresolvable root: containment below fails closed with "missing".
+  }
+  const { relativePath, signal } = options;
   const lexical = validateProjectRelativePath(relativePath, GODOT_LIMITS.maxResReferencePathBytes);
   if (!lexical.ok) {
     if (lexical.reason === "absolute") {

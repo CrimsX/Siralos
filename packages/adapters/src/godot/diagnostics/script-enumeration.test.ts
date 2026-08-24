@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir, symlink } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { GODOT_LIMITS } from "@siralos/core";
@@ -8,7 +8,10 @@ import { enumerateGDScriptFiles, validateCheckScript } from "./script-enumeratio
 const tempRoots: string[] = [];
 
 async function withTempRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "siralos-scripts-test-"));
+  const created = await mkdtemp(path.join(tmpdir(), "siralos-scripts-test-"));
+  // Canonical: production identity checks realpath internally, so tests
+  // must compare against the same spelling (macOS /var -> /private/var).
+  const root = await realpath(created);
   tempRoots.push(root);
   return root;
 }

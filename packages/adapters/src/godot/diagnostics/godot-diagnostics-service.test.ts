@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { GODOT_LIMITS } from "@siralos/core";
@@ -18,7 +18,10 @@ import type { UserGodotConfig } from "../../config/user-config.js";
 const tempRoots: string[] = [];
 
 async function withTempRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "siralos-check-test-"));
+  const created = await mkdtemp(path.join(tmpdir(), "siralos-check-test-"));
+  // Canonical: the service canonicalizes its workspace root at
+  // construction; fixtures must live at the same spelling.
+  const root = await realpath(created);
   tempRoots.push(root);
   return root;
 }

@@ -1,4 +1,14 @@
-import { chmod, mkdir, mkdtemp, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,7 +23,11 @@ import { resolveMacOsBundle } from "./macos-bundle.js";
 const tempDirectories: string[] = [];
 
 async function withTemp(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), "siralos-godot-discovery-"));
+  const created = await mkdtemp(join(tmpdir(), "siralos-godot-discovery-"));
+  // Canonical: validateExecutable records realpath'd canonical targets,
+  // so expectations must use the same spelling (macOS /var ->
+  // /private/var).
+  const directory = await realpath(created);
   tempDirectories.push(directory);
   return directory;
 }
