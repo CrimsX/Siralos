@@ -6,13 +6,13 @@ Context schema: 1
 Status: Active development
 Public stages: 6
 Migration track: Stage 3R
-Current completed milestone: R10
-Current active milestone: R10 (Verified)
-Next milestone: R11 - Full differential, effect-boundary, security, recovery, and cross-platform parity
-Next implementation slice: R11.3 Tier-1 evidence — promotion awaits three green platforms at HEAD
-R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn), R7.2 (generic Application Tool Loop parity), R7.3 (Projection parity), R7.4 (Configuration parity), and R7.5 (/context and /tools CLI rendering) are complete and evidence-backed at corpus version 15 and 133 scenario files (128/128 applicable Windows). Stage 3R R8 (Optional Godot Stage-2 parity) is complete and evidence-backed: six surfaces ported across `siralos-core::godot` and `siralos-adapters::godot`, corpus version 16 holds 155 scenario files with all five frozen `godot-*` differential subjects (discovery 4, knowledge 5, diagnostics 4, lsp 4, scene-resolve 5) at required parity — 150/150 applicable required scenarios (4 platform skips); the fail-closed posture is mechanically preserved (zero spawn paths in any Godot module). Stage 3R R9 (Optional Godot Stage-3 parity — review context & impact intelligence, prepare-only scene/resource mutation contracts, the deterministic unified `/develop` core) is complete and evidence-backed: corpus version 17 holds 167 scenario files with all three frozen subjects (review-context 4, mutation-prepare 4, develop-plan 4) at required parity — 162/162 applicable required scenarios (4 platform skips); apply and new checkpoints stay typed `unavailable` and zero spawn paths exist in any Godot module. Stage 3R R10 (H1/H2/ICM/H3 runtime-readiness parity) is complete and evidence-backed as one Verified milestone with three ordered, entry-reviewed sub-slices: R10a H1 content identity + H2 determinism/replay (`siralos_core::identity` extended, `siralos_core::determinism`; corpus version 18, 182 scenario files, 177/177 applicable required parity), R10b ICM phase contracts / dependency manifests / staleness / provenance (`siralos_core::context`; corpus version 19, 195 scenario files, 190/190), and R10c H3 runtime readiness — causal run identity, manifest-bound budgets, the pure supervisor lifecycle and 13-kind failure taxonomy, harness-owned fault injection under the controlled clock, and the fail-closed readiness doctor (`siralos_core::runtime`; corpus version 20, 210 scenario files, 205/205). No real process is ever launched; effect-boundary hardening, sandbox live conformance, recovery orchestration, and cross-platform closure remain R11-owned.
-Last verified commit: a456afb71ab64c5504cd19e8eb7988d32d60a9dc
-Latest verified executable worktree: a456afb71ab64c5504cd19e8eb7988d32d60a9dc
+Current completed milestone: R11
+Current active milestone: R11 (Verified)
+Next milestone: R12 - TypeScript reference retirement or explicit retention decision
+Next implementation slice: R12 disposition - retirement vs retention evidence per the frozen template
+R7A behavior extraction/protocol remediation is complete; R7.1 (provider contract + deterministic fake provider + bounded single model turn), R7.2 (generic Application Tool Loop parity), R7.3 (Projection parity), R7.4 (Configuration parity), and R7.5 (/context and /tools CLI rendering) are complete and evidence-backed at corpus version 15 and 133 scenario files (128/128 applicable Windows). Stage 3R R8 (Optional Godot Stage-2 parity) is complete and evidence-backed: six surfaces ported across `siralos-core::godot` and `siralos-adapters::godot`, corpus version 16 holds 155 scenario files with all five frozen `godot-*` differential subjects (discovery 4, knowledge 5, diagnostics 4, lsp 4, scene-resolve 5) at required parity — 150/150 applicable required scenarios (4 platform skips); the fail-closed posture is mechanically preserved (zero spawn paths in any Godot module). Stage 3R R9 (Optional Godot Stage-3 parity — review context & impact intelligence, prepare-only scene/resource mutation contracts, the deterministic unified `/develop` core) is complete and evidence-backed: corpus version 17 holds 167 scenario files with all three frozen subjects (review-context 4, mutation-prepare 4, develop-plan 4) at required parity — 162/162 applicable required scenarios (4 platform skips); apply and new checkpoints stay typed `unavailable` and zero spawn paths exist in any Godot module. Stage 3R R10 (H1/H2/ICM/H3 runtime-readiness parity) is complete and evidence-backed as one Verified milestone with three ordered, entry-reviewed sub-slices: R10a H1 content identity + H2 determinism/replay (`siralos_core::identity` extended, `siralos_core::determinism`; corpus version 18, 182 scenario files, 177/177 applicable required parity), R10b ICM phase contracts / dependency manifests / staleness / provenance (`siralos_core::context`; corpus version 19, 195 scenario files, 190/190), and R10c H3 runtime readiness — causal run identity, manifest-bound budgets, the pure supervisor lifecycle and 13-kind failure taxonomy, harness-owned fault injection under the controlled clock, and the fail-closed readiness doctor (`siralos_core::runtime`; corpus version 20, 210 scenario files, 205/205). No real process is ever launched; effect-boundary hardening, sandbox live conformance, recovery orchestration, and cross-platform closure remain R11-owned. Stage 3R R11 (full differential, effect-boundary, security, recovery, and cross-platform parity) is complete and evidence-backed: `workspace-apply` and `recovery-taxonomy` landed at corpus version 23 (222 scenario files), the Tier-1 `tier1-evidence.yml` dispatch at `eea0029e70aae7248b3e1022c3be1cb669fd5a09` returned three green platforms with digest-bound audits (`217/217` applicable required parity on Linux, macOS, and Windows; truthful loud sandbox skips retained), all six Tier-1 register findings are closed with finding #5 recorded as an accepted deviation, and the fail-closed posture is unchanged.
+Last verified commit: eea0029e70aae7248b3e1022c3be1cb669fd5a09
+Latest verified executable worktree: eea0029e70aae7248b3e1022c3be1cb669fd5a09
 Historical R7.2 verified Rust implementation commit: 73db8e89c8f670454927ca7ed7554e17d33ea606
 Earlier R7.3 Unicode helper correction: 4b805d4ac0a9eac6d6de5a2b90b64bc6146aeafc
 R7.3 integrated line-bound production correction: 461f290b3d3d778a3bef4d25a895338efcdf315c
@@ -294,7 +294,7 @@ R7      COMPLETE
 R8      COMPLETE
 R9      COMPLETE
 R10     COMPLETE
-R11     IN PROGRESS
+R11     COMPLETE
 R12     NOT DUE
 ```
 
@@ -316,7 +316,7 @@ Status changes require executable evidence and an update to
 | R8        | Godot Stage-2 parity                                                    | Verified |
 | R9        | Godot Stage-3 parity                                                    | Verified |
 | R10       | H1 / H2 / ICM / H3 parity                                               | Verified |
-| R11       | Full differential/effect parity                                         |
+| R11       | Full differential/effect parity                                         | Verified |
 | R12       | TypeScript reference retirement or explicit retention decision          |
 
 Permanent migration rule:

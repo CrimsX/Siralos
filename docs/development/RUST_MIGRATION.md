@@ -36,7 +36,7 @@ repository concepts never satisfy those identifiers by implication.
 | R8        | Optional Godot Stage-2 parity                                                                                                   | Verified       |
 | R9        | Optional Godot Stage-3 parity                                                                                                   | Verified       |
 | R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Verified       |
-| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | In progress    |
+| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Verified       |
 | R12       | TypeScript reference retirement or an explicit evidence-backed retention disposition                                            | Not due        |
 
 R2 is verified: its versioned corpus is mechanically bound by scenario and
@@ -721,7 +721,29 @@ Gates observed PASS on the verified worktree: `npm run check` (exit 0,
 211/211 TypeScript test files), `cargo fmt`, `clippy -D warnings`,
 `cargo test --workspace`, `check:differential`. Promotion evidence and
 atomic surface list: `docs/wayfinder/decisions/17-r10-verified-promotion.md`.
-R11 requires its own entry review.
+
+## R11 — full differential, effect-boundary, security, recovery, and cross-platform parity (Verified)
+
+R11 is complete and evidence-backed as one Verified milestone with three
+ordered slices. R11.1 added the `workspace-apply` subject (refusal before
+binding: typed `unavailable` application, protected-path classification for
+behavioral configuration, no mutation, approval, or checkpoint) and R11.2 the
+`recovery-taxonomy` subject (the seven typed failure dimensions with stable
+codes, one terminal disposition plus an independent cleanup status), landing
+at corpus **version 23, 222 scenario files** with 217/217 applicable required
+parity on the Windows host. R11.3 closed Tier-1: six cross-platform findings
+were registered, repaired in code without weakening any fail-closed posture,
+and confirmed by a fresh three-platform `tier1-evidence.yml` dispatch at
+`eea0029e70aae7248b3e1022c3be1cb669fd5a09` whose digest-bound audits show
+217/217 applicable required parity on Linux, macOS, and Windows with zero
+deviations; the sandbox conformance transcripts retain truthful loud skips
+(Windows `setup-required`, Linux `dependency-missing`, macOS private
+run-directory unavailability), and the macOS `SSH_AUTH_SOCK` finding is
+recorded as an accepted deviation. All artefacts are retained with matching
+provenance in `tests/differential/evidence/r11/EVIDENCE.md`; promotion
+evidence and atomic surface list:
+`docs/wayfinder/decisions/20-r11-verified-promotion.md`. R12 — the
+retirement/retention disposition decision — requires its own HITL grilling.
 
 ## Porting gate
 

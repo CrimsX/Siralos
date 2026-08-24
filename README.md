@@ -291,7 +291,15 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R10 is **Verified** — R1–R9 Verified as recorded above; R10 (H1/H2/ICM/H3 runtime-readiness parity) is complete and evidence-backed as one milestone with three entry-reviewed sub-slices: `siralos_core::identity` + `siralos_core::determinism` (corpus version 18, 177/177), `siralos_core::context` (version 19, 190/190), and `siralos_core::runtime` (version 20, 210 scenario files, 205/205 applicable required scenarios); no real process is ever launched; R11 entry-reviewed with `workspace-apply` and `recovery-taxonomy` landed at corpus v23 (222 fixtures, 217/217 locally); Tier-1 evidence in progress.
+- **Current:** Stage 3R R11 is **Verified** — R1–R10 Verified as recorded
+  above; R11 (full differential, effect-boundary, security, recovery, and
+  cross-platform parity) is complete and evidence-backed: `workspace-apply`
+  and `recovery-taxonomy` landed at corpus v23 (222 fixtures,
+  217/217 applicable required scenarios), and the Tier-1 three-platform
+  dispatch returned digest-bound green audits on Linux, macOS, and Windows
+  with truthful loud sandbox skips; no unavailable effect was made
+  operational to close the gate. Next: the R12 retirement/retention
+  disposition decision.
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

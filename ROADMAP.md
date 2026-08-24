@@ -351,12 +351,16 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   application, new checkpoint creation, Git inspection) report the same
   typed outcomes on both sides.
 
-Current: Stage 3R R10 is **Verified** (R1–R9 Verified as recorded above; R10 —
-H1/H2/ICM/H3 runtime-readiness parity — complete and evidence-backed as one
-milestone with three entry-reviewed sub-slices at corpus version 20, 210 scenario
-files, 205/205 applicable required scenarios, verified worktree
-a456afb71ab64c5504cd19e8eb7988d32d60a9dc). The complete
-internal sequence is recorded
+Current: Stage 3R R11 is **Verified** (R1–R10 Verified as recorded above;
+R11 — full differential, effect-boundary, security, recovery, and
+cross-platform parity — is complete and evidence-backed: `workspace-apply`
+and `recovery-taxonomy` landed at corpus version 23, 222 scenario files,
+217/217 applicable required scenarios; the Tier-1 `tier1-evidence.yml`
+dispatch at eea0029e70aae7248b3e1022c3be1cb669fd5a09 returned three green
+platforms with digest-bound audits (217/217 applicable required parity on
+each) and truthful loud sandbox skips; all six Tier-1 findings are closed,
+with the macOS `SSH_AUTH_SOCK` finding recorded as an accepted deviation).
+The complete internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution
