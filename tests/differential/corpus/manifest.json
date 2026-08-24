@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 22,
+  "corpusVersion": 23,
   "scenarios": [
     {
       "file": "checkpoint.escape.fail-closed.json",
@@ -891,5 +891,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "f1a6c1f68eddd99e206473effa2bc8e9eb0275f3901f197350d69ffe121575b3"
+  "corpusSha256": "50c0575f279a7481dc16f4ec98d90879db45256460ecf16c841c78bfc529537e"
 }

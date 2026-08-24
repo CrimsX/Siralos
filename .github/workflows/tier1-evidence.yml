@@ -115,6 +115,16 @@ jobs:
           npm run test:sandbox | tee sandbox-conformance.txt
           exit ${PIPESTATUS[0]}
 
+      # Scrub runner-identifying paths before retention: check:public
+      # correctly rejects raw home/runner paths in tracked evidence.
+      - name: Scrub retained outputs
+        if: always()
+        shell: bash
+        run: |
+          sed -i 's|/Users/runner/work/Siralos/Siralos|<runner-workspace>|g' typescript-gate.txt 2>/dev/null || true
+          sed -i 's|D:\\a\\Siralos\\Siralos|<runner-workspace>|g' typescript-gate.txt 2>/dev/null || true
+          sed -i 's|C:\\Users\\[A-Za-z0-9~-]*\\|C:\\<user>\\|g' typescript-gate.txt 2>/dev/null || true
+
       # Map the runner OS to the retention names in
       # tests/differential/evidence/r11/EVIDENCE.md and derive the corpus
       # version from the manifest so artifact names cannot drift.

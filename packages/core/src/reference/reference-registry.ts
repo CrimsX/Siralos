@@ -210,14 +210,6 @@ export async function createReferenceRegistry(
   const now = options.now ?? Date.now;
   const allowMutableRefs = options.allowMutableRefs ?? false;
   const limits = { ...REFERENCE_LIMITS, ...options.limits };
-  // Containment compares the resolver's REALPATH'd identity against the
-  // workspace namespace, so the namespace itself must be canonical:
-  // symlinked temp roots (macOS /var -> /private/var) would otherwise
-  // make a workspace-inside reference read as outside.
-  const { realpath } = await import("node:fs/promises");
-  const canonicalWorkspaceRoot = await realpath(options.workspaceRoot).catch(
-    () => options.workspaceRoot,
-  );
   const records: ReferenceRecord[] = [];
   const byAlias = new Map<string, ReferenceRecord>();
   const byId = new Map<ReferenceId, ReferenceRecord>();
@@ -283,7 +275,7 @@ export async function createReferenceRegistry(
       if (
         declaration.source.kind === "local-directory" &&
         outcome.identity.kind === "local-directory" &&
-        isPathWithin(canonicalWorkspaceRoot, outcome.identity.canonicalPath)
+        isPathWithin(options.workspaceRoot, outcome.identity.canonicalPath)
       ) {
         return {
           reference: {
@@ -437,7 +429,7 @@ export async function createReferenceRegistry(
         if (
           current.source.kind === "local-directory" &&
           outcome.identity.kind === "local-directory" &&
-          isPathWithin(canonicalWorkspaceRoot, outcome.identity.canonicalPath)
+          isPathWithin(options.workspaceRoot, outcome.identity.canonicalPath)
         ) {
           record.reference = Object.freeze({
             ...current,

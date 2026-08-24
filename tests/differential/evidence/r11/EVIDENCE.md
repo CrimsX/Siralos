@@ -10,75 +10,62 @@ This directory retains the per-platform promotion artefacts required by
 decision 18. A missing platform artifact **blocks the R11 Verified
 promotion** until attached here; it is never silently dropped.
 
+**Corpus note:** corpus v22 was briefly ambiguous (fixture-set changed
+mid-version without a bump); the version was bumped to **v23** (222
+fixtures, manifest `50c0575f…`) so all retained audits are digest-bound
+to exactly one fixture set. Pre-v23 audit files were removed from this
+directory as stale.
+
 ## Artefacts
 
-| File                              | Platform | What it proves                                                                                                                                                                                                                                                          | Status                           |
-| --------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `audit-windows-corpus-v22.json`   | Windows  | Digest-bound migration audit at schema 3, corpus version 22 (`8b495e001c60965e45527b983e7da56e2c11c0ef2e64592c72b71486d559f2e5`): parity held, 221 reference records, 0 deviations, 216/216 applicable required scenarios matched, 4 explicit POSIX-only platform skips | **present**                      |
-| `sandbox-conformance-windows.txt` | Windows  | Live `npm run test:sandbox` output: `SKIPPED - backend unavailable (state: setup-required, platform: windows)` with the exact package-supported install command; an unavailable backend is never treated as secure                                                      | **present (truthful loud skip)** |
-| `audit-linux-corpus-v22.json`     | Linux    | Same harness invocation on a Tier-1 Linux runner                                                                                                                                                                                                                        | **MISSING — blocks promotion**   |
-| `sandbox-conformance-linux.txt`   | Linux    | Live sandbox conformance output (available where installed; otherwise loudly unavailable)                                                                                                                                                                               | **MISSING — blocks promotion**   |
-| `audit-macos-corpus-v22.json`     | macOS    | Same harness invocation on a Tier-1 macOS runner                                                                                                                                                                                                                        | **MISSING — blocks promotion**   |
-| `sandbox-conformance-macos.txt`   | macOS    | Live sandbox conformance output                                                                                                                                                                                                                                         | **MISSING — blocks promotion**   |
+| File                              | Platform | What it proves                                                                                                                                 | Status                                                                                  |
+| --------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `audit-linux-corpus-v23.json`     | Linux    | Digest-bound migration audit at schema 3, corpus v23, from the exact repository invocation on a Tier-1 Linux runner                            | **MISSING — blocks promotion**                                                          |
+| `sandbox-conformance-linux.txt`   | Linux    | Live sandbox conformance output (available where installed; otherwise loudly unavailable)                                                      | **MISSING — blocks promotion**                                                          |
+| `audit-macos-corpus-v23.json`     | macOS    | Same harness invocation on a Tier-1 macOS runner                                                                                               | **MISSING — blocks promotion**                                                          |
+| `sandbox-conformance-macos.txt`   | macOS    | Live sandbox conformance output                                                                                                                | **MISSING — blocks promotion**                                                          |
+| `audit-windows-corpus-v23.json`   | Windows  | Same harness invocation on windows-latest or local Windows                                                                                     | **MISSING — blocks promotion** (prior v22-era copies removed as stale: pre-fix digests) |
+| `sandbox-conformance-windows.txt` | Windows  | Live sandbox conformance: truthful loud skip (`setup-required`) — retained posture evidence, superseded by the v23-era rerun at promotion time | present (v22-era; refresh with the audit)                                               |
 
-## How to produce the missing artefacts
+Diagnostic records (ticket 19 repair register inputs; scrubbed of
+runner-identifying paths where required by check:public):
+
+| File                                                                | Purpose                                                                                      |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `windows-differential-failure.json` / `windows-failure-latest.json` | Finding #2 crash record pre-fix (`checkpoint.undo-plan`, store.list count=0)                 |
+| `windows-failure-3e15be4.json`                                      | Same crash post-canonical-write attempt, confirming fingerprint divergence was the mechanism |
+| `typescript-gate-macos-3e15be4.txt`                                 | macOS gate log pre-fix (scrubbed): documents findings #3 remainder and #5                    |
+
+## Open findings (promotion blockers)
+
+Tracked in [Tier-1 Repair Register](../../../../docs/wayfinder/tickets/19-r11-tier1-repair-register.md):
+
+1. **#2 Windows checkpoint probe** — fix landed in code (store exposes
+   its own fingerprint; oracle writes through it). Awaiting fresh
+   dispatch confirmation.
+2. **#1 Windows git link-refusal tests** — canonicalized repo roots;
+   awaiting fresh dispatch confirmation.
+3. **#3 macOS diagnostics/enumeration/inspector/discovery** — fixes
+   landed (service construction + validateCheckScript entry + test-root
+   canonicalization); latest confirmed log predates them. Await fresh
+   dispatch.
+4. **#5 macOS SSH_AUTH_SOCK confinement refusal** — fail-closed posture
+   is correct; needs an upstream wrapper scrub or an explicit accepted
+   deviation recorded in the promotion decision. Never a deny-list
+   weakening.
+
+## How to produce the artefacts
 
 The same invocation produces each platform's audit on an installed
-Node.js (22+) + Rust (1.85+) host:
+Node.js (24.17) + Rust (toolchain-pinned) host:
 
 ```text
 npm ci
-cargo build -p siralos-cli --bin siralos-harness --features differential-harness
+cargo build --locked -p siralos-cli --bin siralos-harness --features differential-harness
 npm run check:differential        # writes tests/differential/out/audit.json
-cp tests/differential/out/audit.json tests/differential/evidence/r11/audit-<platform>-corpus-v22.json
+cp tests/differential/out/audit.json tests/differential/evidence/r11/audit-<platform>-corpus-v<manifest version>.json
 npm run test:sandbox > tests/differential/evidence/r11/sandbox-conformance-<platform>.txt
 ```
 
-The replay-stress determinism property is exercised by
-`tests/differential/replay.test.mjs` as part of `npm test`; its result is
-covered by the full-gate run recorded for each platform alongside the
-audit copy.
-
-## Recorded local-host findings (Windows, 2026-08-23)
-
-- The Windows host has WSL installed but **no distributions**, so no
-  local Linux run is possible without installing one or using CI.
-- The sandbox backend reports `setup-required` on Windows by design;
-  running the optional `npx sandbox-runtime windows-install` would change
-  that posture and is deliberately NOT part of R11 — the gate closes on
-  truthful reporting, not on availability ([R11 Gate] §2.2 exit).
-
-## Open Tier-1 findings (promotion blockers, 2026-08-23)
-
-Surfaced by the first full POSIX/CI execution of the oracle suite —
-these are genuine cross-platform divergences to repair; none may be
-papered over:
-
-1. **Windows (CI): git launch refused via link identity.**
-   `git-cli-adapter.ts` refuses PATH-resolved Git when
-   `samePathIdentity(realpath(git), git)` fails at launch; the runner
-   image's Git layout trips this. The adapter posture is correct;
-   either the discovery must land on a non-link spelling or the tests
-   need environment-adaptive expectations.
-   (`git-adapter.test.ts:248/286`)
-2. **Windows (CI): checkpoint probe crash in replay.**
-   `runWorkspaceProbe` reports the checkpoint oracle exiting nonzero on
-   windows-latest during replay; passes locally. Needs artifact-level
-   diagnosis (`failure.json`/probe stderr).
-3. **macOS: godot-diagnostics prepare returns invalid_input/failed.**
-   `validateCheckScript` → `verifyProjectPathContainment` rejects
-   fixture scripts under macOS tmpdir realpath semantics
-   (`/var/folders` vs `/private/var/folders`) for raw workspace roots.
-   (`godot-diagnostics-service.test.ts:172/201/212/301`)
-4. **macOS: reference-root containment bypassed** — FIXED in
-   `reference-services.ts` (canonicalize workspace root before
-   comparison); covered by `reference-services.test.ts`.
-5. **macOS: sandbox wrapper injects denied `SSH_AUTH_SOCK`.**
-   The pinned sandbox-runtime wrapper's env includes a variable Siralos
-   denies; the fail-closed refusal is correct. Resolution belongs
-   upstream (wrapper env) or as an explicit accepted decision — never
-   by weakening the deny list. (`anthropic-sandbox-runtime-backend.ts`
-   mergeWrapperEnvironment)
-6. **Windows/macOS: reference-path comparisons vs raw tmpdir spelling**
-   (`RUNNER~1`, `/var/...`) — FIXED via canonicalizing
-   `createTempWorkspace`.
+Or dispatch `.github/workflows/tier1-evidence.yml` and drop the
+downloaded artifact contents here (names already match).
