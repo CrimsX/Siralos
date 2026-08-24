@@ -7866,8 +7866,21 @@ fn create_fixture_workspace(
             }
             #[cfg(windows)]
             {
-                let _ =
-                    std::os::windows::fs::symlink_file(&target_path, &link);
+                if directory {
+                    // The oracle's Node `symlinkSync(target, link)` auto-detects
+                    // a directory target and creates a directory symlink. A file
+                    // symlink to a directory makes `std::fs::canonicalize` fail
+                    // on windows-latest, which previously reported
+                    // `unresolvable` where the reference reports the canonical
+                    // escape (`outside_workspace`).
+                    let _ =
+                        std::os::windows::fs::symlink_dir(&target_path, &link);
+                } else {
+                    let _ = std::os::windows::fs::symlink_file(
+                        &target_path,
+                        &link,
+                    );
+                }
             }
         }
     }
@@ -8759,8 +8772,21 @@ fn checkpoint_record(
             }
             #[cfg(windows)]
             {
-                let _ =
-                    std::os::windows::fs::symlink_file(&target_path, &link);
+                if directory {
+                    // The oracle's Node `symlinkSync(target, link)` auto-detects
+                    // a directory target and creates a directory symlink. A file
+                    // symlink to a directory makes `std::fs::canonicalize` fail
+                    // on windows-latest, which previously reported
+                    // `unresolvable` where the reference reports the canonical
+                    // escape (`outside_workspace`).
+                    let _ =
+                        std::os::windows::fs::symlink_dir(&target_path, &link);
+                } else {
+                    let _ = std::os::windows::fs::symlink_file(
+                        &target_path,
+                        &link,
+                    );
+                }
             }
         }
     }
