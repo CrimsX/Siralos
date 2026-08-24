@@ -9,7 +9,7 @@
  * store, and a fixed-clock task runtime.
  */
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -124,10 +124,14 @@ export interface TempWorkspace {
 }
 
 export async function createTempWorkspace(): Promise<TempWorkspace> {
-  const root = await mkdtemp(join(tmpdir(), "siralos-behavior-"));
+  const created = await mkdtemp(join(tmpdir(), "siralos-behavior-"));
+  // Canonicalize immediately: reference/workspace identity comparisons use
+  // realpath'd spellings, and a raw mkdtemp path diverges on CI runners
+  // (Windows short names, macOS /var -> /private/var).
+  const root = await realpath(created);
   return {
     root,
-    cleanup: () => rm(root, { recursive: true, force: true }),
+    cleanup: () => rm(created, { recursive: true, force: true }),
   };
 }
 
