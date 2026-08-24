@@ -2165,6 +2165,9 @@ function validateRecoveryTaxonomyResult(record, label) {
       ],
       `${label}.result`,
     );
+    if (result.code === "CAPABILITY_DENIED" && !Array.isArray(result.missing)) {
+      throw new Error(`${label}.result.missing is invalid`);
+    }
     if (Array.isArray(result.missing)) {
       for (const id of result.missing) {
         if (typeof id !== "string" || id.length === 0) {
@@ -2176,6 +2179,7 @@ function validateRecoveryTaxonomyResult(record, label) {
   }
   if (
     Object.hasOwn(result, "cases") &&
+    Array.isArray(result.cases) &&
     result.cases.every((entry) => Object.hasOwn(entry, "decision"))
   ) {
     assertExactKeys(result, ["cases"], `${label}.result`);

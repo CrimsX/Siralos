@@ -36,7 +36,7 @@ repository concepts never satisfy those identifiers by implication.
 | R8        | Optional Godot Stage-2 parity                                                                                                   | Verified       |
 | R9        | Optional Godot Stage-3 parity                                                                                                   | Verified       |
 | R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Verified       |
-| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Not due        |
+| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | In progress    |
 | R12       | TypeScript reference retirement or an explicit evidence-backed retention disposition                                            | Not due        |
 
 R2 is verified: its versioned corpus is mechanically bound by scenario and

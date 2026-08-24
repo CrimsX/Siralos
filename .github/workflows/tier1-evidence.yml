@@ -116,7 +116,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          grep -E "(FAIL |Test Files |Tests  )" typescript-gate-full.txt \
+          grep -E "(FAIL |Test Files |Tests )" typescript-gate-full.txt \
             > typescript-gate.txt || true
 
       - name: Live sandbox conformance
@@ -155,6 +155,17 @@ jobs:
             tests/differential/out/oracle.json
             tests/differential/out/candidate.json
             tests/differential/out/failure.json
+          if-no-files-found: warn
+        if: always()
+
+      # Diagnostic-only artifact: the raw vitest output with stack traces,
+      # expected/received values, and runner paths. NOT part of tracked
+      # evidence — for manual debugging of cross-platform failures only.
+      - name: Upload raw gate log (diagnostic)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: typescript-gate-full-${{ matrix.os }}-${{ github.sha }}
+          path: typescript-gate-full.txt
           if-no-files-found: warn
         if: always()
 
