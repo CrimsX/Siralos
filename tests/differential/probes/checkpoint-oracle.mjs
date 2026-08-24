@@ -132,15 +132,18 @@ async function run(input) {
   });
   const canonicalWorkspace = realpathSync(workspace);
   const fingerprint = createHash("sha256").update(canonicalWorkspace).digest("hex");
+  // Tier-1 finding #2 fix: write fixtures through the SAME canonical
+  // spelling the store derives internally, so raw-vs-realpath divergent
+  // spellings (windows short names, macOS /var symlink) can never make
+  // written fixtures invisible to the store's own reader.
+  const canonicalStoreRoot = realpathSync(storeRoot);
   for (const spec of input.checkpoints ?? []) {
-    writeFixtureCheckpoint(storeRoot, fingerprint, spec);
+    writeFixtureCheckpoint(canonicalStoreRoot, fingerprint, spec);
   }
-  // Tier-1 diagnostics (finding #2): on windows-latest the store's get()
-  // returned null for a fixture written moments earlier via the raw
-  // mkdtemp spelling. Emit both spellings and the store's own view so a
-  // failing dispatch carries its diagnosis in stderr/failure.json.
+  // Tier-1 diagnostics (finding #2): emit both spellings and the
+  // store's own view so a failing dispatch carries its diagnosis in
+  // stderr/failure.json.
   {
-    const canonicalStoreRoot = realpathSync(storeRoot);
     const listed = await store.list();
     process.stderr.write(
       `[checkpoint-diag] storeRoot=${storeRoot}\n` +
