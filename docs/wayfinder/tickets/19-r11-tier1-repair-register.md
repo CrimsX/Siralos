@@ -2,43 +2,48 @@
 
 **Map:** [Siralos Roadmap](../siralos-roadmap.md) · label `wayfinder:repair` HITL
 **Blocked by:** nothing — this is the active R11.3 completion work
-**Blocks:** [R11 Verified Promotion] (ticket to be opened once green)
-**Status:** OPEN
+**Blocks:** [R11 Verified Promotion] (ticket to be opened once three platforms are green)
+**Status:** OPEN — #1/#2/#3 fixed in code awaiting fresh dispatch; #5 awaiting HITL decision
 
 ## Context
 
 The first full POSIX/CI execution of the oracle suite surfaced five
 genuine cross-platform findings ([EVIDENCE.md](../../../tests/differential/evidence/r11/EVIDENCE.md)
-holds the canonical register). Two are already fixed
-(`reference-services.ts` containment canonicalization;
-`createTempWorkspace` realpath). This ticket holds the remaining three
-plus one CI-environment diagnosis. **None may be papered over**: every
-one lives in security-relevant fail-closed code, and AGENTS.md forbids
-weakening that posture to close a gate.
+holds the canonical register). Three are fixed in code; one needs a HITL
+decision; all await confirmation by a fresh `tier1-evidence.yml`
+dispatch at HEAD. **None may be papered over**: every one lives in
+security-relevant fail-closed code, and AGENTS.md forbids weakening that
+posture to close a gate.
 
-## Findings and repair strategies
+## Findings
 
-| #   | Platform       | Finding                                                                                                                                                                                                                                                                                                                                                                                                                       | First repair move                                                                                                                                                                                      |
-| --- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | windows-latest | Git launch refused: PATH git resolves through a link at `verifyExecutableAtLaunch` (`git-adapter.test.ts:248/286`)                                                                                                                                                                                                                                                                                                            | Reproduce locally against a link-resolved git; decide whether discovery should land on a non-link spelling (preferred) or tests become environment-adaptive                                            |
-| 2   | windows-latest | Checkpoint oracle probe exits nonzero: `store.get("cp_0000000031")` returns null for a fixture checkpoint written moments earlier via the raw mkdtemp spelling (`checkpoint-oracle.mjs:169`; captured in `windows-differential-failure.json`, run `32677001604`). Passes locally and on ubuntu/macos. Suspect: RUNNER~1 short-name vs realpath'd store-root divergence inside `writeFixtureCheckpoint`→`store.get` round trip | Instrument `checkpoint-oracle.mjs` to log `store.list()` + both path spellings before ops; dispatch once; fix the divergent comparison (likely `normalizePathIdentity` missing a short-name expansion) |
-| 3   | macos-latest   | godot-diagnostics prepare → `invalid_input`/`failed` instead of ready (`godot-diagnostics-service.test.ts:172/201/212/301`). **Status: canonicalization fix applied at `createGodotDiagnosticsService` (canonicalDependencies) — NOT yet confirmed on a fresh macOS dispatch** (latest available gate log predates the fix)                                                                                                   | Re-dispatch and read fresh `typescript-gate.txt`; if still failing, trace `validateCheckScript`'s `verifyProjectPathContainment` verdict under `/private/var` semantics                                |
-| 4   | macos-latest   | Sandbox wrapper env includes denied `SSH_AUTH_SOCK`; fail-closed refusal fires (`anthropic-sandbox-runtime-backend.ts:850`)                                                                                                                                                                                                                                                                                                   | Correct posture. Resolution upstream (wrapper env scrub) or an explicit accepted-decision entry — never weakening the deny list                                                                        |
+| #   | Platform                            | Finding                                                                                                                                     | Status                                                                                                                                                                                                                                                                              | Repair                              |
+| --- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 1   | windows-latest (CI)                 | Git launch refused via link identity (`git-adapter.test.ts` tamper tests)                                                                   | **Fixed in code** — canonicalized repo root in `createTempRepo`; unconfirmed pending dispatch                                                                                                                                                                                       | Fresh dispatch confirms             |
+| 2   | windows-latest (CI)                 | Checkpoint probe crash: `store.get` returned null for freshly written fixtures (`checkpoint.undo-plan`)                                     | **Fixed in code** — store exposes its own fingerprint as single source of truth (`866fdea`); oracle + vitest helper consume it. Root cause: oracle/store recomputed the namespace hash independently and diverged on CI                                                             | Fresh dispatch confirms             |
+| 3   | macos-latest                        | godot-diagnostics prepare → `invalid_input`/`failed`; script-enumeration ×3; discovery ×2; project-inspector ×1; reference-path comparisons | **Fixed in code** — service-construction canonicalization, validateCheckScript entry-point realpath, test-helper root canonicalization across diagnostics/discovery/project-inspector/reference fixtures. Confirmed green locally; macOS gate log at `3e15be4` predates these fixes | Fresh dispatch confirms             |
+| 4   | macos-latest (superseded numbering) | _(was SSH_AUTH_SOCK in an earlier draft — renumbered to #5 to match EVIDENCE.md)_                                                           | —                                                                                                                                                                                                                                                                                   | See #5                              |
+| 5   | macos-latest                        | Sandbox wrapper injects denied `SSH_AUTH_SOCK`; fail-closed refusal fires correctly (`mergeWrapperEnvironment`)                             | **OPEN — needs HITL decision**: (a) record as accepted macOS deviation in the promotion decision, (b) pursue upstream wrapper scrub, or (c) defer to R12-era work. Never a deny-list weakening                                                                                      | Decision + promotion-decision entry |
 
-## Evidence pointers
+## Evidence state
 
-- ubuntu-latest: fully green — artifact
-  `tier1-evidence-ubuntu-latest-cb6008fc54bcd0789aec80473bbcbe8348fcf448`
-- macos-latest: differential+sandbox pass, TS gate red on #3/#4 —
-  artifact `tier1-evidence-macos-latest-cb6008f...` (86 KB, contains
-  `typescript-gate.txt`)
-- windows-latest: audit blocked by #2 — re-run at ≥ `d9d70a3` for the
-  spilled failure record
-- Local Windows full gate: exit 0 throughout (all findings are
-  CI/macOS-environment-conditioned)
+- **Linux:** genuinely absent (no runner access); produced by
+  `tier1-evidence.yml` dispatch or equivalent invocation.
+- **Windows:** `audit-windows-corpus-v23.json` +
+  `sandbox-conformance-windows.txt` checked in from the local Windows
+  host (decision 18 permits this) — digest-bound to corpus v23
+  (`50c0575f…`), 217/217 applicable required parity, identity
+  `9e0e05f`.
+- **macOS:** prior audits removed as stale (pre-fix digests); fresh
+  artifacts land with the next dispatch.
+
+Diagnostic records retained (scrubbed per check:public):
+`windows-differential-failure.json`, `windows-failure-latest.json`,
+`windows-failure-3e15be4.json`, `typescript-gate-macos-3e15be4.txt`.
 
 ## Definition of done
 
-All four findings repaired or explicitly decided; a fresh
-`tier1-evidence.yml` dispatch shows **three green platforms with
-artifacts**; then [R11 Verified Promotion] proceeds with the seven-surface advancement.
+A fresh `tier1-evidence.yml` dispatch shows **three green platforms
+with artifacts** (macOS may show only the recorded #5 deviation if
+option (a) is chosen), then [R11 Verified Promotion] proceeds with the
+seven-surface advancement.
