@@ -1,0 +1,11 @@
+
+> siralos@0.0.0 test:sandbox
+> npm run build && node scripts/sandbox/run-conformance.mjs
+
+
+> siralos@0.0.0 build
+> tsc -b
+
+SANDBOX CONFORMANCE: SKIPPED - backend unavailable (state: dependency-missing, platform: linux).
+  Missing sandbox dependencies: ripgrep (rg) not found; bubblewrap (bwrap) not installed; socat not installed
+The conformance suite did not run; an unavailable backend is never treated as secure.

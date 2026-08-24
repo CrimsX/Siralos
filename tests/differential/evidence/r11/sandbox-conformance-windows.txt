@@ -9,6 +9,6 @@
 SANDBOX CONFORMANCE: SKIPPED - backend unavailable (state: setup-required, platform: windows).
   Windows sandbox needs a one-time install (one UAC prompt):
   npx sandbox-runtime windows-install
-  ÔÇö or call installWindowsSandbox(), or run `srt-win.exe install` directly.
+  — or call installWindowsSandbox(), or run `srt-win.exe install` directly.
 No logout is needed: the WFP filter keys on the dedicated `srt-sandbox` user's SID, so your network is unaffected.
 The conformance suite did not run; an unavailable backend is never treated as secure.
