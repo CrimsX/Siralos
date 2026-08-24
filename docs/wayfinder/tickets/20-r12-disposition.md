@@ -4,7 +4,7 @@ label: "wayfinder:grilling"
 type: HITL
 status: open
 resolution: null
-blockedBy: ["21-remaining-surface-ports-entry-review.md"]
+blockedBy: ["22-r13-execution-register.md"]
 ---
 
 ## Question
@@ -19,7 +19,7 @@ re-evaluation trigger + review date + status-surface note).
 
 The human chose **defer - port surfaces first**: the R12 verdict is not
 takeable while TypeScript Stage-3 surfaces remain unported. This ticket
-is blocked by [Remaining-Surface Ports Entry Review](21-remaining-surface-ports-entry-review.md);
+is blocked by the [R13 Execution Register](22-r13-execution-register.md);
 when the ported slices land, re-present the evidence package here.
 
 Evidence state at ticket open (R11 Verified at `eea0029`):

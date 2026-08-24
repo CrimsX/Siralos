@@ -1,9 +1,9 @@
----
+﻿---
 title: "Remaining-Surface Ports Entry Review - Freeze the Continuation Contract"
 label: "wayfinder:grilling"
 type: HITL
-status: open
-resolution: null
+status: closed
+resolution: decisions/21-r13-remaining-surface-parity-entry-review.md
 blockedBy: []
 ---
 
@@ -27,3 +27,7 @@ at slice reconciliation commits ([R10 Entry Review] pattern);
 fail-closed postures never flip to operational; lean composition rules
 (ADR 0036) bound what gets ported vs redesigned. This ticket blocks
 [R12 Disposition Execution](20-r12-disposition.md).
+
+## Resolution
+
+**PASS (2026-08-24)** - R13 contract frozen per [decision 21](../decisions/21-r13-remaining-surface-parity-entry-review.md): five ordered slices, nine frozen subjects, corpus bumps at reconciliation commits, decision-07 predecessor list amended to R1-R11 + R13, R13.5 full CLI parity. R13.1 authorized; landings tracked in the execution register.
