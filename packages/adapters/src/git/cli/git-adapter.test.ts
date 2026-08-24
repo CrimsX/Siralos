@@ -254,7 +254,12 @@ describe("git sandboxed execution", () => {
     const { rm } = await import("node:fs/promises");
     await rm(fakeExecutable);
     try {
-      await symlink(repo.root, fakeExecutable, "file");
+      // A Windows file symlink to a directory is not resolvable by
+      // realpath, which would report the generic "could not be resolved"
+      // path instead of the link refusal this test pins. A junction is the
+      // Windows equivalent of replacing the executable path with a link to
+      // the repository directory and keeps the same launch-time refusal.
+      await symlink(repo.root, fakeExecutable, process.platform === "win32" ? "junction" : "file");
     } catch {
       return; // symlink unsupported; the removal case below still applies
     }
