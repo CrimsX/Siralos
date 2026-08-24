@@ -1,7 +1,11 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 23,
+  "corpusVersion": 24,
   "scenarios": [
+    {
+      "file": "capability-doctor-injected.json",
+      "sha256": "677601471bc4a5d16473ae4d744a8346b55bb1bebfb3ae67bea0f3d05127f7f5"
+    },
     {
       "file": "checkpoint.escape.fail-closed.json",
       "sha256": "a7ab91b5f92a4ac4846165c7d3f52470388aaf78507ca61dd3502ded1bb7bedc"
@@ -21,6 +25,10 @@
     {
       "file": "checkpoint.undo-plan.json",
       "sha256": "d163c153db0e3d27f224818b077620ff3f57ea9bee461cb06bcd14531bc1172e"
+    },
+    {
+      "file": "command-catalog-snapshot.json",
+      "sha256": "1029c31cbbca1d7f9da4fd142b66df32052736e3645642d283c7c35c96818f4c"
     },
     {
       "file": "content-identity-artifact-digest.basic.json",
@@ -647,6 +655,10 @@
       "sha256": "25f8ffab48fb080a0bcf661fed4d6a91f909f38849511e8757587c92e3865d6e"
     },
     {
+      "file": "security-permissions-matrix.json",
+      "sha256": "3deda5f722770841094b5f777a8bdcead7eaac08bb70691bc0502d9dee38a05f"
+    },
+    {
       "file": "state-dir.fallback.posix.json",
       "sha256": "232416906832b4a92dfa3729cd2016d9a16254abb21401268cbbec01174a1655"
     },
@@ -891,5 +903,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "50c0575f279a7481dc16f4ec98d90879db45256460ecf16c841c78bfc529537e"
+  "corpusSha256": "0ddbf8e72c4480020a7ae917ca9de9c182611fa231cc056ac1ad97c9dd32981d"
 }

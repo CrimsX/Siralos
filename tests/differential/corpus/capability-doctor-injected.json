@@ -1,0 +1,17 @@
+{
+  "id": "capability-doctor-injected",
+  "subject": "capability-doctor",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "runtime": { "version": "0.0.0", "nodeMajor": 24, "platform": "differential-fake" },
+    "cases": [
+      { "name": "counts-and-exit-codes" },
+      { "name": "area-normalization" },
+      { "name": "safe-report-redaction" },
+      { "name": "self-reference-revision" },
+      { "name": "config-schema-stability" }
+    ]
+  }
+}

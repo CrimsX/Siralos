@@ -48,6 +48,9 @@ const PROVIDER_TURN_PROBE = join(HERE, "probes", "provider-turn-oracle.mjs");
 const TOOL_LOOP_PROBE = join(HERE, "probes", "tool-loop-oracle.mjs");
 const CONTEXT_PROJECTION_PROBE = join(HERE, "probes", "context-projection-oracle.mjs");
 const USER_CONFIG_PROBE = join(HERE, "probes", "user-config-oracle.mjs");
+const SECURITY_PROBE = join(HERE, "probes", "security-oracle.mjs");
+const COMMANDS_PROBE = join(HERE, "probes", "commands-oracle.mjs");
+const DOCTOR_PROBE = join(HERE, "probes", "doctor-oracle.mjs");
 const GODOT_SCENE_RESOLVE_PROBE = join(HERE, "probes", "godot-scene-resolve-oracle.mjs");
 const GODOT_DISCOVERY_PROBE = join(HERE, "probes", "godot-discovery-oracle.mjs");
 const GODOT_KNOWLEDGE_PROBE = join(HERE, "probes", "godot-knowledge-oracle.mjs");
@@ -388,6 +391,30 @@ export function runScenario(scenario, root) {
       subject: scenario.subject,
       outcome: SCENARIO_OUTCOME.COMPLETED,
       result: runWorkspaceProbe(USER_CONFIG_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "security-permissions") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(SECURITY_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "command-catalog") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(COMMANDS_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "capability-doctor") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(DOCTOR_PROBE, scenario.subject, scenario.input),
     };
   }
   if (GODOT_PROBES.has(scenario.subject)) {

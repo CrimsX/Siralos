@@ -1,0 +1,39 @@
+{
+  "id": "security-permissions-matrix",
+  "subject": "security-permissions",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      { "name": "allow-no-constraint" },
+      { "name": "missing-rule-fails-closed" },
+      { "name": "explicit-deny-research" },
+      { "name": "ask-rule-godot-diagnose" },
+      { "name": "process-profile-constraint" },
+      { "name": "workspace-write-constraint" },
+      { "name": "network-universal-deny" },
+      { "name": "policy-table-snapshot" },
+      { "name": "approval-digest-binding" },
+      {
+        "name": "behavioral-config-classification",
+        "paths": [
+          "AGENTS.md",
+          "agents.md",
+          "packages/core/AGENTS.md",
+          "deep/nested/dir/AGENTS.md",
+          ".siralos/config.json",
+          "tools/.siralos/x.json",
+          ".SIRALOS/y",
+          "src/main.ts",
+          "AGENTS.md.bak",
+          "x/AGENTS.mdx",
+          "",
+          ".",
+          "./AGENTS.md",
+          "a\\b\\AGENTS.md"
+        ]
+      }
+    ]
+  }
+}

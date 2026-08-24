@@ -293,14 +293,25 @@ export function runChecks(root) {
       // fields): external capability-input names, not domain semantics
       // (decision 16). The exemption covers ONLY those two files;
       // every other src/runtime source still fails.
+      // R13 — security.rs, commands.rs, and doctor.rs mirror the
+      // oracle's authority/introspection vocabulary verbatim (`godot.*`
+      // capability ids, catalogue `/godot*` command ids, doctor areas):
+      // external input names frozen for byte parity, not domain
+      // semantics (decision 22). Exemption covers ONLY those three
+      // files.
       const runtimeExempt =
         source.includes(join("src", "runtime", "readiness.rs")) ||
         source.includes(join("src", "runtime", "doctor.rs"));
+      const r13AuthorityExempt =
+        source.includes(join("src", "security.rs")) ||
+        source.includes(join("src", "commands.rs")) ||
+        source.includes(join("src", "doctor.rs"));
       const coreOutsideGodot =
         crate === "crates/siralos-core" &&
         !source.includes(join("src", "godot")) &&
         !source.includes(join("src", "determinism")) &&
-        !runtimeExempt;
+        !runtimeExempt &&
+        !r13AuthorityExempt;
       if (
         coreOutsideGodot &&
         FORBIDDEN_CORE_SYMBOL_PATTERN.test(content.replace(/^\s*pub mod godot;\s*$/gm, ""))

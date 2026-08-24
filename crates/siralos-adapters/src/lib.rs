@@ -14,6 +14,7 @@ pub mod domain;
 pub mod godot;
 pub mod language;
 pub mod paths;
+pub mod process;
 pub mod provider;
 pub mod tool;
 pub mod workspace;

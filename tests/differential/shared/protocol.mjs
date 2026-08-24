@@ -1354,6 +1354,263 @@ function validateUserConfigValue(config, label) {
   }
 }
 
+const R13_CAPABILITY_IDS = new Set([
+  "workspace.read",
+  "workspace.write",
+  "git.inspect",
+  "godot.inspect",
+  "godot.probe_project",
+  "godot.api",
+  "godot.diagnose",
+  "godot.lsp",
+  "godot.development",
+  "process.execute",
+  "network.outbound",
+  "reference.inspect",
+  "research.fetch",
+  "self.inspect",
+]);
+const R13_PROFILE_IDS = new Set([
+  "inspect",
+  "develop-offline",
+  "validation-offline",
+  "godot-probe-offline",
+  "godot-recovery-probe-offline",
+  "godot-diagnostics-offline",
+  "godot-lsp-local",
+]);
+const R13_PERMISSION_RULES = new Set(["allow", "ask", "deny"]);
+const R13_DOCTOR_AREAS = new Set([
+  "runtime",
+  "configuration",
+  "providers",
+  "sandbox",
+  "workspace",
+  "godot",
+  "project",
+  "references",
+  "research",
+  "capabilities",
+  "determinism",
+  "readiness",
+]);
+
+function r13IsSha256(value) {
+  return typeof value === "string" && LOWER_SHA256.test(value);
+}
+
+function validateSecurityPermissionsResultCase(entry, label) {
+  if (Object.hasOwn(entry, "profiles")) {
+    assertExactKeys(entry, ["profiles"], label);
+    if (!Array.isArray(entry.profiles) || entry.profiles.length !== R13_PROFILE_IDS.size) {
+      throw new Error(`${label}.profiles must cover every built-in profile`);
+    }
+    for (const [index, profile] of entry.profiles.entries()) {
+      const profileLabel = `${label}.profiles[${index}]`;
+      assertExactKeys(profile, ["id", "rules"], profileLabel);
+      if (!R13_PROFILE_IDS.has(profile.id)) {
+        throw new Error(`${profileLabel}.id is invalid`);
+      }
+      if (!Array.isArray(profile.rules) || profile.rules.length !== R13_CAPABILITY_IDS.size) {
+        throw new Error(`${profileLabel}.rules must cover every capability`);
+      }
+      for (const pair of profile.rules) {
+        if (
+          !Array.isArray(pair) ||
+          pair.length !== 2 ||
+          !R13_CAPABILITY_IDS.has(pair[0]) ||
+          !R13_PERMISSION_RULES.has(pair[1])
+        ) {
+          throw new Error(`${profileLabel}.rules entries are invalid`);
+        }
+      }
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "baseSha256")) {
+    assertExactKeys(entry, ["baseSha256", "sameBinding", "changedBinding"], label);
+    if (!r13IsSha256(entry.baseSha256)) {
+      throw new Error(`${label}.baseSha256 is invalid`);
+    }
+    if (typeof entry.sameBinding !== "boolean" || typeof entry.changedBinding !== "boolean") {
+      throw new Error(`${label} binding flags are invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "protected")) {
+    assertExactKeys(entry, ["protected"], label);
+    if (
+      !Array.isArray(entry.protected) ||
+      entry.protected.length > 32 ||
+      entry.protected.some((flag) => typeof flag !== "boolean")
+    ) {
+      throw new Error(`${label}.protected must be a bounded boolean array`);
+    }
+    return;
+  }
+  const decisionKeys = entry.decision === "allow" ? ["decision"] : ["decision", "reason"];
+  assertExactKeys(entry, decisionKeys, label);
+  if (!R13_PERMISSION_RULES.has(entry.decision)) {
+    throw new Error(`${label}.decision is invalid`);
+  }
+  if (
+    entry.decision !== "allow" &&
+    (typeof entry.reason !== "string" || entry.reason.length === 0)
+  ) {
+    throw new Error(`${label}.reason is invalid`);
+  }
+}
+
+function validateCommandCatalogResultCase(entry, label) {
+  if (Object.hasOwn(entry, "entries")) {
+    assertExactKeys(entry, ["entries", "revision"], label);
+    if (!Array.isArray(entry.entries) || entry.entries.length > 64) {
+      throw new Error(`${label}.entries must be a bounded array`);
+    }
+    for (const item of entry.entries) {
+      assertExactKeys(item, ["id", "description", "group"], `${label}.entries[]`);
+      if (
+        typeof item.id !== "string" ||
+        typeof item.description !== "string" ||
+        typeof item.group !== "string"
+      ) {
+        throw new Error(`${label}.entries[] fields are invalid`);
+      }
+    }
+    if (!r13IsSha256(entry.revision)) {
+      throw new Error(`${label}.revision is invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "found")) {
+    if (entry.found === false) {
+      assertExactKeys(entry, ["found"], label);
+      return;
+    }
+    assertExactKeys(entry, ["found", "entry"], label);
+    if (!isObject(entry.entry)) {
+      throw new Error(`${label}.entry must be an object`);
+    }
+    assertExactKeys(entry.entry, ["id", "description", "group"], `${label}.entry`);
+    return;
+  }
+  if (Object.hasOwn(entry, "stable")) {
+    assertExactKeys(entry, ["stable", "ids"], label);
+    if (
+      typeof entry.stable !== "boolean" ||
+      !Array.isArray(entry.ids) ||
+      entry.ids.some((id) => typeof id !== "string")
+    ) {
+      throw new Error(`${label} recomputation record is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(entry, ["nodeScript", "npmScript"], label);
+  for (const runner of [entry.nodeScript, entry.npmScript]) {
+    assertExactKeys(runner, ["definitionId", "available"], `${label} runner`);
+    if (typeof runner.definitionId !== "string" || runner.available !== false) {
+      throw new Error(`${label} runner availability must be truthfully unavailable`);
+    }
+  }
+}
+
+function validateCapabilityDoctorResultCase(entry, label) {
+  if (Object.hasOwn(entry, "failing")) {
+    assertExactKeys(entry, ["clean", "failing"], label);
+    for (const side of [entry.failing, entry.clean]) {
+      assertExactKeys(side, ["counts", "exit"], `${label} side`);
+      assertExactKeys(side.counts, ["pass", "warn", "fail", "skip", "total"], `${label} counts`);
+      for (const value of Object.values(side.counts)) {
+        if (!Number.isSafeInteger(value) || value < 0) {
+          throw new Error(`${label} counts are invalid`);
+        }
+      }
+      if (side.exit !== 0 && side.exit !== 1) {
+        throw new Error(`${label}.exit is invalid`);
+      }
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "all")) {
+    assertExactKeys(entry, ["all", "reordered", "emptyMeansAll", "unknownArea"], label);
+    for (const list of [entry.all, entry.reordered]) {
+      if (!Array.isArray(list) || list.some((area) => !R13_DOCTOR_AREAS.has(area))) {
+        throw new Error(`${label} area lists are invalid`);
+      }
+    }
+    if (typeof entry.emptyMeansAll !== "boolean" || entry.unknownArea !== "doctor_invocation") {
+      throw new Error(`${label} normalization record is invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "checks")) {
+    assertExactKeys(
+      entry,
+      ["checks", "detailsDropped", "errorCategories", "secretsOnlyRelativeKept"],
+      label,
+    );
+    if (!Array.isArray(entry.checks) || entry.checks.length > 8) {
+      throw new Error(`${label}.checks must be a bounded array`);
+    }
+    for (const check of entry.checks) {
+      assertExactKeys(check, ["id", "summary"], `${label}.checks[]`);
+    }
+    if (entry.detailsDropped !== true || typeof entry.secretsOnlyRelativeKept !== "boolean") {
+      throw new Error(`${label} redaction record is invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "revision")) {
+    assertExactKeys(
+      entry,
+      ["name", "revision", "sensitiveToVersion", "stableRepeat", "toolAbi"],
+      label,
+    );
+    if (
+      entry.name !== "@siralos" ||
+      !r13IsSha256(entry.revision) ||
+      !r13IsSha256(entry.toolAbi) ||
+      typeof entry.sensitiveToVersion !== "boolean" ||
+      typeof entry.stableRepeat !== "boolean"
+    ) {
+      throw new Error(`${label} self-reference record is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(entry, ["sectionNames", "stable"], label);
+  if (
+    !Array.isArray(entry.sectionNames) ||
+    entry.sectionNames.join(",") !== "sandbox,godot,quality,references" ||
+    typeof entry.stable !== "boolean"
+  ) {
+    throw new Error(`${label} config-schema record is invalid`);
+  }
+}
+
+function validateR13AuthorityResult(record, label) {
+  assertExactKeys(record.result, ["cases"], `${label}.result`);
+  if (
+    !Array.isArray(record.result.cases) ||
+    record.result.cases.length === 0 ||
+    record.result.cases.length > 32
+  ) {
+    throw new Error(`${label}.result.cases must be a bounded array`);
+  }
+  for (const [index, entry] of record.result.cases.entries()) {
+    const caseLabel = `${label}.result.cases[${index}]`;
+    if (!isObject(entry)) {
+      throw new Error(`${caseLabel} must be an object`);
+    }
+    if (record.subject === "security-permissions") {
+      validateSecurityPermissionsResultCase(entry, caseLabel);
+    } else if (record.subject === "command-catalog") {
+      validateCommandCatalogResultCase(entry, caseLabel);
+    } else {
+      validateCapabilityDoctorResultCase(entry, caseLabel);
+    }
+  }
+}
+
 function validateUserConfigResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (!Array.isArray(record.result.cases) || record.result.cases.length > 64) {
@@ -2300,6 +2557,14 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "user-config") {
     validateUserConfigResult(record, label);
+    return;
+  }
+  if (
+    record.subject === "security-permissions" ||
+    record.subject === "command-catalog" ||
+    record.subject === "capability-doctor"
+  ) {
+    validateR13AuthorityResult(record, label);
     return;
   }
   if (record.subject === "godot-scene-resolve") {

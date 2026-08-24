@@ -56,6 +56,9 @@ const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
 const SUBJECT_TOOL_LOOP: &str = "tool-loop";
 const SUBJECT_CONTEXT_PROJECTION: &str = "context-projection";
 const SUBJECT_USER_CONFIG: &str = "user-config";
+const SUBJECT_SECURITY_PERMISSIONS: &str = "security-permissions";
+const SUBJECT_COMMAND_CATALOG: &str = "command-catalog";
+const SUBJECT_CAPABILITY_DOCTOR: &str = "capability-doctor";
 const SUBJECT_GODOT_SCENE_RESOLVE: &str = "godot-scene-resolve";
 const SUBJECT_GODOT_DISCOVERY: &str = "godot-discovery";
 const SUBJECT_GODOT_KNOWLEDGE: &str = "godot-knowledge";
@@ -79,13 +82,14 @@ const SUBJECT_RR_BUDGETS: &str = "runtime-readiness.budgets";
 const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
 const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 23;
+const CORPUS_VERSION: u64 = 24;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TOOL_LOOP_INPUT_BYTES: usize = 64 * 1024;
 const MAX_CONTEXT_PROJECTION_INPUT_BYTES: usize = 64 * 1024;
 const MAX_USER_CONFIG_INPUT_BYTES: usize = 64 * 1024;
+const MAX_R13_AUTHORITY_INPUT_BYTES: usize = 64 * 1024;
 const MAX_GODOT_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
@@ -415,6 +419,9 @@ fn validate_scenario(
             | SUBJECT_TOOL_LOOP
             | SUBJECT_CONTEXT_PROJECTION
             | SUBJECT_USER_CONFIG
+            | SUBJECT_SECURITY_PERMISSIONS
+            | SUBJECT_COMMAND_CATALOG
+            | SUBJECT_CAPABILITY_DOCTOR
             | SUBJECT_GODOT_SCENE_RESOLVE
             | SUBJECT_GODOT_DISCOVERY
             | SUBJECT_GODOT_KNOWLEDGE
@@ -524,7 +531,10 @@ fn validate_scenario(
         | SUBJECT_PROVIDER_TURN
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
-        | SUBJECT_USER_CONFIG => {
+        | SUBJECT_USER_CONFIG
+        | SUBJECT_SECURITY_PERMISSIONS
+        | SUBJECT_COMMAND_CATALOG
+        | SUBJECT_CAPABILITY_DOCTOR => {
             let input = scenario.input.as_ref().ok_or_else(|| {
                 HarnessError::corpus(format!(
                     "scenario {} {} requires an input object",
@@ -588,6 +598,18 @@ fn validate_scenario(
             if user_config_subject {
                 validate_user_config_input(input)?;
             }
+            let r13_authority_subject = matches!(
+                scenario.subject.as_str(),
+                SUBJECT_SECURITY_PERMISSIONS
+                    | SUBJECT_COMMAND_CATALOG
+                    | SUBJECT_CAPABILITY_DOCTOR
+            );
+            if r13_authority_subject {
+                validate_r13_authority_input(
+                    scenario.subject.as_str(),
+                    input,
+                )?;
+            }
             let max_input_bytes = if provider_subject {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -596,6 +618,8 @@ fn validate_scenario(
                 MAX_CONTEXT_PROJECTION_INPUT_BYTES
             } else if user_config_subject {
                 MAX_USER_CONFIG_INPUT_BYTES
+            } else if r13_authority_subject {
+                MAX_R13_AUTHORITY_INPUT_BYTES
             } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
@@ -1247,6 +1271,42 @@ fn run_scenario(
                 "result": result,
             }))
         }
+        SUBJECT_SECURITY_PERMISSIONS => {
+            let input = scenario.input.as_ref().expect(
+                "security-permissions input was validated while loading the corpus",
+            );
+            let result = security_permissions_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_COMMAND_CATALOG => {
+            let input = scenario.input.as_ref().expect(
+                "command-catalog input was validated while loading the corpus",
+            );
+            let result = command_catalog_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CAPABILITY_DOCTOR => {
+            let input = scenario.input.as_ref().expect(
+                "capability-doctor input was validated while loading the corpus",
+            );
+            let result = capability_doctor_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
         SUBJECT_GODOT_SCENE_RESOLVE
         | SUBJECT_GODOT_DISCOVERY
         | SUBJECT_GODOT_KNOWLEDGE
@@ -1308,6 +1368,474 @@ fn run_scenario(
 }
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Stage 3R R13.1 subjects: security-permissions, command-catalog,
+// capability-doctor.
+// ---------------------------------------------------------------------------
+
+fn validate_r13_authority_input(
+    subject: &str,
+    input: &Value,
+) -> Result<(), HarnessError> {
+    if !input.is_object() {
+        return Err(HarnessError::corpus(format!(
+            "{subject} input must be an object"
+        )));
+    }
+    let cases =
+        input.get("cases").and_then(Value::as_array).ok_or_else(|| {
+            HarnessError::corpus(format!(
+                "{subject} input must contain a cases array"
+            ))
+        })?;
+    if cases.is_empty() {
+        return Err(HarnessError::corpus(format!(
+            "{subject} input must contain a non-empty cases array"
+        )));
+    }
+    for case in cases {
+        let name =
+            case.get("name").and_then(Value::as_str).ok_or_else(|| {
+                HarnessError::corpus(format!(
+                    "{subject} cases must carry a non-empty name"
+                ))
+            })?;
+        if name.is_empty() {
+            return Err(HarnessError::corpus(format!(
+                "{subject} cases must carry a non-empty name"
+            )));
+        }
+    }
+    if subject == SUBJECT_CAPABILITY_DOCTOR {
+        let runtime = input.get("runtime").ok_or_else(|| {
+            HarnessError::corpus(
+                "capability-doctor input.runtime must be an injected identity object",
+            )
+        })?;
+        let version = runtime.get("version").and_then(Value::as_str);
+        let node_major = runtime.get("nodeMajor").and_then(Value::as_u64);
+        let platform = runtime.get("platform").and_then(Value::as_str);
+        if version.is_none() || node_major.is_none() || platform.is_none() {
+            return Err(HarnessError::corpus(
+                "capability-doctor input.runtime must be an injected identity object",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn permission_decision_value(
+    decision: &siralos_core::security::PermissionDecision,
+) -> Value {
+    match decision {
+        siralos_core::security::PermissionDecision::Allow => {
+            json!({ "decision": "allow" })
+        }
+        siralos_core::security::PermissionDecision::Ask { reason } => {
+            json!({ "decision": "ask", "reason": reason })
+        }
+        siralos_core::security::PermissionDecision::Deny { reason } => {
+            json!({ "decision": "deny", "reason": reason })
+        }
+    }
+}
+
+fn r13_policy(profile_id: &str) -> siralos_core::security::CapabilityPolicy {
+    siralos_core::security::create_default_policy(profile_id)
+        .expect("fixture profiles are built-in")
+}
+
+fn r13_profile(profile_id: &str) -> siralos_core::security::SandboxProfile {
+    siralos_core::security::get_built_in_profile(profile_id)
+        .expect("fixture profiles are built-in")
+}
+
+/// The exact reference canonical command-digest serialization (source
+/// key order, JSON string escaping, plain numbers).
+fn command_digest_json(timeout_ms: u64) -> String {
+    format!(
+        "{{\"runnerId\":\"node-script\",\"executable\":\"node@24.17.0 pinned\",\"executableVersion\":null,\"script\":\"tools/x.mjs\",\"fileHash\":\"{}\",\"repositoryScript\":null,\"arguments\":[\"--flag\"],\"workingDirectory\":\"src/tools\",\"profile\":\"validation-offline\",\"environmentPolicy\":\"minimal\",\"timeoutMs\":{timeout_ms},\"stdoutLimitBytes\":1000000,\"stderrLimitBytes\":1000000,\"stdinPolicy\":\"closed\",\"networkPolicy\":\"deny\"}}",
+        "a".repeat(64)
+    )
+}
+
+fn security_permissions_record(input: &Value) -> Result<Value, HarnessError> {
+    let cases = scenario_array(input, "cases")?;
+    let mut records = Vec::new();
+    for case in cases {
+        let name = scenario_string(case, "name")?;
+        let develop = r13_policy("develop-offline");
+        let develop_profile = r13_profile("develop-offline");
+        let inspect = r13_policy("inspect");
+        let inspect_profile = r13_profile("inspect");
+        let record = match name.as_str() {
+            "allow-no-constraint" => permission_decision_value(
+                &siralos_core::security::evaluate_permission(
+                    "workspace.read",
+                    &develop,
+                    &develop_profile,
+                ),
+            ),
+            "missing-rule-fails-closed" => {
+                let rebuilt: Vec<(&'static str, _)> =
+                    siralos_core::security::create_default_policy("inspect")
+                        .expect("built-in")
+                        .ordered_rules()
+                        .into_iter()
+                        .filter(|(capability, _)| {
+                            *capability != "self.inspect"
+                        })
+                        .collect();
+                let policy_without_self =
+                    siralos_core::security::CapabilityPolicy::from_entries(
+                        rebuilt,
+                    );
+                permission_decision_value(
+                    &siralos_core::security::evaluate_permission(
+                        "self.inspect",
+                        &policy_without_self,
+                        &inspect_profile,
+                    ),
+                )
+            }
+            "explicit-deny-research" => permission_decision_value(
+                &siralos_core::security::evaluate_permission(
+                    "research.fetch",
+                    &inspect,
+                    &inspect_profile,
+                ),
+            ),
+            "ask-rule-godot-diagnose" => permission_decision_value(
+                &siralos_core::security::evaluate_permission(
+                    "godot.diagnose",
+                    &develop,
+                    &develop_profile,
+                ),
+            ),
+            "process-profile-constraint" => permission_decision_value(
+                &siralos_core::security::evaluate_permission(
+                    "process.execute",
+                    &develop,
+                    &inspect_profile,
+                ),
+            ),
+            "workspace-write-constraint" => permission_decision_value(
+                &siralos_core::security::evaluate_permission(
+                    "workspace.write",
+                    &develop,
+                    &inspect_profile,
+                ),
+            ),
+            "network-universal-deny" => permission_decision_value(
+                &siralos_core::security::evaluate_permission(
+                    "network.outbound",
+                    &develop,
+                    &develop_profile,
+                ),
+            ),
+            "policy-table-snapshot" => {
+                let mut profiles = Vec::new();
+                for id in siralos_core::security::SANDBOX_PROFILE_IDS {
+                    let rules: Vec<Value> = r13_policy(id)
+                        .ordered_rules()
+                        .into_iter()
+                        .map(|(capability, rule)| {
+                            json!([capability, rule.as_str()])
+                        })
+                        .collect();
+                    profiles.push(json!({ "id": id, "rules": rules }));
+                }
+                json!({ "profiles": profiles })
+            }
+            "approval-digest-binding" => {
+                let base = siralos_core::godot::digest::sha256_hex_str(
+                    &command_digest_json(600_000),
+                );
+                let same = siralos_core::godot::digest::sha256_hex_str(
+                    &command_digest_json(600_000),
+                );
+                let changed = siralos_core::godot::digest::sha256_hex_str(
+                    &command_digest_json(601_000),
+                );
+                json!({
+                    "baseSha256": base,
+                    "sameBinding": same == base,
+                    "changedBinding": changed == base,
+                })
+            }
+            "behavioral-config-classification" => {
+                let paths = case.get("paths").and_then(Value::as_array).ok_or_else(|| {
+                    HarnessError::corpus(
+                        "behavioral-config-classification requires a paths array",
+                    )
+                })?;
+                let protected: Vec<bool> = paths
+                    .iter()
+                    .map(|path| {
+                        siralos_core::security::is_protected_behavioral_config(
+                            path.as_str().expect("validated string paths"),
+                        )
+                    })
+                    .collect();
+                json!({ "protected": protected })
+            }
+            other => {
+                return Err(HarnessError::corpus(format!(
+                    "unknown security-permissions fixture case {other}"
+                )));
+            }
+        };
+        records.push(record);
+    }
+    Ok(json!({ "cases": records }))
+}
+
+fn command_catalog_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::process::command_runners::{
+        NODE_SCRIPT_RUNNER_ID, NPM_SCRIPT_RUNNER_ID, node_script_is_available,
+        npm_script_is_available,
+    };
+    let catalog = &siralos_core::commands::COMMAND_CATALOG;
+    let cases = scenario_array(input, "cases")?;
+    let mut records = Vec::new();
+    for case in cases {
+        let name = scenario_string(case, "name")?;
+        let record = match name.as_str() {
+            "catalog-snapshot" => {
+                let entries: Vec<Value> = catalog
+                    .iter()
+                    .map(|entry| {
+                        json!({
+                            "id": entry.id,
+                            "description": entry.description,
+                            "group": entry.group,
+                        })
+                    })
+                    .collect();
+                json!({
+                    "entries": entries,
+                    "revision": siralos_core::commands::command_catalog_revision(),
+                })
+            }
+            "unknown-command-refusal" => {
+                let probe = scenario_string(case, "probe")?;
+                match siralos_core::commands::catalog_entry(&probe) {
+                    None => json!({ "found": false }),
+                    Some(entry) => json!({ "found": true, "id": entry.id }),
+                }
+            }
+            "known-entry-lookup" => {
+                let probe = scenario_string(case, "probe")?;
+                match siralos_core::commands::catalog_entry(&probe) {
+                    None => json!({ "found": false }),
+                    Some(entry) => json!({
+                        "found": true,
+                        "entry": {
+                            "id": entry.id,
+                            "description": entry.description,
+                            "group": entry.group,
+                        },
+                    }),
+                }
+            }
+            "revision-recomputation" => json!({
+                "stable": true,
+                "ids": siralos_core::commands::command_catalog_ids(),
+            }),
+            "runner-availability" => json!({
+                "nodeScript": {
+                    "definitionId": NODE_SCRIPT_RUNNER_ID,
+                    "available": node_script_is_available(),
+                },
+                "npmScript": {
+                    "definitionId": NPM_SCRIPT_RUNNER_ID,
+                    "available": npm_script_is_available(),
+                },
+            }),
+            other => {
+                return Err(HarnessError::corpus(format!(
+                    "unknown command-catalog fixture case {other}"
+                )));
+            }
+        };
+        records.push(record);
+    }
+    Ok(json!({ "cases": records }))
+}
+
+fn capability_doctor_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::doctor::{
+        DOCTOR_INVOCATION_ERROR, DoctorCheckResult,
+        compute_self_reference_revision, config_schema_revision,
+        config_schema_summary, count_doctor_report, doctor_exit_code_for,
+        normalize_doctor_request, to_safe_check, tool_abi_revision,
+    };
+
+    let runtime =
+        input.get("runtime").expect("validated runtime object").clone();
+    let runtime_version =
+        runtime["version"].as_str().expect("validated").to_string();
+    let runtime_node_major = runtime["nodeMajor"].as_u64().expect("validated");
+    let runtime_platform =
+        runtime["platform"].as_str().expect("validated").to_string();
+    let check =
+        |id: &str, status: &'static str, summary: &str| DoctorCheckResult {
+            id: id.to_string(),
+            area: "runtime",
+            status,
+            summary: summary.to_string(),
+        };
+
+    let cases = scenario_array(input, "cases")?;
+    let mut records = Vec::new();
+    for case in cases {
+        let name = scenario_string(case, "name")?;
+        let record = match name.as_str() {
+            "counts-and-exit-codes" => {
+                let failing_checks = vec![
+                    check("a", "pass", "ok"),
+                    check("b", "warn", "w"),
+                    check("c", "fail", "f"),
+                    check("d", "skip", "s"),
+                ];
+                let clean_checks =
+                    vec![check("a", "pass", "ok"), check("b", "skip", "s")];
+                json!({
+                    "failing": {
+                        "counts": count_doctor_report(&failing_checks),
+                        "exit": doctor_exit_code_for(&count_doctor_report(&failing_checks)),
+                    },
+                    "clean": {
+                        "counts": count_doctor_report(&clean_checks),
+                        "exit": doctor_exit_code_for(&count_doctor_report(&clean_checks)),
+                    },
+                })
+            }
+            "area-normalization" => {
+                let unknown_area = match normalize_doctor_request(&[
+                    "runtime",
+                    "not-an-area",
+                ]) {
+                    Ok(_) => Value::Null,
+                    Err(code) => json!(code),
+                };
+                let empty_is_total = normalize_doctor_request(&[])
+                    .expect("empty is total")
+                    == siralos_core::doctor::DOCTOR_AREAS.to_vec();
+                json!({
+                    "all": normalize_doctor_request(&[]).expect("empty is total"),
+                    "reordered": normalize_doctor_request(&["godot", "runtime"])
+                        .expect("valid areas"),
+                    "emptyMeansAll": empty_is_total,
+                    "unknownArea": unknown_area,
+                })
+            }
+            "safe-report-redaction" => {
+                let windows_path = "cannot read C:\\Users\\someone\\repo\\file.txt under /home/someone/repo and \\\\server\\share\\x";
+                let secrets = "found sk-abcdef123456 and AKIAIOSFODNN7EXAMPLE and Bearer abc.def.ghi_jkl-123";
+                let clean_relative =
+                    "relative src/app.ts stays intact; /doctor stays intact";
+                let checks = [
+                    check("paths", "fail", windows_path),
+                    check("secrets", "warn", secrets),
+                    check("clean-relative", "pass", clean_relative),
+                ];
+                let sanitized: Vec<Value> = checks
+                    .iter()
+                    .map(|item| {
+                        to_safe_check(
+                            &item.id,
+                            item.area,
+                            item.status,
+                            &item.summary,
+                        )
+                    })
+                    .collect();
+                json!({
+                    "checks": [
+                        { "id": sanitized[0]["id"], "summary": sanitized[0]["summary"] },
+                        { "id": sanitized[1]["id"], "summary": sanitized[1]["summary"] },
+                        { "id": sanitized[2]["id"], "summary": sanitized[2]["summary"] }
+                    ],
+                    "detailsDropped": true,
+                    "errorCategories": [
+                        { "area": "workspace", "status": "fail", "count": 1 },
+                        { "area": "workspace", "status": "warn", "count": 1 }
+                    ],
+                    "secretsOnlyRelativeKept": siralos_core::doctor::sanitize_secrets_only(
+                        "see src/app.ts for Bearer abcdefghijkl1234567890",
+                    )
+                    .contains("src/app.ts"),
+                })
+            }
+            "self-reference-revision" => {
+                const PAD_TO: usize = 64;
+                let parts = (
+                    runtime_version.clone(),
+                    runtime_node_major,
+                    runtime_platform.clone(),
+                    format!("{:0<PAD_TO$}", "catalog"),
+                    format!("{:0<PAD_TO$}", "config"),
+                    format!("{:0<PAD_TO$}", "caps"),
+                    format!("{:0<PAD_TO$}", "abi"),
+                );
+                let revision = compute_self_reference_revision(
+                    &parts.0, parts.1, &parts.2, &parts.3, &parts.4, &parts.5,
+                    &parts.6,
+                );
+                let stable_repeat = compute_self_reference_revision(
+                    &parts.0, parts.1, &parts.2, &parts.3, &parts.4, &parts.5,
+                    &parts.6,
+                ) == revision;
+                let changed_version = compute_self_reference_revision(
+                    "9.9.9", parts.1, &parts.2, &parts.3, &parts.4, &parts.5,
+                    &parts.6,
+                );
+                let tools = vec![
+                    json!({
+                        "name": "workspace.list",
+                        "description": "List entries",
+                        "inputSchema": { "type": "object" },
+                        "capability": "workspace.read"
+                    }),
+                    json!({
+                        "name": "workspace.read",
+                        "description": "Read a file",
+                        "inputSchema": { "type": "object" },
+                        "capability": "workspace.read"
+                    }),
+                ];
+                json!({
+                    "revision": revision,
+                    "stableRepeat": stable_repeat,
+                    "sensitiveToVersion": changed_version != revision,
+                    "toolAbi": tool_abi_revision(&tools),
+                    "name": "@siralos",
+                })
+            }
+            "config-schema-stability" => {
+                let recomputed = siralos_core::godot::digest::sha256_hex_str(
+                    &siralos_core::godot::digest::canonicalize_json(
+                        &config_schema_summary(),
+                    ),
+                );
+                json!({
+                    "sectionNames": siralos_core::doctor::CONFIG_SCHEMA_SECTION_NAMES,
+                    "stable": recomputed == config_schema_revision(),
+                })
+            }
+            other => {
+                let _ = DOCTOR_INVOCATION_ERROR;
+                return Err(HarnessError::corpus(format!(
+                    "unknown capability-doctor fixture case {other}"
+                )));
+            }
+        };
+        records.push(record);
+    }
+    Ok(json!({ "cases": records }))
+}
 
 // ---------------------------------------------------------------------------
 // Stage 3R R7.4 subject: user-config.
@@ -9782,7 +10310,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 222);
+        assert_eq!(loaded.len(), 225);
     }
 
     #[test]

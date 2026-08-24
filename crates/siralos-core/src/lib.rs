@@ -11,8 +11,10 @@
 //! see `docs/development/RUST_STYLE.md` and ADR 0032 for the engineering
 //! rules this crate follows.
 
+pub mod commands;
 pub mod context;
 pub mod determinism;
+pub mod doctor;
 pub mod domain;
 pub mod godot;
 pub mod identity;
@@ -20,6 +22,7 @@ pub mod language;
 pub mod projection;
 pub mod provider;
 pub mod runtime;
+pub mod security;
 pub mod task;
 pub mod tool;
 pub mod version;

@@ -1,0 +1,16 @@
+{
+  "id": "command-catalog-snapshot",
+  "subject": "command-catalog",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      { "name": "catalog-snapshot" },
+      { "name": "unknown-command-refusal", "probe": "definitely-not-a-command" },
+      { "name": "known-entry-lookup", "probe": "help" },
+      { "name": "revision-recomputation" },
+      { "name": "runner-availability" }
+    ]
+  }
+}
