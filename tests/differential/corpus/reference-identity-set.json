@@ -1,0 +1,22 @@
+{
+  "id": "reference-identity-set",
+  "subject": "reference-identity",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "cases": [
+      { "name": "declaration-parse-strict" },
+      { "name": "origin-normalization" },
+      { "name": "ref-parsing-and-pins" },
+      { "name": "mutable-ref-declined-pre-resolver" },
+      { "name": "workspace-containment-refusal" },
+      { "name": "duplicate-alias-audit" },
+      { "name": "resolver-outcome-matrix" },
+      { "name": "refresh-fail-closed-invalidation" },
+      { "name": "task-binding-fifo-snapshot" },
+      { "name": "materializer-posture" }
+    ]
+  }
+}

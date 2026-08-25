@@ -10,7 +10,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { canonicalizeJson, sha256Hex } from "./shared/canonical.mjs";
-import { CONTRACT_LIMITS, computeCorpusDigest, validateScenario } from "./shared/contract.mjs";
+import {
+  ALLOWED_SUBJECTS,
+  CONTRACT_LIMITS,
+  CORPUS_VERSION,
+  computeCorpusDigest,
+  validateScenario,
+} from "./shared/contract.mjs";
 import {
   SCENARIO_OUTCOME,
   canonicalRecordDocument,
@@ -124,7 +130,7 @@ describe("corpus integrity", () => {
   it("validates every manifest entry against the recomputed digest", () => {
     const manifest = JSON.parse(readFileSync(join(CORPUS, "manifest.json"), "utf8"));
     expect(manifest.schemaVersion).toBe(3);
-    expect(manifest.corpusVersion).toBe(23);
+    expect(manifest.corpusVersion).toBe(CORPUS_VERSION);
     expect(manifest.corpusSha256).toBe(computeCorpusDigest(manifest));
     expect(manifest.scenarios.length).toBeGreaterThanOrEqual(6);
     for (const entry of manifest.scenarios) {
@@ -132,48 +138,7 @@ describe("corpus integrity", () => {
       expect(entry.sha256).toBe(sha256Hex(canonicalizeJson(scenario)));
       expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(scenario.id).toBe(entry.file.replace(/\.json$/, ""));
-      expect([
-        "state-dir",
-        "version-identity",
-        "task-contract",
-        "workspace-read",
-        "workspace-list",
-        "workspace-search",
-        "workspace-revision",
-        "workspace-prepare",
-        "workspace-apply",
-        "checkpoint",
-        "git-inspection",
-        "language-diagnostics",
-        "language-structure",
-        "language-definition",
-        "domain-lifecycle",
-        "domain-capability",
-        "provider-turn",
-        "tool-loop",
-        "context-projection",
-        "user-config",
-        "godot-scene-resolve",
-        "godot-discovery",
-        "godot-knowledge",
-        "godot-diagnostics",
-        "godot-lsp",
-        "godot-review-context",
-        "godot-mutation-prepare",
-        "godot-develop-plan",
-        "content-identity-artifact-digest",
-        "content-identity-contract-digest",
-        "content-identity-manifests",
-        "content-identity-delta",
-        "determinism-replay",
-        "icm.phase-contract",
-        "icm.dependency-manifests",
-        "runtime-readiness.identity",
-        "runtime-readiness.budgets",
-        "runtime-readiness.lifecycle",
-        "runtime-readiness.doctor",
-        "recovery-taxonomy",
-      ]).toContain(scenario.subject);
+      expect([...ALLOWED_SUBJECTS]).toContain(scenario.subject);
       expect(["required", "informational"]).toContain(scenario.parity);
       expect(Array.isArray(scenario.platforms)).toBe(true);
     }

@@ -23,6 +23,8 @@ pub mod knowledge;
 pub mod language;
 pub mod projection;
 pub mod provider;
+pub mod reference;
+pub mod research;
 pub mod runtime;
 pub mod security;
 pub mod task;

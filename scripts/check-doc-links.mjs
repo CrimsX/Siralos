@@ -12,6 +12,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const SKIPPED_DIRECTORIES = new Set([
+  ".agents",
   ".git",
   ".reasonix",
   "coverage",

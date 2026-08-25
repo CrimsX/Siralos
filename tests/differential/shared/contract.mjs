@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 25;
+export const CORPUS_VERSION = 26;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -36,6 +36,8 @@ export const ALLOWED_SUBJECTS = new Set([
   "command-catalog",
   "instructions-resolution",
   "knowledge-revisions",
+  "reference-identity",
+  "research-policy",
   "capability-doctor",
   "godot-scene-resolve",
   "godot-discovery",
@@ -83,6 +85,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   userConfigInputBytes: 64 * 1024,
   r13AuthorityInputBytes: 64 * 1024,
   r13GuidanceInputBytes: 64 * 1024,
+  r13ExternalKnowledgeInputBytes: 64 * 1024,
   godotInputBytes: 64 * 1024,
 });
 
@@ -820,6 +823,39 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const R13_EXTERNAL_KNOWLEDGE_SUBJECTS = new Set(["reference-identity", "research-policy"]);
+  if (R13_EXTERNAL_KNOWLEDGE_SUBJECTS.has(scenario.subject)) {
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (
+      byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.r13ExternalKnowledgeInputBytes
+    ) {
+      throw new Error(
+        `${label}.input exceeds ${CONTRACT_LIMITS.r13ExternalKnowledgeInputBytes} UTF-8 bytes`,
+      );
+    }
+    if (!Number.isSafeInteger(scenario.input.nowMs) || scenario.input.nowMs < 0) {
+      throw new Error(`${label} ${scenario.subject} input must inject a non-negative nowMs clock`);
+    }
+    const cases = scenario.input.cases;
+    if (!Array.isArray(cases) || cases.length === 0 || cases.length > 16) {
+      throw new Error(
+        `${label} ${scenario.subject} input must contain a bounded non-empty cases array`,
+      );
+    }
+    for (const entry of cases) {
+      if (!isPlainRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0) {
+        throw new Error(`${label} ${scenario.subject} cases must carry a non-empty name`);
+      }
+    }
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    return;
+  }
   const GODOT_SUBJECTS = new Set([
     "godot-scene-resolve",
     "godot-discovery",
@@ -962,6 +998,8 @@ export function validateScenario(scenario, file) {
     "capability-doctor",
     "instructions-resolution",
     "knowledge-revisions",
+    "reference-identity",
+    "research-policy",
     "godot-scene-resolve",
     "godot-discovery",
     "godot-knowledge",

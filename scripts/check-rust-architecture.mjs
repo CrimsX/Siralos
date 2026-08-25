@@ -301,6 +301,13 @@ export function runChecks(root) {
       // them for the same reason — instruction/knowledge fixtures cite
       // `godot`-named paths and stopwords (decision 23). Exemption
       // covers ONLY those five files.
+      // R13.3 — reference.rs and research.rs join them: the only Godot
+      // mentions are the shared digest-primitive path
+      // (`crate::godot::digest`, the historical layout both
+      // implementations share) and the frozen oracle source-kind name
+      // (`ResearchSourceKind::GodotDocs` / "godot-docs"), an external
+      // input name required for byte parity (decision 24). Neither file
+      // carries domain semantics.
       const runtimeExempt =
         source.includes(join("src", "runtime", "readiness.rs")) ||
         source.includes(join("src", "runtime", "doctor.rs"));
@@ -309,7 +316,9 @@ export function runChecks(root) {
         source.includes(join("src", "commands.rs")) ||
         source.includes(join("src", "doctor.rs")) ||
         source.includes(join("src", "instructions.rs")) ||
-        source.includes(join("src", "knowledge.rs"));
+        source.includes(join("src", "knowledge.rs")) ||
+        source.includes(join("src", "reference.rs")) ||
+        source.includes(join("src", "research.rs"));
       const coreOutsideGodot =
         crate === "crates/siralos-core" &&
         !source.includes(join("src", "godot")) &&

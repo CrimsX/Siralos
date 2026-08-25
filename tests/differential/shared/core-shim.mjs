@@ -19,6 +19,14 @@ export { toOneBasedRange } from "../../../packages/core/src/language/position.js
 export { truncateUtf8Bytes } from "../../../packages/core/src/language/truncate.js";
 export { isProtectedBehavioralConfigPath } from "../../../packages/core/src/security/behavioral-config.js";
 export { GitError } from "../../../packages/core/src/git/git-errors.js";
+// R13.3 reference/research parity probes: the adapter modules import these
+// values from `@siralos/core`; each aliases its real source module.
+export { canonicalizeJson, sha256Hex } from "../../../packages/core/src/godot/digest.js";
+export { normalizeRepositoryOrigin } from "../../../packages/core/src/reference/reference-declaration.js";
+export {
+  computeResearchDocumentContentDigest,
+  computeResearchDocumentId,
+} from "../../../packages/core/src/research/research-model.js";
 export { VALIDATION_OFFLINE_PROFILE } from "../../../packages/core/src/security/profile.js";
 export {
   REFERENCE_LIMITS,

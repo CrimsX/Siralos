@@ -1774,6 +1774,270 @@ function validateKnowledgeRevisionsCase(entry, label) {
   );
 }
 
+function validateReferenceIdentityCase(entry, label) {
+  if (typeof entry.name !== "string" || entry.name.length === 0) {
+    throw new Error(`${label}.name must be a non-empty string`);
+  }
+  if (Object.hasOwn(entry, "attempts")) {
+    assertExactKeys(
+      entry,
+      [
+        "aliasInvalidLength",
+        "aliasValid",
+        "attempts",
+        "countReason",
+        "idDeterministic",
+        "idSample",
+        "mismatchReason",
+        "name",
+        "validSectionOk",
+      ],
+      label,
+    );
+    if (!/^ref_[0-9a-f]{24}$/.test(entry.idSample)) {
+      throw new Error(`${label}.idSample is invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "results")) {
+    assertExactKeys(entry, ["name", "results"], label);
+    for (const item of entry.results) {
+      if (typeof item.tag !== "string" || typeof item.ok !== "boolean") {
+        throw new Error(`${label}.results[] is invalid`);
+      }
+      if (item.ok && !Object.hasOwn(item, "reason")) {
+        continue;
+      }
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "declinedStatus")) {
+    assertExactKeys(
+      entry,
+      [
+        "declinedReason",
+        "declinedStatus",
+        "name",
+        "pinnedCommit",
+        "pinnedStatus",
+        "preResolverSpyCalls",
+        "requestedRef",
+        "resolvedAtMatchesClock",
+        "resolvedCommit",
+        "resolvedStatus",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "pureChecks")) {
+    assertExactKeys(
+      entry,
+      ["demotion", "name", "pureChecks", "realEnumeration", "references"],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "statuses")) {
+    assertExactKeys(
+      entry,
+      ["duplicateReason", "firstAddressable", "name", "sharedId", "size", "statuses"],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "matrix")) {
+    assertExactKeys(
+      entry,
+      ["idFormat", "idsStableAcrossRegistries", "matrix", "name", "order"],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "unchangedStatus")) {
+    assertExactKeys(
+      entry,
+      [
+        "bindingRetainsHistorical",
+        "declinedRefreshReason",
+        "declinedRefreshStatus",
+        "failedStatus",
+        "name",
+        "refreshedStatus",
+        "refreshedTimestamp",
+        "revisionNullAfterFailure",
+        "unknownRefreshReason",
+        "unknownRefreshStatus",
+        "unchangedKeptTimestamp",
+        "unchangedStatus",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "evictedReadsNull")) {
+    assertExactKeys(
+      entry,
+      ["b2Snapshot", "b3Snapshot", "currentFingerprint", "evictedReadsNull", "name"],
+      label,
+    );
+    return;
+  }
+  assertExactKeys(
+    entry,
+    [
+      "localMaterializationStatus",
+      "localRootMatchesCanonical",
+      "localStatus",
+      "name",
+      "repositoryMaterializationStatus",
+      "repositoryReason",
+      "repositoryStatus",
+      "unknownStatus",
+    ],
+    label,
+  );
+}
+
+function validateResearchPolicyCase(entry, label) {
+  if (typeof entry.name !== "string" || entry.name.length === 0) {
+    throw new Error(`${label}.name must be a non-empty string`);
+  }
+  if (Object.hasOwn(entry, "profiles")) {
+    assertExactKeys(
+      entry,
+      [
+        "askBranch",
+        "denyBranch",
+        "evaluatorDecisionForInspect",
+        "gateSpyCalls",
+        "name",
+        "profiles",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "normalizedMaxBytes")) {
+    assertExactKeys(entry, ["name", "normalizedMaxBytes", "results", "validationSpyCalls"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "byIdStatus")) {
+    assertExactKeys(
+      entry,
+      [
+        "byIdDocumentSourceId",
+        "byIdStatus",
+        "byLabelDocumentSourceId",
+        "byLabelStatus",
+        "name",
+        "unconfiguredReason",
+        "unconfiguredStatus",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "noneTaskStatus")) {
+    assertExactKeys(
+      entry,
+      [
+        "blankTaskIdStatus",
+        "evidenceRevision",
+        "evidenceTaskId",
+        "name",
+        "noneTaskReason",
+        "noneTaskStatus",
+        "zeroRevisionStatus",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "retainedEvidenceCount")) {
+    assertExactKeys(entry, ["name", "reason", "retainedEvidenceCount", "status"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "abortedPreFetchStatus")) {
+    assertExactKeys(
+      entry,
+      [
+        "abortedPreFetchReason",
+        "abortedPreFetchStatus",
+        "abortedSpyCalls",
+        "activeRequestsAfter",
+        "cancelledReason",
+        "cancelledStatus",
+        "name",
+        "timeoutReason",
+        "timeoutStatus",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "sectionLimit")) {
+    assertExactKeys(
+      entry,
+      [
+        "classification",
+        "digestCheck",
+        "headingBound",
+        "idDeterministic",
+        "idFormatOk",
+        "idSample",
+        "jsonCases",
+        "name",
+        "plainOverflow",
+        "sectionLimit",
+      ],
+      label,
+    );
+    if (!/^rd_[0-9a-f]{24}$/.test(entry.idSample)) {
+      throw new Error(`${label}.idSample is invalid`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "directFetchedAtMatchesClock")) {
+    assertExactKeys(
+      entry,
+      [
+        "branchPin",
+        "commitPin",
+        "direct",
+        "directFetchedAtMatchesClock",
+        "fallbackCase",
+        "name",
+        "unknownTopicReason",
+        "unknownTopicStatus",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "idsSeen")) {
+    assertExactKeys(
+      entry,
+      [
+        "excerptByteLengths",
+        "idsSeen",
+        "name",
+        "retainedIds",
+        "sequenceOrdering",
+        "snapshotDetached",
+        "truncatedFlags",
+      ],
+      label,
+    );
+    return;
+  }
+  assertExactKeys(
+    entry,
+    ["boundedTruncated", "boundedView", "defaultMaxBytes", "name", "view"],
+    label,
+  );
+}
+
 function validateR13AuthorityResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (
@@ -2765,6 +3029,34 @@ function validateCompletedResult(record, label) {
     assertExactKeys(record.result, ["cases"], `${label}.result`);
     for (const [index, entry] of record.result.cases.entries()) {
       validateKnowledgeRevisionsCase(entry, `${label}.result.cases[${index}]`);
+    }
+    return;
+  }
+  if (record.subject === "reference-identity") {
+    assertExactKeys(record.result, ["cases"], `${label}.result`);
+    if (
+      !Array.isArray(record.result.cases) ||
+      record.result.cases.length === 0 ||
+      record.result.cases.length > 16
+    ) {
+      throw new Error(`${label}.result.cases must be a bounded array`);
+    }
+    for (const [index, entry] of record.result.cases.entries()) {
+      validateReferenceIdentityCase(entry, `${label}.result.cases[${index}]`);
+    }
+    return;
+  }
+  if (record.subject === "research-policy") {
+    assertExactKeys(record.result, ["cases"], `${label}.result`);
+    if (
+      !Array.isArray(record.result.cases) ||
+      record.result.cases.length === 0 ||
+      record.result.cases.length > 16
+    ) {
+      throw new Error(`${label}.result.cases must be a bounded array`);
+    }
+    for (const [index, entry] of record.result.cases.entries()) {
+      validateResearchPolicyCase(entry, `${label}.result.cases[${index}]`);
     }
     return;
   }

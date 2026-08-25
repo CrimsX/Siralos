@@ -1,0 +1,22 @@
+{
+  "id": "research-policy-set",
+  "subject": "research-policy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "cases": [
+      { "name": "denied-by-default-gate-first" },
+      { "name": "request-validation-bounds" },
+      { "name": "source-matching-and-refusal" },
+      { "name": "task-binding-required-fail-closed" },
+      { "name": "stale-result-discarded" },
+      { "name": "timeout-cancelled-precedence" },
+      { "name": "normalization-bounds-disclosure" },
+      { "name": "provenance-fallback-semantics" },
+      { "name": "evidence-ring-retention" },
+      { "name": "evidence-view-rendering" }
+    ]
+  }
+}
