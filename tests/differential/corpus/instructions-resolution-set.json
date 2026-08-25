@@ -1,0 +1,18 @@
+{
+  "id": "instructions-resolution-set",
+  "subject": "instructions-resolution",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      { "name": "precedence-ordering" },
+      { "name": "scope-applicability" },
+      { "name": "conflict-detection" },
+      { "name": "normalization-identity" },
+      { "name": "revision-determinism" },
+      { "name": "rendering-framing" },
+      { "name": "inventory-revision" }
+    ]
+  }
+}

@@ -1587,6 +1587,193 @@ function validateCapabilityDoctorResultCase(entry, label) {
   }
 }
 
+function validateInstructionsResolutionCase(entry, label) {
+  if (Object.hasOwn(entry, "order")) {
+    assertExactKeys(entry, ["order", "revisionPrefix"], label);
+    if (!Array.isArray(entry.order) || typeof entry.revisionPrefix !== "string") {
+      throw new Error(`${label} ordering record is invalid`);
+    }
+    for (const item of entry.order) {
+      assertExactKeys(item, ["id", "kind", "scope", "priority"], `${label}.order[]`);
+      if (!/^instr_[0-9a-f]{24}$/.test(item.id) || !Number.isInteger(item.priority)) {
+        throw new Error(`${label}.order[] identity is invalid`);
+      }
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "insideApplies")) {
+    assertExactKeys(
+      entry,
+      ["insideApplies", "outsideEmpty", "universalAppliesToBoth", "trailingNormalized"],
+      label,
+    );
+    for (const key of [
+      "insideApplies",
+      "outsideEmpty",
+      "universalAppliesToBoth",
+      "trailingNormalized",
+    ]) {
+      if (typeof entry[key] !== "boolean") throw new Error(`${label}.${key} must be boolean`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "conflictCount")) {
+    assertExactKeys(
+      entry,
+      ["agreeingConflictCount", "conflictCount", "rawBytesDiffer", "reason"],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "sameId")) {
+    assertExactKeys(entry, ["differentId", "idFormat", "normalizedProbe", "sameId"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "stable")) {
+    assertExactKeys(entry, ["revisionChangesOnSourceRevision", "stable"], label);
+    for (const key of ["revisionChangesOnSourceRevision", "stable"]) {
+      if (typeof entry[key] !== "boolean") throw new Error(`${label}.${key} must be boolean`);
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "leadsWithAuthorityFraming")) {
+    assertExactKeys(
+      entry,
+      [
+        "conflictReasonIncluded",
+        "conflictSurfaced",
+        "leadsWithAuthorityFraming",
+        "neverGrantsMentioned",
+      ],
+      label,
+    );
+    for (const key of [
+      "conflictReasonIncluded",
+      "conflictSurfaced",
+      "leadsWithAuthorityFraming",
+      "neverGrantsMentioned",
+    ]) {
+      if (typeof entry[key] !== "boolean") throw new Error(`${label}.${key} must be boolean`);
+    }
+    return;
+  }
+  assertExactKeys(entry, ["orderInsensitive"], label);
+  if (typeof entry.orderInsensitive !== "boolean") {
+    throw new Error(`${label}.orderInsensitive must be boolean`);
+  }
+}
+
+function validateKnowledgeRevisionsCase(entry, label) {
+  if (Object.hasOwn(entry, "status") && Object.hasOwn(entry, "fact")) {
+    assertExactKeys(entry, ["digestMatchesModel", "fact", "size", "status"], label);
+    const fact = entry.fact;
+    if (fact !== null) {
+      assertExactKeys(
+        fact,
+        [
+          "activation",
+          "confidence",
+          "contentDigest",
+          "id",
+          "revision",
+          "subjectKey",
+          "type",
+          "volatility",
+        ],
+        `${label}.fact`,
+      );
+      if (!/^kf_[0-9a-f]{24}$/.test(fact.id)) {
+        throw new Error(`${label}.fact.id is invalid`);
+      }
+    }
+    return;
+  }
+  if (Object.hasOwn(entry, "unchangedStatus")) {
+    assertExactKeys(
+      entry,
+      [
+        "evolvedRevision",
+        "firstRevision",
+        "historyLength",
+        "stateRevisionStable",
+        "unchangedStatus",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "alwaysAllowReason")) {
+    assertExactKeys(
+      entry,
+      ["alwaysAllowReason", "factualAccepted", "noApprovalRejected", "sameReasonText"],
+      label,
+    );
+    return;
+  }
+  if (
+    Object.hasOwn(entry, "rejected") &&
+    Object.hasOwn(entry, "reason") &&
+    Object.keys(entry).length === 2
+  ) {
+    assertExactKeys(entry, ["reason", "rejected"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "goodFileAccepted")) {
+    assertExactKeys(
+      entry,
+      [
+        "badShaReason",
+        "badShaRejected",
+        "goodFileAccepted",
+        "researchWithPortAccepted",
+        "researchWithoutPortReason",
+      ],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "selected")) {
+    assertExactKeys(
+      entry,
+      ["budget", "consideredCount", "facts", "omittedCount", "selected"],
+      label,
+    );
+    for (const selection of entry.selected) {
+      assertExactKeys(selection, ["factId", "matchReasons", "score"], `${label}.selected[]`);
+      if (!Array.isArray(selection.matchReasons)) {
+        throw new Error(`${label}.selected[].matchReasons must be an array`);
+      }
+    }
+    if (
+      !Array.isArray(entry.facts) ||
+      typeof entry.consideredCount !== "number" ||
+      typeof entry.omittedCount !== "number" ||
+      !isObject(entry.budget)
+    ) {
+      throw new Error(`${label} retrieval record is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(
+    entry,
+    [
+      "afterRetire",
+      "beforeRetire",
+      "pinAOk",
+      "pinBOk",
+      "pinCExhausted",
+      "pinCReason",
+      "revisionChanged",
+    ],
+    label,
+  );
+  assertExactKeys(
+    entry.afterRetire,
+    ["activeHasSubject", "historyKept", "retiredListed"],
+    `${label}.afterRetire`,
+  );
+}
+
 function validateR13AuthorityResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (
@@ -2565,6 +2752,20 @@ function validateCompletedResult(record, label) {
     record.subject === "capability-doctor"
   ) {
     validateR13AuthorityResult(record, label);
+    return;
+  }
+  if (record.subject === "instructions-resolution") {
+    assertExactKeys(record.result, ["cases"], `${label}.result`);
+    for (const [index, entry] of record.result.cases.entries()) {
+      validateInstructionsResolutionCase(entry, `${label}.result.cases[${index}]`);
+    }
+    return;
+  }
+  if (record.subject === "knowledge-revisions") {
+    assertExactKeys(record.result, ["cases"], `${label}.result`);
+    for (const [index, entry] of record.result.cases.entries()) {
+      validateKnowledgeRevisionsCase(entry, `${label}.result.cases[${index}]`);
+    }
     return;
   }
   if (record.subject === "godot-scene-resolve") {

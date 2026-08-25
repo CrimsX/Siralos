@@ -1,0 +1,27 @@
+{
+  "id": "knowledge-revisions-state",
+  "subject": "knowledge-revisions",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "secrets": ["s3cr3t-value"],
+    "knownFiles": [
+      [
+        "packages/core/src/engine.ts",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    ],
+    "knownResearchEvidence": ["research-1"],
+    "cases": [
+      { "name": "propose-accept-shape" },
+      { "name": "evolution-no-churn" },
+      { "name": "policy-shape-rejection" },
+      { "name": "secret-protection" },
+      { "name": "provenance-gating" },
+      { "name": "retrieval-scoring-trace" },
+      { "name": "pin-retire-revision" }
+    ]
+  }
+}

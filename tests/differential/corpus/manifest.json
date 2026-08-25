@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 24,
+  "corpusVersion": 25,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -425,6 +425,14 @@
     {
       "file": "icm.phase-contract.unknown-context-class.json",
       "sha256": "d4ca2f35197a05cc599b80684fe2cdb790c76f2ce2ebfc499d123425ad4e97b3"
+    },
+    {
+      "file": "instructions-resolution-set.json",
+      "sha256": "cd23764ff376b46ae6414653834c88027d0687095bcbb0d5dc3a720afc01af3f"
+    },
+    {
+      "file": "knowledge-revisions-state.json",
+      "sha256": "361191fe0f509fce2a11ba9a8e96a55cda5da275da1b5f139065565faa777e9e"
     },
     {
       "file": "language-definition.bounded.json",
@@ -903,5 +911,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "0ddbf8e72c4480020a7ae917ca9de9c182611fa231cc056ac1ad97c9dd32981d"
+  "corpusSha256": "068c984e718299491d424615ee3286175e32ff92ef793769208dc3f3d34e6d67"
 }

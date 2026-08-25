@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 24;
+export const CORPUS_VERSION = 25;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -34,6 +34,8 @@ export const ALLOWED_SUBJECTS = new Set([
   "user-config",
   "security-permissions",
   "command-catalog",
+  "instructions-resolution",
+  "knowledge-revisions",
   "capability-doctor",
   "godot-scene-resolve",
   "godot-discovery",
@@ -80,6 +82,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   contextProjectionInputBytes: 64 * 1024,
   userConfigInputBytes: 64 * 1024,
   r13AuthorityInputBytes: 64 * 1024,
+  r13GuidanceInputBytes: 64 * 1024,
   godotInputBytes: 64 * 1024,
 });
 
@@ -770,6 +773,53 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const R13_GUIDANCE_SUBJECTS = new Set(["instructions-resolution", "knowledge-revisions"]);
+  if (R13_GUIDANCE_SUBJECTS.has(scenario.subject)) {
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.r13GuidanceInputBytes) {
+      throw new Error(
+        `${label}.input exceeds ${CONTRACT_LIMITS.r13GuidanceInputBytes} UTF-8 bytes`,
+      );
+    }
+    const cases = scenario.input.cases;
+    if (!Array.isArray(cases) || cases.length === 0) {
+      throw new Error(`${label} ${scenario.subject} input must contain a non-empty cases array`);
+    }
+    for (const entry of cases) {
+      if (!isPlainRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0) {
+        throw new Error(`${label} ${scenario.subject} cases must carry a non-empty name`);
+      }
+    }
+    if (scenario.subject === "knowledge-revisions") {
+      const runtime = scenario.input;
+      if (
+        !Number.isSafeInteger(runtime.nowMs) ||
+        !Array.isArray(runtime.secrets) ||
+        runtime.secrets.some((secret) => typeof secret !== "string") ||
+        !Array.isArray(runtime.knownFiles) ||
+        runtime.knownFiles.some(
+          (entry) =>
+            !Array.isArray(entry) ||
+            entry.length !== 2 ||
+            typeof entry[0] !== "string" ||
+            typeof entry[1] !== "string",
+        ) ||
+        !Array.isArray(runtime.knownResearchEvidence)
+      ) {
+        throw new Error(
+          `${label} knowledge-revisions input must inject the clock, secrets, known files, and research evidence`,
+        );
+      }
+    }
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    return;
+  }
   const GODOT_SUBJECTS = new Set([
     "godot-scene-resolve",
     "godot-discovery",
@@ -910,6 +960,8 @@ export function validateScenario(scenario, file) {
     "security-permissions",
     "command-catalog",
     "capability-doctor",
+    "instructions-resolution",
+    "knowledge-revisions",
     "godot-scene-resolve",
     "godot-discovery",
     "godot-knowledge",

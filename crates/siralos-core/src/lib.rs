@@ -18,6 +18,8 @@ pub mod doctor;
 pub mod domain;
 pub mod godot;
 pub mod identity;
+pub mod instructions;
+pub mod knowledge;
 pub mod language;
 pub mod projection;
 pub mod provider;

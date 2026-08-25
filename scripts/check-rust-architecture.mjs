@@ -297,15 +297,19 @@ export function runChecks(root) {
       // oracle's authority/introspection vocabulary verbatim (`godot.*`
       // capability ids, catalogue `/godot*` command ids, doctor areas):
       // external input names frozen for byte parity, not domain
-      // semantics (decision 22). Exemption covers ONLY those three
-      // files.
+      // semantics (decision 22). instructions.rs and knowledge.rs join
+      // them for the same reason — instruction/knowledge fixtures cite
+      // `godot`-named paths and stopwords (decision 23). Exemption
+      // covers ONLY those five files.
       const runtimeExempt =
         source.includes(join("src", "runtime", "readiness.rs")) ||
         source.includes(join("src", "runtime", "doctor.rs"));
       const r13AuthorityExempt =
         source.includes(join("src", "security.rs")) ||
         source.includes(join("src", "commands.rs")) ||
-        source.includes(join("src", "doctor.rs"));
+        source.includes(join("src", "doctor.rs")) ||
+        source.includes(join("src", "instructions.rs")) ||
+        source.includes(join("src", "knowledge.rs"));
       const coreOutsideGodot =
         crate === "crates/siralos-core" &&
         !source.includes(join("src", "godot")) &&
