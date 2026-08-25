@@ -16,6 +16,8 @@ pub mod language;
 pub mod paths;
 pub mod process;
 pub mod provider;
+pub mod reference;
+pub mod research;
 pub mod tool;
 pub mod workspace;
 
