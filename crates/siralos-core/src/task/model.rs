@@ -206,9 +206,22 @@ pub enum VerificationOutcome {
     Incomplete,
 }
 
+/// Exact immutable milestone target of host-observed verification
+/// evidence (Stage 3R R13.4 acceptance parity).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MilestoneEvidenceTarget {
+    /// Target manifest id.
+    pub manifest_id: String,
+    /// Target manifest version.
+    pub manifest_version: u64,
+    /// Target requirement id within the manifest.
+    pub requirement_id: String,
+}
+
 /// Host-owned verification binding. The enclosing EvidenceRecord supplies
 /// the task id and exact contract revision/digest; this value binds the
-/// observation to one check and, when applicable, one task criterion.
+/// observation to one check and, when applicable, one task criterion
+/// and/or milestone requirement.
 /// Unbound evidence remains useful for task steps but cannot satisfy
 /// acceptance. Milestone-requirement bindings arrive with their owning
 /// milestone.
@@ -220,6 +233,8 @@ pub struct EvidenceVerification {
     /// Criterion this evidence verifies, when applicable.
     /// Criterion id.
     pub criterion_id: Option<String>,
+    /// Milestone requirement this evidence targets, when applicable.
+    pub milestone: Option<MilestoneEvidenceTarget>,
     /// Host-recorded outcome.
     /// Outcome.
     pub outcome: VerificationOutcome,
@@ -667,6 +682,55 @@ pub enum ActivityEvent {
         /// Host note.
         note: Option<String>,
     },
+    /// Host planning-depth routing recorded.
+    PlanningRouted {
+        /// Monotonic per-task sequence.
+        sequence: u64,
+        /// Routed depth.
+        depth: crate::planning::PlanningDepth,
+        /// Deterministic decision reason.
+        reason: String,
+    },
+    /// Immutable plan revision stored.
+    PlanCreated {
+        /// Monotonic per-task sequence.
+        sequence: u64,
+        /// Plan id.
+        plan_id: String,
+        /// Plan revision.
+        revision: u64,
+        /// Plan depth.
+        depth: crate::planning::PlanningDepth,
+    },
+    /// Plan candidate rejected (invalid, denied).
+    PlanRejected {
+        /// Monotonic per-task sequence.
+        sequence: u64,
+        /// Exact rejection reason.
+        reason: String,
+    },
+    /// Approval bound to the exact current plan revision.
+    PlanApproved {
+        /// Monotonic per-task sequence.
+        sequence: u64,
+        /// Plan id.
+        plan_id: String,
+        /// Plan revision.
+        revision: u64,
+        /// Exact content digest of the approved revision.
+        digest: String,
+    },
+    /// Plan marked stale; approval invalidated when one existed.
+    PlanInvalidated {
+        /// Monotonic per-task sequence.
+        sequence: u64,
+        /// Plan id.
+        plan_id: String,
+        /// Plan revision.
+        revision: u64,
+        /// Exact invalidation reason.
+        reason: String,
+    },
 }
 
 impl ActivityEvent {
@@ -690,6 +754,11 @@ impl ActivityEvent {
             ActivityEvent::DispositionSubmitted { .. } => {
                 "disposition_submitted"
             }
+            ActivityEvent::PlanningRouted { .. } => "planning_routed",
+            ActivityEvent::PlanCreated { .. } => "plan_created",
+            ActivityEvent::PlanRejected { .. } => "plan_rejected",
+            ActivityEvent::PlanApproved { .. } => "plan_approved",
+            ActivityEvent::PlanInvalidated { .. } => "plan_invalidated",
         }
     }
 
@@ -708,9 +777,12 @@ impl ActivityEvent {
             | ActivityEvent::TaskCancelled { sequence, .. }
             | ActivityEvent::TaskFailed { sequence, .. }
             | ActivityEvent::TaskContractRevised { sequence, .. }
-            | ActivityEvent::DispositionSubmitted { sequence, .. } => {
-                *sequence
-            }
+            | ActivityEvent::DispositionSubmitted { sequence, .. }
+            | ActivityEvent::PlanningRouted { sequence, .. }
+            | ActivityEvent::PlanCreated { sequence, .. }
+            | ActivityEvent::PlanRejected { sequence, .. }
+            | ActivityEvent::PlanApproved { sequence, .. }
+            | ActivityEvent::PlanInvalidated { sequence, .. } => *sequence,
         }
     }
 }
@@ -730,6 +802,10 @@ pub struct TaskState {
     /// Current phase.
     /// Phase.
     pub phase: TaskPhase,
+    /// Bounded current-plan reference (identity, depth, staleness,
+    /// approval state only; the full immutable plan lives in the runtime
+    /// plan history).
+    pub plan: crate::planning::TaskPlanState,
     /// Bounded step states.
     /// Steps.
     pub steps: Vec<TaskStepState>,

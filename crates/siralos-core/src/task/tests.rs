@@ -83,6 +83,7 @@ fn verify_verification(criterion_id: &str) -> EvidenceVerification {
         check_id: criterion_id.to_owned(),
         criterion_id: Some(criterion_id.to_owned()),
         outcome: VerificationOutcome::Passed,
+        milestone: None,
     }
 }
 
@@ -574,6 +575,7 @@ fn acceptance_verification_requires_exact_bound_successful_evidence() {
                 check_id: "other".to_owned(),
                 criterion_id: Some("other".to_owned()),
                 outcome: VerificationOutcome::Passed,
+                milestone: None,
             }),
         ),
         AttachResult::Attached
@@ -596,6 +598,7 @@ fn acceptance_verification_requires_exact_bound_successful_evidence() {
                 check_id: "c1".to_owned(),
                 criterion_id: Some("c1".to_owned()),
                 outcome: VerificationOutcome::Failed,
+                milestone: None,
             }),
         ),
         AttachResult::Attached
@@ -684,6 +687,7 @@ fn review_and_user_criteria_require_matching_evidence_kinds() {
                 check_id: "review".to_owned(),
                 criterion_id: Some("review".to_owned()),
                 outcome: VerificationOutcome::Passed,
+                milestone: None,
             }),
         ),
         AttachResult::Attached
@@ -705,6 +709,7 @@ fn review_and_user_criteria_require_matching_evidence_kinds() {
                 check_id: "review".to_owned(),
                 criterion_id: Some("review".to_owned()),
                 outcome: VerificationOutcome::Passed,
+                milestone: None,
             }),
         ),
         AttachResult::Attached
@@ -726,6 +731,7 @@ fn review_and_user_criteria_require_matching_evidence_kinds() {
                 check_id: "user".to_owned(),
                 criterion_id: Some("user".to_owned()),
                 outcome: VerificationOutcome::Passed,
+                milestone: None,
             }),
         ),
         AttachResult::Rejected(AttachRejection::Invalid(
@@ -746,6 +752,7 @@ fn review_and_user_criteria_require_matching_evidence_kinds() {
                 check_id: "user".to_owned(),
                 criterion_id: Some("user".to_owned()),
                 outcome: VerificationOutcome::Passed,
+                milestone: None,
             }),
         ),
         AttachResult::Rejected(AttachRejection::Invalid(
@@ -766,6 +773,7 @@ fn review_and_user_criteria_require_matching_evidence_kinds() {
                 check_id: "user".to_owned(),
                 criterion_id: Some("user".to_owned()),
                 outcome: VerificationOutcome::Passed,
+                milestone: None,
             }),
         ),
         AttachResult::Attached

@@ -445,6 +445,8 @@ struct TaskRecord {
     contract: TaskContract,
     contract_revisions: Vec<TaskContract>,
     state: TaskState,
+    plans: Vec<crate::planning::TaskPlan>,
+    plan_approval: Option<crate::planning::PlanApproval>,
     activity: Vec<ActivityEvent>,
     sequence: u64,
     progress: InternalProgress,
@@ -584,11 +586,14 @@ impl TaskRuntime {
             specs,
             contract,
             contract_revisions: Vec::new(),
+            plans: Vec::new(),
+            plan_approval: None,
             state: TaskState {
                 task_id,
                 contract_revision,
                 contract_digest,
                 phase: TaskPhase::Prepared,
+                plan: crate::planning::NO_TASK_PLAN,
                 steps,
                 acceptance,
                 current_findings: Vec::new(),
@@ -643,7 +648,12 @@ impl TaskRuntime {
             | ActivityEvent::TaskCancelled { sequence, .. }
             | ActivityEvent::TaskFailed { sequence, .. }
             | ActivityEvent::TaskContractRevised { sequence, .. }
-            | ActivityEvent::DispositionSubmitted { sequence, .. } => {
+            | ActivityEvent::DispositionSubmitted { sequence, .. }
+            | ActivityEvent::PlanningRouted { sequence, .. }
+            | ActivityEvent::PlanCreated { sequence, .. }
+            | ActivityEvent::PlanRejected { sequence, .. }
+            | ActivityEvent::PlanApproved { sequence, .. }
+            | ActivityEvent::PlanInvalidated { sequence, .. } => {
                 *sequence = record.sequence;
             }
         }
@@ -747,12 +757,47 @@ impl TaskHandle<'_> {
         self.record.state.contract_revision = revision.revision();
         self.record.state.contract_digest = revision.digest().to_owned();
         self.reconcile_acceptance(&revision);
+        self.invalidate_plan_for_contract_revision();
         let mut event = ActivityEvent::TaskContractRevised {
             sequence: 0,
             revision: revision.revision(),
         };
         self.append_activity(&mut event);
         Ok(revision)
+    }
+
+    /// Mark the current plan stale and invalidate any approval when a
+    /// TaskContract revision advanced (exact reference activity trail).
+    fn invalidate_plan_for_contract_revision(&mut self) {
+        let Some(current) = self.record.plans.last().cloned() else {
+            return;
+        };
+        self.record.state.plan.state =
+            crate::planning::TaskPlanStateKind::Stale;
+        self.record.state.plan.stale_reason = Some(
+            "The TaskContract revision advanced after this plan was created."
+                .to_owned(),
+        );
+        if let Some(approval) = self.record.plan_approval.take() {
+            self.record.state.plan.approval =
+                crate::planning::TaskPlanApprovalKind::Invalidated;
+            let mut event = ActivityEvent::PlanInvalidated {
+                sequence: 0,
+                plan_id: approval.plan_id,
+                revision: approval.plan_revision,
+                reason: "The TaskContract revision advanced; the plan approval no longer applies."
+                    .to_owned(),
+            };
+            self.append_activity(&mut event);
+        }
+        let mut event = ActivityEvent::PlanInvalidated {
+            sequence: 0,
+            plan_id: current.id,
+            revision: current.revision,
+            reason: "The TaskContract revision advanced; the plan is stale until revalidated or replanned."
+                .to_owned(),
+        };
+        self.append_activity(&mut event);
     }
 
     fn reconcile_acceptance(&mut self, contract: &TaskContract) {
@@ -984,7 +1029,12 @@ impl TaskHandle<'_> {
             | ActivityEvent::TaskCancelled { sequence, .. }
             | ActivityEvent::TaskFailed { sequence, .. }
             | ActivityEvent::TaskContractRevised { sequence, .. }
-            | ActivityEvent::DispositionSubmitted { sequence, .. } => {
+            | ActivityEvent::DispositionSubmitted { sequence, .. }
+            | ActivityEvent::PlanningRouted { sequence, .. }
+            | ActivityEvent::PlanCreated { sequence, .. }
+            | ActivityEvent::PlanRejected { sequence, .. }
+            | ActivityEvent::PlanApproved { sequence, .. }
+            | ActivityEvent::PlanInvalidated { sequence, .. } => {
                 *sequence = self.record.sequence;
             }
         }
@@ -1394,4 +1444,304 @@ impl TaskHandle<'_> {
         let now = (self.clock)();
         observe_progress(&mut self.record.progress, &observation, now)
     }
+
+    /// The owning task id.
+    pub fn task_id(&self) -> &str {
+        &self.record.id
+    }
+
+    /// Record the host's planning-depth routing (deterministic policy).
+    pub fn route_planning(
+        &mut self,
+        depth: crate::planning::PlanningDepth,
+        reason: &str,
+    ) {
+        if self.record.terminal_reason().is_some() {
+            return;
+        }
+        self.record.state.plan.depth = depth;
+        let mut event = ActivityEvent::PlanningRouted {
+            sequence: 0,
+            depth,
+            reason: reason.to_owned(),
+        };
+        self.append_activity(&mut event);
+    }
+
+    /// Record a host-observed plan rejection (invalid candidate, denial).
+    pub fn reject_plan(&mut self, reason: &str) {
+        if self.record.terminal_reason().is_some() {
+            return;
+        }
+        let mut event = ActivityEvent::PlanRejected {
+            sequence: 0,
+            reason: reason.to_owned(),
+        };
+        self.append_activity(&mut event);
+    }
+
+    /// Store an immutable plan revision bound to the current TaskContract.
+    ///
+    /// # Errors
+    ///
+    /// Exact reference rejection reasons (terminal state, task/revision
+    /// binding, id pattern, sequencing rules, revision cap, invalid
+    /// candidate content).
+    #[allow(clippy::too_many_lines)]
+    pub fn set_plan(
+        &mut self,
+        plan: crate::planning::TaskPlan,
+    ) -> Result<(), String> {
+        if let Some(reason) = self.record.terminal_reason() {
+            return Err(reason);
+        }
+        if plan.task_id != self.record.id {
+            return Err(format!(
+                "Plan {} belongs to task {}, not {}.",
+                plan.id, plan.task_id, self.record.id
+            ));
+        }
+        if plan.task_contract_revision != self.record.contract.revision() {
+            return Err(format!(
+                "Plan {} binds to TaskContract revision {}, but the current revision is {}.",
+                plan.id,
+                plan.task_contract_revision,
+                self.record.contract.revision()
+            ));
+        }
+        if !crate::planning::is_valid_plan_id(&plan.id) {
+            return Err(format!("Invalid plan id: {}", plan.id));
+        }
+        if plan.revision < 1 {
+            return Err(
+                "A plan revision must be a positive safe integer.".to_owned()
+            );
+        }
+        if plan.created_at < 0 {
+            return Err(
+                "A plan requires a valid createdAt timestamp.".to_owned()
+            );
+        }
+        let validated = crate::planning::validate_plan_candidate(
+            &candidate_value_of_plan(&plan),
+            &crate::planning::PlanCandidateContext {
+                contract: &self.record.contract,
+                depth: plan.depth,
+            },
+        );
+        let content = match validated {
+            crate::planning::PlanCandidateResult::Ok(content) => *content,
+            crate::planning::PlanCandidateResult::Rejected(reasons) => {
+                return Err(format!(
+                    "The plan is invalid: {}",
+                    reasons.join(" ")
+                ));
+            }
+        };
+        let previous = self.record.plans.last().cloned();
+        if previous.is_none() && plan.revision != 1 {
+            return Err("The first plan revision must be 1.".to_owned());
+        }
+        if let Some(previous) = &previous {
+            if previous.id == plan.id && plan.revision != previous.revision + 1
+            {
+                return Err(format!(
+                    "Plan {} revision {} does not follow revision {}; plans are immutable and revisions only ever advance by one.",
+                    plan.id, plan.revision, previous.revision
+                ));
+            }
+        }
+        if let Some(previous) = &previous {
+            if previous.id != plan.id {
+                if plan.revision != 1 {
+                    return Err(format!(
+                        "Replacement plan {} must begin at revision 1.",
+                        plan.id
+                    ));
+                }
+                if self.record.plans.iter().any(|entry| entry.id == plan.id) {
+                    return Err(format!(
+                        "Plan id {} was already used by this task and cannot be restarted.",
+                        plan.id
+                    ));
+                }
+            }
+        }
+        if self.record.plans.len()
+            >= crate::planning::PlanningLimits::MAX_PLAN_REVISIONS
+        {
+            return Err(format!(
+                "The task already holds the maximum of {} plan revisions; replanning is not possible within this bound.",
+                crate::planning::PlanningLimits::MAX_PLAN_REVISIONS
+            ));
+        }
+        let prior_approved =
+            self.record.plan_approval.as_ref().is_some_and(|approval| {
+                approval.plan_id != plan.id
+                    || approval.plan_revision != plan.revision
+            });
+        let stored_plan = crate::planning::TaskPlan { content, ..plan };
+        self.record.state.plan.plan_id = Some(stored_plan.id.clone());
+        self.record.state.plan.plan_revision = stored_plan.revision;
+        self.record.state.plan.plan_digest =
+            Some(stored_plan.digest.value.clone());
+        self.record.state.plan.depth = stored_plan.depth;
+        self.record.state.plan.state =
+            crate::planning::TaskPlanStateKind::Current;
+        self.record.state.plan.stale_reason = None;
+        if prior_approved {
+            self.record.state.plan.approval =
+                crate::planning::TaskPlanApprovalKind::Invalidated;
+            let approval =
+                self.record.plan_approval.clone().expect("checked some");
+            let mut event = ActivityEvent::PlanInvalidated {
+                sequence: 0,
+                plan_id: approval.plan_id,
+                revision: approval.plan_revision,
+                reason:
+                    "The plan identity or revision advanced; the previous approval no longer applies."
+                        .to_owned(),
+            };
+            self.append_activity(&mut event);
+        } else {
+            self.record.state.plan.approval =
+                crate::planning::TaskPlanApprovalKind::None;
+        }
+        self.record.plan_approval = None;
+        let mut created = ActivityEvent::PlanCreated {
+            sequence: 0,
+            plan_id: stored_plan.id.clone(),
+            revision: stored_plan.revision,
+            depth: stored_plan.depth,
+        };
+        self.append_activity(&mut created);
+        self.observe(HostObservation {
+            action: "plan.created".to_owned(),
+            fingerprint: format!(
+                "{}:{}",
+                stored_plan.id, stored_plan.revision
+            ),
+            progress: true,
+        });
+        self.record.plans.push(stored_plan);
+        Ok(())
+    }
+
+    /// Bind approval to the exact current plan and contract revisions.
+    ///
+    /// # Errors
+    ///
+    /// Exact reference rejection reasons.
+    pub fn approve_plan(
+        &mut self,
+        plan_id: &str,
+        plan_revision: u64,
+    ) -> Result<(), String> {
+        if let Some(reason) = self.record.terminal_reason() {
+            return Err(reason);
+        }
+        let Some(current) = self.record.plans.last().cloned() else {
+            return Err(format!(
+                "No current plan matches {plan_id}; nothing was approved."
+            ));
+        };
+        if current.id != plan_id {
+            return Err(format!(
+                "No current plan matches {plan_id}; nothing was approved."
+            ));
+        }
+        if current.revision != plan_revision {
+            return Err(format!(
+                "Approval binds to the exact plan revision: plan {} is revision {}, not {}; the stale approval is refused.",
+                plan_id, current.revision, plan_revision
+            ));
+        }
+        if current.task_contract_revision != self.record.contract.revision() {
+            return Err(format!(
+                "Plan {} binds to TaskContract revision {}, which is no longer current; the approval is refused.",
+                plan_id, current.task_contract_revision
+            ));
+        }
+        if current.task_contract_digest != self.record.contract.digest() {
+            return Err(format!(
+                "Plan {} binds to a different TaskContract content digest; the approval is refused.",
+                plan_id
+            ));
+        }
+        let recomputed = crate::planning::stored_plan_digest(&current)?;
+        if current.digest.value != recomputed {
+            return Err(format!(
+                "Plan {} content does not match its own identity digest; the approval is refused.",
+                plan_id
+            ));
+        }
+        if self.record.state.plan.state
+            == crate::planning::TaskPlanStateKind::Stale
+        {
+            return Err(
+                "The current plan is stale and cannot be approved.".to_owned()
+            );
+        }
+        self.record.plan_approval = Some(crate::planning::PlanApproval {
+            plan_id: current.id.clone(),
+            plan_revision: current.revision,
+            plan_digest: current.digest.value.clone(),
+            task_contract_revision: current.task_contract_revision,
+            task_contract_digest: current.task_contract_digest.clone(),
+            approved_at: (self.clock)(),
+        });
+        self.record.state.plan.approval =
+            crate::planning::TaskPlanApprovalKind::Approved;
+        let mut event = ActivityEvent::PlanApproved {
+            sequence: 0,
+            plan_id: current.id.clone(),
+            revision: current.revision,
+            digest: current.digest.value,
+        };
+        self.append_activity(&mut event);
+        Ok(())
+    }
+
+    /// Mark the current plan stale and its approval invalid.
+    pub fn invalidate_plan(&mut self, reason: &str) {
+        if self.record.terminal_reason().is_some() {
+            return;
+        }
+        let Some(current) = self.record.plans.last().cloned() else {
+            return;
+        };
+        self.record.state.plan.state =
+            crate::planning::TaskPlanStateKind::Stale;
+        self.record.state.plan.stale_reason = Some(reason.to_owned());
+        if self.record.plan_approval.is_some() {
+            self.record.state.plan.approval =
+                crate::planning::TaskPlanApprovalKind::Invalidated;
+        }
+        self.record.plan_approval = None;
+        let mut event = ActivityEvent::PlanInvalidated {
+            sequence: 0,
+            plan_id: current.id,
+            revision: current.revision,
+            reason: reason.to_owned(),
+        };
+        self.append_activity(&mut event);
+    }
+
+    /// Detached copy of the current plan revision, when any.
+    pub fn current_plan(&self) -> Option<crate::planning::TaskPlan> {
+        self.record.plans.last().cloned()
+    }
+
+    /// Detached copies of every stored plan revision (oldest first).
+    pub fn plan_revisions(&self) -> Vec<crate::planning::TaskPlan> {
+        self.record.plans.clone()
+    }
+}
+
+/// Raw JSON view of a stored plan for candidate validation (identity keys
+/// are ignored by validation, exactly like the reference). Optional plan
+fn candidate_value_of_plan(
+    plan: &crate::planning::TaskPlan,
+) -> serde_json::Value {
+    crate::planning::content_candidate_value(&plan.content)
 }

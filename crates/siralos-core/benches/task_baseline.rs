@@ -115,6 +115,7 @@ fn bench_evidence_attach_and_acceptance(criterion: &mut Criterion) {
                 Some(EvidenceVerification {
                     check_id: "parses".to_owned(),
                     criterion_id: Some("parses".to_owned()),
+                    milestone: None,
                     outcome: VerificationOutcome::Passed,
                 }),
             );

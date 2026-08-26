@@ -37,10 +37,10 @@ pub use model::{
     AcceptanceState, AcceptanceStatus, ActivityEvent, ApprovalDecision,
     DispositionSource, EvidenceKind, EvidenceRecord, EvidenceRef,
     EvidenceSource, EvidenceVerification, FindingRef, FindingSeverity,
-    ProgressState, ProgressStateValue, TaskPhase, TaskReviewStatus, TaskState,
-    TaskStepKind, TaskStepSpec, TaskStepState, TaskStepStatus,
-    TaskValidationStatus, VerificationOutcome, WorkflowDisposition,
-    is_terminal_phase,
+    MilestoneEvidenceTarget, ProgressState, ProgressStateValue, TaskPhase,
+    TaskReviewStatus, TaskState, TaskStepKind, TaskStepSpec, TaskStepState,
+    TaskStepStatus, TaskValidationStatus, VerificationOutcome,
+    WorkflowDisposition, is_terminal_phase,
 };
 pub use progress::{HostObservation, InternalProgress, observe_progress};
 pub use runtime::{

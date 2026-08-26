@@ -237,6 +237,7 @@ fn complete_for_property(handle: &mut crate::task::runtime::TaskHandle<'_>) {
             Some(crate::task::model::EvidenceVerification {
                 check_id: "c1".to_owned(),
                 criterion_id: Some("c1".to_owned()),
+                milestone: None,
                 outcome: crate::task::model::VerificationOutcome::Passed,
             }),
         ),
