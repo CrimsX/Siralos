@@ -71,6 +71,7 @@ const SYNTHETIC_HOME_USERS = new Set([
   "me",
   "secret",
   "secret-user",
+  "someone",
   "test",
   "tester",
   "testuser",

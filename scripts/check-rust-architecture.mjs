@@ -311,6 +311,13 @@ export function runChecks(root) {
       const runtimeExempt =
         source.includes(join("src", "runtime", "readiness.rs")) ||
         source.includes(join("src", "runtime", "doctor.rs"));
+      // R13.4 - executor/context.rs, executor/scope.rs, planning/mod.rs
+      // and planning/policy.rs join them: the only Godot mentions are the
+      // capability-area label ("godot"), the default source-context
+      // exclusion prefix (".godot/"), and the frozen oracle marker
+      // vocabulary (containsGodotSceneOrResourceReference), all external
+      // input/output names required for byte parity (decision 26). None
+      // of these files carries domain semantics.
       const r13AuthorityExempt =
         source.includes(join("src", "security.rs")) ||
         source.includes(join("src", "commands.rs")) ||
@@ -318,7 +325,11 @@ export function runChecks(root) {
         source.includes(join("src", "instructions.rs")) ||
         source.includes(join("src", "knowledge.rs")) ||
         source.includes(join("src", "reference.rs")) ||
-        source.includes(join("src", "research.rs"));
+        source.includes(join("src", "research.rs")) ||
+        source.includes(join("src", "executor", "context.rs")) ||
+        source.includes(join("src", "executor", "scope.rs")) ||
+        source.includes(join("src", "planning", "mod.rs")) ||
+        source.includes(join("src", "planning", "policy.rs"));
       const coreOutsideGodot =
         crate === "crates/siralos-core" &&
         !source.includes(join("src", "godot")) &&

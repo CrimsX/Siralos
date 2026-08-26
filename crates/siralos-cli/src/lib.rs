@@ -18,6 +18,8 @@ pub mod sanitize;
 
 #[cfg(feature = "differential-harness")]
 pub mod harness;
+#[cfg(feature = "differential-harness")]
+pub mod harness_r134;
 
 use std::ffi::OsString;
 

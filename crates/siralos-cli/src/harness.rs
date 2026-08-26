@@ -63,6 +63,8 @@ const SUBJECT_INSTRUCTIONS_RESOLUTION: &str = "instructions-resolution";
 const SUBJECT_KNOWLEDGE_REVISIONS: &str = "knowledge-revisions";
 const SUBJECT_REFERENCE_IDENTITY: &str = "reference-identity";
 const SUBJECT_RESEARCH_POLICY: &str = "research-policy";
+pub(crate) const SUBJECT_PLANNING_RUNTIME: &str = "planning-runtime";
+pub(crate) const SUBJECT_EXECUTOR_BRIEF: &str = "executor-brief";
 const SUBJECT_GODOT_SCENE_RESOLVE: &str = "godot-scene-resolve";
 const SUBJECT_GODOT_DISCOVERY: &str = "godot-discovery";
 const SUBJECT_GODOT_KNOWLEDGE: &str = "godot-knowledge";
@@ -86,7 +88,7 @@ const SUBJECT_RR_BUDGETS: &str = "runtime-readiness.budgets";
 const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
 const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 26;
+const CORPUS_VERSION: u64 = 27;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -177,7 +179,7 @@ impl HarnessError {
         Self { kind, code: code.to_owned(), detail: detail.into() }
     }
 
-    fn corpus(detail: impl Into<String>) -> Self {
+    pub(crate) fn corpus(detail: impl Into<String>) -> Self {
         Self::new(HarnessErrorKind::Corpus, detail)
     }
 
@@ -432,6 +434,8 @@ fn validate_scenario(
             | SUBJECT_KNOWLEDGE_REVISIONS
             | SUBJECT_REFERENCE_IDENTITY
             | SUBJECT_RESEARCH_POLICY
+            | SUBJECT_PLANNING_RUNTIME
+            | SUBJECT_EXECUTOR_BRIEF
             | SUBJECT_GODOT_SCENE_RESOLVE
             | SUBJECT_GODOT_DISCOVERY
             | SUBJECT_GODOT_KNOWLEDGE
@@ -548,7 +552,9 @@ fn validate_scenario(
         | SUBJECT_INSTRUCTIONS_RESOLUTION
         | SUBJECT_KNOWLEDGE_REVISIONS
         | SUBJECT_REFERENCE_IDENTITY
-        | SUBJECT_RESEARCH_POLICY => {
+        | SUBJECT_RESEARCH_POLICY
+        | SUBJECT_PLANNING_RUNTIME
+        | SUBJECT_EXECUTOR_BRIEF => {
             let input = scenario.input.as_ref().ok_or_else(|| {
                 HarnessError::corpus(format!(
                     "scenario {} {} requires an input object",
@@ -641,6 +647,16 @@ fn validate_scenario(
                     input,
                 )?;
             }
+            let r13_planning_briefing_subject = matches!(
+                scenario.subject.as_str(),
+                SUBJECT_PLANNING_RUNTIME | SUBJECT_EXECUTOR_BRIEF
+            );
+            if r13_planning_briefing_subject {
+                crate::harness_r134::validate_r13_planning_briefing_input(
+                    scenario.subject.as_str(),
+                    input,
+                )?;
+            }
             let max_input_bytes = if provider_subject {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -655,6 +671,8 @@ fn validate_scenario(
                 MAX_R13_GUIDANCE_INPUT_BYTES
             } else if r13_external_knowledge_subject {
                 MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES
+            } else if r13_planning_briefing_subject {
+                crate::harness_r134::MAX_R13_PLANNING_BRIEFING_INPUT_BYTES
             } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
@@ -1383,6 +1401,30 @@ fn run_scenario(
                 "research-policy input was validated while loading the corpus",
             );
             let result = research_policy_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_PLANNING_RUNTIME => {
+            let input = scenario.input.as_ref().expect(
+                "planning-runtime input was validated while loading the corpus",
+            );
+            let result = crate::harness_r134::planning_runtime_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_EXECUTOR_BRIEF => {
+            let input = scenario.input.as_ref().expect(
+                "executor-brief input was validated while loading the corpus",
+            );
+            let result = crate::harness_r134::executor_brief_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -10385,12 +10427,27 @@ fn parse_evidence_source(
 fn parse_verification(
     value: &Value,
 ) -> Result<EvidenceVerification, HarnessError> {
+    let milestone = match value.get("milestone") {
+        None | Some(Value::Null) => None,
+        Some(target) => Some(siralos_core::task::MilestoneEvidenceTarget {
+            manifest_id: string_field(target, "manifestId")?,
+            manifest_version: object_field(target, "manifestVersion")?
+                .as_u64()
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "verification manifestVersion must be an integer",
+                    )
+                })?,
+            requirement_id: string_field(target, "requirementId")?,
+        }),
+    };
     Ok(EvidenceVerification {
         check_id: string_field(value, "checkId")?,
         criterion_id: value
             .get("criterionId")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        milestone,
         outcome: verification_outcome(&string_field(value, "outcome")?)?,
     })
 }
@@ -10537,6 +10594,50 @@ fn activity_json(event: &ActivityEvent) -> Value {
                 "note": note,
             })
         }
+        ActivityEvent::PlanningRouted { depth, reason, .. } => {
+            json!({
+                "type": event.type_str(),
+                "sequence": event.sequence(),
+                "depth": depth.as_str(),
+                "reason": reason,
+            })
+        }
+        ActivityEvent::PlanCreated { plan_id, revision, depth, .. } => {
+            json!({
+                "type": event.type_str(),
+                "sequence": event.sequence(),
+                "planId": plan_id,
+                "revision": revision,
+                "depth": depth.as_str(),
+            })
+        }
+        ActivityEvent::PlanRejected { reason, .. } => {
+            json!({
+                "type": event.type_str(),
+                "sequence": event.sequence(),
+                "reason": reason,
+            })
+        }
+        ActivityEvent::PlanApproved { plan_id, revision, digest, .. } => {
+            json!({
+                "type": event.type_str(),
+                "sequence": event.sequence(),
+                "planId": plan_id,
+                "revision": revision,
+                "digest": digest,
+            })
+        }
+        ActivityEvent::PlanInvalidated {
+            plan_id, revision, reason, ..
+        } => {
+            json!({
+                "type": event.type_str(),
+                "sequence": event.sequence(),
+                "planId": plan_id,
+                "revision": revision,
+                "reason": reason,
+            })
+        }
     }
 }
 
@@ -10544,8 +10645,13 @@ fn activity_json(event: &ActivityEvent) -> Value {
 static SCENARIO_NOW: std::sync::atomic::AtomicI64 =
     std::sync::atomic::AtomicI64::new(0);
 
+/// Store the deterministic per-scenario clock (used by the R13.4 module).
+pub(crate) fn store_scenario_now(now_ms: i64) {
+    SCENARIO_NOW.store(now_ms, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Zero-capture clock feeding the runtime the scenario's controlled now.
-fn scenario_clock() -> i64 {
+pub(crate) fn scenario_clock() -> i64 {
     SCENARIO_NOW.load(std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -13252,7 +13358,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 229);
+        assert_eq!(loaded.len(), 231);
     }
 
     #[test]
