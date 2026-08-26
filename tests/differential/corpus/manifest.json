@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 28,
+  "corpusVersion": 29,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -233,6 +233,10 @@
     {
       "file": "domain-lifecycle.session-scope.json",
       "sha256": "c4bde411d7da51837e53eed658b318faf201d4eca4f7c6480aa970ef58e38036"
+    },
+    {
+      "file": "executor-brief-real-manifests.json",
+      "sha256": "0758af199a9577d84bb2ab42f2ead7bb3d3cec5d62366d1b521cb6316c60a342"
     },
     {
       "file": "executor-brief-set.json",
@@ -931,5 +935,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "75d2aaf8de8b168b272f2301072ac45b3194b82f7cdb24d700a507e5eabf17a3"
+  "corpusSha256": "40403a3a7fbe89a59d9f87e02751ea34729f9d18aea3f1f761dc326d131b9a7a"
 }

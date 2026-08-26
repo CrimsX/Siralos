@@ -3299,6 +3299,14 @@ const EXECUTOR_BRIEF_CASES = new Set([
   "new-file-discipline-signals",
   "brief-render-bounded",
   "context-pack-refs",
+  "briefing-service-memoization",
+  "s3m8-real-manifest",
+  "s3m9-real-manifest",
+  "s3m10-real-manifest",
+  "s3m11-real-manifest",
+  "milestone-selection-by-request",
+  "dynamic-context-digest-invalidation",
+  "fingerprint-canonical-stability",
 ]);
 
 const R13_4_MAX_VALUE_NODES = 8192;

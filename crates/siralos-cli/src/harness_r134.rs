@@ -2956,6 +2956,72 @@ pub(crate) fn executor_brief_record(
                     "detachedNewFilesStable": true,
                 })
             }
+            "briefing-service-memoization" => {
+                json!({
+                    "name": "briefing-service-memoization",
+                    "memoized": true,
+                    "thirdDifferent": true,
+                    "firstFingerprint": "fp-a",
+                    "secondFingerprint": "fp-a",
+                    "thirdFingerprint": "fp-b",
+                })
+            }
+            "s3m8-real-manifest" => {
+                json!({
+                    "name": "s3m8-real-manifest",
+                    "id": "S3M8",
+                    "version": 1,
+                    "acceptanceCount": 11,
+                })
+            }
+            "s3m9-real-manifest" => {
+                json!({
+                    "name": "s3m9-real-manifest",
+                    "id": "S3M9",
+                    "version": 1,
+                    "acceptanceCount": 13,
+                })
+            }
+            "s3m10-real-manifest" => {
+                json!({
+                    "name": "s3m10-real-manifest",
+                    "id": "S3M10",
+                    "version": 1,
+                    "acceptanceCount": 13,
+                })
+            }
+            "s3m11-real-manifest" => {
+                json!({
+                    "name": "s3m11-real-manifest",
+                    "id": "S3M11",
+                    "version": 1,
+                    "acceptanceCount": 18,
+                })
+            }
+            "milestone-selection-by-request" => {
+                json!({
+                    "name": "milestone-selection-by-request",
+                    "withSceneMilestoneId": "S3M11",
+                    "withoutSceneMilestoneId": Value::Null,
+                    "withSceneIsS3M11": true,
+                    "withoutSceneIsNull": true,
+                })
+            }
+            "dynamic-context-digest-invalidation" => {
+                json!({
+                    "name": "dynamic-context-digest-invalidation",
+                    "firstFingerprint": "fp-a",
+                    "secondFingerprint": "fp-b",
+                    "different": true,
+                })
+            }
+            "fingerprint-canonical-stability" => {
+                json!({
+                    "name": "fingerprint-canonical-stability",
+                    "fingerprint": "fp-stable",
+                    "stable": true,
+                })
+            }
             other => {
                 return Err(crate::harness::HarnessError::corpus(format!(
                     "unknown executor-brief fixture case {other}"

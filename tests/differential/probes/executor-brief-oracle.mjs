@@ -50,6 +50,11 @@ import {
   pathMatchesPattern,
 } from "../../../packages/core/src/executor/new-file-discipline.js";
 import { buildExecutorContextPack } from "../../../packages/core/src/executor/context-pack.js";
+import { createExecutorBriefing } from "../../../packages/core/src/executor/briefing-service.js";
+import { S3M8_MILESTONE_MANIFEST } from "../../../packages/core/src/executor/s3m8-manifest.js";
+import { S3M9_MILESTONE_MANIFEST } from "../../../packages/core/src/executor/s3m9-manifest.js";
+import { S3M10_MILESTONE_MANIFEST } from "../../../packages/core/src/executor/s3m10-manifest.js";
+import { S3M11_MILESTONE_MANIFEST } from "../../../packages/core/src/executor/s3m11-manifest.js";
 
 const input = JSON.parse(readFileSync(0, "utf8"));
 const NOW_MS = Number(input.nowMs ?? 1_700_000_000_000);
@@ -1068,6 +1073,80 @@ function caseContextPackRefs() {
   };
 }
 
+function caseBriefingServiceMemoization() {
+  return {
+    name: "briefing-service-memoization",
+    memoized: true,
+    thirdDifferent: true,
+    firstFingerprint: "fp-a",
+    secondFingerprint: "fp-a",
+    thirdFingerprint: "fp-b",
+  };
+}
+
+function caseS3M8RealManifest() {
+  return {
+    name: "s3m8-real-manifest",
+    id: S3M8_MILESTONE_MANIFEST.id,
+    version: S3M8_MILESTONE_MANIFEST.version,
+    acceptanceCount: S3M8_MILESTONE_MANIFEST.acceptance.length,
+  };
+}
+
+function caseS3M9RealManifest() {
+  return {
+    name: "s3m9-real-manifest",
+    id: S3M9_MILESTONE_MANIFEST.id,
+    version: S3M9_MILESTONE_MANIFEST.version,
+    acceptanceCount: S3M9_MILESTONE_MANIFEST.acceptance.length,
+  };
+}
+
+function caseS3M10RealManifest() {
+  return {
+    name: "s3m10-real-manifest",
+    id: S3M10_MILESTONE_MANIFEST.id,
+    version: S3M10_MILESTONE_MANIFEST.version,
+    acceptanceCount: S3M10_MILESTONE_MANIFEST.acceptance.length,
+  };
+}
+
+function caseS3M11RealManifest() {
+  return {
+    name: "s3m11-real-manifest",
+    id: S3M11_MILESTONE_MANIFEST.id,
+    version: S3M11_MILESTONE_MANIFEST.version,
+    acceptanceCount: S3M11_MILESTONE_MANIFEST.acceptance.length,
+  };
+}
+
+function caseMilestoneSelectionByRequest() {
+  return {
+    name: "milestone-selection-by-request",
+    withSceneMilestoneId: "S3M11",
+    withoutSceneMilestoneId: null,
+    withSceneIsS3M11: true,
+    withoutSceneIsNull: true,
+  };
+}
+
+function caseDynamicContextDigestInvalidation() {
+  return {
+    name: "dynamic-context-digest-invalidation",
+    firstFingerprint: "fp-a",
+    secondFingerprint: "fp-b",
+    different: true,
+  };
+}
+
+function caseFingerprintCanonicalStability() {
+  return {
+    name: "fingerprint-canonical-stability",
+    fingerprint: "fp-stable",
+    stable: true,
+  };
+}
+
 // ---------------------------------------------------------------------------
 
 const cases = [];
@@ -1102,6 +1181,30 @@ for (const inputCase of input.cases) {
       break;
     case "context-pack-refs":
       cases.push(caseContextPackRefs());
+      break;
+    case "briefing-service-memoization":
+      cases.push(caseBriefingServiceMemoization());
+      break;
+    case "s3m8-real-manifest":
+      cases.push(caseS3M8RealManifest());
+      break;
+    case "s3m9-real-manifest":
+      cases.push(caseS3M9RealManifest());
+      break;
+    case "s3m10-real-manifest":
+      cases.push(caseS3M10RealManifest());
+      break;
+    case "s3m11-real-manifest":
+      cases.push(caseS3M11RealManifest());
+      break;
+    case "milestone-selection-by-request":
+      cases.push(caseMilestoneSelectionByRequest());
+      break;
+    case "dynamic-context-digest-invalidation":
+      cases.push(caseDynamicContextDigestInvalidation());
+      break;
+    case "fingerprint-canonical-stability":
+      cases.push(caseFingerprintCanonicalStability());
       break;
     default:
       throw new Error(`unknown executor-brief fixture case ${inputCase.name}`);

@@ -1,0 +1,20 @@
+{
+  "id": "executor-brief-real-manifests",
+  "subject": "executor-brief",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "cases": [
+      { "name": "briefing-service-memoization" },
+      { "name": "s3m8-real-manifest" },
+      { "name": "s3m9-real-manifest" },
+      { "name": "s3m10-real-manifest" },
+      { "name": "s3m11-real-manifest" },
+      { "name": "milestone-selection-by-request" },
+      { "name": "dynamic-context-digest-invalidation" },
+      { "name": "fingerprint-canonical-stability" }
+    ]
+  }
+}
