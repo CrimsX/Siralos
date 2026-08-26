@@ -18,7 +18,7 @@ and gates the [R12 Disposition Execution](20-r12-disposition.md).
 | R13.1 Host introspection & authority        | `security-permissions`, `command-catalog`, `capability-doctor` | [decision 22](../decisions/22-r13-1-entry-review.md) PASS | `e2ee231` (corpus v24, parity held 220/220 locally)   |
 | R13.2 Workspace guidance                    | `instructions-resolution`, `knowledge-revisions`               | [decision 23](../decisions/23-r13-2-entry-review.md) PASS | `d682e62` (corpus v25, parity held 222/222 locally) — |
 | R13.3 External knowledge boundaries         | `reference-identity`, `research-policy`                        | [decision 24](../decisions/24-r13-3-entry-review.md) PASS | `ef597de` (corpus v26, parity held 224/224 locally)   |
-| R13.4 Planning & briefing                   | `planning-runtime`, `executor-brief`                           | [decision 26](../decisions/26-r13-4-entry-review.md) PASS | —                                                     |
+| R13.4 Planning & briefing                   | `planning-runtime`, `executor-brief`                           | [decision 26](../decisions/26-r13-4-entry-review.md) PASS | landed (corpus v27, parity held 226/226 locally)      |
 | R13.5 CLI product composition (full parity) | `cli-session`                                                  | pending                                                   | —                                                     |
 
 ## Definition of done
