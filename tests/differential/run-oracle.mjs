@@ -55,6 +55,8 @@ const INSTRUCTIONS_PROBE = join(HERE, "probes", "instructions-oracle.mjs");
 const KNOWLEDGE_PROBE = join(HERE, "probes", "knowledge-oracle.mjs");
 const REFERENCE_IDENTITY_PROBE = join(HERE, "probes", "reference-identity-oracle.mjs");
 const RESEARCH_POLICY_PROBE = join(HERE, "probes", "research-policy-oracle.mjs");
+const PLANNING_RUNTIME_PROBE = join(HERE, "probes", "planning-runtime-oracle.mjs");
+const EXECUTOR_BRIEF_PROBE = join(HERE, "probes", "executor-brief-oracle.mjs");
 const GODOT_SCENE_RESOLVE_PROBE = join(HERE, "probes", "godot-scene-resolve-oracle.mjs");
 const GODOT_DISCOVERY_PROBE = join(HERE, "probes", "godot-discovery-oracle.mjs");
 const GODOT_KNOWLEDGE_PROBE = join(HERE, "probes", "godot-knowledge-oracle.mjs");
@@ -443,6 +445,22 @@ export function runScenario(scenario, root) {
       subject: scenario.subject,
       outcome: SCENARIO_OUTCOME.COMPLETED,
       result: runWorkspaceProbe(RESEARCH_POLICY_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "planning-runtime") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(PLANNING_RUNTIME_PROBE, scenario.subject, scenario.input),
+    };
+  }
+  if (scenario.subject === "executor-brief") {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(EXECUTOR_BRIEF_PROBE, scenario.subject, scenario.input),
     };
   }
   if (scenario.subject === "capability-doctor") {

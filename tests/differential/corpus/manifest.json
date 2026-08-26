@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 26,
+  "corpusVersion": 27,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -229,6 +229,10 @@
     {
       "file": "domain-lifecycle.session-scope.json",
       "sha256": "c4bde411d7da51837e53eed658b318faf201d4eca4f7c6480aa970ef58e38036"
+    },
+    {
+      "file": "executor-brief-set.json",
+      "sha256": "3d7396791f27eb1cd4f15175f161788d3f330d929895ecd6e940d409b3015a4c"
     },
     {
       "file": "git-inspection.enforcing-missing.json",
@@ -497,6 +501,10 @@
     {
       "file": "language-structure.typical.json",
       "sha256": "ecf216a9df5385cfb9659d85976d7adad3654903b95ddc37bd68ff4eeaaf4ac4"
+    },
+    {
+      "file": "planning-runtime-set.json",
+      "sha256": "03aec64c0cdf0295ac69073c286746f0973a31e8a340befd26f1baf93612f46f"
     },
     {
       "file": "provider-turn.basic.json",
@@ -919,5 +927,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "470719c8703115547596b5e5e8a1dbfdb721647de3c0c7d936d11b55576db0dd"
+  "corpusSha256": "e9ed39dcba8c034a5f2925dd63801261efaf2649d67cebca4c361f1fe3c410f0"
 }

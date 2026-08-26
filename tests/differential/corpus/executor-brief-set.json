@@ -1,0 +1,22 @@
+{
+  "id": "executor-brief-set",
+  "subject": "executor-brief",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "cases": [
+      { "name": "execution-contract-identity" },
+      { "name": "milestone-manifest-acceptance-ids" },
+      { "name": "acceptance-evaluator-evidence-only" },
+      { "name": "brief-compile-determinism" },
+      { "name": "brief-active-working-set" },
+      { "name": "workspace-scope-classification" },
+      { "name": "documentation-selection" },
+      { "name": "new-file-discipline-signals" },
+      { "name": "brief-render-bounded" },
+      { "name": "context-pack-refs" }
+    ]
+  }
+}

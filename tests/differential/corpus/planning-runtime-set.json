@@ -1,0 +1,22 @@
+{
+  "id": "planning-runtime-set",
+  "subject": "planning-runtime",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "cases": [
+      { "name": "plan-model-identity" },
+      { "name": "plan-validation-strict" },
+      { "name": "planning-policy-depth" },
+      { "name": "planning-flow-phases" },
+      { "name": "plan-set-lifecycle" },
+      { "name": "plan-staleness-contract-advance" },
+      { "name": "plan-approval-binding" },
+      { "name": "plan-revision-cap" },
+      { "name": "plan-immutability-detach" },
+      { "name": "plan-invalidate-reasons" }
+    ]
+  }
+}

@@ -3060,6 +3060,34 @@ function validateCompletedResult(record, label) {
     }
     return;
   }
+  if (record.subject === "planning-runtime") {
+    assertExactKeys(record.result, ["cases"], `${label}.result`);
+    if (
+      !Array.isArray(record.result.cases) ||
+      record.result.cases.length === 0 ||
+      record.result.cases.length > 16
+    ) {
+      throw new Error(`${label}.result.cases must be a bounded array`);
+    }
+    for (const [index, entry] of record.result.cases.entries()) {
+      validatePlanningRuntimeCase(entry, `${label}.result.cases[${index}]`);
+    }
+    return;
+  }
+  if (record.subject === "executor-brief") {
+    assertExactKeys(record.result, ["cases"], `${label}.result`);
+    if (
+      !Array.isArray(record.result.cases) ||
+      record.result.cases.length === 0 ||
+      record.result.cases.length > 16
+    ) {
+      throw new Error(`${label}.result.cases must be a bounded array`);
+    }
+    for (const [index, entry] of record.result.cases.entries()) {
+      validateExecutorBriefCase(entry, `${label}.result.cases[${index}]`);
+    }
+    return;
+  }
   if (record.subject === "godot-scene-resolve") {
     validateGodotSceneResolveResult(record.result, label);
     return;
@@ -3231,4 +3259,99 @@ export function parseCanonicalRecordDocument(text, source) {
 /** Machine-readable stderr diagnostic for an expected harness failure. */
 export function harnessDiagnostic(category, code, message) {
   return `${HARNESS_DIAGNOSTIC_PREFIX}${canonicalizeJson({ category, code, message })}`;
+}
+
+const PLANNING_RUNTIME_CASES = new Set([
+  "plan-model-identity",
+  "plan-validation-strict",
+  "planning-policy-depth",
+  "planning-flow-phases",
+  "plan-set-lifecycle",
+  "plan-staleness-contract-advance",
+  "plan-approval-binding",
+  "plan-revision-cap",
+  "plan-immutability-detach",
+  "plan-invalidate-reasons",
+]);
+
+const EXECUTOR_BRIEF_CASES = new Set([
+  "execution-contract-identity",
+  "milestone-manifest-acceptance-ids",
+  "acceptance-evaluator-evidence-only",
+  "brief-compile-determinism",
+  "brief-active-working-set",
+  "workspace-scope-classification",
+  "documentation-selection",
+  "new-file-discipline-signals",
+  "brief-render-bounded",
+  "context-pack-refs",
+]);
+
+const R13_4_MAX_VALUE_NODES = 8192;
+const R13_4_MAX_DEPTH = 12;
+const R13_4_MAX_STRING_BYTES = 16 * 1024;
+
+function r13_4BoundedValue(value, label, depth = 0) {
+  if (depth > R13_4_MAX_DEPTH) {
+    throw new Error(`${label} exceeds the maximum nesting depth`);
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return;
+  }
+  if (typeof value === "string") {
+    if (Buffer.byteLength(value, "utf8") > R13_4_MAX_STRING_BYTES) {
+      throw new Error(`${label} exceeds the string byte bound`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > R13_4_MAX_VALUE_NODES) {
+      throw new Error(`${label} exceeds the array bound`);
+    }
+    for (const entry of value) r13_4BoundedValue(entry, label, depth + 1);
+    return;
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value);
+    if (keys.length > R13_4_MAX_VALUE_NODES) {
+      throw new Error(`${label} exceeds the object bound`);
+    }
+    for (const key of keys) r13_4BoundedValue(value[key], `${label}.${key}`, depth + 1);
+    return;
+  }
+  throw new Error(`${label} contains a non-JSON value`);
+}
+
+function validatePlanningRuntimeCase(entry, label) {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new Error(`${label} must be an object`);
+  }
+  if (
+    !PLANNING_RUNTIME_CASES.has(entry.name) ||
+    Object.keys(entry).some((key) => key !== "name" && !r13IsPlainObjectValue(entry[key]))
+  ) {
+    throw new Error(`${label}.name is unknown or fields are malformed`);
+  }
+  r13_4BoundedValue(entry, label);
+}
+
+function validateExecutorBriefCase(entry, label) {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new Error(`${label} must be an object`);
+  }
+  if (!EXECUTOR_BRIEF_CASES.has(entry.name)) {
+    throw new Error(`${label}.name is unknown`);
+  }
+  r13_4BoundedValue(entry, label);
+}
+
+function r13IsPlainObjectValue(value) {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    Array.isArray(value) ||
+    (value !== null && typeof value === "object")
+  );
 }
