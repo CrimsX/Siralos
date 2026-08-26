@@ -1,0 +1,17 @@
+{
+  "id": "cli-session-set",
+  "subject": "cli-session",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "cases": [
+      { "name": "input-parsing" },
+      { "name": "session-lifecycle" },
+      { "name": "help-and-commands" },
+      { "name": "status-view" },
+      { "name": "unknown-command" },
+      { "name": "prompt-turn" }
+    ]
+  }
+}

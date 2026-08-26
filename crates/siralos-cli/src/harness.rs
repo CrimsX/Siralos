@@ -87,8 +87,9 @@ const SUBJECT_RR_IDENTITY: &str = "runtime-readiness.identity";
 const SUBJECT_RR_BUDGETS: &str = "runtime-readiness.budgets";
 const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
 const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
+const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 27;
+const CORPUS_VERSION: u64 = 28;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -101,6 +102,7 @@ const MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_GODOT_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
+const MAX_CLI_SESSION_INPUT_BYTES: usize = 64 * 1024;
 const RUNNER_PROTOCOL_SCHEMA_VERSION: u64 = 1;
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_SCENARIO_BYTES: usize = 16 * 1024;
@@ -456,6 +458,7 @@ fn validate_scenario(
             | SUBJECT_RR_BUDGETS
             | SUBJECT_RR_LIFECYCLE
             | SUBJECT_RR_DOCTOR
+            | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
             "scenario {} has an unsupported subject",
@@ -554,7 +557,8 @@ fn validate_scenario(
         | SUBJECT_REFERENCE_IDENTITY
         | SUBJECT_RESEARCH_POLICY
         | SUBJECT_PLANNING_RUNTIME
-        | SUBJECT_EXECUTOR_BRIEF => {
+        | SUBJECT_EXECUTOR_BRIEF
+        | SUBJECT_CLI_SESSION => {
             let input = scenario.input.as_ref().ok_or_else(|| {
                 HarnessError::corpus(format!(
                     "scenario {} {} requires an input object",
@@ -657,6 +661,11 @@ fn validate_scenario(
                     input,
                 )?;
             }
+            let cli_session_subject =
+                scenario.subject.as_str() == SUBJECT_CLI_SESSION;
+            if cli_session_subject {
+                crate::harness_cli_session::validate_cli_session_input(input)?;
+            }
             let max_input_bytes = if provider_subject {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -673,6 +682,8 @@ fn validate_scenario(
                 MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES
             } else if r13_planning_briefing_subject {
                 crate::harness_r134::MAX_R13_PLANNING_BRIEFING_INPUT_BYTES
+            } else if cli_session_subject {
+                MAX_CLI_SESSION_INPUT_BYTES
             } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
@@ -1487,6 +1498,19 @@ fn run_scenario(
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
             )
+        }
+        SUBJECT_CLI_SESSION => {
+            let input = scenario.input.as_ref().expect(
+                "cli-session input was validated while loading the corpus",
+            );
+            let result =
+                crate::harness_cli_session::cli_session_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
         }
         _ => unreachable!("subject was validated while loading the corpus"),
     }

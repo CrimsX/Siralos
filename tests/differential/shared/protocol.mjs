@@ -3088,6 +3088,20 @@ function validateCompletedResult(record, label) {
     }
     return;
   }
+  if (record.subject === "cli-session") {
+    assertExactKeys(record.result, ["cases"], `${label}.result`);
+    if (
+      !Array.isArray(record.result.cases) ||
+      record.result.cases.length === 0 ||
+      record.result.cases.length > 16
+    ) {
+      throw new Error(`${label}.result.cases must be a bounded array`);
+    }
+    for (const [index, entry] of record.result.cases.entries()) {
+      validateCliSessionCase(entry, `${label}.result.cases[${index}]`);
+    }
+    return;
+  }
   if (record.subject === "godot-scene-resolve") {
     validateGodotSceneResolveResult(record.result, label);
     return;
@@ -3340,6 +3354,25 @@ function validateExecutorBriefCase(entry, label) {
     throw new Error(`${label} must be an object`);
   }
   if (!EXECUTOR_BRIEF_CASES.has(entry.name)) {
+    throw new Error(`${label}.name is unknown`);
+  }
+  r13_4BoundedValue(entry, label);
+}
+
+const CLI_SESSION_CASES = new Set([
+  "input-parsing",
+  "session-lifecycle",
+  "help-and-commands",
+  "status-view",
+  "unknown-command",
+  "prompt-turn",
+]);
+
+function validateCliSessionCase(entry, label) {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new Error(`${label} must be an object`);
+  }
+  if (!CLI_SESSION_CASES.has(entry.name)) {
     throw new Error(`${label}.name is unknown`);
   }
   r13_4BoundedValue(entry, label);

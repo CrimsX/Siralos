@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 27,
+  "corpusVersion": 28,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -25,6 +25,10 @@
     {
       "file": "checkpoint.undo-plan.json",
       "sha256": "d163c153db0e3d27f224818b077620ff3f57ea9bee461cb06bcd14531bc1172e"
+    },
+    {
+      "file": "cli-session-set.json",
+      "sha256": "c90ecb0a4e4fe174136b72bfad42bb148e34a08327893e6e749c0ba4c3916c6e"
     },
     {
       "file": "command-catalog-snapshot.json",
@@ -927,5 +931,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "e9ed39dcba8c034a5f2925dd63801261efaf2649d67cebca4c361f1fe3c410f0"
+  "corpusSha256": "75d2aaf8de8b168b272f2301072ac45b3194b82f7cdb24d700a507e5eabf17a3"
 }

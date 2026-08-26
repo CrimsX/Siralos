@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 27;
+export const CORPUS_VERSION = 28;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -61,6 +61,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "runtime-readiness.lifecycle",
   "runtime-readiness.doctor",
   "recovery-taxonomy",
+  "cli-session",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
 export const ALLOWED_PARITY = new Set(["required", "informational"]);
@@ -89,6 +90,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   r13GuidanceInputBytes: 64 * 1024,
   r13ExternalKnowledgeInputBytes: 64 * 1024,
   r13PlanningBriefingInputBytes: 64 * 1024,
+  cliSessionInputBytes: 64 * 1024,
   godotInputBytes: 64 * 1024,
 });
 
@@ -892,6 +894,42 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  if (scenario.subject === "cli-session") {
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (
+      byteLength(canonicalizeJson(scenario.input)) >
+      CONTRACT_LIMITS.cliSessionInputBytes
+    ) {
+      throw new Error(
+        `${label}.input exceeds ${CONTRACT_LIMITS.cliSessionInputBytes} UTF-8 bytes`,
+      );
+    }
+    const cases = scenario.input.cases;
+    if (!Array.isArray(cases) || cases.length === 0 || cases.length > 16) {
+      throw new Error(
+        `${label} cli-session input must contain a bounded non-empty cases array`,
+      );
+    }
+    for (const entry of cases) {
+      if (
+        !isPlainRecord(entry) ||
+        typeof entry.name !== "string" ||
+        entry.name.length === 0
+      ) {
+        throw new Error(
+          `${label} cli-session cases must carry a non-empty name`,
+        );
+      }
+    }
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} cli-session inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    return;
+  }
   const GODOT_SUBJECTS = new Set([
     "godot-scene-resolve",
     "godot-discovery",
@@ -1058,6 +1096,7 @@ export function validateScenario(scenario, file) {
     "runtime-readiness.lifecycle",
     "runtime-readiness.doctor",
     "recovery-taxonomy",
+    "cli-session",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
     ? ["id", "subject", "platforms", "parity", "env", "input"]
