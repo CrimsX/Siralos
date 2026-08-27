@@ -12,6 +12,8 @@
 //! - [`artifacts`] — artifact references, budgets, and admission
 //! - [`budget`] — RuntimeBudget, cancellation, restart reconciliation
 //! - [`doctor`] — runtime readiness doctor surface
+//! - [`evidence`] — bounded structured runtime evidence (Stage 4.1)
+//! - [`execution`] — host-authorized controlled runtime execution (Stage 4.1)
 //! - [`faults`] — deterministic fake-process fault scripts
 //! - [`identity`] — causal run/operation ids and trace refs
 //! - [`readiness`] — fail-closed readiness manifests
@@ -27,6 +29,8 @@
 pub mod artifacts;
 pub mod budget;
 pub mod doctor;
+pub mod evidence;
+pub mod execution;
 pub mod faults;
 pub mod identity;
 pub mod readiness;
@@ -46,6 +50,20 @@ pub use budget::{
     request_cancellation,
 };
 pub use doctor::{DoctorCapabilities, build_runtime_readiness_diagnostic};
+pub use evidence::{
+    MAX_RUNTIME_EVIDENCE_STDERR_BYTES, MAX_RUNTIME_EVIDENCE_STDOUT_BYTES,
+    MAX_RUNTIME_EVIDENCE_TOTAL_BYTES, RuntimeEvidence, RuntimeEvidenceInput,
+    create_runtime_evidence, render_runtime_evidence,
+};
+pub use execution::{
+    IDENTITY_BOUND_UNAVAILABLE_REASON, MAX_ARG_BYTES, MAX_ARGS,
+    MAX_COMMAND_BYTES, MAX_OPERATION_ID_BYTES, MAX_RUN_ID_BYTES,
+    PROCESS_EXECUTE_CAPABILITY, RuntimeExecutionDisposition,
+    RuntimeExecutionOutcome, RuntimeExecutionRequest,
+    decide_runtime_execution, decide_runtime_execution_with_flag,
+    digest_runtime_execution_outcome,
+    is_identity_bound_launch_primitive_available,
+};
 pub use faults::{
     FAULT_SCRIPTS, FaultScript, expected_failure_kind, list_fault_scripts,
     observe_fault_script,

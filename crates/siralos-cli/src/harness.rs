@@ -13464,7 +13464,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 231);
+        assert_eq!(loaded.len(), 236);
     }
 
     #[test]
