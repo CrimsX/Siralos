@@ -2,8 +2,8 @@
 title: "R13 Execution Register - Remaining Surface Parity Slices"
 label: "wayfinder:repair"
 type: HITL
-status: open
-resolution: null
+status: closed
+resolution: "PASS — R13 Verified at 72e20be (corpus v31, 231/231; five slices)"
 blockedBy: []
 ---
 

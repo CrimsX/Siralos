@@ -291,15 +291,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R11 is **Verified** — R1–R10 Verified as recorded
-  above; R11 (full differential, effect-boundary, security, recovery, and
-  cross-platform parity) is complete and evidence-backed: `workspace-apply`
-  and `recovery-taxonomy` landed at corpus v23 (222 fixtures,
-  217/217 applicable required scenarios), and the Tier-1 three-platform
-  dispatch returned digest-bound green audits on Linux, macOS, and Windows
-  with truthful loud sandbox skips; no unavailable effect was made
-  operational to close the gate. Next: the R12 retirement/retention
-  disposition decision.
+- **Current:** Stage 3R R13 is **Verified** — R1–R11 Verified as recorded above; R13 (Remaining TypeScript Surface Parity) is complete and evidence-backed: five slices at corpus v31, 236 files, 231/231 applicable required parity; fail-closed postures preserved. R11 remains Verified at eea0029 as the Tier-1 gate. Next: the R12 retirement/retention disposition decision.
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

@@ -35,7 +35,7 @@ const REQUIRED_METADATA = new Map([
   ["Status", "Active development"],
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
-  ["Current completed milestone", "R11"],
+  ["Current completed milestone", "R13"],
   ["Next milestone", "R12 - TypeScript reference retirement or explicit retention decision"],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
@@ -110,7 +110,8 @@ export function validateProjectContext(input) {
     !input.context.includes("R8      COMPLETE") ||
     !input.context.includes("R9      COMPLETE") ||
     !input.context.includes("R10     COMPLETE") ||
-    !input.context.includes("R11     COMPLETE")
+    !input.context.includes("R11     COMPLETE") ||
+    !input.context.includes("R13     COMPLETE")
   ) {
     violations.push("project context does not record R4-R11 complete");
   }

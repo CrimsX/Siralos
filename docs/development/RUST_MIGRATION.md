@@ -37,6 +37,7 @@ repository concepts never satisfy those identifiers by implication.
 | R9        | Optional Godot Stage-3 parity                                                                                                   | Verified       |
 | R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Verified       |
 | R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Verified       |
+| R13       | Remaining TypeScript surface parity (R13.1-13.5d)                                                                               | Verified       |
 | R12       | TypeScript reference retirement or an explicit evidence-backed retention disposition                                            | Not due        |
 
 R2 is verified: its versioned corpus is mechanically bound by scenario and
@@ -744,6 +745,8 @@ provenance in `tests/differential/evidence/r11/EVIDENCE.md`; promotion
 evidence and atomic surface list:
 `docs/wayfinder/decisions/20-r11-verified-promotion.md`. R12 — the
 retirement/retention disposition decision — requires its own HITL grilling.
+
+R13 is verified: Remaining TypeScript Surface Parity is complete and evidence-backed as five ordered slices (R13.1 authority at v24, R13.2 guidance at v25, R13.3 external knowledge at v26, R13.4 planning/briefing at v27, R13.5a-d CLI composition at v28–v31) landed at corpus version 31, 236 scenario files, 231/231 applicable required parity (4 platform skips). The differential harness now covers all TypeScript Stage-3 surfaces; fail-closed postures remain `unavailable` and the full local gate passes on worktree 72e20be.
 
 ## Porting gate
 
