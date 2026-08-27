@@ -11,7 +11,14 @@
       { "name": "help-and-commands" },
       { "name": "status-view" },
       { "name": "unknown-command" },
-      { "name": "prompt-turn" }
+      { "name": "prompt-turn" },
+      { "name": "godot-commands-unavailable" },
+      { "name": "gdscript-commands-unavailable" },
+      { "name": "develop-commands-unavailable" },
+      { "name": "system-commands-unavailable" },
+      { "name": "input-queue-ownership" },
+      { "name": "sanitizer-boundary" },
+      { "name": "session-ordering-determinism" }
     ]
   }
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 30,
+  "corpusVersion": 31,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -28,7 +28,7 @@
     },
     {
       "file": "cli-session-set.json",
-      "sha256": "c90ecb0a4e4fe174136b72bfad42bb148e34a08327893e6e749c0ba4c3916c6e"
+      "sha256": "12683848ae05215c0a1787d91915f26c9b7f0c81050087f4825fc9d6a12e812c"
     },
     {
       "file": "command-catalog-snapshot.json",
@@ -947,5 +947,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "d4fe40f0c30a95a60e429c1f3a6b8097bcdd25e3c313d939f6cd5af9d480a7e3"
+  "corpusSha256": "e24f4bb15ee532e9825e23f8f61a0912e13a1d6a8e5b4bffc90ce1fae78af504"
 }

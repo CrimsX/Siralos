@@ -1754,6 +1754,30 @@ function validateKnowledgeRevisionsCase(entry, label) {
     }
     return;
   }
+  if (Object.hasOwn(entry, "candidateCount") && Object.hasOwn(entry, "subjectKeys")) {
+    assertExactKeys(
+      entry,
+      ["candidateCount", "hasHasDotnet", "hasName", "hasVersion", "subjectKeys"],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "acceptedCount") && Object.hasOwn(entry, "activeFacts")) {
+    assertExactKeys(
+      entry,
+      ["acceptedCount", "activeFacts", "candidateCount", "hasDotnetFact"],
+      label,
+    );
+    return;
+  }
+  if (Object.hasOwn(entry, "emptyVersionCount")) {
+    assertExactKeys(
+      entry,
+      ["emptyVersionCount", "emptyVersionHasDotnet", "nullNameCount", "nullNameHasVersion"],
+      label,
+    );
+    return;
+  }
   assertExactKeys(
     entry,
     [
@@ -1881,6 +1905,33 @@ function validateReferenceIdentityCase(entry, label) {
       ["b2Snapshot", "b3Snapshot", "currentFingerprint", "evictedReadsNull", "name"],
       label,
     );
+    return;
+  }
+  if (
+    Object.hasOwn(entry, "count") &&
+    Object.hasOwn(entry, "firstPath") &&
+    Object.keys(entry).length === 4
+  ) {
+    assertExactKeys(entry, ["count", "firstPath", "name", "secondPath"], label);
+    return;
+  }
+  if (
+    Object.hasOwn(entry, "localStatus") &&
+    Object.hasOwn(entry, "repositoryStatus") &&
+    Object.keys(entry).length === 3
+  ) {
+    assertExactKeys(entry, ["localStatus", "name", "repositoryStatus"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "matchCount") && Object.keys(entry).length === 3) {
+    assertExactKeys(entry, ["firstMatch", "matchCount", "name"], label);
+    return;
+  }
+  if (
+    Object.hasOwn(entry, "visibleWhenReady") &&
+    Object.keys(entry).length === 3
+  ) {
+    assertExactKeys(entry, ["hiddenWhenNone", "name", "visibleWhenReady"], label);
     return;
   }
   assertExactKeys(
@@ -2029,6 +2080,22 @@ function validateResearchPolicyCase(entry, label) {
       ],
       label,
     );
+    return;
+  }
+  if (Object.hasOwn(entry, "count") && Object.hasOwn(entry, "firstEvidenceId")) {
+    assertExactKeys(entry, ["count", "firstEvidenceId", "name"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "found") && Object.hasOwn(entry, "notFoundStatus")) {
+    assertExactKeys(entry, ["found", "name", "notFoundStatus"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "visibleWhenAllow")) {
+    assertExactKeys(entry, ["hiddenWhenDeny", "name", "visibleWhenAllow"], label);
+    return;
+  }
+  if (Object.hasOwn(entry, "hasProvenance")) {
+    assertExactKeys(entry, ["hasProvenance", "hasSource", "name"], label);
     return;
   }
   assertExactKeys(
@@ -3374,6 +3441,13 @@ const CLI_SESSION_CASES = new Set([
   "status-view",
   "unknown-command",
   "prompt-turn",
+  "godot-commands-unavailable",
+  "gdscript-commands-unavailable",
+  "develop-commands-unavailable",
+  "system-commands-unavailable",
+  "input-queue-ownership",
+  "sanitizer-boundary",
+  "session-ordering-determinism",
 ]);
 
 function validateCliSessionCase(entry, label) {

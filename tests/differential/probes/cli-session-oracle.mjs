@@ -130,18 +130,66 @@ async function main() {
   }
 
   async function runSession(lines) {
-    workspaceRoot = cliApp.workspaceRoot;
-    configPath = cliApp.configPath;
+    // Fresh application per session to keep determinism (mirrors Rust harness).
+    const freshCliApp = await createCliApplication({
+      configPath: join(workspace, "config.json"),
+    });
+    workspaceRoot = freshCliApp.workspaceRoot;
+    configPath = freshCliApp.configPath;
     const capture = {
       writes: [],
       prompts: [],
       cleared: 0,
       sanitizer: new TerminalSanitizer(),
     };
+    function freshSessionInfoFor() {
+      const s = freshCliApp;
+      return {
+        workspaceRoot: s.workspaceRoot,
+        configPath: s.configPath,
+        policy: s.policy,
+        profile: s.profile,
+        provider: s.provider,
+        selfReference: s.selfReference,
+        tools: s.tools,
+        security: s.security,
+        git: s.git,
+        godot: s.godot,
+        godotProbe: s.godotProbe,
+        knowledge: s.knowledge,
+        diagnostics: s.diagnostics,
+        language: s.language,
+        development: s.development,
+        reviewer: {
+          async review() {
+            return { type: "deny", reason: "probe" };
+          },
+        },
+        checkpoints: s.checkpoints,
+        undo: s.undo,
+        runners: s.runners,
+        sandbox: s.sandbox,
+        tasks: s.tasks,
+        taskSources: s.taskSources,
+        projection: s.projection,
+        revisions: s.revisions,
+        workspaceRead: s.workspaceRead,
+        instructions: s.instructions,
+        projectKnowledge: s.projectKnowledge,
+        references: s.references,
+        referenceMaterializer: s.referenceMaterializer,
+        referenceConfigError: s.referenceConfigError,
+        research: s.research,
+        researchSources: s.researchSources,
+        planner: s.planner,
+        briefing: s.briefing,
+        milestoneManifest: s.milestoneManifest,
+      };
+    }
     const exitCode = await runInteractiveSession(
       makeIo(capture),
-      cliApp.application,
-      sessionInfoFor(),
+      freshCliApp.application,
+      freshSessionInfoFor(),
       undefined,
       makeQueue(lines),
     );
@@ -209,6 +257,143 @@ async function main() {
       case "prompt-turn": {
         const turn = await runSession(["add a greeting to src/app.ts", "/status"]);
         cases.push({ name: "prompt-turn", writes: turn.writes });
+        break;
+      }
+      case "godot-commands-unavailable": {
+        const session = await runSession([
+          "/godot",
+          "/godot-installations",
+          "/godot-project",
+          "/godot-doctor",
+          "/godot-probe",
+          "/godot-probe-status",
+          "/godot-knowledge",
+          "/godot-knowledge-refresh",
+          "/godot-api test",
+        ]);
+        cases.push({
+          name: "godot-commands-unavailable",
+          writes: session.writes,
+          writeCount: session.writes.length,
+          exitCode: session.exitCode,
+        });
+        break;
+      }
+      case "gdscript-commands-unavailable": {
+        const session = await runSession([
+          "/gdscript-check src/app.gd",
+          "/gdscript-diagnostics",
+          "/gdscript-lsp",
+          "/gdscript-lsp-stop",
+          "/gdscript-hover src/app.gd 1 1",
+          "/gdscript-complete src/app.gd 1 1",
+          "/gdscript-definition src/app.gd 1 1",
+        ]);
+        cases.push({
+          name: "gdscript-commands-unavailable",
+          writes: session.writes,
+          writeCount: session.writes.length,
+          exitCode: session.exitCode,
+        });
+        break;
+      }
+      case "develop-commands-unavailable": {
+        const session = await runSession([
+          "/develop add feature",
+          "/plan test",
+          "/development-status",
+          "/quality",
+          "/review-change",
+        ]);
+        cases.push({
+          name: "develop-commands-unavailable",
+          writes: session.writes,
+          writeCount: session.writes.length,
+          exitCode: session.exitCode,
+        });
+        break;
+      }
+      case "system-commands-unavailable": {
+        const session = await runSession([
+          "/sandbox",
+          "/permissions",
+          "/git-status",
+          "/diff",
+          "/checkpoints",
+          "/undo",
+          "/commands",
+          "/cancel",
+        ]);
+        cases.push({
+          name: "system-commands-unavailable",
+          writes: session.writes,
+          writeCount: session.writes.length,
+          exitCode: session.exitCode,
+        });
+        break;
+      }
+      case "input-queue-ownership": {
+        const drained = await runSession([]);
+        const clearOnce = await runSession(["/clear"]);
+        const interleaved = await runSession(["hello", "/status", "world", "/help"]);
+        const empty = await runSession(["   ", "", "   "]);
+        cases.push({
+          name: "input-queue-ownership",
+          drainedExitCode: drained.exitCode,
+          drainedWrites: drained.writes.length,
+          clearOnceCleared: clearOnce.cleared,
+          clearOnceWrites: clearOnce.writes.length,
+          interleavedWrites: interleaved.writes,
+          interleavedWriteCount: interleaved.writes.length,
+          interleavedCleared: interleaved.cleared,
+          emptyWrites: empty.writes.length,
+          emptyExitCode: empty.exitCode,
+        });
+        break;
+      }
+      case "sanitizer-boundary": {
+        const sanitizer = new TerminalSanitizer();
+        const a = sanitizer.push("\u001b[31mred\u001b[0m");
+        const b = sanitizer.push("a\u001b]8;;https://example.com\u0007b");
+        const c = sanitizer.push("\u0000\u0001\u0008\u007f\u0080\u009f");
+        const d = sanitizer.push("\u001b[");
+        const e = sanitizer.push("31mhello");
+        const f = sanitizer.flush();
+        const g = sanitizer.push("normal\u001b");
+        const h = sanitizer.flush();
+        const s4 = new TerminalSanitizer();
+        const part1 = s4.push("\u{1f600}");
+        const part2 = s4.push("x");
+        const part3 = s4.flush();
+        const session = await runSession(["/status"]);
+        const containsWorkspacePlaceholder = session.writes.join("").includes("<workspace>");
+        cases.push({
+          name: "sanitizer-boundary",
+          csiStripped: a,
+          oscStripped: b,
+          controls: c,
+          splitCsi: d + e + f,
+          loneEscape: g + h,
+          emojiPreserved: part1 + part2 + part3,
+          containsWorkspacePlaceholder,
+        });
+        break;
+      }
+      case "session-ordering-determinism": {
+        const lines = ["/status", "hello world", "/status", "/help"];
+        const first = await runSession(lines);
+        const second = await runSession(lines);
+        const firstJoined = first.writes.join("");
+        cases.push({
+          name: "session-ordering-determinism",
+          firstWrites: first.writes,
+          secondWrites: second.writes,
+          identical: JSON.stringify(first.writes) === JSON.stringify(second.writes),
+          writeCount: first.writes.length,
+          containsWorkspacePlaceholder: firstJoined.includes("<workspace>"),
+          containsConfigPlaceholder: firstJoined.includes("<config>"),
+          exitCode: first.exitCode,
+        });
         break;
       }
       default:
