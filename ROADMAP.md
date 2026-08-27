@@ -365,8 +365,7 @@ in `docs/development/RUST_MIGRATION.md`.
 
 ### Next: Stage 4 — Controlled execution
 
-Not started. Stage 4 begins only after the Stage 3R migration and the
-pre-Stage-4 entry gate pass. Its first milestone is generic Controlled
+Stage 4 entry is **READY** pending the `stage4-entry-gate.md` 17/17 PASS re-evaluation (R12 retired). Its first milestone is generic Controlled
 Runtime Execution: sandboxed, bounded process supervision under Siralos
 authority that produces structured runtime evidence without granting
 unrestricted desktop or network access. The Godot runtime adapter is the

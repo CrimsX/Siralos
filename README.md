@@ -291,7 +291,7 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R13 is **Verified** — R1–R11 Verified as recorded above; R13 (Remaining TypeScript Surface Parity) is complete and evidence-backed: five slices at corpus v31, 236 files, 231/231 applicable required parity; fail-closed postures preserved. R11 remains Verified at eea0029 as the Tier-1 gate. Next: the R12 retirement/retention disposition decision.
+- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified. R13 closed the remaining TypeScript surfaces (v31, 236 files, 231/231); R12 retires the TypeScript oracle (audit v31 e24f4bb, 231/231) — **Rust is now the sole source of truth**. Stage 4 entry is gated by `stage4-entry-gate.md` 17/17 PASS.
 - Stage 4 has not begun
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

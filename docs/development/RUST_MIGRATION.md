@@ -24,21 +24,21 @@ repository concepts never satisfy those identifiers by implication.
 
 ## R1-R12 sequence
 
-| Milestone | Scope                                                                                                                           | Current status |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| R1        | Siralos rename, Rust workspace, and engineering standards                                                                       | Verified       |
-| R2        | Differential Behavioral Harness                                                                                                 | Verified       |
-| R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Verified       |
-| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified       |
-| R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified       |
-| R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Verified       |
-| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Verified       |
-| R8        | Optional Godot Stage-2 parity                                                                                                   | Verified       |
-| R9        | Optional Godot Stage-3 parity                                                                                                   | Verified       |
-| R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Verified       |
-| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Verified       |
-| R13       | Remaining TypeScript surface parity (R13.1-13.5d)                                                                               | Verified       |
-| R12       | TypeScript reference retirement or an explicit evidence-backed retention disposition                                            | Not due        |
+| Milestone | Scope                                                                                                                           | Current status     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| R1        | Siralos rename, Rust workspace, and engineering standards                                                                       | Verified           |
+| R2        | Differential Behavioral Harness                                                                                                 | Verified           |
+| R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Verified           |
+| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified           |
+| R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified           |
+| R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Verified           |
+| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Verified           |
+| R8        | Optional Godot Stage-2 parity                                                                                                   | Verified           |
+| R9        | Optional Godot Stage-3 parity                                                                                                   | Verified           |
+| R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Verified           |
+| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Verified           |
+| R13       | Remaining TypeScript surface parity (R13.1-13.5d)                                                                               | Verified           |
+| R12       | TypeScript reference retirement — **retired** at 4bef901 (audit v31, corpus v31) — Rust sole source of truth                    | Verified (retired) |
 
 R2 is verified: its versioned corpus is mechanically bound by scenario and
 overall digests; its reference and candidate runners have symmetric bounded
@@ -743,8 +743,7 @@ run-directory unavailability), and the macOS `SSH_AUTH_SOCK` finding is
 recorded as an accepted deviation. All artefacts are retained with matching
 provenance in `tests/differential/evidence/r11/EVIDENCE.md`; promotion
 evidence and atomic surface list:
-`docs/wayfinder/decisions/20-r11-verified-promotion.md`. R12 — the
-retirement/retention disposition decision — requires its own HITL grilling.
+`docs/wayfinder/decisions/20-r11-verified-promotion.md`. R12 — TypeScript reference retirement — is **Verified (retired)** at 4bef901 (executable worktree 72e20be): the shared evidence package (8 rows, all PASS locally: differential audit v31 231/231, corpus v31 e24f4bb, harness replay stress green, Stage 1-3 migration audit all paritied, fail-closed boundaries, typed recovery, sandbox truthfulness, performance baselines) plus the 17-criteria stage4-entry-gate are all PASS. Every required scenario is applicable and passing (4 explicit platform skips, 0 informational; no remaining required-but-not-due surface). Retained audit artifacts remain by SHA after archival: `tests/differential/out/audit.json` (231/231 at v31, candidateRecordsSha256 1271343...), `tests/differential/corpus/` digests (corpusSha256 e24f4bb...), and `docs/development/stage4-entry-gate.md` 17/17 PASS. The TypeScript source is archived as historical oracle; fixing a bug now means fixing the Rust code. This fulfills ADR 0032 retirement (measured parity, not structural).
 
 R13 is verified: Remaining TypeScript Surface Parity is complete and evidence-backed as five ordered slices (R13.1 authority at v24, R13.2 guidance at v25, R13.3 external knowledge at v26, R13.4 planning/briefing at v27, R13.5a-d CLI composition at v28–v31) landed at corpus version 31, 236 scenario files, 231/231 applicable required parity (4 platform skips). The differential harness now covers all TypeScript Stage-3 surfaces; fail-closed postures remain `unavailable` and the full local gate passes on worktree 72e20be.
 
