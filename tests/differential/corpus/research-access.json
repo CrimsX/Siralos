@@ -1,0 +1,16 @@
+{
+  "id": "research-access",
+  "subject": "research-policy",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "cases": [
+      { "name": "research-access-port-list" },
+      { "name": "research-access-port-read" },
+      { "name": "research-tools-visibility" },
+      { "name": "research-evidence-provenance" }
+    ]
+  }
+}

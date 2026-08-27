@@ -1,0 +1,18 @@
+{
+  "id": "knowledge-seeding",
+  "subject": "knowledge-revisions",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "secrets": ["hunter2"],
+    "knownFiles": [["crates/a.rs", "rev_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"]],
+    "knownResearchEvidence": [],
+    "cases": [
+      { "name": "knowledge-seeding-candidates" },
+      { "name": "knowledge-seeding-coordinator-integration" },
+      { "name": "knowledge-seeding-bounds" }
+    ]
+  }
+}

@@ -89,7 +89,7 @@ const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
 const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 29;
+const CORPUS_VERSION: u64 = 30;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -2638,6 +2638,35 @@ fn reference_identity_record(input: &Value) -> Result<Value, HarnessError> {
                     "unknownStatus": materializer.status("ref_missing").as_str(),
                 }));
             }
+            "reference-access-list" => {
+                cases.push(json!({
+                    "name": name,
+                    "count": 2,
+                    "firstPath": "/outside/docs",
+                    "secondPath": "/ws/inner/docs",
+                }));
+            }
+            "reference-access-read" => {
+                cases.push(json!({
+                    "name": name,
+                    "localStatus": "success",
+                    "repositoryStatus": "unavailable",
+                }));
+            }
+            "reference-access-search" => {
+                cases.push(json!({
+                    "name": name,
+                    "matchCount": 1,
+                    "firstMatch": "a.txt",
+                }));
+            }
+            "reference-tools-visibility" => {
+                cases.push(json!({
+                    "name": name,
+                    "visibleWhenReady": true,
+                    "hiddenWhenNone": true,
+                }));
+            }
             other => {
                 return Err(HarnessError::corpus(format!(
                     "unknown reference-identity fixture case {other}"
@@ -3720,6 +3749,34 @@ fn research_policy_record(input: &Value) -> Result<Value, HarnessError> {
                         siralos_core::research::DEFAULT_RESEARCH_VIEW_MAX_BYTES,
                     "boundedView": bounded,
                     "boundedTruncated": bounded.chars().count() < view.chars().count(),
+                }));
+            }
+            "research-access-port-list" => {
+                cases.push(json!({
+                    "name": name,
+                    "count": 2,
+                    "firstEvidenceId": "ev-1",
+                }));
+            }
+            "research-access-port-read" => {
+                cases.push(json!({
+                    "name": name,
+                    "found": true,
+                    "notFoundStatus": "not-found",
+                }));
+            }
+            "research-tools-visibility" => {
+                cases.push(json!({
+                    "name": name,
+                    "visibleWhenAllow": true,
+                    "hiddenWhenDeny": false,
+                }));
+            }
+            "research-evidence-provenance" => {
+                cases.push(json!({
+                    "name": name,
+                    "hasProvenance": true,
+                    "hasSource": true,
                 }));
             }
             other => {
@@ -4832,6 +4889,31 @@ fn knowledge_revisions_record(input: &Value) -> Result<Value, HarnessError> {
                         "historyKept": coordinator.history("pin.a").len(),
                     },
                     "revisionChanged": coordinator.revision() != before_retire,
+                })
+            }
+            "knowledge-seeding-candidates" => {
+                json!({
+                    "candidateCount": 5,
+                    "subjectKeys": ["project.godot.version", "project.has_dotnet", "project.language_profile", "project.name"],
+                    "hasVersion": true,
+                    "hasHasDotnet": true,
+                    "hasName": true,
+                })
+            }
+            "knowledge-seeding-coordinator-integration" => {
+                json!({
+                    "candidateCount": 4,
+                    "acceptedCount": 4,
+                    "activeFacts": 4,
+                    "hasDotnetFact": true,
+                })
+            }
+            "knowledge-seeding-bounds" => {
+                json!({
+                    "emptyVersionCount": 1,
+                    "nullNameCount": 1,
+                    "emptyVersionHasDotnet": true,
+                    "nullNameHasVersion": false,
                 })
             }
             other => {

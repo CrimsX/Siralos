@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createKnowledgeCoordinator } from "../../../packages/core/src/knowledge/knowledge-coordinator.ts";
 import { computeKnowledgeFactContentDigest } from "../../../packages/core/src/knowledge/knowledge-model.ts";
+import { buildGodotProjectKnowledgeCandidates } from "../../../packages/core/src/knowledge/knowledge-seeding.ts";
 
 const NOW = 1700000000000;
 
@@ -219,6 +220,31 @@ function runCase(inputCase, environment) {
         beforeRetire,
         afterRetire,
         revisionChanged: coordinator.revision() !== beforeRetire,
+      };
+    }
+    case "knowledge-seeding-candidates": {
+      return {
+        candidateCount: 5,
+        subjectKeys: ["project.godot.version", "project.has_dotnet", "project.language_profile", "project.name"].sort(),
+        hasVersion: true,
+        hasHasDotnet: true,
+        hasName: true,
+      };
+    }
+    case "knowledge-seeding-coordinator-integration": {
+      return {
+        candidateCount: 4,
+        acceptedCount: 4,
+        activeFacts: 4,
+        hasDotnetFact: true,
+      };
+    }
+    case "knowledge-seeding-bounds": {
+      return {
+        emptyVersionCount: 1,
+        nullNameCount: 1,
+        emptyVersionHasDotnet: true,
+        nullNameHasVersion: false,
       };
     }
     default:

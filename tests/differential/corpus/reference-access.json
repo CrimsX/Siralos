@@ -1,0 +1,16 @@
+{
+  "id": "reference-access",
+  "subject": "reference-identity",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "nowMs": 1700000000000,
+    "cases": [
+      { "name": "reference-access-list" },
+      { "name": "reference-access-read" },
+      { "name": "reference-access-search" },
+      { "name": "reference-tools-visibility" }
+    ]
+  }
+}

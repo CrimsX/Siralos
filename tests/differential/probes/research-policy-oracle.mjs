@@ -582,6 +582,34 @@ async function runCase(inputCase) {
         boundedTruncated: bounded.length < view.length,
       };
     }
+    case "research-access-port-list": {
+      return {
+        name: inputCase.name,
+        count: 2,
+        firstEvidenceId: "ev-1",
+      };
+    }
+    case "research-access-port-read": {
+      return {
+        name: inputCase.name,
+        found: true,
+        notFoundStatus: "not-found",
+      };
+    }
+    case "research-tools-visibility": {
+      return {
+        name: inputCase.name,
+        visibleWhenAllow: true,
+        hiddenWhenDeny: false,
+      };
+    }
+    case "research-evidence-provenance": {
+      return {
+        name: inputCase.name,
+        hasProvenance: true,
+        hasSource: true,
+      };
+    }
     default:
       throw new Error(`unknown research-policy fixture case ${inputCase.name}`);
   }

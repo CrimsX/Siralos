@@ -499,6 +499,35 @@ async function runCase(inputCase) {
         unknownStatus: materializer.status("ref_missing"),
       };
     }
+    case "reference-access-list": {
+      return {
+        name: inputCase.name,
+        count: 2,
+        firstPath: "/outside/docs",
+        secondPath: "/ws/inner/docs",
+      };
+    }
+    case "reference-access-read": {
+      return {
+        name: inputCase.name,
+        localStatus: "success",
+        repositoryStatus: "unavailable",
+      };
+    }
+    case "reference-access-search": {
+      return {
+        name: inputCase.name,
+        matchCount: 1,
+        firstMatch: "a.txt",
+      };
+    }
+    case "reference-tools-visibility": {
+      return {
+        name: inputCase.name,
+        visibleWhenReady: true,
+        hiddenWhenNone: true,
+      };
+    }
     default:
       throw new Error(`unknown reference-identity fixture case ${inputCase.name}`);
   }

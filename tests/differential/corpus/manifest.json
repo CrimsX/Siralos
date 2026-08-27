@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 29,
+  "corpusVersion": 30,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -447,6 +447,10 @@
       "sha256": "361191fe0f509fce2a11ba9a8e96a55cda5da275da1b5f139065565faa777e9e"
     },
     {
+      "file": "knowledge-seeding.json",
+      "sha256": "dcc81a058958269b697e70adb399776f3e5b2e2d4481ef21df7e6133d75b9dec"
+    },
+    {
       "file": "language-definition.bounded.json",
       "sha256": "341cee6639c1ad03126d214498d1df1fef0185dd601ad0eae6912cb11b787db9"
     },
@@ -619,8 +623,16 @@
       "sha256": "2952a9fca3b1263d18886038ca64eca13aa13c9a9426a036c271f2dfe4bac46a"
     },
     {
+      "file": "reference-access.json",
+      "sha256": "287811741924990e6379f04e9d50c9216a5d1bcc3cbc548d72aed49356b86ea8"
+    },
+    {
       "file": "reference-identity-set.json",
       "sha256": "99c81c6d787e0d57a411f259183ba702f63547dd7290729cc54ac6beb1544a55"
+    },
+    {
+      "file": "research-access.json",
+      "sha256": "402fdcf524898d3cc74072b1893e8e798ba774b2e8140f6b3834e82e522a7082"
     },
     {
       "file": "research-policy-set.json",
@@ -935,5 +947,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "40403a3a7fbe89a59d9f87e02751ea34729f9d18aea3f1f761dc326d131b9a7a"
+  "corpusSha256": "d4fe40f0c30a95a60e429c1f3a6b8097bcdd25e3c313d939f6cd5af9d480a7e3"
 }
