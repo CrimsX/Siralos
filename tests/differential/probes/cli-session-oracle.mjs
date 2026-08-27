@@ -41,10 +41,6 @@ async function main() {
   let workspaceRoot = "";
   let configPath = "";
 
-  const cliApp = await createCliApplication({
-    configPath: join(workspace, "config.json"),
-  });
-
   function makeIo(capture) {
     return {
       async ask(prompt) {
