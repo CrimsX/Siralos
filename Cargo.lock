@@ -1606,6 +1606,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "siralos-godot"
+version = "0.0.0"
+dependencies = [
+ "siralos-core",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

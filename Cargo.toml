@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/siralos-core",
     "crates/siralos-adapters",
+    "crates/siralos-godot",
     "crates/siralos-cli",
 ]
 # The fuzz crate is nightly-only and must never enter the stable
@@ -28,3 +29,4 @@ todo = "deny"
 [workspace.dependencies]
 siralos-core = { path = "crates/siralos-core", version = "0.0.0" }
 siralos-adapters = { path = "crates/siralos-adapters", version = "0.0.0" }
+siralos-godot = { path = "crates/siralos-godot", version = "0.0.0" }
