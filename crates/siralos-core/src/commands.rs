@@ -4,7 +4,7 @@
 //! registration order, with a content-bound revision digest. Providers
 //! and projects can never register commands.
 
-use crate::godot::digest::{canonicalize_json, sha256_hex_str};
+use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::json;
 
 /// The `session` catalog group.

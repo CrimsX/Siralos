@@ -12,7 +12,7 @@
 //! failing closed (invalidating the current revision) when resolution
 //! fails.
 
-use crate::godot::digest::{canonicalize_json, sha256_hex_str};
+use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

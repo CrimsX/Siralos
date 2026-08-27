@@ -12,8 +12,8 @@
 //! Provider output is untrusted; research never becomes knowledge without
 //! an explicit propose call (owned by the knowledge coordinator).
 
-use crate::godot::digest::{canonicalize_json, sha256_hex_str};
 use crate::identity::{CanonicalValue, compute_artifact_digest_hex};
+use crate::identity::{canonicalize_json, sha256_hex_str};
 use crate::security::{
     CapabilityPolicy, PermissionDecision, SandboxProfile, evaluate_permission,
 };

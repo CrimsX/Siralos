@@ -10,8 +10,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::godot::digest::{canonicalize_json, sha256_hex_str};
 use crate::identity::{CanonicalValue, compute_artifact_digest_hex};
+use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::{Value, json};
 
 /// State-version tag for the knowledge snapshot digest.

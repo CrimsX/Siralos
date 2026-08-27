@@ -39,6 +39,19 @@ pub use artifact::{
 pub use canonical::{
     CanonicalValue, canonical_json_value, canonicalize, json_escape,
 };
+
+/// Canonicalize a JSON value to deterministic bytes (mirrors the oracle
+/// digest primitive). Equal semantic values always produce equal bytes.
+#[must_use]
+pub fn canonicalize_json(value: &serde_json::Value) -> String {
+    canonical_json_value(value)
+}
+
+/// Hex SHA-256 of the exact input text bytes (pure FIPS 180-4).
+#[must_use]
+pub fn sha256_hex_str(text: &str) -> String {
+    sha256_hex(text.as_bytes())
+}
 pub use manifests::{
     AcceptanceEvidenceEntry, AcceptanceEvidenceManifest,
     CreateAcceptanceEvidenceManifest, CreateReviewInputManifest,

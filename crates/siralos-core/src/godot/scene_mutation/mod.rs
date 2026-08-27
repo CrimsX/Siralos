@@ -476,7 +476,7 @@ fn validate_value(
     field: &str,
 ) -> Result<GodotVariantValue, MutationError> {
     let serialized =
-        crate::godot::digest::canonicalize_json(&variant_to_json(value));
+        crate::identity::canonicalize_json(&variant_to_json(value));
     if serialized.len() > MutationLimits::MAX_VALUE_BYTES {
         return Err(error(format!(
             "{field} exceeds {} UTF-8 bytes.",

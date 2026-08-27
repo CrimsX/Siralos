@@ -151,7 +151,7 @@ pub fn compute_godot_check_only_command_digest(
         "stdoutLimitBytes": parts.stdout_limit_bytes,
         "stderrLimitBytes": parts.stderr_limit_bytes,
     });
-    super::digest::sha256_hex_str(&value.to_string())
+    crate::identity::sha256_hex_str(&value.to_string())
 }
 
 /// Siralos-fixed check limits bound into the prepared-check digest.
@@ -214,7 +214,7 @@ pub fn compute_godot_prepared_check_digest(
             "maxDiagnosticsPerRun": parts.check_limits.max_diagnostics_per_run,
         },
     });
-    super::digest::sha256_hex_str(&value.to_string())
+    crate::identity::sha256_hex_str(&value.to_string())
 }
 
 /// Non-ready preparation statuses.

@@ -11,10 +11,10 @@
 //! NOT an apply â€” at this stage apply stays typed `unavailable`
 //! (`SECURITY.md`).
 
-use crate::godot::digest::{canonicalize_json, sha256_hex_str};
 use crate::godot::scene_mutation::{
     MutationError, MutationOperation, expected_semantic_effect,
 };
+use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::json;
 
 /// Complete reviewable preview of one prepared mutation.

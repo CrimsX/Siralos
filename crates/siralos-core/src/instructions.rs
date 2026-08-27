@@ -6,7 +6,7 @@
 //! authority-framed rendering, and deterministic revisions. Pure and
 //! deterministic — no filesystem, provider, or network.
 
-use crate::godot::digest::{canonicalize_json, sha256_hex_str};
+use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::Value;
 use serde_json::json;
 
