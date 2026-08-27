@@ -1609,6 +1609,7 @@ dependencies = [
 name = "siralos-godot"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
  "siralos-core",
 ]
 
