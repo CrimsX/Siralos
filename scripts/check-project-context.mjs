@@ -36,7 +36,7 @@ const REQUIRED_METADATA = new Map([
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
   ["Current completed milestone", "R12"],
-  ["Next milestone", "R12 - TypeScript reference retirement or explicit retention decision"],
+  ["Next milestone", "Stage 4 — Controlled execution"],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
 

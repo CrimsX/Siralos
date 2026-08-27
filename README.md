@@ -183,17 +183,21 @@ consume Runs later without defining Run semantics.
 During Stage 3R the repository contains two implementations:
 
 ```text
-TypeScript behavioral reference (CURRENT)
-  apps/cli → packages/adapters → packages/core
+TypeScript historical oracle (archived at 4bef901, differential parity proof
+retained: audit v31 e24f4bb 231/231, corpus v31, stage4-entry-gate 17/17)
+  apps/cli → packages/adapters → packages/core (not executed)
 
-Rust successor (CURRENT foundation)
-  siralos-cli → siralos-adapters → siralos-core
+Rust successor — sole source of truth
+  siralos-cli → siralos-adapters → siralos-godot → siralos-core
+  (siralos-godot is the in-repo Plugin shim for Godot, still 0 tests;
+   siralos-core stays domain-neutral via check:rust FORBIDDEN_CORE_SYMBOL_PATTERN)
 ```
 
-Both cores own domain-neutral policy and contracts. Adapters own infrastructure
-and optional domain behavior. The CLI is the composition and terminal boundary.
-Godot does not define or appear in the Rust core. The TypeScript structure is
-the behavioral reference, not the target architecture.
+Both cores own domain-neutral policy and contracts. `siralos-godot` re-exports
+the Godot domain as a Plugin shim during Stage 4 extraction (Stage 4.1 Verified);
+adapters own infrastructure and the optional Godot adapters. The CLI is the
+composition and terminal boundary. The historical TypeScript oracle is retained
+by SHA for parity replay, not executed.
 
 See the [architecture index](docs/architecture/README.md),
 [ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md),
@@ -265,10 +269,12 @@ reference can statically inspect Godot projects, scenes, and resources without
 executing project code. Dynamic engine probes and project execution remain
 fail-closed where their security properties cannot be enforced.
 
-The Rust Godot domain package is not implemented yet. Siralos does not install
-Godot, silently enable a domain, or acquire a domain merely because
-`project.godot` exists. The domain package and the Godot Engine installation are
-separate, explicit concerns.
+The Rust Godot domain package lives in `crates/siralos-godot` (in-repo shim,
+currently 0 tests, `siralos-godot → siralos-core` only) — sources still in
+`siralos-core/src/godot` until the 6+3 verbatim move (decision 37). Siralos
+does not install Godot, silently enable a domain, or acquire a domain merely
+because `project.godot` exists. The domain package and the Godot Engine
+installation are separate, explicit concerns.
 
 ## Development status
 
@@ -291,8 +297,8 @@ separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified. R13 closed the remaining TypeScript surfaces (v31, 236 files, 231/231); R12 retires the TypeScript oracle (audit v31 e24f4bb, 231/231) — **Rust is now the sole source of truth**. Stage 4 entry is gated by `stage4-entry-gate.md` 17/17 PASS.
-- Stage 4 has not begun
+- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified. R13 closed the remaining TypeScript surfaces (v31, 236 files, 231/231); R12 retires the TypeScript oracle (audit v31 e24f4bb, 231/231) — **Rust is now the sole source of truth** (`4bef901` historical oracle, `231/231` retained). Stage 4.1 (generic Controlled Runtime) is **Verified** at `168a769` (`05c075c` `process.execute` → `UNAVAILABLE` fail-closed, 0 spawn, 231/231 retained) — authorizes `crates/siralos-godot` extraction next.
+- Stage 4.2 (Godot Runtime Adapter) is the next specialization; `crates/siralos-godot` isolation is the ship-within-a-ship for the 6+3 domain
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the
 authoritative R1–R12 sequence. The [Stage 4 entry gate](docs/development/stage4-entry-gate.md)
