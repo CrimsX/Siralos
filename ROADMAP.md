@@ -368,9 +368,12 @@ in `docs/development/RUST_MIGRATION.md`.
 Stage 4 entry is **READY** pending the `stage4-entry-gate.md` 17/17 PASS re-evaluation (R12 retired). Its first milestone is generic Controlled
 Runtime Execution: sandboxed, bounded process supervision under Siralos
 authority that produces structured runtime evidence without granting
-unrestricted desktop or network access. The Godot runtime adapter is the
-first specialization built on that host boundary; it is not the boundary
-itself. Neither capability is implemented here.
+unrestricted desktop or network access. Stage 4.1 (generic runtime) is
+**Verified** at `168a769`; the Godot domain now lives in the in-repo Plugin
+crate `crates/siralos-godot` (extraction landed per decision 37, parity
+231/231 v31 retained, `siralos-core` domain-neutral again). The Godot runtime
+adapter is the first specialization built on that host boundary; it is not the
+boundary itself. Neither capability is implemented here.
 
 ## 4. Controlled execution
 

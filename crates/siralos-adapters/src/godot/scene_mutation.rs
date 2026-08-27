@@ -4,13 +4,13 @@
 //! Mirrors the orchestration half of
 //! `packages/adapters/src/godot/scene-mutation/scene-mutation-service.ts`
 //! for the frozen R9 boundary: preparation delegates to the core
-//! contracts ([`siralos_core::godot::scene_mutation`]) and application is
+//! contracts ([`siralos_godot::godot::scene_mutation`]) and application is
 //! typed [`GodotMutationApplyOutcome::Unavailable`] before any approval,
 //! checkpoint, mirror, or write — Node offers no directory-relative
 //! create/replace/delete primitive, so nothing here ever mutates the
 //! filesystem or launches a process (`SECURITY.md`).
 
-use siralos_core::godot::scene_mutation::{
+use siralos_godot::godot::scene_mutation::{
     CreatePreparedGodotMutationInput, GodotMutationPreview, MutationError,
     MutationKind, MutationOperation, PreparedGodotMutation,
     create_prepared_godot_mutation, expected_semantic_effect,
@@ -113,8 +113,8 @@ mod tests {
         GODOT_MUTATION_APPLY_UNAVAILABLE_MESSAGE, GodotMutationApplyOutcome,
         GodotSceneMutationPrepareRequest, GodotSceneMutationService,
     };
-    use siralos_core::godot::scene::models::GodotVariantValue;
-    use siralos_core::godot::scene_mutation::{
+    use siralos_godot::godot::scene::models::GodotVariantValue;
+    use siralos_godot::godot::scene_mutation::{
         MutationKind, MutationOperation, compute_mutation_fingerprint,
     };
 

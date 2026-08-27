@@ -12,7 +12,7 @@
 //! harness.
 
 use serde_json::json;
-use siralos_core::godot::digest::{canonicalize_json, sha256_hex_str};
+use siralos_core::identity::{canonicalize_json, sha256_hex_str};
 use siralos_core::reference::normalize_repository_origin;
 use siralos_core::research::{
     CancellationSignal, ResearchBounds, ResearchContentType, ResearchDocument,

@@ -14,10 +14,10 @@
 //! `--path` is reported unsupported and no weaker mode is ever
 //! substituted.
 
-use siralos_core::godot::{
+use siralos_core::identity::sha256_hex;
+use siralos_godot::godot::{
     GODOT_LIMITS, GodotEdition, GodotEngineProfile, GodotInstallation,
 };
-use siralos_core::identity::sha256_hex;
 
 /// Fixed Siralos-owned recovery-mode editor invocation tuple.
 pub const GODOT_RECOVERY_BASE_ARGUMENTS: [&str; 3] =
@@ -102,7 +102,7 @@ pub struct GodotRecoveryCancelled {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GodotCapabilityKey, GodotCommandCapabilities, GodotEdition,
         GodotEditionConfidence, GodotEngineProfile, GodotInstallation,
         GodotInstallationSource, GodotReleaseChannel, GodotVersion,
@@ -119,7 +119,7 @@ pub(crate) mod test_support {
             size_bytes: 1000,
             modified_at_ms: 1000,
             sha256: "a".repeat(64),
-            edition_hint: siralos_core::godot::InstallEditionHint::Unknown,
+            edition_hint: siralos_godot::godot::InstallEditionHint::Unknown,
             status_valid,
             error: None,
         }
@@ -277,7 +277,7 @@ mod tests {
         create_godot_recovery_runner, godot_recovery_argument_template,
         godot_recovery_arguments,
     };
-    use siralos_core::godot::GodotEdition;
+    use siralos_godot::godot::GodotEdition;
 
     #[test]
     fn fixed_headless_recovery_mode_editor_tuple() {

@@ -4,10 +4,10 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use siralos_core::godot::installations::{
+use siralos_godot::godot::installations::{
     GodotEditionHint, GodotInstallation, GodotInstallationSource,
 };
-use siralos_core::godot::limits::GODOT_LIMITS;
+use siralos_godot::godot::limits::GODOT_LIMITS;
 
 use super::candidate_names::{godot_candidate_names, path_list_separator};
 use super::executable_validation::{

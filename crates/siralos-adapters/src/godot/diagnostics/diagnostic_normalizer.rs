@@ -13,12 +13,12 @@
 //! A script parse failure is a VALID diagnostic result; exit-status
 //! semantics live in the service, not here.
 
-use siralos_core::godot::{
-    GODOT_LIMITS, GdScriptDiagnosticSource, GdScriptSeverity,
-    GodotGdScriptDiagnostic,
-};
 use siralos_core::language::{
     sanitize_control_characters, truncate_utf8_bytes,
+};
+use siralos_godot::godot::{
+    GODOT_LIMITS, GdScriptDiagnosticSource, GdScriptSeverity,
+    GodotGdScriptDiagnostic,
 };
 
 /// Input console output of one check-only run.
@@ -568,7 +568,7 @@ mod tests {
         GodotCheckOutputInput, GodotGdScriptDiagnostic,
         normalize_godot_check_output, normalize_with_limits,
     };
-    use siralos_core::godot::{GODOT_LIMITS, GdScriptSeverity};
+    use siralos_godot::godot::{GODOT_LIMITS, GdScriptSeverity};
 
     fn normalize(
         stdout: &str,

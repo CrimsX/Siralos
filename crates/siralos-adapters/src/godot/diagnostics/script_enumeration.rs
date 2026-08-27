@@ -10,8 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::workspace::resolve::resolve_workspace_path;
-use siralos_core::godot::GODOT_LIMITS;
 use siralos_core::identity::sha256_hex;
+use siralos_godot::godot::GODOT_LIMITS;
 
 /// Directory names never scanned for project GDScript files.
 pub const PROJECT_SCAN_EXCLUDED_DIRECTORIES: [&str; 6] =

@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 siralos-core = { workspace = true }
+siralos-godot = { workspace = true }
 # The retained Component Model runtime line (ADR 0034, Stage 3R R6):
 # the experiment pinned wasmtime 47.0.3 with the minimal feature set
 # that provides components, JIT compilation, and the sync runtime; the

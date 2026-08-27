@@ -7,17 +7,17 @@
 
 use std::path::{Path, PathBuf};
 
-use siralos_core::godot::scene::{
+use siralos_core::identity::sha256_hex;
+use siralos_core::workspace::revision::{
+    WorkspaceRevisionRegistry, WorkspaceRevisionRegistryOptions,
+};
+use siralos_godot::godot::scene::{
     GODOT_SCENE_LIMITS, GodotDependencyResult, GodotInspectionOutcome,
     GodotIntelligenceStatus, GodotProjectRelationshipResult,
     GodotRelationshipEntry, GodotRelationshipIndex, GodotRelationshipKind,
     GodotResourceInspectionResult, GodotSceneInspectionResult,
     ResPathResolution, build_scene_node_tree, parse_godot_resource,
     parse_godot_scene, resolve_res_path,
-};
-use siralos_core::identity::sha256_hex;
-use siralos_core::workspace::revision::{
-    WorkspaceRevisionRegistry, WorkspaceRevisionRegistryOptions,
 };
 
 use crate::workspace::fs::{

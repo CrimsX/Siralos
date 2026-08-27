@@ -17,7 +17,6 @@ pub mod determinism;
 pub mod doctor;
 pub mod domain;
 pub mod executor;
-pub mod godot;
 pub mod identity;
 pub mod instructions;
 pub mod knowledge;

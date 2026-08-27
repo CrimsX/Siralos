@@ -3993,13 +3993,13 @@ fn security_permissions_record(input: &Value) -> Result<Value, HarnessError> {
                 json!({ "profiles": profiles })
             }
             "approval-digest-binding" => {
-                let base = siralos_core::godot::digest::sha256_hex_str(
+                let base = siralos_godot::godot::digest::sha256_hex_str(
                     &command_digest_json(600_000),
                 );
-                let same = siralos_core::godot::digest::sha256_hex_str(
+                let same = siralos_godot::godot::digest::sha256_hex_str(
                     &command_digest_json(600_000),
                 );
-                let changed = siralos_core::godot::digest::sha256_hex_str(
+                let changed = siralos_godot::godot::digest::sha256_hex_str(
                     &command_digest_json(601_000),
                 );
                 json!({
@@ -4259,8 +4259,8 @@ fn capability_doctor_record(input: &Value) -> Result<Value, HarnessError> {
                 })
             }
             "config-schema-stability" => {
-                let recomputed = siralos_core::godot::digest::sha256_hex_str(
-                    &siralos_core::godot::digest::canonicalize_json(
+                let recomputed = siralos_godot::godot::digest::sha256_hex_str(
+                    &siralos_godot::godot::digest::canonicalize_json(
                         &config_schema_summary(),
                     ),
                 );
@@ -5990,7 +5990,7 @@ fn godot_record(subject: &str, input: &Value) -> Result<Value, HarnessError> {
 /// parses as a scene; missing keys are null, unknown keys are ignored,
 /// and the default path is empty.
 fn godot_scene_resolve_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_core::godot::scene::{
+    use siralos_godot::godot::scene::{
         GodotParseStatus, parse_godot_resource, parse_godot_scene,
     };
     let tres = input.get("tres").and_then(Value::as_str);
@@ -6039,7 +6039,7 @@ fn godot_scene_resolve_record(input: &Value) -> Result<Value, HarnessError> {
 
 fn godot_knowledge_record(input: &Value) -> Result<Value, HarnessError> {
     use siralos_adapters::godot::knowledge::GodotKnowledgeService;
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GodotApiSearchKind, GodotApiSearchQuery, GodotKnowledgeLookupOutcome,
         GodotKnowledgeQueryResult, GodotKnowledgeRefreshResult,
         KnowledgeState,
@@ -6145,8 +6145,8 @@ fn godot_knowledge_record(input: &Value) -> Result<Value, HarnessError> {
 
 fn godot_api_search_kind(
     value: &Value,
-) -> Option<siralos_core::godot::GodotApiSearchKind> {
-    use siralos_core::godot::GodotApiSearchKind;
+) -> Option<siralos_godot::godot::GodotApiSearchKind> {
+    use siralos_godot::godot::GodotApiSearchKind;
     match value.as_str() {
         Some("class") => Some(GodotApiSearchKind::Class),
         Some("method") => Some(GodotApiSearchKind::Method),
@@ -6161,9 +6161,9 @@ fn godot_api_search_kind(
 }
 
 fn refresh_status_str(
-    status: siralos_core::godot::KnowledgeRefreshStatus,
+    status: siralos_godot::godot::KnowledgeRefreshStatus,
 ) -> &'static str {
-    use siralos_core::godot::KnowledgeRefreshStatus;
+    use siralos_godot::godot::KnowledgeRefreshStatus;
     match status {
         KnowledgeRefreshStatus::Unavailable => "unavailable",
         KnowledgeRefreshStatus::Unsupported => "unsupported",
@@ -6173,9 +6173,9 @@ fn refresh_status_str(
 }
 
 fn query_status_str(
-    status: siralos_core::godot::KnowledgeQueryStatus,
+    status: siralos_godot::godot::KnowledgeQueryStatus,
 ) -> &'static str {
-    use siralos_core::godot::KnowledgeQueryStatus;
+    use siralos_godot::godot::KnowledgeQueryStatus;
     match status {
         KnowledgeQueryStatus::Unavailable => "unavailable",
         KnowledgeQueryStatus::InvalidInput => "invalid_input",
@@ -6184,9 +6184,9 @@ fn query_status_str(
 }
 
 fn lookup_status_str(
-    status: siralos_core::godot::KnowledgeLookupStatus,
+    status: siralos_godot::godot::KnowledgeLookupStatus,
 ) -> &'static str {
-    use siralos_core::godot::KnowledgeLookupStatus;
+    use siralos_godot::godot::KnowledgeLookupStatus;
     match status {
         KnowledgeLookupStatus::NotFound => "not_found",
         KnowledgeLookupStatus::Unavailable => "unavailable",
@@ -6196,9 +6196,9 @@ fn lookup_status_str(
 }
 
 fn check_run_status_str(
-    status: siralos_core::godot::GodotProjectCheckRunStatus,
+    status: siralos_godot::godot::GodotProjectCheckRunStatus,
 ) -> &'static str {
-    use siralos_core::godot::GodotProjectCheckRunStatus;
+    use siralos_godot::godot::GodotProjectCheckRunStatus;
     match status {
         GodotProjectCheckRunStatus::Denied => "denied",
         GodotProjectCheckRunStatus::Conflict => "conflict",
@@ -6212,9 +6212,9 @@ fn check_run_status_str(
 }
 
 fn diagnostics_state_str(
-    state: siralos_core::godot::GodotDiagnosticsState,
+    state: siralos_godot::godot::GodotDiagnosticsState,
 ) -> &'static str {
-    use siralos_core::godot::GodotDiagnosticsState;
+    use siralos_godot::godot::GodotDiagnosticsState;
     match state {
         GodotDiagnosticsState::Untrusted => "untrusted",
         GodotDiagnosticsState::CheckInvalidated => "check-invalidated",
@@ -6223,7 +6223,7 @@ fn diagnostics_state_str(
 
 fn godot_diagnostics_record(input: &Value) -> Result<Value, HarnessError> {
     use siralos_adapters::godot::diagnostics::GodotDiagnosticsService;
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GodotCheckPreparationResult, GodotDiagnosticsExecutionContext,
         GodotDiagnosticsRequest, GodotProjectCheckResult,
         PreparedGDScriptCheck,
@@ -6310,7 +6310,7 @@ fn godot_diagnostics_record(input: &Value) -> Result<Value, HarnessError> {
 
 fn godot_lsp_record(input: &Value) -> Result<Value, HarnessError> {
     use siralos_adapters::godot::lsp::GodotLspService;
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GdScriptNetworkIsolation, GdScriptSessionState,
         GodotCheckPreparationResult,
     };
@@ -6380,7 +6380,7 @@ fn godot_discovery_record(input: &Value) -> Result<Value, HarnessError> {
     use siralos_adapters::godot::profile::engine_profiler::{
         GodotOverrideSource, GodotProfilerInputs, discover, selected_profile,
     };
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GodotInstallationSource, GodotSelectionPreference,
     };
 
@@ -6399,7 +6399,7 @@ fn godot_discovery_record(input: &Value) -> Result<Value, HarnessError> {
     }
 
     fn overview_record(
-        overview: &siralos_core::godot::GodotInstallationOverview,
+        overview: &siralos_godot::godot::GodotInstallationOverview,
     ) -> Value {
         json!({
             "id": overview.installation_id,
@@ -6762,18 +6762,18 @@ mod godot_tests {
     }
 }
 
-use siralos_core::godot::scene::models::{
+use siralos_godot::godot::scene::models::{
     DictionaryEntry, GodotRawValue, GodotVariantValue,
 };
-use siralos_core::godot::scene_mutation::{
+use siralos_godot::godot::scene_mutation::{
     MutationOperation, MutationProperty, SemanticExpectation,
 };
 
 struct ReviewContextSource {
-    edges: Vec<siralos_core::godot::impact::ImpactEdge>,
+    edges: Vec<siralos_godot::godot::impact::ImpactEdge>,
     signals: std::collections::HashMap<
         String,
-        Vec<siralos_core::godot::impact::ImpactSignalConnection>,
+        Vec<siralos_godot::godot::impact::ImpactSignalConnection>,
     >,
     autoloads: std::collections::HashMap<String, String>,
     candidate_tests: std::collections::HashMap<String, Vec<String>>,
@@ -6781,13 +6781,13 @@ struct ReviewContextSource {
     main_scene: Option<String>,
 }
 
-impl siralos_core::godot::impact::ImpactRelationshipSource
+impl siralos_godot::godot::impact::ImpactRelationshipSource
     for ReviewContextSource
 {
     fn outgoing(
         &self,
         path: &str,
-    ) -> Vec<siralos_core::godot::impact::ImpactEdge> {
+    ) -> Vec<siralos_godot::godot::impact::ImpactEdge> {
         self.edges
             .iter()
             .filter(|edge| edge.from_path == path)
@@ -6798,7 +6798,7 @@ impl siralos_core::godot::impact::ImpactRelationshipSource
     fn incoming(
         &self,
         path: &str,
-    ) -> Vec<siralos_core::godot::impact::ImpactEdge> {
+    ) -> Vec<siralos_godot::godot::impact::ImpactEdge> {
         self.edges
             .iter()
             .filter(|edge| edge.to_path == path)
@@ -6809,7 +6809,7 @@ impl siralos_core::godot::impact::ImpactRelationshipSource
     fn signal_connections(
         &self,
         path: &str,
-    ) -> Vec<siralos_core::godot::impact::ImpactSignalConnection> {
+    ) -> Vec<siralos_godot::godot::impact::ImpactSignalConnection> {
         self.signals.get(path).cloned().unwrap_or_default()
     }
 
@@ -7112,16 +7112,16 @@ fn mutation_operation_from_json(
 
 fn relation_kind_from_str(
     value: &str,
-) -> Option<siralos_core::godot::impact::model::ImpactRelationKind> {
+) -> Option<siralos_godot::godot::impact::model::ImpactRelationKind> {
     match value {
-        "script_attachment" => Some(siralos_core::godot::impact::model::ImpactRelationKind::ScriptAttachment),
-        "scene_inheritance" => Some(siralos_core::godot::impact::model::ImpactRelationKind::SceneInheritance),
-        "scene_instancing" => Some(siralos_core::godot::impact::model::ImpactRelationKind::SceneInstancing),
-        "resource_dependency" => Some(siralos_core::godot::impact::model::ImpactRelationKind::ResourceDependency),
-        "script_dependency" => Some(siralos_core::godot::impact::model::ImpactRelationKind::ScriptDependency),
-        "signal_connection" => Some(siralos_core::godot::impact::model::ImpactRelationKind::SignalConnection),
-        "autoload_global" => Some(siralos_core::godot::impact::model::ImpactRelationKind::AutoloadGlobal),
-        "test_covers" => Some(siralos_core::godot::impact::model::ImpactRelationKind::TestCovers),
+        "script_attachment" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::ScriptAttachment),
+        "scene_inheritance" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::SceneInheritance),
+        "scene_instancing" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::SceneInstancing),
+        "resource_dependency" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::ResourceDependency),
+        "script_dependency" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::ScriptDependency),
+        "signal_connection" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::SignalConnection),
+        "autoload_global" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::AutoloadGlobal),
+        "test_covers" => Some(siralos_godot::godot::impact::model::ImpactRelationKind::TestCovers),
         _ => None,
     }
 }
@@ -7139,7 +7139,7 @@ fn semantic_expectation_to_json(expectation: &SemanticExpectation) -> Value {
                 "kind": "property_equals",
                 "nodePath": node_path,
                 "property": property,
-                "value": siralos_core::godot::scene_mutation::variant_to_json(value),
+                "value": siralos_godot::godot::scene_mutation::variant_to_json(value),
             })
         }
         SemanticExpectation::PropertyAbsent { node_path, property } => {
@@ -7204,7 +7204,7 @@ fn semantic_expectation_to_json(expectation: &SemanticExpectation) -> Value {
 }
 
 fn godot_review_context_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_core::godot::impact::{AnalyzeImpactInput, analyze_impact};
+    use siralos_godot::godot::impact::{AnalyzeImpactInput, analyze_impact};
     let task_contract_revision = input
         .get("taskContractRevision")
         .and_then(Value::as_u64)
@@ -7237,7 +7237,7 @@ fn godot_review_context_record(input: &Value) -> Result<Value, HarnessError> {
             .and_then(Value::as_str)
             .and_then(relation_kind_from_str)
             .ok_or_else(|| HarnessError::corpus("invalid impact edge kind"))?;
-        source.edges.push(siralos_core::godot::impact::ImpactEdge {
+        source.edges.push(siralos_godot::godot::impact::ImpactEdge {
             kind,
             from_path: edge
                 .get("fromPath")
@@ -7263,7 +7263,7 @@ fn godot_review_context_record(input: &Value) -> Result<Value, HarnessError> {
             .unwrap_or_default()
             .to_owned();
         source.signals.entry(path).or_default().push(
-            siralos_core::godot::impact::ImpactSignalConnection {
+            siralos_godot::godot::impact::ImpactSignalConnection {
                 signal: connection
                     .get("signal")
                     .and_then(Value::as_str)
@@ -7356,7 +7356,7 @@ fn godot_review_context_record(input: &Value) -> Result<Value, HarnessError> {
     .map_err(|error| HarnessError::corpus(error.message))?;
 
     fn surface_to_json(
-        surface: &siralos_core::godot::impact::ImpactSurface,
+        surface: &siralos_godot::godot::impact::ImpactSurface,
     ) -> Value {
         let mut object = serde_json::Map::new();
         object.insert("path".to_owned(), json!(surface.path));
@@ -7377,7 +7377,7 @@ fn godot_review_context_record(input: &Value) -> Result<Value, HarnessError> {
     }
 
     fn relation_to_json(
-        relation: &siralos_core::godot::impact::ImpactRelation,
+        relation: &siralos_godot::godot::impact::ImpactRelation,
     ) -> Value {
         let mut object = serde_json::Map::new();
         object.insert("kind".to_owned(), json!(relation.kind.as_str()));
@@ -7464,7 +7464,7 @@ impl OptionStrJsonExt for Option<&str> {
 fn godot_mutation_prepare_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
-    use siralos_core::godot::scene_mutation::{
+    use siralos_godot::godot::scene_mutation::{
         CreatePreparedGodotMutationInput, GodotMutationPreview, MutationKind,
         create_prepared_godot_mutation, expected_semantic_effect,
         validate_mutation_operations,
@@ -7560,7 +7560,7 @@ fn godot_mutation_prepare_record(
 }
 
 fn godot_develop_plan_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_core::godot::development::{
+    use siralos_godot::godot::development::{
         DevelopmentSurfaceInput, DevelopmentSurfaceTouchpoint,
         DevelopmentTouchpointStatus, ProjectSurfaces, UnifiedOrderTarget,
         classify_development_surface, derive_unified_apply_order,
@@ -7693,7 +7693,7 @@ fn content_identity_artifact_digest_record(
     let payload = input.get("payload").cloned().unwrap_or(Value::Null);
     let canonical = format!(
         "siralos:{artifact_type}:v{schema_version}\0{}",
-        siralos_core::godot::digest::canonicalize_json(&payload)
+        siralos_godot::godot::digest::canonicalize_json(&payload)
     );
     Ok(json!({ "digest": sha256_hex(canonical.as_bytes()) }))
 }
@@ -8000,8 +8000,8 @@ fn content_identity_delta_record(
     for key in &keys {
         let base_value = base.get(key).cloned().unwrap_or(Value::Null);
         let result_value = result.get(key).cloned().unwrap_or(Value::Null);
-        if siralos_core::godot::digest::canonicalize_json(&base_value)
-            == siralos_core::godot::digest::canonicalize_json(&result_value)
+        if siralos_godot::godot::digest::canonicalize_json(&base_value)
+            == siralos_godot::godot::digest::canonicalize_json(&result_value)
         {
             unchanged.push(key.clone());
         } else {

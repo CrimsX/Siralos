@@ -13,10 +13,10 @@
 //! only references the disposable mirror, and that scene, script, import,
 //! DAP/debug-server, export, and quit options never appear.
 
-use siralos_core::godot::{
+use siralos_core::identity::sha256_hex;
+use siralos_godot::godot::{
     GodotEdition, GodotEngineProfile, GodotInstallation,
 };
-use siralos_core::identity::sha256_hex;
 
 /// Marker for the disposable mirror project path (never a real path).
 pub const GODOT_LSP_MIRROR_PATH_MARKER: &str = "<disposable-mirror>";
@@ -217,11 +217,11 @@ mod tests {
     use crate::godot::process::recovery_runner::test_support::{
         engine_profile, installation,
     };
-    use siralos_core::godot::{GodotCapabilityKey, GodotEdition};
+    use siralos_godot::godot::{GodotCapabilityKey, GodotEdition};
 
-    fn full_capabilities() -> siralos_core::godot::GodotCommandCapabilities {
+    fn full_capabilities() -> siralos_godot::godot::GodotCommandCapabilities {
         let mut capabilities =
-            siralos_core::godot::empty_godot_command_capabilities();
+            siralos_godot::godot::empty_godot_command_capabilities();
         for key in [
             GodotCapabilityKey::Lsp,
             GodotCapabilityKey::RecoveryMode,

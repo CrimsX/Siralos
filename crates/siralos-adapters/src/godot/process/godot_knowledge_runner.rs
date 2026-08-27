@@ -9,10 +9,10 @@
 //! outcome and nothing is created or deleted. An ordinary
 //! `--dump-extension-api` result is never substituted.
 
-use siralos_core::godot::{
+use siralos_core::identity::sha256_hex;
+use siralos_godot::godot::{
     GodotEdition, GodotEngineProfile, GodotInstallation,
 };
-use siralos_core::identity::sha256_hex;
 
 /// Fixed Siralos-owned API documentation generation invocation.
 pub const GODOT_KNOWLEDGE_BASE_ARGUMENTS: [&str; 1] =
@@ -172,7 +172,7 @@ mod tests {
     use crate::godot::process::recovery_runner::test_support::{
         engine_profile, installation,
     };
-    use siralos_core::godot::{GodotCapabilityKey, GodotEdition};
+    use siralos_godot::godot::{GodotCapabilityKey, GodotEdition};
 
     #[test]
     fn fixed_with_docs_tuple_only() {

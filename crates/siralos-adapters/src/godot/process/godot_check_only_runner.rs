@@ -15,7 +15,7 @@
 //! `--check-only`, the check refuses as unsupported and the script is
 //! never run normally.
 
-use siralos_core::godot::{
+use siralos_godot::godot::{
     GodotEdition, GodotEngineProfile, GodotInstallation,
 };
 
@@ -183,7 +183,7 @@ mod tests {
     use crate::godot::process::recovery_runner::test_support::{
         engine_profile, installation,
     };
-    use siralos_core::godot::{GodotCapabilityKey, GodotEdition};
+    use siralos_godot::godot::{GodotCapabilityKey, GodotEdition};
 
     #[test]
     fn template_pairs_script_with_check_only_only() {

@@ -13,6 +13,7 @@ differential-harness = ["dep:serde", "dep:serde_json", "dep:sha2", "dep:toml"]
 [dependencies]
 siralos-core = { workspace = true }
 siralos-adapters = { workspace = true }
+siralos-godot = { workspace = true }
 # Harness tooling (differential behavioral harness, ADR 0033): canonical
 # JSON corpus/records (serde/serde_json), scenario hashing (sha2), and
 # Cargo.toml version extraction (toml). The standard library has no

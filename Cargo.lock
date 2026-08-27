@@ -1580,6 +1580,7 @@ dependencies = [
  "dirs",
  "serde_json",
  "siralos-core",
+ "siralos-godot",
  "wasmtime",
  "wasmtime-wasi",
 ]
@@ -1593,6 +1594,7 @@ dependencies = [
  "sha2 0.11.0",
  "siralos-adapters",
  "siralos-core",
+ "siralos-godot",
  "toml",
 ]
 

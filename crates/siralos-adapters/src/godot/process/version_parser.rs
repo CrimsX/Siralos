@@ -6,7 +6,7 @@
 //! and non-Godot output fails, control characters are sanitized, and
 //! unknown suffixes are preserved rather than failing.
 
-use siralos_core::godot::{GodotVersion, GodotVersionStatus};
+use siralos_godot::godot::{GodotVersion, GodotVersionStatus};
 
 /// Failure of a `--version` text parse with its bounded message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,7 +200,7 @@ pub fn sanitize_control_characters(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{parse_godot_version_text, sanitize_control_characters};
-    use siralos_core::godot::GodotVersionStatus as Status;
+    use siralos_godot::godot::GodotVersionStatus as Status;
 
     #[test]
     fn parses_stable_official() {

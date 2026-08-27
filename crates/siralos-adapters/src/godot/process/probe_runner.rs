@@ -10,7 +10,7 @@
 //! available, every probe reports unavailable and the executable is
 //! never spawned.
 
-use siralos_core::godot::{
+use siralos_godot::godot::{
     GodotApiDumpProbe, GodotHelpProbe, GodotInstallation, GodotProbeRunner,
     GodotVersionProbe,
 };
@@ -63,7 +63,7 @@ mod tests {
     use super::{
         GODOT_PROBING_UNAVAILABLE_MESSAGE, create_godot_probe_runner,
     };
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GodotApiDumpProbe, GodotHelpProbe, GodotInstallation,
         GodotInstallationSource, GodotProbeRunner, GodotVersionProbe,
         InstallEditionHint,

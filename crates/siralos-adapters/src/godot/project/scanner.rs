@@ -4,11 +4,11 @@
 //! Only supported value forms are interpreted; unsupported forms are
 //! preserved as raw and reported. No evaluation, execution, or resolution.
 
-use siralos_core::godot::diagnostics::{DiagnosticSeverity, SafeDiagnostic};
-use siralos_core::godot::scene::{
+use siralos_godot::godot::diagnostics::{DiagnosticSeverity, SafeDiagnostic};
+use siralos_godot::godot::scene::{
     GodotVariantValue, is_balanced_text, parse_godot_variant,
 };
-use siralos_core::godot::{
+use siralos_godot::godot::{
     GODOT_LIMITS, GodotAutoloadSummary, GodotInputAction,
 };
 

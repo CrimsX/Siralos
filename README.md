@@ -189,15 +189,15 @@ retained: audit v31 e24f4bb 231/231, corpus v31, stage4-entry-gate 17/17)
 
 Rust successor — sole source of truth
   siralos-cli → siralos-adapters → siralos-godot → siralos-core
-  (siralos-godot is the in-repo Plugin shim for Godot, still 0 tests;
-   siralos-core stays domain-neutral via check:rust FORBIDDEN_CORE_SYMBOL_PATTERN)
+  (siralos-godot owns the Godot domain as an in-repo Plugin crate during
+   Stage 4 extraction; siralos-core stays domain-neutral)
 ```
 
-Both cores own domain-neutral policy and contracts. `siralos-godot` re-exports
-the Godot domain as a Plugin shim during Stage 4 extraction (Stage 4.1 Verified);
-adapters own infrastructure and the optional Godot adapters. The CLI is the
-composition and terminal boundary. The historical TypeScript oracle is retained
-by SHA for parity replay, not executed.
+The core owns domain-neutral policy and contracts. `siralos-godot` owns the
+Godot domain surfaces (extraction landed per decision 37); adapters own
+infrastructure and the optional Godot adapters. The CLI is the composition and
+terminal boundary. The historical TypeScript oracle is retained by SHA for
+parity replay, not executed.
 
 See the [architecture index](docs/architecture/README.md),
 [ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md),

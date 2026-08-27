@@ -9,7 +9,7 @@
 //! a mechanically identity-bound launch primitive exists; the deeper
 //! machinery lands with that milestone rather than as unreachable code.
 
-use siralos_core::godot::{
+use siralos_godot::godot::{
     GodotCheckPreparationResult, GodotCheckPreparationStatus,
     GodotDiagnosticsExecutionContext, GodotDiagnosticsRequest,
     GodotDiagnosticsState, GodotDiagnosticsStatus, GodotDiagnosticsSupport,
@@ -48,7 +48,7 @@ impl GodotDiagnosticsService {
     /// Truthful platform-level support state.
     pub fn support(&self) -> GodotDiagnosticsSupport {
         GodotDiagnosticsSupport {
-            state: siralos_core::godot::KnowledgeSupportState::Unavailable,
+            state: siralos_godot::godot::KnowledgeSupportState::Unavailable,
             reason: Some(GODOT_CHECK_EXECUTION_UNAVAILABLE_MESSAGE.to_owned()),
             platform: self.platform.clone(),
         }
@@ -113,8 +113,8 @@ mod tests {
     use super::{
         GODOT_CHECK_EXECUTION_UNAVAILABLE_MESSAGE, GodotDiagnosticsService,
     };
-    use siralos_core::godot::KnowledgeSupportState;
-    use siralos_core::godot::{
+    use siralos_godot::godot::KnowledgeSupportState;
+    use siralos_godot::godot::{
         GodotCheckPreparationResult, GodotCheckPreparationStatus,
         GodotDiagnosticsExecutionContext, GodotDiagnosticsRequest,
         GodotDiagnosticsState, GodotProjectCheckResult,

@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use siralos_core::godot::{
+use siralos_godot::godot::{
     DiagnosticSeverity, GodotDiscoveryConfiguration, GodotDiscoveryResult,
     GodotEngineProfile, GodotInstallation, GodotInstallationOverview,
     GodotSelectionPreference, SafeDiagnostic, rank_godot_candidates,
@@ -26,7 +26,7 @@ use crate::godot::discovery::path_discovery::{
     invalid_installation,
 };
 use crate::godot::process::probe_runner::GODOT_PROBING_UNAVAILABLE_MESSAGE;
-use siralos_core::godot::{
+use siralos_godot::godot::{
     GodotInstallationSource as Source, InstallEditionHint as Hint,
 };
 
@@ -370,7 +370,7 @@ fn select_automatic(
 }
 
 fn rank_label(rank: u64) -> &'static str {
-    use siralos_core::godot::godot_selection_ranks as ranks;
+    use siralos_godot::godot::godot_selection_ranks as ranks;
     match rank {
         ranks::VERIFIED_BASELINE => "verified baseline stable standard editor",
         ranks::COMPATIBLE_STABLE_STANDARD => {
@@ -581,7 +581,7 @@ mod tests {
         UserGodotConfig, UserGodotEditionHint, UserGodotInstallationConfig,
     };
     use crate::godot::process::probe_runner::GODOT_PROBING_UNAVAILABLE_MESSAGE;
-    use siralos_core::godot::GodotInstallation;
+    use siralos_godot::godot::GodotInstallation;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -796,12 +796,12 @@ mod tests {
         let make = |id: &str, path: &str| GodotInstallation {
             id: id.to_owned(),
             source_label: "user config".to_owned(),
-            source: siralos_core::godot::GodotInstallationSource::UserConfig,
+            source: siralos_godot::godot::GodotInstallationSource::UserConfig,
             canonical_path: path.to_owned(),
             size_bytes: 10,
             modified_at_ms: 0,
             sha256: "a".repeat(64),
-            edition_hint: siralos_core::godot::InstallEditionHint::Unknown,
+            edition_hint: siralos_godot::godot::InstallEditionHint::Unknown,
             status_valid: true,
             error: None,
         };

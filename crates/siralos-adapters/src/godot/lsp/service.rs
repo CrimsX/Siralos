@@ -9,7 +9,7 @@
 //! identity-bound launch primitive exists; that machinery lands with that
 //! milestone rather than as unreachable code.
 
-use siralos_core::godot::{
+use siralos_godot::godot::{
     EMPTY_GDSCRIPT_LSP_CAPABILITIES, GdScriptSessionState,
     GdScriptSessionStatus, GodotCheckPreparationStatus,
 };
@@ -40,9 +40,9 @@ impl GodotLspService {
     }
 
     /// Truthful platform-level support state.
-    pub fn support(&self) -> siralos_core::godot::GodotDiagnosticsSupport {
-        siralos_core::godot::GodotDiagnosticsSupport {
-            state: siralos_core::godot::KnowledgeSupportState::Unavailable,
+    pub fn support(&self) -> siralos_godot::godot::GodotDiagnosticsSupport {
+        siralos_godot::godot::GodotDiagnosticsSupport {
+            state: siralos_godot::godot::KnowledgeSupportState::Unavailable,
             reason: Some(GODOT_LSP_EXECUTION_UNAVAILABLE_MESSAGE.to_owned()),
             platform: self.platform.clone(),
         }
@@ -54,7 +54,7 @@ impl GodotLspService {
         &mut self,
         cancelled: bool,
     ) -> Result<
-        siralos_core::godot::GodotCheckPreparationResult,
+        siralos_godot::godot::GodotCheckPreparationResult,
         GodotLspServiceCancelled,
     > {
         if cancelled {
@@ -62,7 +62,7 @@ impl GodotLspService {
                 message: "The Godot project operation was aborted.".to_owned(),
             });
         }
-        Ok(siralos_core::godot::GodotCheckPreparationResult::NotReady {
+        Ok(siralos_godot::godot::GodotCheckPreparationResult::NotReady {
             status: GodotCheckPreparationStatus::Unsupported,
             message: NO_SELECTED_INSTALLATION_MESSAGE.to_owned(),
         })
@@ -81,7 +81,7 @@ impl GodotLspService {
             open_document_count: 0,
             diagnostic_count: 0,
             network_isolation:
-                siralos_core::godot::GdScriptNetworkIsolation::Unavailable,
+                siralos_godot::godot::GdScriptNetworkIsolation::Unavailable,
         }
     }
 }
@@ -89,7 +89,7 @@ impl GodotLspService {
 #[cfg(test)]
 mod tests {
     use super::{GODOT_LSP_EXECUTION_UNAVAILABLE_MESSAGE, GodotLspService};
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GdScriptSessionState, GodotCheckPreparationResult,
         GodotCheckPreparationStatus, KnowledgeSupportState,
     };

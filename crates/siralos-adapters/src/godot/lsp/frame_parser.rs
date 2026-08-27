@@ -9,7 +9,7 @@
 //! and ignores all subsequent input, so Siralos never mis-parses a
 //! hostile stream.
 
-use siralos_core::godot::GODOT_LIMITS;
+use siralos_godot::godot::GODOT_LIMITS;
 
 const SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 

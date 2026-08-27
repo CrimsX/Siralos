@@ -7,9 +7,9 @@
 //! becomes an application or provider event; its SHA-256 is computed over
 //! the exact raw bytes.
 
-use siralos_core::godot::GODOT_LIMITS;
 use siralos_core::identity::sha256_hex;
 use siralos_core::language::truncate_utf8_bytes;
+use siralos_godot::godot::GODOT_LIMITS;
 
 /// One dump parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -9,9 +9,11 @@
  * Protects:
  * - canonical identity: the CLI binary is named `siralos`;
  * - workspace shape: exactly crates/siralos-core, crates/siralos-adapters,
- *   crates/siralos-cli — no placeholder or hypothetical domain crates;
+ *   crates/siralos-godot, crates/siralos-cli — no placeholder or
+ *   hypothetical domain crates;
  * - dependency direction: core depends on nothing; adapters may depend
- *   only on core; cli may depend only on core and adapters;
+ *   only on core and the godot domain crate; godot may depend only on
+ *   core; cli may depend only on core, adapters, and godot;
  * - domain neutrality: `siralos-core` sources contain no Godot-domain
  *   symbols;
  * - unsafe Rust: no `unsafe fn`/`unsafe impl`/`unsafe trait`/`unsafe {`
@@ -60,9 +62,9 @@ const UNSAFE_PATTERN = /\bunsafe\s+(fn|impl|trait|extern|\{)/;
 /** Allowed workspace dependencies per crate. */
 const ALLOWED_DEPENDENCIES = new Map([
   ["siralos-core", new Set()],
-  ["siralos-adapters", new Set(["siralos-core"])],
+  ["siralos-adapters", new Set(["siralos-core", "siralos-godot"])],
   ["siralos-godot", new Set(["siralos-core"])],
-  ["siralos-cli", new Set(["siralos-core", "siralos-adapters"])],
+  ["siralos-cli", new Set(["siralos-core", "siralos-adapters", "siralos-godot"])],
 ]);
 
 /** List Rust source files beneath `directory` (absolute paths). */
@@ -285,11 +287,6 @@ export function runChecks(root) {
   for (const crate of EXPECTED_CRATES) {
     for (const source of listRustSources(join(root, crate))) {
       const content = readFileSync(source, "utf8");
-      // R8 — Godot Stage-2 parity lives in `siralos-core/src/godot/**`
-      // (entry-reviewed at 6a77885) and is outside the pre-R8
-      // domain-neutrality guard for the rest of `siralos-core`. Outside
-      // that subtree, the only allowed Godot mention is the exact module
-      // declaration line; any other occurrence still fails.
       // R10 — determinism/ownership.rs references Godot paths as
       // architecture navigation metadata (decision 14); it contains no
       // domain semantics.
@@ -338,14 +335,10 @@ export function runChecks(root) {
         source.includes(join("src", "planning", "policy.rs"));
       const coreOutsideGodot =
         crate === "crates/siralos-core" &&
-        !source.includes(join("src", "godot")) &&
         !source.includes(join("src", "determinism")) &&
         !runtimeExempt &&
         !r13AuthorityExempt;
-      if (
-        coreOutsideGodot &&
-        FORBIDDEN_CORE_SYMBOL_PATTERN.test(content.replace(/^\s*pub mod godot;\s*$/gm, ""))
-      ) {
+      if (coreOutsideGodot && FORBIDDEN_CORE_SYMBOL_PATTERN.test(content)) {
         errors.push(`${source}: siralos-core must stay domain-neutral (Godot symbol present)`);
       }
       if (crate === "crates/siralos-core" && FORBIDDEN_CORE_LANGUAGE_PATTERN.test(content)) {

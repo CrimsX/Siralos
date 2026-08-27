@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use siralos_core::godot::{
+use siralos_godot::godot::{
     GODOT_KNOWN_OPTIONS, GodotCommandCapabilities,
     empty_godot_command_capabilities,
 };

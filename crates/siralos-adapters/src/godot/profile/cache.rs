@@ -5,7 +5,7 @@
 //! profile is ever served and no probe is attempted; the storage root is
 //! never initialized and no file is ever written.
 
-use siralos_core::godot::GodotEngineProfile;
+use siralos_godot::godot::GodotEngineProfile;
 
 /// Immutable schema version of the future on-disk cache layout.
 pub const ENGINE_PROFILE_CACHE_SCHEMA_VERSION: u32 = 1;

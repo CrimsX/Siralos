@@ -8,7 +8,7 @@
 //! `search` and `lookup` serve bounded structured results from a loaded
 //! base and never expose the raw dump.
 
-use siralos_core::godot::{
+use siralos_godot::godot::{
     GodotApiSearchQuery, GodotKnowledgeBase, GodotKnowledgeLookupOutcome,
     GodotKnowledgeQueryResult, GodotKnowledgeRefreshResult,
     GodotKnowledgeStatus, GodotKnowledgeSupport, KNOWLEDGE_SCHEMA_VERSION,
@@ -210,7 +210,7 @@ mod tests {
         build_godot_api_index, parse_godot_api_dump_with_docs,
     };
     use crate::godot::process::godot_knowledge_runner::GODOT_KNOWLEDGE_GENERATION_UNAVAILABLE_MESSAGE;
-    use siralos_core::godot::{
+    use siralos_godot::godot::{
         GodotApiSearchQuery, GodotKnowledgeLookupOutcome,
         GodotKnowledgeQueryResult, GodotKnowledgeRefreshResult, KnowledgeApi,
         KnowledgeEngine, KnowledgeIndex, KnowledgeLookupStatus,
@@ -251,7 +251,7 @@ mod tests {
         let document = parse_godot_api_dump_with_docs(DUMP_JSON.as_bytes())
             .expect("fixture parses");
         let index = build_godot_api_index(&document).expect("index builds");
-        let profile = siralos_core::godot::GodotKnowledgeProfileV1 {
+        let profile = siralos_godot::godot::GodotKnowledgeProfileV1 {
             version: 1,
             engine: KnowledgeEngine {
                 installation_id: "path-1".to_owned(),
@@ -275,7 +275,7 @@ mod tests {
         };
         GodotKnowledgeService::with_loaded_base(
             "win32",
-            siralos_core::godot::GodotKnowledgeBase { profile, index },
+            siralos_godot::godot::GodotKnowledgeBase { profile, index },
         )
     }
 

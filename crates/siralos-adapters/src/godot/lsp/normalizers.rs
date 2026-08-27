@@ -12,11 +12,6 @@
 
 use serde_json::Value;
 
-use siralos_core::godot::{
-    GODOT_LIMITS, GdScriptCompletionItem, GdScriptCompletionResult,
-    GdScriptDefinitionLocation, GdScriptHoverResult, GdScriptHoverSection,
-    GdScriptSeverity, GdScriptSourceRange, GodotGdScriptDiagnostic,
-};
 use siralos_core::language::position::{RawPosition, RawRange};
 use siralos_core::language::truncate_utf8_bytes;
 use siralos_core::language::{
@@ -24,6 +19,11 @@ use siralos_core::language::{
     RawDefinitionEntry, RawDiagnostic, RawDiagnosticCode,
     normalize_definition_locations, normalize_diagnostic_payload,
     sanitize_control_characters, to_one_based_range,
+};
+use siralos_godot::godot::{
+    GODOT_LIMITS, GdScriptCompletionItem, GdScriptCompletionResult,
+    GdScriptDefinitionLocation, GdScriptHoverResult, GdScriptHoverSection,
+    GdScriptSeverity, GdScriptSourceRange, GodotGdScriptDiagnostic,
 };
 
 use super::file_uri::mirror_uri_to_workspace_relative;
@@ -76,7 +76,7 @@ pub fn normalize_publish_diagnostics(
             .diagnostics
             .iter()
             .map(|diagnostic| GodotGdScriptDiagnostic {
-                source: siralos_core::godot::GdScriptDiagnosticSource::Lsp,
+                source: siralos_godot::godot::GdScriptDiagnosticSource::Lsp,
                 severity: match diagnostic.severity {
                     siralos_core::language::DiagnosticSeverity::Error => {
                         GdScriptSeverity::Error
@@ -401,7 +401,7 @@ pub fn normalize_definition(
     uri: &str,
     locations: &Value,
     context: LspNormalizationContext<'_>,
-) -> siralos_core::godot::GdScriptDefinitionResult {
+) -> siralos_godot::godot::GdScriptDefinitionResult {
     let path = mirror_uri_to_workspace_relative(uri, context.mirror_root_path)
         .unwrap_or_else(|| context.path.to_owned());
     let entries: Vec<RawDefinitionEntry> = match locations {
@@ -449,7 +449,7 @@ pub fn normalize_definition(
             max_locations: GODOT_LIMITS.lsp_max_definition_locations,
         },
     );
-    siralos_core::godot::GdScriptDefinitionResult {
+    siralos_godot::godot::GdScriptDefinitionResult {
         path: normalized.path,
         locations: normalized
             .locations
@@ -468,7 +468,7 @@ fn map_language_range(
     range: siralos_core::language::LanguageRange,
 ) -> GdScriptSourceRange {
     let to_position = |position: siralos_core::language::LanguagePosition| {
-        siralos_core::godot::GdScriptPosition {
+        siralos_godot::godot::GdScriptPosition {
             line: u32::try_from(position.line).unwrap_or(u32::MAX),
             column: u32::try_from(position.column).unwrap_or(u32::MAX),
         }
@@ -486,7 +486,7 @@ mod tests {
         normalize_hover, normalize_publish_diagnostics,
     };
     use serde_json::json;
-    use siralos_core::godot::GdScriptSeverity;
+    use siralos_godot::godot::GdScriptSeverity;
 
     const MIRROR: &str = if cfg!(windows) { "C:\\mirror" } else { "/mirror" };
 

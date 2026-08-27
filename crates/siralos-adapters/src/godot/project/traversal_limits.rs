@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use siralos_core::godot::{GODOT_LIMITS, GodotScanTruncationReason};
+use siralos_godot::godot::{GODOT_LIMITS, GodotScanTruncationReason};
 
 /// Shared bounded-traversal budget for walk, plugin, and read phases.
 #[derive(Debug)]
