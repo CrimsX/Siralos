@@ -15,6 +15,13 @@
 
 mod effects;
 mod host;
+pub mod manifest;
 
 pub use effects::{EffectMediation, EffectMediationBounds, MediatedAnswer};
 pub use host::{DomainHost, DomainHostBounds, EffectRequest, QueryOutcome};
+pub use manifest::{
+    DOMAIN_MANIFEST_FILE_NAME, MAX_COMPONENT_BYTES, MAX_MANIFEST_BYTES,
+    MAX_SIRALOS_TOML_BYTES, PluginFailure, PluginManifest, PluginRecord,
+    SIRALOS_TOML_FILE_NAME, load_manifest, load_plugin_records, record_plugin,
+    verify_component,
+};

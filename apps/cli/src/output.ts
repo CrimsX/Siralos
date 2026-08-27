@@ -334,6 +334,10 @@ export function formatTools(
   return `Available tools:\n${lines.join("\n")}\n`;
 }
 
+export function formatDomains(): string {
+  return "No domains installed.\n[Add Plugin] /domains-add <folder>\n";
+}
+
 export function formatApprovalPrompt(request: ApprovalRequest): string {
   if (request.capability === "process.execute") {
     return formatCommandApprovalPrompt(request);

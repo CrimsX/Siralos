@@ -24,6 +24,7 @@ export type CommandCatalogGroup =
   | "godot"
   | "knowledge"
   | "references"
+  | "domains"
   | "doctor";
 
 export interface CommandCatalogEntry {
@@ -222,6 +223,17 @@ export const COMMAND_CATALOG = [
     id: "read-structure",
     description: "Show the GDScript declaration structure of a workspace file",
     group: "knowledge",
+  },
+  // --- domains ---
+  {
+    id: "domains",
+    description: "Show installed domains and the Add Plugin affordance",
+    group: "domains",
+  },
+  {
+    id: "domains-add",
+    description: "Install a domain plugin from a folder containing domain-manifest.toml",
+    group: "domains",
   },
   // --- references ---
   // --- doctor ---

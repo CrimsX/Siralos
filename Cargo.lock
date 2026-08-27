@@ -1581,6 +1581,7 @@ dependencies = [
  "serde_json",
  "siralos-core",
  "siralos-godot",
+ "toml",
  "wasmtime",
  "wasmtime-wasi",
 ]

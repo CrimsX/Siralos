@@ -67,6 +67,7 @@ import {
   formatToolCompleted,
   formatToolProjection,
   formatToolFailed,
+  formatDomains,
   formatTools,
   formatToolStarted,
   sanitizeForDisplay,
@@ -148,6 +149,12 @@ export async function runInteractiveSession(
           case "tools":
             io.write(formatTools(sessionInfo.tools, sessionInfo.security));
             io.write(formatToolProjection(sessionInfo.projection));
+            break;
+          case "domains":
+            io.write(formatDomains());
+            break;
+          case "domains-add":
+            io.write("Domains: /domains-add requires the Add Plugin selection flow.\n");
             break;
           case "sandbox":
             await runSandboxCheck(io, sessionInfo.security);

@@ -19,6 +19,8 @@ pub const COMMAND_CATALOG_GROUP_WORKFLOW: &str = "workflow";
 pub const COMMAND_CATALOG_GROUP_GODOT: &str = "godot";
 /// The `knowledge` catalog group.
 pub const COMMAND_CATALOG_GROUP_KNOWLEDGE: &str = "knowledge";
+/// The `domains` catalog group.
+pub const COMMAND_CATALOG_GROUP_DOMAINS: &str = "domains";
 /// The `doctor` catalog group.
 pub const COMMAND_CATALOG_GROUP_DOCTOR: &str = "doctor";
 
@@ -34,7 +36,7 @@ pub struct CommandCatalogEntry {
 }
 
 /// The single source of truth for the interactive command surface.
-pub const COMMAND_CATALOG: [CommandCatalogEntry; 47] = [
+pub const COMMAND_CATALOG: [CommandCatalogEntry; 49] = [
     CommandCatalogEntry {
         id: "help",
         description: "Show this help",
@@ -261,6 +263,16 @@ pub const COMMAND_CATALOG: [CommandCatalogEntry; 47] = [
         group: COMMAND_CATALOG_GROUP_KNOWLEDGE,
     },
     CommandCatalogEntry {
+        id: "domains",
+        description: "Show installed domains and the Add Plugin affordance",
+        group: COMMAND_CATALOG_GROUP_DOMAINS,
+    },
+    CommandCatalogEntry {
+        id: "domains-add",
+        description: "Install a domain plugin from a folder containing domain-manifest.toml",
+        group: COMMAND_CATALOG_GROUP_DOMAINS,
+    },
+    CommandCatalogEntry {
         id: "doctor",
         description: "Run read-only Siralos capability diagnostics (areas: runtime, configuration, providers, sandbox, workspace, godot, project, references, research, capabilities)",
         group: COMMAND_CATALOG_GROUP_DOCTOR,
@@ -296,9 +308,9 @@ mod tests {
 
     #[test]
     fn catalog_shape_is_stable() {
-        assert_eq!(COMMAND_CATALOG.len(), 47);
+        assert_eq!(COMMAND_CATALOG.len(), 49);
         assert_eq!(command_catalog_ids()[0], "help");
-        assert_eq!(command_catalog_ids()[46], "siralos");
+        assert_eq!(command_catalog_ids()[48], "siralos");
         assert_eq!(
             command_catalog_ids().len(),
             command_catalog_ids()

@@ -9,10 +9,14 @@ use std::fmt;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
+use siralos_adapters::domain::{
+    load_manifest, load_plugin_records, record_plugin, verify_component,
+};
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_adapters::tool::{
     WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
 };
+use siralos_adapters::workspace::resolve::resolve_workspace_path;
 use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
 };
@@ -31,7 +35,8 @@ use crate::configuration::{
     ConfigurationError, DEFAULT_REVIEW_PROVIDER_ID, load_user_configuration,
 };
 use crate::output::{
-    format_context_status, format_tool_projection, format_tools,
+    format_context_status, format_domains, format_plugin_added,
+    format_tool_projection, format_tools,
 };
 use crate::sanitize::TerminalSanitizer;
 
@@ -235,20 +240,103 @@ where
                     )
                     .map_err(InteractiveError::Io)?;
             }
+            "/domains" => {
+                let rendered = render_domains(&workspace_root);
+                writer
+                    .write_all(rendered.as_bytes())
+                    .map_err(InteractiveError::Io)?;
+            }
             "/exit" => break,
-            prompt => {
-                application.send_prompt(prompt.to_owned()).map_err(
-                    |error| {
-                        InteractiveError::Io(io::Error::other(
-                            error.to_string(),
-                        ))
-                    },
-                )?;
-                drain_events(&mut application, &mut writer)?;
+            rest => {
+                if let Some(folder) = rest.strip_prefix("/domains-add ") {
+                    let rendered = render_add_plugin(&workspace_root, folder);
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                } else {
+                    application.send_prompt(input.to_owned()).map_err(
+                        |error| {
+                            InteractiveError::Io(io::Error::other(
+                                error.to_string(),
+                            ))
+                        },
+                    )?;
+                    drain_events(&mut application, &mut writer)?;
+                }
             }
         }
     }
     Ok(())
+}
+
+/// Render the `/domains` empty-state or installed view.
+fn render_domains(workspace_root: &Path) -> String {
+    match load_plugin_records(workspace_root) {
+        Ok(records) => format_domains(&records),
+        Err(failure) => {
+            format!(
+                "Domains unavailable: {failure} (code {})\n",
+                failure.code()
+            )
+        }
+    }
+}
+
+/// Run one `/domains-add <folder>` flow: pick, verify, record.
+fn render_add_plugin(workspace_root: &Path, folder: &str) -> String {
+    let resolved_folder = match resolve_workspace_path(workspace_root, folder)
+    {
+        Ok(resolved) => resolved,
+        Err(rejection) => {
+            return format!(
+                "Add Plugin failed: folder rejected: {rejection} (code {})\n",
+                rejection_code(&rejection)
+            );
+        }
+    };
+    let manifest =
+        match load_manifest(workspace_root, &resolved_folder.absolute_path) {
+            Ok(manifest) => manifest,
+            Err(failure) => {
+                return format!(
+                    "Add Plugin failed: {failure} (code {})\n",
+                    failure.code()
+                );
+            }
+        };
+    if let Err(failure) = verify_component(&manifest) {
+        return format!(
+            "Add Plugin failed: {failure} (code {})\n",
+            failure.code()
+        );
+    }
+    let record = siralos_adapters::domain::PluginRecord {
+        id: manifest.package().id().as_str().to_owned(),
+        path: resolved_folder.workspace_relative_path.clone(),
+        digest: format!("sha256:{}", manifest.package().digest().as_str()),
+    };
+    if let Err(failure) = record_plugin(workspace_root, &record) {
+        return format!(
+            "Add Plugin failed: {failure} (code {})\n",
+            failure.code()
+        );
+    }
+    format_plugin_added(&record)
+}
+
+/// Stable short code for a workspace path rejection.
+fn rejection_code(
+    rejection: &siralos_adapters::workspace::resolve::PathRejection,
+) -> &'static str {
+    use siralos_adapters::workspace::resolve::PathRejection as Rejection;
+    match rejection {
+        Rejection::NullByte => "PATH_NULL_BYTE",
+        Rejection::Empty => "PATH_EMPTY",
+        Rejection::Absolute => "PATH_ABSOLUTE",
+        Rejection::OutsideWorkspace => "PATH_OUTSIDE_WORKSPACE",
+        Rejection::Unresolvable(_) => "PATH_UNRESOLVABLE",
+        Rejection::LinkEscape => "PATH_LINK_ESCAPE",
+    }
 }
 
 fn drain_events<P, W>(
@@ -313,7 +401,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{InteractiveOptions, run_interactive_session_with_options};
-    use std::fs::{create_dir, remove_dir_all, write};
+    use std::fs::{create_dir, create_dir_all, remove_dir_all, write};
     use std::io::Cursor;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -403,6 +491,75 @@ mod tests {
         assert!(output.contains("(read-only, allowed)"));
         assert!(!output.contains("write, allowed"));
         let _ = std::fs::remove_file(config_path);
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn domains_renders_the_deterministic_empty_state() {
+        let root = temporary_directory("domains-empty");
+        let output = run("/domains\n/exit\n", &root, None);
+        assert!(output.contains("No domains installed.\n"));
+        assert!(output.contains("/domains-add <folder>"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn domains_add_records_and_renders() {
+        let root = temporary_directory("domains-add");
+        create_dir_all(root.join("plugins/godot")).expect("folder");
+        let bytes = b"conformance component bytes";
+        let digest = {
+            use siralos_core::identity::sha256_hex;
+            sha256_hex(bytes)
+        };
+        write(root.join("plugins/godot/godot.component.wasm"), bytes)
+            .expect("component");
+        write(
+            root.join("plugins/godot/domain-manifest.toml"),
+            format!(
+                "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
+            ),
+        )
+        .expect("manifest");
+        let siralos_toml = root.join("siralos.toml");
+        let output =
+            run("/domains-add plugins/godot\n/domains\n/exit\n", &root, None);
+        assert!(output.contains("Installed godot (digest sha256:"));
+        assert!(output.contains("Domains installed:\n"));
+        assert!(output.contains("godot (digest "));
+        assert!(siralos_toml.exists());
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn domains_add_missing_manifest_fails_closed() {
+        let root = temporary_directory("domains-add-missing");
+        create_dir(root.join("empty")).expect("folder");
+        let output = run("/domains-add empty\n/domains\n/exit\n", &root, None);
+        assert!(output.contains("Add Plugin failed:"));
+        assert!(output.contains("No domains installed.\n"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn domains_add_outside_workspace_is_rejected() {
+        let root = temporary_directory("domains-add-outside");
+        let mut outside =
+            PathBuf::from(std::env::temp_dir().to_string_lossy().into_owned());
+        outside.push("outside-plugin-inspection");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        outside.push(format!("{unique}"));
+        create_dir_all(&outside).expect("outside folder");
+        let output = run(
+            &format!("/domains-add {}\n/exit\n", outside.display()),
+            &root,
+            None,
+        );
+        assert!(output.contains("folder rejected"));
+        let _ = remove_dir_all(&outside);
         let _ = remove_dir_all(root);
     }
 }

@@ -4,6 +4,7 @@
 //! and permission decisions are calculated by the existing core services;
 //! the formatter never creates authority or changes an approved surface.
 
+use siralos_adapters::domain::PluginRecord;
 use siralos_core::projection::LastProjection;
 use siralos_core::tool::{
     PermissionDecision, PermissionPolicy, RegisteredToolInfo,
@@ -104,6 +105,39 @@ pub fn format_tools(
 
 fn fingerprint_prefix(fingerprint: &str) -> &str {
     &fingerprint[..fingerprint.len().min(8)]
+}
+
+/// Render the installed domains view (`/domains`): the deterministic
+/// empty state, or the recorded plugin list sorted by id.
+pub fn format_domains(records: &[PluginRecord]) -> String {
+    if records.is_empty() {
+        return "No domains installed.\n[Add Plugin] /domains-add <folder>\n"
+            .to_owned();
+    }
+    let lines = records
+        .iter()
+        .map(|record| {
+            let short_digest = record
+                .digest
+                .strip_prefix("sha256:")
+                .unwrap_or(&record.digest)
+                .chars()
+                .take(8)
+                .collect::<String>();
+            format!(
+                "  {} (digest {}, path {})",
+                record.id, short_digest, record.path,
+            )
+        })
+        .collect::<Vec<_>>();
+    format!("Domains installed:\n{}\n", lines.join("\n"))
+}
+
+/// Render the outcome of one `/domains-add` flow.
+pub fn format_plugin_added(record: &PluginRecord) -> String {
+    let digest =
+        record.digest.strip_prefix("sha256:").unwrap_or(&record.digest);
+    format!("Installed {} (digest sha256:{digest}).\n", record.id)
 }
 
 #[cfg(test)]
