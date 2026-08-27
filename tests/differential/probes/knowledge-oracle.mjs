@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createKnowledgeCoordinator } from "../../../packages/core/src/knowledge/knowledge-coordinator.ts";
 import { computeKnowledgeFactContentDigest } from "../../../packages/core/src/knowledge/knowledge-model.ts";
-import { buildGodotProjectKnowledgeCandidates } from "../../../packages/core/src/knowledge/knowledge-seeding.ts";
 
 const NOW = 1700000000000;
 

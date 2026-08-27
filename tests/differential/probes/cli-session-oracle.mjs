@@ -83,52 +83,6 @@ async function main() {
     };
   }
 
-  function sessionInfoFor() {
-    // Mirror index.ts destructuring exactly (composition-owned wiring).
-    const s = cliApp;
-    return {
-      workspaceRoot: s.workspaceRoot,
-      configPath: s.configPath,
-      policy: s.policy,
-      profile: s.profile,
-      provider: s.provider,
-      selfReference: s.selfReference,
-      tools: s.tools,
-      security: s.security,
-      git: s.git,
-      godot: s.godot,
-      godotProbe: s.godotProbe,
-      knowledge: s.knowledge,
-      diagnostics: s.diagnostics,
-      language: s.language,
-      development: s.development,
-      reviewer: {
-        async review() {
-          return { type: "deny", reason: "probe" };
-        },
-      },
-      checkpoints: s.checkpoints,
-      undo: s.undo,
-      runners: s.runners,
-      sandbox: s.sandbox,
-      tasks: s.tasks,
-      taskSources: s.taskSources,
-      projection: s.projection,
-      revisions: s.revisions,
-      workspaceRead: s.workspaceRead,
-      instructions: s.instructions,
-      projectKnowledge: s.projectKnowledge,
-      references: s.references,
-      referenceMaterializer: s.referenceMaterializer,
-      referenceConfigError: s.referenceConfigError,
-      research: s.research,
-      researchSources: s.researchSources,
-      planner: s.planner,
-      briefing: s.briefing,
-      milestoneManifest: s.milestoneManifest,
-    };
-  }
-
   async function runSession(lines) {
     // Fresh application per session to keep determinism (mirrors Rust harness).
     const freshCliApp = await createCliApplication({

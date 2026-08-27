@@ -50,7 +50,6 @@ import {
   pathMatchesPattern,
 } from "../../../packages/core/src/executor/new-file-discipline.js";
 import { buildExecutorContextPack } from "../../../packages/core/src/executor/context-pack.js";
-import { createExecutorBriefing } from "../../../packages/core/src/executor/briefing-service.js";
 import { S3M8_MILESTONE_MANIFEST } from "../../../packages/core/src/executor/s3m8-manifest.js";
 import { S3M9_MILESTONE_MANIFEST } from "../../../packages/core/src/executor/s3m9-manifest.js";
 import { S3M10_MILESTONE_MANIFEST } from "../../../packages/core/src/executor/s3m10-manifest.js";
