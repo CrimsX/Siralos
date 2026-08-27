@@ -225,7 +225,12 @@ function runCase(inputCase, environment) {
     case "knowledge-seeding-candidates": {
       return {
         candidateCount: 5,
-        subjectKeys: ["project.godot.version", "project.has_dotnet", "project.language_profile", "project.name"].sort(),
+        subjectKeys: [
+          "project.godot.version",
+          "project.has_dotnet",
+          "project.language_profile",
+          "project.name",
+        ].sort(),
         hasVersion: true,
         hasHasDotnet: true,
         hasName: true,

@@ -1927,10 +1927,7 @@ function validateReferenceIdentityCase(entry, label) {
     assertExactKeys(entry, ["firstMatch", "matchCount", "name"], label);
     return;
   }
-  if (
-    Object.hasOwn(entry, "visibleWhenReady") &&
-    Object.keys(entry).length === 3
-  ) {
+  if (Object.hasOwn(entry, "visibleWhenReady") && Object.keys(entry).length === 3) {
     assertExactKeys(entry, ["hiddenWhenNone", "name", "visibleWhenReady"], label);
     return;
   }

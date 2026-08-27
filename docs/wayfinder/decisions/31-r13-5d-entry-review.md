@@ -12,15 +12,15 @@
 
 All cases extend the existing `cli-session` subject (no new subject) and are exercised through the scripted `InputQueue` + fake `SessionIO` + `TerminalSanitizer` seam already used for R13.5a. No filesystem, no network, no wall clock beyond the injected `NowMs` for `/status` timestamps.
 
-| # | Case | What it proves |
-|---|------|----------------|
-| 1 | `godot-commands-unavailable` | `/godot` / `godot-installations` / `godot-project` / `godot-doctor` / `godot-probe` / `godot-probe-status` / `godot-knowledge` / `godot-knowledge-refresh` / `godot-api` each render the typed `unavailable` posture (no process, no mutation) with sanitizer-exact output |
-| 2 | `gdscript-commands-unavailable` | `/gdscript-check` / `gdscript-diagnostics` / `gdscript-lsp` / `gdscript-lsp-stop` / `gdscript-hover` / `gdscript-complete` / `gdscript-definition` each report `unavailable`/`not running` without launching LSP |
-| 3 | `develop-commands-unavailable` | `/develop` / `plan` / `development-status` / `quality` / `review-change` render the typed `unavailable`/`no active task` posture; `/develop` never mutates |
-| 4 | `system-commands-unavailable` | `/sandbox` / `permissions` / `git-status` / `diff` / `checkpoints` / `undo` / `commands` / `cancel` render their read-only or typed `unavailable` status (no checkpoint, no Git spawn) |
-| 5 | `input-queue-ownership` | Scripted queue drained to EOF returns exit 0; `/clear` increments `cleared` exactly once; interleaved prompt + command ordering preserved; empty/whitespace never writes |
-| 6 | `sanitizer-boundary` | Provider/tool output containing C0/C1, ANSI CSI/OSC, and surrogate pairs is sanitized via `push`+`flush` exactly as R7.5 rubric — `TerminalSanitizer` statefulness proven by split-sequence cases |
-| 7 | `session-ordering-determinism` | Two identical scripted sessions (`/status` → prompt → `/status` → `/help`) produce byte-identical `writes` arrays; workspace/config canonicalization `<workspace>`/`<config>` holds |
+| #   | Case                            | What it proves                                                                                                                                                                                                                                                             |
+| --- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `godot-commands-unavailable`    | `/godot` / `godot-installations` / `godot-project` / `godot-doctor` / `godot-probe` / `godot-probe-status` / `godot-knowledge` / `godot-knowledge-refresh` / `godot-api` each render the typed `unavailable` posture (no process, no mutation) with sanitizer-exact output |
+| 2   | `gdscript-commands-unavailable` | `/gdscript-check` / `gdscript-diagnostics` / `gdscript-lsp` / `gdscript-lsp-stop` / `gdscript-hover` / `gdscript-complete` / `gdscript-definition` each report `unavailable`/`not running` without launching LSP                                                           |
+| 3   | `develop-commands-unavailable`  | `/develop` / `plan` / `development-status` / `quality` / `review-change` render the typed `unavailable`/`no active task` posture; `/develop` never mutates                                                                                                                 |
+| 4   | `system-commands-unavailable`   | `/sandbox` / `permissions` / `git-status` / `diff` / `checkpoints` / `undo` / `commands` / `cancel` render their read-only or typed `unavailable` status (no checkpoint, no Git spawn)                                                                                     |
+| 5   | `input-queue-ownership`         | Scripted queue drained to EOF returns exit 0; `/clear` increments `cleared` exactly once; interleaved prompt + command ordering preserved; empty/whitespace never writes                                                                                                   |
+| 6   | `sanitizer-boundary`            | Provider/tool output containing C0/C1, ANSI CSI/OSC, and surrogate pairs is sanitized via `push`+`flush` exactly as R7.5 rubric — `TerminalSanitizer` statefulness proven by split-sequence cases                                                                          |
+| 7   | `session-ordering-determinism`  | Two identical scripted sessions (`/status` → prompt → `/status` → `/help`) produce byte-identical `writes` arrays; workspace/config canonicalization `<workspace>`/`<config>` holds                                                                                        |
 
 ## Mechanics
 
@@ -43,9 +43,9 @@ Implementation of R13.5d is authorized against this frozen set; landings are rec
 
 ## Self-loop verification
 
-| Criterion | Direct evidence | Status |
-|-----------|-----------------|--------|
-| Cases exercise reference-observable behavior | `interactive-session.ts:137` exhaustive switch counted 47 catalog ids → 7 new groups; `harness_cli_session.rs:116` `parse_input` already covers catalog; `sanitize.rs:44` stateful `push`+`flush` | pass |
-| Determinism posture preserved | § Mechanics injects one fixed clock; scripted queue + fake IO + sanitizer only; no fs/network/TTY | pass |
-| Overlap resolved, no double port | R13.5a covered `help/status/clear/commands` + input-parsing; R13.5b/c covered briefing/manifests/seams; R13.5d owns only remaining ~75-command surface + queue/sanitizer | pass |
-| Human decided the material cuts | HITL answer 2026-08-26: “7 groups as proposed, v31, all remaining commands as unavailable, queue/sanitizer included” | pass |
+| Criterion                                    | Direct evidence                                                                                                                                                                                   | Status |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Cases exercise reference-observable behavior | `interactive-session.ts:137` exhaustive switch counted 47 catalog ids → 7 new groups; `harness_cli_session.rs:116` `parse_input` already covers catalog; `sanitize.rs:44` stateful `push`+`flush` | pass   |
+| Determinism posture preserved                | § Mechanics injects one fixed clock; scripted queue + fake IO + sanitizer only; no fs/network/TTY                                                                                                 | pass   |
+| Overlap resolved, no double port             | R13.5a covered `help/status/clear/commands` + input-parsing; R13.5b/c covered briefing/manifests/seams; R13.5d owns only remaining ~75-command surface + queue/sanitizer                          | pass   |
+| Human decided the material cuts              | HITL answer 2026-08-26: “7 groups as proposed, v31, all remaining commands as unavailable, queue/sanitizer included”                                                                              | pass   |

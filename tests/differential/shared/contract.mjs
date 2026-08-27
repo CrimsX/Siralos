@@ -898,35 +898,20 @@ function validateSubjectInputs(scenario, label) {
     if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
       throw new Error(`${label}.input must be a plain object`);
     }
-    if (
-      byteLength(canonicalizeJson(scenario.input)) >
-      CONTRACT_LIMITS.cliSessionInputBytes
-    ) {
-      throw new Error(
-        `${label}.input exceeds ${CONTRACT_LIMITS.cliSessionInputBytes} UTF-8 bytes`,
-      );
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.cliSessionInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.cliSessionInputBytes} UTF-8 bytes`);
     }
     const cases = scenario.input.cases;
     if (!Array.isArray(cases) || cases.length === 0 || cases.length > 16) {
-      throw new Error(
-        `${label} cli-session input must contain a bounded non-empty cases array`,
-      );
+      throw new Error(`${label} cli-session input must contain a bounded non-empty cases array`);
     }
     for (const entry of cases) {
-      if (
-        !isPlainRecord(entry) ||
-        typeof entry.name !== "string" ||
-        entry.name.length === 0
-      ) {
-        throw new Error(
-          `${label} cli-session cases must carry a non-empty name`,
-        );
+      if (!isPlainRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0) {
+        throw new Error(`${label} cli-session cases must carry a non-empty name`);
       }
     }
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
-      throw new Error(
-        `${label} cli-session inputs must use platforms ["*"] and an empty env`,
-      );
+      throw new Error(`${label} cli-session inputs must use platforms ["*"] and an empty env`);
     }
     return;
   }

@@ -14,29 +14,29 @@ All cases extend **existing subjects** (no new subject name) — `knowledge-revi
 
 ### `knowledge-revisions` extension ×3 (seeding)
 
-| # | Case | What it proves |
-|---|------|----------------|
-| 1 | `knowledge-seeding-candidates` | `buildGodotProjectKnowledgeCandidates` over `GodotProjectKnowledgeSeed` (null vs `project.godot` sha, declaredEngineVersionRaw, languageProfile, hasDotnet, projectName) — 5 seed shapes → exact candidate sets (subjectKey/content/provenance/confidence/volatility), conservative seeding (no broad inference, always has_dotnet, project.name only when declared, provenance only when sha present) |
-| 2 | `knowledge-seeding-coordinator-integration` | Candidates flow through `KnowledgeCoordinator.propose` → `activeFacts` with `kf_` ids, `revision 1`, `retrieved` activation; reproposal no-churn vs revision bump |
-| 3 | `knowledge-seeding-bounds` | Empty/invalid seed fields (empty version string, unknown languageProfile, null projectName) produce no fact; has_dotnet always present as `true`/`false` |
+| #   | Case                                        | What it proves                                                                                                                                                                                                                                                                                                                                                                                         |
+| --- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `knowledge-seeding-candidates`              | `buildGodotProjectKnowledgeCandidates` over `GodotProjectKnowledgeSeed` (null vs `project.godot` sha, declaredEngineVersionRaw, languageProfile, hasDotnet, projectName) — 5 seed shapes → exact candidate sets (subjectKey/content/provenance/confidence/volatility), conservative seeding (no broad inference, always has_dotnet, project.name only when declared, provenance only when sha present) |
+| 2   | `knowledge-seeding-coordinator-integration` | Candidates flow through `KnowledgeCoordinator.propose` → `activeFacts` with `kf_` ids, `revision 1`, `retrieved` activation; reproposal no-churn vs revision bump                                                                                                                                                                                                                                      |
+| 3   | `knowledge-seeding-bounds`                  | Empty/invalid seed fields (empty version string, unknown languageProfile, null projectName) produce no fact; has_dotnet always present as `true`/`false`                                                                                                                                                                                                                                               |
 
 ### `reference-identity` extension ×4 (access port + tools)
 
-| # | Case | What it proves |
-|---|------|----------------|
-| 1 | `reference-access-list` | `ReferenceAccessPort.list` returns bound revision identities for ready references only, redacted paths, deterministic order |
-| 2 | `reference-access-read` | `ReferenceAccessPort.read` returns bounded exact content for ready local-directory references, `unavailable` for repository references (typed reason), outside-workspace containment fails closed |
-| 3 | `reference-access-search` | `ReferenceAccessPort.search` over materialized local-directory references — bounded, deterministic, redacted |
-| 4 | `reference-tools-visibility` | `reference.inspect` Tools (`reference.list`/`read`/`search`) appear only when at least one reference is ready; gated by `reference.inspect` capability (allow/deny matrix) |
+| #   | Case                         | What it proves                                                                                                                                                                                    |
+| --- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `reference-access-list`      | `ReferenceAccessPort.list` returns bound revision identities for ready references only, redacted paths, deterministic order                                                                       |
+| 2   | `reference-access-read`      | `ReferenceAccessPort.read` returns bounded exact content for ready local-directory references, `unavailable` for repository references (typed reason), outside-workspace containment fails closed |
+| 3   | `reference-access-search`    | `ReferenceAccessPort.search` over materialized local-directory references — bounded, deterministic, redacted                                                                                      |
+| 4   | `reference-tools-visibility` | `reference.inspect` Tools (`reference.list`/`read`/`search`) appear only when at least one reference is ready; gated by `reference.inspect` capability (allow/deny matrix)                        |
 
 ### `research-policy` extension ×4 (access port + tools)
 
-| # | Case | What it proves |
-|---|------|----------------|
-| 1 | `research-access-port-list` | `ResearchAccessPort.list` over `ResearchService` evidence ring — bounded, detached, redacted |
-| 2 | `research-access-port-read` | `ResearchAccessPort.read` returns bounded research document content for existing evidence, `not-found` for unknown id, detached |
-| 3 | `research-tools-visibility` | `research.fetch` Tools (`research.search`/`read`) are always registered but gated by `research.fetch` policy (deny by default, allow when Host grants) — visibility vs capability distinct |
-| 4 | `research-evidence-provenance` | Research evidence carries provenance (source id/label, request digest, resolved revision, fetchedAt) and is host-verified before `KnowledgeCoordinator` propose gate |
+| #   | Case                           | What it proves                                                                                                                                                                             |
+| --- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `research-access-port-list`    | `ResearchAccessPort.list` over `ResearchService` evidence ring — bounded, detached, redacted                                                                                               |
+| 2   | `research-access-port-read`    | `ResearchAccessPort.read` returns bounded research document content for existing evidence, `not-found` for unknown id, detached                                                            |
+| 3   | `research-tools-visibility`    | `research.fetch` Tools (`research.search`/`read`) are always registered but gated by `research.fetch` policy (deny by default, allow when Host grants) — visibility vs capability distinct |
+| 4   | `research-evidence-provenance` | Research evidence carries provenance (source id/label, request digest, resolved revision, fetchedAt) and is host-verified before `KnowledgeCoordinator` propose gate                       |
 
 ## Mechanics
 
@@ -59,9 +59,9 @@ Implementation of R13.5c is authorized against this frozen set; landings are rec
 
 ## Self-loop verification
 
-| Criterion | Direct evidence | Status |
-|-----------|-----------------|--------|
-| Cases exercise reference-observable behavior | `knowledge-seeding.ts:34-92` seed shapes + `KnowledgeCoordinator.propose` read this session; `reference-access` port list/read/search signatures and `research-access` list/read signatures verified via `packages/core/src/reference/*` and `packages/core/src/research/*` exports | pass |
-| Determinism posture preserved | § Mechanics injects one fixed clock + fixture seeds/ports; no fs/network/TTY; all inputs bounded and detached | pass |
-| Overlap resolved, no double port | R13.2 knowledge core (7 cases) stays, R13.5c adds only seeding (3); R13.3 reference/research (10+10) stays, R13.5c adds only access ports/tools (4+4) — no synthesis of R13.5b/d seams | pass |
-| Human decided the material cuts | HITL answer 2026-08-26: “10 groups as proposed (3+4+4), v30, existing subjects extended, no new subject” | pass |
+| Criterion                                    | Direct evidence                                                                                                                                                                                                                                                                     | Status |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Cases exercise reference-observable behavior | `knowledge-seeding.ts:34-92` seed shapes + `KnowledgeCoordinator.propose` read this session; `reference-access` port list/read/search signatures and `research-access` list/read signatures verified via `packages/core/src/reference/*` and `packages/core/src/research/*` exports | pass   |
+| Determinism posture preserved                | § Mechanics injects one fixed clock + fixture seeds/ports; no fs/network/TTY; all inputs bounded and detached                                                                                                                                                                       | pass   |
+| Overlap resolved, no double port             | R13.2 knowledge core (7 cases) stays, R13.5c adds only seeding (3); R13.3 reference/research (10+10) stays, R13.5c adds only access ports/tools (4+4) — no synthesis of R13.5b/d seams                                                                                              | pass   |
+| Human decided the material cuts              | HITL answer 2026-08-26: “10 groups as proposed (3+4+4), v30, existing subjects extended, no new subject”                                                                                                                                                                            | pass   |
