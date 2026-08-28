@@ -15,9 +15,7 @@ configuration, Skills, and explicitly installed Plugins
 [![Rust CI](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml)
 [![CodeQL](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml)
 
-> **Status: active development / Rust migration.** The broad TypeScript
-> implementation is the current behavioral reference. Rust is the successor
-> implementation, migrated under differential verification. Stage 3R R4 —
+> **Status: active development / Rust migration.** The TypeScript implementation is **archived** at `5da5cde` (freeze v32, 234/234, pinned). Rust is the **sole source of truth**, migrated under differential verification. Stage 3R R4 —
 > Generic Workspace / Project Foundation — is complete (bounded reads,
 > listing, search, revisions, prepared-effect contracts, checkpoint
 > inspection/reconciliation, and the typed unavailable Git disposition at
@@ -180,15 +178,13 @@ consume Runs later without defining Run semantics.
 
 ### Current implementation
 
-During Stage 3R the repository contains two implementations:
+The live repository is **Rust-only**. The TypeScript historical oracle is **archived** at `5da5cde` (freeze v32, 234/234, pinned at `tests/differential/evidence/typescript-freeze-v32/`; audit `v31 e24f4bb` retained as historical) and retained only as digest-bound evidence:
 
 ```text
-TypeScript historical oracle (archived at 4bef901, differential parity proof
-retained: audit v31 e24f4bb 231/231, corpus v31, stage4-entry-gate 17/17)
-  apps/cli → packages/adapters → packages/core (executed by the differential
-  harness as the behavioral reference only; not product authority)
+TypeScript historical oracle (archived at 5da5cde, v32 234/234, pinned; prior v31 e24f4bb retained)
+  apps/cli → packages/adapters → packages/core — removed from live tree; historical replay requires worktree at freeze SHA
 
-Rust successor — sole source of truth
+Rust successor — sole source of truth (live)
   siralos-cli → siralos-adapters → siralos-godot → siralos-core
   (siralos-godot owns the Godot domain as an in-repo Plugin crate during
    Stage 4 extraction; siralos-core stays domain-neutral)
@@ -197,9 +193,7 @@ Rust successor — sole source of truth
 The core owns domain-neutral policy and contracts. `siralos-godot` owns the
 Godot domain surfaces (extraction landed per decision 37); adapters own
 infrastructure and the optional Godot adapters. The CLI is the composition and
-terminal boundary. The historical TypeScript oracle is retained by SHA and is
-executed by the differential harness as the behavioral reference only; it
-never grants product authority.
+terminal boundary. The historical TypeScript oracle is retained by SHA as pinned digest-bound evidence; the differential harness runs in **pinned mode** (historical replay requires worktree at freeze SHA); it never grants product authority.
 
 See the [architecture index](docs/architecture/README.md),
 [ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md),
@@ -232,13 +226,7 @@ milestone work. No separate conversational handoff is required.
 
 ### Run
 
-Launch the TypeScript behavioral reference:
-
-```bash
-npm run siralos
-```
-
-Build and inspect the Rust successor CLI:
+Build and inspect the Rust CLI (sole implementation):
 
 ```bash
 cargo build --locked
@@ -254,9 +242,7 @@ Run the standard local repository quality gate:
 npm run check
 ```
 
-This covers formatting, linting, TypeScript build and tests, architecture,
-identity and public-hygiene ratchets, documentation links, R2 differential
-parity, Rust formatting, Clippy with warnings denied, and Rust tests.
+This covers formatting, linting, documentation links, project-context, identity and public-hygiene ratchets, Rust architecture, R2 differential parity (pinned v33), Rust formatting, Clippy with warnings denied, and Rust tests.
 
 Run only the authoritative R2 parity decision:
 
@@ -299,7 +285,7 @@ installation are separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified. R13 closed the remaining TypeScript surfaces (v31, 236 files, 231/231); R12 retires the TypeScript oracle (audit v31 e24f4bb, 231/231) — **Rust is now the sole source of truth** (`4bef901` historical oracle, `231/231` retained). Stage 4.1 (generic Controlled Runtime) is **Verified** at `168a769` (`05c075c` `process.execute` → `UNAVAILABLE` fail-closed, 0 spawn, 231/231 retained) — authorizes `crates/siralos-godot` extraction next.
+- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified. R13 closed the remaining TypeScript surfaces (v31, 236 files, 231/231); R12 retires the TypeScript oracle (audit v31 e24f4bb, 231/231) — **Rust is now the sole source of truth** (`4bef901` historical oracle, `231/231` retained). Stage 4.1 (generic Controlled Runtime) is **Verified** at `168a769` (`05c075c` `process.execute` → `UNAVAILABLE` fail-closed, 0 spawn, 231/231 retained) — authorizes `crates/siralos-godot` extraction next. **TypeScript archive removal is complete** per decision 40 at `e6c49f1` (freeze `5da5cde` v32 234/234, pinned, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed).
 - Stage 4.2 (Godot Runtime Adapter) is the next specialization; `crates/siralos-godot` isolation is the ship-within-a-ship for the 6+3 domain
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the

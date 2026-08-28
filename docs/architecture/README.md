@@ -10,10 +10,12 @@ applicable ADRs so that executor-context discovery is deterministic
 
 Machine-readable metadata lives in the ADR frontmatter
 (`id` / `status` / `domains` / `paths` / `supersedes`) and the runtime
-documentation index (`packages/core/src/executor/documentation-context.ts`).
+documentation index (`crates/siralos-core/src/executor/documentation-context` historically `packages/core/src/executor/documentation-context.ts`).
 Keep this page and the runtime index consistent; the architecture check
-(`npm run check:architecture`) validates frontmatter against the runtime
-index.
+(`npm run check:architecture`) validated frontmatter against the runtime
+index when the TypeScript tree was live (archived at `5da5cde`, decision 40).
+
+> **Historical note:** The `apps/` + `packages/` TypeScript workspace below is the **archived oracle** at `5da5cde` (pinned). The live repository is **Rust-only** (`crates/siralos-core`/`siralos-adapters`/`siralos-godot`/`siralos-cli`). `packages/` paths are retained as historical architecture records.
 
 ## Selection order
 

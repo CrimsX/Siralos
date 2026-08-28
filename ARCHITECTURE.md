@@ -2,7 +2,7 @@
 
 ## Overview
 
-Siralos is a modular monolith: one repository, one npm workspace, one process, and clearly separated layers. See `docs/adr/0001-modular-monolith.md` for the decision record.
+Siralos is a modular monolith: one repository, one process, and clearly separated layers. The `apps/` + `packages/` TypeScript workspace described in historical sections below is the **archived oracle** at `5da5cde` (freeze v32, pinned at `tests/differential/evidence/typescript-freeze-v32/`); the live repository is **Rust-only** (`crates/siralos-core`/`siralos-adapters`/`siralos-godot`/`siralos-cli`, decision 40). See `docs/adr/0001-modular-monolith.md` for the decision record.
 
 ## Product vision and conceptual ownership (ADR 0036)
 
@@ -340,10 +340,7 @@ siralos-cli ─────────→ siralos-adapters ─→ siralos-core
 - The authoritative engineering rules live in
   `docs/development/RUST_STYLE.md`.
 
-The TypeScript implementation remains the behavioral reference
-(migration oracle) until later Stage 3R milestones retire it; behavior
-is preserved across migration, structure is deliberately redesigned
-(ADR 0032).
+The TypeScript implementation **is archived** at `5da5cde` (freeze v32, 234/234, pinned at `tests/differential/evidence/typescript-freeze-v32/`) and retained only as digest-bound evidence; the live repository is **Rust-only** (decision 40). Behavior was preserved across migration, structure was deliberately redesigned (ADR 0032).
 
 ## Differential behavioral harness (Stage 3R R2, ADR 0033)
 

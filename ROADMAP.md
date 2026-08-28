@@ -351,7 +351,7 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   application, new checkpoint creation, Git inspection) report the same
   typed outcomes on both sides.
 
-Current: Stage 3R R13 is **Verified** (R1–R11 Verified as recorded above; R13 — Remaining TypeScript Surface Parity — is complete and evidence-backed: five slices at corpus v31, 236 files, 231/231 applicable required parity; local gate passes; fail-closed postures preserved. R13 **Verified** at 72e20be. Previous R11
+Current: Stage 3R R13 is **Verified** (R1–R11 Verified as recorded above; R13 — Remaining TypeScript Surface Parity — is complete and evidence-backed: five slices at corpus v31, 236 files, 231/231 applicable required parity; local gate passes; fail-closed postures preserved. R13 **Verified** at 72e20be. **TypeScript archive removal is complete** per decision 40 at `5da5cde` (freeze v32 234/234, pinned at `tests/differential/evidence/typescript-freeze-v32/`, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed, `npm run check` is now Rust + pinned differential). Previous R11
 R11 — full differential, effect-boundary, security, recovery, and
 cross-platform parity — is complete and evidence-backed: `workspace-apply`
 and `recovery-taxonomy` landed at corpus version 23, 222 scenario files,

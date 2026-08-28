@@ -84,7 +84,6 @@ function readSingleRecord(path, implementation, scenarioId, outDir) {
 function loadPinnedOracle(pinnedPath, outDir) {
   try {
     const text = readFileSync(resolve(pinnedPath), "utf8");
-    // Pinned oracle is a canonical record document (239 records at freeze).
     return parseCanonicalRecordDocument(text, "reference");
   } catch (error) {
     const failure = {
@@ -102,7 +101,7 @@ function loadPinnedOracle(pinnedPath, outDir) {
   }
 }
 
-/** Execute candidate runner; oracle is either live or pinned. */
+/** Execute candidate runner; oracle is either live (historical replay) or pinned. */
 export async function runDifferential({ corpusDir, root, outDir, pinnedOracle }) {
   const absoluteRoot = resolve(root);
   const absoluteCorpus = resolve(corpusDir);
@@ -157,9 +156,7 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle })
 
     let oracleRecords;
     if (pinnedOracle !== undefined) {
-      // Pinned mode: load oracle records from frozen evidence (post-TS-archive).
       oracleRecords = loadPinnedOracle(pinnedOracle, absoluteOut);
-      // Validate that pinned set covers current corpus scenario ids (version may differ post-bump).
       const pinnedIds = new Set(oracleRecords.map((r) => r.scenarioId));
       for (const scenario of scenarios) {
         if (!pinnedIds.has(scenario.id)) {
@@ -183,11 +180,9 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle })
       }
     } else {
       oracleRecords = [];
-      // Live oracle mode (historical replay only; requires TS tree at freeze SHA).
       for (const scenario of scenarios) {
         const oracleOut = join(scratch, `${scenario.id}.oracle.json`);
         const common = ["--corpus", absoluteCorpus, "--root", absoluteRoot, "--out"];
-        // This path is only valid when the TS oracle tree is present (worktree at freeze SHA).
         const liveOracle = join(HERE, "run-oracle.mjs");
         if (!existsSync(liveOracle)) {
           const failure = {
@@ -221,63 +216,23 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle })
     }
 
     const candidateRecords = [];
-    if (pinnedOracle !== undefined) {
-      for (const scenario of scenarios) {
-        const candidateOut = join(scratch, `${scenario.id}.candidate.json`);
-        const common = ["--corpus", absoluteCorpus, "--root", absoluteRoot, "--out"];
-        const candidate = await superviseRunner({
-          implementation: "candidate",
-          scenarioId: scenario.id,
-          command: runnerExecutable(absoluteRoot),
-          args: ["run", ...common, candidateOut, "--scenario", scenario.id],
-          cwd: absoluteRoot,
-        });
-        assertCompleted(candidate, absoluteOut);
-        candidateRecords.push(
-          readSingleRecord(candidateOut, "candidate", scenario.id, absoluteOut),
-        );
-      }
-    } else {
-      // Live mode already collected oracle above; now collect candidate in same loop.
-      // For live mode we already ran candidate per scenario inside the oracle loop would be double;
-      // but we separated loops: pinned mode candidate loop, live mode already did both.
-      // To avoid duplication, handle live candidate collection here only if not already done.
-      // In live path above we pushed oracle only; candidate was not yet pushed.
-      // So collect candidate now for live mode as well (second half of live loop).
-      // Actually live path needs candidate too — we already collected candidate inside pinned check?
-      // No, live path collected oracle only; we need candidate for live too.
-      for (const scenario of scenarios) {
-        const candidateOut = join(scratch, `${scenario.id}.candidate.json`);
-        // If we already created candidateOut in live loop, reuse; but we didn't create candidate in live loop above,
-        // we only did oracle. So create candidate now.
-        const common = ["--corpus", absoluteCorpus, "--root", absoluteRoot, "--out"];
-        const candidate = await superviseRunner({
-          implementation: "candidate",
-          scenarioId: scenario.id,
-          command: runnerExecutable(absoluteRoot),
-          args: ["run", ...common, candidateOut, "--scenario", scenario.id],
-          cwd: absoluteRoot,
-        });
-        assertCompleted(candidate, absoluteOut);
-        candidateRecords.push(
-          readSingleRecord(candidateOut, "candidate", scenario.id, absoluteOut),
-        );
-      }
-      // For live mode, oracleRecords already populated, candidateRecords now populated.
-      // Deduplicate: we have oracle from first loop, candidate from second loop — that's correct.
+    for (const scenario of scenarios) {
+      const candidateOut = join(scratch, `${scenario.id}.candidate.json`);
+      const common = ["--corpus", absoluteCorpus, "--root", absoluteRoot, "--out"];
+      const candidate = await superviseRunner({
+        implementation: "candidate",
+        scenarioId: scenario.id,
+        command: runnerExecutable(absoluteRoot),
+        args: ["run", ...common, candidateOut, "--scenario", scenario.id],
+        cwd: absoluteRoot,
+      });
+      assertCompleted(candidate, absoluteOut);
+      candidateRecords.push(readSingleRecord(candidateOut, "candidate", scenario.id, absoluteOut));
     }
-    // For live mode we double-collected candidate; need to ensure oracleRecords already has per-scenario.
-    // For pinned mode, oracleRecords is full pinned set, candidateRecords is per-scenario.
-    // Normalize: if pinned, oracleRecords is pinned set (already full); candidate already full.
-    // If live, oracleRecords was built per-scenario, but candidate was built in second loop — good.
-    // However our pinned branch collected candidate in its own loop, live branch collected candidate in second loop.
-    // So both branches have correct arrays. For live we need to ensure we didn't double push oracle.
-    // Live oracleRecords already pushed per-scenario in first loop; candidate pushed in second loop — fine.
 
     const oraclePath = join(absoluteOut, "oracle.json");
     const candidatePath = join(absoluteOut, "candidate.json");
     const auditPath = join(absoluteOut, "audit.json");
-    // In pinned mode, oraclePath is a copy of pinned file (but re-serialized canonically).
     writeFileSync(oraclePath, canonicalRecordDocument(oracleRecords), "utf8");
     writeFileSync(candidatePath, canonicalRecordDocument(candidateRecords), "utf8");
     const sourceIdentity = collectSourceIdentity(absoluteRoot);
@@ -313,8 +268,6 @@ async function main() {
     );
     process.exit(2);
   }
-  // If no explicit pinned oracle but evidence exists at the frozen location, use it implicitly
-  // to keep `npm run check:differential` working after TS removal without requiring flag.
   let effectivePinned = pinnedOracle;
   if (effectivePinned === undefined) {
     const frozenDefault = resolve(

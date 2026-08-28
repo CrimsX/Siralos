@@ -17,7 +17,6 @@
     "check:context": "node scripts/check-project-context.mjs",
     "check:rust": "node scripts/check-rust-architecture.mjs",
     "check:differential": "node tests/differential/run-differential.mjs --corpus tests/differential/corpus --root . --out-dir tests/differential/out",
-    "check:differential:live": "node tests/differential/run-differential.mjs --corpus tests/differential/corpus --root . --out-dir tests/differential/out --pinned-oracle tests/differential/evidence/typescript-freeze-v32/oracle.json",
     "check:rust-format": "cargo fmt --all --check",
     "check:rust-clippy": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
     "test:rust": "cargo test --workspace --all-targets --all-features --locked",
