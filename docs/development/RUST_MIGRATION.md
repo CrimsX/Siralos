@@ -3,8 +3,12 @@
 Status: authoritative migration sequence.
 
 Stage 3R is an internal migration track. It does not replace Siralos's six
-public product stages. The TypeScript implementation remains the behavioral
-reference until R12's retirement gate is satisfied.
+public product stages. The TypeScript implementation was the behavioral
+reference until R12's retirement gate (verified at 4bef901, audit v31); the
+TypeScript tree is now **archived and removed** from the live repository at the
+freeze commit `5da5cde` (corpus v32, 234/234, pinned at
+`tests/differential/evidence/typescript-freeze-v32/`), and Rust is the sole
+source of truth at corpus v33 (decision 40, honest trade-off C7).
 
 Stable cross-project requirement identifiers are repository-owned in the
 [normative requirements register](../requirements/REQUIREMENTS.md). The
@@ -24,21 +28,21 @@ repository concepts never satisfy those identifiers by implication.
 
 ## R1-R12 sequence
 
-| Milestone | Scope                                                                                                                           | Current status     |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| R1        | Siralos rename, Rust workspace, and engineering standards                                                                       | Verified           |
-| R2        | Differential Behavioral Harness                                                                                                 | Verified           |
-| R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                        | Verified           |
-| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration | Verified           |
-| R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                | Verified           |
-| R6        | Minimal domain capability architecture and synthetic conformance domain                                                         | Verified           |
-| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                  | Verified           |
-| R8        | Optional Godot Stage-2 parity                                                                                                   | Verified           |
-| R9        | Optional Godot Stage-3 parity                                                                                                   | Verified           |
-| R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                        | Verified           |
-| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                               | Verified           |
-| R13       | Remaining TypeScript surface parity (R13.1-13.5d)                                                                               | Verified           |
-| R12       | TypeScript reference retirement — **retired** at 4bef901 (audit v31, corpus v31) — Rust sole source of truth                    | Verified (retired) |
+| Milestone | Scope                                                                                                                                                                                                                               | Current status              |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| R1        | Siralos rename, Rust workspace, and engineering standards                                                                                                                                                                           | Verified                    |
+| R2        | Differential Behavioral Harness                                                                                                                                                                                                     | Verified                    |
+| R3        | Domain-neutral core: authoritative task, state, acceptance, evidence, identity, and transition semantics                                                                                                                            | Verified                    |
+| R4        | Generic workspace and project foundation: reads, revisions, search, prepared effects, checkpoints, and optional Git integration                                                                                                     | Verified                    |
+| R5        | Generic language intelligence: diagnostics, symbols, definitions, references, structural parsing, and validation                                                                                                                    | Verified                    |
+| R6        | Minimal domain capability architecture and synthetic conformance domain                                                                                                                                                             | Verified                    |
+| R7        | Provider, tool-loop, projection, configuration, and CLI parity                                                                                                                                                                      | Verified                    |
+| R8        | Optional Godot Stage-2 parity                                                                                                                                                                                                       | Verified                    |
+| R9        | Optional Godot Stage-3 parity                                                                                                                                                                                                       | Verified                    |
+| R10       | H1 content identity, H2 determinism/replay, ICM context, and H3 runtime-readiness parity                                                                                                                                            | Verified                    |
+| R11       | Full differential, effect-boundary, security, recovery, and cross-platform parity                                                                                                                                                   | Verified                    |
+| R13       | Remaining TypeScript surface parity (R13.1-13.5d)                                                                                                                                                                                   | Verified                    |
+| R12       | TypeScript reference retirement — **retired** at 4bef901 (audit v31, corpus v31) — Rust sole source of truth; **TS tree removed** at 5da5cde (freeze v32 234/234, pinned v33, `tests/differential/evidence/typescript-freeze-v32/`) | Verified (retired, removed) |
 
 R2 is verified: its versioned corpus is mechanically bound by scenario and
 overall digests; its reference and candidate runners have symmetric bounded

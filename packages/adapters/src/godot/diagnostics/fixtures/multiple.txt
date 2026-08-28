@@ -1,7 +1,0 @@
-Godot Engine v4.7.1.stable.official
-ERROR: Parse Error: Expected "end of file" after class body.
-   at: GDScript::reload (godot/modules/gdscript/gdscript.cpp:1205)
-SCRIPT ERROR: Parse Error: Identifier "velocityy" not declared in the current scope.
-   at: GDScript::reload (godot/modules/gdscript/gdscript.cpp:1215)
-SCRIPT WARNING: The class_name "Foo" is not used.
-   at: GDScript::reload (godot/modules/gdscript/gdscript.cpp:1230)

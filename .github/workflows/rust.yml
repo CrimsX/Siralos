@@ -1,10 +1,10 @@
 name: Siralos Rust CI
 
 # Validation CI only: no release, no publication, no dependency updates,
-# no Godot acquisition. The TypeScript reference remains the migration
-# oracle (ADR 0032/0033). A dedicated job runs that complete oracle gate
-# before the Rust candidate gate; the differential harness then compares
-# both implementations without recursively re-running the TypeScript suite.
+# no Godot acquisition. Rust is the sole source of truth post-TS-archive
+# (decision 40, ADR 0032/0033). Differential harness runs in pinned mode
+# against tests/differential/evidence/typescript-freeze-v32/oracle.json;
+# live TS oracle requires worktree at freeze SHA and is never part of check.
 on:
   push:
     branches: ["main"]
@@ -28,70 +28,8 @@ env:
   NPM_VERSION: 11.13.0
 
 jobs:
-  oracle:
-    name: TypeScript behavioral oracle (Linux)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          # check:context verifies an exact historical evidence commit.
-          fetch-depth: 0
-
-      # actions/setup-node v6.4.0 (GitHub-owned, immutable SHA pin).
-      - name: Install pinned Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install pinned npm
-        shell: bash
-        run: npm install --global "npm@${NPM_VERSION}"
-
-      - name: Verify JavaScript toolchain identity
-        run: |
-          node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npm = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
-
-      - name: Install locked npm dependencies
-        run: npm ci
-
-      # Keep each command aligned with check:typescript while exposing the
-      # exact failing boundary in public check metadata and clean-room runs.
-      - name: Format check
-        run: npm run format:check
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: TypeScript build and tests
-        run: npm test
-
-      - name: Architecture ratchet
-        run: npm run check:architecture
-
-      - name: Nondeterminism ratchet
-        run: npm run check:nondeterminism
-
-      - name: Identity ratchet
-        run: npm run check:identity
-
-      - name: Public-hygiene ratchet
-        run: npm run check:public
-
-      - name: Documentation links
-        run: npm run check:docs
-
-      - name: Project-context contract
-        run: npm run check:context
-
   gate:
     name: Rust gate (Linux)
-    needs: oracle
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -135,6 +73,24 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Format check (prettier, minimal)
+        run: npm run format:check
+
+      - name: Lint (eslint, minimal)
+        run: npm run lint
+
+      - name: Documentation links
+        run: npm run check:docs
+
+      - name: Project-context contract
+        run: npm run check:context
+
+      - name: Identity ratchet
+        run: npm run check:identity
+
+      - name: Public-hygiene ratchet
+        run: npm run check:public
+
       # --all-features includes the internal differential-harness tooling
       # feature. The default `siralos` product binary remains lean and is
       # exercised separately below without that feature.
@@ -173,9 +129,9 @@ jobs:
       - name: Dependency policy (cargo deny)
         run: cargo deny --locked check
 
-      # The migration's audit remediation gate (ADR 0033): oracle vs
+      # The migration's audit remediation gate (ADR 0033): pinned oracle vs
       # candidate canonical records; POSIX scenarios execute here.
-      - name: Differential harness
+      - name: Differential harness (pinned, v33)
         run: npm run check:differential
 
       # Synthetic conformance-domain freshness (ADR 0034): the checked-in
@@ -206,14 +162,12 @@ jobs:
           if-no-files-found: warn
         if: always()
 
-      # Rust-specific repository ratchet (ADR 0032). The identity and
-      # documentation ratchets already ran in the oracle job.
+      # Rust-specific repository ratchet (ADR 0032).
       - name: Rust architecture ratchet
         run: node scripts/check-rust-architecture.mjs
 
   platform:
     name: Rust platform (${{ matrix.os }})
-    needs: oracle
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -282,8 +236,8 @@ jobs:
       # The differential harness runs the platform's own state-dir
       # scenarios (Windows scenarios on windows-latest; POSIX scenarios
       # on macos-latest), exercising the home-resolution contract on
-      # every supported OS.
-      - name: Differential harness
+      # every supported OS. Pinned oracle is used (no TS tree).
+      - name: Differential harness (pinned, v33)
         run: npm run check:differential
 
       - name: Upload differential evidence (${{ matrix.os }})
@@ -303,7 +257,6 @@ jobs:
 
   msrv:
     name: Minimum supported Rust 1.85.0
-    needs: oracle
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

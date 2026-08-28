@@ -2,12 +2,13 @@ name: Siralos Tier-1 evidence
 
 # R11 promotion evidence generation ([R11 Entry Review] §3): one
 # dispatch-only run per Tier-1 platform produces the digest-bound
-# differential audit and the live sandbox-conformance transcript using
-# the exact repository invocation. Outputs are uploaded as artifacts
+# differential audit (pinned oracle v33, post-TS-archive) using the exact
+# repository invocation. Outputs are uploaded as artifacts
 # whose names drop directly into tests/differential/evidence/r11/
 # (see that directory's EVIDENCE.md). This workflow never publishes,
-# never mutates repository state, and treats an unavailable sandbox
-# as a recorded loud skip — never as secure.
+# never mutates repository state. TypeScript gate and sandbox
+# conformance are retired with the TS tree (decision 40); evidence
+# is now Rust-only pinned differential.
 on:
   workflow_dispatch:
 
@@ -72,7 +73,7 @@ jobs:
       - name: Build differential harness candidate
         run: cargo build --locked -p siralos-cli --bin siralos-harness --features differential-harness
 
-      - name: Differential harness (digest-bound audit)
+      - name: Differential harness (digest-bound audit, pinned v33)
         id: diff
         run: npm run check:differential
 
@@ -96,46 +97,6 @@ jobs:
             fi
           done
 
-      # Replay-stress determinism and the full oracle test suite are part
-      # of the recorded evidence ([R11 Gate] §2.4 replay row). A failure
-      # here is a Tier-1 finding: it must NOT block artifact collection,
-      # but it DOES keep the run red and blocks promotion. Retention
-      # keeps only the failure list and summary lines — raw vitest output
-      # embeds runner filesystem paths that check:public correctly
-      # rejects in tracked files.
-      - name: Full TypeScript gate and replay determinism
-        id: tsgate
-        continue-on-error: true
-        shell: bash
-        run: |
-          # GitHub macOS runners inject an ssh-agent socket that the sandbox
-          # wrapper forwards. Siralos intentionally refuses SSH_AUTH_SOCK
-          # (deny list), so the live confinement tests cannot execute while it
-          # is present. Unset only this CI-injected variable on macOS; the
-          # fail-closed deny-list behavior remains covered by unit tests.
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            unset SSH_AUTH_SOCK
-          fi
-          set -o pipefail
-          npm test 2>&1 | tee typescript-gate-full.txt
-          exit ${PIPESTATUS[0]}
-
-      - name: Extract retention-safe gate record
-        if: always()
-        shell: bash
-        run: |
-          grep -E "(FAIL |Test Files |Tests )" typescript-gate-full.txt \
-            > typescript-gate.txt || true
-
-      - name: Live sandbox conformance
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            unset SSH_AUTH_SOCK
-          fi
-          npm run test:sandbox | tee sandbox-conformance.txt
-          exit ${PIPESTATUS[0]}
-
       # Map the runner OS to the retention names in
       # tests/differential/evidence/r11/EVIDENCE.md and derive the corpus
       # version from the manifest so artifact names cannot drift.
@@ -151,7 +112,6 @@ jobs:
           esac
           corpus_version="$(node -p "require('./tests/differential/corpus/manifest.json').corpusVersion")"
           cp tests/differential/out/audit.json "audit-${platform}-corpus-v${corpus_version}.json"
-          cp sandbox-conformance.txt "sandbox-conformance-${platform}.txt"
 
       # Retain the exact oracle/candidate/audit records alongside the
       # named audit copy, including on parity failure or harness error.
@@ -161,32 +121,8 @@ jobs:
           name: tier1-evidence-${{ matrix.os }}-${{ github.sha }}
           path: |
             audit-*-corpus-v*.json
-            sandbox-conformance-*.txt
-            typescript-gate.txt
             tests/differential/out/oracle.json
             tests/differential/out/candidate.json
             tests/differential/out/failure.json
           if-no-files-found: warn
         if: always()
-
-      # Diagnostic-only artifact: the raw vitest output with stack traces,
-      # expected/received values, and runner paths. NOT part of tracked
-      # evidence — for manual debugging of cross-platform failures only.
-      - name: Upload raw gate log (diagnostic)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: typescript-gate-full-${{ matrix.os }}-${{ github.sha }}
-          path: typescript-gate-full.txt
-          if-no-files-found: warn
-        if: always()
-
-      # The run stays red while any Tier-1 gate fails: evidence collection
-      # never launders a failing platform into a pass.
-      - name: Enforce TypeScript gate result
-        if: always()
-        shell: bash
-        run: |
-          if [ "${{ steps.tsgate.outcome }}" != "success" ]; then
-            echo "TypeScript gate failed on ${{ matrix.os }}; see typescript-gate.txt artifact."
-            exit 1
-          fi

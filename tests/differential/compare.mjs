@@ -22,7 +22,15 @@ import {
   parseCanonicalRecordDocument,
   validateOutcomeRecord,
 } from "./shared/protocol.mjs";
-import { loadCorpus, platformName } from "./run-oracle.mjs";
+import { loadValidatedCorpus } from "./shared/contract.mjs";
+
+export function platformName(platform = process.platform) {
+  return platform === "win32" ? "windows" : "posix";
+}
+
+export function loadCorpus(corpusDir, platform = platformName()) {
+  return loadValidatedCorpus(corpusDir, platform);
+}
 
 const AUDIT_SCHEMA_VERSION = 3;
 const SOURCE_FILE_COUNT_LIMIT = 100_000;

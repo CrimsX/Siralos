@@ -82,17 +82,11 @@ Central invariant:
 
 ## 2. Current implementation reality
 
-### Current TypeScript reference
+### TypeScript historical oracle (archived)
 
-The npm workspace under `apps/` and `packages/` is the broad behavioral
-reference for Stages 1-3. It includes the interactive CLI, deterministic fake
-provider, bounded read-only workspace tools, task/context/evidence/planning
-contracts, references/research, static Godot intelligence, and extensive
-internal mutation/development workflow contracts. Effects that cannot satisfy
-the security contract truthfully report `unavailable`; their presence in code
-does not make them a shipped capability.
+The TypeScript historical oracle is **archived** at `5da5cde` (freeze v32, 234/234, `corpusSha256 c8b70a95`, `candidateRecordsSha256 9f5f786…`) and retained as digest-bound evidence under `tests/differential/evidence/typescript-freeze-v32/` (`oracle.json`, `candidate.json`, `audit.json`, `manifest.json`, `FREEZE.json`). The live npm workspace under `apps/` + `packages/` has been **removed** (decision 40, C4); the live repository is Rust-only. Differential harness runs in **pinned mode** against the frozen oracle (decision 40, C2); historical replay requires an explicit worktree at the freeze SHA and is never part of `npm run check`. The honest trade-off (C7) is that live drift-detection is replaced by pinned records.
 
-### Current Rust candidate
+### Current Rust candidate (sole source of truth)
 
 The Cargo workspace contains `siralos-core`, `siralos-adapters`, and
 `siralos-cli`. R1 established the domain-neutral workspace and engineering
@@ -245,18 +239,14 @@ mutation/process/Godot Tools, no async runtime, no threads, and no locks.
 
 ### Target architecture
 
-Rust is the successor implementation, but TypeScript remains the behavioral
-migration oracle until R12 records an evidence-backed retirement or retention
-disposition. Target Rust behavior is not described as shipped merely because an
-ADR or TypeScript contract exists.
+Rust is the successor implementation and the **sole source of truth** (decision 40). The TypeScript historical oracle is archived at `5da5cde` (freeze v32) and retained only as pinned digest-bound evidence; it is no longer present in the live tree. Target Rust behavior is not described as shipped merely because an ADR or historical TypeScript contract exists.
 
 Useful language:
 
 - **Optional Domain**: explicitly installed specialization that contributes
   intelligence without acquiring host authority. Godot is the first and only
   current Optional Domain.
-- **Behavioral Reference**: implementation whose observable behavior constrains
-  migration parity. TypeScript currently owns this role.
+- **Behavioral Reference**: historical implementation whose observable behavior constrained migration parity. TypeScript owned this role until R12 retirement (archived at freeze v32); Rust is now the sole source of truth.
 - **Rust Successor**: candidate implementation promoted only through migration
   gates; it is not a mechanical rewrite.
 - **Controlled Runtime Execution**: future generic host-authorized, bounded

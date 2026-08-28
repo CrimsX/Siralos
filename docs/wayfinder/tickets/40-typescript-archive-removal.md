@@ -2,8 +2,8 @@
 title: "TypeScript Archive Removal - Oracle Freeze and Complete Tree Removal"
 label: "wayfinder:grilling"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS — Freeze contract C1-C8 approved (HITL 2026-08-28: Q1 Port to Rust, Q2 Pinned+opt-in, Q3 Retain minimal, Q4 Keep schemas+fixtures). Implementation slice authorized next; no deletion in this decision."
 blockedBy: []
 ---
 

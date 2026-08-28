@@ -1,45 +1,15 @@
 import js from "@eslint/js";
 import globals from "globals";
-import tseslint from "typescript-eslint";
 
-export default tseslint.config(
+export default [
   {
-    ignores: [
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/target/**",
-      "**/.agents/**",
-      "vitest.config.ts",
-    ],
+    ignores: ["**/node_modules/**", "**/target/**", "**/.agents/**"],
   },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
-  {
-    languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
-    rules: {
-      "@typescript-eslint/no-floating-promises": "error",
-      "@typescript-eslint/no-unused-vars": [
-        "error",
-        {
-          argsIgnorePattern: "^_",
-          varsIgnorePattern: "^_",
-        },
-      ],
-      "@typescript-eslint/switch-exhaustiveness-check": "error",
-    },
-  },
   {
     files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
-    ...tseslint.configs.disableTypeChecked,
     languageOptions: {
-      ...tseslint.configs.disableTypeChecked.languageOptions,
       globals: globals.node,
     },
   },
-);
+];

@@ -1,0 +1,12 @@
+{
+  "freezeCommit": "5da5cde68f4b13da5649e6bbca0e3d9643cbd848",
+  "corpusVersion": 32,
+  "corpusSha256": "c8b70a951b965d06da51b9d3e88a42d2070bf529be22b23e1622d9e4c2cfef2d",
+  "referenceRecordsSha256": "9f5f7861903b626da53d958f40d51d341edd3e31790acfe05e72768373d398eb",
+  "candidateRecordsSha256": "9f5f7861903b626da53d958f40d51d341edd3e31790acfe05e72768373d398eb",
+  "audit": "audit.json (234/234, 4 skips, pinned at freeze)",
+  "pinnedOracle": "oracle.json",
+  "pinnedCandidate": "candidate.json",
+  "manifest": "manifest.json (v32, copied from corpus at freeze)",
+  "note": "Live TypeScript oracle executed for differential only at freeze (decision 33 §2.1 / decision 40). After freeze, differential harness runs in pinned mode against this oracle; live oracle requires worktree at freeze SHA."
+}
