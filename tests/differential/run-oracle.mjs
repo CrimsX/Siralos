@@ -86,6 +86,8 @@ const RR_BUDGETS_PROBE = join(HERE, "probes", "runtime-readiness-budgets-oracle.
 const RR_LIFECYCLE_PROBE = join(HERE, "probes", "runtime-readiness-lifecycle-oracle.mjs");
 const RR_DOCTOR_PROBE = join(HERE, "probes", "runtime-readiness-doctor-oracle.mjs");
 const RECOVERY_TAXONOMY_PROBE = join(HERE, "probes", "recovery-taxonomy-oracle.mjs");
+const RUNTIME_EXECUTION_PROBE = join(HERE, "probes", "runtime-execution-oracle.mjs");
+const RUNTIME_EVIDENCE_PROBE = join(HERE, "probes", "runtime-evidence-oracle.mjs");
 const GODOT_PROBES = new Map([
   ["godot-scene-resolve", GODOT_SCENE_RESOLVE_PROBE],
   ["godot-discovery", GODOT_DISCOVERY_PROBE],
@@ -107,6 +109,8 @@ const GODOT_PROBES = new Map([
   ["runtime-readiness.lifecycle", RR_LIFECYCLE_PROBE],
   ["runtime-readiness.doctor", RR_DOCTOR_PROBE],
   ["recovery-taxonomy", RECOVERY_TAXONOMY_PROBE],
+  ["runtime-execution", RUNTIME_EXECUTION_PROBE],
+  ["runtime-evidence", RUNTIME_EVIDENCE_PROBE],
 ]);
 
 function optionValue(args, name) {
@@ -481,6 +485,18 @@ export function runScenario(scenario, root) {
     };
   }
   if (GODOT_PROBES.has(scenario.subject)) {
+    return {
+      scenarioId: scenario.id,
+      subject: scenario.subject,
+      outcome: SCENARIO_OUTCOME.COMPLETED,
+      result: runWorkspaceProbe(
+        GODOT_PROBES.get(scenario.subject),
+        scenario.subject,
+        scenario.input,
+      ),
+    };
+  }
+  if (scenario.subject === "runtime-execution" || scenario.subject === "runtime-evidence") {
     return {
       scenarioId: scenario.id,
       subject: scenario.subject,

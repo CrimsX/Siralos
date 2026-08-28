@@ -87,9 +87,11 @@ const SUBJECT_RR_IDENTITY: &str = "runtime-readiness.identity";
 const SUBJECT_RR_BUDGETS: &str = "runtime-readiness.budgets";
 const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
 const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
+const SUBJECT_RUNTIME_EXECUTION: &str = "runtime-execution";
+const SUBJECT_RUNTIME_EVIDENCE: &str = "runtime-evidence";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 31;
+const CORPUS_VERSION: u64 = 32;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -458,6 +460,8 @@ fn validate_scenario(
             | SUBJECT_RR_BUDGETS
             | SUBJECT_RR_LIFECYCLE
             | SUBJECT_RR_DOCTOR
+            | SUBJECT_RUNTIME_EXECUTION
+            | SUBJECT_RUNTIME_EVIDENCE
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -717,7 +721,9 @@ fn validate_scenario(
         | SUBJECT_RR_IDENTITY
         | SUBJECT_RR_BUDGETS
         | SUBJECT_RR_LIFECYCLE
-        | SUBJECT_RR_DOCTOR => {
+        | SUBJECT_RR_DOCTOR
+        | SUBJECT_RUNTIME_EXECUTION
+        | SUBJECT_RUNTIME_EVIDENCE => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1486,6 +1492,19 @@ fn run_scenario(
                 "runtime-readiness input was validated while loading the corpus",
             );
             let result = runtime_readiness_record(&scenario.subject, input)?;
+            Ok(
+                json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
+            )
+        }
+        SUBJECT_RUNTIME_EXECUTION | SUBJECT_RUNTIME_EVIDENCE => {
+            let input = scenario.input.as_ref().expect(
+                "runtime input was validated while loading the corpus",
+            );
+            let result = if scenario.subject == SUBJECT_RUNTIME_EXECUTION {
+                runtime_execution_record(input)?
+            } else {
+                runtime_evidence_record(input)?
+            };
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
             )
@@ -5924,6 +5943,33 @@ fn validate_godot_input(
                 _ => reject("unknown runtime-readiness.doctor op".to_owned()),
             }
         }
+        SUBJECT_RUNTIME_EXECUTION => {
+            const EXECUTION_KEYS: [&str; 5] =
+                ["op", "request", "policy", "budget", "isCancelled"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !EXECUTION_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("decide") => Ok(()),
+                _ => reject("unknown runtime-execution op".to_owned()),
+            }
+        }
+        SUBJECT_RUNTIME_EVIDENCE => {
+            const EVIDENCE_KEYS: [&str; 2] = ["op", "input"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !EVIDENCE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            match input.get("op").and_then(Value::as_str) {
+                Some("create" | "render") => Ok(()),
+                _ => reject("unknown runtime-evidence op".to_owned()),
+            }
+        }
         SUBJECT_RECOVERY_TAXONOMY => {
             const TAXONOMY_KEYS: [&str; 6] =
                 ["op", "cases", "kind", "missing", "resourceKind", "reason"];
@@ -9123,6 +9169,202 @@ fn runtime_readiness_doctor_record(
         other => Err(HarnessError::corpus(format!(
             "unknown runtime-readiness.doctor op {other:?}"
         ))),
+    }
+}
+
+fn runtime_execution_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        IDENTITY_BOUND_UNAVAILABLE_REASON, RuntimeBudgetInput,
+        create_runtime_budget, decide_runtime_execution_with_flag,
+        is_identity_bound_launch_primitive_available,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "decide" {
+        return Err(HarnessError::corpus(format!(
+            "unknown runtime-execution op {op:?}"
+        )));
+    }
+    let request_value = input.get("request").cloned().unwrap_or(Value::Null);
+    let command = request_value
+        .get("command")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let args: Vec<String> = request_value
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let run_id = request_value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let operation_id = request_value
+        .get("operationId")
+        .and_then(Value::as_str)
+        .map(|s| s.to_owned());
+    let is_stale =
+        request_value.get("isStale").and_then(Value::as_bool).unwrap_or(false);
+    let requested_bytes = request_value
+        .get("requestedBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let policy_map = input
+        .get("policy")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut rules = Vec::new();
+    for (cap, rule_str) in policy_map {
+        let rule = match rule_str.as_str().unwrap_or("deny") {
+            "allow" => PermissionRule::Allow,
+            "ask" => PermissionRule::Ask,
+            _ => PermissionRule::Deny,
+        };
+        if let Ok(cap_id) = CapabilityId::parse(&cap) {
+            rules.push(PolicyRule { capability: cap_id, rule });
+        }
+    }
+    let policy = PermissionPolicy::from_rules(rules);
+    let budget_value = input.get("budget").cloned().unwrap_or(Value::Null);
+    let artifact_bytes = budget_value
+        .get("artifactBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(64 * 1024 * 1024);
+    let budget = create_runtime_budget(&RuntimeBudgetInput {
+        artifact_bytes: Some(artifact_bytes),
+        ..Default::default()
+    });
+    let is_cancelled =
+        input.get("isCancelled").and_then(Value::as_bool).unwrap_or(false);
+    let request = siralos_core::runtime::RuntimeExecutionRequest {
+        command,
+        args,
+        run_id,
+        operation_id,
+        is_stale,
+        requested_bytes,
+    };
+    let available = is_identity_bound_launch_primitive_available();
+    match decide_runtime_execution_with_flag(
+        &request,
+        &policy,
+        &budget,
+        is_cancelled,
+    ) {
+        Ok(outcome) => Ok(json!({
+            "outcome": {
+                "disposition": outcome.disposition().as_str(),
+                "reason": outcome.reason(),
+                "isUnavailable": outcome.is_unavailable(),
+            },
+            "available": available,
+            "reason": IDENTITY_BOUND_UNAVAILABLE_REASON,
+        })),
+        Err(error) => Ok(json!({
+            "error": error.message,
+            "available": available,
+        })),
+    }
+}
+
+fn runtime_evidence_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        RuntimeEvidenceInput, create_runtime_evidence, render_runtime_evidence,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "create" {
+        return Err(HarnessError::corpus(format!(
+            "unknown runtime-evidence op {op:?}"
+        )));
+    }
+    let evidence_input_value =
+        input.get("input").cloned().unwrap_or(Value::Null);
+    let mut run_id = evidence_input_value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let mut operation_id = evidence_input_value
+        .get("operationId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let exit_code = evidence_input_value
+        .get("exitCode")
+        .and_then(Value::as_i64)
+        .map(|v| v as i32);
+    let duration_ms = evidence_input_value
+        .get("durationMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let mut stdout = evidence_input_value
+        .get("stdout")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let mut stderr = evidence_input_value
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    if evidence_input_value
+        .get("large")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        stdout = "a".repeat(1024 * 1024 + 10);
+        stderr = "b".repeat(1024 * 1024 + 5);
+    } else if evidence_input_value
+        .get("largeWithEmoji")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let prefix = "a".repeat(1024 * 1024 - 2);
+        stdout = format!("{prefix}😀");
+        stderr = "b".repeat(1024 * 1024 + 5);
+    }
+    if evidence_input_value.get("runId").and_then(Value::as_str) == Some("") {
+        run_id = String::new();
+    }
+    if evidence_input_value.get("operationId").and_then(Value::as_str)
+        == Some("")
+    {
+        operation_id = String::new();
+    }
+    let evidence_input = RuntimeEvidenceInput {
+        run_id,
+        operation_id,
+        exit_code,
+        duration_ms,
+        stdout,
+        stderr,
+    };
+    match create_runtime_evidence(&evidence_input) {
+        Ok(evidence) => Ok(json!({
+            "evidence": {
+                "runId": evidence.run_id,
+                "operationId": evidence.operation_id,
+                "exitCode": evidence.exit_code,
+                "durationMs": evidence.duration_ms,
+                "stdoutLength": evidence.stdout.len(),
+                "stderrLength": evidence.stderr.len(),
+                "truncated": evidence.truncated,
+                "artifactDigest": evidence.artifact_digest,
+                "digest": evidence.digest,
+            },
+            "rendered": render_runtime_evidence(&evidence),
+        })),
+        Err(error) => Ok(json!({ "error": error.message })),
     }
 }
 
@@ -13464,7 +13706,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 236);
+        assert_eq!(loaded.len(), 239);
     }
 
     #[test]

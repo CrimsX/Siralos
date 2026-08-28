@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 31;
+export const CORPUS_VERSION = 32;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -61,6 +61,8 @@ export const ALLOWED_SUBJECTS = new Set([
   "runtime-readiness.lifecycle",
   "runtime-readiness.doctor",
   "recovery-taxonomy",
+  "runtime-execution",
+  "runtime-evidence",
   "cli-session",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
@@ -92,6 +94,7 @@ export const CONTRACT_LIMITS = Object.freeze({
   r13PlanningBriefingInputBytes: 64 * 1024,
   cliSessionInputBytes: 64 * 1024,
   godotInputBytes: 64 * 1024,
+  runtimeInputBytes: 64 * 1024,
 });
 
 const IDENTIFIER = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
@@ -894,6 +897,21 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
+  const RUNTIME_SUBJECTS = new Set(["runtime-execution", "runtime-evidence"]);
+  if (RUNTIME_SUBJECTS.has(scenario.subject)) {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(
+        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
+      );
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.runtimeInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.runtimeInputBytes} UTF-8 bytes`);
+    }
+    return;
+  }
   if (scenario.subject === "cli-session") {
     if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
       throw new Error(`${label}.input must be a plain object`);
@@ -1081,6 +1099,8 @@ export function validateScenario(scenario, file) {
     "runtime-readiness.lifecycle",
     "runtime-readiness.doctor",
     "recovery-taxonomy",
+    "runtime-execution",
+    "runtime-evidence",
     "cli-session",
   ]);
   const expectedKeys = withInput.has(scenario.subject)

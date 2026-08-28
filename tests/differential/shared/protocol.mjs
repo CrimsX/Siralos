@@ -2917,6 +2917,87 @@ function validateRuntimeReadinessResult(subject, result, label) {
   }
 }
 
+function validateRuntimeV32Result(subject, result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (subject === "runtime-execution") {
+    if (Object.hasOwn(result, "error")) {
+      assertExactKeys(result, ["error", "available"], `${label}.result`);
+      if (typeof result.error !== "string") {
+        throw new Error(`${label}.result.error is invalid`);
+      }
+      return;
+    }
+    assertExactKeys(result, ["outcome", "available", "reason"], `${label}.result`);
+    if (typeof result.available !== "boolean") {
+      throw new Error(`${label}.result.available is invalid`);
+    }
+    if (typeof result.reason !== "string") {
+      throw new Error(`${label}.result.reason is invalid`);
+    }
+    const outcome = result.outcome;
+    if (!isObject(outcome)) {
+      throw new Error(`${label}.result.outcome must be an object`);
+    }
+    if (outcome.disposition === "success") {
+      assertExactKeys(outcome, ["disposition", "runId", "operationId"], `${label}.result.outcome`);
+      return;
+    }
+    assertExactKeys(outcome, ["disposition", "reason"], `${label}.result.outcome`);
+    if (typeof outcome.reason !== "string") {
+      throw new Error(`${label}.result.outcome.reason is invalid`);
+    }
+    return;
+  }
+  // runtime-evidence
+  if (Object.hasOwn(result, "error")) {
+    assertExactKeys(result, ["error"], `${label}.result`);
+    if (typeof result.error !== "string") {
+      throw new Error(`${label}.result.error is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(result, ["evidence", "rendered"], `${label}.result`);
+  if (typeof result.rendered !== "string") {
+    throw new Error(`${label}.result.rendered is invalid`);
+  }
+  const evidence = result.evidence;
+  if (!isObject(evidence)) {
+    throw new Error(`${label}.result.evidence must be an object`);
+  }
+  assertExactKeys(
+    evidence,
+    [
+      "runId",
+      "operationId",
+      "exitCode",
+      "durationMs",
+      "stdoutLength",
+      "stderrLength",
+      "truncated",
+      "artifactDigest",
+      "digest",
+    ],
+    `${label}.result.evidence`,
+  );
+  if (typeof evidence.truncated !== "boolean") {
+    throw new Error(`${label}.result.evidence.truncated is invalid`);
+  }
+  if (!Number.isSafeInteger(evidence.stdoutLength) || evidence.stdoutLength < 0) {
+    throw new Error(`${label}.result.evidence.stdoutLength is invalid`);
+  }
+  if (!Number.isSafeInteger(evidence.stderrLength) || evidence.stderrLength < 0) {
+    throw new Error(`${label}.result.evidence.stderrLength is invalid`);
+  }
+  if (!LOWER_SHA256.test(evidence.artifactDigest ?? "")) {
+    throw new Error(`${label}.result.evidence.artifactDigest is invalid`);
+  }
+  if (!LOWER_SHA256.test(evidence.digest ?? "")) {
+    throw new Error(`${label}.result.evidence.digest is invalid`);
+  }
+}
+
 function validateRecoveryTaxonomyResult(record, label) {
   const result = record;
   if (!isObject(result)) {
@@ -3243,6 +3324,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "recovery-taxonomy") {
     validateRecoveryTaxonomyResult(record.result, label);
+    return;
+  }
+  if (record.subject === "runtime-execution" || record.subject === "runtime-evidence") {
+    validateRuntimeV32Result(record.subject, record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

@@ -1,0 +1,19 @@
+{
+  "id": "runtime-evidence.large-emoji",
+  "subject": "runtime-evidence",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "input": {
+      "runId": "run_runtime_abc",
+      "operationId": "op_123",
+      "exitCode": 0,
+      "durationMs": 1500,
+      "stdout": "a",
+      "stderr": "b",
+      "largeWithEmoji": true
+    }
+  }
+}

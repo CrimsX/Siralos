@@ -1,0 +1,18 @@
+{
+  "id": "runtime-evidence.empty-run-id",
+  "subject": "runtime-evidence",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "input": {
+      "runId": "",
+      "operationId": "op_123",
+      "exitCode": 0,
+      "durationMs": 1500,
+      "stdout": "hello\n",
+      "stderr": ""
+    }
+  }
+}

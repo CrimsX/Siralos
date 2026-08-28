@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 31,
+  "corpusVersion": 32,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -639,6 +639,18 @@
       "sha256": "5955a69c564e7cc7f5155b094d72a6993be72c08fc53819712177af17a2e6ad0"
     },
     {
+      "file": "runtime-evidence.empty-run-id.json",
+      "sha256": "610cb4342012392665158f0bd21d4d21f076ce762972eb44447e0517a5332d13"
+    },
+    {
+      "file": "runtime-evidence.large-emoji.json",
+      "sha256": "c4285c1f99e60d90f33e37060807f60a47dbff056fa234d61e9d9966db98c037"
+    },
+    {
+      "file": "runtime-execution.invalid-command.json",
+      "sha256": "6acb7bb63b5b9c4183ab447b1a8dc06bed471af88576b5d1e4e685e44809c660"
+    },
+    {
       "file": "runtime-readiness.budgets.admission-matrix.json",
       "sha256": "9a1256b47b60def5d903a807660d92f03564330fbd238159b71dfdbd4418115b"
     },
@@ -947,5 +959,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "e24f4bb15ee532e9825e23f8f61a0912e13a1d6a8e5b4bffc90ce1fae78af504"
+  "corpusSha256": "c8b70a951b965d06da51b9d3e88a42d2070bf529be22b23e1622d9e4c2cfef2d"
 }
