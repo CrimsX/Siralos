@@ -185,7 +185,8 @@ During Stage 3R the repository contains two implementations:
 ```text
 TypeScript historical oracle (archived at 4bef901, differential parity proof
 retained: audit v31 e24f4bb 231/231, corpus v31, stage4-entry-gate 17/17)
-  apps/cli → packages/adapters → packages/core (not executed)
+  apps/cli → packages/adapters → packages/core (executed by the differential
+  harness as the behavioral reference only; not product authority)
 
 Rust successor — sole source of truth
   siralos-cli → siralos-adapters → siralos-godot → siralos-core
@@ -196,8 +197,9 @@ Rust successor — sole source of truth
 The core owns domain-neutral policy and contracts. `siralos-godot` owns the
 Godot domain surfaces (extraction landed per decision 37); adapters own
 infrastructure and the optional Godot adapters. The CLI is the composition and
-terminal boundary. The historical TypeScript oracle is retained by SHA for
-parity replay, not executed.
+terminal boundary. The historical TypeScript oracle is retained by SHA and is
+executed by the differential harness as the behavioral reference only; it
+never grants product authority.
 
 See the [architecture index](docs/architecture/README.md),
 [ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md),

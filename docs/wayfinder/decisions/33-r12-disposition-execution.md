@@ -45,6 +45,18 @@ All eight were **observed PASS on the same worktree** (`72e20be` executable, `4b
 
 After retirement, the Rust path is the sole source of truth; the TypeScript archive (`packages/**` + `apps/**` at `4bef901`) is historical and not executed.
 
+## 2.1 Correction — "not executed" vs the differential reference (recording HITL 2026-08-27)
+
+The retirement verdict means **product authority** lives in `crates/**`: bugs are
+fixed in Rust. It does **not** mean the TypeScript tree is inert: the
+differential harness executes `packages/**` as the behavioral **reference**
+against the Rust candidate (`tests/differential/run-oracle.mjs` + the oracle
+probes), and lockstep edits to catalog/oracle surfaces are permitted where a
+parity scenario pins both sides. The human resolution is **oracle executed for
+differential only**: retained, executed as reference, never product authority.
+This amends the strictly-read "not executed" sentence above; the retirement
+verdict itself is unchanged.
+
 ## 3. Atomic surface advancement (this commit)
 
 Seven surfaces advanced together per template 07 §2 (same 7-surface pattern as R7/R13):
