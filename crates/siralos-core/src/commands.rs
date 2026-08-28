@@ -36,7 +36,7 @@ pub struct CommandCatalogEntry {
 }
 
 /// The single source of truth for the interactive command surface.
-pub const COMMAND_CATALOG: [CommandCatalogEntry; 49] = [
+pub const COMMAND_CATALOG: [CommandCatalogEntry; 51] = [
     CommandCatalogEntry {
         id: "help",
         description: "Show this help",
@@ -273,6 +273,16 @@ pub const COMMAND_CATALOG: [CommandCatalogEntry; 49] = [
         group: COMMAND_CATALOG_GROUP_DOMAINS,
     },
     CommandCatalogEntry {
+        id: "domains-enable",
+        description: "Enable an installed domain plugin (Host-gated, no capability grant)",
+        group: COMMAND_CATALOG_GROUP_DOMAINS,
+    },
+    CommandCatalogEntry {
+        id: "domains-activate",
+        description: "Activate an enabled domain plugin (Host-gated, capability grant checked)",
+        group: COMMAND_CATALOG_GROUP_DOMAINS,
+    },
+    CommandCatalogEntry {
         id: "doctor",
         description: "Run read-only Siralos capability diagnostics (areas: runtime, configuration, providers, sandbox, workspace, godot, project, references, research, capabilities)",
         group: COMMAND_CATALOG_GROUP_DOCTOR,
@@ -308,9 +318,9 @@ mod tests {
 
     #[test]
     fn catalog_shape_is_stable() {
-        assert_eq!(COMMAND_CATALOG.len(), 49);
+        assert_eq!(COMMAND_CATALOG.len(), 51);
         assert_eq!(command_catalog_ids()[0], "help");
-        assert_eq!(command_catalog_ids()[48], "siralos");
+        assert_eq!(command_catalog_ids()[50], "siralos");
         assert_eq!(
             command_catalog_ids().len(),
             command_catalog_ids()

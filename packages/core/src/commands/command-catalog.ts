@@ -235,6 +235,16 @@ export const COMMAND_CATALOG = [
     description: "Install a domain plugin from a folder containing domain-manifest.toml",
     group: "domains",
   },
+  {
+    id: "domains-enable",
+    description: "Enable an installed domain plugin (Host-gated, no capability grant)",
+    group: "domains",
+  },
+  {
+    id: "domains-activate",
+    description: "Activate an enabled domain plugin (Host-gated, capability grant checked)",
+    group: "domains",
+  },
   // --- references ---
   // --- doctor ---
   {

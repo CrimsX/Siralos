@@ -156,6 +156,12 @@ export async function runInteractiveSession(
           case "domains-add":
             io.write("Domains: /domains-add requires the Add Plugin selection flow.\n");
             break;
+          case "domains-enable":
+            io.write("Domains: /domains-enable requires Host-gated enable.\n");
+            break;
+          case "domains-activate":
+            io.write("Domains: /domains-activate requires Host-gated activation.\n");
+            break;
           case "sandbox":
             await runSandboxCheck(io, sessionInfo.security);
             break;

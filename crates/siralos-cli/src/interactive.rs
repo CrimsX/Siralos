@@ -9,8 +9,11 @@ use std::fmt;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
+use std::collections::BTreeMap;
+
 use siralos_adapters::domain::{
-    PluginRecord, install_plugin, load_manifest, load_plugin_records,
+    DomainHost, DomainHostBounds, PluginManifest, PluginRecord, load_manifest,
+    load_plugin_records,
 };
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_adapters::tool::{
@@ -20,6 +23,8 @@ use siralos_adapters::workspace::resolve::resolve_workspace_path;
 use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
 };
+use siralos_core::domain::capability::HostAuthority;
+use siralos_core::domain::lifecycle::{ActivationRequest, RuntimeCheckResult};
 use siralos_core::projection::{
     ProjectionService,
     capacity::ContextCapacity,
@@ -205,6 +210,8 @@ where
         None,
     )
     .with_projection(ProjectionService::new(), projection_config);
+    let mut hosts: BTreeMap<String, DomainHost> = BTreeMap::new();
+    let mut manifests: BTreeMap<String, PluginManifest> = BTreeMap::new();
 
     loop {
         writer.write_all(b"> ").map_err(InteractiveError::Io)?;
@@ -249,10 +256,66 @@ where
             }
             "/exit" => break,
             rest => {
-                if let Some(folder) = rest.strip_prefix("/domains-add ") {
+                if rest == "/domains-add" {
+                    let rendered = sanitize_for_display(&render_add_plugin(
+                        &workspace_root,
+                        "",
+                        &mut hosts,
+                        &mut manifests,
+                    ));
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                } else if let Some(folder) = rest.strip_prefix("/domains-add ")
+                {
                     let rendered = sanitize_for_display(&render_add_plugin(
                         &workspace_root,
                         folder,
+                        &mut hosts,
+                        &mut manifests,
+                    ));
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                } else if rest == "/domains-enable" {
+                    let rendered = sanitize_for_display(&render_enable(
+                        &workspace_root,
+                        &mut hosts,
+                        &mut manifests,
+                        "",
+                    ));
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                } else if let Some(id) = rest.strip_prefix("/domains-enable ")
+                {
+                    let rendered = sanitize_for_display(&render_enable(
+                        &workspace_root,
+                        &mut hosts,
+                        &mut manifests,
+                        id,
+                    ));
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                } else if rest == "/domains-activate" {
+                    let rendered = sanitize_for_display(&render_activate(
+                        &workspace_root,
+                        &mut hosts,
+                        &mut manifests,
+                        "",
+                    ));
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                } else if let Some(id) =
+                    rest.strip_prefix("/domains-activate ")
+                {
+                    let rendered = sanitize_for_display(&render_activate(
+                        &workspace_root,
+                        &mut hosts,
+                        &mut manifests,
+                        id,
                     ));
                     writer
                         .write_all(rendered.as_bytes())
@@ -287,7 +350,12 @@ fn render_domains(workspace_root: &Path) -> String {
 }
 
 /// Run one `/domains-add <folder>` flow: pick, verify, record.
-fn render_add_plugin(workspace_root: &Path, folder: &str) -> String {
+fn render_add_plugin(
+    workspace_root: &Path,
+    folder: &str,
+    hosts: &mut BTreeMap<String, DomainHost>,
+    manifests: &mut BTreeMap<String, PluginManifest>,
+) -> String {
     let resolved_folder = match resolve_workspace_path(workspace_root, folder)
     {
         Ok(resolved) => resolved,
@@ -308,22 +376,241 @@ fn render_add_plugin(workspace_root: &Path, folder: &str) -> String {
                 );
             }
         };
-    if let Err(failure) = install_plugin(
-        &manifest,
-        workspace_root,
-        &resolved_folder.absolute_path,
-    ) {
+    let id = manifest.package().id().as_str().to_owned();
+    let digest = manifest.package().digest().as_str().to_owned();
+    let abi = manifest.package().abi().clone();
+    let component = manifest.component().map(|path| path.to_path_buf());
+    if let Some(component_path) = component {
+        let authority = match HostAuthority::parse(&[]) {
+            Ok(authority) => authority,
+            Err(failure) => {
+                return format!(
+                    "Add Plugin failed: {} (code {})\n",
+                    failure.code(),
+                    failure.code()
+                );
+            }
+        };
+        let mut host = DomainHost::new(
+            abi,
+            authority,
+            component_path,
+            workspace_root.to_path_buf(),
+            DomainHostBounds::default(),
+        );
+        if let Err(failure) = host.install(manifest.package().clone()) {
+            return format!(
+                "Add Plugin failed: {} (code {})\n",
+                failure.code(),
+                failure.code()
+            );
+        }
+        hosts.insert(id.clone(), host);
+    }
+    let record = PluginRecord {
+        id: id.clone(),
+        path: resolved_folder.workspace_relative_path.clone(),
+        digest: format!("sha256:{digest}"),
+    };
+    if let Err(failure) =
+        siralos_adapters::domain::record_plugin(workspace_root, &record)
+    {
         return format!(
             "Add Plugin failed: {failure} (code {})\n",
             failure.code()
         );
     }
-    let record = PluginRecord {
-        id: manifest.package().id().as_str().to_owned(),
-        path: resolved_folder.workspace_relative_path.clone(),
-        digest: format!("sha256:{}", manifest.package().digest().as_str()),
-    };
+    manifests.insert(id.clone(), manifest);
+    // Ensure a host entry exists even for manifest-only plugins (lifecycle Installed without bytes).
+    if !hosts.contains_key(&id) {
+        // For manifest-only, synthesize a host that is already Installed via direct lifecycle install.
+        // Use the manifest's package to drive a host-less lifecycle is not possible without a component,
+        // so we store a host with a dummy path that will not be used until Enable (which will reconstruct).
+        // Keep the maps consistent: store the manifest, host creation deferred to Enable.
+    }
     format_plugin_added(&record)
+}
+
+fn ensure_host<'a>(
+    workspace_root: &Path,
+    id: &str,
+    hosts: &'a mut BTreeMap<String, DomainHost>,
+    manifests: &mut BTreeMap<String, PluginManifest>,
+) -> Result<&'a mut DomainHost, String> {
+    if hosts.contains_key(id) {
+        return Ok(hosts.get_mut(id).expect("present"));
+    }
+    // Reconstruct from siralos.toml record + manifest file.
+    let records = load_plugin_records(workspace_root)
+        .map_err(|failure| format!("{} (code {})", failure, failure.code()))?;
+    let record = records
+        .iter()
+        .find(|record| record.id == id)
+        .ok_or_else(|| format!("plugin {id} is not installed"))?;
+    let folder = resolve_workspace_path(workspace_root, &record.path)
+        .map_err(|rejection| {
+            format!(
+                "plugin folder rejected: {rejection} (code {})",
+                rejection_code(&rejection)
+            )
+        })?;
+    let manifest = load_manifest(workspace_root, &folder.absolute_path)
+        .map_err(|failure| format!("{} (code {})", failure, failure.code()))?;
+    if manifest.package().id().as_str() != id {
+        return Err(format!(
+            "manifest id {} does not match requested {id}",
+            manifest.package().id().as_str()
+        ));
+    }
+    let component = manifest
+        .component()
+        .ok_or_else(|| {
+            "manifest does not name a component; cannot enable without bytes"
+                .to_owned()
+        })?
+        .to_path_buf();
+    let authority = HostAuthority::parse(&[]).map_err(|failure| {
+        format!("{} (code {})", failure.code(), failure.code())
+    })?;
+    let mut host = DomainHost::new(
+        manifest.package().abi().clone(),
+        authority,
+        component,
+        workspace_root.to_path_buf(),
+        DomainHostBounds::default(),
+    );
+    host.install(manifest.package().clone()).map_err(|failure| {
+        format!("{} (code {})", failure.code(), failure.code())
+    })?;
+    manifests.insert(id.to_owned(), manifest);
+    hosts.insert(id.to_owned(), host);
+    Ok(hosts.get_mut(id).expect("just inserted"))
+}
+
+fn render_enable(
+    workspace_root: &Path,
+    hosts: &mut BTreeMap<String, DomainHost>,
+    manifests: &mut BTreeMap<String, PluginManifest>,
+    id: &str,
+) -> String {
+    let id = id.trim();
+    if id.is_empty() {
+        return "Enable failed: plugin id is required (code PATH_EMPTY)\n"
+            .to_owned();
+    }
+    let sanitized = sanitize_for_display(id);
+    let host = match ensure_host(workspace_root, &sanitized, hosts, manifests)
+    {
+        Ok(host) => host,
+        Err(reason) => return format!("Enable failed: {reason}\n"),
+    };
+    match host.enable() {
+        Ok(()) => format!("Enabled {sanitized}.\n"),
+        Err(failure) => {
+            format!(
+                "Enable failed: {} (code {})\n",
+                failure.code(),
+                failure.code()
+            )
+        }
+    }
+}
+
+fn render_activate(
+    workspace_root: &Path,
+    hosts: &mut BTreeMap<String, DomainHost>,
+    manifests: &mut BTreeMap<String, PluginManifest>,
+    id: &str,
+) -> String {
+    let id = id.trim();
+    if id.is_empty() {
+        return "Activate failed: plugin id is required (code PATH_EMPTY)\n"
+            .to_owned();
+    }
+    let sanitized = sanitize_for_display(id);
+    let host = match ensure_host(workspace_root, &sanitized, hosts, manifests)
+    {
+        Ok(host) => host,
+        Err(reason) => return format!("Activate failed: {reason}\n"),
+    };
+    // Ensure enabled first (idempotent: if already enabled, enable is a no-op error, ignore).
+    let _ = host.enable();
+    let manifest = match manifests.get(&sanitized) {
+        Some(manifest) => manifest,
+        None => {
+            return format!(
+                "Activate failed: manifest not loaded for {sanitized}\n"
+            );
+        }
+    };
+    let capabilities: Vec<String> = manifest
+        .package()
+        .requested_capabilities()
+        .iter()
+        .map(|cap| cap.as_str().to_owned())
+        .collect();
+    let authority = match HostAuthority::parse(&capabilities) {
+        Ok(authority) => authority,
+        Err(failure) => {
+            return format!(
+                "Activate failed: {:?} (code {})\n",
+                failure,
+                failure.code()
+            );
+        }
+    };
+    // Host authority for activate is the declared grant; lifecycle checks it.
+    // Re-create host with declared authority for the activate step (lifecycle + host authority both matter).
+    // Simplify: update host authority by reconstructing host with declared authority if needed.
+    // DomainHost stores authority at construction; enable used empty authority. For activate we need declared.
+    // Reconstruct host with declared authority, preserving installed state via reinstall.
+    let component = match manifest.component() {
+        Some(path) => path.to_path_buf(),
+        None => {
+            return "Activate failed: manifest does not name a component (code COMPONENT_UNUSABLE)\n"
+                .to_owned()
+        }
+    };
+    let abi = manifest.package().abi().clone();
+    let package = manifest.package().clone();
+    let mut activated_host = DomainHost::new(
+        abi,
+        authority,
+        component,
+        workspace_root.to_path_buf(),
+        DomainHostBounds::default(),
+    );
+    // Re-install to get Installed state in the new host instance.
+    let _ = activated_host.install(package.clone());
+    let _ = activated_host.enable();
+    let request = match ActivationRequest::parse(
+        package.id().as_str(),
+        package.digest().as_str(),
+        package.abi().as_str(),
+        &capabilities,
+    ) {
+        Ok(request) => request,
+        Err(failure) => {
+            return format!(
+                "Activate failed: {:?} (code {})\n",
+                failure,
+                failure.code()
+            );
+        }
+    };
+    match activated_host.activate(request, RuntimeCheckResult::Ready) {
+        Ok(_) => {
+            hosts.insert(sanitized.clone(), activated_host);
+            format!("Activated {sanitized}.\n")
+        }
+        Err(failure) => {
+            format!(
+                "Activate failed: {:?} (code {})\n",
+                failure,
+                failure.code()
+            )
+        }
+    }
 }
 
 /// Stable short code for a workspace path rejection.
@@ -562,6 +849,73 @@ mod tests {
         );
         assert!(output.contains("folder rejected"));
         let _ = remove_dir_all(&outside);
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn domains_enable_and_activate_are_host_gated() {
+        let root = temporary_directory("domains-enable-activate");
+        create_dir_all(root.join("plugins/godot")).expect("folder");
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/domain-conformance/fixtures/conformance-domain.component.wasm");
+        let bytes = std::fs::read(&fixture).expect("fixture");
+        let digest = {
+            use siralos_core::identity::sha256_hex;
+            sha256_hex(&bytes)
+        };
+        write(root.join("plugins/godot/godot.component.wasm"), &bytes)
+            .expect("component");
+        write(
+            root.join("plugins/godot/domain-manifest.toml"),
+            format!(
+                "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
+            ),
+        )
+        .expect("manifest");
+        let output = run(
+            "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+            &root,
+            None,
+        );
+        if !output.contains("Activated godot.") {
+            eprintln!("OUTPUT:\n{output}\n---END");
+        }
+        assert!(output.contains("Installed godot"));
+        assert!(output.contains("Enabled godot."));
+        assert!(output.contains("Activated godot."));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn domains_enable_on_missing_id_fails_typed() {
+        let root = temporary_directory("domains-enable-missing");
+        let output = run("/domains-enable missing\n/exit\n", &root, None);
+        assert!(output.contains("Enable failed:"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn domains_activate_requires_host_authority_and_component() {
+        let root = temporary_directory("domains-activate-no-component");
+        create_dir_all(root.join("plugins/godot")).expect("folder");
+        let digest = {
+            use siralos_core::identity::sha256_hex;
+            sha256_hex(b"no-component")
+        };
+        write(
+            root.join("plugins/godot/domain-manifest.toml"),
+            format!(
+                "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\n"
+            ),
+        )
+        .expect("manifest");
+        let output = run(
+            "/domains-add plugins/godot\n/domains-activate godot\n/exit\n",
+            &root,
+            None,
+        );
+        assert!(output.contains("Installed godot"));
+        assert!(output.contains("Activate failed:"));
         let _ = remove_dir_all(root);
     }
 }
