@@ -10,9 +10,14 @@
 //! performs no installation. This slice is View + Add Plugin only:
 //! `Enable`/`Activate` remain Host-gated and are not implemented here.
 
-use crate::workspace::fs::{BoundedFileRead, read_complete_file_bounded};
+use crate::domain::host::DomainHost;
+use crate::domain::host::DomainHostBounds;
+use crate::workspace::fs::{
+    BoundedFileRead, MUTATION_TEMP_PREFIX, read_complete_file_bounded,
+};
+use siralos_core::domain::capability::HostAuthority;
 use siralos_core::domain::failure::DomainFailure;
-use siralos_core::domain::package::DomainPackage;
+use siralos_core::domain::package::{DomainPackage, DomainPackageId};
 use siralos_core::identity::sha256_hex;
 
 use std::fmt;
@@ -76,6 +81,8 @@ pub enum PluginFailure {
     RecordConflict(String),
     /// The plugin record file could not be inspected or written.
     RecordIo(String),
+    /// No `siralos.toml` exists yet (a clean empty workspace).
+    NoRecord,
 }
 
 impl PluginFailure {
@@ -93,6 +100,7 @@ impl PluginFailure {
             }
             Self::RecordConflict(_) => "RECORD_CONFLICT",
             Self::RecordIo(_) => "RECORD_IO",
+            Self::NoRecord => "NO_RECORD",
         }
     }
 }
@@ -128,6 +136,9 @@ impl fmt::Display for PluginFailure {
                     formatter,
                     "plugin record I/O failure: {reason}"
                 );
+            }
+            Self::NoRecord => {
+                return formatter.write_str("no siralos.toml exists yet");
             }
         };
         formatter.write_str(detail)
@@ -346,6 +357,64 @@ pub struct PluginRecord {
     pub digest: String,
 }
 
+/// Install one loaded manifest through the production host boundary.
+///
+/// The host reads the exact component bytes (bounded, regular file,
+/// no symlink) and verifies the declared digest itself; the lifecycle
+/// transitions to `Installed`. Installation carries no authority gain:
+/// the host starts with an empty authority, and `Enable`/`Activate`
+/// remain separate Host-gated steps. When the manifest names no
+/// component there are no bytes to verify, so the declared manifest
+/// identity is recorded as-is (still typed, never silence).
+pub fn install_plugin(
+    manifest: &PluginManifest,
+    workspace_root: &Path,
+    folder: &Path,
+) -> Result<(), PluginFailure> {
+    if let Some(component) = manifest.component() {
+        let abi = manifest.package().abi().clone();
+        let authority = HostAuthority::parse(&[]).map_err(|error| {
+            PluginFailure::ManifestInvalid(error.code().to_owned())
+        })?;
+        let mut host = DomainHost::new(
+            abi,
+            authority,
+            component.to_path_buf(),
+            workspace_root.to_path_buf(),
+            DomainHostBounds::default(),
+        );
+        host.install(manifest.package().clone()).map_err(
+            |error| match error {
+                DomainFailure::IdentityMismatch { .. } => {
+                    PluginFailure::ComponentDigestMismatch {
+                        declared: manifest
+                            .package()
+                            .digest()
+                            .as_str()
+                            .to_owned(),
+                        computed: "mismatch".to_owned(),
+                    }
+                }
+                DomainFailure::InvalidOutput { reason }
+                | DomainFailure::InvalidInput { reason }
+                | DomainFailure::Unavailable { reason } => {
+                    PluginFailure::ComponentUnusable(reason)
+                }
+                other => {
+                    PluginFailure::ComponentUnusable(other.code().to_owned())
+                }
+            },
+        )?;
+        verify_component(manifest)?;
+    }
+    let record = PluginRecord {
+        id: manifest.package().id().as_str().to_owned(),
+        path: workspace_relative(workspace_root, folder)?,
+        digest: format!("sha256:{}", manifest.package().digest().as_str()),
+    };
+    record_plugin(workspace_root, &record)
+}
+
 /// Read the workspace plugin records from `siralos.toml`.
 ///
 /// A missing file means no plugins are installed (empty, not an
@@ -357,7 +426,12 @@ pub fn load_plugin_records(
     root: &Path,
 ) -> Result<Vec<PluginRecord>, PluginFailure> {
     let path = root.join(SIRALOS_TOML_FILE_NAME);
-    let text = read_record_text(&path)?;
+    let Some(text) = read_record_text(&path)? else {
+        return Ok(Vec::new());
+    };
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     let value: toml::Value = toml::from_str(&text)
         .map_err(|error| PluginFailure::ManifestSyntax(error.to_string()))?;
     let Some(toml::Value::Table(plugins)) = value.get("plugins") else {
@@ -386,46 +460,172 @@ pub fn load_plugin_records(
                 )));
             }
         };
-        records.push(PluginRecord { id: id.clone(), path, digest });
+        records.push(validate_record(PluginRecord {
+            id: id.clone(),
+            path,
+            digest,
+        })?);
     }
     records.sort();
     Ok(records)
 }
 
-/// Read one bounded, UTF-8 file; missing returns None.
-fn read_record_text(path: &Path) -> Result<String, PluginFailure> {
+/// Validate one stored record against the same shape rules the
+/// manifest uses, so a crafted `siralos.toml` cannot drive arbitrary
+/// rendering or a poisoned id.
+fn validate_record(
+    record: PluginRecord,
+) -> Result<PluginRecord, PluginFailure> {
+    DomainPackageId::parse(&record.id).map_err(|_| {
+        PluginFailure::RecordConflict(format!(
+            "plugin id {} is invalid",
+            record.id
+        ))
+    })?;
+    let path_ok = !record.path.is_empty()
+        && !record.path.contains('\0')
+        && !record.path.starts_with('/')
+        && !record.path.starts_with('\\')
+        && !is_absolute_drive(&record.path);
+    let digest_ok = record.digest.len() == "sha256:".len() + 64
+        && record.digest.starts_with("sha256:")
+        && is_hex64(&record.digest[7..]);
+    if !path_ok || !digest_ok {
+        return Err(PluginFailure::RecordConflict(format!(
+            "plugin {} record has an invalid path or digest",
+            record.id
+        )));
+    }
+    Ok(record)
+}
+
+fn is_absolute_drive(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn is_hex64(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Read one bounded, UTF-8 file. A missing file yields `None`; a
+/// symlink or non-regular file is a typed refusal (the caller never
+/// writes through a substituted pathname).
+fn read_record_text(path: &Path) -> Result<Option<String>, PluginFailure> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(PluginFailure::RecordIo(error.to_string())),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(PluginFailure::RecordConflict(
+            "siralos.toml must be a regular file; refusing symlink or special file"
+                .to_owned(),
+        ));
+    }
     match read_complete_file_bounded(path, MAX_SIRALOS_TOML_BYTES) {
-        BoundedFileRead::Complete(bytes) => String::from_utf8(bytes)
-            .map_err(|_| PluginFailure::ManifestNotUtf8),
+        BoundedFileRead::Complete(bytes) => {
+            String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|_| PluginFailure::ManifestNotUtf8)
+        }
         BoundedFileRead::TooLarge => Err(PluginFailure::RecordIo(
             "siralos.toml exceeds the byte bound".to_owned(),
         )),
-        BoundedFileRead::NotReadable => Ok(String::new()),
+        BoundedFileRead::NotReadable => Err(PluginFailure::RecordConflict(
+            "siralos.toml must be a regular file; refusing symlink or special file"
+                .to_owned(),
+        )),
         BoundedFileRead::IoError(error) => {
             Err(PluginFailure::RecordIo(error.to_string()))
         }
     }
 }
 
+/// Write the plugin record document atomically.
+///
+/// The document is written to a unique temporary file in the workspace
+/// root, lstat-verified as a regular file, then renamed over
+/// `siralos.toml`. The target is never opened for write: a symlink at
+/// the target path is replaced (not followed) by the rename, and a
+/// pre-rename lstat check refuses symlink/special targets before the
+/// swap. Any failure removes the temporary file.
+fn write_record_document(
+    root: &Path,
+    document: &toml::Table,
+) -> Result<(), PluginFailure> {
+    let path = root.join(SIRALOS_TOML_FILE_NAME);
+    let serialized = toml::to_string(document)
+        .map_err(|error| PluginFailure::RecordIo(error.to_string()))?;
+    let nonce = record_write_nonce();
+    let temporary =
+        root.join(format!("{MUTATION_TEMP_PREFIX}siralos-toml-{nonce}"));
+    std::fs::write(&temporary, serialized).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        PluginFailure::RecordIo(error.to_string())
+    })?;
+    let target_metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(PluginFailure::RecordConflict(
+                    "siralos.toml must be a regular file; refusing symlink or special file"
+                        .to_owned(),
+                ));
+            }
+            Some(metadata)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(PluginFailure::RecordIo(error.to_string()));
+        }
+    };
+    let rename_result = std::fs::rename(&temporary, &path);
+    if let Err(error) = rename_result {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(PluginFailure::RecordIo(error.to_string()));
+    }
+    let _ = target_metadata;
+    Ok(())
+}
+
+/// Unique suffix for temporary record files.
+fn record_write_nonce() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{stamp:x}")
+}
+
 /// Merge one plugin record into the workspace `siralos.toml`,
-/// preserving every other section and record verbatim. Creating the
-/// file when absent is fine; an existing record under the same id with
-/// a different package identity conflicts (typed refusal, no write).
+/// preserving every other section and record (structurally; comments
+/// and original formatting are not preserved by the TOML round-trip).
+/// Creating the file when absent is fine; an existing record under the
+/// same id with a different package identity conflicts (typed refusal,
+/// no write).
 pub fn record_plugin(
     root: &Path,
     record: &PluginRecord,
 ) -> Result<(), PluginFailure> {
     let path = root.join(SIRALOS_TOML_FILE_NAME);
-    let text = read_record_text(&path)?;
+    let text = read_record_text(&path)?.unwrap_or_default();
     let mut document: toml::Table = if text.trim().is_empty() {
         toml::Table::new()
     } else {
         toml::from_str(&text).map_err(|error| {
-            if is_section_conflict(&error) {
-                PluginFailure::RecordConflict(error.to_string())
-            } else {
-                PluginFailure::ManifestSyntax(error.to_string())
-            }
+            // Fail closed on any parse error of a pre-existing file:
+            // never silently rewrite an unparseable record file.
+            PluginFailure::RecordConflict(format!(
+                "siralos.toml does not parse: {error}"
+            ))
         })?
     };
     let plugins = match document.remove("plugins") {
@@ -467,16 +667,7 @@ pub fn record_plugin(
     );
     plugins.insert(record.id.clone(), toml::Value::Table(entry));
     document.insert("plugins".to_owned(), toml::Value::Table(plugins));
-    let serialized = toml::to_string(&document)
-        .map_err(|error| PluginFailure::RecordIo(error.to_string()))?;
-    std::fs::write(&path, serialized)
-        .map_err(|error| PluginFailure::RecordIo(error.to_string()))
-}
-
-/// Distinguish a duplicate-key conflict from generic syntax errors when
-/// error strings are not available through typed accessors.
-fn is_section_conflict(_error: &toml::de::Error) -> bool {
-    false
+    write_record_document(root, &document)
 }
 
 #[cfg(test)]
@@ -737,6 +928,108 @@ mod tests {
         };
         record_plugin(&temp, &first).expect("first");
         let failure = record_plugin(&temp, &conflicting).unwrap_err();
+        assert_eq!(failure.code(), "RECORD_CONFLICT");
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn record_symlink_target_is_refused_without_touching_it() {
+        #[cfg(unix)]
+        {
+            let temp = workspace();
+            let target = temp.join("elsewhere.toml");
+            write(&target, b"[unrelated]\nkey = \"original\"\n")
+                .expect("target");
+            std::os::unix::fs::symlink(
+                &target,
+                temp.join(SIRALOS_TOML_FILE_NAME),
+            )
+            .expect("symlink");
+            let record = PluginRecord {
+                id: "godot".to_owned(),
+                path: "plugins/godot".to_owned(),
+                digest: format!("sha256:{}", digest_hex(0x01)),
+            };
+            let failure = record_plugin(&temp, &record).unwrap_err();
+            assert_eq!(failure.code(), "RECORD_CONFLICT");
+            let target_text =
+                std::fs::read_to_string(&target).expect("target unchanged");
+            assert!(target_text.contains("original"));
+            let _ = remove_dir_all(temp);
+        }
+    }
+
+    #[test]
+    fn record_directory_target_is_refused() {
+        let temp = workspace();
+        std::fs::create_dir(temp.join(SIRALOS_TOML_FILE_NAME)).expect("dir");
+        let record = PluginRecord {
+            id: "godot".to_owned(),
+            path: "plugins/godot".to_owned(),
+            digest: format!("sha256:{}", digest_hex(0x01)),
+        };
+        let failure = record_plugin(&temp, &record).unwrap_err();
+        assert_eq!(failure.code(), "RECORD_CONFLICT");
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn record_oversized_siralos_toml_is_refused() {
+        let temp = workspace();
+        let oversized = vec![b'x'; MAX_SIRALOS_TOML_BYTES + 1];
+        write(temp.join(SIRALOS_TOML_FILE_NAME), &oversized).expect("file");
+        let record = PluginRecord {
+            id: "godot".to_owned(),
+            path: "plugins/godot".to_owned(),
+            digest: format!("sha256:{}", digest_hex(0x01)),
+        };
+        let failure = record_plugin(&temp, &record).unwrap_err();
+        assert_eq!(failure.code(), "RECORD_IO");
+        // The target must be untouched (still the original oversized bytes).
+        assert_eq!(
+            std::fs::metadata(temp.join(SIRALOS_TOML_FILE_NAME))
+                .expect("file still exists")
+                .len(),
+            (MAX_SIRALOS_TOML_BYTES + 1) as u64
+        );
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn crafted_record_with_bad_id_poison_is_refused() {
+        let temp = workspace();
+        write(
+            temp.join(SIRALOS_TOML_FILE_NAME),
+            "[plugins.UPPER-case]\npath = \"plugins/x\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+        )
+        .expect("file");
+        let failure = load_plugin_records(&temp).unwrap_err();
+        assert_eq!(failure.code(), "RECORD_CONFLICT");
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn crafted_record_with_bad_digest_shape_is_refused() {
+        let temp = workspace();
+        write(
+            temp.join(SIRALOS_TOML_FILE_NAME),
+            "[plugins.godot]\npath = \"plugins/x\"\ndigest = \"md5:deadbeef\"\n",
+        )
+        .expect("file");
+        let failure = load_plugin_records(&temp).unwrap_err();
+        assert_eq!(failure.code(), "RECORD_CONFLICT");
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn crafted_record_with_absolute_path_is_refused() {
+        let temp = workspace();
+        write(
+            temp.join(SIRALOS_TOML_FILE_NAME),
+            "[plugins.godot]\npath = \"C:/outside\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+        )
+        .expect("file");
+        let failure = load_plugin_records(&temp).unwrap_err();
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         let _ = remove_dir_all(temp);
     }

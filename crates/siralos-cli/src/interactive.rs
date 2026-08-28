@@ -10,7 +10,7 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use siralos_adapters::domain::{
-    load_manifest, load_plugin_records, record_plugin, verify_component,
+    PluginRecord, install_plugin, load_manifest, load_plugin_records,
 };
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_adapters::tool::{
@@ -38,7 +38,7 @@ use crate::output::{
     format_context_status, format_domains, format_plugin_added,
     format_tool_projection, format_tools,
 };
-use crate::sanitize::TerminalSanitizer;
+use crate::sanitize::{TerminalSanitizer, sanitize_for_display};
 
 /// The stable product-neutral segment supplied by the CLI composition root.
 ///
@@ -241,7 +241,8 @@ where
                     .map_err(InteractiveError::Io)?;
             }
             "/domains" => {
-                let rendered = render_domains(&workspace_root);
+                let rendered =
+                    sanitize_for_display(&render_domains(&workspace_root));
                 writer
                     .write_all(rendered.as_bytes())
                     .map_err(InteractiveError::Io)?;
@@ -249,7 +250,10 @@ where
             "/exit" => break,
             rest => {
                 if let Some(folder) = rest.strip_prefix("/domains-add ") {
-                    let rendered = render_add_plugin(&workspace_root, folder);
+                    let rendered = sanitize_for_display(&render_add_plugin(
+                        &workspace_root,
+                        folder,
+                    ));
                     writer
                         .write_all(rendered.as_bytes())
                         .map_err(InteractiveError::Io)?;
@@ -304,23 +308,21 @@ fn render_add_plugin(workspace_root: &Path, folder: &str) -> String {
                 );
             }
         };
-    if let Err(failure) = verify_component(&manifest) {
+    if let Err(failure) = install_plugin(
+        &manifest,
+        workspace_root,
+        &resolved_folder.absolute_path,
+    ) {
         return format!(
             "Add Plugin failed: {failure} (code {})\n",
             failure.code()
         );
     }
-    let record = siralos_adapters::domain::PluginRecord {
+    let record = PluginRecord {
         id: manifest.package().id().as_str().to_owned(),
         path: resolved_folder.workspace_relative_path.clone(),
         digest: format!("sha256:{}", manifest.package().digest().as_str()),
     };
-    if let Err(failure) = record_plugin(workspace_root, &record) {
-        return format!(
-            "Add Plugin failed: {failure} (code {})\n",
-            failure.code()
-        );
-    }
     format_plugin_added(&record)
 }
 

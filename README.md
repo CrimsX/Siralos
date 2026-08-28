@@ -269,11 +269,11 @@ reference can statically inspect Godot projects, scenes, and resources without
 executing project code. Dynamic engine probes and project execution remain
 fail-closed where their security properties cannot be enforced.
 
-The Rust Godot domain package lives in `crates/siralos-godot` (in-repo shim,
-currently 0 tests, `siralos-godot → siralos-core` only) — sources still in
-`siralos-core/src/godot` until the 6+3 verbatim move (decision 37). Siralos
-does not install Godot, silently enable a domain, or acquire a domain merely
-because `project.godot` exists. The domain package and the Godot Engine
+The Rust Godot domain package lives in `crates/siralos-godot` (72 tests,
+`siralos-godot → siralos-core` only) — the 6+3 R8/R9 surfaces moved there from
+`siralos-core/src/godot` (deleted, domain-neutral again) per decision 37.
+Siralos does not install Godot, silently enable a domain, or acquire a domain
+merely because `project.godot` exists. The domain package and the Godot Engine
 installation are separate, explicit concerns.
 
 ## Development status
