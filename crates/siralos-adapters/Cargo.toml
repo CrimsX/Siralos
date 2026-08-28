@@ -16,7 +16,7 @@ siralos-godot = { workspace = true }
 # change. No WASI surface is granted to domain components: the world
 # declares exactly the host-effects import, so any additional import
 # fails instantiation (no ambient authority).
-wasmtime = { version = "=47.0.3", default-features = false, features = [
+wasmtime = { version = "=48.0.1", default-features = false, features = [
     "component-model",
     "cranelift",
     "runtime",
