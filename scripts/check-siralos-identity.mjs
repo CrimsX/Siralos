@@ -51,16 +51,8 @@ const EXCLUSIONS = new Map([
     "the rename-verification mechanism itself: it must name the old identity to search for it",
   ],
   [
-    "scripts/check-siralos-identity.test.mjs",
-    "tests of the rename-verification mechanism intentionally contain the old identity",
-  ],
-  [
     "docs/adr/0032-rust-migration-and-siralos-rename.md",
     "the migration decision record must name the former identity to document the rename",
-  ],
-  [
-    "scripts/check-rust-architecture.test.mjs",
-    "migration test fixtures intentionally use the former identity as a wrong-value example",
   ],
 ]);
 
