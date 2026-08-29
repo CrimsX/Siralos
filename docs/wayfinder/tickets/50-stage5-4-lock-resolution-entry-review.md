@@ -2,8 +2,8 @@
 title: "Stage 5.4 siralos.lock Resolution Entry Review - Machine-Generated Portable Identities"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS per decision 50 (2026-08-28): C1-C6 approved; implemented as the Stage 5.4 slice."
 blockedBy: []
 ---
 
