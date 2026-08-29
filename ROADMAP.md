@@ -351,7 +351,7 @@ Implemented (R4 — Generic Workspace / Project Foundation):
   application, new checkpoint creation, Git inspection) report the same
   typed outcomes on both sides.
 
-Current: Stage 3R R13 is **Verified** (R1–R11 Verified as recorded above; R13 — Remaining TypeScript Surface Parity — is complete and evidence-backed: five slices at corpus v31, 236 files, 231/231 applicable required parity; local gate passes; fail-closed postures preserved. R13 **Verified** at 72e20be. **TypeScript archive removal is complete** per decision 40 at `5da5cde` (freeze v32 234/234, pinned at `tests/differential/evidence/typescript-freeze-v32/`, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed, `npm run check` is now Rust + pinned differential). Previous R11
+Current: **Stage 4 is Verified** at `9566eee` — the frozen seven-step Controlled-Execution sequence (decision 08) is fully consumed (generic runtime execution + evidence at the v32 reconciliation; Godot runtime adapter `5bedf57`; visual evidence `4a250d8`; controlled interaction `42ee5ab`; QA workflows `a83c2a4`; run-profiling sessions `b206a4a`), with differential parity 259/259 applicable required at corpus v38/264 files, 25 digest-bound post-freeze expectation records, the pinned v32 oracle untouched, and zero spawn paths (decisions 41–46; map: `docs/wayfinder/siralos-roadmap.md`). The Stage 3R sequence that preceded it is also Verified: Stage 3R R13 is **Verified** (R1–R11 Verified as recorded above; R13 — Remaining TypeScript Surface Parity — is complete and evidence-backed: five slices at corpus v31, 236 files, 231/231 applicable required parity; local gate passes; fail-closed postures preserved. R13 **Verified** at 72e20be. **TypeScript archive removal is complete** per decision 40 at `5da5cde` (freeze v32 234/234, pinned at `tests/differential/evidence/typescript-freeze-v32/`, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed, `npm run check` is now Rust + pinned differential). Previous R11
 R11 — full differential, effect-boundary, security, recovery, and
 cross-platform parity — is complete and evidence-backed: `workspace-apply`
 and `recovery-taxonomy` landed at corpus version 23, 222 scenario files,
@@ -363,17 +363,20 @@ with the macOS `SSH_AUTH_SOCK` finding recorded as an accepted deviation).
 The complete internal sequence is recorded
 in `docs/development/RUST_MIGRATION.md`.
 
-### Next: Stage 4 — Controlled execution
+### Stage 4 — Controlled execution (realized)
 
-Stage 4 entry is **READY** pending the `stage4-entry-gate.md` 17/17 PASS re-evaluation (R12 retired). Its first milestone is generic Controlled
-Runtime Execution: sandboxed, bounded process supervision under Siralos
-authority that produces structured runtime evidence without granting
-unrestricted desktop or network access. Stage 4.1 (generic runtime) is
-**Verified** at `168a769`; the Godot domain now lives in the in-repo Plugin
-crate `crates/siralos-godot` (extraction landed per decision 37, parity
-231/231 v31 retained, `siralos-core` domain-neutral again). The Godot runtime
-adapter is the first specialization built on that host boundary; it is not the
-boundary itself. Neither capability is implemented here.
+Stage 4 is **complete and Verified** at `9566eee`. The `stage4-entry-gate.md`
+17/17 PASS re-evaluation held (R12 retired); the entry sequence froze seven
+steps (decision 08) and every step is implemented, entry-reviewed, and
+evidence-backed: generic Controlled Runtime Execution — sandboxed, bounded
+process supervision under Siralos authority that produces structured runtime
+evidence without granting unrestricted desktop or network access (the
+fail-closed posture is mechanically preserved) — the Godot runtime adapter
+specialization on that host
+boundary, visual evidence, controlled interaction, QA workflows, and
+run-profiling sessions. The Godot domain lives in the in-repo Plugin crate
+`crates/siralos-godot` (extraction landed per decision 37); `siralos-core`
+stays domain-neutral.
 
 ## 4. Controlled execution
 
@@ -384,8 +387,7 @@ QA workflows, and performance profiling where domain-owned. The generic
 boundary comes first; the Godot adapter is a specialization, never the
 boundary itself (ADR 0035).
 
-Status: not started. The Stage 3R migration and the Stage-4 entry gate must
-pass first.
+Status: complete and **Verified** at `9566eee` — all seven realized steps hold differential parity at corpus v38 (259/259 applicable required, 25 digest-bound expectation records, pinned v32 oracle untouched) with zero spawn paths; recorded in decisions 41–46 and the Wayfinder map.
 
 ## 5. Composition
 

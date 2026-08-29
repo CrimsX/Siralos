@@ -146,8 +146,7 @@ product, composition, and extension model is frozen in
   Tools, Views where justified, optional Domains, and the measured
   `/evolve` workflow are TARGET concepts in their owning stages
   (ADR 0036) — none are implemented
-- Real provider integrations, additional domains, and Stage 4 runtime/visual QA
-  are future milestones
+- Real provider integrations and additional domains are future milestones
 
 Unavailable effects return typed failures before execution, approval,
 checkpoint creation, or cleanup. See the [roadmap](ROADMAP.md) for exact status.
@@ -285,8 +284,8 @@ installation are separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified. R13 closed the remaining TypeScript surfaces (v31, 236 files, 231/231); R12 retires the TypeScript oracle (audit v31 e24f4bb, 231/231) — **Rust is now the sole source of truth** (`4bef901` historical oracle, `231/231` retained). Stage 4.1 (generic Controlled Runtime) is **Verified** at `168a769` (`05c075c` `process.execute` → `UNAVAILABLE` fail-closed, 0 spawn, 231/231 retained) — authorizes `crates/siralos-godot` extraction next. **TypeScript archive removal is complete** per decision 40 at `e6c49f1` (freeze `5da5cde` v32 234/234, pinned, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed).
-- Stage 4.2 (Godot Runtime Adapter) is the next specialization; `crates/siralos-godot` isolation is the ship-within-a-ship for the 6+3 domain
+- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified; R12 retires the TypeScript oracle — **Rust is now the sole source of truth**. **TypeScript archive removal is complete** per decision 40 at `e6c49f1` (freeze `5da5cde` v32 234/234, pinned, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed). **Stage 4 (Controlled Execution) is complete and Verified** at `9566eee` — the frozen seven-step sequence (decision 08) is fully consumed: generic runtime execution + evidence (4.1 with 4.2 folded in, subjects landed at the v32 reconciliation), Godot runtime adapter (`5bedf57`), visual evidence (`4a250d8`), controlled interaction (`42ee5ab`), QA workflows (`a83c2a4`), and run-profiling sessions (`b206a4a`); differential parity is 259/259 applicable required at corpus v38 (264 files) with 25 digest-bound expectation records, the pinned v32 oracle untouched, and zero spawn paths; recorded in decisions 41–46 and the Wayfinder map.
+- Next: the map's Not-yet-specified section is empty; Stage 5 composition remains future-facing (ADR 0036) and is not committed
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the
 authoritative R1–R12 sequence. The [Stage 4 entry gate](docs/development/stage4-entry-gate.md)
