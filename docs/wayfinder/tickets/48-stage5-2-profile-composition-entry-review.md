@@ -2,8 +2,8 @@
 title: "Stage 5.2 Profile Composition Entry Review - Effective Run Configuration over Host Authority"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS per decision 48 (2026-08-28): C1-C6 approved; implemented as the Stage 5.2 slice."
 blockedBy: []
 ---
 
