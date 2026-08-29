@@ -2,8 +2,8 @@
 title: "Stage 5.1 Profiles Entry Review - Named Declarative Working Configurations over a Narrowing-Only Boundary"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS — Stage 5.1 contract frozen (HITL 2026-08-28: Q1 model + overlay, no CLI/lockfile; Q2 composition-profile ×4 as drafted; Q3 confirm narrowing-only, zero-config valid, pure data; Q4 approve C1–C6). Authorized as next implementation slice; see decision 47."
 blockedBy: []
 ---
 
