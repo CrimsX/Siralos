@@ -1,0 +1,23 @@
+{
+  "id": "qa-workflow.resource-exceeded",
+  "subject": "qa-workflow",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "decide",
+    "request": {
+      "runId": "run_qa_budget",
+      "operationId": null,
+      "isStale": false,
+      "steps": ["step-0-spec", "step-1-spec", "step-2-spec"]
+    },
+    "policy": {
+      "qa.workflow": "allow"
+    },
+    "budget": {
+      "artifactBytes": 16
+    },
+    "isCancelled": false
+  }
+}

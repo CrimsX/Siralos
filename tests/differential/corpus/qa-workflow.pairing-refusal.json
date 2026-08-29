@@ -1,0 +1,23 @@
+{
+  "id": "qa-workflow.pairing-refusal",
+  "subject": "qa-workflow",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "decide",
+    "request": {
+      "runId": "run_qa_empty",
+      "operationId": null,
+      "isStale": false,
+      "steps": []
+    },
+    "policy": {
+      "qa.workflow": "allow"
+    },
+    "budget": {
+      "artifactBytes": 67108864
+    },
+    "isCancelled": false
+  }
+}

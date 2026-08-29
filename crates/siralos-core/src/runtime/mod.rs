@@ -34,6 +34,7 @@ pub mod execution;
 pub mod faults;
 pub mod identity;
 pub mod interaction;
+pub mod qa;
 pub mod readiness;
 pub mod supervision;
 pub mod visual;
@@ -82,6 +83,15 @@ pub use interaction::{
     decide_run_interaction, decide_run_interaction_with_flag,
     is_identity_bound_interactive_run_primitive_available,
     render_run_interaction_evidence,
+};
+pub use qa::{
+    MAX_QA_WORKFLOW_STEPS, MAX_STEP_BYTES, QA_WORKFLOW_CAPABILITY,
+    QA_WORKFLOW_UNAVAILABLE_REASON, QaWorkflowEvidence,
+    QaWorkflowEvidenceDetail, QaWorkflowRequest, QaWorkflowStep,
+    create_qa_workflow_evidence, decide_qa_workflow,
+    decide_qa_workflow_with_flag,
+    is_identity_bound_qa_workflow_primitive_available,
+    render_qa_workflow_evidence,
 };
 pub use readiness::{
     RUNTIME_MODES, ReadinessItem, ReadinessItemId, RuntimeCapabilityState,

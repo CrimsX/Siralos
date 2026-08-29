@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 36;
+export const CORPUS_VERSION = 37;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -67,6 +67,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "runtime-evidence",
   "visual-evidence",
   "run-interaction",
+  "qa-workflow",
   "cli-session",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
@@ -76,7 +77,7 @@ export const ALLOWED_ENV_KEYS = new Set(["HOME", "HOMEDRIVE", "HOMEPATH", "USERP
 export const CONTRACT_LIMITS = Object.freeze({
   manifestBytes: 64 * 1024,
   scenarioBytes: 16 * 1024,
-  scenarios: 256,
+  scenarios: 384,
   identifierBytes: 128,
   fileNameBytes: 160,
   envEntries: 16,
@@ -906,6 +907,7 @@ function validateSubjectInputs(scenario, label) {
     "runtime-evidence",
     "visual-evidence",
     "run-interaction",
+    "qa-workflow",
   ]);
   if (RUNTIME_SUBJECTS.has(scenario.subject)) {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
@@ -1116,6 +1118,7 @@ export function validateScenario(scenario, file) {
     "runtime-evidence",
     "visual-evidence",
     "run-interaction",
+    "qa-workflow",
     "cli-session",
   ]);
   const expectedKeys = withInput.has(scenario.subject)
