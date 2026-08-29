@@ -900,11 +900,7 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
-  const RUNTIME_SUBJECTS = new Set([
-    "runtime-execution",
-    "runtime-evidence",
-    "visual-evidence",
-  ]);
+  const RUNTIME_SUBJECTS = new Set(["runtime-execution", "runtime-evidence", "visual-evidence"]);
   if (RUNTIME_SUBJECTS.has(scenario.subject)) {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
       throw new Error(

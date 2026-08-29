@@ -3137,10 +3137,7 @@ function validateVisualEvidenceV35Result(result, label) {
     throw new Error(`${label}.result.outcome must be an object`);
   }
   assertExactKeys(outcome, ["disposition", "reason", "isUnavailable"], `${label}.result.outcome`);
-  if (
-    typeof outcome.disposition !== "string" ||
-    typeof outcome.isUnavailable !== "boolean"
-  ) {
+  if (typeof outcome.disposition !== "string" || typeof outcome.isUnavailable !== "boolean") {
     throw new Error(`${label}.result.outcome shape is invalid`);
   }
   if (outcome.reason !== null && typeof outcome.reason !== "string") {
@@ -3150,7 +3147,11 @@ function validateVisualEvidenceV35Result(result, label) {
   if (!isObject(detail)) {
     throw new Error(`${label}.result.detail must be an object`);
   }
-  assertExactKeys(detail, ["mode", "frameCount", "frameDigests", "totalBytes"], `${label}.result.detail`);
+  assertExactKeys(
+    detail,
+    ["mode", "frameCount", "frameDigests", "totalBytes"],
+    `${label}.result.detail`,
+  );
   if (typeof detail.mode !== "string" || detail.mode !== "visual") {
     throw new Error(`${label}.result.detail.mode is invalid`);
   }
