@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 33;
+export const CORPUS_VERSION = 34;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -49,6 +49,8 @@ export const ALLOWED_SUBJECTS = new Set([
   "godot-review-context",
   "godot-mutation-prepare",
   "godot-develop-plan",
+  "godot-runtime-launch",
+  "godot-runtime-evidence",
   "content-identity-artifact-digest",
   "content-identity-contract-digest",
   "content-identity-manifests",
@@ -942,6 +944,8 @@ function validateSubjectInputs(scenario, label) {
     "godot-review-context",
     "godot-mutation-prepare",
     "godot-develop-plan",
+    "godot-runtime-launch",
+    "godot-runtime-evidence",
   ]);
   if (GODOT_SUBJECTS.has(scenario.subject)) {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
@@ -1087,6 +1091,8 @@ export function validateScenario(scenario, file) {
     "godot-review-context",
     "godot-mutation-prepare",
     "godot-develop-plan",
+    "godot-runtime-launch",
+    "godot-runtime-evidence",
     "content-identity-artifact-digest",
     "content-identity-contract-digest",
     "content-identity-manifests",

@@ -1,0 +1,25 @@
+{
+  "id": "godot-runtime-evidence.truncation",
+  "subject": "godot-runtime-evidence",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "input": {
+      "runId": "run_godot_abc",
+      "operationId": "op_g1",
+      "exitCode": 0,
+      "durationMs": 2000,
+      "stdout": "",
+      "stderr": "",
+      "largeWithEmoji": true
+    },
+    "detail": {
+      "engineId": "godot-4.3-stable",
+      "engineVersion": "4.3.stable",
+      "projectPath": "game/project.godot",
+      "mode": "project"
+    }
+  }
+}

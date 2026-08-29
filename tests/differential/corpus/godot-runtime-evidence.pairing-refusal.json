@@ -1,0 +1,24 @@
+{
+  "id": "godot-runtime-evidence.pairing-refusal",
+  "subject": "godot-runtime-evidence",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "create",
+    "input": {
+      "runId": "run_godot_lsp",
+      "operationId": "op_g2",
+      "exitCode": null,
+      "durationMs": 500,
+      "stdout": "",
+      "stderr": ""
+    },
+    "detail": {
+      "engineId": "godot-4.3-stable",
+      "engineVersion": "4.3.stable",
+      "projectPath": "game/project.godot",
+      "mode": "lsp-only"
+    }
+  }
+}

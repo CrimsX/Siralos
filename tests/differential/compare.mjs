@@ -258,6 +258,8 @@ export function runCompare({
   corpusVersion = null,
   corpusDigest = null,
   sourceIdentity = null,
+  expectationScenarioIds = null,
+  expectationRecordsSha256 = null,
 }) {
   if (platform !== "windows" && platform !== "posix") {
     throw new Error(`unsupported comparison platform ${JSON.stringify(platform)}`);
@@ -384,6 +386,10 @@ export function runCompare({
     candidateRecords: candidateRecords.length,
     referenceRecordsSha256: sha256Hex(canonicalRecordDocument(oracleRecords)),
     candidateRecordsSha256: sha256Hex(canonicalRecordDocument(candidateRecords)),
+    expectationCoverage:
+      expectationScenarioIds === null
+        ? null
+        : { scenarios: expectationScenarioIds, recordsSha256: expectationRecordsSha256 },
     perSubject: perSubjectCoverage(scenarios, statuses),
     scenarios: statuses,
     parity: parity.sort(),

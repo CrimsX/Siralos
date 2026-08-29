@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { canonicalizeJson } from "./shared/canonical.mjs";
+import { canonicalizeJson, sha256Hex } from "./shared/canonical.mjs";
 import { CorpusIntegrityError, loadValidatedCorpus } from "./shared/contract.mjs";
 import { canonicalRecordDocument, parseCanonicalRecordDocument } from "./shared/protocol.mjs";
 import { RUNNER_PROCESS_LIMITS, superviseRunner } from "./shared/runner-process.mjs";
@@ -101,8 +101,30 @@ function loadPinnedOracle(pinnedPath, outDir) {
   }
 }
 
+/** Load the digest-bound post-freeze expectation records (decision 40 C7). */
+function loadExpectations(path, outDir) {
+  try {
+    return parseCanonicalRecordDocument(readFileSync(resolve(path), "utf8"), "expectation");
+  } catch (error) {
+    const failure = {
+      implementation: "reference",
+      scenarioId: "<post-freeze-expectations>",
+      outcome: "HARNESS_ERROR",
+      category: "PINNED_ORACLE_FAILURE",
+      code: error instanceof CorpusIntegrityError ? error.code : "EXPECTATIONS_READ_FAILURE",
+      message: `post-freeze expectations could not be loaded: ${
+        error instanceof Error ? error.message : error
+      }`,
+    };
+    writeFailure(outDir, { schemaVersion: 1, parityHeld: false, runnerFailure: failure });
+    const e = new Error(failure.message);
+    e.exitCode = 2;
+    throw e;
+  }
+}
+
 /** Execute candidate runner; oracle is either live (historical replay) or pinned. */
-export async function runDifferential({ corpusDir, root, outDir, pinnedOracle }) {
+export async function runDifferential({ corpusDir, root, outDir, pinnedOracle, expectationsPath }) {
   const absoluteRoot = resolve(root);
   const absoluteCorpus = resolve(corpusDir);
   const absoluteOut = resolve(outDir);
@@ -155,18 +177,58 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle })
     assertCompleted(build, absoluteOut);
 
     let oracleRecords;
+    let expectationScenarioIds = null;
+    let expectationRecordsSha256 = null;
     if (pinnedOracle !== undefined) {
       oracleRecords = loadPinnedOracle(pinnedOracle, absoluteOut);
       const pinnedIds = new Set(oracleRecords.map((r) => r.scenarioId));
-      for (const scenario of scenarios) {
-        if (!pinnedIds.has(scenario.id)) {
+      let expectationRecords = [];
+      if (expectationsPath !== undefined) {
+        expectationRecords = loadExpectations(expectationsPath, absoluteOut);
+        expectationRecordsSha256 = sha256Hex(readFileSync(resolve(expectationsPath)));
+      }
+      const expectationIds = new Set(expectationRecords.map((r) => r.scenarioId));
+      const overlapping = [...pinnedIds].filter((id) => expectationIds.has(id));
+      const uncovered = scenarios.filter(
+        (scenario) => !pinnedIds.has(scenario.id) && !expectationIds.has(scenario.id),
+      );
+      if (overlapping.length > 0 || uncovered.length > 0) {
+        const failure = {
+          implementation: "reference",
+          scenarioId: uncovered[0]?.id ?? overlapping[0] ?? "<coverage>",
+          outcome: "HARNESS_ERROR",
+          category: "PINNED_ORACLE_FAILURE",
+          code: overlapping.length > 0 ? "EXPECTATIONS_OVERLAP" : "PINNED_MISMATCH",
+          message:
+            overlapping.length > 0
+              ? `scenarios covered by both the pinned freeze-v32 oracle and the post-freeze expectations: ${overlapping.join(", ")}`
+              : `pinned oracle does not contain scenario ${uncovered[0].id} (freeze v32 vs current v${manifest.corpusVersion}); post-freeze scenarios require explicit digest-bound expectation records (decision 40 C7, decision 41 C5)`,
+        };
+        writeFailure(absoluteOut, {
+          schemaVersion: 1,
+          parityHeld: false,
+          runnerFailure: failure,
+        });
+        const e = new Error(failure.message);
+        e.exitCode = 2;
+        throw e;
+      }
+      // Reference records in exact corpus order: frozen oracle records plus
+      // digest-bound post-freeze expectation records. The audit discloses
+      // which scenarios rely on candidate-authored expectations.
+      const recordsById = new Map(
+        [...oracleRecords, ...expectationRecords].map((record) => [record.scenarioId, record]),
+      );
+      oracleRecords = scenarios.map((scenario) => {
+        const record = recordsById.get(scenario.id);
+        if (record === undefined) {
           const failure = {
             implementation: "reference",
             scenarioId: scenario.id,
             outcome: "HARNESS_ERROR",
             category: "PINNED_ORACLE_FAILURE",
             code: "PINNED_MISMATCH",
-            message: `pinned oracle does not contain scenario ${scenario.id} (freeze v32 vs current v${manifest.corpusVersion})`,
+            message: `pinned reference set does not contain scenario ${scenario.id}`,
           };
           writeFailure(absoluteOut, {
             schemaVersion: 1,
@@ -177,7 +239,9 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle })
           e.exitCode = 2;
           throw e;
         }
-      }
+        return record;
+      });
+      expectationScenarioIds = [...expectationIds].sort();
     } else {
       oracleRecords = [];
       for (const scenario of scenarios) {
@@ -244,6 +308,8 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle })
       corpusVersion: manifest.corpusVersion,
       corpusDigest,
       sourceIdentity,
+      expectationScenarioIds,
+      expectationRecordsSha256,
     });
     writeFileSync(auditPath, `${canonicalizeJson(audit)}\n`, "utf8");
     if (!audit.parityHeld) {
@@ -262,9 +328,10 @@ async function main() {
   const root = optionValue(process.argv, "--root");
   const outDir = optionValue(process.argv, "--out-dir");
   const pinnedOracle = optionValue(process.argv, "--pinned-oracle");
+  const expectationsArg = optionValue(process.argv, "--expectations");
   if (corpusDir === undefined || root === undefined || outDir === undefined) {
     console.error(
-      "usage: run-differential.mjs --corpus <dir> --root <repo> --out-dir <directory> [--pinned-oracle <file>]",
+      "usage: run-differential.mjs --corpus <dir> --root <repo> --out-dir <directory> [--pinned-oracle <file>] [--expectations <file>]",
     );
     process.exit(2);
   }
@@ -278,8 +345,24 @@ async function main() {
       effectivePinned = frozenDefault;
     }
   }
+  let effectiveExpectations = expectationsArg;
+  if (effectiveExpectations === undefined) {
+    const defaultExpectations = resolve(
+      root,
+      "tests/differential/evidence/post-freeze/expectations.json",
+    );
+    if (existsSync(defaultExpectations)) {
+      effectiveExpectations = defaultExpectations;
+    }
+  }
   try {
-    const audit = await runDifferential({ corpusDir, root, outDir, pinnedOracle: effectivePinned });
+    const audit = await runDifferential({
+      corpusDir,
+      root,
+      outDir,
+      pinnedOracle: effectivePinned,
+      expectationsPath: effectiveExpectations,
+    });
     console.log(
       `Differential audit: parity held (${audit.matchedRequiredScenarios}/${audit.requiredApplicableScenarios} applicable required scenarios; ${audit.skipped.length} explicit platform skips; ${audit.informationalDeviations.length} accepted informational deviations).`,
     );

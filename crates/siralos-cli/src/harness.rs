@@ -73,6 +73,8 @@ const SUBJECT_GODOT_LSP: &str = "godot-lsp";
 const SUBJECT_GODOT_REVIEW_CONTEXT: &str = "godot-review-context";
 const SUBJECT_GODOT_MUTATION_PREPARE: &str = "godot-mutation-prepare";
 const SUBJECT_GODOT_DEVELOP_PLAN: &str = "godot-develop-plan";
+const SUBJECT_GODOT_RUNTIME_LAUNCH: &str = "godot-runtime-launch";
+const SUBJECT_GODOT_RUNTIME_EVIDENCE: &str = "godot-runtime-evidence";
 /// Fixed task id for review-context records (identical on both sides).
 const GODOT_REVIEW_CONTEXT_TASK_ID: &str = "differential-task";
 const SUBJECT_CI_ARTIFACT_DIGEST: &str = "content-identity-artifact-digest";
@@ -91,7 +93,7 @@ const SUBJECT_RUNTIME_EXECUTION: &str = "runtime-execution";
 const SUBJECT_RUNTIME_EVIDENCE: &str = "runtime-evidence";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 33;
+const CORPUS_VERSION: u64 = 34;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -448,6 +450,8 @@ fn validate_scenario(
             | SUBJECT_GODOT_REVIEW_CONTEXT
             | SUBJECT_GODOT_MUTATION_PREPARE
             | SUBJECT_GODOT_DEVELOP_PLAN
+            | SUBJECT_GODOT_RUNTIME_LAUNCH
+            | SUBJECT_GODOT_RUNTIME_EVIDENCE
             | SUBJECT_CI_ARTIFACT_DIGEST
             | SUBJECT_CI_CONTRACT_DIGEST
             | SUBJECT_CI_MANIFESTS
@@ -722,6 +726,8 @@ fn validate_scenario(
         | SUBJECT_RR_BUDGETS
         | SUBJECT_RR_LIFECYCLE
         | SUBJECT_RR_DOCTOR
+        | SUBJECT_GODOT_RUNTIME_LAUNCH
+        | SUBJECT_GODOT_RUNTIME_EVIDENCE
         | SUBJECT_RUNTIME_EXECUTION
         | SUBJECT_RUNTIME_EVIDENCE => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
@@ -1504,6 +1510,19 @@ fn run_scenario(
                 runtime_execution_record(input)?
             } else {
                 runtime_evidence_record(input)?
+            };
+            Ok(
+                json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
+            )
+        }
+        SUBJECT_GODOT_RUNTIME_LAUNCH | SUBJECT_GODOT_RUNTIME_EVIDENCE => {
+            let input = scenario.input.as_ref().expect(
+                "godot runtime input was validated while loading the corpus",
+            );
+            let result = if scenario.subject == SUBJECT_GODOT_RUNTIME_LAUNCH {
+                godot_runtime_launch_record(input)?
+            } else {
+                godot_runtime_evidence_record(input)?
             };
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
@@ -5970,6 +5989,161 @@ fn validate_godot_input(
                 _ => reject("unknown runtime-evidence op".to_owned()),
             }
         }
+        SUBJECT_GODOT_RUNTIME_LAUNCH => {
+            const LAUNCH_KEYS: [&str; 5] =
+                ["op", "request", "policy", "budget", "isCancelled"];
+            const REQUEST_KEYS: [&str; 8] = [
+                "engineId",
+                "engineVersion",
+                "projectPath",
+                "mode",
+                "runId",
+                "operationId",
+                "isStale",
+                "requestedBytes",
+            ];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !LAUNCH_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if input.get("op").and_then(Value::as_str) != Some("decide") {
+                return reject("unknown godot-runtime-launch op".to_owned());
+            }
+            let Some(request) =
+                input.get("request").and_then(Value::as_object)
+            else {
+                return reject("request must be an object".to_owned());
+            };
+            for key in request.keys() {
+                if !REQUEST_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected request field {key}"));
+                }
+            }
+            for key in ["engineId", "engineVersion", "projectPath", "runId"] {
+                if !request.get(key).is_some_and(Value::is_string) {
+                    return reject(format!("request {key} must be a string"));
+                }
+            }
+            match request.get("mode").and_then(Value::as_str) {
+                Some(
+                    "project" | "check-only" | "recovery-project" | "lsp-only",
+                ) => {}
+                _ => {
+                    return reject(
+                        "request mode is not a Godot launch mode".to_owned(),
+                    );
+                }
+            }
+            if let Some(operation_id) = request.get("operationId") {
+                if !operation_id.is_null() && !operation_id.is_string() {
+                    return reject(
+                        "request operationId must be a string or null"
+                            .to_owned(),
+                    );
+                }
+            }
+            if !request.get("isStale").is_some_and(Value::is_boolean) {
+                return reject("request isStale must be a boolean".to_owned());
+            }
+            if !request.get("requestedBytes").is_some_and(Value::is_u64) {
+                return reject(
+                    "request requestedBytes must be a non-negative integer"
+                        .to_owned(),
+                );
+            }
+            if !input.get("isCancelled").is_some_and(Value::is_boolean) {
+                return reject("isCancelled must be a boolean".to_owned());
+            }
+            Ok(())
+        }
+        SUBJECT_GODOT_RUNTIME_EVIDENCE => {
+            const EVIDENCE_KEYS: [&str; 3] = ["op", "input", "detail"];
+            const EVIDENCE_INPUT_KEYS: [&str; 8] = [
+                "runId",
+                "operationId",
+                "exitCode",
+                "durationMs",
+                "stdout",
+                "stderr",
+                "large",
+                "largeWithEmoji",
+            ];
+            const DETAIL_KEYS: [&str; 4] =
+                ["engineId", "engineVersion", "projectPath", "mode"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !EVIDENCE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if input.get("op").and_then(Value::as_str) != Some("create") {
+                return reject("unknown godot-runtime-evidence op".to_owned());
+            }
+            let Some(evidence) = input.get("input").and_then(Value::as_object)
+            else {
+                return reject("input must be an object".to_owned());
+            };
+            for key in evidence.keys() {
+                if !EVIDENCE_INPUT_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected input field {key}"));
+                }
+            }
+            for key in ["runId", "operationId", "stdout", "stderr"] {
+                if !evidence.get(key).is_some_and(Value::is_string) {
+                    return reject(format!("input {key} must be a string"));
+                }
+            }
+            if !evidence
+                .get("exitCode")
+                .is_some_and(|value| value.is_null() || value.is_i64())
+            {
+                return reject(
+                    "input exitCode must be an integer or null".to_owned(),
+                );
+            }
+            if !evidence.get("durationMs").is_some_and(Value::is_u64) {
+                return reject(
+                    "input durationMs must be a non-negative integer"
+                        .to_owned(),
+                );
+            }
+            for key in ["large", "largeWithEmoji"] {
+                if let Some(flag) = evidence.get(key) {
+                    if !flag.is_boolean() {
+                        return reject(format!(
+                            "input {key} must be a boolean"
+                        ));
+                    }
+                }
+            }
+            let Some(detail) = input.get("detail").and_then(Value::as_object)
+            else {
+                return reject("detail must be an object".to_owned());
+            };
+            for key in detail.keys() {
+                if !DETAIL_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected detail field {key}"));
+                }
+            }
+            for key in DETAIL_KEYS {
+                if !detail.get(key).is_some_and(Value::is_string) {
+                    return reject(format!("detail {key} must be a string"));
+                }
+            }
+            match detail.get("mode").and_then(Value::as_str) {
+                Some(
+                    "project" | "check-only" | "recovery-project" | "lsp-only",
+                ) => {}
+                _ => {
+                    return reject(
+                        "detail mode is not a Godot launch mode".to_owned(),
+                    );
+                }
+            }
+            Ok(())
+        }
         SUBJECT_RECOVERY_TAXONOMY => {
             const TAXONOMY_KEYS: [&str; 6] =
                 ["op", "cases", "kind", "missing", "resourceKind", "reason"];
@@ -9363,6 +9537,240 @@ fn runtime_evidence_record(input: &Value) -> Result<Value, HarnessError> {
                 "digest": evidence.digest,
             },
             "rendered": render_runtime_evidence(&evidence),
+        })),
+        Err(error) => Ok(json!({ "error": error.message })),
+    }
+}
+
+fn godot_runtime_launch_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        IDENTITY_BOUND_UNAVAILABLE_REASON, RuntimeBudgetInput,
+        create_runtime_budget, is_identity_bound_launch_primitive_available,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    use siralos_godot::godot::runtime_adapter::{
+        GodotLaunchMode, GodotLaunchRequest, decide_godot_launch,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "decide" {
+        return Err(HarnessError::corpus(format!(
+            "unknown godot-runtime-launch op {op:?}"
+        )));
+    }
+    let request_value = input.get("request").cloned().unwrap_or(Value::Null);
+    let engine_id = request_value
+        .get("engineId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let engine_version = request_value
+        .get("engineVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let project_path = request_value
+        .get("projectPath")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let mode_value =
+        request_value.get("mode").and_then(Value::as_str).unwrap_or("");
+    let Some(mode) = GodotLaunchMode::parse(mode_value) else {
+        return Err(HarnessError::corpus(format!(
+            "unknown godot-runtime-launch mode {mode_value:?}"
+        )));
+    };
+    let run_id = request_value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let operation_id = request_value
+        .get("operationId")
+        .and_then(Value::as_str)
+        .map(|s| s.to_owned());
+    let is_stale =
+        request_value.get("isStale").and_then(Value::as_bool).unwrap_or(false);
+    let requested_bytes = request_value
+        .get("requestedBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let policy_map = input
+        .get("policy")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut rules = Vec::new();
+    for (cap, rule_str) in policy_map {
+        let rule = match rule_str.as_str().unwrap_or("deny") {
+            "allow" => PermissionRule::Allow,
+            "ask" => PermissionRule::Ask,
+            _ => PermissionRule::Deny,
+        };
+        if let Ok(cap_id) = CapabilityId::parse(&cap) {
+            rules.push(PolicyRule { capability: cap_id, rule });
+        }
+    }
+    let policy = PermissionPolicy::from_rules(rules);
+    let artifact_bytes = input
+        .get("budget")
+        .and_then(|budget| budget.get("artifactBytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(64 * 1024 * 1024);
+    let budget = create_runtime_budget(&RuntimeBudgetInput {
+        artifact_bytes: Some(artifact_bytes),
+        ..Default::default()
+    });
+    let is_cancelled =
+        input.get("isCancelled").and_then(Value::as_bool).unwrap_or(false);
+    let request = GodotLaunchRequest {
+        engine_id,
+        engine_version,
+        project_path,
+        mode,
+        run_id,
+        operation_id,
+        is_stale,
+        requested_bytes,
+    };
+    let available = is_identity_bound_launch_primitive_available();
+    match decide_godot_launch(&request, &policy, &budget, is_cancelled) {
+        Ok(decision) => Ok(json!({
+            "outcome": {
+                "disposition": decision.outcome.disposition().as_str(),
+                "reason": decision.outcome.reason(),
+                "isUnavailable": decision.outcome.is_unavailable(),
+            },
+            "available": available,
+            "reason": IDENTITY_BOUND_UNAVAILABLE_REASON,
+            "engine": {
+                "engineId": decision.engine.engine_id,
+                "engineVersion": decision.engine.engine_version,
+                "projectPath": decision.engine.project_path,
+                "mode": decision.engine.mode.as_str(),
+            },
+        })),
+        Err(error) => Ok(json!({
+            "error": error.message,
+            "available": available,
+        })),
+    }
+}
+
+fn godot_runtime_evidence_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::RuntimeEvidenceInput;
+    use siralos_godot::godot::runtime_adapter::{
+        GodotLaunchMode, GodotRuntimeEvidenceDetail,
+        create_godot_runtime_evidence, render_godot_runtime_evidence,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "create" {
+        return Err(HarnessError::corpus(format!(
+            "unknown godot-runtime-evidence op {op:?}"
+        )));
+    }
+    let evidence_value = input.get("input").cloned().unwrap_or(Value::Null);
+    let run_id = evidence_value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let operation_id = evidence_value
+        .get("operationId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let exit_code = evidence_value
+        .get("exitCode")
+        .and_then(Value::as_i64)
+        .map(|value| value as i32);
+    let duration_ms =
+        evidence_value.get("durationMs").and_then(Value::as_u64).unwrap_or(0);
+    let mut stdout = evidence_value
+        .get("stdout")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let mut stderr = evidence_value
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    if evidence_value.get("large").and_then(Value::as_bool).unwrap_or(false) {
+        stdout = "a".repeat(1024 * 1024 + 10);
+        stderr = "b".repeat(1024 * 1024 + 5);
+    } else if evidence_value
+        .get("largeWithEmoji")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let prefix = "a".repeat(1024 * 1024 - 2);
+        stdout = format!("{prefix}\u{1F600}");
+        stderr = "b".repeat(1024 * 1024 + 5);
+    }
+    let detail_value = input.get("detail").cloned().unwrap_or(Value::Null);
+    let engine_id = detail_value
+        .get("engineId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let engine_version = detail_value
+        .get("engineVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let project_path = detail_value
+        .get("projectPath")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let mode_value =
+        detail_value.get("mode").and_then(Value::as_str).unwrap_or("");
+    let Some(mode) = GodotLaunchMode::parse(mode_value) else {
+        return Err(HarnessError::corpus(format!(
+            "unknown godot-runtime-evidence mode {mode_value:?}"
+        )));
+    };
+    let evidence_input = RuntimeEvidenceInput {
+        run_id,
+        operation_id,
+        exit_code,
+        duration_ms,
+        stdout,
+        stderr,
+    };
+    let detail = GodotRuntimeEvidenceDetail {
+        engine_id,
+        engine_version,
+        project_path,
+        mode,
+    };
+    match create_godot_runtime_evidence(&evidence_input, &detail) {
+        Ok(created) => Ok(json!({
+            "evidence": {
+                "runId": created.evidence.run_id,
+                "operationId": created.evidence.operation_id,
+                "exitCode": created.evidence.exit_code,
+                "durationMs": created.evidence.duration_ms,
+                "stdoutLength": created.evidence.stdout.len(),
+                "stderrLength": created.evidence.stderr.len(),
+                "truncated": created.evidence.truncated,
+                "artifactDigest": created.evidence.artifact_digest,
+                "digest": created.evidence.digest,
+            },
+            "detail": {
+                "engineId": created.detail.engine_id,
+                "engineVersion": created.detail.engine_version,
+                "projectPath": created.detail.project_path,
+                "mode": created.detail.mode.as_str(),
+            },
+            "godotDigest": created.godot_digest,
+            "rendered": render_godot_runtime_evidence(&created),
         })),
         Err(error) => Ok(json!({ "error": error.message })),
     }
@@ -13706,7 +14114,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 239);
+        assert_eq!(loaded.len(), 248);
     }
 
     #[test]

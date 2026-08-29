@@ -29,6 +29,7 @@ pub mod lsp;
 pub mod probe;
 pub mod probes;
 pub mod project;
+pub mod runtime_adapter;
 pub mod scene;
 pub mod scene_mutation;
 pub mod selection;
@@ -61,6 +62,12 @@ pub use inspector::{
 pub use installations::{
     GodotEditionHint as InstallEditionHint, GodotInstallation,
     GodotInstallationSource,
+};
+pub use runtime_adapter::{
+    GodotLaunchDecision, GodotLaunchEngineDetail, GodotLaunchMode,
+    GodotLaunchRequest, GodotRuntimeEvidence, GodotRuntimeEvidenceDetail,
+    create_godot_runtime_evidence, decide_godot_launch,
+    godot_launch_unavailable_reason, render_godot_runtime_evidence,
 };
 
 pub use api::{

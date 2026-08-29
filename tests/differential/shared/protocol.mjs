@@ -2998,6 +2998,116 @@ function validateRuntimeV32Result(subject, result, label) {
   }
 }
 
+function validateGodotRuntimeV34Result(subject, result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (subject === "godot-runtime-launch") {
+    if (Object.hasOwn(result, "error")) {
+      assertExactKeys(result, ["error", "available"], `${label}.result`);
+      if (typeof result.error !== "string" || typeof result.available !== "boolean") {
+        throw new Error(`${label}.result error shape is invalid`);
+      }
+      return;
+    }
+    assertExactKeys(result, ["outcome", "available", "reason", "engine"], `${label}.result`);
+    if (typeof result.available !== "boolean" || typeof result.reason !== "string") {
+      throw new Error(`${label}.result availability shape is invalid`);
+    }
+    const outcome = result.outcome;
+    if (!isObject(outcome)) {
+      throw new Error(`${label}.result.outcome must be an object`);
+    }
+    assertExactKeys(outcome, ["disposition", "reason", "isUnavailable"], `${label}.result.outcome`);
+    if (typeof outcome.disposition !== "string" || typeof outcome.isUnavailable !== "boolean") {
+      throw new Error(`${label}.result.outcome shape is invalid`);
+    }
+    if (outcome.reason !== null && typeof outcome.reason !== "string") {
+      throw new Error(`${label}.result.outcome.reason is invalid`);
+    }
+    const engine = result.engine;
+    if (!isObject(engine)) {
+      throw new Error(`${label}.result.engine must be an object`);
+    }
+    assertExactKeys(
+      engine,
+      ["engineId", "engineVersion", "projectPath", "mode"],
+      `${label}.result.engine`,
+    );
+    for (const key of ["engineId", "engineVersion", "projectPath", "mode"]) {
+      if (typeof engine[key] !== "string") {
+        throw new Error(`${label}.result.engine.${key} is invalid`);
+      }
+    }
+    return;
+  }
+  if (Object.hasOwn(result, "error")) {
+    assertExactKeys(result, ["error"], `${label}.result`);
+    if (typeof result.error !== "string") {
+      throw new Error(`${label}.result.error is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(result, ["evidence", "detail", "godotDigest", "rendered"], `${label}.result`);
+  const evidence = result.evidence;
+  if (!isObject(evidence)) {
+    throw new Error(`${label}.result.evidence must be an object`);
+  }
+  assertExactKeys(
+    evidence,
+    [
+      "runId",
+      "operationId",
+      "exitCode",
+      "durationMs",
+      "stdoutLength",
+      "stderrLength",
+      "truncated",
+      "artifactDigest",
+      "digest",
+    ],
+    `${label}.result.evidence`,
+  );
+  if (
+    typeof evidence.runId !== "string" ||
+    typeof evidence.operationId !== "string" ||
+    typeof evidence.durationMs !== "number" ||
+    typeof evidence.stdoutLength !== "number" ||
+    typeof evidence.stderrLength !== "number" ||
+    typeof evidence.truncated !== "boolean"
+  ) {
+    throw new Error(`${label}.result.evidence shape is invalid`);
+  }
+  if (evidence.exitCode !== null && typeof evidence.exitCode !== "number") {
+    throw new Error(`${label}.result.evidence.exitCode is invalid`);
+  }
+  for (const key of ["artifactDigest", "digest"]) {
+    if (typeof evidence[key] !== "string" || !LOWER_SHA256.test(evidence[key])) {
+      throw new Error(`${label}.result.evidence.${key} is invalid`);
+    }
+  }
+  const detail = result.detail;
+  if (!isObject(detail)) {
+    throw new Error(`${label}.result.detail must be an object`);
+  }
+  assertExactKeys(
+    detail,
+    ["engineId", "engineVersion", "projectPath", "mode"],
+    `${label}.result.detail`,
+  );
+  for (const key of ["engineId", "engineVersion", "projectPath", "mode"]) {
+    if (typeof detail[key] !== "string") {
+      throw new Error(`${label}.result.detail.${key} is invalid`);
+    }
+  }
+  if (typeof result.godotDigest !== "string" || !LOWER_SHA256.test(result.godotDigest)) {
+    throw new Error(`${label}.result.godotDigest is invalid`);
+  }
+  if (typeof result.rendered !== "string") {
+    throw new Error(`${label}.result.rendered is invalid`);
+  }
+}
+
 function validateRecoveryTaxonomyResult(record, label) {
   const result = record;
   if (!isObject(result)) {
@@ -3328,6 +3438,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "runtime-execution" || record.subject === "runtime-evidence") {
     validateRuntimeV32Result(record.subject, record.result, label);
+    return;
+  }
+  if (record.subject === "godot-runtime-launch" || record.subject === "godot-runtime-evidence") {
+    validateGodotRuntimeV34Result(record.subject, record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

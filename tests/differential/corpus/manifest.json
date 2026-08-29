@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 33,
+  "corpusVersion": 34,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -365,6 +365,42 @@
     {
       "file": "godot-review-context.verified-graph-complete.json",
       "sha256": "25f58fea2804ab53c180ed244689f6280793753f1a42554bd26ddbc32df0800a"
+    },
+    {
+      "file": "godot-runtime-evidence.basic.json",
+      "sha256": "e9b1ec1a9fdab068f21397d6f5faddb184901fd0b34fe88314ce1d4f5b12f476"
+    },
+    {
+      "file": "godot-runtime-evidence.lsp-no-project.json",
+      "sha256": "68c88ed0a3fcf6b69e03b20a813b5b43359e96e5e7906a0fa844a9a5cd6903e3"
+    },
+    {
+      "file": "godot-runtime-evidence.pairing-refusal.json",
+      "sha256": "e57d5622d01d358912db09f27819337602613bc638e21dccfb9df6a0b0e3dc56"
+    },
+    {
+      "file": "godot-runtime-evidence.truncation.json",
+      "sha256": "8a1dd5d17ca88c29bf25cf20ce0155cd8d217e32b2218d89e011b23dc3af74ec"
+    },
+    {
+      "file": "godot-runtime-launch.cancelled.json",
+      "sha256": "6eca37485ae620adb7907e6814f4a4cf92309aea999e3adb8ca71dd9a73b7a73"
+    },
+    {
+      "file": "godot-runtime-launch.command-denied.json",
+      "sha256": "1142bce784c2e9b685df7a49ff73870159e15e4bc25ff0d11b744dd64708856e"
+    },
+    {
+      "file": "godot-runtime-launch.resource-exceeded.json",
+      "sha256": "fed53c202521d2a30d6b9ffb80982d8b874bdd81c0cf7dcad06eb61d1ac0516b"
+    },
+    {
+      "file": "godot-runtime-launch.stale.json",
+      "sha256": "37cfaf3e765c960e3c5dd5a26ba9c0714e4e87e5d10bc355c344bd2888c0aea4"
+    },
+    {
+      "file": "godot-runtime-launch.unavailable.json",
+      "sha256": "d74efe11da0eff8c7e6dce0757e3fab671e88a67473e116f536beb82bd655237"
     },
     {
       "file": "godot-scene-resolve.complete-scene.json",
@@ -959,5 +995,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "01ba53ae27d39d10cb5de478fa945215f4c9138d15f8ca26955a875afa95cb31"
+  "corpusSha256": "0fc304045b97182f284df2ec62cc444e198c641aa6706c86456e439384e0c5ee"
 }
