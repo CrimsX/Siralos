@@ -2,8 +2,8 @@
 title: "Stage 5.3 Context Controls Entry Review - Live/Pinned/Frozen Visibility over Content Identity"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS per decision 49 (2026-08-28): C1-C6 approved; implemented as the Stage 5.3 slice."
 blockedBy: []
 ---
 
