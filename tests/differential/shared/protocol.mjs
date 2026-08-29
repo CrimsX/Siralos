@@ -3174,6 +3174,68 @@ function validateVisualEvidenceV35Result(result, label) {
   }
 }
 
+function validateRunProfileV38Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (Object.hasOwn(result, "error")) {
+    assertExactKeys(result, ["error"], `${label}.result`);
+    if (typeof result.error !== "string") {
+      throw new Error(`${label}.result.error is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(
+    result,
+    ["outcome", "available", "reason", "capability", "detail", "profileDigest", "rendered"],
+    `${label}.result`,
+  );
+  if (
+    typeof result.available !== "boolean" ||
+    result.available !== false ||
+    typeof result.reason !== "string" ||
+    result.reason !== "identity-bound profiling primitive not available" ||
+    typeof result.capability !== "string" ||
+    result.capability !== "run.profile" ||
+    typeof result.rendered !== "string"
+  ) {
+    throw new Error(`${label}.result availability shape is invalid`);
+  }
+  const outcome = result.outcome;
+  if (!isObject(outcome)) {
+    throw new Error(`${label}.result.outcome must be an object`);
+  }
+  assertExactKeys(outcome, ["disposition", "reason", "isUnavailable"], `${label}.result.outcome`);
+  if (typeof outcome.disposition !== "string" || typeof outcome.isUnavailable !== "boolean") {
+    throw new Error(`${label}.result.outcome shape is invalid`);
+  }
+  if (outcome.reason !== null && typeof outcome.reason !== "string") {
+    throw new Error(`${label}.result.outcome.reason is invalid`);
+  }
+  const detail = result.detail;
+  if (!isObject(detail)) {
+    throw new Error(`${label}.result.detail must be an object`);
+  }
+  assertExactKeys(detail, ["sampleCount", "sampleDigests", "totalBytes"], `${label}.result.detail`);
+  if (!Number.isInteger(detail.sampleCount) || detail.sampleCount < 1) {
+    throw new Error(`${label}.result.detail.sampleCount is invalid`);
+  }
+  if (!Number.isInteger(detail.totalBytes) || detail.totalBytes < 1) {
+    throw new Error(`${label}.result.detail.totalBytes is invalid`);
+  }
+  if (!Array.isArray(detail.sampleDigests) || detail.sampleDigests.length !== detail.sampleCount) {
+    throw new Error(`${label}.result.detail.sampleDigests is invalid`);
+  }
+  for (const digest of detail.sampleDigests) {
+    if (typeof digest !== "string" || !LOWER_SHA256.test(digest)) {
+      throw new Error(`${label}.result.detail.sampleDigests entries are invalid`);
+    }
+  }
+  if (typeof result.profileDigest !== "string" || !LOWER_SHA256.test(result.profileDigest)) {
+    throw new Error(`${label}.result.profileDigest is invalid`);
+  }
+}
+
 function validateQaWorkflowV37Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -3647,6 +3709,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "qa-workflow") {
     validateQaWorkflowV37Result(record.result, label);
+    return;
+  }
+  if (record.subject === "run-profile") {
+    validateRunProfileV38Result(record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

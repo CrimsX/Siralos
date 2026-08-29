@@ -94,9 +94,10 @@ const SUBJECT_RUNTIME_EVIDENCE: &str = "runtime-evidence";
 const SUBJECT_VISUAL_EVIDENCE: &str = "visual-evidence";
 const SUBJECT_RUN_INTERACTION: &str = "run-interaction";
 const SUBJECT_QA_WORKFLOW: &str = "qa-workflow";
+const SUBJECT_RUN_PROFILE: &str = "run-profile";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 37;
+const CORPUS_VERSION: u64 = 38;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -472,6 +473,7 @@ fn validate_scenario(
             | SUBJECT_VISUAL_EVIDENCE
             | SUBJECT_RUN_INTERACTION
             | SUBJECT_QA_WORKFLOW
+            | SUBJECT_RUN_PROFILE
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -738,7 +740,8 @@ fn validate_scenario(
         | SUBJECT_RUNTIME_EVIDENCE
         | SUBJECT_VISUAL_EVIDENCE
         | SUBJECT_RUN_INTERACTION
-        | SUBJECT_QA_WORKFLOW => {
+        | SUBJECT_QA_WORKFLOW
+        | SUBJECT_RUN_PROFILE => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1515,7 +1518,8 @@ fn run_scenario(
         | SUBJECT_RUNTIME_EVIDENCE
         | SUBJECT_VISUAL_EVIDENCE
         | SUBJECT_RUN_INTERACTION
-        | SUBJECT_QA_WORKFLOW => {
+        | SUBJECT_QA_WORKFLOW
+        | SUBJECT_RUN_PROFILE => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1524,6 +1528,7 @@ fn run_scenario(
                 SUBJECT_VISUAL_EVIDENCE => visual_evidence_record(input)?,
                 SUBJECT_RUN_INTERACTION => run_interaction_record(input)?,
                 SUBJECT_QA_WORKFLOW => qa_workflow_record(input)?,
+                SUBJECT_RUN_PROFILE => run_profile_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6183,6 +6188,61 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_RUN_PROFILE => {
+            const PROFILE_KEYS: [&str; 5] =
+                ["op", "request", "policy", "budget", "isCancelled"];
+            const REQUEST_KEYS: [&str; 4] =
+                ["runId", "operationId", "isStale", "samples"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !PROFILE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if input.get("op").and_then(Value::as_str) != Some("decide") {
+                return reject("unknown run-profile op".to_owned());
+            }
+            let Some(request) =
+                input.get("request").and_then(Value::as_object)
+            else {
+                return reject("request must be an object".to_owned());
+            };
+            for key in request.keys() {
+                if !REQUEST_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected request field {key}"));
+                }
+            }
+            if !request.get("runId").is_some_and(Value::is_string) {
+                return reject("request runId must be a string".to_owned());
+            }
+            if let Some(operation_id) = request.get("operationId") {
+                if !operation_id.is_null() && !operation_id.is_string() {
+                    return reject(
+                        "request operationId must be a string or null"
+                            .to_owned(),
+                    );
+                }
+            }
+            if !request.get("isStale").is_some_and(Value::is_boolean) {
+                return reject("request isStale must be a boolean".to_owned());
+            }
+            let Some(samples) =
+                request.get("samples").and_then(Value::as_array)
+            else {
+                return reject("request samples must be an array".to_owned());
+            };
+            for sample in samples {
+                if !sample.is_string() {
+                    return reject(
+                        "request samples must be strings".to_owned(),
+                    );
+                }
+            }
+            if !input.get("isCancelled").is_some_and(Value::is_boolean) {
+                return reject("isCancelled must be a boolean".to_owned());
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -9647,6 +9707,114 @@ fn visual_evidence_record(input: &Value) -> Result<Value, HarnessError> {
                 },
                 "captureDigest": evidence.capture_digest,
                 "rendered": render_visual_capture_evidence(&evidence),
+            }))
+        }
+        Err(error) => Ok(json!({ "error": error.message })),
+    }
+}
+
+fn run_profile_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        RUN_PROFILE_CAPABILITY, RUN_PROFILE_UNAVAILABLE_REASON,
+        RunProfileRequest, RuntimeBudgetInput, create_run_profile_evidence,
+        create_runtime_budget, decide_run_profile_with_flag,
+        is_identity_bound_profiling_primitive_available,
+        render_run_profile_evidence,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "decide" {
+        return Err(HarnessError::corpus(format!(
+            "unknown run-profile op {op:?}"
+        )));
+    }
+    let request_value = input.get("request").cloned().unwrap_or(Value::Null);
+    let run_id = request_value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let operation_id = request_value
+        .get("operationId")
+        .and_then(Value::as_str)
+        .map(|s| s.to_owned());
+    let is_stale =
+        request_value.get("isStale").and_then(Value::as_bool).unwrap_or(false);
+    let samples = request_value
+        .get("samples")
+        .and_then(Value::as_array)
+        .map(|sample_values| {
+            sample_values
+                .iter()
+                .enumerate()
+                .map(|(index, sample_value)| {
+                    siralos_core::runtime::ProfileSample {
+                        index,
+                        label: sample_value.as_str().unwrap_or("").to_owned(),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let policy_map = input
+        .get("policy")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut policy_rules = Vec::new();
+    for (cap, rule_str) in policy_map {
+        let rule = match rule_str.as_str().unwrap_or("deny") {
+            "allow" => PermissionRule::Allow,
+            "ask" => PermissionRule::Ask,
+            _ => PermissionRule::Deny,
+        };
+        if let Ok(cap_id) = CapabilityId::parse(&cap) {
+            policy_rules.push(PolicyRule { capability: cap_id, rule });
+        }
+    }
+    let policy = PermissionPolicy::from_rules(policy_rules);
+    let artifact_bytes = input
+        .get("budget")
+        .and_then(|budget| budget.get("artifactBytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(64 * 1024 * 1024);
+    let budget = create_runtime_budget(&RuntimeBudgetInput {
+        artifact_bytes: Some(artifact_bytes),
+        ..Default::default()
+    });
+    let is_cancelled =
+        input.get("isCancelled").and_then(Value::as_bool).unwrap_or(false);
+    let request =
+        RunProfileRequest { run_id, operation_id, is_stale, samples };
+    let available = is_identity_bound_profiling_primitive_available();
+    match decide_run_profile_with_flag(
+        &request,
+        &policy,
+        &budget,
+        is_cancelled,
+    ) {
+        Ok(outcome) => {
+            let evidence = create_run_profile_evidence(&outcome, &request)
+                .map_err(|error| HarnessError::corpus(error.message))?;
+            Ok(json!({
+                "outcome": {
+                    "disposition": evidence.outcome.disposition().as_str(),
+                    "reason": evidence.outcome.reason(),
+                    "isUnavailable": evidence.outcome.is_unavailable(),
+                },
+                "available": available,
+                "reason": RUN_PROFILE_UNAVAILABLE_REASON,
+                "capability": RUN_PROFILE_CAPABILITY,
+                "detail": {
+                    "sampleCount": evidence.detail.sample_count,
+                    "sampleDigests": evidence.detail.sample_digests,
+                    "totalBytes": evidence.detail.total_bytes,
+                },
+                "profileDigest": evidence.profile_digest,
+                "rendered": render_run_profile_evidence(&evidence),
             }))
         }
         Err(error) => Ok(json!({ "error": error.message })),
@@ -14646,7 +14814,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 260);
+        assert_eq!(loaded.len(), 264);
     }
 
     #[test]

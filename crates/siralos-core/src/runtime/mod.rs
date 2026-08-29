@@ -34,6 +34,7 @@ pub mod execution;
 pub mod faults;
 pub mod identity;
 pub mod interaction;
+pub mod profiling;
 pub mod qa;
 pub mod readiness;
 pub mod supervision;
@@ -83,6 +84,15 @@ pub use interaction::{
     decide_run_interaction, decide_run_interaction_with_flag,
     is_identity_bound_interactive_run_primitive_available,
     render_run_interaction_evidence,
+};
+pub use profiling::{
+    MAX_PROFILE_SAMPLES, MAX_SAMPLE_BYTES, ProfileSample,
+    RUN_PROFILE_CAPABILITY, RUN_PROFILE_UNAVAILABLE_REASON,
+    RunProfileEvidence, RunProfileEvidenceDetail, RunProfileRequest,
+    create_run_profile_evidence, decide_run_profile,
+    decide_run_profile_with_flag,
+    is_identity_bound_profiling_primitive_available,
+    render_run_profile_evidence,
 };
 pub use qa::{
     MAX_QA_WORKFLOW_STEPS, MAX_STEP_BYTES, QA_WORKFLOW_CAPABILITY,

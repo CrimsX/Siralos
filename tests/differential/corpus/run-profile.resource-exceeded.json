@@ -1,0 +1,23 @@
+{
+  "id": "run-profile.resource-exceeded",
+  "subject": "run-profile",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "decide",
+    "request": {
+      "runId": "run_profile_budget",
+      "operationId": null,
+      "isStale": false,
+      "samples": ["sample-0", "sample-1", "sample-2"]
+    },
+    "policy": {
+      "run.profile": "allow"
+    },
+    "budget": {
+      "artifactBytes": 16
+    },
+    "isCancelled": false
+  }
+}
