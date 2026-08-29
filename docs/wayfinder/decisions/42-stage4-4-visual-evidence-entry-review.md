@@ -5,6 +5,7 @@
 **Blocked by:** [Godot Runtime Adapter Entry Review](41-godot-runtime-adapter-entry-review.md) (complete at `5bedf57`, corpus v34) + [TypeScript Archive Removal](40-typescript-archive-removal.md) (complete, expectations mechanism landed)
 **Decided:** 2026-08-28 (resolver session; HITL grilling over ticket 42's C1–C6 draft and the 4 open frontier questions)
 **Status:** **PASS — Stage 4.4 contract frozen; authorized as next implementation slice**
+**Implemented:** `4a250d8` (corpus v35/252 files, expectations 13 records, audit 247/247 applicable required; zero spawn preserved)
 **Self-loop ledger:** 4 criteria, one decision pass (verification below)
 
 > Mirrors `decisions/41-godot-runtime-adapter-entry-review.md` (first specialization, complete) and `decisions/08-stage4-entry-sequence.md` (frozen 7-step sequence, step 4). No implementation lands here.
