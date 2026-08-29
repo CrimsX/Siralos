@@ -2,8 +2,8 @@
 title: "Stage 4.4 Visual Evidence Entry Review - Visual-Run Evidence Lifecycle over the Generic Runtime Boundary"
 label: "wayfinder:grilling"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS — Stage 4.4 contract frozen (HITL 2026-08-28: Q1 Stage 4.4 Visual Evidence step 4; Q2 visual-evidence ×4 at v35; Q3 confirm nothing flips unavailable; Q4 approve C1–C6). Authorized as next implementation slice; see decision 42."
 blockedBy: []
 ---
 
