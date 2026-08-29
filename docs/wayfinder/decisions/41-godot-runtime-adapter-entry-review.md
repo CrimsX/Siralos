@@ -5,6 +5,7 @@
 **Blocked by:** [Stage 4.1 Verified Promotion](36-stage4-1-verified-promotion.md) (PASS — generic boundary Verified, 0 spawn) + [TypeScript Archive Removal](40-typescript-archive-removal.md) (complete at `e6c49f1`, corpus v33)
 **Decided:** 2026-08-28 (resolver session; HITL grilling over ticket 41's C1–C6 draft and the 4 open frontier questions)
 **Status:** **PASS — Stage 4.3 contract frozen; authorized as next implementation slice**
+**Implemented:** `5bedf57` (corpus v34/248 files, audit 243/243 applicable required; the 9 post-freeze scenarios covered by digest-bound expectations per decision 40 C7; zero spawn preserved)
 **Self-loop ledger:** 4 criteria, one decision pass (verification below)
 
 > Mirrors `decisions/35-stage4-1-entry-review.md` (generic boundary, Verified) and `decisions/08-stage4-entry-sequence.md` (frozen 7-step sequence, step 3). No implementation lands here.
