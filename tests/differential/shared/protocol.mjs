@@ -3298,10 +3298,7 @@ function validateContextControlsV41Result(result, label) {
     ["actualDigest", "boundDigest", "controlDigest", "disposition", "expectedDigest", "rendered"],
     `${label}.result`,
   );
-  if (
-    !result.disposition ||
-    !["fresh", "stale", "blocked"].includes(result.disposition)
-  ) {
+  if (!result.disposition || !["fresh", "stale", "blocked"].includes(result.disposition)) {
     throw new Error(`${label}.result.disposition is invalid`);
   }
   for (const field of ["actualDigest", "boundDigest", "controlDigest", "expectedDigest"]) {
@@ -3322,10 +3319,14 @@ function validateContextControlsV41Result(result, label) {
     }
   } else {
     if (typeof result.expectedDigest !== "string" || typeof result.actualDigest !== "string") {
-      throw new Error(`${label}.result ${result.disposition} outcome requires expected and actual digests`);
+      throw new Error(
+        `${label}.result ${result.disposition} outcome requires expected and actual digests`,
+      );
     }
     if (result.expectedDigest === result.actualDigest) {
-      throw new Error(`${label}.result ${result.disposition} outcome cannot match its bound digest`);
+      throw new Error(
+        `${label}.result ${result.disposition} outcome cannot match its bound digest`,
+      );
     }
   }
   if (typeof result.rendered !== "string") {
