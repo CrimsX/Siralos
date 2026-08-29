@@ -3108,6 +3108,71 @@ function validateGodotRuntimeV34Result(subject, result, label) {
   }
 }
 
+function validateVisualEvidenceV35Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (Object.hasOwn(result, "error")) {
+    assertExactKeys(result, ["error"], `${label}.result`);
+    if (typeof result.error !== "string") {
+      throw new Error(`${label}.result.error is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(
+    result,
+    ["outcome", "available", "reason", "capability", "detail", "captureDigest", "rendered"],
+    `${label}.result`,
+  );
+  if (
+    typeof result.available !== "boolean" ||
+    typeof result.reason !== "string" ||
+    typeof result.capability !== "string" ||
+    typeof result.rendered !== "string"
+  ) {
+    throw new Error(`${label}.result availability shape is invalid`);
+  }
+  const outcome = result.outcome;
+  if (!isObject(outcome)) {
+    throw new Error(`${label}.result.outcome must be an object`);
+  }
+  assertExactKeys(outcome, ["disposition", "reason", "isUnavailable"], `${label}.result.outcome`);
+  if (
+    typeof outcome.disposition !== "string" ||
+    typeof outcome.isUnavailable !== "boolean"
+  ) {
+    throw new Error(`${label}.result.outcome shape is invalid`);
+  }
+  if (outcome.reason !== null && typeof outcome.reason !== "string") {
+    throw new Error(`${label}.result.outcome.reason is invalid`);
+  }
+  const detail = result.detail;
+  if (!isObject(detail)) {
+    throw new Error(`${label}.result.detail must be an object`);
+  }
+  assertExactKeys(detail, ["mode", "frameCount", "frameDigests", "totalBytes"], `${label}.result.detail`);
+  if (typeof detail.mode !== "string" || detail.mode !== "visual") {
+    throw new Error(`${label}.result.detail.mode is invalid`);
+  }
+  if (!Number.isInteger(detail.frameCount) || detail.frameCount < 1) {
+    throw new Error(`${label}.result.detail.frameCount is invalid`);
+  }
+  if (!Number.isInteger(detail.totalBytes) || detail.totalBytes < 1) {
+    throw new Error(`${label}.result.detail.totalBytes is invalid`);
+  }
+  if (!Array.isArray(detail.frameDigests) || detail.frameDigests.length !== detail.frameCount) {
+    throw new Error(`${label}.result.detail.frameDigests is invalid`);
+  }
+  for (const digest of detail.frameDigests) {
+    if (typeof digest !== "string" || !LOWER_SHA256.test(digest)) {
+      throw new Error(`${label}.result.detail.frameDigests entries are invalid`);
+    }
+  }
+  if (typeof result.captureDigest !== "string" || !LOWER_SHA256.test(result.captureDigest)) {
+    throw new Error(`${label}.result.captureDigest is invalid`);
+  }
+}
+
 function validateRecoveryTaxonomyResult(record, label) {
   const result = record;
   if (!isObject(result)) {
@@ -3442,6 +3507,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "godot-runtime-launch" || record.subject === "godot-runtime-evidence") {
     validateGodotRuntimeV34Result(record.subject, record.result, label);
+    return;
+  }
+  if (record.subject === "visual-evidence") {
+    validateVisualEvidenceV35Result(record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);

@@ -35,6 +35,7 @@ pub mod faults;
 pub mod identity;
 pub mod readiness;
 pub mod supervision;
+pub mod visual;
 
 pub use artifacts::{
     ArtifactAdmission, ArtifactBudget, ArtifactBudgetState,
@@ -83,6 +84,15 @@ pub use supervision::{
     RuntimeFailureKind, SupervisorObservation, SupervisorState,
     SupervisorStateView, create_run_outcome, initial_supervisor_state,
     is_supervisor_terminal, render_run_outcome, transition_supervisor,
+};
+pub use visual::{
+    MAX_CAPTURE_FRAMES, MAX_FRAME_BYTES, VISUAL_CAPTURE_CAPABILITY,
+    VISUAL_CAPTURE_UNAVAILABLE_REASON, VisualCaptureEvidence,
+    VisualCaptureEvidenceDetail, VisualCaptureRequest, VisualFrame,
+    create_visual_capture_evidence, decide_visual_capture,
+    decide_visual_capture_with_flag,
+    is_identity_bound_visual_capture_primitive_available,
+    render_visual_capture_evidence,
 };
 
 /// Validation failure at a runtime-readiness boundary. The message

@@ -91,9 +91,10 @@ const SUBJECT_RR_LIFECYCLE: &str = "runtime-readiness.lifecycle";
 const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
 const SUBJECT_RUNTIME_EXECUTION: &str = "runtime-execution";
 const SUBJECT_RUNTIME_EVIDENCE: &str = "runtime-evidence";
+const SUBJECT_VISUAL_EVIDENCE: &str = "visual-evidence";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 34;
+const CORPUS_VERSION: u64 = 35;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -466,6 +467,7 @@ fn validate_scenario(
             | SUBJECT_RR_DOCTOR
             | SUBJECT_RUNTIME_EXECUTION
             | SUBJECT_RUNTIME_EVIDENCE
+            | SUBJECT_VISUAL_EVIDENCE
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -729,7 +731,8 @@ fn validate_scenario(
         | SUBJECT_GODOT_RUNTIME_LAUNCH
         | SUBJECT_GODOT_RUNTIME_EVIDENCE
         | SUBJECT_RUNTIME_EXECUTION
-        | SUBJECT_RUNTIME_EVIDENCE => {
+        | SUBJECT_RUNTIME_EVIDENCE
+        | SUBJECT_VISUAL_EVIDENCE => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1502,14 +1505,16 @@ fn run_scenario(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
             )
         }
-        SUBJECT_RUNTIME_EXECUTION | SUBJECT_RUNTIME_EVIDENCE => {
+        SUBJECT_RUNTIME_EXECUTION
+        | SUBJECT_RUNTIME_EVIDENCE
+        | SUBJECT_VISUAL_EVIDENCE => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
-            let result = if scenario.subject == SUBJECT_RUNTIME_EXECUTION {
-                runtime_execution_record(input)?
-            } else {
-                runtime_evidence_record(input)?
+            let result = match scenario.subject.as_str() {
+                SUBJECT_RUNTIME_EXECUTION => runtime_execution_record(input)?,
+                SUBJECT_VISUAL_EVIDENCE => visual_evidence_record(input)?,
+                _ => runtime_evidence_record(input)?,
             };
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
@@ -5989,6 +5994,71 @@ fn validate_godot_input(
                 _ => reject("unknown runtime-evidence op".to_owned()),
             }
         }
+        SUBJECT_VISUAL_EVIDENCE => {
+            const CAPTURE_KEYS: [&str; 5] =
+                ["op", "request", "policy", "budget", "isCancelled"];
+            const REQUEST_KEYS: [&str; 5] =
+                ["runId", "operationId", "mode", "isStale", "frames"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !CAPTURE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if input.get("op").and_then(Value::as_str) != Some("decide") {
+                return reject("unknown visual-evidence op".to_owned());
+            }
+            let Some(request) =
+                input.get("request").and_then(Value::as_object)
+            else {
+                return reject("request must be an object".to_owned());
+            };
+            for key in request.keys() {
+                if !REQUEST_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected request field {key}"));
+                }
+            }
+            if !request.get("runId").is_some_and(Value::is_string) {
+                return reject("request runId must be a string".to_owned());
+            }
+            if let Some(operation_id) = request.get("operationId") {
+                if !operation_id.is_null() && !operation_id.is_string() {
+                    return reject(
+                        "request operationId must be a string or null"
+                            .to_owned(),
+                    );
+                }
+            }
+            match request.get("mode").and_then(Value::as_str) {
+                Some("visual" | "headless") => {}
+                _ => {
+                    return reject(
+                        "request mode is not a runtime mode".to_owned(),
+                    );
+                }
+            }
+            if !request.get("isStale").is_some_and(Value::is_boolean) {
+                return reject("request isStale must be a boolean".to_owned());
+            }
+            let Some(frames) = request.get("frames").and_then(Value::as_array)
+            else {
+                return reject("request frames must be an array".to_owned());
+            };
+            if frames.is_empty() {
+                return reject("request frames must not be empty".to_owned());
+            }
+            for frame in frames {
+                if !frame.is_string() {
+                    return reject(
+                        "request frames must be strings".to_owned(),
+                    );
+                }
+            }
+            if !input.get("isCancelled").is_some_and(Value::is_boolean) {
+                return reject("isCancelled must be a boolean".to_owned());
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -9343,6 +9413,119 @@ fn runtime_readiness_doctor_record(
         other => Err(HarnessError::corpus(format!(
             "unknown runtime-readiness.doctor op {other:?}"
         ))),
+    }
+}
+
+fn visual_evidence_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        RuntimeBudgetInput, RuntimeMode, VISUAL_CAPTURE_CAPABILITY,
+        VISUAL_CAPTURE_UNAVAILABLE_REASON, VisualCaptureRequest, VisualFrame,
+        create_runtime_budget, create_visual_capture_evidence,
+        decide_visual_capture_with_flag,
+        is_identity_bound_visual_capture_primitive_available,
+        render_visual_capture_evidence,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "decide" {
+        return Err(HarnessError::corpus(format!(
+            "unknown visual-evidence op {op:?}"
+        )));
+    }
+    let request_value = input.get("request").cloned().unwrap_or(Value::Null);
+    let run_id = request_value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let operation_id = request_value
+        .get("operationId")
+        .and_then(Value::as_str)
+        .map(|s| s.to_owned());
+    let mode_value =
+        request_value.get("mode").and_then(Value::as_str).unwrap_or("");
+    let Some(mode) = RuntimeMode::parse(mode_value) else {
+        return Err(HarnessError::corpus(format!(
+            "unknown visual-evidence mode {mode_value:?}"
+        )));
+    };
+    let is_stale =
+        request_value.get("isStale").and_then(Value::as_bool).unwrap_or(false);
+    let mut frames = Vec::new();
+    if let Some(frame_values) =
+        request_value.get("frames").and_then(Value::as_array)
+    {
+        for (index, frame_value) in frame_values.iter().enumerate() {
+            let payload = frame_value.as_str().unwrap_or("");
+            frames.push(VisualFrame {
+                index,
+                bytes: payload.as_bytes().to_vec(),
+            });
+        }
+    }
+    let policy_map = input
+        .get("policy")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut rules = Vec::new();
+    for (cap, rule_str) in policy_map {
+        let rule = match rule_str.as_str().unwrap_or("deny") {
+            "allow" => PermissionRule::Allow,
+            "ask" => PermissionRule::Ask,
+            _ => PermissionRule::Deny,
+        };
+        if let Ok(cap_id) = CapabilityId::parse(&cap) {
+            rules.push(PolicyRule { capability: cap_id, rule });
+        }
+    }
+    let policy = PermissionPolicy::from_rules(rules);
+    let artifact_bytes = input
+        .get("budget")
+        .and_then(|budget| budget.get("artifactBytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(64 * 1024 * 1024);
+    let budget = create_runtime_budget(&RuntimeBudgetInput {
+        artifact_bytes: Some(artifact_bytes),
+        ..Default::default()
+    });
+    let is_cancelled =
+        input.get("isCancelled").and_then(Value::as_bool).unwrap_or(false);
+    let request =
+        VisualCaptureRequest { run_id, operation_id, mode, is_stale, frames };
+    let available = is_identity_bound_visual_capture_primitive_available();
+    match decide_visual_capture_with_flag(
+        &request,
+        &policy,
+        &budget,
+        is_cancelled,
+    ) {
+        Ok(outcome) => {
+            let evidence = create_visual_capture_evidence(&outcome, &request)
+                .map_err(|error| HarnessError::corpus(error.message))?;
+            Ok(json!({
+                "outcome": {
+                    "disposition": evidence.outcome.disposition().as_str(),
+                    "reason": evidence.outcome.reason(),
+                    "isUnavailable": evidence.outcome.is_unavailable(),
+                },
+                "available": available,
+                "reason": VISUAL_CAPTURE_UNAVAILABLE_REASON,
+                "capability": VISUAL_CAPTURE_CAPABILITY,
+                "detail": {
+                    "mode": evidence.detail.mode.as_str(),
+                    "frameCount": evidence.detail.frame_count,
+                    "frameDigests": evidence.detail.frame_digests,
+                    "totalBytes": evidence.detail.total_bytes,
+                },
+                "captureDigest": evidence.capture_digest,
+                "rendered": render_visual_capture_evidence(&evidence),
+            }))
+        }
+        Err(error) => Ok(json!({ "error": error.message })),
     }
 }
 
@@ -14114,7 +14297,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 248);
+        assert_eq!(loaded.len(), 252);
     }
 
     #[test]
