@@ -35,7 +35,7 @@ HITL confirmed **Stage 5.1 — Profiles**: the generic Profile model lands in `s
 | C5  | Corpus mechanics         | Schema stays 3; corpus bumps v38 → v39 (264 → 268 files, inside the 384 cap); all four contract.mjs sites, the protocol validator, and the strict-loader assert move together per the established checklist.                                                                                                                                                        |
 | C6  | Lean guardrails          | No `siralos.lock` generation, no Skills/Plugin references resolved, no multi-agent machinery, no auto-acquisition, no approval-authority change (ADR 0036); measurement per `RUST_STYLE.md`; map/AGENTS.md updated atomically at record-complete.                                                                                                                   |
 
-**The Stage 5.1 implementation slice is authorized as the next implementation slice** against this frozen contract and the 4 HITL answers above. Acceptance: gates green, `composition-profile` ×4 at required parity at v39, narrowing-only enforced mechanically with adversarial coverage, `check:rust` green, docs atomic.
+**The Stage 5.1 implementation slice is authorized as the next implementation slice** against this frozen contract and the 4 HITL answers above. **Implemented at `be030e3`** (corpus v39/268 files, expectations 29 records, audit 263/263 applicable required; zero spawn paths preserved). Acceptance: gates green, `composition-profile` ×4 at required parity at v39, narrowing-only enforced mechanically with adversarial coverage, `check:rust` green, docs atomic.
 
 ## Self-loop verification
 
