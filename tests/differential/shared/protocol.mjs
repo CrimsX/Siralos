@@ -3197,7 +3197,12 @@ function validateCompositionProfileV39Result(result, label) {
     throw new Error(`${label}.result.rendered is invalid`);
   }
   if (disposition === "invalid") {
-    if (result.profile !== null || result.narrowedOverlay !== null || result.profileDigest !== null || typeof result.reason !== "string") {
+    if (
+      result.profile !== null ||
+      result.narrowedOverlay !== null ||
+      result.profileDigest !== null ||
+      typeof result.reason !== "string"
+    ) {
       throw new Error(`${label}.result invalid-disposition shape mismatch`);
     }
     return;
@@ -3234,7 +3239,12 @@ function validateCompositionProfileV39Result(result, label) {
     }
     return;
   }
-  if (result.profile !== null || result.narrowedOverlay !== null || typeof result.reason !== "string" || !result.reason.includes("PROFILE_REFUSED")) {
+  if (
+    result.profile !== null ||
+    result.narrowedOverlay !== null ||
+    typeof result.reason !== "string" ||
+    !result.reason.includes("PROFILE_REFUSED")
+  ) {
     throw new Error(`${label}.result refused-disposition shape mismatch`);
   }
 }
