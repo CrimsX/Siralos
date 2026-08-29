@@ -2,8 +2,8 @@
 title: "Godot Runtime Adapter Entry Review - First Specialization of the Generic Runtime Boundary"
 label: "wayfinder:grilling"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS — Stage 4.3 contract frozen (HITL 2026-08-28: Q1 keep 4.3 with 4.2 folded into 4.1; Q2 subjects as drafted — godot-runtime-launch ×5 + godot-runtime-evidence ×4 at v34; Q3 nothing flips unavailable; Q4 approve C1–C6). Authorized as next implementation slice; see decision 41."
 blockedBy: []
 ---
 
