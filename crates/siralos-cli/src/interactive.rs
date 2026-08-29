@@ -15,6 +15,9 @@ use siralos_adapters::domain::{
     DomainHost, DomainHostBounds, PluginManifest, PluginRecord, load_manifest,
     load_plugin_records,
 };
+use siralos_adapters::profile_config::{
+    WorkspaceProfileLoad, load_workspace_profile,
+};
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_adapters::tool::{
     WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
@@ -22,6 +25,9 @@ use siralos_adapters::tool::{
 use siralos_adapters::workspace::resolve::resolve_workspace_path;
 use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
+};
+use siralos_core::composition::{
+    DeclaredProfile, compose_effective_policy, declare_profile,
 };
 use siralos_core::domain::capability::HostAuthority;
 use siralos_core::domain::lifecycle::{ActivationRequest, RuntimeCheckResult};
@@ -187,11 +193,33 @@ where
     // R7.4 profiles select the built-in fail-closed posture; they never
     // grant a Tool. The only registered R7.2 capability is read-only
     // workspace inspection, and its decision is still checked per call.
-    let policy = PermissionPolicy::from_rules([PolicyRule {
+    // Stage 5.2 (decision 48): the workspace profile narrows these Host
+    // rules - composition can never produce a rule broader than the
+    // Host's own, and a refused or invalid profile is simply not applied
+    // with a truthful diagnostic (C3).
+    let host_rules = vec![PolicyRule {
         capability: siralos_core::tool::CapabilityId::parse("workspace.read")
             .expect("workspace.read is a valid capability id"),
         rule: PermissionRule::Allow,
-    }]);
+    }];
+    let declared = match load_workspace_profile(&workspace_root) {
+        WorkspaceProfileLoad::Record(record) => declare_profile(
+            Some(&record),
+            &PermissionPolicy::from_rules(host_rules.clone()),
+        ),
+        WorkspaceProfileLoad::Absent => DeclaredProfile::Absent,
+        WorkspaceProfileLoad::Invalid { diagnostic } => {
+            DeclaredProfile::Invalid { diagnostic }
+        }
+    };
+    let effective = compose_effective_policy(&host_rules, &declared);
+    if let Some(diagnostic) = &effective.diagnostic {
+        // Host-side startup diagnostic (never model output): the declared
+        // profile was not applied; the session proceeds on pure Host
+        // policy.
+        eprintln!("siralos: profile not applied: {diagnostic}");
+    }
+    let policy = PermissionPolicy::from_rules(effective.rules);
     let projection_config = ApplicationProjectionConfig {
         capacity: Some(ContextCapacity::default()),
         segments: vec![SegmentInput {

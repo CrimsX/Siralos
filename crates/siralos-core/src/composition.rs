@@ -19,7 +19,8 @@ use std::collections::BTreeMap;
 use crate::identity::{CanonicalValue, compute_artifact_digest};
 use crate::tool::capability::CapabilityId;
 use crate::tool::permission::{
-    PermissionDecision, PermissionPolicy, PermissionRule, evaluate_permission,
+    PermissionDecision, PermissionPolicy, PermissionRule, PolicyRule,
+    evaluate_permission,
 };
 
 /// Maximum profile name length in UTF-8 bytes.
@@ -329,6 +330,214 @@ pub fn create_profile_evidence(
     })
 }
 
+/// The declared workspace profile state fed into composition (Stage 5.2,
+/// decision 48). Adapters map the on-disk document onto this enum; the
+/// invalid case carries a truthful diagnostic instead of blocking
+/// composition (C3: ignoring unverified config cannot broaden authority).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclaredProfile {
+    /// No profile document in the workspace; zero-configuration holds.
+    Absent,
+    /// Document parsed and resolved against Host authority.
+    Resolved {
+        /// The validated profile name.
+        name: String,
+        /// The accepted (narrowed) overlay.
+        narrowed: NarrowedProfileOverlay,
+    },
+    /// Document parsed but resolution refused (authority widening).
+    Refused {
+        /// Deterministic refusal reason naming the capability.
+        reason: String,
+    },
+    /// Document failed the adapter's bounded parse/validation.
+    Invalid {
+        /// Truthful reason the document was not applied.
+        diagnostic: String,
+    },
+}
+
+/// The effective run configuration produced by composition: Host rules
+/// narrowed by an applied profile, or the Host rules unchanged when no
+/// profile applies. Every rule is the Host's own decision narrowed -
+/// composition can never produce a rule broader than the Host's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveRunPolicy {
+    /// The applied profile name, when one was applied.
+    pub applied_profile: Option<String>,
+    /// Why a declared profile was not applied (refused or invalid).
+    pub diagnostic: Option<String>,
+    /// Effective per-capability rules, sorted by capability id.
+    pub rules: Vec<PolicyRule>,
+}
+
+/// Map an optional profile record onto the declared state by resolving it
+/// against Host policy. `None` (no document) declares
+/// [`DeclaredProfile::Absent`]; a record resolves to `Resolved` or
+/// `Refused`. Adapter-level document failures map to `Invalid` by the
+/// caller.
+#[must_use]
+pub fn declare_profile(
+    record: Option<&ProfileRecord>,
+    host: &PermissionPolicy,
+) -> DeclaredProfile {
+    match record {
+        None => DeclaredProfile::Absent,
+        Some(record) => match resolve_profile_overlay(record, host) {
+            Ok(ProfileResolution::Resolved { name, narrowed }) => {
+                DeclaredProfile::Resolved { name, narrowed }
+            }
+            Ok(ProfileResolution::Default) => DeclaredProfile::Absent,
+            Ok(ProfileResolution::Refused { reason }) => {
+                DeclaredProfile::Refused { reason }
+            }
+            Err(error) => {
+                DeclaredProfile::Invalid { diagnostic: error.message }
+            }
+        },
+    }
+}
+
+/// Compose the effective run configuration: Host rules narrowed by the
+/// declared profile when (and only when) it applies. The narrowing-only
+/// invariant is re-checked here at the composition boundary: an overlay
+/// entry broader than the Host decision demotes the whole profile to
+/// not-applied with a diagnostic rather than applying any part of it.
+#[must_use]
+pub fn compose_effective_policy(
+    host_rules: &[PolicyRule],
+    declared: &DeclaredProfile,
+) -> EffectiveRunPolicy {
+    let mut rules: BTreeMap<String, PolicyRule> = host_rules
+        .iter()
+        .map(|rule| (rule.capability.as_str().to_owned(), rule.clone()))
+        .collect();
+    let not_applied =
+        |diagnostic: String, rules: &BTreeMap<String, PolicyRule>| {
+            EffectiveRunPolicy {
+                applied_profile: None,
+                diagnostic: Some(diagnostic),
+                rules: sorted_rules(rules),
+            }
+        };
+    let (applied_profile, diagnostic) = match declared {
+        DeclaredProfile::Absent => (None, None),
+        DeclaredProfile::Invalid { diagnostic } => {
+            return not_applied(diagnostic.clone(), &rules);
+        }
+        DeclaredProfile::Refused { reason } => {
+            return not_applied(reason.clone(), &rules);
+        }
+        DeclaredProfile::Resolved { name, narrowed } => {
+            let host = PermissionPolicy::from_rules(host_rules.to_vec());
+            for entry in &narrowed.entries {
+                let host_decision =
+                    evaluate_permission(&entry.capability, &host);
+                if rule_rank(&entry.requested) > decision_rank(&host_decision)
+                {
+                    return not_applied(
+                        format!(
+                            "PROFILE_REFUSED: overlay requests {} for capability {} but the Host grants {}; a profile may never broaden Host authority.",
+                            entry.requested.as_str(),
+                            entry.capability.as_str(),
+                            host_decision.decision(),
+                        ),
+                        &rules,
+                    );
+                }
+                rules.insert(
+                    entry.capability.as_str().to_owned(),
+                    PolicyRule {
+                        capability: entry.capability.clone(),
+                        rule: entry.requested,
+                    },
+                );
+            }
+            (Some(name.clone()), None)
+        }
+    };
+    EffectiveRunPolicy {
+        applied_profile,
+        diagnostic,
+        rules: sorted_rules(&rules),
+    }
+}
+
+fn sorted_rules(rules: &BTreeMap<String, PolicyRule>) -> Vec<PolicyRule> {
+    rules.values().cloned().collect()
+}
+
+/// Digest-bound evidence for the composed effective run configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectivePolicyEvidence {
+    /// The composed policy the digest binds.
+    pub policy: EffectiveRunPolicy,
+    /// Artifact digest over the canonical evidence payload.
+    pub effective_digest: String,
+}
+
+/// Build digest-bound evidence for a composed effective policy. The
+/// payload binds the applied profile, the diagnostic (when present), and
+/// the full effective rule map, so any authority change moves the digest.
+///
+/// # Errors
+///
+/// Returns [`ProfileValidationError`] when canonical serialization or
+/// digest computation fails.
+pub fn create_effective_policy_evidence(
+    policy: &EffectiveRunPolicy,
+) -> Result<EffectivePolicyEvidence, ProfileValidationError> {
+    let rule_map: BTreeMap<String, CanonicalValue> = policy
+        .rules
+        .iter()
+        .map(|rule| {
+            (
+                rule.capability.as_str().to_owned(),
+                CanonicalValue::Str(rule.rule.as_str().to_owned()),
+            )
+        })
+        .collect();
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        (
+            "appliedProfile".to_owned(),
+            policy
+                .applied_profile
+                .as_ref()
+                .map_or(CanonicalValue::Null, |name| {
+                    CanonicalValue::Str(name.to_owned())
+                }),
+        ),
+        (
+            "diagnostic".to_owned(),
+            policy.diagnostic.as_ref().map_or(CanonicalValue::Null, |d| {
+                CanonicalValue::Str(d.to_owned())
+            }),
+        ),
+        ("rules".to_owned(), CanonicalValue::Object(rule_map)),
+    ]));
+    let effective_digest =
+        compute_artifact_digest("EffectivePolicyEvidence", 1, &payload)
+            .map_err(|error| ProfileValidationError {
+                message: error.message,
+            })?
+            .value;
+    Ok(EffectivePolicyEvidence { policy: policy.clone(), effective_digest })
+}
+
+/// Bounded deterministic rendering: applied profile or not-applied state.
+#[must_use]
+pub fn render_effective_policy_evidence(
+    evidence: &EffectivePolicyEvidence,
+) -> String {
+    match (&evidence.policy.applied_profile, &evidence.policy.diagnostic) {
+        (Some(name), _) => format!(
+            "applied profile={name} rules={}",
+            evidence.policy.rules.len()
+        ),
+        (None, Some(diagnostic)) => format!("not applied: {diagnostic}"),
+        (None, None) => "unmodified (no profile applied)".to_owned(),
+    }
+}
 /// Bounded deterministic rendering: disposition, name, and entry counts.
 #[must_use]
 pub fn render_profile_evidence(evidence: &ProfileEvidence) -> String {
@@ -351,7 +560,7 @@ mod tests {
     use super::{
         MAX_PROFILE_NAME_BYTES, MAX_PROFILE_OVERLAY_ENTRIES,
         ProfileOverlayEntry, ProfileRecord, create_profile_evidence,
-        default_profile_resolution, render_profile_evidence,
+        declare_profile, default_profile_resolution, render_profile_evidence,
         resolve_profile_overlay,
     };
     use crate::tool::capability::CapabilityId;
@@ -484,5 +693,105 @@ mod tests {
         let evidence = create_profile_evidence(&resolution).expect("evidence");
         assert_eq!(evidence.detail.name, None);
         assert!(render_profile_evidence(&evidence).contains("default"));
+    }
+
+    #[test]
+    fn compose_applies_narrowing() {
+        let host_rules = vec![
+            PolicyRule {
+                capability: CapabilityId::parse("tool.workspace.read")
+                    .expect("valid capability"),
+                rule: PermissionRule::Allow,
+            },
+            PolicyRule {
+                capability: CapabilityId::parse("tool.workspace.search")
+                    .expect("valid capability"),
+                rule: PermissionRule::Ask,
+            },
+        ];
+        let host = PermissionPolicy::from_rules(host_rules.clone());
+        let record = ProfileRecord {
+            name: "dev".to_owned(),
+            overlay: vec![
+                entry("tool.workspace.read", PermissionRule::Ask),
+                entry("tool.workspace.search", PermissionRule::Deny),
+            ],
+        };
+        let declared = declare_profile(Some(&record), &host);
+        let effective =
+            super::compose_effective_policy(&host_rules, &declared);
+        assert_eq!(effective.applied_profile.as_deref(), Some("dev"));
+        assert!(effective.diagnostic.is_none());
+        assert_eq!(effective.rules.len(), 2);
+        assert_eq!(effective.rules[0].rule, PermissionRule::Ask);
+        assert_eq!(effective.rules[1].rule, PermissionRule::Deny);
+        let evidence = super::create_effective_policy_evidence(&effective)
+            .expect("evidence");
+        assert_eq!(evidence.effective_digest.len(), 64);
+        assert!(
+            evidence.effective_digest.chars().all(|c| c.is_ascii_hexdigit())
+        );
+        assert!(
+            super::render_effective_policy_evidence(&evidence)
+                .starts_with("applied profile=dev")
+        );
+    }
+
+    #[test]
+    fn compose_absent_and_ignored_states() {
+        let host_rules = vec![PolicyRule {
+            capability: CapabilityId::parse("tool.workspace.read")
+                .expect("valid capability"),
+            rule: PermissionRule::Allow,
+        }];
+        let absent = super::compose_effective_policy(
+            &host_rules,
+            &super::DeclaredProfile::Absent,
+        );
+        assert_eq!(absent.applied_profile, None);
+        assert_eq!(absent.diagnostic, None);
+        assert_eq!(absent.rules.len(), 1);
+        assert_eq!(absent.rules[0].rule, PermissionRule::Allow);
+        let invalid = super::compose_effective_policy(
+            &host_rules,
+            &super::DeclaredProfile::Invalid {
+                diagnostic: "siralos.toml does not parse".to_owned(),
+            },
+        );
+        assert_eq!(invalid.applied_profile, None);
+        assert_eq!(
+            invalid.diagnostic.as_deref(),
+            Some("siralos.toml does not parse")
+        );
+        assert_eq!(invalid.rules.len(), 1);
+        assert_eq!(invalid.rules[0].rule, PermissionRule::Allow);
+    }
+
+    #[test]
+    fn compose_rechecks_the_invariant() {
+        // A hand-built Resolved declaration whose overlay widens Host
+        // authority must be demoted to not-applied at the boundary.
+        let host_rules = vec![PolicyRule {
+            capability: CapabilityId::parse("tool.workspace.read")
+                .expect("valid capability"),
+            rule: PermissionRule::Ask,
+        }];
+        let declared = super::DeclaredProfile::Resolved {
+            name: "wide".to_owned(),
+            narrowed: super::NarrowedProfileOverlay {
+                entries: vec![entry(
+                    "tool.workspace.read",
+                    PermissionRule::Allow,
+                )],
+            },
+        };
+        let effective =
+            super::compose_effective_policy(&host_rules, &declared);
+        assert_eq!(effective.applied_profile, None);
+        let diagnostic = effective.diagnostic.expect("diagnostic");
+        assert!(diagnostic.starts_with("PROFILE_REFUSED"));
+        assert!(diagnostic.contains("tool.workspace.read"));
+        assert_eq!(effective.rules.len(), 1);
+        assert_eq!(effective.rules[0].rule, PermissionRule::Ask);
     }
 }

@@ -1,0 +1,14 @@
+{
+  "id": "composition-effective.narrowed",
+  "subject": "composition-effective",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "hostPolicy": {
+      "tool.workspace.read": "allow",
+      "tool.workspace.search": "ask"
+    },
+    "document": "\n[profile]\nname = \"dev\"\n\n[profile.permissions]\n\"tool.workspace.read\" = \"ask\"\n\"tool.workspace.search\" = \"deny\"\n"
+  }
+}

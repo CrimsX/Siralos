@@ -3249,6 +3249,49 @@ function validateCompositionProfileV39Result(result, label) {
   }
 }
 
+function validateCompositionEffectiveV40Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    ["applied", "diagnostic", "effective", "effectiveDigest", "rendered"],
+    `${label}.result`,
+  );
+  if (typeof result.applied !== "boolean") {
+    throw new Error(`${label}.result.applied is invalid`);
+  }
+  if (result.diagnostic !== null && typeof result.diagnostic !== "string") {
+    throw new Error(`${label}.result.diagnostic is invalid`);
+  }
+  if (result.applied && result.diagnostic !== null) {
+    throw new Error(`${label}.result applied profile cannot carry a diagnostic`);
+  }
+  if (typeof result.rendered !== "string") {
+    throw new Error(`${label}.result.rendered is invalid`);
+  }
+  if (
+    typeof result.effectiveDigest !== "string" ||
+    !LOWER_SHA256.test(result.effectiveDigest)
+  ) {
+    throw new Error(`${label}.result.effectiveDigest is invalid`);
+  }
+  if (!isObject(result.effective)) {
+    throw new Error(`${label}.result.effective must be an object`);
+  }
+  if (Object.keys(result.effective).length === 0) {
+    throw new Error(`${label}.result.effective must not be empty`);
+  }
+  for (const [capability, rule] of Object.entries(result.effective)) {
+    if (capability === "") {
+      throw new Error(`${label}.result.effective keys are invalid`);
+    }
+    if (!["allow", "ask", "deny"].includes(rule)) {
+      throw new Error(`${label}.result.effective entries are invalid`);
+    }
+  }
+}
+
 function validateRunProfileV38Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -3784,6 +3827,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "qa-workflow") {
     validateQaWorkflowV37Result(record.result, label);
+    return;
+  }
+  if (record.subject === "composition-effective") {
+    validateCompositionEffectiveV40Result(record.result, label);
     return;
   }
   if (record.subject === "composition-profile") {

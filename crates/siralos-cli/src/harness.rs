@@ -96,9 +96,10 @@ const SUBJECT_RUN_INTERACTION: &str = "run-interaction";
 const SUBJECT_QA_WORKFLOW: &str = "qa-workflow";
 const SUBJECT_RUN_PROFILE: &str = "run-profile";
 const SUBJECT_COMPOSITION_PROFILE: &str = "composition-profile";
+const SUBJECT_COMPOSITION_EFFECTIVE: &str = "composition-effective";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 39;
+const CORPUS_VERSION: u64 = 40;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -476,6 +477,7 @@ fn validate_scenario(
             | SUBJECT_QA_WORKFLOW
             | SUBJECT_RUN_PROFILE
             | SUBJECT_COMPOSITION_PROFILE
+            | SUBJECT_COMPOSITION_EFFECTIVE
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -744,7 +746,8 @@ fn validate_scenario(
         | SUBJECT_RUN_INTERACTION
         | SUBJECT_QA_WORKFLOW
         | SUBJECT_RUN_PROFILE
-        | SUBJECT_COMPOSITION_PROFILE => {
+        | SUBJECT_COMPOSITION_PROFILE
+        | SUBJECT_COMPOSITION_EFFECTIVE => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1523,7 +1526,8 @@ fn run_scenario(
         | SUBJECT_RUN_INTERACTION
         | SUBJECT_QA_WORKFLOW
         | SUBJECT_RUN_PROFILE
-        | SUBJECT_COMPOSITION_PROFILE => {
+        | SUBJECT_COMPOSITION_PROFILE
+        | SUBJECT_COMPOSITION_EFFECTIVE => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1535,6 +1539,9 @@ fn run_scenario(
                 SUBJECT_RUN_PROFILE => run_profile_record(input)?,
                 SUBJECT_COMPOSITION_PROFILE => {
                     composition_profile_record(input)?
+                }
+                SUBJECT_COMPOSITION_EFFECTIVE => {
+                    composition_effective_record(input)?
                 }
                 _ => runtime_evidence_record(input)?,
             };
@@ -6280,6 +6287,33 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_EFFECTIVE => {
+            const EFFECTIVE_KEYS: [&str; 2] = ["document", "hostPolicy"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !EFFECTIVE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(document) = input.get("document") {
+                if !document.is_string() {
+                    return reject("document must be a string".to_owned());
+                }
+            }
+            let Some(policy) =
+                input.get("hostPolicy").and_then(Value::as_object)
+            else {
+                return reject("hostPolicy must be an object".to_owned());
+            };
+            for (key, value) in policy {
+                if !value.is_string() {
+                    return reject(format!(
+                        "hostPolicy rule for {key} must be a string"
+                    ));
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -9957,6 +9991,69 @@ fn composition_profile_record(input: &Value) -> Result<Value, HarnessError> {
         "narrowedOverlay": narrowed_overlay,
         "profileDigest": evidence.profile_digest,
         "rendered": render_profile_evidence(&evidence),
+    }))
+}
+
+fn composition_effective_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::profile_config::parse_profile_document;
+    use siralos_core::composition::{
+        DeclaredProfile, compose_effective_policy,
+        create_effective_policy_evidence, declare_profile,
+        render_effective_policy_evidence,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    let Some(host_policy) = input.get("hostPolicy").and_then(Value::as_object)
+    else {
+        return Err(HarnessError::corpus(
+            "composition-effective requires a hostPolicy object".to_owned(),
+        ));
+    };
+    let mut host_rules = Vec::new();
+    for (capability, rule) in host_policy {
+        let rule_text = rule.as_str().unwrap_or("");
+        let capability_id = CapabilityId::parse(capability)
+            .map_err(|error| HarnessError::corpus(error.to_string()))?;
+        let parsed_rule =
+            PermissionRule::parse(rule_text).ok_or_else(|| {
+                HarnessError::corpus(format!(
+                    "unknown host rule {rule_text:?}"
+                ))
+            })?;
+        host_rules
+            .push(PolicyRule { capability: capability_id, rule: parsed_rule });
+    }
+    let host = PermissionPolicy::from_rules(host_rules.clone());
+    let declared = match input.get("document").and_then(Value::as_str) {
+        None => DeclaredProfile::Absent,
+        Some(document) => match parse_profile_document(document) {
+            Ok(record) => declare_profile(Some(&record), &host),
+            Err(error) => {
+                DeclaredProfile::Invalid { diagnostic: error.message }
+            }
+        },
+    };
+    let effective = compose_effective_policy(&host_rules, &declared);
+    let evidence = create_effective_policy_evidence(&effective)
+        .map_err(|error| HarnessError::corpus(error.message))?;
+    let rules: serde_json::Map<String, Value> = effective
+        .rules
+        .iter()
+        .map(|rule| {
+            (
+                rule.capability.as_str().to_owned(),
+                Value::String(rule.rule.as_str().to_owned()),
+            )
+        })
+        .collect();
+    Ok(json!({
+        "applied": effective.applied_profile.is_some(),
+        "diagnostic": evidence.policy.diagnostic,
+        "effective": Value::Object(rules),
+        "effectiveDigest": evidence.effective_digest,
+        "rendered": render_effective_policy_evidence(&evidence),
     }))
 }
 

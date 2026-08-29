@@ -1,0 +1,13 @@
+{
+  "id": "composition-effective.absent",
+  "subject": "composition-effective",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "hostPolicy": {
+      "tool.workspace.read": "allow",
+      "tool.workspace.search": "ask"
+    }
+  }
+}

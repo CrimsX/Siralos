@@ -1,0 +1,13 @@
+{
+  "id": "composition-effective.widening-ignored",
+  "subject": "composition-effective",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "hostPolicy": {
+      "tool.workspace.search": "ask"
+    },
+    "document": "\n[profile]\nname = \"wide\"\n\n[profile.permissions]\n\"tool.workspace.search\" = \"allow\"\n"
+  }
+}
