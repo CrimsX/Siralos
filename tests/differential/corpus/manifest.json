@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 38,
+  "corpusVersion": 39,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -33,6 +33,22 @@
     {
       "file": "command-catalog-snapshot.json",
       "sha256": "1029c31cbbca1d7f9da4fd142b66df32052736e3645642d283c7c35c96818f4c"
+    },
+    {
+      "file": "composition-profile.absent-default.json",
+      "sha256": "329149069c7b96f18e1860c0fe4df8b968e650a3f589fedac4b6fe78029528f9"
+    },
+    {
+      "file": "composition-profile.bounds-violated.json",
+      "sha256": "6861f6fa2425946cc417963b29fdf9a5dc97a5bddda6f70770f7de5d7fc0b89d"
+    },
+    {
+      "file": "composition-profile.resolved.json",
+      "sha256": "bcad52b1fe28defe6a95463044487a2ad8fd3767af74922251670cb2481e5089"
+    },
+    {
+      "file": "composition-profile.widening-refused.json",
+      "sha256": "0f055dbb918c66279d60f98b3fc2d86ca86c29e641d7d593ef30b783baa2a3fd"
     },
     {
       "file": "content-identity-artifact-digest.basic.json",
@@ -1059,5 +1075,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "3f1f34906eb45dcdd6e4449ecb131f34d50629c049bdc659b9b1366d3050dcf2"
+  "corpusSha256": "e9976eb070c26943e02ec4c594c66624ce0cb1b640818048bc97d16ac3dc1c96"
 }

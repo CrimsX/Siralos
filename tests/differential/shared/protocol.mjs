@@ -3174,6 +3174,71 @@ function validateVisualEvidenceV35Result(result, label) {
   }
 }
 
+function validateCompositionProfileV39Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    ["disposition", "narrowedOverlay", "profile", "profileDigest", "reason", "rendered"],
+    `${label}.result`,
+  );
+  const disposition = result.disposition;
+  if (
+    typeof disposition !== "string" ||
+    !["resolved", "default", "refused", "invalid"].includes(disposition)
+  ) {
+    throw new Error(`${label}.result.disposition is invalid`);
+  }
+  if (result.reason !== null && typeof result.reason !== "string") {
+    throw new Error(`${label}.result.reason is invalid`);
+  }
+  if (typeof result.rendered !== "string") {
+    throw new Error(`${label}.result.rendered is invalid`);
+  }
+  if (disposition === "invalid") {
+    if (result.profile !== null || result.narrowedOverlay !== null || result.profileDigest !== null || typeof result.reason !== "string") {
+      throw new Error(`${label}.result invalid-disposition shape mismatch`);
+    }
+    return;
+  }
+  if (typeof result.profileDigest !== "string" || !LOWER_SHA256.test(result.profileDigest)) {
+    throw new Error(`${label}.result.profileDigest is invalid`);
+  }
+  if (disposition === "resolved") {
+    const profile = result.profile;
+    if (!isObject(profile)) {
+      throw new Error(`${label}.result.profile must be an object`);
+    }
+    assertExactKeys(profile, ["name", "overlayEntries"], `${label}.result.profile`);
+    if (typeof profile.name !== "string" || !Number.isInteger(profile.overlayEntries)) {
+      throw new Error(`${label}.result.profile shape is invalid`);
+    }
+    const narrowed = result.narrowedOverlay;
+    if (!isObject(narrowed)) {
+      throw new Error(`${label}.result.narrowedOverlay must be an object`);
+    }
+    for (const [capability, rule] of Object.entries(narrowed)) {
+      if (!["allow", "ask", "deny"].includes(rule)) {
+        throw new Error(`${label}.result.narrowedOverlay entries are invalid`);
+      }
+      if (capability === "") {
+        throw new Error(`${label}.result.narrowedOverlay keys are invalid`);
+      }
+    }
+    return;
+  }
+  if (disposition === "default") {
+    if (result.profile !== null || result.narrowedOverlay !== null || result.reason !== null) {
+      throw new Error(`${label}.result default-disposition shape mismatch`);
+    }
+    return;
+  }
+  if (result.profile !== null || result.narrowedOverlay !== null || typeof result.reason !== "string" || !result.reason.includes("PROFILE_REFUSED")) {
+    throw new Error(`${label}.result refused-disposition shape mismatch`);
+  }
+}
+
 function validateRunProfileV38Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -3709,6 +3774,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "qa-workflow") {
     validateQaWorkflowV37Result(record.result, label);
+    return;
+  }
+  if (record.subject === "composition-profile") {
+    validateCompositionProfileV39Result(record.result, label);
     return;
   }
   if (record.subject === "run-profile") {

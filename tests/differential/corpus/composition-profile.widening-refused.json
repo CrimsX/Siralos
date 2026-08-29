@@ -1,0 +1,15 @@
+{
+  "id": "composition-profile.widening-refused",
+  "subject": "composition-profile",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "resolve",
+    "document": "\n[profile]\nname = \"wide\"\n\n[profile.permissions]\n\"tool.workspace.search\" = \"allow\"\n",
+    "hostPolicy": {
+      "tool.workspace.read": "allow",
+      "tool.workspace.search": "ask"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "composition-profile.resolved",
+  "subject": "composition-profile",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "resolve",
+    "document": "\n[profile]\nname = \"dev\"\n\n[profile.permissions]\n\"tool.workspace.read\" = \"ask\"\n\"tool.workspace.search\" = \"deny\"\n",
+    "hostPolicy": {
+      "tool.workspace.read": "allow",
+      "tool.workspace.search": "ask"
+    }
+  }
+}

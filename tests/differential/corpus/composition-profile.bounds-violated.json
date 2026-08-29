@@ -1,0 +1,14 @@
+{
+  "id": "composition-profile.bounds-violated",
+  "subject": "composition-profile",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "resolve",
+    "document": "\n[profile]\nname = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+    "hostPolicy": {
+      "tool.workspace.read": "allow"
+    }
+  }
+}

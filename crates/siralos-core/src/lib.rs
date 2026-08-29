@@ -12,6 +12,7 @@
 //! rules this crate follows.
 
 pub mod commands;
+pub mod composition;
 pub mod context;
 pub mod determinism;
 pub mod doctor;

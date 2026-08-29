@@ -1,0 +1,13 @@
+{
+  "id": "composition-profile.absent-default",
+  "subject": "composition-profile",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "resolve",
+    "hostPolicy": {
+      "tool.workspace.read": "allow"
+    }
+  }
+}

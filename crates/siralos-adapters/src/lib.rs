@@ -15,6 +15,7 @@ pub mod godot;
 pub mod language;
 pub mod paths;
 pub mod process;
+pub mod profile_config;
 pub mod provider;
 pub mod reference;
 pub mod research;

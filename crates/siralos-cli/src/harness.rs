@@ -95,9 +95,10 @@ const SUBJECT_VISUAL_EVIDENCE: &str = "visual-evidence";
 const SUBJECT_RUN_INTERACTION: &str = "run-interaction";
 const SUBJECT_QA_WORKFLOW: &str = "qa-workflow";
 const SUBJECT_RUN_PROFILE: &str = "run-profile";
+const SUBJECT_COMPOSITION_PROFILE: &str = "composition-profile";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 38;
+const CORPUS_VERSION: u64 = 39;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -474,6 +475,7 @@ fn validate_scenario(
             | SUBJECT_RUN_INTERACTION
             | SUBJECT_QA_WORKFLOW
             | SUBJECT_RUN_PROFILE
+            | SUBJECT_COMPOSITION_PROFILE
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -741,7 +743,8 @@ fn validate_scenario(
         | SUBJECT_VISUAL_EVIDENCE
         | SUBJECT_RUN_INTERACTION
         | SUBJECT_QA_WORKFLOW
-        | SUBJECT_RUN_PROFILE => {
+        | SUBJECT_RUN_PROFILE
+        | SUBJECT_COMPOSITION_PROFILE => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1519,7 +1522,8 @@ fn run_scenario(
         | SUBJECT_VISUAL_EVIDENCE
         | SUBJECT_RUN_INTERACTION
         | SUBJECT_QA_WORKFLOW
-        | SUBJECT_RUN_PROFILE => {
+        | SUBJECT_RUN_PROFILE
+        | SUBJECT_COMPOSITION_PROFILE => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1529,6 +1533,9 @@ fn run_scenario(
                 SUBJECT_RUN_INTERACTION => run_interaction_record(input)?,
                 SUBJECT_QA_WORKFLOW => qa_workflow_record(input)?,
                 SUBJECT_RUN_PROFILE => run_profile_record(input)?,
+                SUBJECT_COMPOSITION_PROFILE => {
+                    composition_profile_record(input)?
+                }
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6243,6 +6250,36 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_PROFILE => {
+            const PROFILE_KEYS: [&str; 3] = ["op", "document", "hostPolicy"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !PROFILE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if input.get("op").and_then(Value::as_str) != Some("resolve") {
+                return reject("unknown composition-profile op".to_owned());
+            }
+            if let Some(document) = input.get("document") {
+                if !document.is_string() {
+                    return reject("document must be a string".to_owned());
+                }
+            }
+            if let Some(policy) = input.get("hostPolicy") {
+                let Some(map) = policy.as_object() else {
+                    return reject("hostPolicy must be an object".to_owned());
+                };
+                for (key, value) in map {
+                    if !value.is_string() {
+                        return reject(format!(
+                            "hostPolicy rule for {key} must be a string"
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -9819,6 +9856,108 @@ fn run_profile_record(input: &Value) -> Result<Value, HarnessError> {
         }
         Err(error) => Ok(json!({ "error": error.message })),
     }
+}
+
+fn composition_profile_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::profile_config::parse_profile_document;
+    use siralos_core::composition::{
+        ProfileResolution, create_profile_evidence,
+        default_profile_resolution, render_profile_evidence,
+        resolve_profile_overlay,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "resolve" {
+        return Err(HarnessError::corpus(format!(
+            "unknown composition-profile op {op:?}"
+        )));
+    }
+    let mut policy_rules = Vec::new();
+    if let Some(policy) = input.get("hostPolicy").and_then(Value::as_object) {
+        for (capability, rule) in policy {
+            let rule_text = rule.as_str().unwrap_or("");
+            let capability_id = CapabilityId::parse(capability)
+                .map_err(|error| HarnessError::corpus(error.to_string()))?;
+            let parsed_rule =
+                PermissionRule::parse(rule_text).ok_or_else(|| {
+                    HarnessError::corpus(format!(
+                        "unknown host rule {rule_text:?}"
+                    ))
+                })?;
+            policy_rules.push(PolicyRule {
+                capability: capability_id,
+                rule: parsed_rule,
+            });
+        }
+    }
+    let host = PermissionPolicy::from_rules(policy_rules);
+    let resolution = match input.get("document").and_then(Value::as_str) {
+        None => default_profile_resolution(),
+        Some(document) => match parse_profile_document(document) {
+            Ok(record) => resolve_profile_overlay(&record, &host)
+                .map_err(|error| HarnessError::corpus(error.message))?,
+            Err(error) => {
+                return Ok(json!({
+                    "disposition": "invalid",
+                    "reason": error.message,
+                    "profile": Value::Null,
+                    "narrowedOverlay": Value::Null,
+                    "profileDigest": Value::Null,
+                    "rendered": format!("invalid: {}", error.message),
+                }));
+            }
+        },
+    };
+    let evidence = match create_profile_evidence(&resolution) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            return Ok(json!({
+                "disposition": "invalid",
+                "reason": error.message,
+                "profile": Value::Null,
+                "narrowedOverlay": Value::Null,
+                "profileDigest": Value::Null,
+                "rendered": format!("invalid: {}", error.message),
+            }));
+        }
+    };
+    let (profile, narrowed_overlay) = match &resolution {
+        ProfileResolution::Resolved { name, narrowed } => {
+            let map: serde_json::Map<String, Value> = narrowed
+                .entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.capability.as_str().to_owned(),
+                        Value::String(entry.requested.as_str().to_owned()),
+                    )
+                })
+                .collect();
+            (
+                json!({
+                    "name": name,
+                    "overlayEntries": narrowed.entries.len(),
+                }),
+                Value::Object(map),
+            )
+        }
+        _ => (Value::Null, Value::Null),
+    };
+    let reason = match &resolution {
+        ProfileResolution::Refused { reason } => Some(reason.clone()),
+        _ => None,
+    };
+    Ok(json!({
+        "disposition": resolution.disposition(),
+        "reason": reason,
+        "profile": profile,
+        "narrowedOverlay": narrowed_overlay,
+        "profileDigest": evidence.profile_digest,
+        "rendered": render_profile_evidence(&evidence),
+    }))
 }
 
 fn qa_workflow_record(input: &Value) -> Result<Value, HarnessError> {
@@ -14814,7 +14953,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 264);
+        assert_eq!(loaded.len(), 268);
     }
 
     #[test]
