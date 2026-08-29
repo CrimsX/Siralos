@@ -20,6 +20,7 @@
 //! rendering are not exercised by any wired subject yet.
 
 mod artifacts;
+mod controls;
 mod phase_contract;
 mod provenance;
 mod staleness;
@@ -28,6 +29,11 @@ pub use artifacts::{
     ArtifactDependency, ArtifactDependencyManifest, HighValueDependency,
     build_dependency_manifest, create_artifact_dependency_manifest,
     high_value_dependencies,
+};
+pub use controls::{
+    ContextControlEvidence, ContextControlOutcome, ContextPolicy,
+    create_context_control_evidence, evaluate_context_policy,
+    render_context_control_evidence,
 };
 pub use phase_contract::{
     CONTEXT_CLASS_ARTIFACT_KINDS, CONTEXT_CLASSES, ContextClass,

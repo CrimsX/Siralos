@@ -1,0 +1,14 @@
+{
+  "id": "context-controls.pinned-current",
+  "subject": "context-controls",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "policy": {
+      "kind": "pinned",
+      "digest": "69b2f93ab72f8a57b446057a2880d1b640682f2e803812dca62a6435030f67e2"
+    },
+    "actualDigest": "69b2f93ab72f8a57b446057a2880d1b640682f2e803812dca62a6435030f67e2"
+  }
+}

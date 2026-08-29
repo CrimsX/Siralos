@@ -97,9 +97,10 @@ const SUBJECT_QA_WORKFLOW: &str = "qa-workflow";
 const SUBJECT_RUN_PROFILE: &str = "run-profile";
 const SUBJECT_COMPOSITION_PROFILE: &str = "composition-profile";
 const SUBJECT_COMPOSITION_EFFECTIVE: &str = "composition-effective";
+const SUBJECT_CONTEXT_CONTROLS: &str = "context-controls";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 40;
+const CORPUS_VERSION: u64 = 41;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -478,6 +479,7 @@ fn validate_scenario(
             | SUBJECT_RUN_PROFILE
             | SUBJECT_COMPOSITION_PROFILE
             | SUBJECT_COMPOSITION_EFFECTIVE
+            | SUBJECT_CONTEXT_CONTROLS
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -747,7 +749,8 @@ fn validate_scenario(
         | SUBJECT_QA_WORKFLOW
         | SUBJECT_RUN_PROFILE
         | SUBJECT_COMPOSITION_PROFILE
-        | SUBJECT_COMPOSITION_EFFECTIVE => {
+        | SUBJECT_COMPOSITION_EFFECTIVE
+        | SUBJECT_CONTEXT_CONTROLS => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1527,7 +1530,8 @@ fn run_scenario(
         | SUBJECT_QA_WORKFLOW
         | SUBJECT_RUN_PROFILE
         | SUBJECT_COMPOSITION_PROFILE
-        | SUBJECT_COMPOSITION_EFFECTIVE => {
+        | SUBJECT_COMPOSITION_EFFECTIVE
+        | SUBJECT_CONTEXT_CONTROLS => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1543,6 +1547,7 @@ fn run_scenario(
                 SUBJECT_COMPOSITION_EFFECTIVE => {
                     composition_effective_record(input)?
                 }
+                SUBJECT_CONTEXT_CONTROLS => context_controls_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6314,6 +6319,36 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_CONTEXT_CONTROLS => {
+            const CONTROL_KEYS: [&str; 2] = ["actualDigest", "policy"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !CONTROL_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if !input.get("actualDigest").and_then(Value::as_str).is_some() {
+                return reject("actualDigest must be a string".to_owned());
+            }
+            let Some(policy) = input.get("policy").and_then(Value::as_object)
+            else {
+                return reject("policy must be an object".to_owned());
+            };
+            let Some(kind) = policy.get("kind").and_then(Value::as_str) else {
+                return reject("policy requires a kind string".to_owned());
+            };
+            if !matches!(kind, "live" | "pinned" | "frozen") {
+                return reject(format!("unknown policy kind {kind}"));
+            }
+            if kind != "live"
+                && !policy.get("digest").and_then(Value::as_str).is_some()
+            {
+                return reject(format!(
+                    "policy {kind} requires a digest string"
+                ));
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10054,6 +10089,50 @@ fn composition_effective_record(input: &Value) -> Result<Value, HarnessError> {
         "effective": Value::Object(rules),
         "effectiveDigest": evidence.effective_digest,
         "rendered": render_effective_policy_evidence(&evidence),
+    }))
+}
+
+fn context_controls_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::context::{
+        ContextControlOutcome, ContextPolicy, create_context_control_evidence,
+        evaluate_context_policy, render_context_control_evidence,
+    };
+    let Some(policy_value) = input.get("policy").and_then(Value::as_object)
+    else {
+        return Err(HarnessError::corpus(
+            "context-controls requires a policy object".to_owned(),
+        ));
+    };
+    let kind = policy_value.get("kind").and_then(Value::as_str).unwrap_or("");
+    let digest = policy_value.get("digest").and_then(Value::as_str);
+    let policy = ContextPolicy::new(kind, digest)
+        .map_err(|error| HarnessError::corpus(error.message))?;
+    let Some(actual_digest) =
+        input.get("actualDigest").and_then(Value::as_str)
+    else {
+        return Err(HarnessError::corpus(
+            "context-controls requires an actualDigest string".to_owned(),
+        ));
+    };
+    let outcome = evaluate_context_policy(&policy, actual_digest);
+    let evidence = create_context_control_evidence(&policy, &outcome)
+        .map_err(|error| HarnessError::corpus(error.message))?;
+    let (expected_digest, bound_digest) = match &outcome {
+        ContextControlOutcome::Fresh { bound } => (None, bound.clone()),
+        ContextControlOutcome::Stale { expected, .. } => {
+            (Some(expected.clone()), None)
+        }
+        ContextControlOutcome::Blocked { expected, .. } => {
+            (Some(expected.clone()), None)
+        }
+    };
+    Ok(json!({
+        "actualDigest": actual_digest,
+        "boundDigest": bound_digest,
+        "controlDigest": evidence.control_digest,
+        "disposition": outcome.disposition(),
+        "expectedDigest": expected_digest,
+        "rendered": render_context_control_evidence(&evidence),
     }))
 }
 

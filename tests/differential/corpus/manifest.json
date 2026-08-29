@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 40,
+  "corpusVersion": 41,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -113,6 +113,22 @@
     {
       "file": "content-identity-manifests.two-entries.json",
       "sha256": "ac91ebf5b4749699e6cdb7d27cdf70fa0b193ccaba179cb8bdd30b6aab0244ac"
+    },
+    {
+      "file": "context-controls.frozen-stale.json",
+      "sha256": "afd564ba0ccbb60c6b9ce3e47e1c1228f1d5673769937e02f0b2bee30855d98f"
+    },
+    {
+      "file": "context-controls.live.json",
+      "sha256": "b3553d71106a0cabfa8250949e1caf00c1f66db06e8d74f8da139c4d2ce44d29"
+    },
+    {
+      "file": "context-controls.pinned-current.json",
+      "sha256": "b3ff609b41255009d93e7d6aaada18e0636a7ee60305ddafce19113f520129a2"
+    },
+    {
+      "file": "context-controls.pinned-stale.json",
+      "sha256": "3acfa5fe2566949af992302f5752dd7e37eddd97c4d71d70efccffcb8f36d1ba"
     },
     {
       "file": "context-projection.estimate.json",
@@ -1091,5 +1107,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "efccd459b43acb37c71f02d5c77ad521714be40f63037d227fffbb4a24daf869"
+  "corpusSha256": "fbefd51d7ab53a97ff777ceed0fbb4be36d7ce39709c06ff43fdca153297460c"
 }

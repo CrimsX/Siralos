@@ -3289,6 +3289,50 @@ function validateCompositionEffectiveV40Result(result, label) {
   }
 }
 
+function validateContextControlsV41Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    ["actualDigest", "boundDigest", "controlDigest", "disposition", "expectedDigest", "rendered"],
+    `${label}.result`,
+  );
+  if (
+    !result.disposition ||
+    !["fresh", "stale", "blocked"].includes(result.disposition)
+  ) {
+    throw new Error(`${label}.result.disposition is invalid`);
+  }
+  for (const field of ["actualDigest", "boundDigest", "controlDigest", "expectedDigest"]) {
+    const value = result[field];
+    if (value === null) {
+      continue;
+    }
+    if (typeof value !== "string" || !LOWER_SHA256.test(value)) {
+      throw new Error(`${label}.result.${field} is invalid`);
+    }
+  }
+  if (typeof result.controlDigest !== "string" || !LOWER_SHA256.test(result.controlDigest)) {
+    throw new Error(`${label}.result.controlDigest is required`);
+  }
+  if (result.disposition === "fresh") {
+    if (result.expectedDigest !== null) {
+      throw new Error(`${label}.result fresh outcome cannot name an expected digest`);
+    }
+  } else {
+    if (typeof result.expectedDigest !== "string" || typeof result.actualDigest !== "string") {
+      throw new Error(`${label}.result ${result.disposition} outcome requires expected and actual digests`);
+    }
+    if (result.expectedDigest === result.actualDigest) {
+      throw new Error(`${label}.result ${result.disposition} outcome cannot match its bound digest`);
+    }
+  }
+  if (typeof result.rendered !== "string") {
+    throw new Error(`${label}.result.rendered is invalid`);
+  }
+}
+
 function validateRunProfileV38Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -3824,6 +3868,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "qa-workflow") {
     validateQaWorkflowV37Result(record.result, label);
+    return;
+  }
+  if (record.subject === "context-controls") {
+    validateContextControlsV41Result(record.result, label);
     return;
   }
   if (record.subject === "composition-effective") {
