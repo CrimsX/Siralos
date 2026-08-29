@@ -2,8 +2,8 @@
 title: "Stage 4.6 QA Workflows Entry Review - Bounded QA Workflow Contracts over the Generic Runtime Boundary"
 label: "wayfinder:grilling"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS — Stage 4.6 contract frozen (HITL 2026-08-28: Q1 bounded workflow steps step 6; Q2 raise cap to 384, qa-workflow ×4 at v37; Q3 confirm nothing flips unavailable; Q4 approve C1–C6). Authorized as next implementation slice; see decision 44."
 blockedBy: []
 ---
 
