@@ -2,8 +2,8 @@
 title: "Stage 4.7 Profiling Entry Review - Bounded Run-Profiling Sessions over the Generic Runtime Boundary"
 label: "wayfinder:grilling"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS — Stage 4.7 contract frozen (HITL 2026-08-28: Q1 run-profiling sessions step 7; Q2 run-profile ×4 at v38; Q3 confirm nothing flips unavailable; Q4 approve C1–C6). Authorized as next implementation slice; see decision 45."
 blockedBy: []
 ---
 
