@@ -3270,10 +3270,7 @@ function validateCompositionEffectiveV40Result(result, label) {
   if (typeof result.rendered !== "string") {
     throw new Error(`${label}.result.rendered is invalid`);
   }
-  if (
-    typeof result.effectiveDigest !== "string" ||
-    !LOWER_SHA256.test(result.effectiveDigest)
-  ) {
+  if (typeof result.effectiveDigest !== "string" || !LOWER_SHA256.test(result.effectiveDigest)) {
     throw new Error(`${label}.result.effectiveDigest is invalid`);
   }
   if (!isObject(result.effective)) {
