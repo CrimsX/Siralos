@@ -2,8 +2,8 @@
 title: "Stage 4 Verified Roll-Up - Consolidating the Seven Realized Slices into One Milestone-Verified State"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS — Stage 4 Verified roll-up contract frozen (HITL 2026-08-28: Q1 seven realized steps as drafted; Q2 six criteria with fresh gate runs; Q3 confirm pure closure record; Q4 approve C1–C6). See decision 46."
 blockedBy: []
 ---
 
