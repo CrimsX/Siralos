@@ -1,0 +1,24 @@
+{
+  "id": "run-interaction.resource-exceeded",
+  "subject": "run-interaction",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "op": "decide",
+    "request": {
+      "runId": "run_interact_budget",
+      "operationId": null,
+      "isInteractive": true,
+      "isStale": false,
+      "rounds": ["round-0-request", "round-1-request", "round-2-request"]
+    },
+    "policy": {
+      "run.interact": "allow"
+    },
+    "budget": {
+      "artifactBytes": 16
+    },
+    "isCancelled": false
+  }
+}

@@ -33,6 +33,7 @@ pub mod evidence;
 pub mod execution;
 pub mod faults;
 pub mod identity;
+pub mod interaction;
 pub mod readiness;
 pub mod supervision;
 pub mod visual;
@@ -72,6 +73,15 @@ pub use faults::{
 pub use identity::{
     RunIdentityInput, RunTraceRef, create_operation_id, create_run_id,
     create_run_trace_ref, format_run_trace_ref,
+};
+pub use interaction::{
+    InteractionRound, MAX_INTERACTION_ROUNDS, MAX_ROUND_BYTES,
+    RUN_INTERACTION_CAPABILITY, RUN_INTERACTION_UNAVAILABLE_REASON,
+    RunInteractionEvidence, RunInteractionEvidenceDetail,
+    RunInteractionRequest, create_run_interaction_evidence,
+    decide_run_interaction, decide_run_interaction_with_flag,
+    is_identity_bound_interactive_run_primitive_available,
+    render_run_interaction_evidence,
 };
 pub use readiness::{
     RUNTIME_MODES, ReadinessItem, ReadinessItemId, RuntimeCapabilityState,

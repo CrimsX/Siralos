@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 35,
+  "corpusVersion": 36,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -675,6 +675,22 @@
       "sha256": "5955a69c564e7cc7f5155b094d72a6993be72c08fc53819712177af17a2e6ad0"
     },
     {
+      "file": "run-interaction.cancelled.json",
+      "sha256": "d9173f47064c482e21c0664e614faef026f3b72f7acd2802253e2e95f2d32b4c"
+    },
+    {
+      "file": "run-interaction.pairing-refusal.json",
+      "sha256": "8526473b4e91d5b7e003a641eb927300846f5813ad226bacd97b2a59982ee329"
+    },
+    {
+      "file": "run-interaction.resource-exceeded.json",
+      "sha256": "225f43aaf9ebc6d2c69a7fc07d73fc1f1a1759900e5239ba68144cce6cf793fe"
+    },
+    {
+      "file": "run-interaction.unavailable.json",
+      "sha256": "4d49a3c96db70ae60695d4e05ebf2bfce55802be7402814ace3a463df78d976c"
+    },
+    {
       "file": "runtime-evidence.empty-run-id.json",
       "sha256": "610cb4342012392665158f0bd21d4d21f076ce762972eb44447e0517a5332d13"
     },
@@ -1011,5 +1027,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "0c5fa0c33f9c7a6ce9957c0bade226833fef374c01a8c884f2442b710e05431a"
+  "corpusSha256": "7597236fbb35e6ecb4af4b9c470bcb8d1062865bc5f50ec3f0f0c2861640cc48"
 }

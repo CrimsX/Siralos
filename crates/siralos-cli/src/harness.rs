@@ -92,9 +92,10 @@ const SUBJECT_RR_DOCTOR: &str = "runtime-readiness.doctor";
 const SUBJECT_RUNTIME_EXECUTION: &str = "runtime-execution";
 const SUBJECT_RUNTIME_EVIDENCE: &str = "runtime-evidence";
 const SUBJECT_VISUAL_EVIDENCE: &str = "visual-evidence";
+const SUBJECT_RUN_INTERACTION: &str = "run-interaction";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 35;
+const CORPUS_VERSION: u64 = 36;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -468,6 +469,7 @@ fn validate_scenario(
             | SUBJECT_RUNTIME_EXECUTION
             | SUBJECT_RUNTIME_EVIDENCE
             | SUBJECT_VISUAL_EVIDENCE
+            | SUBJECT_RUN_INTERACTION
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -732,7 +734,8 @@ fn validate_scenario(
         | SUBJECT_GODOT_RUNTIME_EVIDENCE
         | SUBJECT_RUNTIME_EXECUTION
         | SUBJECT_RUNTIME_EVIDENCE
-        | SUBJECT_VISUAL_EVIDENCE => {
+        | SUBJECT_VISUAL_EVIDENCE
+        | SUBJECT_RUN_INTERACTION => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1507,13 +1510,15 @@ fn run_scenario(
         }
         SUBJECT_RUNTIME_EXECUTION
         | SUBJECT_RUNTIME_EVIDENCE
-        | SUBJECT_VISUAL_EVIDENCE => {
+        | SUBJECT_VISUAL_EVIDENCE
+        | SUBJECT_RUN_INTERACTION => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
             let result = match scenario.subject.as_str() {
                 SUBJECT_RUNTIME_EXECUTION => runtime_execution_record(input)?,
                 SUBJECT_VISUAL_EVIDENCE => visual_evidence_record(input)?,
+                SUBJECT_RUN_INTERACTION => run_interaction_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6059,6 +6064,68 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_RUN_INTERACTION => {
+            const INTERACTION_KEYS: [&str; 5] =
+                ["op", "request", "policy", "budget", "isCancelled"];
+            const REQUEST_KEYS: [&str; 5] =
+                ["runId", "operationId", "isInteractive", "isStale", "rounds"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !INTERACTION_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if input.get("op").and_then(Value::as_str) != Some("decide") {
+                return reject("unknown run-interaction op".to_owned());
+            }
+            let Some(request) =
+                input.get("request").and_then(Value::as_object)
+            else {
+                return reject("request must be an object".to_owned());
+            };
+            for key in request.keys() {
+                if !REQUEST_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected request field {key}"));
+                }
+            }
+            if !request.get("runId").is_some_and(Value::is_string) {
+                return reject("request runId must be a string".to_owned());
+            }
+            if let Some(operation_id) = request.get("operationId") {
+                if !operation_id.is_null() && !operation_id.is_string() {
+                    return reject(
+                        "request operationId must be a string or null"
+                            .to_owned(),
+                    );
+                }
+            }
+            if !request.get("isInteractive").is_some_and(Value::is_boolean) {
+                return reject(
+                    "request isInteractive must be a boolean".to_owned(),
+                );
+            }
+            if !request.get("isStale").is_some_and(Value::is_boolean) {
+                return reject("request isStale must be a boolean".to_owned());
+            }
+            let Some(rounds) = request.get("rounds").and_then(Value::as_array)
+            else {
+                return reject("request rounds must be an array".to_owned());
+            };
+            if rounds.is_empty() {
+                return reject("request rounds must not be empty".to_owned());
+            }
+            for round in rounds {
+                if !round.is_string() {
+                    return reject(
+                        "request rounds must be strings".to_owned(),
+                    );
+                }
+            }
+            if !input.get("isCancelled").is_some_and(Value::is_boolean) {
+                return reject("isCancelled must be a boolean".to_owned());
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -9523,6 +9590,124 @@ fn visual_evidence_record(input: &Value) -> Result<Value, HarnessError> {
                 },
                 "captureDigest": evidence.capture_digest,
                 "rendered": render_visual_capture_evidence(&evidence),
+            }))
+        }
+        Err(error) => Ok(json!({ "error": error.message })),
+    }
+}
+
+fn run_interaction_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::runtime::{
+        RUN_INTERACTION_CAPABILITY, RUN_INTERACTION_UNAVAILABLE_REASON,
+        RunInteractionRequest, RuntimeBudgetInput,
+        create_run_interaction_evidence, create_runtime_budget,
+        decide_run_interaction_with_flag,
+        is_identity_bound_interactive_run_primitive_available,
+        render_run_interaction_evidence,
+    };
+    use siralos_core::tool::capability::CapabilityId;
+    use siralos_core::tool::permission::{
+        PermissionPolicy, PermissionRule, PolicyRule,
+    };
+    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
+    if op != "decide" {
+        return Err(HarnessError::corpus(format!(
+            "unknown run-interaction op {op:?}"
+        )));
+    }
+    let request_value = input.get("request").cloned().unwrap_or(Value::Null);
+    let run_id = request_value
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let operation_id = request_value
+        .get("operationId")
+        .and_then(Value::as_str)
+        .map(|s| s.to_owned());
+    let is_interactive = request_value
+        .get("isInteractive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let is_stale =
+        request_value.get("isStale").and_then(Value::as_bool).unwrap_or(false);
+    let rounds = request_value
+        .get("rounds")
+        .and_then(Value::as_array)
+        .map(|round_values| {
+            round_values
+                .iter()
+                .enumerate()
+                .map(|(index, round_value)| {
+                    siralos_core::runtime::InteractionRound {
+                        index,
+                        request: round_value.as_str().unwrap_or("").to_owned(),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let policy_map = input
+        .get("policy")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut policy_rules = Vec::new();
+    for (cap, rule_str) in policy_map {
+        let rule = match rule_str.as_str().unwrap_or("deny") {
+            "allow" => PermissionRule::Allow,
+            "ask" => PermissionRule::Ask,
+            _ => PermissionRule::Deny,
+        };
+        if let Ok(cap_id) = CapabilityId::parse(&cap) {
+            policy_rules.push(PolicyRule { capability: cap_id, rule });
+        }
+    }
+    let policy = PermissionPolicy::from_rules(policy_rules);
+    let artifact_bytes = input
+        .get("budget")
+        .and_then(|budget| budget.get("artifactBytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(64 * 1024 * 1024);
+    let budget = create_runtime_budget(&RuntimeBudgetInput {
+        artifact_bytes: Some(artifact_bytes),
+        ..Default::default()
+    });
+    let is_cancelled =
+        input.get("isCancelled").and_then(Value::as_bool).unwrap_or(false);
+    let request = RunInteractionRequest {
+        run_id,
+        operation_id,
+        is_interactive,
+        is_stale,
+        rounds,
+    };
+    let available = is_identity_bound_interactive_run_primitive_available();
+    match decide_run_interaction_with_flag(
+        &request,
+        &policy,
+        &budget,
+        is_cancelled,
+    ) {
+        Ok(outcome) => {
+            let evidence = create_run_interaction_evidence(&outcome, &request)
+                .map_err(|error| HarnessError::corpus(error.message))?;
+            Ok(json!({
+                "outcome": {
+                    "disposition": evidence.outcome.disposition().as_str(),
+                    "reason": evidence.outcome.reason(),
+                    "isUnavailable": evidence.outcome.is_unavailable(),
+                },
+                "available": available,
+                "reason": RUN_INTERACTION_UNAVAILABLE_REASON,
+                "capability": RUN_INTERACTION_CAPABILITY,
+                "detail": {
+                    "roundCount": evidence.detail.round_count,
+                    "roundDigests": evidence.detail.round_digests,
+                    "totalBytes": evidence.detail.total_bytes,
+                },
+                "interactionDigest": evidence.interaction_digest,
+                "rendered": render_run_interaction_evidence(&evidence),
             }))
         }
         Err(error) => Ok(json!({ "error": error.message })),
@@ -14297,7 +14482,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 252);
+        assert_eq!(loaded.len(), 256);
     }
 
     #[test]

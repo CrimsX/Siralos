@@ -3174,6 +3174,71 @@ function validateVisualEvidenceV35Result(result, label) {
   }
 }
 
+function validateRunInteractionV36Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  if (Object.hasOwn(result, "error")) {
+    assertExactKeys(result, ["error"], `${label}.result`);
+    if (typeof result.error !== "string") {
+      throw new Error(`${label}.result.error is invalid`);
+    }
+    return;
+  }
+  assertExactKeys(
+    result,
+    ["outcome", "available", "reason", "capability", "detail", "interactionDigest", "rendered"],
+    `${label}.result`,
+  );
+  if (
+    typeof result.available !== "boolean" ||
+    result.available !== false ||
+    typeof result.reason !== "string" ||
+    result.reason !== "identity-bound interactive-run primitive not available" ||
+    typeof result.capability !== "string" ||
+    result.capability !== "run.interact" ||
+    typeof result.rendered !== "string"
+  ) {
+    throw new Error(`${label}.result availability shape is invalid`);
+  }
+  const outcome = result.outcome;
+  if (!isObject(outcome)) {
+    throw new Error(`${label}.result.outcome must be an object`);
+  }
+  assertExactKeys(outcome, ["disposition", "reason", "isUnavailable"], `${label}.result.outcome`);
+  if (typeof outcome.disposition !== "string" || typeof outcome.isUnavailable !== "boolean") {
+    throw new Error(`${label}.result.outcome shape is invalid`);
+  }
+  if (outcome.reason !== null && typeof outcome.reason !== "string") {
+    throw new Error(`${label}.result.outcome.reason is invalid`);
+  }
+  const detail = result.detail;
+  if (!isObject(detail)) {
+    throw new Error(`${label}.result.detail must be an object`);
+  }
+  assertExactKeys(detail, ["roundCount", "roundDigests", "totalBytes"], `${label}.result.detail`);
+  if (!Number.isInteger(detail.roundCount) || detail.roundCount < 1) {
+    throw new Error(`${label}.result.detail.roundCount is invalid`);
+  }
+  if (!Number.isInteger(detail.totalBytes) || detail.totalBytes < 1) {
+    throw new Error(`${label}.result.detail.totalBytes is invalid`);
+  }
+  if (!Array.isArray(detail.roundDigests) || detail.roundDigests.length !== detail.roundCount) {
+    throw new Error(`${label}.result.detail.roundDigests is invalid`);
+  }
+  for (const digest of detail.roundDigests) {
+    if (typeof digest !== "string" || !LOWER_SHA256.test(digest)) {
+      throw new Error(`${label}.result.detail.roundDigests entries are invalid`);
+    }
+  }
+  if (
+    typeof result.interactionDigest !== "string" ||
+    !LOWER_SHA256.test(result.interactionDigest)
+  ) {
+    throw new Error(`${label}.result.interactionDigest is invalid`);
+  }
+}
+
 function validateRecoveryTaxonomyResult(record, label) {
   const result = record;
   if (!isObject(result)) {
@@ -3512,6 +3577,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "visual-evidence") {
     validateVisualEvidenceV35Result(record.result, label);
+    return;
+  }
+  if (record.subject === "run-interaction") {
+    validateRunInteractionV36Result(record.result, label);
     return;
   }
   assertExactKeys(record.result, ["version"], `${label}.result`);
