@@ -104,8 +104,8 @@ impl VisualCaptureRequest {
 }
 
 /// Validate a visual capture request. Headless mode is a pairing refusal
-/// (mirrors the Godot adapter's mode/path pairing): a capture without a
-/// visual run is a malformed request, never a silent success.
+/// (the adapter-side pairing discipline, generic here): a capture without
+/// a visual run is a malformed request, never a silent success.
 fn validate_visual_capture_request(
     request: &VisualCaptureRequest,
 ) -> Result<(), RuntimeError> {
