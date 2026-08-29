@@ -1,6 +1,6 @@
 # Siralos Stage-4 entry gate
 
-Status: authoritative (pre-Stage-4 assurance, contract Part 27).
+Status: authoritative (pre-Stage-4 assurance, contract Part 27); the gate held — Stage 4 was subsequently realized in full and Verified at `9566eee` (decision 46).
 Stage 4 (Runtime and Visual QA) begins when and only when every
 criterion below holds. Status is host-observed evidence, never claims.
 This document is the written gate; it is re-evaluated at each

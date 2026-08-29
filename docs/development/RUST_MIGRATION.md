@@ -841,3 +841,14 @@ it is not a Godot-specific launcher. The intended Stage 4 sequence is:
 
 Godot is the first specialization to consume the generic runtime boundary.
 It does not define that boundary in `siralos-core`.
+
+Realized outcome (decision 46): the seven-step sequence above is fully
+consumed — Controlled Runtime Execution and Runtime Evidence landed with the
+v32 reconciliation (4.2 folded into 4.1 per decision 41), the Godot runtime
+adapter at `5bedf57` (decision 41), visual evidence at `4a250d8` (decision
+42), controlled interaction at `42ee5ab` (decision 43), QA workflows at
+`a83c2a4` (decision 44), and run-profiling sessions at `b206a4a` (decision
+45). Differential parity holds at corpus v38 (264 files, 259/259 applicable
+required) with 25 digest-bound post-freeze expectation records, the pinned
+TypeScript oracle untouched, and zero spawn paths. **Stage 4 is Verified** at
+`9566eee`.

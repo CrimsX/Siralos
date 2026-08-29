@@ -35,8 +35,11 @@ const REQUIRED_METADATA = new Map([
   ["Status", "Active development"],
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
-  ["Current completed milestone", "R12"],
-  ["Next milestone", "Stage 4 — Controlled execution"],
+  ["Current completed milestone", "Stage 4 — Controlled execution (Verified at 9566eee)"],
+  [
+    "Next milestone",
+    "none committed (Stage 5 — Composition is future-facing under ADR 0036, not committed)",
+  ],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
 
