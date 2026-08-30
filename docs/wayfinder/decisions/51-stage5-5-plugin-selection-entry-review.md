@@ -48,7 +48,9 @@ is the frozen evidence shape?
 ## Resolution
 
 **The Stage 5.5 implementation slice is authorized as the next implementation slice**
-against this frozen contract and the 4 HITL answers above. Acceptance: gates
+against this frozen contract and the 4 HITL answers above. **Implemented at
+`5e1b3e0`** (corpus v43/284 files, expectations 45 records, audit 279/279
+applicable required; the intersection property unit-proven). Acceptance: gates
 green, `composition-plugin-selection` ×4 at required parity at v43, the
 intersection property unit-proven, `check:rust` green, docs atomic.
 
