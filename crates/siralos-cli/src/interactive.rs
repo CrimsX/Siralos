@@ -27,9 +27,10 @@ use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
 };
 use siralos_core::composition::{
-    DeclaredProfile, compose_effective_policy, decide_plugin_activation,
-    declare_profile,
+    DeclaredProfile, compose_effective_policy, decide_context_control,
+    decide_plugin_activation, declare_profile,
 };
+use siralos_core::context::ContextPolicy;
 use siralos_core::domain::capability::HostAuthority;
 use siralos_core::domain::lifecycle::{ActivationRequest, RuntimeCheckResult};
 use siralos_core::projection::{
@@ -234,6 +235,20 @@ where
         } else {
             None
         };
+    // Stage 5.8 (decision 54): the applied profile's context control
+    // narrows what the session claims about content. Only an
+    // actually-applied profile contributes a control; invalid or refused
+    // profiles contribute none (5.2 semantics), and without one the
+    // session is transparent (Live).
+    let context_control: Option<ContextPolicy> =
+        if effective.applied_profile.is_some() {
+            match &loaded_profile {
+                WorkspaceProfileLoad::Record(record) => record.context.clone(),
+                _ => None,
+            }
+        } else {
+            None
+        };
     let policy = PermissionPolicy::from_rules(effective.rules);
     let projection_config = ApplicationProjectionConfig {
         capacity: Some(ContextCapacity::default()),
@@ -273,8 +288,13 @@ where
             "/context" => {
                 writer
                     .write_all(
-                        format_context_status(application.last_projection())
-                            .as_bytes(),
+                        render_context_claim(
+                            &format_context_status(
+                                application.last_projection(),
+                            ),
+                            context_control.as_ref(),
+                        )
+                        .as_bytes(),
                     )
                     .map_err(InteractiveError::Io)?;
             }
@@ -381,6 +401,29 @@ where
     Ok(())
 }
 
+/// Stage 5.8 (decision 54): evaluate the applied profile's context
+/// control against the rendered `/context` claim. Without a control the
+/// render is byte-for-byte transparent (R7.5 rubric). `Pinned`-stale
+/// keeps the claim usable but appends a truthful label; `Frozen`-stale
+/// refuses the claim use with a typed refusal before anything renders.
+fn render_context_claim(raw: &str, control: Option<&ContextPolicy>) -> String {
+    let Some(control) = control else {
+        return raw.to_owned();
+    };
+    let observed = siralos_core::identity::sha256_hex(raw.as_bytes());
+    let decision = decide_context_control(Some(control), &observed);
+    match &decision.reason {
+        None => format!(
+            "{raw}Context control: context claim {} (bound {})\n",
+            decision.outcome.disposition(),
+            &observed[..8],
+        ),
+        Some(reason) if decision.outcome.usable() => {
+            format!("{raw}Context control: context claim stale ({reason})\n")
+        }
+        Some(reason) => format!("Context projection refused: {reason}\n"),
+    }
+}
 /// Render the `/domains` empty-state or installed view.
 fn render_domains(workspace_root: &Path) -> String {
     match load_plugin_records(workspace_root) {
@@ -1020,9 +1063,6 @@ mod tests {
             &root,
             None,
         );
-        if !output.contains("Activated godot.") {
-            eprintln!("RUN2 OUTPUT:\n{output}\n---END");
-        }
         assert!(output.contains("Activated godot."));
         // Invalid profile: no selection, gate transparent (5.2).
         write(
@@ -1036,6 +1076,51 @@ mod tests {
             None,
         );
         assert!(output.contains("Activated godot."));
+        let _ = remove_dir_all(root);
+    }
+    #[test]
+    fn profile_context_control_gates_context_claims() {
+        // Transparent without a profile: byte-for-byte R7.5 render.
+        let root = temporary_directory("context-control-gate");
+        let bound = "a".repeat(64);
+        let output = run("/context\n/exit\n", &root, None);
+        assert!(output.contains("Context projection: not yet computed"));
+        assert!(!output.contains("Context control:"));
+        assert!(!output.contains("Context projection refused"));
+        // Pinned stale: the claim stays usable but is labelled.
+        write(
+            root.join("siralos.toml"),
+            format!(
+                "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"pinned\"\ndigest = \"{bound}\"\n",
+            ),
+        )
+        .expect("profile");
+        let output = run("/context\n/exit\n", &root, None);
+        assert!(output.contains("Context projection: not yet computed"));
+        assert!(output
+            .contains("Context control: context claim stale (the pinned content changed: expected "));
+        // Frozen stale: the claim use is refused before rendering.
+        write(
+            root.join("siralos.toml"),
+            format!(
+                "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"frozen\"\ndigest = \"{bound}\"\n",
+            ),
+        )
+        .expect("profile");
+        let output = run("/context\n/exit\n", &root, None);
+        assert!(!output.contains("Context projection: not yet computed"));
+        assert!(output.contains(
+            "Context projection refused: the frozen content changed: expected "
+        ));
+        // Invalid control: the profile is not applied, gate transparent.
+        write(
+            root.join("siralos.toml"),
+            "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"pinned\"\n",
+        )
+        .expect("profile");
+        let output = run("/context\n/exit\n", &root, None);
+        assert!(output.contains("Context projection: not yet computed"));
+        assert!(!output.contains("Context control:"));
         let _ = remove_dir_all(root);
     }
 }

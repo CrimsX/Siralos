@@ -3385,6 +3385,31 @@ function validateCompositionLockV42Result(result, label) {
   }
 }
 
+
+function validateCompositionContextControlV46Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(result, ["controlDigest", "disposition", "reason", "rendered"], `${label}.result`);
+  if (!result.disposition || !["fresh", "stale", "blocked"].includes(result.disposition)) {
+    throw new Error(`${label}.result.disposition is invalid`);
+  }
+  if (typeof result.controlDigest !== "string" || !LOWER_SHA256.test(result.controlDigest)) {
+    throw new Error(`${label}.result.controlDigest is invalid`);
+  }
+  if (result.disposition === "fresh") {
+    if (result.reason !== null || !["context claim unbound", "context claim fresh"].includes(result.rendered)) {
+      throw new Error(`${label}.result fresh outcome is invalid`);
+    }
+  } else {
+    if (typeof result.reason !== "string" || !result.reason.startsWith("the ")) {
+      throw new Error(`${label}.result ${result.disposition} reason is invalid`);
+    }
+    if (result.rendered !== `context claim ${result.disposition} (${result.reason})`) {
+      throw new Error(`${label}.result ${result.disposition} rendering is invalid`);
+    }
+  }
+}
 function validateCompositionPluginActivationV45Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -4093,6 +4118,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "composition-plugin-activation") {
     validateCompositionPluginActivationV45Result(record.result, label);
+    return;
+  }
+  if (record.subject === "composition-context-control") {
+    validateCompositionContextControlV46Result(record.result, label);
     return;
   }
   if (record.subject === "composition-effective") {

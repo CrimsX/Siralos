@@ -104,9 +104,11 @@ const SUBJECT_COMPOSITION_PLUGIN_SELECTION: &str =
 const SUBJECT_COMPOSITION_SKILLS: &str = "composition-skills";
 const SUBJECT_COMPOSITION_PLUGIN_ACTIVATION: &str =
     "composition-plugin-activation";
+const SUBJECT_COMPOSITION_CONTEXT_CONTROL: &str =
+    "composition-context-control";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 45;
+const CORPUS_VERSION: u64 = 46;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -490,6 +492,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_PLUGIN_SELECTION
             | SUBJECT_COMPOSITION_SKILLS
             | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
+            | SUBJECT_COMPOSITION_CONTEXT_CONTROL
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -764,7 +767,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_LOCK
         | SUBJECT_COMPOSITION_PLUGIN_SELECTION
         | SUBJECT_COMPOSITION_SKILLS
-        | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
+        | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
+        | SUBJECT_COMPOSITION_CONTEXT_CONTROL => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1549,7 +1553,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_LOCK
         | SUBJECT_COMPOSITION_PLUGIN_SELECTION
         | SUBJECT_COMPOSITION_SKILLS
-        | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
+        | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
+        | SUBJECT_COMPOSITION_CONTEXT_CONTROL => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1575,6 +1580,9 @@ fn run_scenario(
                 }
                 SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
                     composition_plugin_activation_record(input)?
+                }
+                SUBJECT_COMPOSITION_CONTEXT_CONTROL => {
+                    composition_context_control_record(input)?
                 }
                 _ => runtime_evidence_record(input)?,
             };
@@ -6567,6 +6575,43 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_CONTEXT_CONTROL => {
+            const CONTROL_KEYS: [&str; 3] = ["actual", "digest", "kind"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !CONTROL_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            let actual =
+                input.get("actual").and_then(Value::as_str).unwrap_or("");
+            if actual.is_empty() || actual.len() > 128 {
+                return reject(
+                    "actual must be a non-empty bounded string".to_owned(),
+                );
+            }
+            if let Some(kind) = input.get("kind") {
+                let Some(kind_text) = kind.as_str() else {
+                    return reject("kind must be a string".to_owned());
+                };
+                if !["live", "pinned", "frozen"].contains(&kind_text) {
+                    return reject(format!(
+                        "unknown context kind {kind_text}"
+                    ));
+                }
+            }
+            if let Some(digest) = input.get("digest") {
+                let Some(digest_text) = digest.as_str() else {
+                    return reject("digest must be a string".to_owned());
+                };
+                if digest_text.is_empty() || digest_text.len() > 128 {
+                    return reject(
+                        "digest must be a bounded string".to_owned(),
+                    );
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10451,6 +10496,36 @@ fn composition_plugin_selection_record(
     }))
 }
 
+fn composition_context_control_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::composition::{
+        create_context_control_decision_evidence, decide_context_control,
+        render_context_control_decision,
+    };
+    use siralos_core::context::ContextPolicy;
+    let actual =
+        input.get("actual").and_then(Value::as_str).unwrap_or("").to_owned();
+    let kind = input.get("kind").and_then(Value::as_str);
+    let digest = input.get("digest").and_then(Value::as_str);
+    let policy = match kind {
+        None => None,
+        Some(kind) => Some(
+            ContextPolicy::new(kind, digest)
+                .map_err(|error| HarnessError::corpus(error.message))?,
+        ),
+    };
+    let decision = decide_context_control(policy.as_ref(), &actual);
+    let evidence =
+        create_context_control_decision_evidence(&decision, kind.is_some())
+            .map_err(|error| HarnessError::corpus(error.message))?;
+    Ok(json!({
+        "controlDigest": evidence.control_digest,
+        "disposition": evidence.disposition,
+        "reason": evidence.reason,
+        "rendered": render_context_control_decision(&evidence),
+    }))
+}
 fn composition_plugin_activation_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
@@ -15539,7 +15614,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 292);
+        assert_eq!(loaded.len(), 296);
     }
 
     #[test]

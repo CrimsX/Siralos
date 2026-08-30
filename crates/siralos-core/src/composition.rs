@@ -20,6 +20,9 @@ pub mod lock;
 
 pub use lock::{LockPluginIdentity, WorkspaceLock, create_workspace_lock};
 
+use crate::context::{
+    ContextControlOutcome, ContextPolicy, evaluate_context_policy,
+};
 use crate::identity::{CanonicalValue, compute_artifact_digest};
 use crate::tool::capability::CapabilityId;
 use crate::tool::permission::{
@@ -57,6 +60,10 @@ pub struct ProfileRecord {
     /// Optional plugin-selection filter: the profile may only narrow
     /// which Host-enabled plugins a session activates (Stage 5.5).
     pub plugins: Option<Vec<String>>,
+    /// Optional context control: the profile may only narrow what the
+    /// session claims about content — Live/Pinned/Frozen visibility
+    /// (Stage 5.8).
+    pub context: Option<ContextPolicy>,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -436,6 +443,115 @@ pub fn render_plugin_activation_evidence(
     requested: &str,
 ) -> String {
     let base = format!("{} {requested}", evidence.decision);
+    match &evidence.reason {
+        Some(reason) => format!("{base} ({reason})"),
+        None => base,
+    }
+}
+
+/// The composition-level context-control decision (Stage 5.8, decision
+/// 54): the frozen Stage 5.3 evaluation applied to the session's content
+/// claim, where an absent control is transparent (`Live`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextControlDecision {
+    /// The typed outcome from the frozen 5.3 evaluation.
+    pub outcome: ContextControlOutcome,
+    /// Truthful, report-safe reason; `None` when the claim is fresh.
+    pub reason: Option<String>,
+}
+
+/// Decide the session's context claim under the applied profile's
+/// control. `None` (no control declared, or no applied profile) is
+/// transparent: the claim behaves exactly as `Live`.
+#[must_use]
+pub fn decide_context_control(
+    policy: Option<&ContextPolicy>,
+    actual_digest: &str,
+) -> ContextControlDecision {
+    let outcome = match policy {
+        None => evaluate_context_policy(&ContextPolicy::Live, actual_digest),
+        Some(control) => evaluate_context_policy(control, actual_digest),
+    };
+    let reason = match &outcome {
+        ContextControlOutcome::Fresh { .. } => None,
+        ContextControlOutcome::Stale { expected, actual } => Some(format!(
+            "the pinned content changed: expected {expected}, observed {actual}; the claim stays labelled"
+        )),
+        ContextControlOutcome::Blocked { expected, actual } => Some(format!(
+            "the frozen content changed: expected {expected}, observed {actual}; the claim is refused"
+        )),
+    };
+    ContextControlDecision { outcome, reason }
+}
+
+/// Digest-bound evidence for one context-control decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextControlDecisionEvidence {
+    /// The disposition token: `fresh`, `stale`, or `blocked`.
+    pub disposition: String,
+    /// The bound decision digest.
+    pub control_digest: String,
+    /// Truthful reason; `None` when the claim is fresh.
+    pub reason: Option<String>,
+    /// `"absent"` or `"present"`: whether a control was declared.
+    pub control: String,
+}
+
+/// Create digest-bound evidence for a context-control decision.
+///
+/// # Errors
+///
+/// Returns [`ProfileValidationError`] when the digest primitive fails.
+pub fn create_context_control_decision_evidence(
+    decision: &ContextControlDecision,
+    control_present: bool,
+) -> Result<ContextControlDecisionEvidence, ProfileValidationError> {
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        (
+            "control".to_owned(),
+            CanonicalValue::Str(
+                if control_present { "present" } else { "absent" }.to_owned(),
+            ),
+        ),
+        (
+            "disposition".to_owned(),
+            CanonicalValue::Str(decision.outcome.disposition().to_owned()),
+        ),
+        (
+            "reason".to_owned(),
+            match &decision.reason {
+                Some(reason) => CanonicalValue::Str(reason.clone()),
+                None => CanonicalValue::Null,
+            },
+        ),
+    ]));
+    let control_digest =
+        compute_artifact_digest("ContextControlDecisionEvidence", 1, &payload)
+            .map_err(|error| ProfileValidationError {
+                message: error.message,
+            })?
+            .value;
+    Ok(ContextControlDecisionEvidence {
+        disposition: decision.outcome.disposition().to_owned(),
+        control_digest,
+        reason: decision.reason.clone(),
+        control: if control_present {
+            "present".to_owned()
+        } else {
+            "absent".to_owned()
+        },
+    })
+}
+
+/// Deterministic report-safe rendering of context-control evidence.
+#[must_use]
+pub fn render_context_control_decision(
+    evidence: &ContextControlDecisionEvidence,
+) -> String {
+    if evidence.control == "absent" {
+        return "context claim unbound".to_owned();
+    }
+    let base = format!("context claim {}", evidence.disposition);
     match &evidence.reason {
         Some(reason) => format!("{base} ({reason})"),
         None => base,
@@ -911,6 +1027,7 @@ mod tests {
                 entry("tool.workspace.search", PermissionRule::Deny),
             ],
             plugins: None,
+            context: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -935,6 +1052,7 @@ mod tests {
                 entry("ungranted.capability", PermissionRule::Ask),
             ],
             plugins: None,
+            context: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -953,6 +1071,7 @@ mod tests {
             name: "same".to_owned(),
             overlay: vec![entry("tool.workspace.search", PermissionRule::Ask)],
             plugins: None,
+            context: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -968,6 +1087,7 @@ mod tests {
             name: "a".repeat(MAX_PROFILE_NAME_BYTES + 1),
             overlay: Vec::new(),
             plugins: None,
+            context: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -979,6 +1099,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Ask),
             ],
             plugins: None,
+            context: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -996,6 +1117,7 @@ mod tests {
                 })
                 .collect(),
             plugins: None,
+            context: None,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -1035,6 +1157,7 @@ mod tests {
                 entry("tool.workspace.search", PermissionRule::Deny),
             ],
             plugins: None,
+            context: None,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -1223,6 +1346,7 @@ mod tests {
             name: "dev".to_owned(),
             overlay: Vec::new(),
             plugins: Some(vec!["a".to_owned(), "a".to_owned()]),
+            context: None,
         };
         let error = record.validate().expect_err("duplicate refused");
         assert!(error.message.contains("more than once"));
@@ -1230,6 +1354,7 @@ mod tests {
             name: "dev".to_owned(),
             overlay: Vec::new(),
             plugins: Some(vec![String::new()]),
+            context: None,
         };
         let error = record.validate().expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
@@ -1237,10 +1362,78 @@ mod tests {
             name: "dev".to_owned(),
             overlay: Vec::new(),
             plugins: Some(vec!["a".to_owned()]),
+            context: None,
         };
         record.validate().expect("valid");
     }
 
+    #[test]
+    fn context_control_narrowing_and_refusal() {
+        use super::{
+            create_context_control_decision_evidence, decide_context_control,
+            render_context_control_decision,
+        };
+        use crate::context::ContextPolicy;
+        let bound = "a".repeat(64);
+        let other = "b".repeat(64);
+        // Absent control is transparent: the claim behaves as Live.
+        let absent = decide_context_control(None, &other);
+        assert_eq!(absent.outcome.disposition(), "fresh");
+        assert_eq!(absent.reason, None);
+        // Pinned current: fresh and digest-bound.
+        let policy =
+            ContextPolicy::new("pinned", Some(&bound)).expect("policy");
+        let current = decide_context_control(Some(&policy), &bound);
+        assert_eq!(current.outcome.disposition(), "fresh");
+        assert_eq!(current.reason, None);
+        // Pinned stale: usable but labelled with expected/actual.
+        let stale = decide_context_control(Some(&policy), &other);
+        assert_eq!(stale.outcome.disposition(), "stale");
+        assert!(
+            stale
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("the pinned content changed: expected ")
+        );
+        assert!(stale.reason.as_deref().unwrap_or("").contains(&other));
+        // Frozen stale: refused with expected/actual.
+        let frozen =
+            ContextPolicy::new("frozen", Some(&bound)).expect("policy");
+        let blocked = decide_context_control(Some(&frozen), &other);
+        assert_eq!(blocked.outcome.disposition(), "blocked");
+        assert!(
+            blocked
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("the claim is refused")
+        );
+        // Evidence binds control presence, disposition, and reason.
+        let evidence = create_context_control_decision_evidence(&stale, true)
+            .expect("evidence");
+        assert_eq!(evidence.disposition, "stale");
+        assert_eq!(evidence.control, "present");
+        assert_eq!(
+            render_context_control_decision(&evidence),
+            format!(
+                "context claim stale ({})",
+                stale.reason.as_deref().unwrap_or("")
+            ),
+        );
+        let transparent =
+            create_context_control_decision_evidence(&absent, false)
+                .expect("evidence");
+        assert_eq!(
+            render_context_control_decision(&transparent),
+            "context claim unbound"
+        );
+        // Evidence digest moves with the decision payload.
+        let fresh_bound =
+            create_context_control_decision_evidence(&current, true)
+                .expect("evidence");
+        assert_ne!(evidence.control_digest, fresh_bound.control_digest);
+    }
     #[test]
     fn activation_gate_precedence_and_filtering() {
         use super::{

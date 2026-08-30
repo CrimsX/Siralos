@@ -18,6 +18,7 @@ use siralos_core::composition::{
     MAX_PROFILE_NAME_BYTES, MAX_PROFILE_OVERLAY_ENTRIES, ProfileOverlayEntry,
     ProfileRecord,
 };
+use siralos_core::context::ContextPolicy;
 use siralos_core::tool::capability::CapabilityId;
 use siralos_core::tool::permission::PermissionRule;
 use std::path::Path;
@@ -172,6 +173,55 @@ pub fn parse_profile_document(
     parse_profile_value(profile)
 }
 
+/// Parse the additive `[profile.context]` control (Stage 5.8, decision
+/// 54): either the inline string form `context = "live"` or a
+/// `[profile.context]` table with a bounded `kind` and an optional
+/// `digest`. Validation delegates to the frozen 5.3 constructor, so a
+/// malformed control makes the whole profile not applied (5.2
+/// semantics). `live` must not carry a digest.
+fn parse_context_control(
+    control: &toml::Value,
+) -> Result<ContextPolicy, ProfileDocumentError> {
+    if let Some(kind) = control.as_str() {
+        return ContextPolicy::new(kind, None)
+            .map_err(|err| error(err.message));
+    }
+    let Some(table) = control.as_table() else {
+        return Err(error(
+            "The [profile.context] entry must be a string or a table.",
+        ));
+    };
+    for key in table.keys() {
+        if key != "kind" && key != "digest" {
+            return Err(error(format!(
+                "Unknown profile context field {key:?}."
+            )));
+        }
+    }
+    let Some(kind) = table.get("kind").and_then(toml::Value::as_str) else {
+        return Err(error(
+            "The [profile.context] entry requires a string kind.".to_owned(),
+        ));
+    };
+    let digest = match table.get("digest") {
+        None => None,
+        Some(value) => {
+            let Some(text) = value.as_str() else {
+                return Err(error(
+                    "The profile context digest must be a string.".to_owned(),
+                ));
+            };
+            Some(text)
+        }
+    };
+    if kind == "live" && digest.is_some() {
+        return Err(error(
+            "The live profile context control must not carry a digest."
+                .to_owned(),
+        ));
+    }
+    ContextPolicy::new(kind, digest).map_err(|err| error(err.message))
+}
 /// Validate a `[profile]` table value into a `ProfileRecord`. Shared by
 /// [`parse_profile_document`] (full-document input) and
 /// [`load_workspace_profile`] (the `[profile]` subtree of the shared
@@ -188,7 +238,11 @@ pub fn parse_profile_value(
         return Err(error("The [profile] entry must be a table."));
     };
     for key in profile_table.keys() {
-        if key != "name" && key != "permissions" && key != "plugins" {
+        if key != "name"
+            && key != "permissions"
+            && key != "plugins"
+            && key != "context"
+        {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
     }
@@ -247,7 +301,11 @@ pub fn parse_profile_value(
         }
         plugins = Some(ids);
     }
-    Ok(ProfileRecord { name: name.to_owned(), overlay, plugins })
+    let mut context: Option<ContextPolicy> = None;
+    if let Some(control) = profile.get("context") {
+        context = Some(parse_context_control(control)?);
+    }
+    Ok(ProfileRecord { name: name.to_owned(), overlay, plugins, context })
 }
 
 #[cfg(test)]
@@ -276,6 +334,48 @@ mod tests {
         assert_eq!(record.overlay[1].requested, PermissionRule::Deny);
     }
 
+    #[test]
+    fn parses_the_context_control_forms() {
+        let bound = "a".repeat(64);
+        let inline = "\n[profile]\nname = \"dev\"\ncontext = \"live\"\n";
+        let record = parse_profile_document(inline).expect("valid");
+        assert!(matches!(
+            record.context,
+            Some(siralos_core::context::ContextPolicy::Live)
+        ));
+        let tabled = format!(
+            "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"pinned\"\ndigest = \"{bound}\"\n",
+        );
+        let record = parse_profile_document(&tabled).expect("valid");
+        assert!(matches!(
+            record.context,
+            Some(siralos_core::context::ContextPolicy::Pinned { .. })
+        ));
+        let absent = "\n[profile]\nname = \"dev\"\n";
+        let record = parse_profile_document(absent).expect("valid");
+        assert_eq!(record.context, None);
+    }
+
+    #[test]
+    fn rejects_malformed_context_controls() {
+        let bound = "a".repeat(64);
+        for document in [
+            "\n[profile]\nname = \"dev\"\ncontext = \"wat\"\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"pinned\"\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"live\"\ndigest = \"x\"\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"pinned\"\ndigest = \"zz\"\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"pinned\"\ndigest = \"x\"\nwat = 1\n",
+            "\n[profile]\nname = \"dev\"\ncontext = 7\n",
+            format!(
+                "\n[profile]\nname = \"dev\"\n\n[profile.context]\nkind = \"frozen\"\ndigest = \"{bound}\"\nsurprise = true\n",
+            )
+                .as_str(),
+        ] {
+            let error = parse_profile_document(document)
+                .expect_err("malformed control refused");
+            assert!(!error.message.is_empty());
+        }
+    }
     #[test]
     fn rejects_unknown_fields_and_bad_rules() {
         let error =
