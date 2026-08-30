@@ -1,0 +1,11 @@
+{
+  "id": "composition-plugin-selection.empty",
+  "subject": "composition-plugin-selection",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "enabled": ["zeta", "alpha", "guest"],
+    "selected": []
+  }
+}

@@ -188,7 +188,7 @@ pub fn parse_profile_value(
         return Err(error("The [profile] entry must be a table."));
     };
     for key in profile_table.keys() {
-        if key != "name" && key != "permissions" {
+        if key != "name" && key != "permissions" && key != "plugins" {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
     }
@@ -229,7 +229,25 @@ pub fn parse_profile_value(
             });
         }
     }
-    Ok(ProfileRecord { name: name.to_owned(), overlay })
+    let mut plugins: Option<Vec<String>> = None;
+    if let Some(selection) = profile.get("plugins") {
+        let Some(list) = selection.as_array() else {
+            return Err(error(
+                "The [profile.plugins] entry must be an array.",
+            ));
+        };
+        let mut ids = Vec::new();
+        for id in list {
+            let Some(text) = id.as_str() else {
+                return Err(error(
+                    "Each profile plugin id must be a string.".to_owned(),
+                ));
+            };
+            ids.push(text.to_owned());
+        }
+        plugins = Some(ids);
+    }
+    Ok(ProfileRecord { name: name.to_owned(), overlay, plugins })
 }
 
 #[cfg(test)]
@@ -304,6 +322,45 @@ mod tests {
         };
         assert_eq!(record.name, "dev");
         assert_eq!(record.overlay.len(), 1);
+    }
+
+    #[test]
+    fn profile_plugins_parse_and_validate() {
+        let document = r#"
+[profile]
+name = "dev"
+plugins = ["guest", "alpha"]
+
+[profile.permissions]
+"tool.workspace.read" = "ask"
+"#;
+        let record = parse_profile_document(document).expect("parsed");
+        assert_eq!(
+            record.plugins,
+            Some(vec!["guest".to_owned(), "alpha".to_owned()])
+        );
+        let duplicate = r#"
+[profile]
+name = "dev"
+plugins = ["guest", "guest"]
+"#;
+        let record = parse_profile_document(duplicate).expect("shape ok");
+        let error = record.validate().expect_err("dup refused by core");
+        assert!(error.message.contains("more than once"));
+        let malformed = r#"
+[profile]
+name = "dev"
+plugins = [7]
+"#;
+        let error = parse_profile_document(malformed).expect_err("type");
+        assert!(error.message.contains("must be a string"));
+        let unknown = r#"
+[profile]
+name = "dev"
+widgets = ["x"]
+"#;
+        let error = parse_profile_document(unknown).expect_err("unknown");
+        assert!(error.message.contains("Unknown profile field"));
     }
 
     #[test]

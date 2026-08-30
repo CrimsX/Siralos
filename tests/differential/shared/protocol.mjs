@@ -3384,6 +3384,60 @@ function validateCompositionLockV42Result(result, label) {
     throw new Error(`${label}.result stale rendering is invalid`);
   }
 }
+
+function validateCompositionPluginSelectionV43Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    ["activated", "disposition", "reason", "rendered", "selectionDigest"],
+    `${label}.result`,
+  );
+  if (!result.disposition || !["unfiltered", "narrowed"].includes(result.disposition)) {
+    throw new Error(`${label}.result.disposition is invalid`);
+  }
+  if (typeof result.selectionDigest !== "string" || !LOWER_SHA256.test(result.selectionDigest)) {
+    throw new Error(`${label}.result.selectionDigest is invalid`);
+  }
+  if (!Array.isArray(result.activated)) {
+    throw new Error(`${label}.result.activated must be an array`);
+  }
+  let previousId = null;
+  for (const id of result.activated) {
+    if (typeof id !== "string" || id.length === 0 || id.length > 64) {
+      throw new Error(`${label}.result.activated id is invalid`);
+    }
+    if (previousId !== null && id <= previousId) {
+      throw new Error(`${label}.result.activated must be sorted`);
+    }
+    previousId = id;
+  }
+  if (result.reason !== null && typeof result.reason !== "string") {
+    throw new Error(`${label}.result.reason is invalid`);
+  }
+  if (result.disposition === "unfiltered") {
+    if (
+      result.reason !== null ||
+      result.rendered !== `unfiltered plugins=${result.activated.length}`
+    ) {
+      throw new Error(`${label}.result unfiltered outcome is invalid`);
+    }
+  } else {
+    if (!result.rendered.startsWith(`narrowed plugins=${result.activated.length}`)) {
+      throw new Error(`${label}.result narrowed rendering is invalid`);
+    }
+    if (result.reason === null) {
+      if (result.rendered !== `narrowed plugins=${result.activated.length}`) {
+        throw new Error(`${label}.result narrowed rendering is invalid`);
+      }
+    } else {
+      if (!result.reason.startsWith("selection names ") || !result.rendered.includes("unknown=")) {
+        throw new Error(`${label}.result narrowed reason is invalid`);
+      }
+    }
+  }
+}
 function validateRunProfileV38Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -3927,6 +3981,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "composition-lock") {
     validateCompositionLockV42Result(record.result, label);
+    return;
+  }
+  if (record.subject === "composition-plugin-selection") {
+    validateCompositionPluginSelectionV43Result(record.result, label);
     return;
   }
   if (record.subject === "composition-effective") {

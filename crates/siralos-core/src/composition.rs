@@ -14,7 +14,7 @@
 //! probing, no wall clock. Zero-configuration stays first-class: an absent
 //! profile resolves to a typed default.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub mod lock;
 
@@ -31,6 +31,10 @@ use crate::tool::permission::{
 pub const MAX_PROFILE_NAME_BYTES: usize = 64;
 /// Maximum number of permission-overlay entries in one profile.
 pub const MAX_PROFILE_OVERLAY_ENTRIES: usize = 16;
+/// Maximum number of plugin ids in one profile selection.
+pub const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
+/// Maximum profile plugin id length in UTF-8 bytes.
+pub const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
 
 /// One profile permission-overlay entry: the capability and the rule the
 /// profile requests for it. Legality is decided by
@@ -50,6 +54,9 @@ pub struct ProfileRecord {
     pub name: String,
     /// Permission overlay entries (bounded count, unique capabilities).
     pub overlay: Vec<ProfileOverlayEntry>,
+    /// Optional plugin-selection filter: the profile may only narrow
+    /// which Host-enabled plugins a session activates (Stage 5.5).
+    pub plugins: Option<Vec<String>>,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -129,8 +136,167 @@ impl ProfileRecord {
             }
             seen.insert(entry.capability.as_str(), ());
         }
-        Ok(())
+        validate_plugin_selection(&self.plugins)
     }
+}
+
+/// The result of applying a profile's plugin selection to the
+/// Host-enabled set (Stage 5.5): `activated = enabled ∩ selected`. The
+/// intersection can only shrink the enabled set, so a profile can never
+/// broaden activation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginSelection {
+    /// Sorted ids that may activate.
+    pub activated: Vec<String>,
+    /// True when the profile declared no selection (nothing filtered).
+    pub unfiltered: bool,
+    /// Sorted selected ids that are not Host-enabled (diagnostics only).
+    pub unknown: Vec<String>,
+}
+
+impl PluginSelection {
+    /// Typed disposition: `unfiltered` or `narrowed`.
+    pub fn disposition(&self) -> &'static str {
+        if self.unfiltered { "unfiltered" } else { "narrowed" }
+    }
+}
+
+/// Digest-bound evidence for one plugin-selection resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginSelectionEvidence {
+    /// The sorted activated ids.
+    pub activated: Vec<String>,
+    /// Typed disposition (`unfiltered` or `narrowed`).
+    pub disposition: String,
+    /// The bound selection digest.
+    pub selection_digest: String,
+    /// Sorted selected ids that are not Host-enabled.
+    pub unknown: Vec<String>,
+}
+
+/// Create digest-bound evidence for a plugin selection over the single
+/// artifact-digest primitive.
+///
+/// # Errors
+///
+/// Returns [`ProfileValidationError`] when the digest primitive fails.
+pub fn create_plugin_selection_evidence(
+    selection: &PluginSelection,
+) -> Result<PluginSelectionEvidence, ProfileValidationError> {
+    let activated: Vec<CanonicalValue> = selection
+        .activated
+        .iter()
+        .map(|id| CanonicalValue::Str(id.clone()))
+        .collect();
+    let unknown: Vec<CanonicalValue> = selection
+        .unknown
+        .iter()
+        .map(|id| CanonicalValue::Str(id.clone()))
+        .collect();
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        ("activated".to_owned(), CanonicalValue::Array(activated)),
+        (
+            "disposition".to_owned(),
+            CanonicalValue::Str(selection.disposition().to_owned()),
+        ),
+        ("unknown".to_owned(), CanonicalValue::Array(unknown)),
+    ]));
+    let selection_digest =
+        compute_artifact_digest("PluginSelectionEvidence", 1, &payload)
+            .map_err(|error| ProfileValidationError {
+                message: error.message,
+            })?
+            .value;
+    Ok(PluginSelectionEvidence {
+        activated: selection.activated.clone(),
+        disposition: selection.disposition().to_owned(),
+        selection_digest,
+        unknown: selection.unknown.clone(),
+    })
+}
+
+/// Deterministic report-safe rendering of plugin-selection evidence.
+pub fn render_plugin_selection_evidence(
+    evidence: &PluginSelectionEvidence,
+) -> String {
+    let base = format!(
+        "{} plugins={}",
+        evidence.disposition,
+        evidence.activated.len()
+    );
+    if evidence.unknown.is_empty() {
+        base
+    } else {
+        format!("{base} unknown={}", evidence.unknown.len())
+    }
+}
+/// Apply a profile's plugin selection to the Host-enabled set.
+/// `selected` is the profile's declared list (`None` = unfiltered).
+pub fn select_profile_plugins(
+    enabled: &[String],
+    selected: Option<&[String]>,
+) -> PluginSelection {
+    let Some(selected) = selected else {
+        let mut activated: Vec<String> = enabled.to_vec();
+        activated.sort();
+        return PluginSelection {
+            activated,
+            unfiltered: true,
+            unknown: Vec::new(),
+        };
+    };
+    let enabled_set: BTreeSet<&String> = enabled.iter().collect();
+    let selected_set: BTreeSet<&String> = selected.iter().collect();
+    let activated = enabled_set
+        .intersection(&selected_set)
+        .map(|id| (*id).clone())
+        .collect::<Vec<String>>();
+    let unknown = selected_set
+        .difference(&enabled_set)
+        .map(|id| (*id).clone())
+        .collect::<Vec<String>>();
+    PluginSelection { activated, unfiltered: false, unknown }
+}
+/// Validate the optional plugin-selection list: bounded count and id
+/// length, non-empty ids, no duplicates.
+fn validate_plugin_selection(
+    plugins: &Option<Vec<String>>,
+) -> Result<(), ProfileValidationError> {
+    let Some(plugins) = plugins else {
+        return Ok(());
+    };
+    if plugins.len() > MAX_PROFILE_PLUGIN_ENTRIES {
+        return Err(ProfileValidationError {
+            message: format!(
+                "The profile exceeds the {MAX_PROFILE_PLUGIN_ENTRIES}-plugin bound."
+            ),
+        });
+    }
+    let mut seen = BTreeMap::new();
+    for id in plugins {
+        if id.is_empty() || id.len() > MAX_PROFILE_PLUGIN_ID_BYTES {
+            return Err(ProfileValidationError {
+                message: format!(
+                    "A profile plugin id must be 1..={MAX_PROFILE_PLUGIN_ID_BYTES} bytes."
+                ),
+            });
+        }
+        if id.contains('\0') {
+            return Err(ProfileValidationError {
+                message: "A profile plugin id must not contain NUL."
+                    .to_owned(),
+            });
+        }
+        if seen.contains_key(id.as_str()) {
+            return Err(ProfileValidationError {
+                message: format!(
+                    "The profile selects plugin id {id} more than once."
+                ),
+            });
+        }
+        seen.insert(id.as_str(), ());
+    }
+    Ok(())
 }
 
 /// The accepted narrowing result: every overlay entry, guaranteed not
@@ -602,6 +768,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Ask),
                 entry("tool.workspace.search", PermissionRule::Deny),
             ],
+            plugins: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -625,6 +792,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Allow),
                 entry("ungranted.capability", PermissionRule::Ask),
             ],
+            plugins: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -642,6 +810,7 @@ mod tests {
         let record = ProfileRecord {
             name: "same".to_owned(),
             overlay: vec![entry("tool.workspace.search", PermissionRule::Ask)],
+            plugins: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -656,6 +825,7 @@ mod tests {
         let record = ProfileRecord {
             name: "a".repeat(MAX_PROFILE_NAME_BYTES + 1),
             overlay: Vec::new(),
+            plugins: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -666,6 +836,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Deny),
                 entry("tool.workspace.read", PermissionRule::Ask),
             ],
+            plugins: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -682,6 +853,7 @@ mod tests {
                         })
                 })
                 .collect(),
+            plugins: None,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -720,6 +892,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Ask),
                 entry("tool.workspace.search", PermissionRule::Deny),
             ],
+            plugins: None,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -863,5 +1036,66 @@ mod tests {
         )
         .expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
+    }
+
+    #[test]
+    fn plugin_selection_intersects_and_reports_unknown() {
+        let enabled =
+            vec!["zeta".to_owned(), "alpha".to_owned(), "guest".to_owned()];
+        let selection = super::select_profile_plugins(
+            &enabled,
+            Some(&["zeta".to_owned(), "ghost".to_owned()]),
+        );
+        assert_eq!(selection.disposition(), "narrowed");
+        assert_eq!(selection.activated, vec!["zeta".to_owned()]);
+        assert_eq!(selection.unknown, vec!["ghost".to_owned()]);
+        let unfiltered = super::select_profile_plugins(&enabled, None);
+        assert_eq!(unfiltered.disposition(), "unfiltered");
+        assert_eq!(
+            unfiltered.activated,
+            vec!["alpha".to_owned(), "guest".to_owned(), "zeta".to_owned()]
+        );
+        let empty = super::select_profile_plugins(&enabled, Some(&[]));
+        assert_eq!(empty.disposition(), "narrowed");
+        assert!(empty.activated.is_empty());
+        let evidence = super::create_plugin_selection_evidence(&selection)
+            .expect("evidence");
+        assert_eq!(evidence.activated.len(), 1);
+        assert_eq!(evidence.unknown.len(), 1);
+        assert_eq!(
+            super::render_plugin_selection_evidence(&evidence),
+            "narrowed plugins=1 unknown=1"
+        );
+        let unfiltered_evidence =
+            super::create_plugin_selection_evidence(&unfiltered)
+                .expect("evidence");
+        assert_eq!(
+            super::render_plugin_selection_evidence(&unfiltered_evidence),
+            "unfiltered plugins=3"
+        );
+    }
+
+    #[test]
+    fn profile_plugin_selection_validates_bounds_and_uniqueness() {
+        let record = super::ProfileRecord {
+            name: "dev".to_owned(),
+            overlay: Vec::new(),
+            plugins: Some(vec!["a".to_owned(), "a".to_owned()]),
+        };
+        let error = record.validate().expect_err("duplicate refused");
+        assert!(error.message.contains("more than once"));
+        let record = super::ProfileRecord {
+            name: "dev".to_owned(),
+            overlay: Vec::new(),
+            plugins: Some(vec![String::new()]),
+        };
+        let error = record.validate().expect_err("empty id refused");
+        assert!(error.message.contains("1..=64 bytes"));
+        let record = super::ProfileRecord {
+            name: "dev".to_owned(),
+            overlay: Vec::new(),
+            plugins: Some(vec!["a".to_owned()]),
+        };
+        record.validate().expect("valid");
     }
 }

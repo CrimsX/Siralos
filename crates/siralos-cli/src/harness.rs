@@ -99,9 +99,11 @@ const SUBJECT_COMPOSITION_PROFILE: &str = "composition-profile";
 const SUBJECT_COMPOSITION_EFFECTIVE: &str = "composition-effective";
 const SUBJECT_CONTEXT_CONTROLS: &str = "context-controls";
 const SUBJECT_COMPOSITION_LOCK: &str = "composition-lock";
+const SUBJECT_COMPOSITION_PLUGIN_SELECTION: &str =
+    "composition-plugin-selection";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 42;
+const CORPUS_VERSION: u64 = 43;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -482,6 +484,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_EFFECTIVE
             | SUBJECT_CONTEXT_CONTROLS
             | SUBJECT_COMPOSITION_LOCK
+            | SUBJECT_COMPOSITION_PLUGIN_SELECTION
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -753,7 +756,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_PROFILE
         | SUBJECT_COMPOSITION_EFFECTIVE
         | SUBJECT_CONTEXT_CONTROLS
-        | SUBJECT_COMPOSITION_LOCK => {
+        | SUBJECT_COMPOSITION_LOCK
+        | SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1535,7 +1539,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_PROFILE
         | SUBJECT_COMPOSITION_EFFECTIVE
         | SUBJECT_CONTEXT_CONTROLS
-        | SUBJECT_COMPOSITION_LOCK => {
+        | SUBJECT_COMPOSITION_LOCK
+        | SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1553,6 +1558,9 @@ fn run_scenario(
                 }
                 SUBJECT_CONTEXT_CONTROLS => context_controls_record(input)?,
                 SUBJECT_COMPOSITION_LOCK => composition_lock_record(input)?,
+                SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
+                    composition_plugin_selection_record(input)?
+                }
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6410,6 +6418,35 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
+            const SELECTION_KEYS: [&str; 2] = ["enabled", "selected"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !SELECTION_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            for key in ["enabled", "selected"] {
+                if let Some(list) = input.get(key) {
+                    let Some(entries) = list.as_array() else {
+                        return reject(format!("{key} must be an array"));
+                    };
+                    if entries.len() > 16 {
+                        return reject(format!(
+                            "{key} exceeds the 16-entry bound"
+                        ));
+                    }
+                    for entry in entries {
+                        if entry.as_str().is_none() {
+                            return reject(format!(
+                                "{key} entries must be strings"
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10255,6 +10292,42 @@ fn composition_lock_record(input: &Value) -> Result<Value, HarnessError> {
         "identities": identities,
         "lockDigest": lock.lock_digest,
         "rendered": rendered,
+    }))
+}
+
+fn composition_plugin_selection_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::composition::{
+        create_plugin_selection_evidence, render_plugin_selection_evidence,
+        select_profile_plugins,
+    };
+    let strings = |key: &str| -> Option<Vec<String>> {
+        input.get(key).and_then(Value::as_array).map(|list| {
+            list.iter()
+                .map(|value| value.as_str().unwrap_or("").to_owned())
+                .collect()
+        })
+    };
+    let enabled = strings("enabled").unwrap_or_default();
+    let selected = strings("selected");
+    let selection = select_profile_plugins(&enabled, selected.as_deref());
+    let evidence = create_plugin_selection_evidence(&selection)
+        .map_err(|error| HarnessError::corpus(error.message))?;
+    let reason = if selection.unknown.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "selection names {} un-enabled plugin id(s); they stay inactive",
+            selection.unknown.len()
+        ))
+    };
+    Ok(json!({
+        "activated": evidence.activated,
+        "disposition": evidence.disposition,
+        "reason": reason,
+        "rendered": render_plugin_selection_evidence(&evidence),
+        "selectionDigest": evidence.selection_digest,
     }))
 }
 fn qa_workflow_record(input: &Value) -> Result<Value, HarnessError> {
@@ -15250,7 +15323,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 280);
+        assert_eq!(loaded.len(), 284);
     }
 
     #[test]
