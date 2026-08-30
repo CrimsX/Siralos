@@ -1,16 +1,11 @@
 {
   "id": "composition-skill-consumption.bound",
   "subject": "composition-skill-consumption",
-  "platforms": [
-    "*"
-  ],
+  "platforms": ["*"],
   "parity": "required",
   "env": {},
   "input": {
-    "selected": [
-      "guest",
-      "alpha"
-    ],
+    "selected": ["guest", "alpha"],
     "skills": [
       {
         "content": "guidance for alpha",

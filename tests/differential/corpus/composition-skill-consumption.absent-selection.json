@@ -1,9 +1,7 @@
 {
   "id": "composition-skill-consumption.absent-selection",
   "subject": "composition-skill-consumption",
-  "platforms": [
-    "*"
-  ],
+  "platforms": ["*"],
   "parity": "required",
   "env": {},
   "input": {

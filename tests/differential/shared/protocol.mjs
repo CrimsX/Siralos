@@ -3425,10 +3425,7 @@ function validateCompositionSkillConsumptionV48Result(result, label) {
     ["bound", "consumptionDigest", "disposition", "reason", "rendered"],
     `${label}.result`,
   );
-  if (
-    !result.disposition ||
-    !["none", "bound", "unknown"].includes(result.disposition)
-  ) {
+  if (!result.disposition || !["none", "bound", "unknown"].includes(result.disposition)) {
     throw new Error(`${label}.result.disposition is invalid`);
   }
   if (

@@ -1,14 +1,10 @@
 {
   "id": "composition-skill-consumption.absent-catalog",
   "subject": "composition-skill-consumption",
-  "platforms": [
-    "*"
-  ],
+  "platforms": ["*"],
   "parity": "required",
   "env": {},
   "input": {
-    "selected": [
-      "alpha"
-    ]
+    "selected": ["alpha"]
   }
 }
