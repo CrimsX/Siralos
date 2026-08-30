@@ -3416,6 +3416,71 @@ function validateCompositionContextControlV46Result(result, label) {
     }
   }
 }
+function validateCompositionSkillConsumptionV48Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    ["bound", "consumptionDigest", "disposition", "reason", "rendered"],
+    `${label}.result`,
+  );
+  if (
+    !result.disposition ||
+    !["none", "bound", "unknown"].includes(result.disposition)
+  ) {
+    throw new Error(`${label}.result.disposition is invalid`);
+  }
+  if (
+    typeof result.consumptionDigest !== "string" ||
+    !LOWER_SHA256.test(result.consumptionDigest)
+  ) {
+    throw new Error(`${label}.result.consumptionDigest is invalid`);
+  }
+  if (!Array.isArray(result.bound)) {
+    throw new Error(`${label}.result.bound must be an array`);
+  }
+  if (!Array.isArray(result.reason)) {
+    throw new Error(`${label}.result.reason must be the sorted unknown list`);
+  }
+  for (const name of result.reason) {
+    if (typeof name !== "string") {
+      throw new Error(`${label}.result.reason entries must be strings`);
+    }
+  }
+  if (result.disposition === "none") {
+    if (result.bound.length !== 0 || result.reason.length !== 0) {
+      throw new Error(`${label}.result none outcome is invalid`);
+    }
+    if (result.rendered !== "skills none (guidance only)") {
+      throw new Error(`${label}.result none rendering is invalid`);
+    }
+  } else {
+    for (const reference of result.bound) {
+      if (
+        !isObject(reference) ||
+        reference.name === undefined ||
+        typeof reference.digest !== "string" ||
+        !LOWER_SHA256.test(reference.digest)
+      ) {
+        throw new Error(`${label}.result bound reference is invalid`);
+      }
+    }
+    if (result.disposition === "unknown" && result.reason.length === 0) {
+      throw new Error(`${label}.result unknown outcome is invalid`);
+    }
+    if (result.disposition === "bound" && result.reason.length !== 0) {
+      throw new Error(`${label}.result bound outcome is invalid`);
+    }
+    const expected =
+      result.disposition === "bound"
+        ? `skills bound bound skills=${result.bound.length} (guidance only)`
+        : `skills unknown bound skills=${result.bound.length} (guidance only) unknown=${result.reason.length}`;
+    if (result.rendered !== expected) {
+      throw new Error(`${label}.result ${result.disposition} rendering is invalid`);
+    }
+  }
+}
 function validateCompositionLockVerifyV47Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -4161,6 +4226,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "composition-lock-verify") {
     validateCompositionLockVerifyV47Result(record.result, label);
+    return;
+  }
+  if (record.subject === "composition-skill-consumption") {
+    validateCompositionSkillConsumptionV48Result(record.result, label);
     return;
   }
   if (record.subject === "composition-effective") {

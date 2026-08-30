@@ -242,6 +242,7 @@ pub fn parse_profile_value(
             && key != "permissions"
             && key != "plugins"
             && key != "context"
+            && key != "skills"
         {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
@@ -305,7 +306,29 @@ pub fn parse_profile_value(
     if let Some(control) = profile.get("context") {
         context = Some(parse_context_control(control)?);
     }
-    Ok(ProfileRecord { name: name.to_owned(), overlay, plugins, context })
+    let mut skills: Option<Vec<String>> = None;
+    if let Some(selection) = profile.get("skills") {
+        let Some(list) = selection.as_array() else {
+            return Err(error("The [profile.skills] entry must be an array."));
+        };
+        let mut names = Vec::new();
+        for skill_name in list {
+            let Some(text) = skill_name.as_str() else {
+                return Err(error(
+                    "Each profile skill name must be a string.".to_owned(),
+                ));
+            };
+            names.push(text.to_owned());
+        }
+        skills = Some(names);
+    }
+    Ok(ProfileRecord {
+        name: name.to_owned(),
+        overlay,
+        plugins,
+        context,
+        skills,
+    })
 }
 
 #[cfg(test)]
@@ -334,6 +357,31 @@ mod tests {
         assert_eq!(record.overlay[1].requested, PermissionRule::Deny);
     }
 
+    #[test]
+    fn parses_the_skills_selection_forms() {
+        let document =
+            "\n[profile]\nname = \"dev\"\nskills = [\"alpha\", \"guest\"]\n";
+        let record = parse_profile_document(document).expect("valid");
+        assert_eq!(
+            record.skills,
+            Some(vec!["alpha".to_owned(), "guest".to_owned()])
+        );
+        let absent = parse_profile_document("\n[profile]\nname = \"dev\"\n")
+            .expect("valid");
+        assert_eq!(absent.skills, None);
+    }
+
+    #[test]
+    fn rejects_malformed_skills_selections() {
+        let non_array = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nskills = \"alpha\"\n",
+        );
+        assert!(non_array.is_err());
+        let non_string = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nskills = [\"alpha\", 7]\n",
+        );
+        assert!(non_string.is_err());
+    }
     #[test]
     fn parses_the_context_control_forms() {
         let bound = "a".repeat(64);

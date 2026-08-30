@@ -1,0 +1,21 @@
+{
+  "id": "composition-skill-consumption.unknown",
+  "subject": "composition-skill-consumption",
+  "platforms": [
+    "*"
+  ],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "selected": [
+      "alpha",
+      "ghost"
+    ],
+    "skills": [
+      {
+        "content": "guidance for alpha",
+        "name": "alpha"
+      }
+    ]
+  }
+}

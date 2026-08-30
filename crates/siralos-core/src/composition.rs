@@ -24,6 +24,11 @@ use crate::context::{
     ContextControlOutcome, ContextPolicy, evaluate_context_policy,
 };
 use crate::identity::{CanonicalValue, compute_artifact_digest};
+use crate::skills::{
+    SkillCatalog, SkillResolution, SkillResolutionEvidence,
+    create_skill_resolution_evidence, render_skill_resolution_evidence,
+    resolve_profile_skills,
+};
 use crate::tool::capability::CapabilityId;
 use crate::tool::permission::{
     PermissionDecision, PermissionPolicy, PermissionRule, PolicyRule,
@@ -64,6 +69,10 @@ pub struct ProfileRecord {
     /// session claims about content — Live/Pinned/Frozen visibility
     /// (Stage 5.8).
     pub context: Option<ContextPolicy>,
+    /// Optional opt-in skill selection: the profile may only bind
+    /// declarative guidance from the workspace catalog — never authority
+    /// (Stage 5.10).
+    pub skills: Option<Vec<String>>,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -710,6 +719,141 @@ pub fn render_lock_verification_evidence(
         },
     }
 }
+
+/// The session-side skill-catalog state fed to the consumption
+/// decision (Stage 5.10, decision 56): the workspace declares no
+/// skills directory, or it loads a validated catalog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillCatalogState<'a> {
+    /// No `.siralos/skills` directory: nothing can bind.
+    Absent,
+    /// The validated workspace catalog.
+    Loaded(&'a SkillCatalog),
+}
+
+/// The typed skill-consumption outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillConsumptionOutcome {
+    /// Nothing binds (no selection, empty selection, or no catalog).
+    None,
+    /// Every selected skill bound to the catalog.
+    Bound,
+    /// Some selected skills are not declared by the workspace.
+    Unknown,
+}
+
+impl SkillConsumptionOutcome {
+    /// Stable disposition token for evidence and wire output.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Bound => "bound",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// The result of consuming the frozen 5.6 skill seam at a session
+/// boundary. Guidance only: the decision can never add capability,
+/// Tool, or permission, and absent inputs are transparent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillConsumptionDecision {
+    /// The typed outcome.
+    pub outcome: SkillConsumptionOutcome,
+    /// The frozen 5.6 resolution underneath the decision.
+    pub resolution: SkillResolution,
+}
+
+/// Decide the session's skill consumption. Absent selection or an
+/// absent catalog binds nothing (transparent); otherwise the frozen
+/// opt-in intersection applies and unknown selections surface
+/// truthfully as the `unknown` outcome.
+#[must_use]
+pub fn compose_skill_consumption(
+    selected: Option<&[String]>,
+    catalog: SkillCatalogState<'_>,
+) -> SkillConsumptionDecision {
+    let resolution = match (catalog, selected) {
+        (SkillCatalogState::Absent, _) | (_, None) => {
+            SkillResolution { bound: Vec::new(), unknown: Vec::new() }
+        }
+        (SkillCatalogState::Loaded(catalog), Some(selected)) => {
+            resolve_profile_skills(catalog, Some(selected))
+        }
+    };
+    let outcome =
+        if resolution.unknown.is_empty() && resolution.bound.is_empty() {
+            SkillConsumptionOutcome::None
+        } else if resolution.unknown.is_empty() {
+            SkillConsumptionOutcome::Bound
+        } else {
+            SkillConsumptionOutcome::Unknown
+        };
+    SkillConsumptionDecision { outcome, resolution }
+}
+
+/// Digest-bound evidence for one skill-consumption decision. Like the
+/// 5.6 evidence it binds, the payload literally carries
+/// `authority = none`: the digest is only valid for a consumption that
+/// grants no capability at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillConsumptionEvidence {
+    /// The typed outcome string.
+    pub outcome: String,
+    /// The frozen 5.6 resolution evidence underneath the decision.
+    pub resolution: SkillResolutionEvidence,
+    /// The bound consumption digest.
+    pub consumption_digest: String,
+}
+
+/// Create digest-bound evidence for a skill-consumption decision.
+///
+/// # Errors
+///
+/// Returns [`ProfileValidationError`] when the digest primitive fails.
+pub fn create_skill_consumption_evidence(
+    decision: &SkillConsumptionDecision,
+) -> Result<SkillConsumptionEvidence, ProfileValidationError> {
+    let resolution = create_skill_resolution_evidence(&decision.resolution)
+        .map_err(|error| ProfileValidationError { message: error.message })?;
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        ("authority".to_owned(), CanonicalValue::Str("none".to_owned())),
+        (
+            "outcome".to_owned(),
+            CanonicalValue::Str(decision.outcome.as_str().to_owned()),
+        ),
+        (
+            "resolutionDigest".to_owned(),
+            CanonicalValue::Str(resolution.resolution_digest.clone()),
+        ),
+    ]));
+    let consumption_digest =
+        compute_artifact_digest("SkillConsumptionEvidence", 1, &payload)
+            .map_err(|error| ProfileValidationError {
+                message: error.message,
+            })?
+            .value;
+    Ok(SkillConsumptionEvidence {
+        outcome: decision.outcome.as_str().to_owned(),
+        resolution,
+        consumption_digest,
+    })
+}
+
+/// Deterministic report-safe rendering of skill-consumption evidence.
+#[must_use]
+pub fn render_skill_consumption_evidence(
+    evidence: &SkillConsumptionEvidence,
+) -> String {
+    match evidence.outcome.as_str() {
+        "none" => "skills none (guidance only)".to_owned(),
+        other => format!(
+            "skills {other} {}",
+            render_skill_resolution_evidence(&evidence.resolution)
+        ),
+    }
+}
 /// The accepted narrowing result: every overlay entry, guaranteed not
 /// broader than the Host's current rule for its capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1181,6 +1325,7 @@ mod tests {
             ],
             plugins: None,
             context: None,
+            skills: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1206,6 +1351,7 @@ mod tests {
             ],
             plugins: None,
             context: None,
+            skills: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1225,6 +1371,7 @@ mod tests {
             overlay: vec![entry("tool.workspace.search", PermissionRule::Ask)],
             plugins: None,
             context: None,
+            skills: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1241,6 +1388,7 @@ mod tests {
             overlay: Vec::new(),
             plugins: None,
             context: None,
+            skills: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -1253,6 +1401,7 @@ mod tests {
             ],
             plugins: None,
             context: None,
+            skills: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -1271,6 +1420,7 @@ mod tests {
                 .collect(),
             plugins: None,
             context: None,
+            skills: None,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -1311,6 +1461,7 @@ mod tests {
             ],
             plugins: None,
             context: None,
+            skills: None,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -1500,6 +1651,7 @@ mod tests {
             overlay: Vec::new(),
             plugins: Some(vec!["a".to_owned(), "a".to_owned()]),
             context: None,
+            skills: None,
         };
         let error = record.validate().expect_err("duplicate refused");
         assert!(error.message.contains("more than once"));
@@ -1508,6 +1660,7 @@ mod tests {
             overlay: Vec::new(),
             plugins: Some(vec![String::new()]),
             context: None,
+            skills: None,
         };
         let error = record.validate().expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
@@ -1516,10 +1669,84 @@ mod tests {
             overlay: Vec::new(),
             plugins: Some(vec!["a".to_owned()]),
             context: None,
+            skills: None,
         };
         record.validate().expect("valid");
     }
 
+    #[test]
+    fn skill_consumption_binds_guidance_only_and_transparently() {
+        use super::{
+            SkillCatalogState, SkillConsumptionOutcome,
+            compose_skill_consumption, create_skill_consumption_evidence,
+            render_skill_consumption_evidence,
+        };
+        use crate::skills::{SkillCatalog, SkillDefinition};
+        let catalog = SkillCatalog::new(vec![
+            SkillDefinition::new("alpha", "guidance for alpha")
+                .expect("skill"),
+            SkillDefinition::new("guest", "guidance for guest")
+                .expect("skill"),
+        ])
+        .expect("catalog");
+        let loaded = SkillCatalogState::Loaded(&catalog);
+
+        // Absent selection binds nothing (transparent).
+        let none = compose_skill_consumption(None, loaded);
+        assert_eq!(none.outcome, SkillConsumptionOutcome::None);
+        // An absent catalog binds nothing even with a selection.
+        let absent = compose_skill_consumption(
+            Some(&["alpha".to_owned()]),
+            SkillCatalogState::Absent,
+        );
+        assert_eq!(absent.outcome, SkillConsumptionOutcome::None);
+
+        // A full selection binds every skill (guidance only).
+        let bound = compose_skill_consumption(
+            Some(&["guest".to_owned(), "alpha".to_owned()]),
+            SkillCatalogState::Loaded(&catalog),
+        );
+        assert_eq!(bound.outcome, SkillConsumptionOutcome::Bound);
+        assert_eq!(bound.resolution.bound.len(), 2);
+        assert_eq!(bound.resolution.bound[0].name, "alpha");
+
+        // Unknown selections surface truthfully; the bound subset applies.
+        let unknown = compose_skill_consumption(
+            Some(&["alpha".to_owned(), "ghost".to_owned()]),
+            SkillCatalogState::Loaded(&catalog),
+        );
+        assert_eq!(unknown.outcome, SkillConsumptionOutcome::Unknown);
+        assert_eq!(unknown.resolution.unknown, vec!["ghost".to_owned()]);
+        assert_eq!(unknown.resolution.bound.len(), 1);
+
+        // Evidence is digest-bound, carries authority = none transitively,
+        // and renders deterministically.
+        let evidence =
+            create_skill_consumption_evidence(&bound).expect("evidence");
+        assert_eq!(evidence.outcome, "bound");
+        assert_eq!(
+            evidence.consumption_digest,
+            create_skill_consumption_evidence(&bound)
+                .expect("evidence")
+                .consumption_digest
+        );
+        assert_ne!(
+            evidence.consumption_digest,
+            create_skill_consumption_evidence(&none)
+                .expect("evidence")
+                .consumption_digest
+        );
+        assert_eq!(
+            render_skill_consumption_evidence(
+                &create_skill_consumption_evidence(&none).expect("evidence"),
+            ),
+            "skills none (guidance only)"
+        );
+        assert_eq!(
+            render_skill_consumption_evidence(&evidence),
+            "skills bound bound skills=2 (guidance only)"
+        );
+    }
     #[test]
     fn lock_verification_never_gates_and_reports_truthfully() {
         use super::{

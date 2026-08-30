@@ -20,6 +20,9 @@ use siralos_adapters::profile_config::{
     WorkspaceProfileLoad, load_workspace_profile,
 };
 use siralos_adapters::provider::DeterministicFakeProvider;
+use siralos_adapters::skills_loader::{
+    SkillCatalogLoad, load_workspace_skills,
+};
 use siralos_adapters::tool::{
     WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
 };
@@ -32,9 +35,10 @@ use siralos_core::composition::lock::{
 };
 use siralos_core::composition::{
     DeclaredProfile, EffectiveRunPolicy, LockVerificationDecision,
-    StoredLockDigest, compose_effective_policy,
-    create_effective_policy_evidence, decide_context_control,
-    decide_lock_verification, decide_plugin_activation, declare_profile,
+    SkillCatalogState, StoredLockDigest, compose_effective_policy,
+    compose_skill_consumption, create_effective_policy_evidence,
+    decide_context_control, decide_lock_verification,
+    decide_plugin_activation, declare_profile,
 };
 use siralos_core::context::ContextPolicy;
 use siralos_core::domain::capability::HostAuthority;
@@ -263,15 +267,25 @@ where
     if let Some(reason) = &lock_decision.reason {
         eprintln!("siralos: lock not trusted: {reason}");
     }
+    // Stage 5.10 (decision 56): the applied profile's opt-in skill
+    // selection resolves against the workspace catalog. Guidance only —
+    // the consumption can never add capability, Tool, or permission —
+    // and absent selection/catalog stays byte-transparent (R7.5).
+    let skills_segment =
+        compose_skills_segment(&workspace_root, &loaded_profile, &effective);
+    let mut segments = vec![SegmentInput {
+        id: "siralos-core-instructions".to_owned(),
+        stability: Stability::Stable,
+        title: "Siralos instructions".to_owned(),
+        content: SIRALOS_SYSTEM_INSTRUCTIONS.to_owned(),
+    }];
+    if let Some(segment) = skills_segment {
+        segments.push(segment);
+    }
     let policy = PermissionPolicy::from_rules(effective.rules);
     let projection_config = ApplicationProjectionConfig {
         capacity: Some(ContextCapacity::default()),
-        segments: vec![SegmentInput {
-            id: "siralos-core-instructions".to_owned(),
-            stability: Stability::Stable,
-            title: "Siralos instructions".to_owned(),
-            content: SIRALOS_SYSTEM_INSTRUCTIONS.to_owned(),
-        }],
+        segments,
         ..ApplicationProjectionConfig::default()
     };
     let mut application = SiralosApplication::new(
@@ -437,6 +451,81 @@ fn render_context_claim(raw: &str, control: Option<&ContextPolicy>) -> String {
         }
         Some(reason) => format!("Context projection refused: {reason}\n"),
     }
+}
+/// Stage 5.10 (decision 56): resolve the applied profile's opt-in skill
+/// selection against the workspace skill catalog. Guidance only — the
+/// consumption can never add capability, Tool, or permission. Returns
+/// the bounded, deterministic workspace-skills guidance segment when at
+/// least one skill binds; absent selection/catalog or unknown
+/// selections are reported truthfully and leave the session
+/// byte-transparent (R7.5 preserved).
+fn compose_skills_segment(
+    workspace_root: &Path,
+    loaded_profile: &WorkspaceProfileLoad,
+    effective: &EffectiveRunPolicy,
+) -> Option<SegmentInput> {
+    let session_skills: Option<Vec<String>> =
+        if effective.applied_profile.is_some() {
+            match loaded_profile {
+                WorkspaceProfileLoad::Record(record) => record.skills.clone(),
+                _ => None,
+            }
+        } else {
+            None
+        };
+    let loaded_catalog = match load_workspace_skills(workspace_root) {
+        Ok(SkillCatalogLoad::Catalog(catalog)) => Some(catalog),
+        Ok(SkillCatalogLoad::Absent) => None,
+        Err(failure) => {
+            eprintln!(
+                "siralos: skill catalog not trusted: {}",
+                failure.message
+            );
+            None
+        }
+    };
+    let skill_catalog_state = match &loaded_catalog {
+        Some(catalog) => SkillCatalogState::Loaded(catalog),
+        None => SkillCatalogState::Absent,
+    };
+    let skill_consumption = compose_skill_consumption(
+        session_skills.as_deref(),
+        skill_catalog_state,
+    );
+    if !skill_consumption.resolution.unknown.is_empty() {
+        eprintln!(
+            "siralos: skills not in the workspace catalog: {}",
+            skill_consumption.resolution.unknown.join(", ")
+        );
+    }
+    // Bound guidance applies for both `bound` and `unknown` outcomes
+    // (the bound subset applies; unknown names are reported truthfully
+    // above). Only `none` leaves the session byte-transparent.
+    if skill_consumption.resolution.bound.is_empty() {
+        return None;
+    }
+    // Bounded, deterministic guidance segment: sorted by name (the
+    // catalog and resolution are sorted), capped at the skill-content
+    // bound per skill by the loader.
+    let mut guidance = String::new();
+    for reference in &skill_consumption.resolution.bound {
+        if let Some(skill) = loaded_catalog
+            .as_ref()
+            .and_then(|catalog| catalog.get(&reference.name))
+        {
+            guidance
+                .push_str(&format!("## {}\n{}\n", skill.name, skill.content));
+        }
+    }
+    if guidance.is_empty() {
+        return None;
+    }
+    Some(SegmentInput {
+        id: "workspace-skills".to_owned(),
+        stability: Stability::Stable,
+        title: "Workspace skills".to_owned(),
+        content: guidance,
+    })
 }
 /// Stage 5.9 (decision 55): verify the on-disk `siralos.lock` against
 /// the recomputed current lock. The current lock is recomputed from the
@@ -1163,6 +1252,82 @@ mod tests {
             None,
         );
         assert!(output.contains("Activated godot."));
+        let _ = remove_dir_all(root);
+    }
+    #[test]
+    fn session_skill_consumption_surfaces_guidance_only() {
+        use super::compose_skills_segment;
+        use super::{
+            DeclaredProfile, EffectiveRunPolicy, PermissionPolicy,
+            PermissionRule, PolicyRule, WorkspaceProfileLoad,
+            compose_effective_policy, declare_profile, load_workspace_profile,
+        };
+        let root = temporary_directory("skill-consume");
+        create_dir_all(root.join(".siralos").join("skills"))
+            .expect("skills dir");
+        write(
+            root.join(".siralos").join("skills").join("alpha.md"),
+            "guidance for alpha",
+        )
+        .expect("skill file");
+        let host_rules = vec![PolicyRule {
+            capability: siralos_core::tool::CapabilityId::parse(
+                "workspace.read",
+            )
+            .expect("capability id"),
+            rule: PermissionRule::Allow,
+        }];
+        let effective: EffectiveRunPolicy =
+            compose_effective_policy(&host_rules, &DeclaredProfile::Absent);
+        // Without an applied profile nothing binds (transparent).
+        let absent_profile = compose_skills_segment(
+            &root,
+            &WorkspaceProfileLoad::Absent,
+            &effective,
+        );
+        assert!(absent_profile.is_none());
+        // Applied profile with an opt-in selection: the bound guidance
+        // reaches the segment, sorted and guidance-only. Unknown names
+        // never bind and never appear in the guidance.
+        write(
+            root.join("siralos.toml"),
+            "\n[profile]\nname = \"dev\"\nskills = [\"ghost\", \"alpha\"]\n",
+        )
+        .expect("profile");
+        let loaded = load_workspace_profile(&root);
+        let declared = match &loaded {
+            WorkspaceProfileLoad::Record(record) => declare_profile(
+                Some(record),
+                &PermissionPolicy::from_rules(host_rules.clone()),
+            ),
+            WorkspaceProfileLoad::Absent => DeclaredProfile::Absent,
+            WorkspaceProfileLoad::Invalid { diagnostic } => {
+                DeclaredProfile::Invalid { diagnostic: diagnostic.clone() }
+            }
+        };
+        let effective_with_profile =
+            compose_effective_policy(&host_rules, &declared);
+        let segment =
+            compose_skills_segment(&root, &loaded, &effective_with_profile);
+        let segment = segment.expect("skills segment");
+        assert_eq!(segment.id, "workspace-skills");
+        assert_eq!(segment.title, "Workspace skills");
+        assert!(segment.content.contains("guidance for alpha"));
+        assert!(!segment.content.contains("ghost"));
+        // A malformed skills key leaves the profile unapplied (5.2):
+        // nothing binds, session proceeds transparently.
+        write(
+            root.join("siralos.toml"),
+            "\n[profile]\nname = \"dev\"\nskills = \"alpha\"\n",
+        )
+        .expect("bad profile");
+        let loaded_bad = load_workspace_profile(&root);
+        let segment = compose_skills_segment(
+            &root,
+            &loaded_bad,
+            &effective_with_profile,
+        );
+        assert!(segment.is_none());
         let _ = remove_dir_all(root);
     }
     #[test]

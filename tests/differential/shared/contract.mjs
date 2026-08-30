@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 47;
+export const CORPUS_VERSION = 48;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -78,6 +78,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "composition-plugin-activation",
   "composition-context-control",
   "composition-lock-verify",
+  "composition-skill-consumption",
   "cli-session",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
@@ -928,6 +929,7 @@ function validateSubjectInputs(scenario, label) {
     "composition-plugin-activation",
     "composition-context-control",
     "composition-lock-verify",
+    "composition-skill-consumption",
   ]);
   if (RUNTIME_SUBJECTS.has(scenario.subject)) {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
@@ -1149,6 +1151,7 @@ export function validateScenario(scenario, file) {
     "composition-plugin-activation",
     "composition-context-control",
     "composition-lock-verify",
+    "composition-skill-consumption",
     "cli-session",
   ]);
   const expectedKeys = withInput.has(scenario.subject)

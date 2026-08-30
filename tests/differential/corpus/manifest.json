@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 47,
+  "corpusVersion": 48,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -145,6 +145,22 @@
     {
       "file": "composition-profile.widening-refused.json",
       "sha256": "0f055dbb918c66279d60f98b3fc2d86ca86c29e641d7d593ef30b783baa2a3fd"
+    },
+    {
+      "file": "composition-skill-consumption.absent-catalog.json",
+      "sha256": "268c472d54f40ae385f60a0f25b1e7508d86d6db43030ceaac53427240771f1b"
+    },
+    {
+      "file": "composition-skill-consumption.absent-selection.json",
+      "sha256": "ab9485757e2bd6b79aa40604019b8aa92b9d7ed66bc9cb20b3053c7a8097db72"
+    },
+    {
+      "file": "composition-skill-consumption.bound.json",
+      "sha256": "177b1f9e38010b5ce833d89e68877e8b8e6067d8455ff11052425ce9f153920c"
+    },
+    {
+      "file": "composition-skill-consumption.unknown.json",
+      "sha256": "2e6708ddf42295fbbcb7f4e9215884fb396e6876366fa8b93a9f8fc2d2ba4841"
     },
     {
       "file": "composition-skills.absent.json",
@@ -1203,5 +1219,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "1245944d6c1d8232bd2502aec158595a5bc580e42f8d71930b240d70035738bb"
+  "corpusSha256": "c9c0075e28b43e025e95f6b5440ca3b06703caaa5627d403579d6a7c0b19568f"
 }
