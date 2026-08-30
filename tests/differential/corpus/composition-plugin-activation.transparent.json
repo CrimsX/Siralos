@@ -1,1 +1,8 @@
-{"id":"composition-plugin-activation.transparent","subject":"composition-plugin-activation","platforms":["*"],"parity":"required","env":{},"input":{"enabled":["zeta","alpha","guest"],"requested":"guest"}}
+{
+  "id": "composition-plugin-activation.transparent",
+  "subject": "composition-plugin-activation",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "enabled": ["zeta", "alpha", "guest"], "requested": "guest" }
+}

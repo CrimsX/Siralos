@@ -3385,13 +3385,19 @@ function validateCompositionLockV42Result(result, label) {
   }
 }
 
-
 function validateCompositionPluginActivationV45Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
   }
-  assertExactKeys(result, ["activationDigest", "decision", "reason", "rendered"], `${label}.result`);
-  if (!result.decision || !["activated", "refused-filtered", "refused-not-enabled"].includes(result.decision)) {
+  assertExactKeys(
+    result,
+    ["activationDigest", "decision", "reason", "rendered"],
+    `${label}.result`,
+  );
+  if (
+    !result.decision ||
+    !["activated", "refused-filtered", "refused-not-enabled"].includes(result.decision)
+  ) {
     throw new Error(`${label}.result.decision is invalid`);
   }
   if (typeof result.activationDigest !== "string" || !LOWER_SHA256.test(result.activationDigest)) {
@@ -3405,7 +3411,10 @@ function validateCompositionPluginActivationV45Result(result, label) {
     if (typeof result.reason !== "string" || !result.reason.startsWith("the ")) {
       throw new Error(`${label}.result refusal reason is invalid`);
     }
-    if (!result.rendered.startsWith(`${result.decision} `) || !result.rendered.endsWith(`(${result.reason})`)) {
+    if (
+      !result.rendered.startsWith(`${result.decision} `) ||
+      !result.rendered.endsWith(`(${result.reason})`)
+    ) {
       throw new Error(`${label}.result refusal rendering is invalid`);
     }
   }

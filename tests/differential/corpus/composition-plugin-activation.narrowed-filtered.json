@@ -1,1 +1,12 @@
-{"id":"composition-plugin-activation.narrowed-filtered","subject":"composition-plugin-activation","platforms":["*"],"parity":"required","env":{},"input":{"enabled":["zeta","alpha","guest"],"requested":"zeta","selected":["alpha","guest"]}}
+{
+  "id": "composition-plugin-activation.narrowed-filtered",
+  "subject": "composition-plugin-activation",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "enabled": ["zeta", "alpha", "guest"],
+    "requested": "zeta",
+    "selected": ["alpha", "guest"]
+  }
+}
