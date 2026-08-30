@@ -16,6 +16,10 @@
 
 use std::collections::BTreeMap;
 
+pub mod lock;
+
+pub use lock::{LockPluginIdentity, WorkspaceLock, create_workspace_lock};
+
 use crate::identity::{CanonicalValue, compute_artifact_digest};
 use crate::tool::capability::CapabilityId;
 use crate::tool::permission::{
@@ -793,5 +797,71 @@ mod tests {
         assert!(diagnostic.contains("tool.workspace.read"));
         assert_eq!(effective.rules.len(), 1);
         assert_eq!(effective.rules[0].rule, PermissionRule::Ask);
+    }
+
+    #[test]
+    fn lock_resolution_is_deterministic_and_sorted() {
+        let mk = |id: &str, digest: &str| super::lock::LockPluginIdentity {
+            id: id.to_owned(),
+            path: format!("{id}.wasm"),
+            digest: digest.to_owned(),
+        };
+        let low = "a".repeat(64);
+        let high = "b".repeat(64);
+        let profile = "c".repeat(64);
+        let first = super::lock::create_workspace_lock(
+            Some(&profile),
+            &[mk("zeta", &low), mk("alpha", &high)],
+        )
+        .expect("lock");
+        let second = super::lock::create_workspace_lock(
+            Some(&profile),
+            &[mk("alpha", &high), mk("zeta", &low)],
+        )
+        .expect("lock");
+        assert_eq!(first.lock_digest, second.lock_digest);
+        assert_eq!(first.plugins[0].id, "alpha");
+        assert_eq!(first.plugins[1].id, "zeta");
+        assert_eq!(first.profile_digest.as_deref(), Some(profile.as_str()));
+        let absent =
+            super::lock::create_workspace_lock(None, &[]).expect("lock");
+        assert_eq!(absent.plugins.len(), 0);
+        assert!(absent.profile_digest.is_none());
+        assert_ne!(absent.lock_digest, first.lock_digest);
+    }
+
+    #[test]
+    fn lock_rejects_malformed_identities() {
+        let good = "a".repeat(64);
+        let error = super::lock::create_workspace_lock(Some("nothex"), &[])
+            .expect_err("profile digest refused");
+        assert!(error.message.contains("64 lowercase hex"));
+        let error = super::lock::create_workspace_lock(
+            None,
+            &[
+                super::lock::LockPluginIdentity {
+                    id: "dup".to_owned(),
+                    path: "a.wasm".to_owned(),
+                    digest: good.clone(),
+                },
+                super::lock::LockPluginIdentity {
+                    id: "dup".to_owned(),
+                    path: "b.wasm".to_owned(),
+                    digest: good.clone(),
+                },
+            ],
+        )
+        .expect_err("duplicate refused");
+        assert!(error.message.contains("more than once"));
+        let error = super::lock::create_workspace_lock(
+            None,
+            &[super::lock::LockPluginIdentity {
+                id: String::new(),
+                path: "a.wasm".to_owned(),
+                digest: good,
+            }],
+        )
+        .expect_err("empty id refused");
+        assert!(error.message.contains("1..=64 bytes"));
     }
 }

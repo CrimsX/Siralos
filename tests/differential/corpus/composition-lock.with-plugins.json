@@ -1,0 +1,22 @@
+{
+  "id": "composition-lock.with-plugins",
+  "subject": "composition-lock",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "profileDigest": "3338107de9d830fd0c6b5a286e43bae53e5f253ae138231964aa93b1b2b6b9c7",
+    "plugins": [
+      {
+        "id": "guest",
+        "path": "guest.wasm",
+        "digest": "018490e721ab3afefd630361b4233aa4c7f66baccf995608268e617d660da6ea"
+      },
+      {
+        "id": "alpha",
+        "path": "alpha.wasm",
+        "digest": "c83362b0edcc79dc406892f7ba283560d1cd53423726b41bc3ef50728d36185f"
+      }
+    ]
+  }
+}

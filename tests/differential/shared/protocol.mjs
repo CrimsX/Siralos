@@ -3334,6 +3334,56 @@ function validateContextControlsV41Result(result, label) {
   }
 }
 
+function validateCompositionLockV42Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(
+    result,
+    ["disposition", "identities", "lockDigest", "rendered"],
+    `${label}.result`,
+  );
+  if (!result.disposition || !["resolved", "current", "stale"].includes(result.disposition)) {
+    throw new Error(`${label}.result.disposition is invalid`);
+  }
+  if (typeof result.lockDigest !== "string" || !LOWER_SHA256.test(result.lockDigest)) {
+    throw new Error(`${label}.result.lockDigest is invalid`);
+  }
+  if (!Array.isArray(result.identities)) {
+    throw new Error(`${label}.result.identities must be an array`);
+  }
+  let previousId = null;
+  for (const identity of result.identities) {
+    if (!isObject(identity)) {
+      throw new Error(`${label}.result.identities entries must be objects`);
+    }
+    assertExactKeys(identity, ["digest", "id", "path"], `${label}.result.identities entry`);
+    if (typeof identity.id !== "string" || identity.id.length === 0) {
+      throw new Error(`${label}.result.identities entry id is invalid`);
+    }
+    if (typeof identity.path !== "string" || identity.path.length === 0) {
+      throw new Error(`${label}.result.identities entry path is invalid`);
+    }
+    if (typeof identity.digest !== "string" || !LOWER_SHA256.test(identity.digest)) {
+      throw new Error(`${label}.result.identities entry digest is invalid`);
+    }
+    if (previousId !== null && identity.id <= previousId) {
+      throw new Error(`${label}.result.identities must be sorted by id`);
+    }
+    previousId = identity.id;
+  }
+  if (result.disposition === "resolved") {
+    if (!result.rendered.startsWith("resolved plugins=")) {
+      throw new Error(`${label}.result resolved rendering is invalid`);
+    }
+  } else if (result.disposition === "current") {
+    if (result.rendered !== "verified current") {
+      throw new Error(`${label}.result current rendering is invalid`);
+    }
+  } else if (!result.rendered.startsWith("verified stale expected=")) {
+    throw new Error(`${label}.result stale rendering is invalid`);
+  }
+}
 function validateRunProfileV38Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -3873,6 +3923,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-controls") {
     validateContextControlsV41Result(record.result, label);
+    return;
+  }
+  if (record.subject === "composition-lock") {
+    validateCompositionLockV42Result(record.result, label);
     return;
   }
   if (record.subject === "composition-effective") {

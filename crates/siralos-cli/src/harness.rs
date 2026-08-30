@@ -98,9 +98,10 @@ const SUBJECT_RUN_PROFILE: &str = "run-profile";
 const SUBJECT_COMPOSITION_PROFILE: &str = "composition-profile";
 const SUBJECT_COMPOSITION_EFFECTIVE: &str = "composition-effective";
 const SUBJECT_CONTEXT_CONTROLS: &str = "context-controls";
+const SUBJECT_COMPOSITION_LOCK: &str = "composition-lock";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 41;
+const CORPUS_VERSION: u64 = 42;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -480,6 +481,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_PROFILE
             | SUBJECT_COMPOSITION_EFFECTIVE
             | SUBJECT_CONTEXT_CONTROLS
+            | SUBJECT_COMPOSITION_LOCK
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -750,7 +752,8 @@ fn validate_scenario(
         | SUBJECT_RUN_PROFILE
         | SUBJECT_COMPOSITION_PROFILE
         | SUBJECT_COMPOSITION_EFFECTIVE
-        | SUBJECT_CONTEXT_CONTROLS => {
+        | SUBJECT_CONTEXT_CONTROLS
+        | SUBJECT_COMPOSITION_LOCK => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1531,7 +1534,8 @@ fn run_scenario(
         | SUBJECT_RUN_PROFILE
         | SUBJECT_COMPOSITION_PROFILE
         | SUBJECT_COMPOSITION_EFFECTIVE
-        | SUBJECT_CONTEXT_CONTROLS => {
+        | SUBJECT_CONTEXT_CONTROLS
+        | SUBJECT_COMPOSITION_LOCK => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1548,6 +1552,7 @@ fn run_scenario(
                     composition_effective_record(input)?
                 }
                 SUBJECT_CONTEXT_CONTROLS => context_controls_record(input)?,
+                SUBJECT_COMPOSITION_LOCK => composition_lock_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6349,6 +6354,62 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_LOCK => {
+            const LOCK_KEYS: [&str; 3] =
+                ["plugins", "profileDigest", "storedLockDigest"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !LOCK_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(digest) = input.get("profileDigest") {
+                if digest.as_str().is_none() {
+                    return reject(
+                        "profileDigest must be a string".to_owned(),
+                    );
+                }
+            }
+            if let Some(stored) = input.get("storedLockDigest") {
+                if stored.as_str().is_none() {
+                    return reject(
+                        "storedLockDigest must be a string".to_owned(),
+                    );
+                }
+            }
+            if let Some(plugins) = input.get("plugins") {
+                let Some(list) = plugins.as_array() else {
+                    return reject("plugins must be an array".to_owned());
+                };
+                if list.len() > 16 {
+                    return reject(
+                        "plugins exceeds the 16-entry bound".to_owned(),
+                    );
+                }
+                for entry in list {
+                    let Some(table) = entry.as_object() else {
+                        return reject(
+                            "each plugin entry must be an object".to_owned(),
+                        );
+                    };
+                    for key in table.keys() {
+                        if !matches!(key.as_str(), "digest" | "id" | "path") {
+                            return reject(format!(
+                                "unexpected plugin field {key}"
+                            ));
+                        }
+                    }
+                    for key in ["digest", "id", "path"] {
+                        if table.get(key).and_then(Value::as_str).is_none() {
+                            return reject(format!(
+                                "plugin entry requires a {key} string"
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10136,6 +10197,66 @@ fn context_controls_record(input: &Value) -> Result<Value, HarnessError> {
     }))
 }
 
+fn composition_lock_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::composition::lock::{
+        LockPluginIdentity, create_workspace_lock,
+    };
+    let profile_digest = input.get("profileDigest").and_then(Value::as_str);
+    let mut plugins = Vec::new();
+    if let Some(list) = input.get("plugins").and_then(Value::as_array) {
+        for entry in list {
+            let Some(table) = entry.as_object() else {
+                return Err(HarnessError::corpus(
+                    "composition-lock requires plugin objects".to_owned(),
+                ));
+            };
+            let get = |key: &str| {
+                table.get(key).and_then(Value::as_str).unwrap_or("")
+            };
+            plugins.push(LockPluginIdentity {
+                id: get("id").to_owned(),
+                path: get("path").to_owned(),
+                digest: get("digest").to_owned(),
+            });
+        }
+    }
+    let lock = create_workspace_lock(profile_digest, &plugins)
+        .map_err(|error| HarnessError::corpus(error.message))?;
+    let stored = input.get("storedLockDigest").and_then(Value::as_str);
+    let (disposition, rendered) = match stored {
+        None => {
+            ("resolved", format!("resolved plugins={}", lock.plugins.len()))
+        }
+        Some(digest) if digest == lock.lock_digest => {
+            ("current", "verified current".to_owned())
+        }
+        Some(digest) => (
+            "stale",
+            format!(
+                "verified stale expected={} actual={}",
+                &lock.lock_digest[..8.min(lock.lock_digest.len())],
+                &digest[..8.min(digest.len())]
+            ),
+        ),
+    };
+    let identities: Vec<Value> = lock
+        .plugins
+        .iter()
+        .map(|identity| {
+            json!({
+                "digest": identity.digest,
+                "id": identity.id,
+                "path": identity.path,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "disposition": disposition,
+        "identities": identities,
+        "lockDigest": lock.lock_digest,
+        "rendered": rendered,
+    }))
+}
 fn qa_workflow_record(input: &Value) -> Result<Value, HarnessError> {
     use siralos_core::runtime::{
         QA_WORKFLOW_CAPABILITY, QA_WORKFLOW_UNAVAILABLE_REASON,
@@ -15129,7 +15250,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 276);
+        assert_eq!(loaded.len(), 280);
     }
 
     #[test]

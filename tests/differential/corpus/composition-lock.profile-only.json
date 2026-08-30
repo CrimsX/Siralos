@@ -1,0 +1,10 @@
+{
+  "id": "composition-lock.profile-only",
+  "subject": "composition-lock",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "profileDigest": "3338107de9d830fd0c6b5a286e43bae53e5f253ae138231964aa93b1b2b6b9c7"
+  }
+}

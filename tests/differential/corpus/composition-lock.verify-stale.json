@@ -1,0 +1,18 @@
+{
+  "id": "composition-lock.verify-stale",
+  "subject": "composition-lock",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "profileDigest": "3338107de9d830fd0c6b5a286e43bae53e5f253ae138231964aa93b1b2b6b9c7",
+    "plugins": [
+      {
+        "id": "guest",
+        "path": "guest.wasm",
+        "digest": "018490e721ab3afefd630361b4233aa4c7f66baccf995608268e617d660da6ea"
+      }
+    ],
+    "storedLockDigest": "b2935be6fae49e8fca8f654de5a52a685a42e9b61b36f785e06b10c575ee06bd"
+  }
+}

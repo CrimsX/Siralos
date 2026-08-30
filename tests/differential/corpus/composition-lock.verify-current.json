@@ -1,0 +1,11 @@
+{
+  "id": "composition-lock.verify-current",
+  "subject": "composition-lock",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "profileDigest": "3338107de9d830fd0c6b5a286e43bae53e5f253ae138231964aa93b1b2b6b9c7",
+    "storedLockDigest": "7b705dd5b7d234eac27b1f60bcd35672852ba79a6d648cae7b7c972a455531c0"
+  }
+}
