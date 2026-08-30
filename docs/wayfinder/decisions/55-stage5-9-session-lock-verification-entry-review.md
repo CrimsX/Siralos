@@ -51,6 +51,9 @@ startup, and what is the frozen evidence shape?
 against this frozen contract and the 4 HITL answers above. Acceptance: gates
 green, `composition-lock-verify` ×4 at required parity at v47, the
 never-gates-authority property unit-proven, `check:rust` green, docs atomic.
+**Implemented at `6e38804`** (reflow `c1c4081`; corpus v47/300 files,
+expectations 61 records, audit 295/295 applicable required; zero spawn/fs-write
+paths; the lock never gates authority — unit- and session-proven).
 
 ## Self-loop verification
 

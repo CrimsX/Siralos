@@ -3,7 +3,7 @@ title: "Stage 5.9 Session Lock Verification Entry Review"
 label: "wayfinder:ticket"
 type: HITL
 status: closed
-resolution: "PASS per decision 55 (2026-08-29): C1-C6 approved; implemented as the Stage 5.9 slice."
+resolution: "PASS per decision 55 (2026-08-29): C1-C6 approved; implemented as the Stage 5.9 slice at 6e38804 (reflow c1c4081)."
 blockedBy: []
 ---
 
