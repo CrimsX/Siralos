@@ -299,6 +299,148 @@ fn validate_plugin_selection(
     Ok(())
 }
 
+/// The typed outcome of one per-id activation attempt through the
+/// Stage 5.7 gate (Host authority first, then the profile filter).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginActivationOutcome {
+    /// The id may activate.
+    Activated,
+    /// Host-enabled, but outside the applied profile selection.
+    RefusedFiltered,
+    /// Not enabled by the Host; a profile can never enable (decision 39).
+    RefusedNotEnabled,
+}
+
+impl PluginActivationOutcome {
+    /// Typed decision string used by evidence and rendering.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Activated => "activated",
+            Self::RefusedFiltered => "refused-filtered",
+            Self::RefusedNotEnabled => "refused-not-enabled",
+        }
+    }
+}
+
+/// The result of gating one requested plugin id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginActivationDecision {
+    /// The typed outcome.
+    pub outcome: PluginActivationOutcome,
+    /// Truthful, report-safe refusal reason; `None` when activated.
+    pub reason: Option<String>,
+}
+
+/// Gate one requested plugin id: Host authority first (a profile can
+/// never enable - decision 39), then the frozen Stage 5.5 profile
+/// filter (activated = enabled ∩ selected).
+#[must_use]
+pub fn decide_plugin_activation(
+    enabled: &[String],
+    selected: Option<&[String]>,
+    requested: &str,
+) -> PluginActivationDecision {
+    if !enabled.iter().any(|id| id == requested) {
+        return PluginActivationDecision {
+            outcome: PluginActivationOutcome::RefusedNotEnabled,
+            reason: Some(format!(
+                "the Host has not enabled {requested:?}; a profile can never enable"
+            )),
+        };
+    }
+    let Some(selected) = selected else {
+        return PluginActivationDecision {
+            outcome: PluginActivationOutcome::Activated,
+            reason: None,
+        };
+    };
+    if selected.iter().any(|id| id == requested) {
+        PluginActivationDecision {
+            outcome: PluginActivationOutcome::Activated,
+            reason: None,
+        }
+    } else {
+        PluginActivationDecision {
+            outcome: PluginActivationOutcome::RefusedFiltered,
+            reason: Some(format!(
+                "the workspace profile does not select {requested:?}; it stays inactive"
+            )),
+        }
+    }
+}
+
+/// Digest-bound evidence for one activation-gate decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginActivationEvidence {
+    /// The typed decision string.
+    pub decision: String,
+    /// The bound decision digest.
+    pub activation_digest: String,
+    /// Truthful refusal reason; `None` when activated.
+    pub reason: Option<String>,
+    /// `"absent"` or `"present"`: whether a profile selection applies.
+    pub selection: String,
+}
+
+/// Create digest-bound evidence for an activation-gate decision.
+///
+/// # Errors
+///
+/// Returns [`ProfileValidationError`] when the digest primitive fails.
+pub fn create_plugin_activation_evidence(
+    decision: &PluginActivationDecision,
+    selection_present: bool,
+) -> Result<PluginActivationEvidence, ProfileValidationError> {
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        (
+            "decision".to_owned(),
+            CanonicalValue::Str(decision.outcome.as_str().to_owned()),
+        ),
+        (
+            "reason".to_owned(),
+            match &decision.reason {
+                Some(reason) => CanonicalValue::Str(reason.clone()),
+                None => CanonicalValue::Null,
+            },
+        ),
+        (
+            "selection".to_owned(),
+            CanonicalValue::Str(
+                if selection_present { "present" } else { "absent" }
+                    .to_owned(),
+            ),
+        ),
+    ]));
+    let activation_digest =
+        compute_artifact_digest("PluginActivationEvidence", 1, &payload)
+            .map_err(|error| ProfileValidationError {
+                message: error.message,
+            })?
+            .value;
+    Ok(PluginActivationEvidence {
+        decision: decision.outcome.as_str().to_owned(),
+        activation_digest,
+        reason: decision.reason.clone(),
+        selection: if selection_present {
+            "present".to_owned()
+        } else {
+            "absent".to_owned()
+        },
+    })
+}
+
+/// Deterministic report-safe rendering of activation-gate evidence.
+#[must_use]
+pub fn render_plugin_activation_evidence(
+    evidence: &PluginActivationEvidence,
+    requested: &str,
+) -> String {
+    let base = format!("{} {requested}", evidence.decision);
+    match &evidence.reason {
+        Some(reason) => format!("{base} ({reason})"),
+        None => base,
+    }
+}
 /// The accepted narrowing result: every overlay entry, guaranteed not
 /// broader than the Host's current rule for its capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1097,5 +1239,62 @@ mod tests {
             plugins: Some(vec!["a".to_owned()]),
         };
         record.validate().expect("valid");
+    }
+
+    #[test]
+    fn activation_gate_precedence_and_filtering() {
+        use super::{
+            PluginActivationOutcome, create_plugin_activation_evidence,
+            decide_plugin_activation, render_plugin_activation_evidence,
+        };
+        let enabled = vec!["zeta".to_owned(), "alpha".to_owned()];
+        // Host authority first: un-enabled id refused even when selected.
+        let refused = decide_plugin_activation(
+            &enabled,
+            Some(&["alpha".to_owned(), "ghost".to_owned()]),
+            "ghost",
+        );
+        assert_eq!(
+            refused.outcome,
+            PluginActivationOutcome::RefusedNotEnabled
+        );
+        assert!(refused.reason.as_deref().unwrap().contains("never enable"));
+        // Filtered: enabled but not selected.
+        let filtered = decide_plugin_activation(
+            &enabled,
+            Some(&["alpha".to_owned()]),
+            "zeta",
+        );
+        assert_eq!(filtered.outcome, PluginActivationOutcome::RefusedFiltered);
+        assert!(
+            filtered.reason.as_deref().unwrap().contains("does not select")
+        );
+        // Narrowed allow.
+        let allowed = decide_plugin_activation(
+            &enabled,
+            Some(&["alpha".to_owned(), "zeta".to_owned()]),
+            "alpha",
+        );
+        assert_eq!(allowed.outcome, PluginActivationOutcome::Activated);
+        assert!(allowed.reason.is_none());
+        // Transparent without a selection.
+        let transparent = decide_plugin_activation(&enabled, None, "zeta");
+        assert_eq!(transparent.outcome, PluginActivationOutcome::Activated);
+        // Digest-bound evidence and rendering.
+        let evidence = create_plugin_activation_evidence(&filtered, true)
+            .expect("evidence");
+        assert_eq!(evidence.decision, "refused-filtered");
+        assert_eq!(evidence.selection, "present");
+        assert_eq!(
+            render_plugin_activation_evidence(&evidence, "zeta"),
+            "refused-filtered zeta (the workspace profile does not select \"zeta\"; it stays inactive)"
+        );
+        let absent = create_plugin_activation_evidence(&transparent, false)
+            .expect("evidence");
+        assert_eq!(absent.selection, "absent");
+        assert_eq!(
+            render_plugin_activation_evidence(&absent, "zeta"),
+            "activated zeta"
+        );
     }
 }

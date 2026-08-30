@@ -102,9 +102,11 @@ const SUBJECT_COMPOSITION_LOCK: &str = "composition-lock";
 const SUBJECT_COMPOSITION_PLUGIN_SELECTION: &str =
     "composition-plugin-selection";
 const SUBJECT_COMPOSITION_SKILLS: &str = "composition-skills";
+const SUBJECT_COMPOSITION_PLUGIN_ACTIVATION: &str =
+    "composition-plugin-activation";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 44;
+const CORPUS_VERSION: u64 = 45;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -487,6 +489,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_LOCK
             | SUBJECT_COMPOSITION_PLUGIN_SELECTION
             | SUBJECT_COMPOSITION_SKILLS
+            | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -760,7 +763,8 @@ fn validate_scenario(
         | SUBJECT_CONTEXT_CONTROLS
         | SUBJECT_COMPOSITION_LOCK
         | SUBJECT_COMPOSITION_PLUGIN_SELECTION
-        | SUBJECT_COMPOSITION_SKILLS => {
+        | SUBJECT_COMPOSITION_SKILLS
+        | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1544,7 +1548,8 @@ fn run_scenario(
         | SUBJECT_CONTEXT_CONTROLS
         | SUBJECT_COMPOSITION_LOCK
         | SUBJECT_COMPOSITION_PLUGIN_SELECTION
-        | SUBJECT_COMPOSITION_SKILLS => {
+        | SUBJECT_COMPOSITION_SKILLS
+        | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1567,6 +1572,9 @@ fn run_scenario(
                 }
                 SUBJECT_COMPOSITION_SKILLS => {
                     composition_skills_record(input)?
+                }
+                SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
+                    composition_plugin_activation_record(input)?
                 }
                 _ => runtime_evidence_record(input)?,
             };
@@ -6512,6 +6520,53 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
+            const ACTIVATION_KEYS: [&str; 3] =
+                ["enabled", "requested", "selected"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !ACTIVATION_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            let Some(enabled) = input.get("enabled").and_then(Value::as_array)
+            else {
+                return reject("enabled must be an array".to_owned());
+            };
+            if enabled.len() > 16 {
+                return reject(
+                    "enabled exceeds the 16-entry bound".to_owned(),
+                );
+            }
+            for entry in enabled {
+                if entry.as_str().is_none() {
+                    return reject(
+                        "enabled entries must be strings".to_owned(),
+                    );
+                }
+            }
+            if input.get("requested").and_then(Value::as_str).is_none() {
+                return reject("requested must be a string".to_owned());
+            }
+            if let Some(list) = input.get("selected") {
+                let Some(entries) = list.as_array() else {
+                    return reject("selected must be an array".to_owned());
+                };
+                if entries.len() > 16 {
+                    return reject(
+                        "selected exceeds the 16-entry bound".to_owned(),
+                    );
+                }
+                for entry in entries {
+                    if entry.as_str().is_none() {
+                        return reject(
+                            "selected entries must be strings".to_owned(),
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10396,6 +10451,45 @@ fn composition_plugin_selection_record(
     }))
 }
 
+fn composition_plugin_activation_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::composition::{
+        create_plugin_activation_evidence, decide_plugin_activation,
+        render_plugin_activation_evidence,
+    };
+    let enabled: Vec<String> = input
+        .get("enabled")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .map(|value| value.as_str().unwrap_or("").to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let selected: Option<Vec<String>> =
+        input.get("selected").and_then(Value::as_array).map(|list| {
+            list.iter()
+                .map(|value| value.as_str().unwrap_or("").to_owned())
+                .collect()
+        });
+    let requested = input
+        .get("requested")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let decision =
+        decide_plugin_activation(&enabled, selected.as_deref(), &requested);
+    let evidence =
+        create_plugin_activation_evidence(&decision, selected.is_some())
+            .map_err(|error| HarnessError::corpus(error.message))?;
+    Ok(json!({
+        "activationDigest": evidence.activation_digest,
+        "decision": evidence.decision,
+        "reason": evidence.reason,
+        "rendered": render_plugin_activation_evidence(&evidence, &requested),
+    }))
+}
 fn composition_skills_record(input: &Value) -> Result<Value, HarnessError> {
     use siralos_core::skills::{
         SkillCatalog, SkillDefinition, create_skill_resolution_evidence,
@@ -15445,7 +15539,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 288);
+        assert_eq!(loaded.len(), 292);
     }
 
     #[test]

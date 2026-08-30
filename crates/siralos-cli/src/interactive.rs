@@ -27,7 +27,8 @@ use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
 };
 use siralos_core::composition::{
-    DeclaredProfile, compose_effective_policy, declare_profile,
+    DeclaredProfile, compose_effective_policy, decide_plugin_activation,
+    declare_profile,
 };
 use siralos_core::domain::capability::HostAuthority;
 use siralos_core::domain::lifecycle::{ActivationRequest, RuntimeCheckResult};
@@ -202,14 +203,15 @@ where
             .expect("workspace.read is a valid capability id"),
         rule: PermissionRule::Allow,
     }];
-    let declared = match load_workspace_profile(&workspace_root) {
+    let loaded_profile = load_workspace_profile(&workspace_root);
+    let declared = match &loaded_profile {
         WorkspaceProfileLoad::Record(record) => declare_profile(
-            Some(&record),
+            Some(record),
             &PermissionPolicy::from_rules(host_rules.clone()),
         ),
         WorkspaceProfileLoad::Absent => DeclaredProfile::Absent,
         WorkspaceProfileLoad::Invalid { diagnostic } => {
-            DeclaredProfile::Invalid { diagnostic }
+            DeclaredProfile::Invalid { diagnostic: diagnostic.clone() }
         }
     };
     let effective = compose_effective_policy(&host_rules, &declared);
@@ -219,6 +221,19 @@ where
         // policy.
         eprintln!("siralos: profile not applied: {diagnostic}");
     }
+    // Stage 5.7 (decision 53): the applied profile's plugin selection
+    // narrows /domains-activate. Only an actually-applied profile
+    // contributes a selection; invalid or refused profiles contribute
+    // none (5.2 semantics), and the Host can never be broadened.
+    let profile_plugins: Option<Vec<String>> =
+        if effective.applied_profile.is_some() {
+            match &loaded_profile {
+                WorkspaceProfileLoad::Record(record) => record.plugins.clone(),
+                _ => None,
+            }
+        } else {
+            None
+        };
     let policy = PermissionPolicy::from_rules(effective.rules);
     let projection_config = ApplicationProjectionConfig {
         capacity: Some(ContextCapacity::default()),
@@ -332,6 +347,7 @@ where
                         &mut hosts,
                         &mut manifests,
                         "",
+                        profile_plugins.as_deref(),
                     ));
                     writer
                         .write_all(rendered.as_bytes())
@@ -344,6 +360,7 @@ where
                         &mut hosts,
                         &mut manifests,
                         id,
+                        profile_plugins.as_deref(),
                     ));
                     writer
                         .write_all(rendered.as_bytes())
@@ -549,6 +566,7 @@ fn render_activate(
     hosts: &mut BTreeMap<String, DomainHost>,
     manifests: &mut BTreeMap<String, PluginManifest>,
     id: &str,
+    profile_plugins: Option<&[String]>,
 ) -> String {
     let id = id.trim();
     if id.is_empty() {
@@ -561,6 +579,19 @@ fn render_activate(
         Ok(host) => host,
         Err(reason) => return format!("Activate failed: {reason}\n"),
     };
+    // Stage 5.7 (decision 53): the profile filter runs after the
+    // Host-authority gate (ensure_host above) and before any
+    // install/enable/activate side effect. The Host's own auto-enable
+    // here is its authority decision; the applied profile can only
+    // narrow it.
+    let gate = decide_plugin_activation(
+        std::slice::from_ref(&sanitized),
+        profile_plugins,
+        &sanitized,
+    );
+    if let Some(reason) = &gate.reason {
+        return format!("Activate failed: {reason}\n");
+    }
     // Ensure enabled first (idempotent: if already enabled, enable is a no-op error, ignore).
     let _ = host.enable();
     let manifest = match manifests.get(&sanitized) {
@@ -905,9 +936,6 @@ mod tests {
             &root,
             None,
         );
-        if !output.contains("Activated godot.") {
-            eprintln!("OUTPUT:\n{output}\n---END");
-        }
         assert!(output.contains("Installed godot"));
         assert!(output.contains("Enabled godot."));
         assert!(output.contains("Activated godot."));
@@ -938,12 +966,76 @@ mod tests {
         )
         .expect("manifest");
         let output = run(
-            "/domains-add plugins/godot\n/domains-activate godot\n/exit\n",
+            "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
             &root,
             None,
         );
         assert!(output.contains("Installed godot"));
         assert!(output.contains("Activate failed:"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn profile_plugin_selection_gates_domains_activate() {
+        let root = temporary_directory("domains-activate-gate");
+        create_dir_all(root.join("plugins/godot")).expect("folder");
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/domain-conformance/fixtures/conformance-domain.component.wasm");
+        let bytes = std::fs::read(&fixture).expect("fixture");
+        let digest = {
+            use siralos_core::identity::sha256_hex;
+            sha256_hex(&bytes)
+        };
+        write(root.join("plugins/godot/godot.component.wasm"), &bytes)
+            .expect("component");
+        write(
+            root.join("plugins/godot/domain-manifest.toml"),
+            format!(
+                "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
+            ),
+        )
+        .expect("manifest");
+        // Applied profile with a selection that excludes godot: the
+        // gate refuses before any install/enable/activate side effect.
+        write(
+            root.join("siralos.toml"),
+            "\n[profile]\nname = \"dev\"\nplugins = [\"other\"]\n",
+        )
+        .expect("profile");
+        let output = run(
+            "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+            &root,
+            None,
+        );
+        assert!(output.contains("Activate failed: the workspace profile does not select \"godot\"; it stays inactive"));
+        assert!(!output.contains("Activated godot."));
+        // Narrowed allow: the selection includes godot.
+        write(
+            root.join("siralos.toml"),
+            "\n[profile]\nname = \"dev\"\nplugins = [\"godot\"]\n",
+        )
+        .expect("profile");
+        let output = run(
+            "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+            &root,
+            None,
+        );
+        if !output.contains("Activated godot.") {
+            eprintln!("RUN2 OUTPUT:\n{output}\n---END");
+        }
+        assert!(output.contains("Activated godot."));
+        // Invalid profile: no selection, gate transparent (5.2).
+        write(
+            root.join("siralos.toml"),
+            "\n[profile]\nname = \"dev\"\nplugins = [7]\n",
+        )
+        .expect("profile");
+        let output = run(
+            "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+            &root,
+            None,
+        );
+        assert!(output.contains("Activated godot."));
         let _ = remove_dir_all(root);
     }
 }

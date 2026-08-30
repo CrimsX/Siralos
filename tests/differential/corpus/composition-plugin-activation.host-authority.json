@@ -1,0 +1,1 @@
+{"id":"composition-plugin-activation.host-authority","subject":"composition-plugin-activation","platforms":["*"],"parity":"required","env":{},"input":{"enabled":["zeta","alpha","guest"],"requested":"ghost","selected":["ghost","alpha"]}}
