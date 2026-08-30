@@ -1,1 +1,14 @@
-{"id":"composition-skills.unknown-ids","subject":"composition-skills","platforms":["*"],"parity":"required","env":{},"input":{"skills":[{"content":"guidance for alpha","name":"alpha"},{"content":"guidance for zeta","name":"zeta"}],"selected":["alpha","ghost","wraith"]}}
+{
+  "id": "composition-skills.unknown-ids",
+  "subject": "composition-skills",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "skills": [
+      { "content": "guidance for alpha", "name": "alpha" },
+      { "content": "guidance for zeta", "name": "zeta" }
+    ],
+    "selected": ["alpha", "ghost", "wraith"]
+  }
+}

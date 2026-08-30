@@ -1,1 +1,15 @@
-{"id":"composition-skills.bound","subject":"composition-skills","platforms":["*"],"parity":"required","env":{},"input":{"skills":[{"content":"guidance for alpha","name":"alpha"},{"content":"guidance for guest","name":"guest"},{"content":"guidance for zeta","name":"zeta"}],"selected":["alpha","zeta"]}}
+{
+  "id": "composition-skills.bound",
+  "subject": "composition-skills",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "skills": [
+      { "content": "guidance for alpha", "name": "alpha" },
+      { "content": "guidance for guest", "name": "guest" },
+      { "content": "guidance for zeta", "name": "zeta" }
+    ],
+    "selected": ["alpha", "zeta"]
+  }
+}

@@ -3385,12 +3385,15 @@ function validateCompositionLockV42Result(result, label) {
   }
 }
 
-
 function validateCompositionSkillsV44Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
   }
-  assertExactKeys(result, ["bound", "disposition", "reason", "rendered", "resolutionDigest"], `${label}.result`);
+  assertExactKeys(
+    result,
+    ["bound", "disposition", "reason", "rendered", "resolutionDigest"],
+    `${label}.result`,
+  );
   if (!result.disposition || !["none", "bound"].includes(result.disposition)) {
     throw new Error(`${label}.result.disposition is invalid`);
   }
@@ -3406,7 +3409,11 @@ function validateCompositionSkillsV44Result(result, label) {
       throw new Error(`${label}.result.bound entries must be objects`);
     }
     assertExactKeys(reference, ["digest", "name"], `${label}.result.bound entry`);
-    if (typeof reference.name !== "string" || reference.name.length === 0 || reference.name.length > 64) {
+    if (
+      typeof reference.name !== "string" ||
+      reference.name.length === 0 ||
+      reference.name.length > 64
+    ) {
       throw new Error(`${label}.result.bound entry name is invalid`);
     }
     if (typeof reference.digest !== "string" || !LOWER_SHA256.test(reference.digest)) {
@@ -3418,18 +3425,28 @@ function validateCompositionSkillsV44Result(result, label) {
     previousName = reference.name;
   }
   if (result.disposition === "none") {
-    if (result.bound.length !== 0 || result.reason !== null || result.rendered !== "none skills=0") {
+    if (
+      result.bound.length !== 0 ||
+      result.reason !== null ||
+      result.rendered !== "none skills=0"
+    ) {
       throw new Error(`${label}.result none outcome is invalid`);
     }
   } else {
-    if (result.bound.length === 0 || !result.rendered.startsWith(`bound skills=${result.bound.length} (guidance only)`)) {
+    if (
+      result.bound.length === 0 ||
+      !result.rendered.startsWith(`bound skills=${result.bound.length} (guidance only)`)
+    ) {
       throw new Error(`${label}.result bound outcome is invalid`);
     }
     if (result.reason === null) {
       if (result.rendered !== `bound skills=${result.bound.length} (guidance only)`) {
         throw new Error(`${label}.result bound rendering is invalid`);
       }
-    } else if (!result.reason.startsWith("selection names ") || !result.rendered.includes("unknown=")) {
+    } else if (
+      !result.reason.startsWith("selection names ") ||
+      !result.rendered.includes("unknown=")
+    ) {
       throw new Error(`${label}.result bound reason is invalid`);
     }
   }
