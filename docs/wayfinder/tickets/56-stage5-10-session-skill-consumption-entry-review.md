@@ -3,7 +3,7 @@ title: "Stage 5.10 Session Skill Consumption Entry Review"
 label: "wayfinder:ticket"
 type: HITL
 status: closed
-resolution: "PASS per decision 56 (2026-08-29): C1-C6 approved; implemented as the Stage 5.10 slice."
+resolution: "PASS per decision 56 (2026-08-29): C1-C6 approved; implemented as the Stage 5.10 slice at 579f1e9 (corpus v48, 299/299, gates green)."
 blockedBy: []
 ---
 

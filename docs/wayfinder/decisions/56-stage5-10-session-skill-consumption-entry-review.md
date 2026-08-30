@@ -64,3 +64,21 @@ guidance-only property unit- and session-proven, `check:rust` green, docs atomic
   answers above recorded verbatim.
 - Verdict: **PASS** — the Stage 5.10 contract is frozen; implementation
   authorized.
+
+## Implementation record
+
+**Implemented at** `579f1e9` (reflow `59428ed`). `siralos-core::composition`
+owns `compose_skill_consumption` over `SkillCatalogState` with outcomes
+`none`/`bound`/`unknown`, digest-bound `SkillConsumptionEvidence` whose
+payload binds `authority = none` transitively through the frozen 5.6
+resolution evidence, and the deterministic render; `siralos-adapters::profile_config`
+gains the additive `[profile.skills]` array key with malformed values
+leaving the profile unapplied (5.2 semantics); `siralos-cli` composes the
+session's skill consumption at startup — bound guidance surfaces as the
+bounded `workspace-skills` system-instructions segment sorted by name,
+unknown names are reported truthfully, absent selection/catalog stays
+byte-transparent (R7.5 preserved). Corpus v48/304 files, expectations 65
+records, audit 299/299 applicable required, zero spawn/fs-write paths;
+the guidance-only property is unit- and session-proven; gates green
+(fmt, clippy -D warnings, workspace tests, CLI libtest 70, differential
+299/299, `check:differential` exit 0).
