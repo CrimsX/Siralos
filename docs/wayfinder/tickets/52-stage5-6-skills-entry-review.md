@@ -2,8 +2,8 @@
 title: "Stage 5.6 Skills Entry Review - Declarative Digest-Bound Model Guidance"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS per decision 52 (2026-08-28): C1-C6 approved; implemented as the Stage 5.6 slice."
 blockedBy: []
 ---
 
