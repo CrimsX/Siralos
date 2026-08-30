@@ -3385,6 +3385,55 @@ function validateCompositionLockV42Result(result, label) {
   }
 }
 
+
+function validateCompositionSkillsV44Result(result, label) {
+  if (!isObject(result)) {
+    throw new Error(`${label}.result must be an object`);
+  }
+  assertExactKeys(result, ["bound", "disposition", "reason", "rendered", "resolutionDigest"], `${label}.result`);
+  if (!result.disposition || !["none", "bound"].includes(result.disposition)) {
+    throw new Error(`${label}.result.disposition is invalid`);
+  }
+  if (typeof result.resolutionDigest !== "string" || !LOWER_SHA256.test(result.resolutionDigest)) {
+    throw new Error(`${label}.result.resolutionDigest is invalid`);
+  }
+  if (!Array.isArray(result.bound)) {
+    throw new Error(`${label}.result.bound must be an array`);
+  }
+  let previousName = null;
+  for (const reference of result.bound) {
+    if (!isObject(reference)) {
+      throw new Error(`${label}.result.bound entries must be objects`);
+    }
+    assertExactKeys(reference, ["digest", "name"], `${label}.result.bound entry`);
+    if (typeof reference.name !== "string" || reference.name.length === 0 || reference.name.length > 64) {
+      throw new Error(`${label}.result.bound entry name is invalid`);
+    }
+    if (typeof reference.digest !== "string" || !LOWER_SHA256.test(reference.digest)) {
+      throw new Error(`${label}.result.bound entry digest is invalid`);
+    }
+    if (previousName !== null && reference.name <= previousName) {
+      throw new Error(`${label}.result.bound must be sorted by name`);
+    }
+    previousName = reference.name;
+  }
+  if (result.disposition === "none") {
+    if (result.bound.length !== 0 || result.reason !== null || result.rendered !== "none skills=0") {
+      throw new Error(`${label}.result none outcome is invalid`);
+    }
+  } else {
+    if (result.bound.length === 0 || !result.rendered.startsWith(`bound skills=${result.bound.length} (guidance only)`)) {
+      throw new Error(`${label}.result bound outcome is invalid`);
+    }
+    if (result.reason === null) {
+      if (result.rendered !== `bound skills=${result.bound.length} (guidance only)`) {
+        throw new Error(`${label}.result bound rendering is invalid`);
+      }
+    } else if (!result.reason.startsWith("selection names ") || !result.rendered.includes("unknown=")) {
+      throw new Error(`${label}.result bound reason is invalid`);
+    }
+  }
+}
 function validateCompositionPluginSelectionV43Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
@@ -3985,6 +4034,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "composition-plugin-selection") {
     validateCompositionPluginSelectionV43Result(record.result, label);
+    return;
+  }
+  if (record.subject === "composition-skills") {
+    validateCompositionSkillsV44Result(record.result, label);
     return;
   }
   if (record.subject === "composition-effective") {

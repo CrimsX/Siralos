@@ -29,6 +29,7 @@ pub mod reference;
 pub mod research;
 pub mod runtime;
 pub mod security;
+pub mod skills;
 pub mod task;
 pub mod tool;
 pub mod version;

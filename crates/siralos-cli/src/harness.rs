@@ -101,9 +101,10 @@ const SUBJECT_CONTEXT_CONTROLS: &str = "context-controls";
 const SUBJECT_COMPOSITION_LOCK: &str = "composition-lock";
 const SUBJECT_COMPOSITION_PLUGIN_SELECTION: &str =
     "composition-plugin-selection";
+const SUBJECT_COMPOSITION_SKILLS: &str = "composition-skills";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 43;
+const CORPUS_VERSION: u64 = 44;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -485,6 +486,7 @@ fn validate_scenario(
             | SUBJECT_CONTEXT_CONTROLS
             | SUBJECT_COMPOSITION_LOCK
             | SUBJECT_COMPOSITION_PLUGIN_SELECTION
+            | SUBJECT_COMPOSITION_SKILLS
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -757,7 +759,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_EFFECTIVE
         | SUBJECT_CONTEXT_CONTROLS
         | SUBJECT_COMPOSITION_LOCK
-        | SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
+        | SUBJECT_COMPOSITION_PLUGIN_SELECTION
+        | SUBJECT_COMPOSITION_SKILLS => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1540,7 +1543,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_EFFECTIVE
         | SUBJECT_CONTEXT_CONTROLS
         | SUBJECT_COMPOSITION_LOCK
-        | SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
+        | SUBJECT_COMPOSITION_PLUGIN_SELECTION
+        | SUBJECT_COMPOSITION_SKILLS => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1560,6 +1564,9 @@ fn run_scenario(
                 SUBJECT_COMPOSITION_LOCK => composition_lock_record(input)?,
                 SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
                     composition_plugin_selection_record(input)?
+                }
+                SUBJECT_COMPOSITION_SKILLS => {
+                    composition_skills_record(input)?
                 }
                 _ => runtime_evidence_record(input)?,
             };
@@ -6447,6 +6454,64 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_SKILLS => {
+            const SKILL_KEYS: [&str; 2] = ["selected", "skills"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !SKILL_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(list) = input.get("selected") {
+                let Some(entries) = list.as_array() else {
+                    return reject("selected must be an array".to_owned());
+                };
+                if entries.len() > 32 {
+                    return reject(
+                        "selected exceeds the 32-entry bound".to_owned(),
+                    );
+                }
+                for entry in entries {
+                    if entry.as_str().is_none() {
+                        return reject(
+                            "selected entries must be strings".to_owned(),
+                        );
+                    }
+                }
+            }
+            if let Some(list) = input.get("skills") {
+                let Some(entries) = list.as_array() else {
+                    return reject("skills must be an array".to_owned());
+                };
+                if entries.len() > 32 {
+                    return reject(
+                        "skills exceeds the 32-entry bound".to_owned(),
+                    );
+                }
+                for entry in entries {
+                    let Some(table) = entry.as_object() else {
+                        return reject(
+                            "each skill must be an object".to_owned(),
+                        );
+                    };
+                    for key in table.keys() {
+                        if !matches!(key.as_str(), "content" | "name") {
+                            return reject(format!(
+                                "unexpected skill field {key}"
+                            ));
+                        }
+                    }
+                    for key in ["content", "name"] {
+                        if table.get(key).and_then(Value::as_str).is_none() {
+                            return reject(format!(
+                                "skill requires a {key} string"
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10328,6 +10393,63 @@ fn composition_plugin_selection_record(
         "reason": reason,
         "rendered": render_plugin_selection_evidence(&evidence),
         "selectionDigest": evidence.selection_digest,
+    }))
+}
+
+fn composition_skills_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::skills::{
+        SkillCatalog, SkillDefinition, create_skill_resolution_evidence,
+        render_skill_resolution_evidence, resolve_profile_skills,
+    };
+    let mut definitions = Vec::new();
+    if let Some(list) = input.get("skills").and_then(Value::as_array) {
+        for entry in list {
+            let Some(table) = entry.as_object() else {
+                return Err(HarnessError::corpus(
+                    "composition-skills requires skill objects".to_owned(),
+                ));
+            };
+            let name = table.get("name").and_then(Value::as_str).unwrap_or("");
+            let content =
+                table.get("content").and_then(Value::as_str).unwrap_or("");
+            definitions.push(
+                SkillDefinition::new(name, content)
+                    .map_err(|error| HarnessError::corpus(error.message))?,
+            );
+        }
+    }
+    let catalog = SkillCatalog::new(definitions)
+        .map_err(|error| HarnessError::corpus(error.message))?;
+    let selected: Option<Vec<String>> =
+        input.get("selected").and_then(Value::as_array).map(|list| {
+            list.iter()
+                .map(|value| value.as_str().unwrap_or("").to_owned())
+                .collect()
+        });
+    let resolution = resolve_profile_skills(&catalog, selected.as_deref());
+    let evidence = create_skill_resolution_evidence(&resolution)
+        .map_err(|error| HarnessError::corpus(error.message))?;
+    let reason = if resolution.unknown.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "selection names {} undeclared skill name(s); they stay unbound",
+            resolution.unknown.len()
+        ))
+    };
+    let bound: Vec<Value> = evidence
+        .bound
+        .iter()
+        .map(|reference| {
+            json!({"digest": reference.digest, "name": reference.name})
+        })
+        .collect();
+    Ok(json!({
+        "bound": bound,
+        "disposition": evidence.disposition,
+        "reason": reason,
+        "rendered": render_skill_resolution_evidence(&evidence),
+        "resolutionDigest": evidence.resolution_digest,
     }))
 }
 fn qa_workflow_record(input: &Value) -> Result<Value, HarnessError> {
@@ -15323,7 +15445,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 284);
+        assert_eq!(loaded.len(), 288);
     }
 
     #[test]

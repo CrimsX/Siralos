@@ -1,0 +1,1 @@
+{"id":"composition-skills.order-independent","subject":"composition-skills","platforms":["*"],"parity":"required","env":{},"input":{"skills":[{"content":"guidance for zeta","name":"zeta"},{"content":"guidance for guest","name":"guest"},{"content":"guidance for alpha","name":"alpha"}],"selected":["zeta","alpha"]}}

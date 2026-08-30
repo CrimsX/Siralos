@@ -20,6 +20,7 @@ pub mod profile_config;
 pub mod provider;
 pub mod reference;
 pub mod research;
+pub mod skills_loader;
 pub mod tool;
 pub mod workspace;
 
