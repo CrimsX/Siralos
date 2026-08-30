@@ -54,6 +54,16 @@ against this frozen contract and the 4 HITL answers above. Acceptance: gates
 green, `composition-context-control` ×4 at required parity at v46, the
 narrowing-only property unit-proven, `check:rust` green, docs atomic.
 
+**Implemented at `6dc830e`** (2026-08-29): `siralos-core::composition` owns
+`decide_context_control` over the frozen 5.3 evaluation with absent-control
+transparency and digest-bound `ContextControlDecisionEvidence`;
+`siralos-adapters::profile_config` parses the additive `[profile.context]`
+key through the 5.3 constructor (malformed controls leave the profile
+unapplied); `siralos-cli` holds the applied control and `/context` labels
+Pinned-stale claims, refuses Frozen-stale ones, and stays byte-transparent
+otherwise; corpus v46/296 files, expectations 57 records, audit 291/291
+applicable required; docs at the follow-up docs commit.
+
 ## Self-loop verification
 
 - Criterion: the frozen contract is complete and internally consistent
