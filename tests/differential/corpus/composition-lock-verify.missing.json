@@ -1,9 +1,7 @@
 {
   "id": "composition-lock-verify.missing",
   "subject": "composition-lock-verify",
-  "platforms": [
-    "*"
-  ],
+  "platforms": ["*"],
   "parity": "required",
   "env": {},
   "input": {

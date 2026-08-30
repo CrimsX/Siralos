@@ -3420,15 +3420,8 @@ function validateCompositionLockVerifyV47Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
   }
-  assertExactKeys(
-    result,
-    ["decision", "lockDigest", "reason", "rendered"],
-    `${label}.result`,
-  );
-  if (
-    !result.decision ||
-    !["missing", "current", "stale", "invalid"].includes(result.decision)
-  ) {
+  assertExactKeys(result, ["decision", "lockDigest", "reason", "rendered"], `${label}.result`);
+  if (!result.decision || !["missing", "current", "stale", "invalid"].includes(result.decision)) {
     throw new Error(`${label}.result.decision is invalid`);
   }
   if (typeof result.lockDigest !== "string" || !LOWER_SHA256.test(result.lockDigest)) {
@@ -3439,8 +3432,7 @@ function validateCompositionLockVerifyV47Result(result, label) {
       result.reason !== null ||
       (result.decision === "missing" &&
         result.rendered !== "lock verification missing (transparent)") ||
-      (result.decision === "current" &&
-        result.rendered !== "lock verified current")
+      (result.decision === "current" && result.rendered !== "lock verified current")
     ) {
       throw new Error(`${label}.result ${result.decision} outcome is invalid`);
     }
