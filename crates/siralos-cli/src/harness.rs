@@ -106,9 +106,10 @@ const SUBJECT_COMPOSITION_PLUGIN_ACTIVATION: &str =
     "composition-plugin-activation";
 const SUBJECT_COMPOSITION_CONTEXT_CONTROL: &str =
     "composition-context-control";
+const SUBJECT_COMPOSITION_LOCK_VERIFY: &str = "composition-lock-verify";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 46;
+const CORPUS_VERSION: u64 = 47;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -493,6 +494,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_SKILLS
             | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
             | SUBJECT_COMPOSITION_CONTEXT_CONTROL
+            | SUBJECT_COMPOSITION_LOCK_VERIFY
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -768,7 +770,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_PLUGIN_SELECTION
         | SUBJECT_COMPOSITION_SKILLS
         | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
-        | SUBJECT_COMPOSITION_CONTEXT_CONTROL => {
+        | SUBJECT_COMPOSITION_CONTEXT_CONTROL
+        | SUBJECT_COMPOSITION_LOCK_VERIFY => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1554,7 +1557,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_PLUGIN_SELECTION
         | SUBJECT_COMPOSITION_SKILLS
         | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
-        | SUBJECT_COMPOSITION_CONTEXT_CONTROL => {
+        | SUBJECT_COMPOSITION_CONTEXT_CONTROL
+        | SUBJECT_COMPOSITION_LOCK_VERIFY => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1583,6 +1587,9 @@ fn run_scenario(
                 }
                 SUBJECT_COMPOSITION_CONTEXT_CONTROL => {
                     composition_context_control_record(input)?
+                }
+                SUBJECT_COMPOSITION_LOCK_VERIFY => {
+                    composition_lock_verify_record(input)?
                 }
                 _ => runtime_evidence_record(input)?,
             };
@@ -6612,6 +6619,93 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_COMPOSITION_LOCK_VERIFY => {
+            const LOCK_KEYS: [&str; 3] =
+                ["plugins", "profileDigest", "stored"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !LOCK_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(digest) = input.get("profileDigest") {
+                let Some(digest_text) = digest.as_str() else {
+                    return reject(
+                        "profileDigest must be a string".to_owned(),
+                    );
+                };
+                if digest_text.len() != 64 {
+                    return reject(
+                        "profileDigest must be 64 hex characters".to_owned(),
+                    );
+                }
+            }
+            let lock_plugins = |value: &Value| -> Result<(), String> {
+                let Some(list) = value.as_array() else {
+                    return Err("plugins must be an array".to_owned());
+                };
+                for entry in list {
+                    let Some(table) = entry.as_object() else {
+                        return Err(
+                            "plugin entries must be objects".to_owned()
+                        );
+                    };
+                    for key in ["id", "path", "digest"] {
+                        if !table.get(key).and_then(Value::as_str).is_some_and(
+                            |text| !text.is_empty() && text.len() <= 256,
+                        ) {
+                            return Err(format!(
+                                "plugin field {key} must be a bounded string"
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            };
+            if let Some(plugins) = input.get("plugins") {
+                if let Err(message) = lock_plugins(plugins) {
+                    return reject(message);
+                }
+            }
+            match input.get("stored") {
+                None | Some(Value::Null) => {}
+                Some(stored) => {
+                    let Some(table) = stored.as_object() else {
+                        return reject(
+                            "stored must be null or an object".to_owned(),
+                        );
+                    };
+                    for key in table.keys() {
+                        if !["plugins", "profileDigest", "recordedDigest"]
+                            .contains(&key.as_str())
+                        {
+                            return reject(format!(
+                                "unexpected stored field {key}"
+                            ));
+                        }
+                    }
+                    if let Some(plugins) = table.get("plugins") {
+                        if let Err(message) = lock_plugins(plugins) {
+                            return reject(message);
+                        }
+                    }
+                    if let Some(recorded) = table.get("recordedDigest") {
+                        let Some(text) = recorded.as_str() else {
+                            return reject(
+                                "recordedDigest must be a string".to_owned(),
+                            );
+                        };
+                        if text.len() != 64 {
+                            return reject(
+                                "recordedDigest must be 64 hex characters"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10524,6 +10618,88 @@ fn composition_context_control_record(
         "disposition": evidence.disposition,
         "reason": evidence.reason,
         "rendered": render_context_control_decision(&evidence),
+    }))
+}
+/// Stage 5.9 (decision 55): verify the on-disk lock against the
+/// recomputed current lock over the pure composition seam.
+fn composition_lock_verify_record(
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::composition::lock::{
+        LockPluginIdentity, create_workspace_lock,
+    };
+    use siralos_core::composition::{
+        StoredLockDigest, create_lock_verification_evidence,
+        decide_lock_verification, render_lock_verification_evidence,
+    };
+    let build_identities = |value: Option<&Value>| {
+        let mut plugins = Vec::new();
+        if let Some(list) = value.and_then(Value::as_array) {
+            for entry in list {
+                let table = entry.as_object();
+                let get = |key: &str| {
+                    table
+                        .and_then(|map| map.get(key))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                };
+                plugins.push(LockPluginIdentity {
+                    id: get("id").to_owned(),
+                    path: get("path").to_owned(),
+                    digest: get("digest").to_owned(),
+                });
+            }
+        }
+        plugins
+    };
+    let profile_digest = input.get("profileDigest").and_then(Value::as_str);
+    let current_lock = create_workspace_lock(
+        profile_digest,
+        &build_identities(input.get("plugins")),
+    )
+    .map_err(|error| HarnessError::corpus(error.message))?;
+    let stored = match input.get("stored") {
+        None | Some(Value::Null) => StoredLockDigest::Missing,
+        Some(table) => {
+            let stored_profile =
+                table.get("profileDigest").and_then(Value::as_str);
+            match create_workspace_lock(
+                stored_profile,
+                &build_identities(table.get("plugins")),
+            ) {
+                Err(error) => StoredLockDigest::Untrusted(error.message),
+                Ok(stored_lock) => {
+                    match table.get("recordedDigest").and_then(Value::as_str) {
+                        None => {
+                            StoredLockDigest::Trusted(stored_lock.lock_digest)
+                        }
+                        Some(recorded)
+                            if recorded == stored_lock.lock_digest =>
+                        {
+                            StoredLockDigest::Trusted(stored_lock.lock_digest)
+                        }
+                        Some(recorded) => {
+                            StoredLockDigest::Untrusted(format!(
+                                "the on-disk lock does not match its recorded digest (recorded {recorded}, re-derived {})",
+                                stored_lock.lock_digest
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+    };
+    let decision = decide_lock_verification(stored, &current_lock.lock_digest);
+    let evidence = create_lock_verification_evidence(
+        &decision,
+        &current_lock.lock_digest,
+    )
+    .map_err(|error| HarnessError::corpus(error.message))?;
+    Ok(json!({
+        "decision": decision.outcome.as_str(),
+        "lockDigest": current_lock.lock_digest,
+        "reason": decision.reason,
+        "rendered": render_lock_verification_evidence(&evidence),
     }))
 }
 fn composition_plugin_activation_record(
@@ -15614,7 +15790,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 296);
+        assert_eq!(loaded.len(), 300);
     }
 
     #[test]

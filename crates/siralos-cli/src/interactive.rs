@@ -15,6 +15,7 @@ use siralos_adapters::domain::{
     DomainHost, DomainHostBounds, PluginManifest, PluginRecord, load_manifest,
     load_plugin_records,
 };
+use siralos_adapters::lockfile::{LockVerification, verify_workspace_lock};
 use siralos_adapters::profile_config::{
     WorkspaceProfileLoad, load_workspace_profile,
 };
@@ -26,9 +27,14 @@ use siralos_adapters::workspace::resolve::resolve_workspace_path;
 use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
 };
+use siralos_core::composition::lock::{
+    LockPluginIdentity, create_workspace_lock,
+};
 use siralos_core::composition::{
-    DeclaredProfile, compose_effective_policy, decide_context_control,
-    decide_plugin_activation, declare_profile,
+    DeclaredProfile, EffectiveRunPolicy, LockVerificationDecision,
+    StoredLockDigest, compose_effective_policy,
+    create_effective_policy_evidence, decide_context_control,
+    decide_lock_verification, decide_plugin_activation, declare_profile,
 };
 use siralos_core::context::ContextPolicy;
 use siralos_core::domain::capability::HostAuthority;
@@ -249,6 +255,14 @@ where
         } else {
             None
         };
+    // Stage 5.9 (decision 55): verify the on-disk `siralos.lock` against
+    // the recomputed current lock. The lock never gates authority: the
+    // session always proceeds on live Host state and reports drift or
+    // untrusted content truthfully as a host-side startup diagnostic.
+    let lock_decision = verify_session_lock(&workspace_root, &effective);
+    if let Some(reason) = &lock_decision.reason {
+        eprintln!("siralos: lock not trusted: {reason}");
+    }
     let policy = PermissionPolicy::from_rules(effective.rules);
     let projection_config = ApplicationProjectionConfig {
         capacity: Some(ContextCapacity::default()),
@@ -422,6 +436,79 @@ fn render_context_claim(raw: &str, control: Option<&ContextPolicy>) -> String {
             format!("{raw}Context control: context claim stale ({reason})\n")
         }
         Some(reason) => format!("Context projection refused: {reason}\n"),
+    }
+}
+/// Stage 5.9 (decision 55): verify the on-disk `siralos.lock` against
+/// the recomputed current lock. The current lock is recomputed from the
+/// applied profile's effective-policy identity and the installed plugin
+/// records; the on-disk lock is read through the unchanged 5.4 adapter.
+/// The lock never gates authority: every outcome is advisory and the
+/// session proceeds on live Host state.
+fn verify_session_lock(
+    workspace_root: &Path,
+    effective: &EffectiveRunPolicy,
+) -> LockVerificationDecision {
+    let lock_profile_digest: Option<String> =
+        if effective.applied_profile.is_some() {
+            create_effective_policy_evidence(effective)
+                .ok()
+                .map(|evidence| evidence.effective_digest)
+        } else {
+            None
+        };
+    let lock_identities: Vec<LockPluginIdentity> =
+        match load_plugin_records(workspace_root) {
+            Ok(records) => records
+                .iter()
+                .map(|record| LockPluginIdentity {
+                    id: record.id.clone(),
+                    path: record.path.clone(),
+                    digest: record
+                        .digest
+                        .strip_prefix("sha256:")
+                        .unwrap_or(&record.digest)
+                        .to_owned(),
+                })
+                .collect(),
+            Err(_) => {
+                // The recomputation itself is compromised: the stored
+                // lock cannot be held to account against a current state
+                // the session cannot see.
+                return decide_lock_verification(
+                    StoredLockDigest::Untrusted(
+                        "the workspace plugin records could not be read"
+                            .to_owned(),
+                    ),
+                    "",
+                );
+            }
+        };
+    match create_workspace_lock(
+        lock_profile_digest.as_deref(),
+        &lock_identities,
+    ) {
+        Ok(current_lock) => {
+            let stored =
+                match verify_workspace_lock(workspace_root, &current_lock) {
+                    Ok(LockVerification::Missing) => StoredLockDigest::Missing,
+                    Ok(LockVerification::Current) => {
+                        StoredLockDigest::Trusted(
+                            current_lock.lock_digest.clone(),
+                        )
+                    }
+                    Ok(LockVerification::Stale { actual, .. }) => {
+                        StoredLockDigest::Trusted(actual)
+                    }
+                    Err(failure) => {
+                        StoredLockDigest::Untrusted(failure.message)
+                    }
+                };
+            decide_lock_verification(stored, &current_lock.lock_digest)
+        }
+        Err(error) => decide_lock_verification(
+            StoredLockDigest::Untrusted(error.message),
+            "",
+        ),
     }
 }
 /// Render the `/domains` empty-state or installed view.
@@ -1076,6 +1163,67 @@ mod tests {
             None,
         );
         assert!(output.contains("Activated godot."));
+        let _ = remove_dir_all(root);
+    }
+    #[test]
+    fn session_lock_verification_reports_without_gating() {
+        use super::{
+            DeclaredProfile, PermissionRule, PolicyRule,
+            compose_effective_policy, verify_session_lock,
+        };
+        use siralos_adapters::lockfile::write_workspace_lock;
+        use siralos_core::composition::lock::{
+            LockPluginIdentity, create_workspace_lock,
+        };
+        let root = temporary_directory("lock-verify");
+        // Missing: verification is transparent.
+        let host_rules = vec![PolicyRule {
+            capability: siralos_core::tool::CapabilityId::parse(
+                "workspace.read",
+            )
+            .expect("capability id"),
+            rule: PermissionRule::Allow,
+        }];
+        let effective =
+            compose_effective_policy(&host_rules, &DeclaredProfile::Absent);
+        let decision = verify_session_lock(&root, &effective);
+        assert_eq!(decision.outcome.as_str(), "missing");
+        // Current: a written lock matching the recomputed state verifies.
+        let empty = create_workspace_lock(None, &[]).expect("empty lock");
+        write_workspace_lock(&root, &empty).expect("write lock");
+        let decision = verify_session_lock(&root, &effective);
+        assert_eq!(decision.outcome.as_str(), "current");
+        assert_eq!(decision.reason, None);
+        // Stale: a lock from a different plugin set drifts truthfully,
+        // and the session still proceeds on live Host state.
+        let drifted = create_workspace_lock(
+            None,
+            &[LockPluginIdentity {
+                id: "ghost".to_owned(),
+                path: "ghost".to_owned(),
+                digest: "a".repeat(64),
+            }],
+        )
+        .expect("drifted lock");
+        write_workspace_lock(&root, &drifted).expect("write drifted");
+        let decision = verify_session_lock(&root, &effective);
+        assert_eq!(decision.outcome.as_str(), "stale");
+        assert!(decision.reason.as_deref().is_some_and(|reason| {
+            reason.starts_with("the on-disk lock does not match")
+        }));
+        let output = run("/tools\n/exit\n", &root, None);
+        assert!(output.contains("Tool projection: not yet computed"));
+        // Invalid: a corrupt lock is untrusted with a truthful reason,
+        // and the session still proceeds.
+        write(root.join("siralos.lock"), "lockDigest = \"corrupt\"\n")
+            .expect("corrupt lock");
+        let decision = verify_session_lock(&root, &effective);
+        assert_eq!(decision.outcome.as_str(), "invalid");
+        assert!(decision.reason.as_deref().is_some_and(|reason| {
+            reason.starts_with("the on-disk lock could not be trusted")
+        }));
+        let output = run("/tools\n/exit\n", &root, None);
+        assert!(output.contains("Tool projection: not yet computed"));
         let _ = remove_dir_all(root);
     }
     #[test]

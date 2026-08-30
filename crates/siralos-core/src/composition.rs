@@ -557,6 +557,159 @@ pub fn render_context_control_decision(
         None => base,
     }
 }
+
+/// What the loading side learned about the on-disk lock (Stage 5.9,
+/// decision 55): missing (no lock file), trusted (a well-formed lock
+/// whose re-derived digest is carried), or untrusted (the adapter
+/// refused the lock; the truthful reason is carried).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredLockDigest {
+    /// No lock file exists.
+    Missing,
+    /// A well-formed stored lock; its re-derived digest.
+    Trusted(String),
+    /// The stored lock is not trusted; the truthful reason.
+    Untrusted(String),
+}
+
+/// The typed lock-verification outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockVerificationOutcome {
+    /// No on-disk lock: verification is transparent.
+    Missing,
+    /// The stored digest matches the recomputed one.
+    Current,
+    /// The stored digest drifted from the recomputed one.
+    Stale,
+    /// The stored lock is untrusted (corrupt or out of bounds).
+    Invalid,
+}
+
+impl LockVerificationOutcome {
+    /// Stable disposition token for evidence and wire output.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Current => "current",
+            Self::Stale => "stale",
+            Self::Invalid => "invalid",
+        }
+    }
+}
+
+/// The result of verifying the on-disk lock against the recomputed
+/// current lock. The lock never gates authority: every outcome is
+/// advisory, and the session proceeds on live Host state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockVerificationDecision {
+    /// The typed outcome.
+    pub outcome: LockVerificationOutcome,
+    /// Truthful, report-safe reason; `None` when missing/current.
+    pub reason: Option<String>,
+}
+
+/// Decide the session's lock verification. `Missing` is transparent;
+/// a trusted digest equal to the recomputed one is current; any other
+/// trusted digest is stale with expected/actual; an untrusted lock is
+/// invalid with the adapter's truthful reason.
+#[must_use]
+pub fn decide_lock_verification(
+    stored: StoredLockDigest,
+    current_digest: &str,
+) -> LockVerificationDecision {
+    match stored {
+        StoredLockDigest::Missing => LockVerificationDecision {
+            outcome: LockVerificationOutcome::Missing,
+            reason: None,
+        },
+        StoredLockDigest::Untrusted(reason) => LockVerificationDecision {
+            outcome: LockVerificationOutcome::Invalid,
+            reason: Some(format!(
+                "the on-disk lock could not be trusted: {reason}"
+            )),
+        },
+        StoredLockDigest::Trusted(digest) => {
+            if digest == current_digest {
+                LockVerificationDecision {
+                    outcome: LockVerificationOutcome::Current,
+                    reason: None,
+                }
+            } else {
+                LockVerificationDecision {
+                    outcome: LockVerificationOutcome::Stale,
+                    reason: Some(format!(
+                        "the on-disk lock does not match the recomputed workspace lock: expected {current_digest}, actual {digest}"
+                    )),
+                }
+            }
+        }
+    }
+}
+
+/// Digest-bound evidence for one lock-verification decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockVerificationEvidence {
+    /// The typed decision string.
+    pub decision: String,
+    /// The recomputed current lock digest.
+    pub lock_digest: String,
+    /// Truthful reason; `None` when missing/current.
+    pub reason: Option<String>,
+    /// The bound decision digest.
+    pub verification_digest: String,
+}
+
+/// Create digest-bound evidence for a lock-verification decision.
+///
+/// # Errors
+///
+/// Returns [`ProfileValidationError`] when the digest primitive fails.
+pub fn create_lock_verification_evidence(
+    decision: &LockVerificationDecision,
+    current_digest: &str,
+) -> Result<LockVerificationEvidence, ProfileValidationError> {
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        (
+            "decision".to_owned(),
+            CanonicalValue::Str(decision.outcome.as_str().to_owned()),
+        ),
+        (
+            "reason".to_owned(),
+            match &decision.reason {
+                Some(reason) => CanonicalValue::Str(reason.clone()),
+                None => CanonicalValue::Null,
+            },
+        ),
+    ]));
+    let verification_digest =
+        compute_artifact_digest("LockVerificationEvidence", 1, &payload)
+            .map_err(|error| ProfileValidationError {
+                message: error.message,
+            })?
+            .value;
+    Ok(LockVerificationEvidence {
+        decision: decision.outcome.as_str().to_owned(),
+        lock_digest: current_digest.to_owned(),
+        reason: decision.reason.clone(),
+        verification_digest,
+    })
+}
+
+/// Deterministic report-safe rendering of lock-verification evidence.
+#[must_use]
+pub fn render_lock_verification_evidence(
+    evidence: &LockVerificationEvidence,
+) -> String {
+    match evidence.decision.as_str() {
+        "missing" => "lock verification missing (transparent)".to_owned(),
+        "current" => "lock verified current".to_owned(),
+        other => match &evidence.reason {
+            Some(reason) => format!("lock {other} ({reason})"),
+            None => format!("lock {other}"),
+        },
+    }
+}
 /// The accepted narrowing result: every overlay entry, guaranteed not
 /// broader than the Host's current rule for its capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1367,6 +1520,95 @@ mod tests {
         record.validate().expect("valid");
     }
 
+    #[test]
+    fn lock_verification_never_gates_and_reports_truthfully() {
+        use super::{
+            LockVerificationOutcome, StoredLockDigest,
+            create_lock_verification_evidence, decide_lock_verification,
+            render_lock_verification_evidence,
+        };
+        let current = "a".repeat(64);
+        let drifted = "b".repeat(64);
+
+        // Missing is transparent; the session proceeds unchanged.
+        let missing =
+            decide_lock_verification(StoredLockDigest::Missing, &current);
+        assert_eq!(missing.outcome, LockVerificationOutcome::Missing);
+        assert_eq!(missing.reason, None);
+
+        // A matching trusted digest is current.
+        let current_outcome = decide_lock_verification(
+            StoredLockDigest::Trusted(current.clone()),
+            &current,
+        );
+        assert_eq!(current_outcome.outcome, LockVerificationOutcome::Current);
+        assert_eq!(current_outcome.reason, None);
+
+        // Any other trusted digest is stale with expected/actual.
+        let stale = decide_lock_verification(
+            StoredLockDigest::Trusted(drifted.clone()),
+            &current,
+        );
+        assert_eq!(stale.outcome, LockVerificationOutcome::Stale);
+        assert!(stale
+            .reason
+            .as_deref()
+            .is_some_and(|reason| {
+                reason.starts_with("the on-disk lock does not match the recomputed workspace lock: expected ")
+                    && reason.ends_with(&format!("actual {drifted}"))
+            }));
+
+        // An untrusted lock is invalid with the truthful reason.
+        let invalid = decide_lock_verification(
+            StoredLockDigest::Untrusted("corrupt".to_owned()),
+            &current,
+        );
+        assert_eq!(invalid.outcome, LockVerificationOutcome::Invalid);
+        assert_eq!(
+            invalid.reason.as_deref(),
+            Some("the on-disk lock could not be trusted: corrupt")
+        );
+
+        // Evidence is digest-bound and renders deterministically.
+        let evidence = create_lock_verification_evidence(&stale, &current)
+            .expect("evidence");
+        assert_eq!(evidence.decision, "stale");
+        assert_eq!(evidence.lock_digest, current);
+        assert_eq!(
+            evidence.verification_digest,
+            create_lock_verification_evidence(&stale, &current)
+                .expect("evidence")
+                .verification_digest
+        );
+        let moved = decide_lock_verification(
+            StoredLockDigest::Trusted("c".repeat(64)),
+            &current,
+        );
+        assert_ne!(
+            evidence.verification_digest,
+            create_lock_verification_evidence(&moved, &current)
+                .expect("evidence")
+                .verification_digest
+        );
+        assert_eq!(
+            render_lock_verification_evidence(
+                &create_lock_verification_evidence(&missing, &current)
+                    .expect("evidence"),
+            ),
+            "lock verification missing (transparent)"
+        );
+        assert_eq!(
+            render_lock_verification_evidence(
+                &create_lock_verification_evidence(&current_outcome, &current)
+                    .expect("evidence"),
+            ),
+            "lock verified current"
+        );
+        assert!(
+            render_lock_verification_evidence(&evidence)
+                .starts_with("lock stale (the on-disk lock does not match")
+        );
+    }
     #[test]
     fn context_control_narrowing_and_refusal() {
         use super::{

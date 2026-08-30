@@ -1,0 +1,29 @@
+{
+  "id": "composition-lock-verify.invalid",
+  "subject": "composition-lock-verify",
+  "platforms": [
+    "*"
+  ],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "profileDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "plugins": [
+      {
+        "digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "id": "alpha",
+        "path": "alpha.wasm"
+      }
+    ],
+    "stored": {
+      "profileDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "plugins": [
+        {
+          "digest": "not-hex",
+          "id": "x",
+          "path": "p"
+        }
+      ]
+    }
+  }
+}
