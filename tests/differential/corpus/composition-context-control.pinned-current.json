@@ -1,1 +1,12 @@
-{"id":"composition-context-control.pinned-current","subject":"composition-context-control","platforms":["*"],"parity":"required","env":{},"input":{"actual":"2222222222222222222222222222222222222222222222222222222222222222","digest":"2222222222222222222222222222222222222222222222222222222222222222","kind":"pinned"}}
+{
+  "id": "composition-context-control.pinned-current",
+  "subject": "composition-context-control",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "actual": "2222222222222222222222222222222222222222222222222222222222222222",
+    "digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "kind": "pinned"
+  }
+}

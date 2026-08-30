@@ -1,1 +1,8 @@
-{"id":"composition-context-control.transparent","subject":"composition-context-control","platforms":["*"],"parity":"required","env":{},"input":{"actual":"1111111111111111111111111111111111111111111111111111111111111111"}}
+{
+  "id": "composition-context-control.transparent",
+  "subject": "composition-context-control",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": { "actual": "1111111111111111111111111111111111111111111111111111111111111111" }
+}

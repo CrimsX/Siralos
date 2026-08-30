@@ -3385,12 +3385,15 @@ function validateCompositionLockV42Result(result, label) {
   }
 }
 
-
 function validateCompositionContextControlV46Result(result, label) {
   if (!isObject(result)) {
     throw new Error(`${label}.result must be an object`);
   }
-  assertExactKeys(result, ["controlDigest", "disposition", "reason", "rendered"], `${label}.result`);
+  assertExactKeys(
+    result,
+    ["controlDigest", "disposition", "reason", "rendered"],
+    `${label}.result`,
+  );
   if (!result.disposition || !["fresh", "stale", "blocked"].includes(result.disposition)) {
     throw new Error(`${label}.result.disposition is invalid`);
   }
@@ -3398,7 +3401,10 @@ function validateCompositionContextControlV46Result(result, label) {
     throw new Error(`${label}.result.controlDigest is invalid`);
   }
   if (result.disposition === "fresh") {
-    if (result.reason !== null || !["context claim unbound", "context claim fresh"].includes(result.rendered)) {
+    if (
+      result.reason !== null ||
+      !["context claim unbound", "context claim fresh"].includes(result.rendered)
+    ) {
       throw new Error(`${label}.result fresh outcome is invalid`);
     }
   } else {
