@@ -49,7 +49,10 @@ frozen evidence shape?
 ## Resolution
 
 **The Stage 5.4 implementation slice is authorized as the next implementation slice**
-against this frozen contract and the 4 HITL answers above. Acceptance: gates
+against this frozen contract and the 4 HITL answers above. **Implemented at
+`0a6d592`** (corpus v42/280 files, expectations 41 records, audit 275/275
+applicable required; the lock write follows the shared atomic-write pattern;
+load re-derives the lock digest, verify compares recomputed digests). Acceptance: gates
 green, `composition-lock` ×4 at required parity at v42, deterministic
 idempotent regeneration with unit-tested atomic writes, `check:rust` green,
 docs atomic.
