@@ -2,8 +2,8 @@
 title: "Stage 5.7 Session Plugin Activation Gate Entry Review"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS per decision 53 (2026-08-29): C1-C6 approved; implemented as the Stage 5.7 slice."
 blockedBy: []
 ---
 
