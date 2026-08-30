@@ -2,8 +2,8 @@
 title: "Stage 5.5 Plugin Selection by Profiles Entry Review - Narrowing-Only Domain Activation"
 label: "wayfinder:ticket"
 type: HITL
-status: open
-resolution: ""
+status: closed
+resolution: "PASS per decision 51 (2026-08-28): C1-C6 approved; implemented as the Stage 5.5 slice."
 blockedBy: []
 ---
 
