@@ -58,3 +58,27 @@ marker recorded atomically in this decision, the map, and AGENTS.md.
   answers above recorded verbatim.
 - Verdict: **PASS** — the Stage 5 roll-up contract is frozen; evidence
   gathering authorized.
+
+## Verification ledger (self-loop verification protocol)
+
+| Criterion (C2)                                                                                                                                                            | Direct evidence                                                                                                                                                                                                                                                                                              | Status |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| Sequence complete — all ten slices implemented, entry-reviewed, evidence-backed                                                                                           | decisions 47–56 frozen and annotated in the map index and AGENTS.md Current; each slice's completion record names its own commit, corpus version, and audit line                                                                                                                                             | pass   |
+| Differential parity at v48 — audit 299/299 applicable required, 4 explicit platform skips, 1 accepted informational; expectations 65 records; pinned v32 oracle untouched | fresh `npm run check` run at the freeze commit; the 4 post-freeze `composition-skill-consumption` scenarios are covered by digest-bound candidate-authored expectations at `tests/differential/evidence/post-freeze/expectations.json` per decision 40 C7; pinned oracle directory unchanged                 | pass   |
+| Fail-closed posture — nothing flips `unavailable`; zero spawn paths                                                                                                       | grep sweep over the Stage 5 modules (`siralos-core::composition`, `siralos-core::skills`, `siralos-adapters::{profile_config, lockfile, skills_loader}`, `siralos-cli::interactive`): zero `std::process`/`Command::new`/`spawn` code paths; every Stage 5 decision (47–56) explicitly preserves the posture | pass   |
+| Core domain neutrality — `check:rust` green                                                                                                                               | fresh `npm run check` run (architecture check + fmt + clippy + tests included); `composition`/`skills` stay in `siralos-core` with no infrastructure or domain dependencies                                                                                                                                  | pass   |
+| Lean guardrails per ADR 0036 — no taxonomy growth, corpus cap unchanged, no scope redraw                                                                                  | corpus cap stays 384 (v48/304 files); the closed 13-kind failure taxonomy and decision order are untouched; no new ADR; the map's Not-yet-specified section has no open fog                                                                                                                                  | pass   |
+| Docs atomic — decision, map, and AGENTS.md carry the marker together                                                                                                      | this closure commit annotates this decision, the map index, AGENTS.md Current, and ticket 57 in one commit                                                                                                                                                                                                   | pass   |
+
+## Closure record
+
+**Stage 5 is Verified at `c2c30f0`** — fresh full-gate run at the freeze
+commit (fmt, clippy `-D warnings`, workspace tests, CLI libtest 70,
+differential 299/299 applicable required at corpus v48/304 files,
+expectations 65 records, pinned v32 oracle untouched), spawn sweep clean,
+core neutrality green. The roll-up flips nothing (C3); the guidance-only
+property and the never-gates property remain unit- and session-proven at
+their slices. **The next frontier is named from the map's fog-free
+state**: every Not-yet-specified item is decided, Stage 5's composition
+unit is closed, and any next work (per ADR 0036's lean model) starts with
+a new ticket + entry review.
