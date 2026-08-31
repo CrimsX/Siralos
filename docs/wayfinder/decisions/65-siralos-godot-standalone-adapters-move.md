@@ -1,5 +1,5 @@
 ---
-title: "siralos-godot Standalone — Keep Host Adapters in Host"
+title: "siralos-godot Standalone — Move Host Adapters into Plugin"
 label: "wayfinder:decision"
 status: accepted
 date: 2026-08-31
@@ -7,55 +7,68 @@ ticket: "65"
 supersedes: []
 ---
 
-# Decision 65 — siralos-godot Standalone (Keep Adapters in Host)
+# Decision 65 — siralos-godot Standalone (Host Adapters Moved into the Plugin)
 
 **Ticket:** [65 — siralos-godot Standalone](../tickets/65-siralos-godot-standalone-adapters-move.md) · label `wayfinder:task` HITL
 **Map:** [Siralos Roadmap](../siralos-roadmap.md)
 **Blocked by:** [64 — Pin Option A](../decisions/64-siralos-godot-monorepo-pin-and-shim-removal.md)
 
-> **HITL 2026-08-31 — explored making the plugin fully self-contained by moving `siralos_adapters::godot` into `siralos_godot`; reverted — keep adapters in host, plugin stays domain-only.**
+> **HITL 2026-08-31 — user direction: "keep working until this is properly implemented, don't stop."** The plugin is now **fully self-contained**: host adapters, workspace helpers, config, and paths all live in `siralos-godot`; the monorepo consumes it via the external path dep. Supersedes the interim "keep adapters in host" posture recorded during the first failed attempt.
 
 ## Question
 
-`siralos-godot` at `../siralos-godot` `a01c561` (41 files, 77 tests) is domain-only (`siralos_godot::godot`), host adapters `crates/siralos-adapters/src/godot/**` (10 entries) still live in monorepo. User leaned toward a fully self-contained plugin at `../siralos-godot` so adding it as a domain/plugin is enough to use it. How to make it self-contained without breaking host control or creating a circular Cargo dep?
+`siralos-godot` at `../siralos-godot` (41 domain files) plus host adapters `crates/siralos-adapters/src/godot/**` (10 entries) in the monorepo meant the plugin was not self-contained — adding `siralos-godot` alone was not enough to use it. How is the plugin made fully self-contained without a circular Cargo dep, without changing `siralos-core` neutrality, and without adding spawn paths?
 
-## Investigation (2026-08-31, one coherent pass)
+## Why the first attempt failed, and the fix
 
-**Attempt (ticket 65):**
-- Copied `crates/siralos-adapters/src/godot/**` verbatim to `../siralos-godot/src/adapters/godot/**` (10 entries) + `src/adapters/mod.rs` (`pub mod godot;`)
-- Added `wasmtime = "=47.0.3"` / `wasmtime-wasi = "=47.0.3"` / `dirs = "6"` / `toml = "1.1"` from `crates/siralos-adapters/Cargo.toml:19-44` to `../siralos-godot/Cargo.toml:10`
-- Fixed `siralos_godot::godot::…` → `crate::godot::…` in 24 files under `src/adapters/godot/**`
-- Exposed `pub mod adapters;` in `../siralos-godot/src/lib.rs:12`
-- Deleted `crates/siralos-adapters/src/godot/**` and `pub mod godot;` from `crates/siralos-adapters/src/lib.rs:14` in monorepo
-- Updated `crates/siralos-cli/src/harness.rs:7287,7471,7558,7626` `siralos_adapters::godot::` → `siralos_godot::adapters::godot::` (4 places)
-- Removed `siralos_godot` from `crates/siralos-adapters/Cargo.toml:10`
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `crate::workspace::fs` not found | moved adapters used `crate::workspace::{fs,list,resolve,root}` which lived in `siralos-adapters`, not in the plugin | copy `workspace/` (10 files), `config.rs`, `paths.rs` into the plugin (`config.rs` itself needs `paths` for `state_dir`) |
+| `crate::godot::knowledgeSupportState` (lowercase) | PowerShell `-replace` is **case-insensitive**, so the ordered module rewrites corrupted `KnowledgeSupportState` | re-copy pristine files and rewrite with **case-sensitive** `-creplace` in a fixed order |
+| ambiguous `crate::godot::X` (domain vs adapter-internal) | both domain refs (`siralos_godot::godot::X`) and adapter-internal refs (`crate::godot::X`) collapsed to the same path | ordered rewrite: **first** adapter-internal `crate::godot` → `crate::adapters::godot`, **then** domain `siralos_godot::godot` → `crate::godot` |
+| circular dep risk | plugin needing `siralos-adapters` while adapters needed the plugin | no edge remains: plugin carries its own copies of `workspace`/`config`/`paths`; monorepo adapters dropped the `siralos-godot` dep |
 
-**Verification (failed):**
-- `cargo check -p siralos-godot --manifest-path ../siralos-godot/Cargo.toml` → 23 errors:
-  - `crate::workspace::fs::{decode_utf8, ...}` / `crate::workspace::{list,resolve,root}` not found — moved files used `crate::workspace::…` which was `siralos_adapters::workspace::…` in monorepo; `siralos_godot` has no `workspace` module.
-  - Copying `crates/siralos-adapters/src/workspace/**` (fs.rs, list.rs, resolve.rs, root.rs, etc. — 10 files, `decode_utf8` at `workspace/fs.rs:166` `-> Option<String>`) to `../siralos-godot/src/workspace` and exposing `pub mod workspace;` made the `str` vs `String` error disappear but introduced a new circular dep: `siralos_godot` (external) → `siralos_adapters::workspace` (host) and `siralos_adapters` → `siralos_godot` (external) via `path = "../siralos-godot"` → Cargo `cyclic package dependency` if both depend on each other. The alternative `siralos_godot` → `siralos_core::workspace` is wrong type (`siralos_core::workspace` is revision/path, not fs/list).
-  - The `siralos_godot::adapters::godot::scene::service.rs:207,410` `let Some(content) = decode_utf8(&bytes) else` error was a symptom of the missing `workspace` module, not the `str` type itself.
+## Final layout
 
-**Trade-off:**
-- **Keep adapters in host (current):** host retains `siralos_adapters::workspace::fs/list/resolve/root` (bounded reads, `is_path_within`, `lstat`), plugin stays pure domain (models, scene parser, `forbid(unsafe_code)`), `siralos_godot → siralos_core` only via `path = "../siralos/crates/siralos-core"`, monorepo `siralos_godot` via `path = "../siralos-godot"` — no circular, `cargo test --workspace` 505 and `cargo build --bin siralos-harness` both green, `harness.rs` still uses `siralos_adapters::godot::*` + `siralos_godot::godot::*` as before.
-- **Move adapters to plugin (self-contained):** plugin becomes self-contained — adding `siralos_godot` is enough — but plugin then needs `host-effects` (filesystem, process) and must either vendor `siralos_adapters::workspace` or depend on `siralos_adapters`, creating a circular or a larger `wasmtime` dep in the plugin. Violates ADR 0036 lean bias (host stays small, plugin is domain-only until concrete need).
+```text
+../siralos-godot (standalone, self-contained)          Siralos monorepo (3 members)
+  src/godot/**            domain (41 files)              crates/siralos-core        (505 tests, domain-neutral)
+  src/adapters/godot/**   host adapters (10 entries)     crates/siralos-adapters    (155 tests, -> core only)
+  src/workspace/**        fs/list/resolve/root/...       crates/siralos-cli         (70 tests, -> core+adapters+godot)
+  src/config.rs           UserGodotConfig                [workspace.dependencies]
+  src/paths.rs            state_dir (dirs)                 siralos-godot = { path = "../siralos-godot" }
+  src/lib.rs              adapters, config, godot,
+                          paths, workspace             harness.rs -> siralos_godot::adapters::godot::*
+```
 
-## Decision
+`DomainHost::install` (`siralos.toml [plugins.godot] { digest }` + `siralos.lock`, decisions 38/39) remains the Host authority gate. Every runner stays fail-closed (`GODOT_MUTATION_APPLY_UNAVAILABLE_MESSAGE`); zero spawn paths; `forbid(unsafe_code)` preserved; `missing_docs`/clippy `-D warnings` clean.
 
-**Keep host adapters in host** — `siralos_godot` at `../siralos-godot` stays domain-only (41 files, `a01c561` / `190ef6d` docs update), `crates/siralos-adapters/src/godot/**` stays in monorepo as the bridge. The plugin is *not* fully self-contained by Cargo alone; it is self-contained at the Host/plugin distribution layer (`siralos.toml [plugins.godot] { digest }` + `siralos.lock` digest, `DomainHost::install` SHA-256 gate per decisions 38/39), which is the lean model (ADR 0036). No new `host-effects` granted to the plugin in this slice.
+## Verification (all observed PASS, 2026-08-31)
 
-All moves for this ticket were **reverted**: `../siralos-godot/src/adapters` + `../siralos-godot/src/workspace` deleted, `../siralos-godot/Cargo.toml` and `src/lib.rs` restored to `a01c561`, `crates/siralos-adapters/src/godot/**` and `src/lib.rs:14` restored, `crates/siralos-cli/src/harness.rs` restored to `siralos_adapters::godot::`, `crates/siralos-adapters/Cargo.toml:10` restored to `siralos_godot = { workspace = true }` (but monorepo's `Cargo.toml` keeps `siralos_godot = { path = "../siralos-godot" }` from commit `5da2cab`, so the crate is still outside via path, not in-repo). `git status` clean except ticket 65.
+| Gate | Result |
+|------|--------|
+| External `cargo check -p siralos-godot --all-targets` | Finished clean |
+| External `cargo test` | **234 passed** (77 domain + 157 adapter) |
+| External `cargo clippy --all-targets -- -D warnings` | Finished clean |
+| Monorepo `cargo check --workspace --all-targets` | Finished clean |
+| Monorepo `cargo test --workspace` | core **505**, adapters **155**, cli **70** — 0 failures |
+| Monorepo harness build (`--features differential-harness`) | Finished |
+| **`npm run check:differential`** | **315/315 applicable required parity held** (pinned v32 oracle untouched) |
+| `node scripts/check-rust-architecture.mjs` | passed (3 members, adapters → core only) |
+| `cargo test -p siralos-cli --lib --all-features` (strict-loader corpus assert) | 70 passed |
+| `node scripts/check-doc-links.mjs` | passed |
+
+Commits: external **`1bf2ca3`** (`feat(godot): make plugin self-contained — move host adapters into siralos-godot`, 55 files), monorepo **`87bfd35`** (`refactor(godot): consume host adapters from external siralos-godot`, 44 files).
 
 ## Self-loop verification
 
 | Criterion | Evidence | Verdict |
 |-----------|----------|---------|
-| Plugin domain stays 41 files, 77 tests, `forbid(unsafe_code)` | `../siralos-godot` at `a01c561` / `190ef6d`, `cargo metadata` shows `siralos_godot → siralos_core` + `serde_json` only (wasmtime not added) | pass |
-| Host adapters stay in host, no circular | `crates/siralos-adapters/src/godot` present, `Cargo.toml` members 3, `siralos_godot` via `path = "../siralos-godot"` external, `check-rust-architecture.mjs` 3 members, `cargo check -p siralos-core` PASS | pass |
-| Move was attempted and reverted cleanly | `git status --short` shows only ticket 65 untracked after `git restore` of all moved files | pass |
-| No new spawn path, no `available` flip | `GODOT_MUTATION_APPLY_UNAVAILABLE_MESSAGE` retained in `crates/siralos-godot/src/godot/scene_mutation` | pass |
-| Human leaning recorded, decision explicit | Ticket 65 HITL: user leaned to standalone, investigation showed circular, decision keeps host bridge per ADR 0036 | pass |
+| Plugin self-contained, no circular dep | `siralos-godot` deps: `siralos-core` (path) + `serde_json` + `dirs` only; monorepo adapters dropped `siralos-godot`; only `siralos-cli → siralos-godot` edge remains | pass |
+| Behavioral parity preserved | differential **315/315** after the move (verbatim files, only import paths rewritten) | pass |
+| Case-corruption repaired | pristine re-copy + `-creplace` ordered rewrite; `KnowledgeSupportState` casing restored; external compiles with zero errors | pass |
+| Lean posture: no wasmtime/toml in plugin | plugin `Cargo.toml` deps = core + serde_json + dirs; `missing_docs` deny clean | pass |
+| No new authority/spawn | fail-closed messages retained; zero `std::process` additions; nothing flips `unavailable` | pass |
+| Human direction recorded | HITL: "im leaning towards having the plugin completely standalone" + "keep working until this is properly implemented dont stop" | pass |
 
-## Implementation record
-
-_No code change retained from this ticket's attempt — all file moves were reverted. The decision is to **keep the split**: domain outside at `../siralos-godot`, adapters inside at `crates/siralos-adapters/src/godot`. Ticket 65 closed as **explored, reverted — keep adapters in host**._
+Stage 7 externalization is **complete**: domain + adapters + helpers all in `../siralos-godot` (`1bf2ca3`), monorepo consumes via external path dep (`87bfd35`), all gates green, parity held.

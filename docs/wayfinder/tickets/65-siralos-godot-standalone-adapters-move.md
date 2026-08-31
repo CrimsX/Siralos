@@ -3,7 +3,7 @@ title: "siralos-godot Standalone — Move Host Adapters into Plugin"
 label: "wayfinder:task"
 type: HITL
 status: closed
-resolution: "decisions/65-siralos-godot-standalone-adapters-move.md — explored, reverted — keep adapters in host (lean, no circular)"
+resolution: "decisions/65-siralos-godot-standalone-adapters-move.md — plugin self-contained at 1bf2ca3, monorepo consumes via external path 87bfd35"
 blockedBy: ["64-siralos-godot-monorepo-pin-and-shim-removal.md"]
 ---
 
@@ -18,13 +18,11 @@ blockedBy: ["64-siralos-godot-monorepo-pin-and-shim-removal.md"]
 
 Execute (one commit per repo, no `available` flip):
 
-- **External:** copy `crates/siralos-adapters/src/godot/**` verbatim to `../siralos-godot/src/adapters/godot/**` (or `src/godot_adapters/**`), add `wasmtime`/`wasmtime-wasi`/`dirs`/`toml` deps from `crates/siralos-adapters/Cargo.toml:19-44` to `../siralos-godot/Cargo.toml`, change `use siralos_godot::godot::...` → `crate::godot::...` in the moved files, expose `pub mod adapters;` in `../siralos-godot/src/lib.rs`, keep `forbid(unsafe_code)`.
-- **Monorepo:** delete `crates/siralos-adapters/src/godot/**` and `pub mod godot;` from `crates/siralos-adapters/src/lib.rs:14`, keep `Cargo.toml` path dep to external for `harness.rs` (still needs `siralos_godot` types), or make `harness.rs` use external's adapters via `siralos_godot::adapters::godot::*` if moved.
+- **External:** copy `crates/siralos-adapters/src/godot/**` verbatim to `../siralos-godot/src/adapters/godot/**`, copy the `workspace` helpers (`fs/list/resolve/root/read/search/checkpoint/effects/git`), `config.rs`, and `paths.rs` the moved code needs, rewrite imports with a case-sensitive ordered pass (adapter-internal `crate::godot` → `crate::adapters::godot` first, then domain `siralos_godot::godot` → `crate::godot`), expose `pub mod adapters; pub mod config; pub mod godot; pub mod paths; pub mod workspace;`, add `dirs = "6"` for `paths::state_dir`. Keep `siralos-godot → siralos-core` only; no wasmtime/toml needed.
+- **Monorepo:** delete `crates/siralos-adapters/src/godot/**` and `pub mod godot;` from `crates/siralos-adapters/src/lib.rs`, drop `siralos-godot` from `crates/siralos-adapters/Cargo.toml` (adapters → core only), point `harness.rs` at `siralos_godot::adapters::godot::*` and build `siralos_godot::config::UserGodotConfig` for the discovery record, keep `ALLOWED_DEPENDENCIES` `siralos-cli → core+adapters+godot` over the external path dep.
 
 Do not change `siralos-core` neutrality or add new spawn paths. Godot adapters remain fail-closed (`GODOT_MUTATION_APPLY_UNAVAILABLE_MESSAGE`).
 
-Blocked by: 64 (Option A). Frontier is this ticket.
-
 ## Resolution
 
-Closed — explored moving `adapters/src/godot` (10 entries) into `../siralos-godot/src/adapters/godot` to make the plugin fully self-contained. Attempt copied verbatim, added `wasmtime`/`dirs`/`toml` to external `Cargo.toml`, fixed `siralos_godot::` → `crate::` (24 files), exposed `pub mod adapters;`, deleted `adapters/src/godot` from monorepo, updated `harness.rs` `siralos_adapters::godot::` → `siralos_godot::adapters::godot::` (4 places). Verification failed: external `cargo check -p siralos-godot` reported 23 errors (`crate::workspace::fs` missing, `str` unsized, `wasmtime` heavy) — moving host adapters requires copying `siralos_adapters::workspace` (fs/list/resolve/root) and would create circular `siralos_godot ↔ siralos_adapters` deps. Decision: **keep adapters in host** per [decision 65](../decisions/65-siralos-godot-standalone-adapters-move.md) — plugin stays domain-only (41 files), host retains `adapters/src/godot` as bridge, external stays `siralos-godot → siralos-core` via `path = "../siralos/crates/siralos-core"`, monorepo `siralos-godot` via `path = "../siralos-godot"`. Reverted all moves; `cargo test --workspace` 505 and `harness` still build via external path dep. Lean and no circular.
+Closed — **plugin is fully self-contained.** First attempt (2026-08-31) failed on a missing `workspace` module and a case-insensitive rewrite that corrupted `KnowledgeSupportState`; repaired by re-copying pristine monorepo files and applying a case-sensitive ordered rewrite (`-creplace`: `crate::godot` → `crate::adapters::godot` first, then `siralos_godot::godot` → `crate::godot`), copying `workspace/`, `config.rs`, `paths.rs` into the plugin, and adding `dirs`. External **Verified at `1bf2ca3`** (55 files: 41 domain + adapters + workspace + config + paths; `cargo check --all-targets` clean; **234 tests pass** = 77 domain + 157 adapter; clippy `-D warnings` clean; `forbid(unsafe_code)` preserved; `siralos-godot → siralos-core` only). Monorepo **Verified at `87bfd35`** (adapters godot deleted, adapters → core only, harness consumes `siralos_godot::adapters::godot::*`; workspace all-targets clean; core 505 + adapters 155 + cli 70 tests pass; harness builds; **differential 315/315 parity held**; arch check PASS; doc links PASS; strict-loader assert PASS). Zero spawn paths, nothing flips `unavailable`.
