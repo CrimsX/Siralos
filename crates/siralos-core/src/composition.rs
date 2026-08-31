@@ -43,6 +43,12 @@ pub const MAX_PROFILE_OVERLAY_ENTRIES: usize = 16;
 pub const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
 /// Maximum profile plugin id length in UTF-8 bytes.
 pub const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
+/// Maximum provider id length in UTF-8 bytes.
+pub const MAX_PROFILE_PROVIDER_BYTES: usize = 64;
+/// Maximum model id length in UTF-8 bytes.
+pub const MAX_PROFILE_MODEL_BYTES: usize = 128;
+/// Maximum credential reference length in UTF-8 bytes.
+pub const MAX_PROFILE_CREDENTIAL_BYTES: usize = 70;
 
 /// One profile permission-overlay entry: the capability and the rule the
 /// profile requests for it. Legality is decided by
@@ -73,6 +79,19 @@ pub struct ProfileRecord {
     /// declarative guidance from the workspace catalog — never authority
     /// (Stage 5.10).
     pub skills: Option<Vec<String>>,
+    /// Optional provider selection: the profile may declare a bounded
+    /// provider identifier (e.g., "openai", "anthropic") that feeds
+    /// `EffectiveRunPolicy` but never grants network authority by itself
+    /// (Stage 8, decision 67 C1).
+    pub provider: Option<String>,
+    /// Optional model selection: the profile may declare a bounded model
+    /// identifier (e.g., "gpt-4o") that feeds `EffectiveRunPolicy`.
+    pub model: Option<String>,
+    /// Optional credential reference: the profile may declare a bounded
+    /// `env:` reference (e.g., "env:OPENAI_API_KEY") that the Host
+    /// resolves at startup; the resolved bytes are never written to
+    /// `siralos.toml`/`siralos.lock`/`Context` (decision 67 C2, 68 §1).
+    pub credential: Option<String>,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -152,8 +171,101 @@ impl ProfileRecord {
             }
             seen.insert(entry.capability.as_str(), ());
         }
-        validate_plugin_selection(&self.plugins)
+        validate_plugin_selection(&self.plugins)?;
+        validate_provider_field(&self.provider)?;
+        validate_model_field(&self.model)?;
+        validate_credential_field(&self.credential)?;
+        Ok(())
     }
+}
+
+fn validate_provider_field(provider: &Option<String>) -> Result<(), ProfileValidationError> {
+    let Some(value) = provider else {
+        return Ok(());
+    };
+    if value.is_empty() || value.len() > MAX_PROFILE_PROVIDER_BYTES {
+        return Err(ProfileValidationError {
+            message: format!(
+                "The provider exceeds the {MAX_PROFILE_PROVIDER_BYTES}-byte bound or is empty."
+            ),
+        });
+    }
+    if value.contains('\0') {
+        return Err(ProfileValidationError {
+            message: "A provider must not contain NUL.".to_owned(),
+        });
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    {
+        return Err(ProfileValidationError {
+            message: "A provider must match [a-z0-9_-]{1,64}.".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_model_field(model: &Option<String>) -> Result<(), ProfileValidationError> {
+    let Some(value) = model else {
+        return Ok(());
+    };
+    if value.is_empty() || value.len() > MAX_PROFILE_MODEL_BYTES {
+        return Err(ProfileValidationError {
+            message: format!(
+                "The model exceeds the {MAX_PROFILE_MODEL_BYTES}-byte bound or is empty."
+            ),
+        });
+    }
+    if value.contains('\0') {
+        return Err(ProfileValidationError {
+            message: "A model must not contain NUL.".to_owned(),
+        });
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err(ProfileValidationError {
+            message: "A model must match [a-zA-Z0-9._-]{1,128}.".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_credential_field(credential: &Option<String>) -> Result<(), ProfileValidationError> {
+    let Some(value) = credential else {
+        return Ok(());
+    };
+    if value.len() > MAX_PROFILE_CREDENTIAL_BYTES {
+        return Err(ProfileValidationError {
+            message: format!(
+                "The credential exceeds the {MAX_PROFILE_CREDENTIAL_BYTES}-byte bound."
+            ),
+        });
+    }
+    if value.contains('\0') {
+        return Err(ProfileValidationError {
+            message: "A credential must not contain NUL.".to_owned(),
+        });
+    }
+    if !value.starts_with("env:") {
+        return Err(ProfileValidationError {
+            message: "A credential must start with \"env:\".".to_owned(),
+        });
+    }
+    let name = &value[4..];
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(ProfileValidationError {
+            message: "A credential env name must match [A-Z0-9_]{1,64} after \"env:\".".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// The result of applying a profile's plugin selection to the
@@ -1326,6 +1438,9 @@ mod tests {
             plugins: None,
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1352,6 +1467,9 @@ mod tests {
             plugins: None,
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1372,6 +1490,9 @@ mod tests {
             plugins: None,
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1389,6 +1510,9 @@ mod tests {
             plugins: None,
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -1402,6 +1526,9 @@ mod tests {
             plugins: None,
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -1421,6 +1548,9 @@ mod tests {
             plugins: None,
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -1462,6 +1592,9 @@ mod tests {
             plugins: None,
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -1652,6 +1785,9 @@ mod tests {
             plugins: Some(vec!["a".to_owned(), "a".to_owned()]),
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let error = record.validate().expect_err("duplicate refused");
         assert!(error.message.contains("more than once"));
@@ -1661,6 +1797,9 @@ mod tests {
             plugins: Some(vec![String::new()]),
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         let error = record.validate().expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
@@ -1670,6 +1809,9 @@ mod tests {
             plugins: Some(vec!["a".to_owned()]),
             context: None,
             skills: None,
+            provider: None,
+            model: None,
+            credential: None,
         };
         record.validate().expect("valid");
     }

@@ -243,6 +243,9 @@ pub fn parse_profile_value(
             && key != "plugins"
             && key != "context"
             && key != "skills"
+            && key != "provider"
+            && key != "model"
+            && key != "credential"
         {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
@@ -322,12 +325,42 @@ pub fn parse_profile_value(
         }
         skills = Some(names);
     }
+    let mut provider: Option<String> = None;
+    if let Some(value) = profile.get("provider") {
+        let Some(text) = value.as_str() else {
+            return Err(error(
+                "The [profile.provider] entry must be a string.".to_owned(),
+            ));
+        };
+        provider = Some(text.to_owned());
+    }
+    let mut model: Option<String> = None;
+    if let Some(value) = profile.get("model") {
+        let Some(text) = value.as_str() else {
+            return Err(error(
+                "The [profile.model] entry must be a string.".to_owned(),
+            ));
+        };
+        model = Some(text.to_owned());
+    }
+    let mut credential: Option<String> = None;
+    if let Some(value) = profile.get("credential") {
+        let Some(text) = value.as_str() else {
+            return Err(error(
+                "The [profile.credential] entry must be a string.".to_owned(),
+            ));
+        };
+        credential = Some(text.to_owned());
+    }
     Ok(ProfileRecord {
         name: name.to_owned(),
         overlay,
         plugins,
         context,
         skills,
+        provider,
+        model,
+        credential,
     })
 }
 
