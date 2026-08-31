@@ -2,7 +2,8 @@
 title: "Real Provider Credentials and Registry — Env Resolution and Host-Mediated HTTP Adapters"
 label: "wayfinder:task"
 type: HITL
-status: open
+status: closed
+resolution: "decisions/68-real-provider-credentials-and-registry.md"
 blockedBy: ["67-real-model-provider-entry-review.md"]
 ---
 
@@ -25,3 +26,7 @@ Decide and record (no code in this ticket):
 Output: a one-page credential + registry + HTTP adapter plan with the exact `siralos.toml` snippet, the `ModelProvider` trait bound, and the 3-surface secret audit. Do not implement the adapter — implementation follows only after HITL PASS on 67 and on this plan.
 
 Blocked by: 67-real-model-provider-entry-review.md (contract not frozen until then). This ticket is the last planning slice before the `ProfileRecord` provider/model fields implementation; the HTTP adapter lands as the next implementation ticket after both 66/67 PASS.
+
+## Resolution
+
+Closed — credential + registry + HTTP adapter plan frozen in [decisions/68-real-provider-credentials-and-registry.md](../decisions/68-real-provider-credentials-and-registry.md) (env: only, registry, HTTP with determinism clock, secret hygiene) — **PASS; ProfileRecord provider/model fields + siralos.toml parsing is now fully planned and authorized per decision 67 C6; HTTP registry remains frozen but not authorized until that slice is Verified.**
