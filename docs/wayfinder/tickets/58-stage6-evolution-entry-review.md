@@ -1,0 +1,43 @@
+---
+title: "Stage 6 Evolution & Stabilization Entry Review — Freeze the Bounded Evaluation Workflow Contract"
+label: "wayfinder:ticket"
+type: HITL
+status: open
+blockedBy: []
+---
+
+# Ticket 58 — Stage 6 Evolution & Stabilization Entry Review
+
+**Map:** [Siralos Roadmap](../siralos-roadmap.md) · label `wayfinder:map`
+**Decision:** [Stage 6 Evolution Entry Review](../decisions/58-stage6-evolution-entry-review.md) (opens after HITL grilling)
+
+## Question
+
+Stage 5 — Composition is Verified at `c2c30f0` (ten slices, decisions 47–57, differential 299/299 at v48/304, 65 expectations). The Wayfinder map's `Not yet specified` section is empty and `PROJECT_CONTEXT.md:9-14` now records Stage 5 Verified. ADR 0036 §§44–48 reserves **Stage 6 — Evolution & Stabilization** as the only remaining lean stage: a bounded, measured `/evolve` workflow (`baseline → candidate → evaluation → comparison → reject or propose`) that escalates `Profile → Context → Skill → Plugin → Host`, prefers configuration over Host complexity, and may recommend deletion. No Stage 6 ticket exists. How is Stage 6 frozen so an executor can implement it without rediscovering scope, authority, or evaluation boundaries?
+
+> Wayfinder discipline: Plan, don't do. This ticket freezes the decision contract; implementation follows only after HITL PASS (one ticket per session).
+
+## Why now
+
+- **Stage 4 Verified at `9566eee`** (seven steps, decisions 41–46) and **Stage 5 Verified at `c2c30f0`** (ten slices, decisions 47–57) are both evidence-backed with pinned v32 oracle untouched and zero spawn paths; the lean product model (ADR 0036) is frozen.
+- **No open frontier tickets:** `docs/wayfinder/tickets/` `01`–`57` are closed; the map's `Decisions so far` is complete through Stage 5 and `Not yet specified` has no open fog — any next work needs a new ticket + entry review per ADR 0036 and the map `Notes:14`.
+- **Stage 6 remains the only staged product direction not yet ticketed:** `ROADMAP.md:5-6` and `PROJECT_CONTEXT.md:268-272` list it as future-facing; starting it without a frozen contract risks pulling forward Out-of-scope items (general Hooks, TaskGraph, Fleet, marketplaces, auto-acquisition per `ARCHITECTURE.md: Out of scope`).
+- **HITL grilling is required before code:** Stage 6 touches evaluation, packaging, and potential Host changes — high-consequence escalation — so C1–C6 must be human-approved before any `siralos-core`/`siralos-adapters`/`siralos-cli` code or corpus bump.
+
+## Contract draft (C1–C6)
+
+| #   | Clause              | Draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| C1  | Scope               | Freeze Stage 6 as **bounded, measurement-driven `/evolve` only** — no new product surface beyond ADR 0036 §§44–48. Candidate slices: **6.1 Evaluation Corpus & Baselines** (typed corpora, scoring, deterministic baselines), **6.2 Evolve Workflow Core** (`baseline → candidate → evaluation → comparison → reject\|propose` with `Profile → Context → Skill → Plugin → Host` escalation and deletion preference), **6.3 Skill / Plugin / Host Proposals** (typed proposal artifacts, Host-change gating), **6.4 Packaging & Release Stabilization** (versioning, compatibility, performance baselines). Exact slice boundaries stay advisory until each slice's own entry review. |
+| C2  | Authority invariant | `/evolve` never grants authority, never mutates Host state silently, never claims stronger reproducibility than the provider permits (ADR 0036 §13). Proposals are bounded, redacted, and Host-observed; acceptance requires explicit human/host gate. Lower-cost configurable layer (Profile/Context/Skill) is preferred over Host code by construction.                                                                                                                                                                                                                                                                                                                            |
+| C3  | Posture             | Zero new `std::process`/`Command::new().spawn()` paths beyond the typed `UNAVAILABLE` decision order; corpus cap stays 384; no general Hooks, TaskGraph, Fleet, distributed workers, marketplaces, plugin dependency graphs, auto-acquisition, or GUI/TUI ownership (ADR 0036 §51). Fail-closed and core neutrality (`check:rust`) preserved.                                                                                                                                                                                                                                                                                                                                        |
+| C4  | Evidence            | Each Stage 6 slice contributes a frozen differential subject over pure seams (e.g., `evolve-corpus` ×4, `evolve-proposal` ×4) at successive corpus bumps `v49`→ within cap; audit `299/299 + new slices` at required parity with expectations coverage per decision 40 C7; unit- and session-proven invariants. No corpus change in this entry-review ticket.                                                                                                                                                                                                                                                                                                                        |
+| C5  | Corpus mechanics    | Schema stays 3; each implementation slice bumps `CORPUS_VERSION` and strict-loader count asserts in `crates/siralos-cli/src/harness.rs` together with manifest version (all four contract.mjs sites + protocol validator), per map Notes reminder (`cargo test -p siralos-cli --lib --all-features` before slice commit). Entry review itself bumps nothing.                                                                                                                                                                                                                                                                                                                         |
+| C6  | Lean guardrails     | No new ADR beyond 0036, no scope redraw, no Out-of-scope growth; `docs/wayfinder/siralos-roadmap.md: Out of scope` stays closed. One ticket per session; budget one coherent pass + up to two repairs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+
+## HITL grilling (pending)
+
+- **Q1 Scope** — bounded `/evolve` with 6.1–6.4 as drafted vs narrower (e.g., defer packaging/release to a follow-on)?
+- **Q2 Escalation** — `Profile → Context → Skill → Plugin → Host` with deletion preference as the frozen order, or alternative ordering?
+- **Q3 Evidence** — differential subjects over pure seams + expectation coverage as drafted, or alternative harness shape?
+- **Q4 Contract** — approve C1–C6 as drafted for implementation?
