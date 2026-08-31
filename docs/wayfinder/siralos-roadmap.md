@@ -100,6 +100,9 @@ The map is done when no decision remains before an executor could: (1) promote R
 
 <!-- Conscious scope boundary — never graduates; returns only if Destination is redrawn -->
 
-- General Hooks, built-in multi-agent frameworks, TaskGraph, generic workflow engines, agent teams/Fleet, distributed workers, plugin marketplaces, plugin dependency graphs, automatic Skill/Plugin acquisition, model-router architecture, generic Memory subsystem, GUI/TUI runtime ownership — explicitly **FUTURE / NOT DUE** per `ARCHITECTURE.md` (lean constitution ADR 0036).
-- Adding a Godot package, placeholder domains, or marketing content ahead of R7/R8.
-- Re-enabling pathname-based filesystem/process approximations that the fail-closed posture intentionally reports as `unavailable`.
+- General Hooks — explicit `before_model`/`after_tool` injection points that create hidden control flow; kept **FUTURE / NOT DUE** — use an explicit Skill or Tool instead (ADR 0036).
+- TaskGraph / generic workflow engines — a build-graph system where tasks declare dependencies (“B needs A”) and the engine schedules them in parallel/sequence; Siralos is a single bounded turn + tools harness, not a general DAG runner; kept **FUTURE / NOT DUE**.
+- Plugin dependency graphs — letting plugin A declare “I need plugin B”; creates a package manager (A→B→C). Lean rule: a plugin depends only on the Host version — **FUTURE / NOT DUE**.
+- Automatic Skill/Plugin acquisition — the model silently downloading a Skill/Plugin it thinks it needs; kept **FUTURE / NOT DUE** — `Add Plugin` stays explicit and Host-gated via `siralos.toml` digest + `DomainHost::install`.
+- Generic Memory subsystem — an ambient, hidden store that auto-remembers across runs; kept **FUTURE / NOT DUE** — memory, if wanted, is an explicit `Context` item you can `show/explain/pin` (not a core Host feature).
+- Re-enabling pathname-based filesystem/process approximations that the fail-closed posture intentionally reports as `unavailable` — permanent security boundary.
