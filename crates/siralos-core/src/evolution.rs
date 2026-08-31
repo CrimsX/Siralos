@@ -324,6 +324,251 @@ pub fn evaluate_corpus(
     }
 }
 
+/// The escalation level for an evolve proposal (ADR 0036 45): the
+/// cheapest configurable layer that could realize the measured improvement
+/// is preferred. Lower-cost layers must be tried before Host code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Escalation {
+    /// Profile-level improvement (cheapest).
+    Profile,
+    /// Context-level improvement.
+    Context,
+    /// Skill-level improvement.
+    Skill,
+    /// Plugin-level improvement.
+    Plugin,
+    /// Host-level improvement (most expensive).
+    Host,
+}
+
+impl Escalation {
+    /// Stable string for digests and rendering.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::Context => "context",
+            Self::Skill => "skill",
+            Self::Plugin => "plugin",
+            Self::Host => "host",
+        }
+    }
+
+    /// Parse a bounded escalation string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CorpusValidationError`] for unknown values.
+    pub fn parse(value: &str) -> Result<Self, CorpusValidationError> {
+        match value {
+            "profile" => Ok(Self::Profile),
+            "context" => Ok(Self::Context),
+            "skill" => Ok(Self::Skill),
+            "plugin" => Ok(Self::Plugin),
+            "host" => Ok(Self::Host),
+            _ => Err(CorpusValidationError {
+                message: format!("Unknown escalation level {value:?}."),
+            }),
+        }
+    }
+}
+
+/// The typed outcome of an evolve comparison: propose the candidate when
+/// its score strictly exceeds the baseline; otherwise reject (equal scores
+/// reject, per the deletion-preference and measurement-driven rule).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkflowOutcome {
+    /// Candidate does not strictly improve over baseline.
+    Reject,
+    /// Candidate strictly improves over baseline.
+    Propose,
+}
+
+impl WorkflowOutcome {
+    /// Stable string for digests and rendering.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Reject => "reject",
+            Self::Propose => "propose",
+        }
+    }
+}
+
+/// Digest-bound evidence for one workflow comparison.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkflowEvidence {
+    /// Baseline evidence.
+    pub baseline: CorpusEvidence,
+    /// Candidate evidence.
+    pub candidate: CorpusEvidence,
+    /// Strict improvement (candidate score - baseline score).
+    pub improvement: f64,
+    /// Formatted improvement with sign and two decimals.
+    pub improvement_value: String,
+    /// Typed decision.
+    pub decision: WorkflowOutcome,
+    /// Escalation level that would realize the improvement.
+    pub escalation: Escalation,
+    /// Domain-separated digest over baseline/candidate digests, scores,
+    /// decision, and escalation.
+    pub workflow_digest: String,
+}
+
+/// Create digest-bound evidence for a workflow comparison.
+///
+/// # Errors
+///
+/// Returns [`CorpusValidationError`] for digest failures or unknown
+/// escalation.
+pub fn create_workflow_evidence(
+    baseline: &CorpusEvidence,
+    baseline_score: &CorpusScore,
+    candidate: &CorpusEvidence,
+    candidate_score: &CorpusScore,
+    escalation: Escalation,
+) -> Result<(WorkflowEvidence, WorkflowOutcome), CorpusValidationError> {
+    let improvement = candidate_score.score - baseline_score.score;
+    let improvement_value = format!("{improvement:+.2}");
+    let decision = if candidate_score.score > baseline_score.score {
+        WorkflowOutcome::Propose
+    } else {
+        WorkflowOutcome::Reject
+    };
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        (
+            "baselineDigest".to_owned(),
+            CanonicalValue::Str(baseline.corpus_digest.clone()),
+        ),
+        (
+            "baselineScore".to_owned(),
+            CanonicalValue::Str(baseline.score_value.clone()),
+        ),
+        (
+            "candidateDigest".to_owned(),
+            CanonicalValue::Str(candidate.corpus_digest.clone()),
+        ),
+        (
+            "candidateScore".to_owned(),
+            CanonicalValue::Str(candidate.score_value.clone()),
+        ),
+        (
+            "decision".to_owned(),
+            CanonicalValue::Str(decision.as_str().to_owned()),
+        ),
+        (
+            "escalation".to_owned(),
+            CanonicalValue::Str(escalation.as_str().to_owned()),
+        ),
+        (
+            "improvement".to_owned(),
+            CanonicalValue::Str(improvement_value.clone()),
+        ),
+    ]));
+    let workflow_digest =
+        compute_artifact_digest("WorkflowEvidence", 1, &payload)
+            .map_err(|error| CorpusValidationError { message: error.message })?
+            .value;
+    let evidence = WorkflowEvidence {
+        baseline: baseline.clone(),
+        candidate: candidate.clone(),
+        improvement,
+        improvement_value,
+        decision: decision.clone(),
+        escalation,
+        workflow_digest,
+    };
+    Ok((evidence, decision))
+}
+
+/// Deterministic rendering of workflow evidence.
+#[must_use]
+pub fn render_workflow_evidence(evidence: &WorkflowEvidence) -> String {
+    format!(
+        "workflow {} baseline={} candidate={} improvement={} escalation={}",
+        evidence.decision.as_str(),
+        evidence.baseline.score_value,
+        evidence.candidate.score_value,
+        evidence.improvement_value,
+        evidence.escalation.as_str()
+    )
+}
+
+/// The typed outcome of evaluating a workflow at the pure boundary.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
+pub enum WorkflowEvaluation {
+    /// The workflow was valid and produced evidence.
+    Valid {
+        /// Digest-bound evidence.
+        evidence: WorkflowEvidence,
+        /// Typed decision.
+        decision: WorkflowOutcome,
+    },
+    /// The workflow was invalid; the truthful reason is carried.
+    Invalid {
+        /// Deterministic reason.
+        reason: String,
+    },
+}
+
+impl WorkflowEvaluation {
+    /// Stable disposition token.
+    #[must_use]
+    pub fn disposition(&self) -> &'static str {
+        match self {
+            Self::Valid { .. } => "valid",
+            Self::Invalid { .. } => "invalid",
+        }
+    }
+}
+
+/// Evaluate a workflow at the pure boundary. Invalid baselines or
+/// candidates (malformed corpora, unknown escalation) never panic; they
+/// return the typed `Invalid` disposition.
+#[must_use]
+pub fn evaluate_workflow(
+    baseline_corpus: Option<EvaluationCorpus>,
+    baseline_candidate: &BTreeMap<String, String>,
+    candidate_corpus: Option<EvaluationCorpus>,
+    candidate_candidate: &BTreeMap<String, String>,
+    escalation_raw: &str,
+) -> WorkflowEvaluation {
+    let escalation = match Escalation::parse(escalation_raw) {
+        Ok(level) => level,
+        Err(error) => {
+            return WorkflowEvaluation::Invalid { reason: error.message };
+        }
+    };
+    let baseline_eval = evaluate_corpus(baseline_corpus, baseline_candidate);
+    let candidate_eval =
+        evaluate_corpus(candidate_corpus, candidate_candidate);
+    let (baseline_evidence, baseline_score) = match baseline_eval {
+        CorpusEvaluation::Valid { evidence, score } => (evidence, score),
+        CorpusEvaluation::Invalid { reason } => {
+            return WorkflowEvaluation::Invalid { reason };
+        }
+    };
+    let (candidate_evidence, candidate_score) = match candidate_eval {
+        CorpusEvaluation::Valid { evidence, score } => (evidence, score),
+        CorpusEvaluation::Invalid { reason } => {
+            return WorkflowEvaluation::Invalid { reason };
+        }
+    };
+    match create_workflow_evidence(
+        &baseline_evidence,
+        &baseline_score,
+        &candidate_evidence,
+        &candidate_score,
+        escalation,
+    ) {
+        Ok((evidence, decision)) => {
+            WorkflowEvaluation::Valid { evidence, decision }
+        }
+        Err(error) => WorkflowEvaluation::Invalid { reason: error.message },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -439,5 +684,116 @@ mod tests {
         let err: CorpusValidationError =
             corpus.validate().expect_err("oversized prompt");
         assert!(err.message.contains("prompt exceeds"));
+    }
+
+    #[test]
+    fn workflow_proposes_when_candidate_improves() {
+        let baseline = EvaluationCorpus {
+            id: "baseline".to_owned(),
+            cases: vec![case("a", "ok"), case("b", "ok")],
+        };
+        let candidate = EvaluationCorpus {
+            id: "candidate".to_owned(),
+            cases: vec![case("a", "ok"), case("b", "ok")],
+        };
+        let baseline_cand =
+            BTreeMap::from([("a".to_owned(), "wrong".to_owned())]);
+        let candidate_cand = BTreeMap::from([
+            ("a".to_owned(), "ok".to_owned()),
+            ("b".to_owned(), "ok".to_owned()),
+        ]);
+        let eval = super::evaluate_workflow(
+            Some(baseline),
+            &baseline_cand,
+            Some(candidate),
+            &candidate_cand,
+            "skill",
+        );
+        match eval {
+            super::WorkflowEvaluation::Valid { evidence, decision } => {
+                assert_eq!(decision, super::WorkflowOutcome::Propose);
+                assert_eq!(evidence.escalation, super::Escalation::Skill);
+                assert!(evidence.improvement > 0.0);
+                assert!(evidence.workflow_digest.len() == 64);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workflow_rejects_when_not_improving() {
+        let baseline = EvaluationCorpus {
+            id: "baseline".to_owned(),
+            cases: vec![case("a", "ok"), case("b", "ok")],
+        };
+        let candidate = EvaluationCorpus {
+            id: "candidate".to_owned(),
+            cases: vec![case("a", "ok"), case("b", "ok")],
+        };
+        let baseline_cand = BTreeMap::from([
+            ("a".to_owned(), "ok".to_owned()),
+            ("b".to_owned(), "ok".to_owned()),
+        ]);
+        let candidate_cand =
+            BTreeMap::from([("a".to_owned(), "wrong".to_owned())]);
+        let eval = super::evaluate_workflow(
+            Some(baseline),
+            &baseline_cand,
+            Some(candidate),
+            &candidate_cand,
+            "profile",
+        );
+        match eval {
+            super::WorkflowEvaluation::Valid { decision, .. } => {
+                assert_eq!(decision, super::WorkflowOutcome::Reject);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workflow_invalid_on_bad_escalation() {
+        let corpus = EvaluationCorpus {
+            id: "id".to_owned(),
+            cases: vec![case("a", "ok")],
+        };
+        let eval = super::evaluate_workflow(
+            Some(corpus.clone()),
+            &BTreeMap::from([("a".to_owned(), "ok".to_owned())]),
+            Some(corpus),
+            &BTreeMap::from([("a".to_owned(), "ok".to_owned())]),
+            "unknown",
+        );
+        match eval {
+            super::WorkflowEvaluation::Invalid { reason } => {
+                assert!(reason.contains("Unknown escalation"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workflow_invalid_on_duplicate_corpus() {
+        let bad = EvaluationCorpus {
+            id: "bad".to_owned(),
+            cases: vec![case("dup", "ok"), case("dup", "ok")],
+        };
+        let good = EvaluationCorpus {
+            id: "good".to_owned(),
+            cases: vec![case("a", "ok")],
+        };
+        let eval = super::evaluate_workflow(
+            Some(bad),
+            &BTreeMap::new(),
+            Some(good),
+            &BTreeMap::new(),
+            "skill",
+        );
+        match eval {
+            super::WorkflowEvaluation::Invalid { reason } => {
+                assert!(reason.contains("duplicate"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }

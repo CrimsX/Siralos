@@ -110,9 +110,10 @@ const SUBJECT_COMPOSITION_LOCK_VERIFY: &str = "composition-lock-verify";
 const SUBJECT_COMPOSITION_SKILL_CONSUMPTION: &str =
     "composition-skill-consumption";
 const SUBJECT_EVOLVE_CORPUS: &str = "evolve-corpus";
+const SUBJECT_EVOLVE_WORKFLOW: &str = "evolve-workflow";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 49;
+const CORPUS_VERSION: u64 = 50;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -500,6 +501,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_LOCK_VERIFY
             | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
             | SUBJECT_EVOLVE_CORPUS
+            | SUBJECT_EVOLVE_WORKFLOW
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -778,7 +780,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_CONTEXT_CONTROL
         | SUBJECT_COMPOSITION_LOCK_VERIFY
         | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
-        | SUBJECT_EVOLVE_CORPUS => {
+        | SUBJECT_EVOLVE_CORPUS
+        | SUBJECT_EVOLVE_WORKFLOW => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1567,7 +1570,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_CONTEXT_CONTROL
         | SUBJECT_COMPOSITION_LOCK_VERIFY
         | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
-        | SUBJECT_EVOLVE_CORPUS => {
+        | SUBJECT_EVOLVE_CORPUS
+        | SUBJECT_EVOLVE_WORKFLOW => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1604,6 +1608,7 @@ fn run_scenario(
                     composition_skill_consumption_record(input)?
                 }
                 SUBJECT_EVOLVE_CORPUS => evolve_corpus_record(input)?,
+                SUBJECT_EVOLVE_WORKFLOW => evolve_workflow_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6825,6 +6830,47 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_EVOLVE_WORKFLOW => {
+            const WORKFLOW_KEYS: [&str; 3] =
+                ["baseline", "candidate", "escalation"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !WORKFLOW_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if input.get("escalation").and_then(Value::as_str).is_none() {
+                return reject("escalation must be a string".to_owned());
+            }
+            for side in ["baseline", "candidate"] {
+                let Some(table) = input.get(side).and_then(Value::as_object)
+                else {
+                    return reject(format!("{side} must be an object"));
+                };
+                for key in table.keys() {
+                    if !["candidate", "corpus"].contains(&key.as_str()) {
+                        return reject(format!(
+                            "unexpected {side} field {key}"
+                        ));
+                    }
+                }
+                if let Some(corpus) = table.get("corpus") {
+                    if !corpus.is_null() && !corpus.is_object() {
+                        return reject(format!(
+                            "{side} corpus must be object or null"
+                        ));
+                    }
+                }
+                if let Some(candidate) = table.get("candidate") {
+                    if !candidate.is_null() && !candidate.is_object() {
+                        return reject(format!(
+                            "{side} candidate must be object or null"
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10980,6 +11026,141 @@ fn evolve_corpus_record(input: &Value) -> Result<Value, HarnessError> {
         }
     }
 }
+fn evolve_workflow_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::evolution::{
+        EvaluationCase, EvaluationCorpus, evaluate_workflow,
+    };
+    use std::collections::BTreeMap;
+
+    let parse_corpus =
+        |value: &Value| -> Result<Option<EvaluationCorpus>, HarnessError> {
+            match value {
+                Value::Null => Ok(None),
+                Value::Object(table) => {
+                    let id = table
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned();
+                    let cases = table
+                        .get("cases")
+                        .and_then(Value::as_array)
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(|entry| {
+                                    let obj = entry.as_object()?;
+                                    Some(EvaluationCase {
+                                        id: obj
+                                            .get("id")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_owned(),
+                                        prompt: obj
+                                            .get("prompt")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_owned(),
+                                        expected: obj
+                                            .get("expected")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("")
+                                            .to_owned(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    Ok(Some(EvaluationCorpus { id, cases }))
+                }
+                _ => Err(HarnessError::corpus(
+                    "evolve-workflow corpus must be an object or null"
+                        .to_owned(),
+                )),
+            }
+        };
+    let parse_candidate = |value: &Value| -> BTreeMap<String, String> {
+        value
+            .as_object()
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(k, v)| {
+                        Some((k.clone(), v.as_str()?.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let baseline_input =
+        input.get("baseline").and_then(Value::as_object).ok_or_else(|| {
+            HarnessError::corpus(
+                "evolve-workflow requires baseline object".to_owned(),
+            )
+        })?;
+    let candidate_input = input
+        .get("candidate")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            HarnessError::corpus(
+                "evolve-workflow requires candidate object".to_owned(),
+            )
+        })?;
+    let escalation = input
+        .get("escalation")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let baseline_corpus =
+        parse_corpus(baseline_input.get("corpus").unwrap_or(&Value::Null))?;
+    let baseline_candidate = parse_candidate(
+        baseline_input.get("candidate").unwrap_or(&Value::Null),
+    );
+    let candidate_corpus =
+        parse_corpus(candidate_input.get("corpus").unwrap_or(&Value::Null))?;
+    let candidate_candidate = parse_candidate(
+        candidate_input.get("candidate").unwrap_or(&Value::Null),
+    );
+    let evaluation = evaluate_workflow(
+        baseline_corpus,
+        &baseline_candidate,
+        candidate_corpus,
+        &candidate_candidate,
+        &escalation,
+    );
+    match evaluation {
+        siralos_core::evolution::WorkflowEvaluation::Valid {
+            evidence,
+            decision,
+        } => Ok(serde_json::json!({
+            "baselineDigest": evidence.baseline.corpus_digest,
+            "baselineScore": evidence.baseline.score_value,
+            "candidateDigest": evidence.candidate.corpus_digest,
+            "candidateScore": evidence.candidate.score_value,
+            "decision": decision.as_str(),
+            "disposition": "valid",
+            "escalation": evidence.escalation.as_str(),
+            "improvement": evidence.improvement_value,
+            "reason": null,
+            "rendered": siralos_core::evolution::render_workflow_evidence(&evidence),
+            "workflowDigest": evidence.workflow_digest,
+        })),
+        siralos_core::evolution::WorkflowEvaluation::Invalid { reason } => {
+            Ok(serde_json::json!({
+                "baselineDigest": null,
+                "baselineScore": null,
+                "candidateDigest": null,
+                "candidateScore": null,
+                "decision": null,
+                "disposition": "invalid",
+                "escalation": null,
+                "improvement": null,
+                "reason": reason,
+                "rendered": format!("workflow invalid ({reason})"),
+                "workflowDigest": null,
+            }))
+        }
+    }
+}
+
 fn composition_plugin_activation_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
@@ -16068,7 +16249,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 308);
+        assert_eq!(loaded.len(), 312);
     }
 
     #[test]

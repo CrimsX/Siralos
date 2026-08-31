@@ -4233,6 +4233,10 @@ function validateCompletedResult(record, label) {
     validateEvolveCorpusV49Result(record.result, label);
     return;
   }
+  if (record.subject === "evolve-workflow") {
+    validateEvolveWorkflowV50Result(record.result, label);
+    return;
+  }
   if (record.subject === "composition-effective") {
     validateCompositionEffectiveV40Result(record.result, label);
     return;
@@ -4303,7 +4307,81 @@ function validateCompletedResult(record, label) {
     }
   }
 
-  assertExactKeys(record.result, ["version"], `${label}.result`);
+  function validateEvolveWorkflowV50Result(result, label) {
+    assertExactKeys(
+      result,
+      [
+        "baselineDigest",
+        "baselineScore",
+        "candidateDigest",
+        "candidateScore",
+        "decision",
+        "disposition",
+        "escalation",
+        "improvement",
+        "reason",
+        "rendered",
+        "workflowDigest",
+      ],
+      `${label}.result`,
+    );
+    if (result.disposition !== "valid" && result.disposition !== "invalid") {
+      throw new Error(`${label}.result.disposition is invalid`);
+    }
+    if (typeof result.rendered !== "string" || result.rendered.length === 0) {
+      throw new Error(`${label}.result.rendered is invalid`);
+    }
+    if (result.disposition === "valid") {
+      if (
+        typeof result.baselineDigest !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(result.baselineDigest) ||
+        typeof result.candidateDigest !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(result.candidateDigest)
+      ) {
+        throw new Error(`${label}.result digests are invalid`);
+      }
+      if (typeof result.baselineScore !== "string" || typeof result.candidateScore !== "string") {
+        throw new Error(`${label}.result score fields are invalid`);
+      }
+      if (result.decision !== "reject" && result.decision !== "propose") {
+        throw new Error(`${label}.result.decision is invalid`);
+      }
+      if (
+        typeof result.escalation !== "string" ||
+        !["profile", "context", "skill", "plugin", "host"].includes(result.escalation)
+      ) {
+        throw new Error(`${label}.result.escalation is invalid`);
+      }
+      if (typeof result.improvement !== "string") {
+        throw new Error(`${label}.result.improvement is invalid`);
+      }
+      if (
+        typeof result.workflowDigest !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(result.workflowDigest)
+      ) {
+        throw new Error(`${label}.result.workflowDigest is invalid`);
+      }
+      if (result.reason !== null) {
+        throw new Error(`${label}.result.reason must be null for valid disposition`);
+      }
+    } else {
+      if (
+        result.baselineDigest !== null ||
+        result.candidateDigest !== null ||
+        result.baselineScore !== null ||
+        result.candidateScore !== null ||
+        result.decision !== null ||
+        result.escalation !== null ||
+        result.improvement !== null ||
+        result.workflowDigest !== null
+      ) {
+        throw new Error(`${label}.result fields must be null for invalid disposition`);
+      }
+      if (typeof result.reason !== "string" || result.reason.length === 0) {
+        throw new Error(`${label}.result.reason is invalid`);
+      }
+    }
+  }
 
   assertExactKeys(record.result, ["version"], `${label}.result`);
   if (

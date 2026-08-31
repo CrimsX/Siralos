@@ -1,0 +1,41 @@
+{
+  "id": "evolve-workflow.invalid",
+  "subject": "evolve-workflow",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "baseline": {
+      "candidate": {},
+      "corpus": {
+        "cases": [
+          {
+            "expected": "expected same",
+            "id": "dup",
+            "prompt": "prompt one"
+          },
+          {
+            "expected": "expected same",
+            "id": "dup",
+            "prompt": "prompt two"
+          }
+        ],
+        "id": "bad-baseline"
+      }
+    },
+    "candidate": {
+      "candidate": {},
+      "corpus": {
+        "cases": [
+          {
+            "expected": "expected alpha",
+            "id": "alpha",
+            "prompt": "prompt for alpha"
+          }
+        ],
+        "id": "candidate"
+      }
+    },
+    "escalation": "skill"
+  }
+}
