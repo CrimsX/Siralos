@@ -17,6 +17,7 @@ pub mod context;
 pub mod determinism;
 pub mod doctor;
 pub mod domain;
+pub mod evolution;
 pub mod executor;
 pub mod identity;
 pub mod instructions;

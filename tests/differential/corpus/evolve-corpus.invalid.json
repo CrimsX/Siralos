@@ -1,0 +1,25 @@
+{
+  "id": "evolve-corpus.invalid",
+  "subject": "evolve-corpus",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "candidate": {},
+    "corpus": {
+      "cases": [
+        {
+          "expected": "expected same",
+          "id": "dup",
+          "prompt": "prompt one"
+        },
+        {
+          "expected": "expected same",
+          "id": "dup",
+          "prompt": "prompt two"
+        }
+      ],
+      "id": "bad-corpus"
+    }
+  }
+}

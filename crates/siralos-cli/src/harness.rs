@@ -109,9 +109,10 @@ const SUBJECT_COMPOSITION_CONTEXT_CONTROL: &str =
 const SUBJECT_COMPOSITION_LOCK_VERIFY: &str = "composition-lock-verify";
 const SUBJECT_COMPOSITION_SKILL_CONSUMPTION: &str =
     "composition-skill-consumption";
+const SUBJECT_EVOLVE_CORPUS: &str = "evolve-corpus";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 48;
+const CORPUS_VERSION: u64 = 49;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -498,6 +499,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_CONTEXT_CONTROL
             | SUBJECT_COMPOSITION_LOCK_VERIFY
             | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
+            | SUBJECT_EVOLVE_CORPUS
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -775,7 +777,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
         | SUBJECT_COMPOSITION_CONTEXT_CONTROL
         | SUBJECT_COMPOSITION_LOCK_VERIFY
-        | SUBJECT_COMPOSITION_SKILL_CONSUMPTION => {
+        | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
+        | SUBJECT_EVOLVE_CORPUS => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1563,7 +1566,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
         | SUBJECT_COMPOSITION_CONTEXT_CONTROL
         | SUBJECT_COMPOSITION_LOCK_VERIFY
-        | SUBJECT_COMPOSITION_SKILL_CONSUMPTION => {
+        | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
+        | SUBJECT_EVOLVE_CORPUS => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1599,6 +1603,7 @@ fn run_scenario(
                 SUBJECT_COMPOSITION_SKILL_CONSUMPTION => {
                     composition_skill_consumption_record(input)?
                 }
+                SUBJECT_EVOLVE_CORPUS => evolve_corpus_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6768,6 +6773,58 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_EVOLVE_CORPUS => {
+            const EVOLVE_KEYS: [&str; 2] = ["candidate", "corpus"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !EVOLVE_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(corpus) = input.get("corpus") {
+                if !corpus.is_null() && !corpus.is_object() {
+                    return reject(
+                        "corpus must be an object or null".to_owned(),
+                    );
+                }
+                if let Some(table) = corpus.as_object() {
+                    for key in table.keys() {
+                        if !["id", "cases"].contains(&key.as_str()) {
+                            return reject(format!(
+                                "unexpected corpus field {key}"
+                            ));
+                        }
+                    }
+                    if let Some(id) = table.get("id") {
+                        if !id.is_string() {
+                            return reject(
+                                "corpus id must be a string".to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(cases) = table.get("cases") {
+                        let Some(list) = cases.as_array() else {
+                            return reject(
+                                "corpus cases must be an array".to_owned(),
+                            );
+                        };
+                        if list.len() > 64 {
+                            return reject(
+                                "corpus cases exceeds 64".to_owned(),
+                            );
+                        }
+                    }
+                }
+            }
+            if let Some(candidate) = input.get("candidate") {
+                if !candidate.is_null() && !candidate.is_object() {
+                    return reject(
+                        "candidate must be an object or null".to_owned(),
+                    );
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -10832,6 +10889,96 @@ fn composition_skill_consumption_record(
         "reason": evidence.resolution.unknown,
         "rendered": render_skill_consumption_evidence(&evidence),
     }))
+}
+fn evolve_corpus_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::evolution::{
+        EvaluationCase, EvaluationCorpus, evaluate_corpus,
+        render_corpus_evidence,
+    };
+    use std::collections::BTreeMap;
+    let corpus = match input.get("corpus") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(table)) => {
+            let id = table
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let cases = table
+                .get("cases")
+                .and_then(Value::as_array)
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|entry| {
+                            let obj = entry.as_object()?;
+                            Some(EvaluationCase {
+                                id: obj
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_owned(),
+                                prompt: obj
+                                    .get("prompt")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_owned(),
+                                expected: obj
+                                    .get("expected")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .to_owned(),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Some(EvaluationCorpus { id, cases })
+        }
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "evolve-corpus requires a corpus object or null".to_owned(),
+            ));
+        }
+    };
+    let candidate: BTreeMap<String, String> = input
+        .get("candidate")
+        .and_then(Value::as_object)
+        .map(|map| {
+            map.iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let evaluation = evaluate_corpus(corpus, &candidate);
+    match evaluation {
+        siralos_core::evolution::CorpusEvaluation::Valid {
+            evidence,
+            score,
+        } => Ok(json!({
+            "corpusDigest": evidence.corpus_digest,
+            "corpusId": evidence.corpus_id,
+            "disposition": "valid",
+            "matches": score.matches,
+            "reason": null,
+            "rendered": render_corpus_evidence(&evidence),
+            "score": evidence.score,
+            "scoreValue": evidence.score_value,
+            "total": score.total,
+        })),
+        siralos_core::evolution::CorpusEvaluation::Invalid { reason } => {
+            Ok(json!({
+                "corpusDigest": null,
+                "corpusId": null,
+                "disposition": "invalid",
+                "matches": null,
+                "reason": reason,
+                "rendered": format!("corpus invalid ({reason})"),
+                "score": null,
+                "scoreValue": null,
+                "total": null,
+            }))
+        }
+    }
 }
 fn composition_plugin_activation_record(
     input: &Value,
@@ -15921,7 +16068,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 304);
+        assert_eq!(loaded.len(), 308);
     }
 
     #[test]

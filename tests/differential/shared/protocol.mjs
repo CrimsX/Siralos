@@ -4229,6 +4229,10 @@ function validateCompletedResult(record, label) {
     validateCompositionSkillConsumptionV48Result(record.result, label);
     return;
   }
+  if (record.subject === "evolve-corpus") {
+    validateEvolveCorpusV49Result(record.result, label);
+    return;
+  }
   if (record.subject === "composition-effective") {
     validateCompositionEffectiveV40Result(record.result, label);
     return;
@@ -4241,6 +4245,66 @@ function validateCompletedResult(record, label) {
     validateRunProfileV38Result(record.result, label);
     return;
   }
+  function validateEvolveCorpusV49Result(result, label) {
+    assertExactKeys(
+      result,
+      [
+        "corpusDigest",
+        "corpusId",
+        "disposition",
+        "matches",
+        "reason",
+        "rendered",
+        "score",
+        "scoreValue",
+        "total",
+      ],
+      `${label}.result`,
+    );
+    if (result.disposition !== "valid" && result.disposition !== "invalid") {
+      throw new Error(`${label}.result.disposition is invalid`);
+    }
+    if (typeof result.rendered !== "string" || result.rendered.length === 0) {
+      throw new Error(`${label}.result.rendered is invalid`);
+    }
+    if (result.disposition === "valid") {
+      if (typeof result.corpusDigest !== "string" || !/^[0-9a-f]{64}$/u.test(result.corpusDigest)) {
+        throw new Error(`${label}.result.corpusDigest is invalid`);
+      }
+      if (typeof result.corpusId !== "string" || result.corpusId.length === 0) {
+        throw new Error(`${label}.result.corpusId is invalid`);
+      }
+      if (!Number.isSafeInteger(result.matches) || result.matches < 0) {
+        throw new Error(`${label}.result.matches is invalid`);
+      }
+      if (!Number.isSafeInteger(result.total) || result.total < 0) {
+        throw new Error(`${label}.result.total is invalid`);
+      }
+      if (typeof result.score !== "string" || typeof result.scoreValue !== "string") {
+        throw new Error(`${label}.result score fields are invalid`);
+      }
+      if (result.reason !== null) {
+        throw new Error(`${label}.result.reason must be null for valid disposition`);
+      }
+    } else {
+      if (
+        result.corpusDigest !== null ||
+        result.corpusId !== null ||
+        result.matches !== null ||
+        result.total !== null ||
+        result.score !== null ||
+        result.scoreValue !== null
+      ) {
+        throw new Error(`${label}.result fields must be null for invalid disposition`);
+      }
+      if (typeof result.reason !== "string" || result.reason.length === 0) {
+        throw new Error(`${label}.result.reason is invalid`);
+      }
+    }
+  }
+
+  assertExactKeys(record.result, ["version"], `${label}.result`);
+
   assertExactKeys(record.result, ["version"], `${label}.result`);
   if (
     typeof record.result.version !== "string" ||

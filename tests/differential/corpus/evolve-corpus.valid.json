@@ -1,0 +1,28 @@
+{
+  "id": "evolve-corpus.valid",
+  "subject": "evolve-corpus",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "candidate": {
+      "alpha": "expected alpha",
+      "beta": "expected beta"
+    },
+    "corpus": {
+      "cases": [
+        {
+          "expected": "expected alpha",
+          "id": "alpha",
+          "prompt": "prompt for alpha"
+        },
+        {
+          "expected": "expected beta",
+          "id": "beta",
+          "prompt": "prompt for beta"
+        }
+      ],
+      "id": "baseline"
+    }
+  }
+}
