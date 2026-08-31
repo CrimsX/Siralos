@@ -7284,7 +7284,7 @@ fn godot_scene_resolve_record(input: &Value) -> Result<Value, HarnessError> {
 }
 
 fn godot_knowledge_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_adapters::godot::knowledge::GodotKnowledgeService;
+    use siralos_godot::adapters::godot::knowledge::GodotKnowledgeService;
     use siralos_godot::godot::{
         GodotApiSearchKind, GodotApiSearchQuery, GodotKnowledgeLookupOutcome,
         GodotKnowledgeQueryResult, GodotKnowledgeRefreshResult,
@@ -7468,7 +7468,7 @@ fn diagnostics_state_str(
 }
 
 fn godot_diagnostics_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_adapters::godot::diagnostics::GodotDiagnosticsService;
+    use siralos_godot::adapters::godot::diagnostics::GodotDiagnosticsService;
     use siralos_godot::godot::{
         GodotCheckPreparationResult, GodotDiagnosticsExecutionContext,
         GodotDiagnosticsRequest, GodotProjectCheckResult,
@@ -7555,7 +7555,7 @@ fn godot_diagnostics_record(input: &Value) -> Result<Value, HarnessError> {
 }
 
 fn godot_lsp_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_adapters::godot::lsp::GodotLspService;
+    use siralos_godot::adapters::godot::lsp::GodotLspService;
     use siralos_godot::godot::{
         GdScriptNetworkIsolation, GdScriptSessionState,
         GodotCheckPreparationResult,
@@ -7620,10 +7620,10 @@ fn godot_lsp_record(input: &Value) -> Result<Value, HarnessError> {
 }
 
 fn godot_discovery_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_adapters::config::{
+    use siralos_godot::config::{
         UserGodotConfig, UserGodotEditionHint, UserGodotInstallationConfig,
     };
-    use siralos_adapters::godot::profile::engine_profiler::{
+    use siralos_godot::adapters::godot::profile::engine_profiler::{
         GodotOverrideSource, GodotProfilerInputs, discover, selected_profile,
     };
     use siralos_godot::godot::{

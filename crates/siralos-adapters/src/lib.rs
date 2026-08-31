@@ -11,7 +11,6 @@
 
 pub mod config;
 pub mod domain;
-pub mod godot;
 pub mod language;
 pub mod lockfile;
 pub mod paths;

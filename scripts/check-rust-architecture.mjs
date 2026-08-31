@@ -60,7 +60,7 @@ const UNSAFE_PATTERN = /\bunsafe\s+(fn|impl|trait|extern|\{)/;
 /** Allowed workspace dependencies per crate. */
 const ALLOWED_DEPENDENCIES = new Map([
   ["siralos-core", new Set()],
-  ["siralos-adapters", new Set(["siralos-core", "siralos-godot"])],
+  ["siralos-adapters", new Set(["siralos-core"])],
   ["siralos-cli", new Set(["siralos-core", "siralos-adapters", "siralos-godot"])],
 ]);
 
