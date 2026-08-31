@@ -569,6 +569,226 @@ pub fn evaluate_workflow(
     }
 }
 
+/// Maximum proposal id length in UTF-8 bytes.
+pub const MAX_PROPOSAL_ID_BYTES: usize = 64;
+/// Maximum proposal description length in UTF-8 bytes.
+pub const MAX_PROPOSAL_DESCRIPTION_BYTES: usize = 512;
+
+/// A typed proposal for an evolve improvement (Stage 6.3, decision 58 C2):
+/// `Skill` and `Plugin` proposals carry declarative guidance or plugin
+/// selection; `Host` proposals carry a bounded description of the required
+/// Host change and are the only ones that may set `requires_host_approval`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proposal {
+    /// Stable proposal id (non-empty, bounded, NUL-free).
+    pub id: String,
+    /// The workflow digest this proposal derives from (64 hex).
+    pub workflow_digest: String,
+    /// Escalation level that would realize the improvement.
+    pub kind: Escalation,
+    /// Bounded human-readable description of the proposed change.
+    pub description: String,
+    /// Whether the proposal requires explicit Host approval (only Host).
+    pub requires_host_approval: bool,
+}
+
+/// Digest-bound evidence for one proposal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposalEvidence {
+    /// Stable proposal id.
+    pub proposal_id: String,
+    /// The workflow digest this proposal derives from.
+    pub workflow_digest: String,
+    /// Escalation level.
+    pub kind: Escalation,
+    /// Bounded description.
+    pub description: String,
+    /// Whether Host approval is required.
+    pub requires_host_approval: bool,
+    /// Domain-separated digest over the proposal fields.
+    pub proposal_digest: String,
+}
+
+/// Typed validation failure for a malformed proposal.
+pub type ProposalValidationError = CorpusValidationError;
+
+impl Proposal {
+    /// Validate bounds, NUL bytes, digest shape, kind, and Host-gating
+    /// invariant: only `Host` proposals may require Host approval, and
+    /// every `Host` proposal must require it.
+    pub fn validate(&self) -> Result<(), ProposalValidationError> {
+        if self.id.is_empty() {
+            return Err(ProposalValidationError {
+                message: "A proposal requires a non-empty id.".to_owned(),
+            });
+        }
+        if self.id.len() > MAX_PROPOSAL_ID_BYTES {
+            return Err(ProposalValidationError {
+                message: format!(
+                    "The proposal id exceeds the {MAX_PROPOSAL_ID_BYTES}-byte bound."
+                ),
+            });
+        }
+        if self.id.contains('\0') {
+            return Err(ProposalValidationError {
+                message: "A proposal id must not contain NUL.".to_owned(),
+            });
+        }
+        if self.workflow_digest.len() != 64
+            || !self.workflow_digest.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            return Err(ProposalValidationError {
+                message:
+                    "A proposal workflow digest must be 64 hex characters."
+                        .to_owned(),
+            });
+        }
+        if self.description.is_empty() {
+            return Err(ProposalValidationError {
+                message: "A proposal requires a non-empty description."
+                    .to_owned(),
+            });
+        }
+        if self.description.len() > MAX_PROPOSAL_DESCRIPTION_BYTES {
+            return Err(ProposalValidationError {
+                message: format!(
+                    "The proposal description exceeds the {MAX_PROPOSAL_DESCRIPTION_BYTES}-byte bound."
+                ),
+            });
+        }
+        if self.description.contains('\0') {
+            return Err(ProposalValidationError {
+                message: "A proposal description must not contain NUL."
+                    .to_owned(),
+            });
+        }
+        match self.kind {
+            Escalation::Host => {
+                if !self.requires_host_approval {
+                    return Err(ProposalValidationError {
+                        message: "A Host proposal must require Host approval."
+                            .to_owned(),
+                    });
+                }
+            }
+            Escalation::Skill | Escalation::Plugin => {
+                if self.requires_host_approval {
+                    return Err(ProposalValidationError {
+                        message:
+                            "Only Host proposals may require Host approval."
+                                .to_owned(),
+                    });
+                }
+            }
+            Escalation::Profile | Escalation::Context => {
+                return Err(ProposalValidationError {
+                    message: "A proposal kind must be skill, plugin, or host."
+                        .to_owned(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Create digest-bound evidence for a proposal.
+///
+/// # Errors
+///
+/// Returns [`ProposalValidationError`] for malformed proposals or digest
+/// failures.
+pub fn create_proposal_evidence(
+    proposal: &Proposal,
+) -> Result<ProposalEvidence, ProposalValidationError> {
+    proposal.validate()?;
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        (
+            "description".to_owned(),
+            CanonicalValue::Str(proposal.description.clone()),
+        ),
+        (
+            "kind".to_owned(),
+            CanonicalValue::Str(proposal.kind.as_str().to_owned()),
+        ),
+        ("proposalId".to_owned(), CanonicalValue::Str(proposal.id.clone())),
+        (
+            "requiresHostApproval".to_owned(),
+            CanonicalValue::Bool(proposal.requires_host_approval),
+        ),
+        (
+            "workflowDigest".to_owned(),
+            CanonicalValue::Str(proposal.workflow_digest.clone()),
+        ),
+    ]));
+    let proposal_digest =
+        compute_artifact_digest("ProposalEvidence", 1, &payload)
+            .map_err(|error| ProposalValidationError {
+                message: error.message,
+            })?
+            .value;
+    Ok(ProposalEvidence {
+        proposal_id: proposal.id.clone(),
+        workflow_digest: proposal.workflow_digest.clone(),
+        kind: proposal.kind.clone(),
+        description: proposal.description.clone(),
+        requires_host_approval: proposal.requires_host_approval,
+        proposal_digest,
+    })
+}
+
+/// Deterministic rendering of proposal evidence.
+#[must_use]
+pub fn render_proposal_evidence(evidence: &ProposalEvidence) -> String {
+    format!(
+        "proposal {} kind={} host_approval={} digest={}",
+        evidence.proposal_id,
+        evidence.kind.as_str(),
+        evidence.requires_host_approval,
+        &evidence.proposal_digest[..8]
+    )
+}
+
+/// The typed outcome of evaluating a proposal at the pure boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalEvaluation {
+    /// The proposal was valid and produced evidence.
+    Valid {
+        /// Digest-bound evidence.
+        evidence: ProposalEvidence,
+    },
+    /// The proposal was invalid; the truthful reason is carried.
+    Invalid {
+        /// Deterministic reason.
+        reason: String,
+    },
+}
+
+impl ProposalEvaluation {
+    /// Stable disposition token.
+    #[must_use]
+    pub fn disposition(&self) -> &'static str {
+        match self {
+            Self::Valid { .. } => "valid",
+            Self::Invalid { .. } => "invalid",
+        }
+    }
+}
+
+/// Evaluate a proposal at the pure boundary. Invalid proposals never
+/// panic; they return the typed `Invalid` disposition.
+#[must_use]
+pub fn evaluate_proposal(proposal: Option<Proposal>) -> ProposalEvaluation {
+    let Some(proposal) = proposal else {
+        return ProposalEvaluation::Invalid {
+            reason: "A proposal is required.".to_owned(),
+        };
+    };
+    match create_proposal_evidence(&proposal) {
+        Ok(evidence) => ProposalEvaluation::Valid { evidence },
+        Err(error) => ProposalEvaluation::Invalid { reason: error.message },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -792,6 +1012,82 @@ mod tests {
         match eval {
             super::WorkflowEvaluation::Invalid { reason } => {
                 assert!(reason.contains("duplicate"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proposal_skill_is_valid() {
+        let proposal = super::Proposal {
+            id: "skill-1".to_owned(),
+            workflow_digest: "a".repeat(64),
+            kind: super::Escalation::Skill,
+            description: "Add skill for workflow".to_owned(),
+            requires_host_approval: false,
+        };
+        let eval = super::evaluate_proposal(Some(proposal));
+        match eval {
+            super::ProposalEvaluation::Valid { evidence } => {
+                assert_eq!(evidence.kind, super::Escalation::Skill);
+                assert!(!evidence.requires_host_approval);
+                assert_eq!(evidence.proposal_digest.len(), 64);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proposal_host_requires_approval() {
+        let proposal = super::Proposal {
+            id: "host-1".to_owned(),
+            workflow_digest: "b".repeat(64),
+            kind: super::Escalation::Host,
+            description: "Host change proposal".to_owned(),
+            requires_host_approval: true,
+        };
+        let eval = super::evaluate_proposal(Some(proposal));
+        assert!(matches!(eval, super::ProposalEvaluation::Valid { .. }));
+        let bad = super::Proposal {
+            id: "host-bad".to_owned(),
+            workflow_digest: "c".repeat(64),
+            kind: super::Escalation::Host,
+            description: "Host without approval".to_owned(),
+            requires_host_approval: false,
+        };
+        let eval = super::evaluate_proposal(Some(bad));
+        match eval {
+            super::ProposalEvaluation::Invalid { reason } => {
+                assert!(reason.contains("Host proposal must require"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proposal_invalid_kind_rejected() {
+        let proposal = super::Proposal {
+            id: "bad-kind".to_owned(),
+            workflow_digest: "d".repeat(64),
+            kind: super::Escalation::Profile,
+            description: "Profile proposal should be invalid".to_owned(),
+            requires_host_approval: false,
+        };
+        let eval = super::evaluate_proposal(Some(proposal));
+        match eval {
+            super::ProposalEvaluation::Invalid { reason } => {
+                assert!(reason.contains("skill, plugin, or host"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proposal_absent_is_invalid() {
+        let eval = super::evaluate_proposal(None);
+        match eval {
+            super::ProposalEvaluation::Invalid { reason } => {
+                assert!(reason.contains("A proposal is required"));
             }
             other => panic!("unexpected {other:?}"),
         }

@@ -1,0 +1,16 @@
+{
+  "id": "evolve-proposal.host",
+  "subject": "evolve-proposal",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "proposal": {
+      "description": "Host change proposal",
+      "id": "host-1",
+      "kind": "host",
+      "requiresHostApproval": true,
+      "workflowDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+}

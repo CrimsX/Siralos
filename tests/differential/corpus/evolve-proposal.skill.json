@@ -1,0 +1,16 @@
+{
+  "id": "evolve-proposal.skill",
+  "subject": "evolve-proposal",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "proposal": {
+      "description": "Add skill for workflow",
+      "id": "skill-1",
+      "kind": "skill",
+      "requiresHostApproval": false,
+      "workflowDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  }
+}

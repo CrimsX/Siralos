@@ -111,9 +111,10 @@ const SUBJECT_COMPOSITION_SKILL_CONSUMPTION: &str =
     "composition-skill-consumption";
 const SUBJECT_EVOLVE_CORPUS: &str = "evolve-corpus";
 const SUBJECT_EVOLVE_WORKFLOW: &str = "evolve-workflow";
+const SUBJECT_EVOLVE_PROPOSAL: &str = "evolve-proposal";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 50;
+const CORPUS_VERSION: u64 = 51;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -502,6 +503,7 @@ fn validate_scenario(
             | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
             | SUBJECT_EVOLVE_CORPUS
             | SUBJECT_EVOLVE_WORKFLOW
+            | SUBJECT_EVOLVE_PROPOSAL
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -781,7 +783,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_LOCK_VERIFY
         | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
         | SUBJECT_EVOLVE_CORPUS
-        | SUBJECT_EVOLVE_WORKFLOW => {
+        | SUBJECT_EVOLVE_WORKFLOW
+        | SUBJECT_EVOLVE_PROPOSAL => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1571,7 +1574,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_LOCK_VERIFY
         | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
         | SUBJECT_EVOLVE_CORPUS
-        | SUBJECT_EVOLVE_WORKFLOW => {
+        | SUBJECT_EVOLVE_WORKFLOW
+        | SUBJECT_EVOLVE_PROPOSAL => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1609,6 +1613,7 @@ fn run_scenario(
                 }
                 SUBJECT_EVOLVE_CORPUS => evolve_corpus_record(input)?,
                 SUBJECT_EVOLVE_WORKFLOW => evolve_workflow_record(input)?,
+                SUBJECT_EVOLVE_PROPOSAL => evolve_proposal_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6871,6 +6876,77 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_EVOLVE_PROPOSAL => {
+            const PROPOSAL_KEYS: [&str; 1] = ["proposal"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !PROPOSAL_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(proposal) = input.get("proposal") {
+                if !proposal.is_null() && !proposal.is_object() {
+                    return reject(
+                        "proposal must be an object or null".to_owned(),
+                    );
+                }
+                if let Some(table) = proposal.as_object() {
+                    for key in table.keys() {
+                        if ![
+                            "description",
+                            "id",
+                            "kind",
+                            "requiresHostApproval",
+                            "workflowDigest",
+                        ]
+                        .contains(&key.as_str())
+                        {
+                            return reject(format!(
+                                "unexpected proposal field {key}"
+                            ));
+                        }
+                    }
+                    if let Some(id) = table.get("id") {
+                        if !id.is_string() {
+                            return reject(
+                                "proposal id must be a string".to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(digest) = table.get("workflowDigest") {
+                        if !digest.is_string() {
+                            return reject(
+                                "proposal workflowDigest must be a string"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(kind) = table.get("kind") {
+                        if !kind.is_string() {
+                            return reject(
+                                "proposal kind must be a string".to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(desc) = table.get("description") {
+                        if !desc.is_string() {
+                            return reject(
+                                "proposal description must be a string"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(flag) = table.get("requiresHostApproval") {
+                        if !flag.is_boolean() {
+                            return reject(
+                                "proposal requiresHostApproval must be a boolean".to_owned(),
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -11156,6 +11232,88 @@ fn evolve_workflow_record(input: &Value) -> Result<Value, HarnessError> {
                 "reason": reason,
                 "rendered": format!("workflow invalid ({reason})"),
                 "workflowDigest": null,
+            }))
+        }
+    }
+}
+
+fn evolve_proposal_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::evolution::{Escalation, Proposal, evaluate_proposal};
+    let proposal = match input.get("proposal") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(table)) => {
+            let id = table
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let workflow_digest = table
+                .get("workflowDigest")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let kind_raw = table
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let kind = match Escalation::parse(&kind_raw) {
+                Ok(k) => k,
+                Err(error) => {
+                    return Ok(serde_json::json!({
+                        "disposition": "invalid",
+                        "proposalDigest": null,
+                        "proposalId": null,
+                        "reason": error.message,
+                        "rendered": format!("proposal invalid ({})", error.message),
+                        "requiresHostApproval": null,
+                    }));
+                }
+            };
+            let description = table
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let requires_host_approval = table
+                .get("requiresHostApproval")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            Some(Proposal {
+                id,
+                workflow_digest,
+                kind,
+                description,
+                requires_host_approval,
+            })
+        }
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "evolve-proposal requires a proposal object or null"
+                    .to_owned(),
+            ));
+        }
+    };
+    let evaluation = evaluate_proposal(proposal);
+    match evaluation {
+        siralos_core::evolution::ProposalEvaluation::Valid { evidence } => {
+            Ok(serde_json::json!({
+                "disposition": "valid",
+                "proposalDigest": evidence.proposal_digest,
+                "proposalId": evidence.proposal_id,
+                "reason": null,
+                "rendered": siralos_core::evolution::render_proposal_evidence(&evidence),
+                "requiresHostApproval": evidence.requires_host_approval,
+            }))
+        }
+        siralos_core::evolution::ProposalEvaluation::Invalid { reason } => {
+            Ok(serde_json::json!({
+                "disposition": "invalid",
+                "proposalDigest": null,
+                "proposalId": null,
+                "reason": reason,
+                "rendered": format!("proposal invalid ({reason})"),
+                "requiresHostApproval": null,
             }))
         }
     }
@@ -16249,7 +16407,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 312);
+        assert_eq!(loaded.len(), 316);
     }
 
     #[test]

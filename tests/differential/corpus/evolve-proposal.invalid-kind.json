@@ -1,0 +1,16 @@
+{
+  "id": "evolve-proposal.invalid-kind",
+  "subject": "evolve-proposal",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "proposal": {
+      "description": "Profile proposal should be invalid",
+      "id": "bad-kind",
+      "kind": "profile",
+      "requiresHostApproval": false,
+      "workflowDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+}

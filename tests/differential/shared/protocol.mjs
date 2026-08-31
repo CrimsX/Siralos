@@ -4237,6 +4237,10 @@ function validateCompletedResult(record, label) {
     validateEvolveWorkflowV50Result(record.result, label);
     return;
   }
+  if (record.subject === "evolve-proposal") {
+    validateEvolveProposalV51Result(record.result, label);
+    return;
+  }
   if (record.subject === "composition-effective") {
     validateCompositionEffectiveV40Result(record.result, label);
     return;
@@ -4374,6 +4378,48 @@ function validateCompletedResult(record, label) {
         result.escalation !== null ||
         result.improvement !== null ||
         result.workflowDigest !== null
+      ) {
+        throw new Error(`${label}.result fields must be null for invalid disposition`);
+      }
+      if (typeof result.reason !== "string" || result.reason.length === 0) {
+        throw new Error(`${label}.result.reason is invalid`);
+      }
+    }
+  }
+
+  function validateEvolveProposalV51Result(result, label) {
+    assertExactKeys(
+      result,
+      ["disposition", "proposalDigest", "proposalId", "reason", "rendered", "requiresHostApproval"],
+      `${label}.result`,
+    );
+    if (result.disposition !== "valid" && result.disposition !== "invalid") {
+      throw new Error(`${label}.result.disposition is invalid`);
+    }
+    if (typeof result.rendered !== "string" || result.rendered.length === 0) {
+      throw new Error(`${label}.result.rendered is invalid`);
+    }
+    if (result.disposition === "valid") {
+      if (
+        typeof result.proposalDigest !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(result.proposalDigest)
+      ) {
+        throw new Error(`${label}.result.proposalDigest is invalid`);
+      }
+      if (typeof result.proposalId !== "string" || result.proposalId.length === 0) {
+        throw new Error(`${label}.result.proposalId is invalid`);
+      }
+      if (typeof result.requiresHostApproval !== "boolean") {
+        throw new Error(`${label}.result.requiresHostApproval is invalid`);
+      }
+      if (result.reason !== null) {
+        throw new Error(`${label}.result.reason must be null for valid disposition`);
+      }
+    } else {
+      if (
+        result.proposalDigest !== null ||
+        result.proposalId !== null ||
+        result.requiresHostApproval !== null
       ) {
         throw new Error(`${label}.result fields must be null for invalid disposition`);
       }
