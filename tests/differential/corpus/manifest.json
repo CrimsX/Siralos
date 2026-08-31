@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 51,
+  "corpusVersion": 52,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -409,6 +409,22 @@
     {
       "file": "evolve-corpus.valid.json",
       "sha256": "51ea8d02800732979f0706ed1fceefe515d9d1f02967e058610581e2a08f6477"
+    },
+    {
+      "file": "evolve-packaging.breaking.json",
+      "sha256": "b095b60d2afd003f350533cea596f610a9ba45c995a9d73827e8faa3797e8b23"
+    },
+    {
+      "file": "evolve-packaging.compatible.json",
+      "sha256": "2e0db4722463471229ebbe7959e5f9d936b10b9487a8356b9e0aba5977ecc126"
+    },
+    {
+      "file": "evolve-packaging.invalid-version.json",
+      "sha256": "5aba7e81b31546e8df33a455482b15b57bf6868a04b645107b8abe01211cf8a6"
+    },
+    {
+      "file": "evolve-packaging.patch.json",
+      "sha256": "f10f347264c06edba10692ae27227f9b112872c44966f6f258cd2eab52aeaa40"
     },
     {
       "file": "evolve-proposal.host.json",
@@ -1267,5 +1283,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "fbd1bfe7b07d9507fd98913e5bd2f4766c6d37fc7de97615c02f94cacf828f63"
+  "corpusSha256": "40dad8780a82909555ee9722c2befc2a71f3b662dc19608bb0d689a0073fa683"
 }

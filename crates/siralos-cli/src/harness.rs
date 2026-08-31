@@ -112,9 +112,10 @@ const SUBJECT_COMPOSITION_SKILL_CONSUMPTION: &str =
 const SUBJECT_EVOLVE_CORPUS: &str = "evolve-corpus";
 const SUBJECT_EVOLVE_WORKFLOW: &str = "evolve-workflow";
 const SUBJECT_EVOLVE_PROPOSAL: &str = "evolve-proposal";
+const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 51;
+const CORPUS_VERSION: u64 = 52;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -504,6 +505,7 @@ fn validate_scenario(
             | SUBJECT_EVOLVE_CORPUS
             | SUBJECT_EVOLVE_WORKFLOW
             | SUBJECT_EVOLVE_PROPOSAL
+            | SUBJECT_EVOLVE_PACKAGING
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -784,7 +786,8 @@ fn validate_scenario(
         | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
         | SUBJECT_EVOLVE_CORPUS
         | SUBJECT_EVOLVE_WORKFLOW
-        | SUBJECT_EVOLVE_PROPOSAL => {
+        | SUBJECT_EVOLVE_PROPOSAL
+        | SUBJECT_EVOLVE_PACKAGING => {
             if platforms != BTreeSet::from(["*"]) || !scenario.env.is_empty() {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} {} inputs must use platforms [\"*\"] and an empty env",
@@ -1575,7 +1578,8 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
         | SUBJECT_EVOLVE_CORPUS
         | SUBJECT_EVOLVE_WORKFLOW
-        | SUBJECT_EVOLVE_PROPOSAL => {
+        | SUBJECT_EVOLVE_PROPOSAL
+        | SUBJECT_EVOLVE_PACKAGING => {
             let input = scenario.input.as_ref().expect(
                 "runtime input was validated while loading the corpus",
             );
@@ -1614,6 +1618,7 @@ fn run_scenario(
                 SUBJECT_EVOLVE_CORPUS => evolve_corpus_record(input)?,
                 SUBJECT_EVOLVE_WORKFLOW => evolve_workflow_record(input)?,
                 SUBJECT_EVOLVE_PROPOSAL => evolve_proposal_record(input)?,
+                SUBJECT_EVOLVE_PACKAGING => evolve_packaging_record(input)?,
                 _ => runtime_evidence_record(input)?,
             };
             Ok(
@@ -6947,6 +6952,69 @@ fn validate_godot_input(
             }
             Ok(())
         }
+        SUBJECT_EVOLVE_PACKAGING => {
+            const PACKAGING_KEYS: [&str; 1] = ["release"];
+            for key in input.as_object().into_iter().flat_map(|map| map.keys())
+            {
+                if !PACKAGING_KEYS.contains(&key.as_str()) {
+                    return reject(format!("unexpected field {key}"));
+                }
+            }
+            if let Some(release) = input.get("release") {
+                if !release.is_null() && !release.is_object() {
+                    return reject(
+                        "release must be an object or null".to_owned(),
+                    );
+                }
+                if let Some(table) = release.as_object() {
+                    for key in table.keys() {
+                        if ![
+                            "compatibility",
+                            "id",
+                            "previousVersion",
+                            "version",
+                        ]
+                        .contains(&key.as_str())
+                        {
+                            return reject(format!(
+                                "unexpected release field {key}"
+                            ));
+                        }
+                    }
+                    if let Some(id) = table.get("id") {
+                        if !id.is_string() {
+                            return reject(
+                                "release id must be a string".to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(version) = table.get("version") {
+                        if !version.is_string() {
+                            return reject(
+                                "release version must be a string".to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(prev) = table.get("previousVersion") {
+                        if !prev.is_string() {
+                            return reject(
+                                "release previousVersion must be a string"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    if let Some(compat) = table.get("compatibility") {
+                        if !compat.is_string() {
+                            return reject(
+                                "release compatibility must be a string"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         SUBJECT_GODOT_RUNTIME_LAUNCH => {
             const LAUNCH_KEYS: [&str; 5] =
                 ["op", "request", "policy", "budget", "isCancelled"];
@@ -11314,6 +11382,81 @@ fn evolve_proposal_record(input: &Value) -> Result<Value, HarnessError> {
                 "reason": reason,
                 "rendered": format!("proposal invalid ({reason})"),
                 "requiresHostApproval": null,
+            }))
+        }
+    }
+}
+
+fn evolve_packaging_record(input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::evolution::{Compatibility, Release, evaluate_release};
+    let release = match input.get("release") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(table)) => {
+            let id = table
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let version = table
+                .get("version")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let previous_version = table
+                .get("previousVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let compat_raw = table
+                .get("compatibility")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let compatibility = match Compatibility::parse(&compat_raw) {
+                Ok(c) => c,
+                Err(error) => {
+                    return Ok(serde_json::json!({
+                        "compatibility": null,
+                        "disposition": "invalid",
+                        "reason": error.message,
+                        "releaseDigest": null,
+                        "releaseId": null,
+                        "rendered": format!("release invalid ({})", error.message),
+                        "version": null,
+                    }));
+                }
+            };
+            Some(Release { id, version, previous_version, compatibility })
+        }
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "evolve-packaging requires a release object or null"
+                    .to_owned(),
+            ));
+        }
+    };
+    let evaluation = evaluate_release(release);
+    match evaluation {
+        siralos_core::evolution::ReleaseEvaluation::Valid { evidence } => {
+            Ok(serde_json::json!({
+                "compatibility": evidence.compatibility.as_str(),
+                "disposition": "valid",
+                "reason": null,
+                "releaseDigest": evidence.release_digest,
+                "releaseId": evidence.release_id,
+                "rendered": siralos_core::evolution::render_release_evidence(&evidence),
+                "version": evidence.version,
+            }))
+        }
+        siralos_core::evolution::ReleaseEvaluation::Invalid { reason } => {
+            Ok(serde_json::json!({
+                "compatibility": null,
+                "disposition": "invalid",
+                "reason": reason,
+                "releaseDigest": null,
+                "releaseId": null,
+                "rendered": format!("release invalid ({reason})"),
+                "version": null,
             }))
         }
     }
@@ -16407,7 +16550,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 316);
+        assert_eq!(loaded.len(), 320);
     }
 
     #[test]

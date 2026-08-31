@@ -1,0 +1,15 @@
+{
+  "id": "evolve-packaging.patch",
+  "subject": "evolve-packaging",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "release": {
+      "compatibility": "patch",
+      "id": "rel-patch",
+      "previousVersion": "1.2.2",
+      "version": "1.2.3"
+    }
+  }
+}

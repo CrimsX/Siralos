@@ -1,0 +1,15 @@
+{
+  "id": "evolve-packaging.invalid-version",
+  "subject": "evolve-packaging",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "release": {
+      "compatibility": "patch",
+      "id": "bad-ver",
+      "previousVersion": "1.0.0",
+      "version": "not-semver"
+    }
+  }
+}

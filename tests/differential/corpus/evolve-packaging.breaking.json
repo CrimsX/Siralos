@@ -1,0 +1,15 @@
+{
+  "id": "evolve-packaging.breaking",
+  "subject": "evolve-packaging",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "release": {
+      "compatibility": "breaking",
+      "id": "rel-break",
+      "previousVersion": "1.9.9",
+      "version": "2.0.0"
+    }
+  }
+}

@@ -789,6 +789,217 @@ pub fn evaluate_proposal(proposal: Option<Proposal>) -> ProposalEvaluation {
     }
 }
 
+/// Maximum release id length in UTF-8 bytes.
+pub const MAX_RELEASE_ID_BYTES: usize = 64;
+/// Maximum version string length in UTF-8 bytes.
+pub const MAX_VERSION_BYTES: usize = 32;
+
+/// Compatibility level for a release (Stage 6.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Compatibility {
+    /// Patch-level compatible change.
+    Patch,
+    /// Minor compatible change.
+    Compatible,
+    /// Breaking change.
+    Breaking,
+}
+
+impl Compatibility {
+    /// Stable string.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Patch => "patch",
+            Self::Compatible => "compatible",
+            Self::Breaking => "breaking",
+        }
+    }
+
+    /// Parse a bounded compatibility string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CorpusValidationError`] for unknown values.
+    pub fn parse(value: &str) -> Result<Self, CorpusValidationError> {
+        match value {
+            "patch" => Ok(Self::Patch),
+            "compatible" => Ok(Self::Compatible),
+            "breaking" => Ok(Self::Breaking),
+            _ => Err(CorpusValidationError {
+                message: format!("Unknown compatibility level {value:?}."),
+            }),
+        }
+    }
+}
+
+/// A bounded release record for packaging & stabilization (Stage 6.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    /// Stable release id.
+    pub id: String,
+    /// Semver-like version `MAJOR.MINOR.PATCH`.
+    pub version: String,
+    /// Previous version for compatibility check.
+    pub previous_version: String,
+    /// Compatibility level.
+    pub compatibility: Compatibility,
+}
+
+/// Digest-bound evidence for one release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseEvidence {
+    /// Stable release id.
+    pub release_id: String,
+    /// Version string.
+    pub version: String,
+    /// Compatibility level.
+    pub compatibility: Compatibility,
+    /// Domain-separated digest.
+    pub release_digest: String,
+}
+
+impl Release {
+    /// Validate bounds, NUL bytes, semver shape, and compatibility.
+    pub fn validate(&self) -> Result<(), CorpusValidationError> {
+        if self.id.is_empty() {
+            return Err(CorpusValidationError {
+                message: "A release requires a non-empty id.".to_owned(),
+            });
+        }
+        if self.id.len() > MAX_RELEASE_ID_BYTES {
+            return Err(CorpusValidationError {
+                message: format!(
+                    "The release id exceeds the {MAX_RELEASE_ID_BYTES}-byte bound."
+                ),
+            });
+        }
+        if self.id.contains('\0') {
+            return Err(CorpusValidationError {
+                message: "A release id must not contain NUL.".to_owned(),
+            });
+        }
+        for (label, value) in [
+            ("version", &self.version),
+            ("previous_version", &self.previous_version),
+        ] {
+            if value.is_empty() || value.len() > MAX_VERSION_BYTES {
+                return Err(CorpusValidationError {
+                    message: format!(
+                        "A release {label} must be 1..={MAX_VERSION_BYTES} bytes."
+                    ),
+                });
+            }
+            if value.contains('\0') {
+                return Err(CorpusValidationError {
+                    message: format!(
+                        "A release {label} must not contain NUL."
+                    ),
+                });
+            }
+            let parts: Vec<&str> = value.split('.').collect();
+            if parts.len() != 3
+                || parts.iter().any(|p| {
+                    p.is_empty() || !p.chars().all(|c| c.is_ascii_digit())
+                })
+            {
+                return Err(CorpusValidationError {
+                    message: format!(
+                        "A release {label} must be MAJOR.MINOR.PATCH numeric."
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Create digest-bound evidence for a release.
+///
+/// # Errors
+///
+/// Returns [`CorpusValidationError`] for malformed releases or digest
+/// failures.
+pub fn create_release_evidence(
+    release: &Release,
+) -> Result<ReleaseEvidence, CorpusValidationError> {
+    release.validate()?;
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        (
+            "compatibility".to_owned(),
+            CanonicalValue::Str(release.compatibility.as_str().to_owned()),
+        ),
+        ("id".to_owned(), CanonicalValue::Str(release.id.clone())),
+        (
+            "previousVersion".to_owned(),
+            CanonicalValue::Str(release.previous_version.clone()),
+        ),
+        ("version".to_owned(), CanonicalValue::Str(release.version.clone())),
+    ]));
+    let release_digest =
+        compute_artifact_digest("ReleaseEvidence", 1, &payload)
+            .map_err(|error| CorpusValidationError { message: error.message })?
+            .value;
+    Ok(ReleaseEvidence {
+        release_id: release.id.clone(),
+        version: release.version.clone(),
+        compatibility: release.compatibility.clone(),
+        release_digest,
+    })
+}
+
+/// Deterministic rendering of release evidence.
+#[must_use]
+pub fn render_release_evidence(evidence: &ReleaseEvidence) -> String {
+    format!(
+        "release {} version={} compat={} digest={}",
+        evidence.release_id,
+        evidence.version,
+        evidence.compatibility.as_str(),
+        &evidence.release_digest[..8]
+    )
+}
+
+/// The typed outcome of evaluating a release at the pure boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseEvaluation {
+    /// The release was valid.
+    Valid {
+        /// Digest-bound evidence.
+        evidence: ReleaseEvidence,
+    },
+    /// The release was invalid.
+    Invalid {
+        /// Deterministic reason.
+        reason: String,
+    },
+}
+
+impl ReleaseEvaluation {
+    /// Stable disposition token.
+    #[must_use]
+    pub fn disposition(&self) -> &'static str {
+        match self {
+            Self::Valid { .. } => "valid",
+            Self::Invalid { .. } => "invalid",
+        }
+    }
+}
+
+/// Evaluate a release at the pure boundary.
+#[must_use]
+pub fn evaluate_release(release: Option<Release>) -> ReleaseEvaluation {
+    let Some(release) = release else {
+        return ReleaseEvaluation::Invalid {
+            reason: "A release is required.".to_owned(),
+        };
+    };
+    match create_release_evidence(&release) {
+        Ok(evidence) => ReleaseEvaluation::Valid { evidence },
+        Err(error) => ReleaseEvaluation::Invalid { reason: error.message },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1088,6 +1299,67 @@ mod tests {
         match eval {
             super::ProposalEvaluation::Invalid { reason } => {
                 assert!(reason.contains("A proposal is required"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn release_compatible_is_valid() {
+        let release = super::Release {
+            id: "rel-1".to_owned(),
+            version: "1.2.3".to_owned(),
+            previous_version: "1.2.2".to_owned(),
+            compatibility: super::Compatibility::Compatible,
+        };
+        let eval = super::evaluate_release(Some(release));
+        match eval {
+            super::ReleaseEvaluation::Valid { evidence } => {
+                assert_eq!(
+                    evidence.compatibility,
+                    super::Compatibility::Compatible
+                );
+                assert_eq!(evidence.release_digest.len(), 64);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn release_breaking_is_valid() {
+        let release = super::Release {
+            id: "rel-break".to_owned(),
+            version: "2.0.0".to_owned(),
+            previous_version: "1.9.9".to_owned(),
+            compatibility: super::Compatibility::Breaking,
+        };
+        let eval = super::evaluate_release(Some(release));
+        assert!(matches!(eval, super::ReleaseEvaluation::Valid { .. }));
+    }
+
+    #[test]
+    fn release_invalid_version_rejected() {
+        let release = super::Release {
+            id: "bad".to_owned(),
+            version: "not-semver".to_owned(),
+            previous_version: "1.0.0".to_owned(),
+            compatibility: super::Compatibility::Patch,
+        };
+        let eval = super::evaluate_release(Some(release));
+        match eval {
+            super::ReleaseEvaluation::Invalid { reason } => {
+                assert!(reason.contains("MAJOR.MINOR.PATCH"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn release_absent_is_invalid() {
+        let eval = super::evaluate_release(None);
+        match eval {
+            super::ReleaseEvaluation::Invalid { reason } => {
+                assert!(reason.contains("A release is required"));
             }
             other => panic!("unexpected {other:?}"),
         }

@@ -1,0 +1,15 @@
+{
+  "id": "evolve-packaging.compatible",
+  "subject": "evolve-packaging",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "release": {
+      "compatibility": "compatible",
+      "id": "rel-compat",
+      "previousVersion": "1.2.2",
+      "version": "1.3.0"
+    }
+  }
+}

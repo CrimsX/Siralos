@@ -4241,6 +4241,10 @@ function validateCompletedResult(record, label) {
     validateEvolveProposalV51Result(record.result, label);
     return;
   }
+  if (record.subject === "evolve-packaging") {
+    validateEvolvePackagingV52Result(record.result, label);
+    return;
+  }
   if (record.subject === "composition-effective") {
     validateCompositionEffectiveV40Result(record.result, label);
     return;
@@ -4420,6 +4424,60 @@ function validateCompletedResult(record, label) {
         result.proposalDigest !== null ||
         result.proposalId !== null ||
         result.requiresHostApproval !== null
+      ) {
+        throw new Error(`${label}.result fields must be null for invalid disposition`);
+      }
+      if (typeof result.reason !== "string" || result.reason.length === 0) {
+        throw new Error(`${label}.result.reason is invalid`);
+      }
+    }
+  }
+
+  function validateEvolvePackagingV52Result(result, label) {
+    assertExactKeys(
+      result,
+      [
+        "compatibility",
+        "disposition",
+        "reason",
+        "releaseDigest",
+        "releaseId",
+        "rendered",
+        "version",
+      ],
+      `${label}.result`,
+    );
+    if (result.disposition !== "valid" && result.disposition !== "invalid") {
+      throw new Error(`${label}.result.disposition is invalid`);
+    }
+    if (typeof result.rendered !== "string" || result.rendered.length === 0) {
+      throw new Error(`${label}.result.rendered is invalid`);
+    }
+    if (result.disposition === "valid") {
+      if (
+        typeof result.releaseDigest !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(result.releaseDigest)
+      ) {
+        throw new Error(`${label}.result.releaseDigest is invalid`);
+      }
+      if (typeof result.releaseId !== "string" || result.releaseId.length === 0) {
+        throw new Error(`${label}.result.releaseId is invalid`);
+      }
+      if (typeof result.version !== "string" || result.version.length === 0) {
+        throw new Error(`${label}.result.version is invalid`);
+      }
+      if (!["patch", "compatible", "breaking"].includes(result.compatibility)) {
+        throw new Error(`${label}.result.compatibility is invalid`);
+      }
+      if (result.reason !== null) {
+        throw new Error(`${label}.result.reason must be null for valid disposition`);
+      }
+    } else {
+      if (
+        result.releaseDigest !== null ||
+        result.releaseId !== null ||
+        result.version !== null ||
+        result.compatibility !== null
       ) {
         throw new Error(`${label}.result fields must be null for invalid disposition`);
       }
