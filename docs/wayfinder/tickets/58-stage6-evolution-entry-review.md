@@ -2,7 +2,8 @@
 title: "Stage 6 Evolution & Stabilization Entry Review — Freeze the Bounded Evaluation Workflow Contract"
 label: "wayfinder:ticket"
 type: HITL
-status: open
+status: closed
+resolution: "PASS per decision 58 (2026-08-30): C1–C6 approved; Stage 6 is authorized as next frontier — 6.1 Evaluation Corpus & Baselines is next slice (bounded /evolve with Profile→Host escalation, no new spawn, corpus cap 384)."
 blockedBy: []
 ---
 
@@ -35,9 +36,9 @@ Stage 5 — Composition is Verified at `c2c30f0` (ten slices, decisions 47–57,
 | C5  | Corpus mechanics    | Schema stays 3; each implementation slice bumps `CORPUS_VERSION` and strict-loader count asserts in `crates/siralos-cli/src/harness.rs` together with manifest version (all four contract.mjs sites + protocol validator), per map Notes reminder (`cargo test -p siralos-cli --lib --all-features` before slice commit). Entry review itself bumps nothing.                                                                                                                                                                                                                                                                                                                         |
 | C6  | Lean guardrails     | No new ADR beyond 0036, no scope redraw, no Out-of-scope growth; `docs/wayfinder/siralos-roadmap.md: Out of scope` stays closed. One ticket per session; budget one coherent pass + up to two repairs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
-## HITL grilling (pending)
+## HITL grilling (2026-08-30, recorded verbatim)
 
-- **Q1 Scope** — bounded `/evolve` with 6.1–6.4 as drafted vs narrower (e.g., defer packaging/release to a follow-on)?
-- **Q2 Escalation** — `Profile → Context → Skill → Plugin → Host` with deletion preference as the frozen order, or alternative ordering?
-- **Q3 Evidence** — differential subjects over pure seams + expectation coverage as drafted, or alternative harness shape?
-- **Q4 Contract** — approve C1–C6 as drafted for implementation?
+- **Q1 Scope** — approved: _"Approve 6.1–6.4 as drafted"_ — bounded `/evolve` with four advisory slices (6.1 Evaluation Corpus & Baselines, 6.2 Evolve Workflow Core, 6.3 Skill/Plugin/Host Proposals, 6.4 Packaging & Release).
+- **Q2 Escalation** — approved: _"Approve escalation as drafted"_ — `Profile → Context → Skill → Plugin → Host` with deletion preference.
+- **Q3 Evidence** — approved: _"Approve evidence as drafted"_ — differential subjects over pure seams with expectations coverage per decision 40 C7.
+- **Q4 Contract** — approved: _"Approve C1–C6"_ — freezes decision 58; 6.1 authorized next.

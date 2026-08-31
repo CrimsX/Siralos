@@ -2,7 +2,7 @@
 title: "Stage 6 Evolution & Stabilization Entry Review — Freeze the Bounded Evaluation Workflow Contract"
 label: "wayfinder:decision"
 type: entry-review
-status: draft
+status: accepted
 date: 2026-08-30
 ticket: "58"
 supersedes: []
@@ -17,9 +17,9 @@ supersedes: []
 
 Stage 5 — Composition is Verified at `c2c30f0` (ten slices, decisions 47–57). How is **Stage 6 — Evolution & Stabilization** (ADR 0036 §§44–48) frozen as a bounded, measurement-driven `/evolve` workflow so an executor can implement it without rediscovering scope, authority, or evaluation boundaries?
 
-> Draft — awaits HITL grilling. This file satisfies the Wayfinder link contract; C1–C6 are frozen only after HITL PASS.
+> **PASS — HITL 2026-08-30: C1–C6 approved** (scope 6.1–6.4, escalation Profile→Host with deletion preference, evidence over pure seams, contract frozen; authorized as next implementation frontier).
 
-## Contract (C1–C6, draft — pending HITL)
+## Contract (C1–C6, approved 2026-08-30)
 
 | #   | Clause              | Draft                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | --- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -30,19 +30,21 @@ Stage 5 — Composition is Verified at `c2c30f0` (ten slices, decisions 47–57)
 | C5  | Corpus mechanics    | Schema stays 3; each slice bumps `CORPUS_VERSION` and strict-loader count asserts in `crates/siralos-cli/src/harness.rs` together with manifest version (all contract.mjs sites + protocol validator). Entry review itself bumps nothing.                                                                                                                                                                                |
 | C6  | Lean guardrails     | No new ADR beyond 0036, no scope redraw, no Out-of-scope growth; `docs/wayfinder/siralos-roadmap.md: Out of scope` stays closed. One ticket per session; budget one coherent pass + up to two repairs.                                                                                                                                                                                                                   |
 
-## HITL answers (pending)
+## HITL answers (2026-08-30, recorded verbatim)
 
-- **Q1 Scope** — bounded `/evolve` with 6.1–6.4 as drafted vs narrower?
-- **Q2 Escalation** — `Profile → Context → Skill → Plugin → Host` with deletion preference as frozen order?
-- **Q3 Evidence** — differential subjects over pure seams + expectation coverage vs alternative harness?
-- **Q4 Contract** — approve C1–C6 as drafted for implementation?
+- **Q1 Scope** — approved: _"Approve 6.1–6.4 as drafted"_ — bounded `/evolve` with four advisory slices (6.1 Evaluation Corpus & Baselines, 6.2 Evolve Workflow Core, 6.3 Skill/Plugin/Host Proposals, 6.4 Packaging & Release).
+- **Q2 Escalation** — approved: _"Approve escalation as drafted"_ — `Profile → Context → Skill → Plugin → Host` with deletion preference (lower-cost configurable layer preferred).
+- **Q3 Evidence** — approved: _"Approve evidence as drafted"_ — differential subjects over pure seams with expectations coverage per decision 40 C7 at successive corpus bumps within cap 384.
+- **Q4 Contract** — approved: _"Approve C1–C6"_ — freezes decision 58; implementation of 6.1 authorized next.
+
+**Stage 6 entry review is PASS — Stage 6 is authorized as the next implementation frontier** against this frozen contract and the 4 HITL answers above. Acceptance: C1–C6 frozen, lean guardrails held, no code/corpus bump in this decision.
 
 ## Self-loop verification
 
-- Criterion: draft contract is complete and internally consistent with ADR 0036 and the Verified Stage 5 map.
-- Evidence: this document; ticket 58 with the C1–C6 draft.
-- Verdict: **DRAFT** — awaits HITL grilling.
+- Criterion: the frozen contract is complete and internally consistent with ADR 0036, the Verified Stage 5 map (c2c30f0), and the lean Host/Plugin/Skill invariants.
+- Evidence: this document; ticket 58 with the C1–C6 draft; HITL answers above recorded verbatim.
+- Verdict: **PASS** — the Stage 6 contract is frozen; 6.1 implementation authorized.
 
 ## Implementation record
 
-_Draft — no implementation._
+_Authorized at 2026-08-30 — no code in this decision. Next slice 6.1 Evaluation Corpus & Baselines is authorized as the next implementation slice against the frozen C1–C6 contract._
