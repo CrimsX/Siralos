@@ -9,11 +9,10 @@
  * Protects:
  * - canonical identity: the CLI binary is named `siralos`;
  * - workspace shape: exactly crates/siralos-core, crates/siralos-adapters,
- *   crates/siralos-godot, crates/siralos-cli — no placeholder or
- *   hypothetical domain crates;
+ *   crates/siralos-cli — siralos-godot now lives in standalone repo
+ *   https://github.com/CrimsX/siralos-godot (no in-repo placeholder);
  * - dependency direction: core depends on nothing; adapters may depend
- *   only on core and the godot domain crate; godot may depend only on
- *   core; cli may depend only on core, adapters, and godot;
+ *   only on core; cli may depend only on core and adapters;
  * - domain neutrality: `siralos-core` sources contain no Godot-domain
  *   symbols;
  * - unsafe Rust: no `unsafe fn`/`unsafe impl`/`unsafe trait`/`unsafe {`
@@ -29,7 +28,6 @@ import { pathToFileURL } from "node:url";
 const EXPECTED_CRATES = [
   "crates/siralos-core",
   "crates/siralos-adapters",
-  "crates/siralos-godot",
   "crates/siralos-cli",
 ];
 
@@ -63,7 +61,6 @@ const UNSAFE_PATTERN = /\bunsafe\s+(fn|impl|trait|extern|\{)/;
 const ALLOWED_DEPENDENCIES = new Map([
   ["siralos-core", new Set()],
   ["siralos-adapters", new Set(["siralos-core", "siralos-godot"])],
-  ["siralos-godot", new Set(["siralos-core"])],
   ["siralos-cli", new Set(["siralos-core", "siralos-adapters", "siralos-godot"])],
 ]);
 
