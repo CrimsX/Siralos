@@ -2,7 +2,8 @@
 title: "Real Model/Provider Research — Inventory and Secure Credential Requirements"
 label: "wayfinder:research"
 type: AFK
-status: open
+status: closed
+resolution: "decisions/66-real-model-provider-research.md"
 blockedBy: []
 ---
 
@@ -20,3 +21,7 @@ Research inside this repo only (no external API):
 Deliver a fact sheet with file:line pointers, not a proposal. This unblocks the entry review for real providers.
 
 Blocked by: none (AFK frontier). Needed by: 67-real-model-provider-entry-review.
+
+## Resolution
+
+Closed — fact sheet recorded in [decisions/66-real-model-provider-research.md](../decisions/66-real-model-provider-research.md). Local-markdown fallback, no hosted `research/real-model-provider` branch created. This unblocks [67 — Entry Review](../tickets/67-real-model-provider-entry-review.md) — frontier now includes 67.
