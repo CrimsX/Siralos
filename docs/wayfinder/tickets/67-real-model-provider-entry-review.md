@@ -2,7 +2,8 @@
 title: "Real Model/Provider Entry Review — Freeze the Provider Contract"
 label: "wayfinder:grilling"
 type: HITL
-status: open
+status: closed
+resolution: "decisions/67-real-model-provider-entry-review.md"
 blockedBy: ["66-real-model-provider-research.md"]
 ---
 
@@ -45,5 +46,9 @@ blockedBy: ["66-real-model-provider-research.md"]
 ## Acceptance
 
 PASS when 5 answers recorded verbatim and C1–C6 frozen in `decisions/67-*`. That **authorizes only** the `ProfileRecord` provider/model fields + `siralos.toml` parsing slice; the credential + HTTP registry slice remains frozen but not authorized until that slice is Verified (gates green, no secret in portable config). `Out of scope` stays closed.
+
+## Resolution
+
+Closed — HITL 2026-08-31: Q1 Add to ProfileRecord / Q2 Env only / Q3 Bounded Host-observed / Q4 Host gate / Q5 Approve ordering — C1–C6 frozen in [decisions/67-real-model-provider-entry-review.md](../decisions/67-real-model-provider-entry-review.md) — **PASS; ProfileRecord provider/model fields + siralos.toml parsing authorized as next implementation slice.** This unblocks [68 — Credentials & Registry](../tickets/68-real-provider-credentials-and-registry.md) — frontier now includes 68.
 
 Blocked by: 66-real-model-provider-research.md
