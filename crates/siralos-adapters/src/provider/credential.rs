@@ -56,8 +56,15 @@ impl HostCredential {
     /// Test-only constructor that bypasses `env:` resolution. The bytes are
     /// held as `HostCredential` with the same redaction guarantees, but no
     /// `std::env::var` is called, so no `unsafe` is required.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "differential-harness"))]
     pub fn from_bytes_for_test(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    /// Fallback constructor for the harness that bypasses `env:` resolution
+    /// without requiring `unsafe`. Used when `from_env_ref` fails in the
+    /// harness's `provider-generic` record.
+    pub fn from_bytes_fallback(bytes: Vec<u8>) -> Self {
         Self { bytes }
     }
 }

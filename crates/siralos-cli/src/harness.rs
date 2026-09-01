@@ -112,10 +112,11 @@ const SUBJECT_COMPOSITION_SKILL_CONSUMPTION: &str =
 const SUBJECT_EVOLVE_CORPUS: &str = "evolve-corpus";
 const SUBJECT_EVOLVE_WORKFLOW: &str = "evolve-workflow";
 const SUBJECT_EVOLVE_PROPOSAL: &str = "evolve-proposal";
+const SUBJECT_PROVIDER_GENERIC: &str = "provider-generic";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 52;
+const CORPUS_VERSION: u64 = 53;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -506,6 +507,7 @@ fn validate_scenario(
             | SUBJECT_EVOLVE_WORKFLOW
             | SUBJECT_EVOLVE_PROPOSAL
             | SUBJECT_EVOLVE_PACKAGING
+            | SUBJECT_PROVIDER_GENERIC
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -594,6 +596,7 @@ fn validate_scenario(
         | SUBJECT_DOMAIN_LIFECYCLE
         | SUBJECT_DOMAIN_CAPABILITY
         | SUBJECT_PROVIDER_TURN
+        | SUBJECT_PROVIDER_GENERIC
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -647,6 +650,11 @@ fn validate_scenario(
                 scenario.subject.as_str() == SUBJECT_PROVIDER_TURN;
             if provider_subject {
                 validate_provider_turn_input(input)?;
+            }
+            let provider_generic_subject =
+                scenario.subject.as_str() == SUBJECT_PROVIDER_GENERIC;
+            if provider_generic_subject {
+                validate_provider_generic_input(input)?;
             }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
@@ -714,7 +722,7 @@ fn validate_scenario(
             if cli_session_subject {
                 crate::harness_cli_session::validate_cli_session_input(input)?;
             }
-            let max_input_bytes = if provider_subject {
+            let max_input_bytes = if provider_subject || provider_generic_subject {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
                 MAX_TOOL_LOOP_INPUT_BYTES
@@ -1362,6 +1370,18 @@ fn run_scenario(
                 "provider input was validated while loading the corpus",
             );
             let result = provider_turn_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_PROVIDER_GENERIC => {
+            let input = scenario.input.as_ref().expect(
+                "provider-generic input was validated while loading the corpus",
+            );
+            let result = provider_generic_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -12400,6 +12420,99 @@ fn recovery_taxonomy_record(input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// All-purpose provider subject: provider-generic (Stage 8, decision 67/68).
+
+/// Canonical provider-generic record: one canonical observation per input.
+/// The input is the `provider-generic` subject's `input` object which
+/// carries `provider`/`model`/`credential`/`endpoint`/`messages`/`tools`.
+/// This exercises the `GenericProvider` path via `HostProvider` without
+/// requiring a live network — the `endpoint` is validated but the call
+/// itself is Host-observed and bounded, and the test corpus uses a
+/// loopback/unreachable endpoint so the `reqwest` error is the expected
+/// `ProviderEvent::Failed` (never panics, never leaks credential).
+fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
+    let provider = scenario_string(input, "provider")?;
+    let model = scenario_string(input, "model").unwrap_or_else(|_| "gpt-4o".to_owned());
+    let credential = input
+        .get("credential")
+        .and_then(|v| v.as_str())
+        .unwrap_or("env:TEST_GENERIC")
+        .to_owned();
+    let endpoint = input
+        .get("endpoint")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned());
+    let messages = input
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let tools = input
+        .get("tools")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // Build a minimal ModelRequest for the GenericProvider.
+    let mut conv_items = Vec::new();
+    for msg in messages {
+        if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
+            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+            match role {
+                "user" => conv_items.push(siralos_core::provider::ConversationItem::UserMessage {
+                    content: content.to_owned(),
+                }),
+                "assistant" => conv_items.push(siralos_core::provider::ConversationItem::AssistantMessage {
+                    content: content.to_owned(),
+                }),
+                _ => {}
+            }
+        }
+    }
+    let tool_defs = tools
+        .iter()
+        .filter_map(|t| {
+            Some(siralos_core::provider::ToolDefinition {
+                name: t.get("name")?.as_str()?.to_owned(),
+                description: t.get("description")?.as_str().unwrap_or("").to_owned(),
+                input_schema: t.get("input_schema").cloned().unwrap_or(serde_json::json!({})),
+            })
+        })
+        .collect::<Vec<_>>();
+    let cred = siralos_adapters::provider::HostCredential::from_env_ref(&credential)
+        .unwrap_or_else(|_| {
+            siralos_adapters::provider::HostCredential::from_bytes_fallback(
+                b"sk-test-generic".to_vec(),
+            )
+        });
+    let generic = siralos_adapters::provider::generic::GenericProvider::new(
+        provider.clone(),
+        model.clone(),
+        endpoint.clone(),
+        Some(cred),
+    );
+    let request = siralos_core::provider::ModelRequest {
+        messages: conv_items,
+        tools: tool_defs,
+        system: None,
+    };
+    let token = siralos_core::provider::CancellationToken::new();
+    let events: Vec<_> = generic.stream(&request, token.signal()).collect();
+    Ok(serde_json::json!({
+        "providerId": generic.id(),
+        "events": events.iter().map(|e| match e {
+            siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                siralos_core::provider::ModelEvent::TextDelta { text } => serde_json::json!({"type": "text_delta", "text": text}),
+                siralos_core::provider::ModelEvent::ToolCall { call_id, tool_name, input } => serde_json::json!({"type": "tool_call", "callId": call_id, "toolName": tool_name, "input": input.value()}),
+                siralos_core::provider::ModelEvent::Completed => serde_json::json!({"type": "completed"}),
+            },
+            siralos_core::provider::ProviderEvent::Failed(msg) => serde_json::json!({"type": "failed", "message": msg}),
+            siralos_core::provider::ProviderEvent::Cancelled { message } => serde_json::json!({"type": "cancelled", "message": message}),
+            siralos_core::provider::ProviderEvent::Raw(v) => serde_json::json!({"type": "raw", "value": v}),
+        }).collect::<Vec<_>>(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -12967,6 +13080,40 @@ fn is_repeat_marker(value: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+/// Strict provider-generic input shape validation (Stage 8, all-purpose provider).
+fn validate_provider_generic_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("provider-generic input must be an object")
+    })?;
+    for key in ["provider", "model", "credential", "endpoint", "messages", "tools"] {
+        if let Some(val) = obj.get(key) {
+            match key {
+                "provider" | "model" | "credential" | "endpoint" => {
+                    if !val.is_string() {
+                        return Err(HarnessError::corpus(format!(
+                            "provider-generic {key} must be a string"
+                        )));
+                    }
+                }
+                "messages" | "tools" => {
+                    if !val.is_array() {
+                        return Err(HarnessError::corpus(format!(
+                            "provider-generic {key} must be an array"
+                        )));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if obj.get("provider").and_then(Value::as_str).is_none_or(|s| s.is_empty()) {
+        return Err(HarnessError::corpus(
+            "provider-generic provider must be a non-empty string",
+        ));
+    }
+    Ok(())
 }
 
 /// Strict provider-turn input shape validation (mirrors contract.mjs).

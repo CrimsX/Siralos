@@ -2161,6 +2161,16 @@ function validateUserConfigResult(record, label) {
   }
 }
 
+function validateProviderGenericResult(record, label) {
+  assertExactKeys(record.result, ["providerId", "events"], `${label}.result`);
+  if (typeof record.result.providerId !== "string" || record.result.providerId.length === 0) {
+    throw new Error(`${label}.result.providerId must be a non-empty string`);
+  }
+  if (!Array.isArray(record.result.events)) {
+    throw new Error(`${label}.result.events must be an array`);
+  }
+}
+
 function validateProviderTurnResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (!Array.isArray(record.result.cases) || record.result.cases.length > 32) {
@@ -3992,6 +4002,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "provider-turn") {
     validateProviderTurnResult(record, label);
+    return;
+  }
+  if (record.subject === "provider-generic") {
+    validateProviderGenericResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

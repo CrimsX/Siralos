@@ -1,0 +1,15 @@
+{
+  "id": "provider-generic",
+  "subject": "provider-generic",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "provider": "github-copilot",
+    "model": "gpt-4o",
+    "credential": "env:GITHUB_TOKEN",
+    "endpoint": "https://api.githubcopilot.com/chat/completions",
+    "messages": [{ "role": "user", "content": "hello" }],
+    "tools": []
+  }
+}
