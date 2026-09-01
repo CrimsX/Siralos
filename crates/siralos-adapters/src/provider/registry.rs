@@ -47,6 +47,11 @@ impl std::fmt::Display for UnknownProvider {
 impl std::error::Error for UnknownProvider {}
 
 /// Map a bounded `provider` string to a `ProviderKind`, or typed refusal.
+/// Any syntactically valid `provider` string that passed `ProfileRecord`
+/// validation is accepted — unknown names become `Generic`, not a refusal.
+/// `UnknownProvider` is retained only for the explicit `provider_kind_from_str`
+/// diagnostic path used by `HostProvider::from_kind` when the caller opts
+/// into strict matching.
 pub fn provider_kind_from_str(s: &str) -> Result<ProviderKind, UnknownProvider> {
     match s {
         "deterministic-fake" => Ok(ProviderKind::DeterministicFake),
@@ -56,6 +61,13 @@ pub fn provider_kind_from_str(s: &str) -> Result<ProviderKind, UnknownProvider> 
             provider_id: other.to_owned(),
         }),
     }
+}
+
+/// Strict diagnostic path — kept for callers that want a typed refusal for
+/// an unregistered provider. The generic `HostProvider` path below accepts
+/// any provider string via `GenericProvider`.
+pub fn is_known_provider(s: &str) -> bool {
+    matches!(s, "deterministic-fake" | "openai" | "anthropic")
 }
 
 /// A Host-constructed provider that is `ModelProvider` over the
@@ -77,6 +89,9 @@ pub enum HostProvider {
     OpenAi(crate::provider::openai::OpenAiProvider),
     /// Anthropic provider (credential redacted, Host-observed stub in this slice).
     Anthropic(crate::provider::anthropic::AnthropicProvider),
+    /// Generic provider — accepts any bounded `provider` string with an
+    /// optional `endpoint` and `credential`, Host-observed and bounded.
+    Generic(crate::provider::generic::GenericProvider),
 }
 
 impl HostProvider {
@@ -89,6 +104,47 @@ impl HostProvider {
         credential: Option<HostCredential>,
     ) -> Result<Self, String> {
         Self::from_kind_with_model(kind, credential, None)
+    }
+
+    /// Construct a `HostProvider` from an arbitrary `provider` string
+    /// (generic, all-purpose) with an optional `model`, `credential`, and
+    /// `endpoint`. Any bounded `provider` string that passed
+    /// `ProfileRecord` validation is accepted — no `UnknownProvider`.
+    pub fn from_provider_str(
+        provider: &str,
+        model: Option<String>,
+        credential: Option<HostCredential>,
+        endpoint: Option<String>,
+    ) -> Result<Self, String> {
+        if provider == "deterministic-fake" {
+            return Ok(Self::Fake(
+                crate::provider::deterministic_fake::DeterministicFakeProvider::new(),
+            ));
+        }
+        // For known providers, keep the typed OpenAi/Anthropic stubs for
+        // backward compatibility; for any other provider, use Generic.
+        match provider_kind_from_str(provider) {
+            Ok(ProviderKind::OpenAi) => Self::from_kind_with_model(
+                ProviderKind::OpenAi,
+                credential,
+                model,
+            ),
+            Ok(ProviderKind::Anthropic) => Self::from_kind_with_model(
+                ProviderKind::Anthropic,
+                credential,
+                model,
+            ),
+            Ok(ProviderKind::DeterministicFake) => unreachable!(),
+            Err(_) => {
+                let model = model.unwrap_or_else(|| "gpt-4o".to_owned());
+                Ok(Self::Generic(crate::provider::generic::GenericProvider::new(
+                    provider.to_owned(),
+                    model,
+                    endpoint,
+                    credential,
+                )))
+            }
+        }
     }
 
     /// Construct a `HostProvider` with an explicit `model` id.
@@ -135,6 +191,7 @@ impl ModelProvider for HostProvider {
             Self::Fake(provider) => provider.id(),
             Self::OpenAi(provider) => provider.id(),
             Self::Anthropic(provider) => provider.id(),
+            Self::Generic(provider) => provider.id(),
         }
     }
 
@@ -147,6 +204,7 @@ impl ModelProvider for HostProvider {
             Self::Fake(provider) => Box::new(provider.stream(request, cancellation)),
             Self::OpenAi(provider) => Box::new(provider.stream(request, cancellation)),
             Self::Anthropic(provider) => Box::new(provider.stream(request, cancellation)),
+            Self::Generic(provider) => Box::new(provider.stream(request, cancellation)),
         }
     }
 }

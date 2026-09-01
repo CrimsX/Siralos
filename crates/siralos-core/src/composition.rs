@@ -49,6 +49,8 @@ pub const MAX_PROFILE_PROVIDER_BYTES: usize = 64;
 pub const MAX_PROFILE_MODEL_BYTES: usize = 128;
 /// Maximum credential reference length in UTF-8 bytes.
 pub const MAX_PROFILE_CREDENTIAL_BYTES: usize = 70;
+/// Maximum endpoint URL length in UTF-8 bytes.
+pub const MAX_PROFILE_ENDPOINT_BYTES: usize = 512;
 
 /// One profile permission-overlay entry: the capability and the rule the
 /// profile requests for it. Legality is decided by
@@ -92,6 +94,12 @@ pub struct ProfileRecord {
     /// resolves at startup; the resolved bytes are never written to
     /// `siralos.toml`/`siralos.lock`/`Context` (decision 67 C2, 68 §1).
     pub credential: Option<String>,
+    /// Optional endpoint override: the profile may declare a bounded
+    /// endpoint URL for the provider (e.g., OpenAI-compatible Copilot
+    /// at `https://api.githubcopilot.com/chat/completions`). When
+    /// `None`, the provider's default endpoint is used. No code
+    /// execution, no `file:` or `unix:` scheme.
+    pub endpoint: Option<String>,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -175,8 +183,38 @@ impl ProfileRecord {
         validate_provider_field(&self.provider)?;
         validate_model_field(&self.model)?;
         validate_credential_field(&self.credential)?;
+        validate_endpoint_field(&self.endpoint)?;
         Ok(())
     }
+}
+
+fn validate_endpoint_field(endpoint: &Option<String>) -> Result<(), ProfileValidationError> {
+    let Some(value) = endpoint else {
+        return Ok(());
+    };
+    if value.is_empty() || value.len() > MAX_PROFILE_ENDPOINT_BYTES {
+        return Err(ProfileValidationError {
+            message: format!(
+                "The endpoint exceeds the {MAX_PROFILE_ENDPOINT_BYTES}-byte bound or is empty."
+            ),
+        });
+    }
+    if value.contains('\0') {
+        return Err(ProfileValidationError {
+            message: "An endpoint must not contain NUL.".to_owned(),
+        });
+    }
+    if !(value.starts_with("https://") || value.starts_with("http://")) {
+        return Err(ProfileValidationError {
+            message: "An endpoint must start with \"https://\" or \"http://\".".to_owned(),
+        });
+    }
+    if value.contains(' ') {
+        return Err(ProfileValidationError {
+            message: "An endpoint must not contain spaces.".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_provider_field(provider: &Option<String>) -> Result<(), ProfileValidationError> {
@@ -1441,6 +1479,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1470,6 +1509,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1493,6 +1533,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1513,6 +1554,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -1529,6 +1571,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -1551,6 +1594,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -1595,6 +1639,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -1788,6 +1833,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let error = record.validate().expect_err("duplicate refused");
         assert!(error.message.contains("more than once"));
@@ -1800,6 +1846,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         let error = record.validate().expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
@@ -1812,6 +1859,7 @@ mod tests {
             provider: None,
             model: None,
             credential: None,
+            endpoint: None,
         };
         record.validate().expect("valid");
     }

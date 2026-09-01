@@ -11,6 +11,7 @@
 pub mod anthropic;
 pub mod credential;
 pub mod deterministic_fake;
+pub mod generic;
 pub mod openai;
 pub mod registry;
 pub mod strict_turn;

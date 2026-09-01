@@ -246,6 +246,7 @@ pub fn parse_profile_value(
             && key != "provider"
             && key != "model"
             && key != "credential"
+            && key != "endpoint"
         {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
@@ -352,6 +353,15 @@ pub fn parse_profile_value(
         };
         credential = Some(text.to_owned());
     }
+    let mut endpoint: Option<String> = None;
+    if let Some(value) = profile.get("endpoint") {
+        let Some(text) = value.as_str() else {
+            return Err(error(
+                "The [profile.endpoint] entry must be a string.".to_owned(),
+            ));
+        };
+        endpoint = Some(text.to_owned());
+    }
     Ok(ProfileRecord {
         name: name.to_owned(),
         overlay,
@@ -361,6 +371,7 @@ pub fn parse_profile_value(
         provider,
         model,
         credential,
+        endpoint,
     })
 }
 
