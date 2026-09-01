@@ -722,31 +722,32 @@ fn validate_scenario(
             if cli_session_subject {
                 crate::harness_cli_session::validate_cli_session_input(input)?;
             }
-            let max_input_bytes = if provider_subject || provider_generic_subject {
-                MAX_PROVIDER_INPUT_BYTES
-            } else if tool_loop_subject {
-                MAX_TOOL_LOOP_INPUT_BYTES
-            } else if context_projection_subject {
-                MAX_CONTEXT_PROJECTION_INPUT_BYTES
-            } else if user_config_subject {
-                MAX_USER_CONFIG_INPUT_BYTES
-            } else if r13_authority_subject {
-                MAX_R13_AUTHORITY_INPUT_BYTES
-            } else if r13_guidance_subject {
-                MAX_R13_GUIDANCE_INPUT_BYTES
-            } else if r13_external_knowledge_subject {
-                MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES
-            } else if r13_planning_briefing_subject {
-                crate::harness_r134::MAX_R13_PLANNING_BRIEFING_INPUT_BYTES
-            } else if cli_session_subject {
-                MAX_CLI_SESSION_INPUT_BYTES
-            } else if language_subject {
-                MAX_LANGUAGE_INPUT_BYTES
-            } else if domain_subject {
-                MAX_DOMAIN_INPUT_BYTES
-            } else {
-                MAX_WORKSPACE_INPUT_BYTES
-            };
+            let max_input_bytes =
+                if provider_subject || provider_generic_subject {
+                    MAX_PROVIDER_INPUT_BYTES
+                } else if tool_loop_subject {
+                    MAX_TOOL_LOOP_INPUT_BYTES
+                } else if context_projection_subject {
+                    MAX_CONTEXT_PROJECTION_INPUT_BYTES
+                } else if user_config_subject {
+                    MAX_USER_CONFIG_INPUT_BYTES
+                } else if r13_authority_subject {
+                    MAX_R13_AUTHORITY_INPUT_BYTES
+                } else if r13_guidance_subject {
+                    MAX_R13_GUIDANCE_INPUT_BYTES
+                } else if r13_external_knowledge_subject {
+                    MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES
+                } else if r13_planning_briefing_subject {
+                    crate::harness_r134::MAX_R13_PLANNING_BRIEFING_INPUT_BYTES
+                } else if cli_session_subject {
+                    MAX_CLI_SESSION_INPUT_BYTES
+                } else if language_subject {
+                    MAX_LANGUAGE_INPUT_BYTES
+                } else if domain_subject {
+                    MAX_DOMAIN_INPUT_BYTES
+                } else {
+                    MAX_WORKSPACE_INPUT_BYTES
+                };
             if serialized.len() > max_input_bytes {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} input exceeds {max_input_bytes} bytes",
@@ -7640,11 +7641,11 @@ fn godot_lsp_record(input: &Value) -> Result<Value, HarnessError> {
 }
 
 fn godot_discovery_record(input: &Value) -> Result<Value, HarnessError> {
-    use siralos_godot::config::{
-        UserGodotConfig, UserGodotEditionHint, UserGodotInstallationConfig,
-    };
     use siralos_godot::adapters::godot::profile::engine_profiler::{
         GodotOverrideSource, GodotProfilerInputs, discover, selected_profile,
+    };
+    use siralos_godot::config::{
+        UserGodotConfig, UserGodotEditionHint, UserGodotInstallationConfig,
     };
     use siralos_godot::godot::{
         GodotInstallationSource, GodotSelectionPreference,
@@ -12432,16 +12433,15 @@ fn recovery_taxonomy_record(input: &Value) -> Result<Value, HarnessError> {
 /// `ProviderEvent::Failed` (never panics, never leaks credential).
 fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
     let provider = scenario_string(input, "provider")?;
-    let model = scenario_string(input, "model").unwrap_or_else(|_| "gpt-4o".to_owned());
+    let model = scenario_string(input, "model")
+        .unwrap_or_else(|_| "gpt-4o".to_owned());
     let credential = input
         .get("credential")
         .and_then(|v| v.as_str())
         .unwrap_or("env:TEST_GENERIC")
         .to_owned();
-    let endpoint = input
-        .get("endpoint")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned());
+    let endpoint =
+        input.get("endpoint").and_then(|v| v.as_str()).map(|s| s.to_owned());
     let messages = input
         .get("messages")
         .and_then(|v| v.as_array())
@@ -12456,7 +12456,8 @@ fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
     let mut conv_items = Vec::new();
     for msg in messages {
         if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
-            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+            let role =
+                msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
             match role {
                 "user" => conv_items.push(siralos_core::provider::ConversationItem::UserMessage {
                     content: content.to_owned(),
@@ -12473,17 +12474,26 @@ fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
         .filter_map(|t| {
             Some(siralos_core::provider::ToolDefinition {
                 name: t.get("name")?.as_str()?.to_owned(),
-                description: t.get("description")?.as_str().unwrap_or("").to_owned(),
-                input_schema: t.get("input_schema").cloned().unwrap_or(serde_json::json!({})),
+                description: t
+                    .get("description")?
+                    .as_str()
+                    .unwrap_or("")
+                    .to_owned(),
+                input_schema: t
+                    .get("input_schema")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({})),
             })
         })
         .collect::<Vec<_>>();
-    let cred = siralos_adapters::provider::HostCredential::from_env_ref(&credential)
-        .unwrap_or_else(|_| {
-            siralos_adapters::provider::HostCredential::from_bytes_fallback(
-                b"sk-test-generic".to_vec(),
-            )
-        });
+    let cred = siralos_adapters::provider::HostCredential::from_env_ref(
+        &credential,
+    )
+    .unwrap_or_else(|_| {
+        siralos_adapters::provider::HostCredential::from_bytes_fallback(
+            b"sk-test-generic".to_vec(),
+        )
+    });
     let generic = siralos_adapters::provider::generic::GenericProvider::new(
         provider.clone(),
         model.clone(),
@@ -13087,28 +13097,32 @@ fn validate_provider_generic_input(input: &Value) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
         HarnessError::corpus("provider-generic input must be an object")
     })?;
-    for key in ["provider", "model", "credential", "endpoint", "messages", "tools"] {
-        if let Some(val) = obj.get(key) {
-            match key {
-                "provider" | "model" | "credential" | "endpoint" => {
-                    if !val.is_string() {
-                        return Err(HarnessError::corpus(format!(
-                            "provider-generic {key} must be a string"
-                        )));
-                    }
+    for key in
+        ["provider", "model", "credential", "endpoint", "messages", "tools"]
+    {
+        let Some(val) = obj.get(key) else {
+            continue;
+        };
+        match key {
+            "provider" | "model" | "credential" | "endpoint" => {
+                if !val.is_string() {
+                    return Err(HarnessError::corpus(format!(
+                        "provider-generic {key} must be a string"
+                    )));
                 }
-                "messages" | "tools" => {
-                    if !val.is_array() {
-                        return Err(HarnessError::corpus(format!(
-                            "provider-generic {key} must be an array"
-                        )));
-                    }
-                }
-                _ => {}
             }
+            "messages" | "tools" => {
+                if !val.is_array() {
+                    return Err(HarnessError::corpus(format!(
+                        "provider-generic {key} must be an array"
+                    )));
+                }
+            }
+            _ => {}
         }
     }
-    if obj.get("provider").and_then(Value::as_str).is_none_or(|s| s.is_empty()) {
+    if obj.get("provider").and_then(Value::as_str).is_none_or(|s| s.is_empty())
+    {
         return Err(HarnessError::corpus(
             "provider-generic provider must be a non-empty string",
         ));
@@ -16697,7 +16711,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 320);
+        assert_eq!(loaded.len(), 321);
     }
 
     #[test]

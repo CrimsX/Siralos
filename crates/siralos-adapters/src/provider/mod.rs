@@ -23,7 +23,9 @@ pub use credential::HostCredential;
 pub use deterministic_fake::{
     DETERMINISTIC_FAKE_PROVIDER_ID, DeterministicFakeProvider,
 };
-pub use registry::{HostProvider, ProviderKind, UnknownProvider, provider_kind_from_str};
+pub use registry::{
+    HostProvider, ProviderKind, UnknownProvider, provider_kind_from_str,
+};
 pub use strict_turn::{
     BoundedModelToolCall, BoundedModelTurnLimits, BoundedModelTurnOutcome,
     collect_bounded_model_turn,

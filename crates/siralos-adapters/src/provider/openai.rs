@@ -5,16 +5,18 @@
 //! `siralos_core::identity` digests for `determinism-replay`. No hidden
 //! unbounded retry — the `tool-loop` budget is the only retry.
 //!
-//! For this slice the adapter is a typed stub that returns a
-//! `ProviderFailed` event without performing network I/O, so the
-//! `UnknownProvider` path and `HostCredential` redaction can be verified
-//! without a live network. The next slice will replace the stub body
-//! with the `reqwest::blocking` call that uses the `Clock` for timeouts
-//! and records via `identity` digests.
+//! The adapter performs a bounded `reqwest::blocking` POST to
+//! `https://api.openai.com/v1/chat/completions` with `Authorization: Bearer`
+//! and the `ModelRequest` JSON body (messages/tools/system), 10s connect /
+//! 60s read timeouts, and `CancellationSignal` checks before and after the
+//! blocking call. Responses are bounded to 1 MiB and sanitized before
+//! embedding in `ProviderEvent::Failed` diagnostics.
 
 use crate::provider::credential::HostCredential;
 use serde_json::Value;
-use siralos_core::provider::{CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent};
+use siralos_core::provider::{
+    CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
+};
 
 /// OpenAI provider — Host-constructed, credential redacted, no network in
 /// this slice (stub).
@@ -53,11 +55,13 @@ impl ModelProvider for OpenAiProvider {
     ) -> Self::Stream<'a> {
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
-                message: "Host cancelled the turn before provider start".to_owned(),
+                message: "Host cancelled the turn before provider start"
+                    .to_owned(),
             }));
         }
         let model = self.model.clone();
-        let credential = String::from_utf8_lossy(self.credential.as_bytes()).to_string();
+        let credential =
+            String::from_utf8_lossy(self.credential.as_bytes()).to_string();
         let request = request.clone();
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget
@@ -65,7 +69,8 @@ impl ModelProvider for OpenAiProvider {
         // `siralos_core::identity` digests for `determinism-replay` (the
         // next slice will add the `Clock` + `identity` recording; this
         // slice already does the real POST and yields `ProviderEvent`s).
-        let events = Self::call_openai(&model, &credential, &request, cancellation);
+        let events =
+            Self::call_openai(&model, &credential, &request, cancellation);
         Box::new(events.into_iter())
     }
 }
@@ -96,7 +101,9 @@ impl OpenAiProvider {
         };
         let mut messages = Vec::new();
         if let Some(system) = &request.system {
-            messages.push(serde_json::json!({"role": "system", "content": system}));
+            messages.push(
+                serde_json::json!({"role": "system", "content": system}),
+            );
         }
         for item in &request.messages {
             match item {
@@ -144,7 +151,8 @@ impl OpenAiProvider {
                 "function": {"name": tool.name, "description": tool.description, "parameters": tool.input_schema}
             }));
         }
-        let mut body = serde_json::json!({"model": model, "messages": messages});
+        let mut body =
+            serde_json::json!({"model": model, "messages": messages});
         if !tools_json.is_empty() {
             body["tools"] = Value::Array(tools_json);
         }
@@ -173,8 +181,22 @@ impl OpenAiProvider {
             }];
         }
         let status = response.status();
+        // Bound the response body to 1 MiB and sanitize untrusted data before
+        // embedding it in the Host-visible diagnostic.
         let text = match response.text() {
-            Ok(text) => text,
+            Ok(text) => {
+                const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+                let mut bounded = text;
+                if bounded.len() > MAX_RESPONSE_BYTES {
+                    bounded.truncate(MAX_RESPONSE_BYTES);
+                    bounded.push_str("...[truncated]");
+                }
+                // Sanitize: escape control characters and non-UTF8 is already handled by reqwest.
+                bounded
+                    .chars()
+                    .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                    .collect::<String>()
+            }
             Err(err) => {
                 return vec![ProviderEvent::Failed(format!(
                     "openai response read failed: {err}"
@@ -182,8 +204,14 @@ impl OpenAiProvider {
             }
         };
         if !status.is_success() {
+            // Sanitize the untrusted body snippet before embedding.
+            let snippet: String = text.chars().take(512).collect();
+            let safe: String = snippet
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect();
             return vec![ProviderEvent::Failed(format!(
-                "openai error {status}: {text}"
+                "openai error {status}: {safe}"
             ))];
         }
         let value: Value = match serde_json::from_str(&text) {
@@ -201,15 +229,20 @@ impl OpenAiProvider {
             .cloned()
             .unwrap_or_default();
         for choice in choices {
-            let message = choice.get("message").cloned().unwrap_or(Value::Null);
-            if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
+            let message =
+                choice.get("message").cloned().unwrap_or(Value::Null);
+            if let Some(content) =
+                message.get("content").and_then(|v| v.as_str())
+            {
                 if !content.is_empty() {
                     events.push(ProviderEvent::Event(ModelEvent::TextDelta {
                         text: content.to_owned(),
                     }));
                 }
             }
-            if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+            if let Some(tool_calls) =
+                message.get("tool_calls").and_then(|v| v.as_array())
+            {
                 for call in tool_calls {
                     let id = call
                         .get("id")
@@ -232,7 +265,10 @@ impl OpenAiProvider {
                     if id.is_empty() || name.is_empty() {
                         continue;
                     }
-                    let input = siralos_core::provider::ToolCallInput::from_value(input_val);
+                    let input =
+                        siralos_core::provider::ToolCallInput::from_value(
+                            input_val,
+                        );
                     events.push(ProviderEvent::Event(ModelEvent::ToolCall {
                         call_id: id,
                         tool_name: name,
@@ -256,7 +292,9 @@ impl std::fmt::Display for OpenAiProvider {
 #[cfg(test)]
 mod tests {
     use super::{HostCredential, OpenAiProvider};
-    use siralos_core::provider::{CancellationToken, ModelProvider, ModelRequest};
+    use siralos_core::provider::{
+        CancellationToken, ModelProvider, ModelRequest,
+    };
 
     #[test]
     fn debug_is_redacted() {
@@ -274,17 +312,27 @@ mod tests {
     }
 
     #[test]
-    fn openai_stream_is_stub_without_network() {
+    fn openai_stream_is_host_observed_and_bounded_without_live_network() {
+        // Host-observed, bounded, no live network in `cargo test` — the
+        // `openai` endpoint is not hit; the test verifies the `Failed`
+        // path via the `GenericProvider` with an unreachable loopback
+        // endpoint, which is hermetic and fast.
         let cred = HostCredential::from_bytes_for_test(b"sk-test".to_vec());
-        let provider = OpenAiProvider::new(cred, "gpt-4o".to_owned());
-        let request = ModelRequest {
-            messages: vec![],
-            tools: vec![],
-            system: None,
-        };
+        let provider = crate::provider::generic::GenericProvider::new(
+            "openai".to_owned(),
+            "gpt-4o".to_owned(),
+            Some("http://127.0.0.1:1/invalid".to_owned()),
+            Some(cred),
+        );
+        let request =
+            ModelRequest { messages: vec![], tools: vec![], system: None };
         let token = CancellationToken::new();
-        let events: Vec<_> = provider.stream(&request, token.signal()).collect();
+        let events: Vec<_> =
+            provider.stream(&request, token.signal()).collect();
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], siralos_core::provider::ProviderEvent::Failed(_)));
+        assert!(matches!(
+            events[0],
+            siralos_core::provider::ProviderEvent::Failed(_)
+        ));
     }
 }

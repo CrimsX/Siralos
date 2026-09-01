@@ -1,8 +1,10 @@
 //! Anthropic provider adapter — Host-observed, bounded, replay-recordable (Stage 8, decision 67 C3, 68 §3).
 //!
 //! Mirrors `openai.rs`: the `ModelProvider` seam stays synchronous and
-//! Host-observed via `siralos_core::determinism::Clock` and
-//! `siralos_core::identity` digests for `determinism-replay`.
+//! Host-observed, with a bounded `reqwest::blocking` POST to
+//! `https://api.anthropic.com/v1/messages` (`x-api-key` + `anthropic-version`),
+//! 10s connect / 60s read, `CancellationSignal` checks, 1 MiB bound and
+//! sanitized diagnostics.
 
 use crate::provider::credential::HostCredential;
 use serde_json::Value;
@@ -46,13 +48,16 @@ impl ModelProvider for AnthropicProvider {
     ) -> Self::Stream<'a> {
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
-                message: "Host cancelled the turn before provider start".to_owned(),
+                message: "Host cancelled the turn before provider start"
+                    .to_owned(),
             }));
         }
         let model = self.model.clone();
-        let credential = String::from_utf8_lossy(self.credential.as_bytes()).to_string();
+        let credential =
+            String::from_utf8_lossy(self.credential.as_bytes()).to_string();
         let request = request.clone();
-        let events = Self::call_anthropic(&model, &credential, &request, cancellation);
+        let events =
+            Self::call_anthropic(&model, &credential, &request, cancellation);
         Box::new(events.into_iter())
     }
 }
@@ -155,7 +160,18 @@ impl AnthropicProvider {
         }
         let status = response.status();
         let text = match response.text() {
-            Ok(text) => text,
+            Ok(text) => {
+                const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+                let mut bounded = text;
+                if bounded.len() > MAX_RESPONSE_BYTES {
+                    bounded.truncate(MAX_RESPONSE_BYTES);
+                    bounded.push_str("...[truncated]");
+                }
+                bounded
+                    .chars()
+                    .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                    .collect::<String>()
+            }
             Err(err) => {
                 return vec![ProviderEvent::Failed(format!(
                     "anthropic response read failed: {err}"
@@ -163,8 +179,13 @@ impl AnthropicProvider {
             }
         };
         if !status.is_success() {
+            let snippet: String = text.chars().take(512).collect();
+            let safe: String = snippet
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect();
             return vec![ProviderEvent::Failed(format!(
-                "anthropic error {status}: {text}"
+                "anthropic error {status}: {safe}"
             ))];
         }
         let value: Value = match serde_json::from_str(&text) {
@@ -188,7 +209,9 @@ impl AnthropicProvider {
                     }));
                 }
             }
-            if let Some(tool_use) = content.get("type").and_then(|v| v.as_str()) {
+            if let Some(tool_use) =
+                content.get("type").and_then(|v| v.as_str())
+            {
                 if tool_use == "tool_use" {
                     let id = content
                         .get("id")
@@ -200,22 +223,31 @@ impl AnthropicProvider {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_owned();
-                    let input_val = content.get("input").cloned().unwrap_or(Value::Null);
+                    let input_val =
+                        content.get("input").cloned().unwrap_or(Value::Null);
                     if !id.is_empty() && !name.is_empty() {
                         let input =
-                            siralos_core::provider::ToolCallInput::from_value(input_val);
-                        events.push(ProviderEvent::Event(ModelEvent::ToolCall {
-                            call_id: id,
-                            tool_name: name,
-                            input,
-                        }));
+                            siralos_core::provider::ToolCallInput::from_value(
+                                input_val,
+                            );
+                        events.push(ProviderEvent::Event(
+                            ModelEvent::ToolCall {
+                                call_id: id,
+                                tool_name: name,
+                                input,
+                            },
+                        ));
                     }
                 }
             }
         }
-        if let Some(content_arr) = value.get("content").and_then(|v| v.as_array()) {
+        if let Some(content_arr) =
+            value.get("content").and_then(|v| v.as_array())
+        {
             for block in content_arr.iter().skip(1) {
-                if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                if block.get("type").and_then(|v| v.as_str())
+                    == Some("tool_use")
+                {
                     let id = block
                         .get("id")
                         .and_then(|v| v.as_str())
@@ -226,21 +258,28 @@ impl AnthropicProvider {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_owned();
-                    let input_val = block.get("input").cloned().unwrap_or(Value::Null);
+                    let input_val =
+                        block.get("input").cloned().unwrap_or(Value::Null);
                     if !id.is_empty() && !name.is_empty() {
                         let input =
-                            siralos_core::provider::ToolCallInput::from_value(input_val);
-                        events.push(ProviderEvent::Event(ModelEvent::ToolCall {
-                            call_id: id,
-                            tool_name: name,
-                            input,
-                        }));
+                            siralos_core::provider::ToolCallInput::from_value(
+                                input_val,
+                            );
+                        events.push(ProviderEvent::Event(
+                            ModelEvent::ToolCall {
+                                call_id: id,
+                                tool_name: name,
+                                input,
+                            },
+                        ));
                     }
-                } else if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                } else if let Some(text) =
+                    block.get("text").and_then(|v| v.as_str())
+                {
                     if !text.is_empty() {
-                        events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                            text: text.to_owned(),
-                        }));
+                        events.push(ProviderEvent::Event(
+                            ModelEvent::TextDelta { text: text.to_owned() },
+                        ));
                     }
                 }
             }
@@ -259,27 +298,32 @@ impl std::fmt::Display for AnthropicProvider {
 #[cfg(test)]
 mod tests {
     use super::{AnthropicProvider, HostCredential};
-    use siralos_core::provider::{CancellationToken, ModelProvider, ModelRequest};
+    use siralos_core::provider::{
+        CancellationToken, ModelProvider, ModelRequest,
+    };
 
     #[test]
     fn anthropic_id_is_stable() {
         let cred = HostCredential::from_bytes_for_test(b"sk-test".to_vec());
-        let provider = AnthropicProvider::new(cred, "claude-3-5-sonnet".to_owned());
+        let provider =
+            AnthropicProvider::new(cred, "claude-3-5-sonnet".to_owned());
         assert_eq!(provider.id(), "anthropic");
     }
 
     #[test]
     fn anthropic_stream_is_stub_without_network() {
         let cred = HostCredential::from_bytes_for_test(b"sk-test".to_vec());
-        let provider = AnthropicProvider::new(cred, "claude-3-5-sonnet".to_owned());
-        let request = ModelRequest {
-            messages: vec![],
-            tools: vec![],
-            system: None,
-        };
+        let provider =
+            AnthropicProvider::new(cred, "claude-3-5-sonnet".to_owned());
+        let request =
+            ModelRequest { messages: vec![], tools: vec![], system: None };
         let token = CancellationToken::new();
-        let events: Vec<_> = provider.stream(&request, token.signal()).collect();
+        let events: Vec<_> =
+            provider.stream(&request, token.signal()).collect();
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], siralos_core::provider::ProviderEvent::Failed(_)));
+        assert!(matches!(
+            events[0],
+            siralos_core::provider::ProviderEvent::Failed(_)
+        ));
     }
 }

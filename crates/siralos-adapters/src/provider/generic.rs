@@ -3,9 +3,13 @@
 //! "make an all purpose provider diagnostic that can accept any").
 //!
 //! The `ModelProvider` seam stays synchronous and Host-observed. When
-//! `endpoint` is `Some`, it is used verbatim as the POST URL; otherwise the
-//! provider's default endpoint is used. No `UnknownProvider` — any bounded
-//! `provider` string that passed `ProfileRecord` validation is accepted.
+//! `endpoint` is `Some`, it is used verbatim as the POST URL (host-configured
+//! authority, `https://`/`http://` per `ProfileRecord::validate`, no
+//! `file:`/`unix:`); otherwise the provider's default endpoint is used
+//! (`anthropic` → `api.anthropic.com`, all others incl. unknown →
+//! `api.openai.com` with `model` default `gpt-4o`). No `UnknownProvider` —
+//! any bounded `provider` string that passed `ProfileRecord` validation is
+//! accepted.
 
 use crate::provider::credential::HostCredential;
 use serde_json::Value;
@@ -34,12 +38,7 @@ impl GenericProvider {
         endpoint: Option<String>,
         credential: Option<HostCredential>,
     ) -> Self {
-        Self {
-            provider,
-            model,
-            endpoint,
-            credential,
-        }
+        Self { provider, model, endpoint, credential }
     }
 
     fn default_endpoint(provider: &str) -> &'static str {
@@ -67,7 +66,8 @@ impl ModelProvider for GenericProvider {
     ) -> Self::Stream<'a> {
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
-                message: "Host cancelled the turn before provider start".to_owned(),
+                message: "Host cancelled the turn before provider start"
+                    .to_owned(),
             }));
         }
         let provider = self.provider.clone();
@@ -86,7 +86,14 @@ impl ModelProvider for GenericProvider {
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget
         // is the only retry.
-        let events = Self::call_generic(&provider, &model, &endpoint, credential, &request, cancellation);
+        let events = Self::call_generic(
+            &provider,
+            &model,
+            &endpoint,
+            credential,
+            &request,
+            cancellation,
+        );
         Box::new(events.into_iter())
     }
 }
@@ -119,7 +126,9 @@ impl GenericProvider {
         };
         let mut messages = Vec::new();
         if let Some(system) = &request.system {
-            messages.push(serde_json::json!({"role": "system", "content": system}));
+            messages.push(
+                serde_json::json!({"role": "system", "content": system}),
+            );
         }
         for item in &request.messages {
             match item {
@@ -167,7 +176,8 @@ impl GenericProvider {
                 "function": {"name": tool.name, "description": tool.description, "parameters": tool.input_schema}
             }));
         }
-        let mut body = serde_json::json!({"model": model, "messages": messages});
+        let mut body =
+            serde_json::json!({"model": model, "messages": messages});
         if !tools_json.is_empty() {
             body["tools"] = Value::Array(tools_json);
         }
@@ -179,7 +189,8 @@ impl GenericProvider {
                 message: "Host cancelled before HTTP send".to_owned(),
             }];
         }
-        let mut req = client.post(endpoint).header("Content-Type", "application/json");
+        let mut req =
+            client.post(endpoint).header("Content-Type", "application/json");
         if let Some(cred) = credential {
             if provider == "anthropic" {
                 req = req
@@ -205,7 +216,18 @@ impl GenericProvider {
         }
         let status = response.status();
         let text = match response.text() {
-            Ok(text) => text,
+            Ok(text) => {
+                const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+                let mut bounded = text;
+                if bounded.len() > MAX_RESPONSE_BYTES {
+                    bounded.truncate(MAX_RESPONSE_BYTES);
+                    bounded.push_str("...[truncated]");
+                }
+                bounded
+                    .chars()
+                    .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                    .collect::<String>()
+            }
             Err(err) => {
                 return vec![ProviderEvent::Failed(format!(
                     "{provider} response read failed: {err}"
@@ -213,8 +235,13 @@ impl GenericProvider {
             }
         };
         if !status.is_success() {
+            let snippet: String = text.chars().take(512).collect();
+            let safe: String = snippet
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect();
             return vec![ProviderEvent::Failed(format!(
-                "{provider} error {status}: {text}"
+                "{provider} error {status}: {safe}"
             ))];
         }
         let value: Value = match serde_json::from_str(&text) {
@@ -235,15 +262,20 @@ impl GenericProvider {
             .cloned()
             .unwrap_or_default();
         for choice in choices {
-            let message = choice.get("message").cloned().unwrap_or(Value::Null);
-            if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
+            let message =
+                choice.get("message").cloned().unwrap_or(Value::Null);
+            if let Some(content) =
+                message.get("content").and_then(|v| v.as_str())
+            {
                 if !content.is_empty() {
                     events.push(ProviderEvent::Event(ModelEvent::TextDelta {
                         text: content.to_owned(),
                     }));
                 }
             }
-            if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+            if let Some(tool_calls) =
+                message.get("tool_calls").and_then(|v| v.as_array())
+            {
                 for call in tool_calls {
                     let id = call
                         .get("id")
@@ -266,7 +298,10 @@ impl GenericProvider {
                     if id.is_empty() || name.is_empty() {
                         continue;
                     }
-                    let input = siralos_core::provider::ToolCallInput::from_value(input_val);
+                    let input =
+                        siralos_core::provider::ToolCallInput::from_value(
+                            input_val,
+                        );
                     events.push(ProviderEvent::Event(ModelEvent::ToolCall {
                         call_id: id,
                         tool_name: name,
@@ -281,14 +316,18 @@ impl GenericProvider {
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.first())
             {
-                if let Some(text) = content.get("text").and_then(|v| v.as_str()) {
+                if let Some(text) =
+                    content.get("text").and_then(|v| v.as_str())
+                {
                     if !text.is_empty() {
-                        events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                            text: text.to_owned(),
-                        }));
+                        events.push(ProviderEvent::Event(
+                            ModelEvent::TextDelta { text: text.to_owned() },
+                        ));
                     }
                 }
-                if content.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                if content.get("type").and_then(|v| v.as_str())
+                    == Some("tool_use")
+                {
                     let id = content
                         .get("id")
                         .and_then(|v| v.as_str())
@@ -299,21 +338,30 @@ impl GenericProvider {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_owned();
-                    let input_val = content.get("input").cloned().unwrap_or(Value::Null);
+                    let input_val =
+                        content.get("input").cloned().unwrap_or(Value::Null);
                     if !id.is_empty() && !name.is_empty() {
                         let input =
-                            siralos_core::provider::ToolCallInput::from_value(input_val);
-                        events.push(ProviderEvent::Event(ModelEvent::ToolCall {
-                            call_id: id,
-                            tool_name: name,
-                            input,
-                        }));
+                            siralos_core::provider::ToolCallInput::from_value(
+                                input_val,
+                            );
+                        events.push(ProviderEvent::Event(
+                            ModelEvent::ToolCall {
+                                call_id: id,
+                                tool_name: name,
+                                input,
+                            },
+                        ));
                     }
                 }
             }
-            if let Some(content_arr) = value.get("content").and_then(|v| v.as_array()) {
+            if let Some(content_arr) =
+                value.get("content").and_then(|v| v.as_array())
+            {
                 for block in content_arr.iter().skip(1) {
-                    if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                    if block.get("type").and_then(|v| v.as_str())
+                        == Some("tool_use")
+                    {
                         let id = block
                             .get("id")
                             .and_then(|v| v.as_str())
@@ -324,21 +372,28 @@ impl GenericProvider {
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_owned();
-                        let input_val = block.get("input").cloned().unwrap_or(Value::Null);
+                        let input_val =
+                            block.get("input").cloned().unwrap_or(Value::Null);
                         if !id.is_empty() && !name.is_empty() {
                             let input =
                                 siralos_core::provider::ToolCallInput::from_value(input_val);
-                            events.push(ProviderEvent::Event(ModelEvent::ToolCall {
-                                call_id: id,
-                                tool_name: name,
-                                input,
-                            }));
+                            events.push(ProviderEvent::Event(
+                                ModelEvent::ToolCall {
+                                    call_id: id,
+                                    tool_name: name,
+                                    input,
+                                },
+                            ));
                         }
-                    } else if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                    } else if let Some(text) =
+                        block.get("text").and_then(|v| v.as_str())
+                    {
                         if !text.is_empty() {
-                            events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                                text: text.to_owned(),
-                            }));
+                            events.push(ProviderEvent::Event(
+                                ModelEvent::TextDelta {
+                                    text: text.to_owned(),
+                                },
+                            ));
                         }
                     }
                 }
@@ -364,7 +419,9 @@ impl std::fmt::Display for GenericProvider {
 #[cfg(test)]
 mod tests {
     use super::{GenericProvider, HostCredential};
-    use siralos_core::provider::{CancellationToken, ModelProvider, ModelRequest};
+    use siralos_core::provider::{
+        CancellationToken, ModelProvider, ModelRequest,
+    };
 
     #[test]
     fn generic_id_is_provider_name() {
@@ -389,13 +446,11 @@ mod tests {
             Some("http://127.0.0.1:1/invalid".to_owned()),
             Some(cred),
         );
-        let request = ModelRequest {
-            messages: vec![],
-            tools: vec![],
-            system: None,
-        };
+        let request =
+            ModelRequest { messages: vec![], tools: vec![], system: None };
         let token = CancellationToken::new();
-        let events: Vec<_> = provider.stream(&request, token.signal()).collect();
+        let events: Vec<_> =
+            provider.stream(&request, token.signal()).collect();
         assert!(!events.is_empty());
     }
 }

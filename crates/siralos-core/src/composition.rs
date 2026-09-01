@@ -188,7 +188,9 @@ impl ProfileRecord {
     }
 }
 
-fn validate_endpoint_field(endpoint: &Option<String>) -> Result<(), ProfileValidationError> {
+fn validate_endpoint_field(
+    endpoint: &Option<String>,
+) -> Result<(), ProfileValidationError> {
     let Some(value) = endpoint else {
         return Ok(());
     };
@@ -206,7 +208,9 @@ fn validate_endpoint_field(endpoint: &Option<String>) -> Result<(), ProfileValid
     }
     if !(value.starts_with("https://") || value.starts_with("http://")) {
         return Err(ProfileValidationError {
-            message: "An endpoint must start with \"https://\" or \"http://\".".to_owned(),
+            message:
+                "An endpoint must start with \"https://\" or \"http://\"."
+                    .to_owned(),
         });
     }
     if value.contains(' ') {
@@ -217,7 +221,9 @@ fn validate_endpoint_field(endpoint: &Option<String>) -> Result<(), ProfileValid
     Ok(())
 }
 
-fn validate_provider_field(provider: &Option<String>) -> Result<(), ProfileValidationError> {
+fn validate_provider_field(
+    provider: &Option<String>,
+) -> Result<(), ProfileValidationError> {
     let Some(value) = provider else {
         return Ok(());
     };
@@ -233,10 +239,9 @@ fn validate_provider_field(provider: &Option<String>) -> Result<(), ProfileValid
             message: "A provider must not contain NUL.".to_owned(),
         });
     }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-    {
+    if !value.chars().all(|c| {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
+    }) {
         return Err(ProfileValidationError {
             message: "A provider must match [a-z0-9_-]{1,64}.".to_owned(),
         });
@@ -244,7 +249,9 @@ fn validate_provider_field(provider: &Option<String>) -> Result<(), ProfileValid
     Ok(())
 }
 
-fn validate_model_field(model: &Option<String>) -> Result<(), ProfileValidationError> {
+fn validate_model_field(
+    model: &Option<String>,
+) -> Result<(), ProfileValidationError> {
     let Some(value) = model else {
         return Ok(());
     };
@@ -271,7 +278,9 @@ fn validate_model_field(model: &Option<String>) -> Result<(), ProfileValidationE
     Ok(())
 }
 
-fn validate_credential_field(credential: &Option<String>) -> Result<(), ProfileValidationError> {
+fn validate_credential_field(
+    credential: &Option<String>,
+) -> Result<(), ProfileValidationError> {
     let Some(value) = credential else {
         return Ok(());
     };

@@ -228,30 +228,43 @@ where
     };
     let effective = compose_effective_policy(&host_rules, &declared);
     let provider = {
-        let (provider_name, model, credential, endpoint) = match &loaded_profile {
-            WorkspaceProfileLoad::Record(record) if effective.applied_profile.is_some() => {
-                let cred = record.credential.as_deref().and_then(|c| {
-                    match HostCredential::from_env_ref(c) {
-                        Ok(cred) => Some(cred),
-                        Err(e) => {
-                            eprintln!("siralos: credential error: {e}");
-                            None
+        let (provider_name, model, credential, endpoint) =
+            match &loaded_profile {
+                WorkspaceProfileLoad::Record(record)
+                    if effective.applied_profile.is_some() =>
+                {
+                    let cred = record.credential.as_deref().and_then(|c| {
+                        match HostCredential::from_env_ref(c) {
+                            Ok(cred) => Some(cred),
+                            Err(e) => {
+                                eprintln!("siralos: credential error: {e}");
+                                None
+                            }
                         }
-                    }
-                });
-                (
-                    record.provider.as_deref().unwrap_or("deterministic-fake"),
-                    record.model.clone(),
-                    cred,
-                    record.endpoint.clone(),
-                )
-            }
-            _ => ("deterministic-fake", None, None, None),
-        };
-        match HostProvider::from_provider_str(provider_name, model, credential, endpoint) {
+                    });
+                    (
+                        record
+                            .provider
+                            .as_deref()
+                            .unwrap_or("deterministic-fake"),
+                        record.model.clone(),
+                        cred,
+                        record.endpoint.clone(),
+                    )
+                }
+                _ => ("deterministic-fake", None, None, None),
+            };
+        match HostProvider::from_provider_str(
+            provider_name,
+            model,
+            credential,
+            endpoint,
+        ) {
             Ok(host_provider) => host_provider,
             Err(err) => {
-                eprintln!("siralos: provider error: {err} — falling back to deterministic-fake");
+                eprintln!(
+                    "siralos: provider error: {err} — falling back to deterministic-fake"
+                );
                 HostProvider::Fake(DeterministicFakeProvider::new())
             }
         }

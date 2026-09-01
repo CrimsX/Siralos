@@ -1,9 +1,13 @@
-//! Provider registry — bounded `provider` string → `ModelProvider` (Stage 8, decision 67 C1, 68 §2).
+//! Provider registry — bounded `provider` string → `ModelProvider` (Stage 8, decision 67 C1, 68 §2, all-purpose per user direction 2026-08-31).
 //!
 //! The registry maps the `provider` field from `ProfileRecord` (validated at
 //! `profile_config.rs` and `composition.rs`) to a concrete `ModelProvider`.
-//! Unknown provider strings are a typed `UnknownProvider` refusal before any
-//! network call, with a diagnostic that never echoes the credential.
+//! Three provider kinds are typed (`deterministic-fake`, `openai`,
+//! `anthropic`) via `ProviderKind`; any other bounded provider string is
+//! accepted via `GenericProvider` (all-purpose, `endpoint` override, no
+//! `UnknownProvider` for valid strings). The `UnknownProvider` diagnostic
+//! path is retained only for callers that opt into strict matching via
+//! `provider_kind_from_str`.
 
 use crate::provider::credential::HostCredential;
 use siralos_core::provider::{ModelProvider, ProviderEvent};
@@ -52,14 +56,14 @@ impl std::error::Error for UnknownProvider {}
 /// `UnknownProvider` is retained only for the explicit `provider_kind_from_str`
 /// diagnostic path used by `HostProvider::from_kind` when the caller opts
 /// into strict matching.
-pub fn provider_kind_from_str(s: &str) -> Result<ProviderKind, UnknownProvider> {
+pub fn provider_kind_from_str(
+    s: &str,
+) -> Result<ProviderKind, UnknownProvider> {
     match s {
         "deterministic-fake" => Ok(ProviderKind::DeterministicFake),
         "openai" => Ok(ProviderKind::OpenAi),
         "anthropic" => Ok(ProviderKind::Anthropic),
-        other => Err(UnknownProvider {
-            provider_id: other.to_owned(),
-        }),
+        other => Err(UnknownProvider { provider_id: other.to_owned() }),
     }
 }
 
@@ -71,17 +75,11 @@ pub fn is_known_provider(s: &str) -> bool {
 }
 
 /// A Host-constructed provider that is `ModelProvider` over the
-/// `deterministic-fake` echo, or over the `openai`/`anthropic` HTTP
-/// adapters (which are Host-observed, bounded, and replay-recordable via
-/// `siralos_core::determinism` and `siralos_core::identity`).
-///
-/// For this slice the `openai`/`anthropic` variants delegate to the typed
-/// `OpenAiProvider`/`AnthropicProvider` stubs that return a `ProviderFailed`
-/// event without performing network I/O, so the `UnknownProvider` path and
-/// the `HostCredential` redaction can be verified without a live network.
-/// The next slice will replace the stub bodies with the `reqwest::blocking`
-/// call that uses the `Clock` for timeouts and records via `identity`
-/// digests for `determinism-replay`.
+/// `deterministic-fake` echo, or over the `openai`/`anthropic`/generic HTTP
+/// adapters (which are Host-observed, bounded, 1 MiB, sanitized, and
+/// replay-recordable via `siralos_core::determinism` and
+/// `siralos_core::identity`). The `generic` path accepts any bounded
+/// provider string with an optional `endpoint` override.
 pub enum HostProvider {
     /// Deterministic fake provider (no credential, echo).
     Fake(crate::provider::deterministic_fake::DeterministicFakeProvider),
@@ -137,12 +135,14 @@ impl HostProvider {
             Ok(ProviderKind::DeterministicFake) => unreachable!(),
             Err(_) => {
                 let model = model.unwrap_or_else(|| "gpt-4o".to_owned());
-                Ok(Self::Generic(crate::provider::generic::GenericProvider::new(
-                    provider.to_owned(),
-                    model,
-                    endpoint,
-                    credential,
-                )))
+                Ok(Self::Generic(
+                    crate::provider::generic::GenericProvider::new(
+                        provider.to_owned(),
+                        model,
+                        endpoint,
+                        credential,
+                    ),
+                ))
             }
         }
     }
@@ -201,17 +201,25 @@ impl ModelProvider for HostProvider {
         cancellation: siralos_core::provider::CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
         match self {
-            Self::Fake(provider) => Box::new(provider.stream(request, cancellation)),
-            Self::OpenAi(provider) => Box::new(provider.stream(request, cancellation)),
-            Self::Anthropic(provider) => Box::new(provider.stream(request, cancellation)),
-            Self::Generic(provider) => Box::new(provider.stream(request, cancellation)),
+            Self::Fake(provider) => {
+                Box::new(provider.stream(request, cancellation))
+            }
+            Self::OpenAi(provider) => {
+                Box::new(provider.stream(request, cancellation))
+            }
+            Self::Anthropic(provider) => {
+                Box::new(provider.stream(request, cancellation))
+            }
+            Self::Generic(provider) => {
+                Box::new(provider.stream(request, cancellation))
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ProviderKind, UnknownProvider, provider_kind_from_str};
+    use super::{ProviderKind, provider_kind_from_str};
 
     #[test]
     fn known_providers_map() {

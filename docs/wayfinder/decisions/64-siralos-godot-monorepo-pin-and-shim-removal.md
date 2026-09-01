@@ -43,17 +43,17 @@ Decision 62 §2 anticipated this (shim A→B→C) but did not freeze the pin opt
 
 ## HITL answer (2026-08-31, verbatim)
 
-- **Q1 Pin strategy** — answer: *"the goal is to move siralos-godot into its own repo once you deem that it is ready i will move it myself"* — interpreted as **Option A (shim retained, external ready to move, no automatic git pin)** — monorepo build stays on shim, external is distribution channel, manual `git push` when owner deems ready.
+- **Q1 Pin strategy** — answer: _"the goal is to move siralos-godot into its own repo once you deem that it is ready i will move it myself"_ — interpreted as **Option A (shim retained, external ready to move, no automatic git pin)** — monorepo build stays on shim, external is distribution channel, manual `git push` when owner deems ready.
 
 ## Verification
 
-| Criterion | Evidence | Verdict |
-|-----------|----------|---------|
-| External repo is verbatim and green | `../siralos-godot` `d098926` 41 files, `cargo test --workspace --all-features` 77 passed (monorepo `cargo test -p siralos-godot` also 77) | pass |
-| Monorepo stays green with shim retained | `Cargo.toml:3-6` 4 members, `check-rust-architecture.mjs:29-67` 4 crates, `cargo test --workspace` / `node scripts/check-rust-architecture.mjs` PASS | pass |
-| No circular git dep introduced | No `git =` dep added to `Cargo.toml` in this slice — circular avoided, `FORBIDDEN_CORE_SYMBOL_PATTERN` still passes | pass |
-| Distribution channel documented | `../siralos-godot/README.md:1` states `github.com/CrimsX/siralos-godot` origin `e2c3540` + `decisions/61 C3` digest flow via `siralos.toml/lock` | pass |
-| Human decision recorded | Q1 answer verbatim | pass |
+| Criterion                               | Evidence                                                                                                                                             | Verdict |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| External repo is verbatim and green     | `../siralos-godot` `d098926` 41 files, `cargo test --workspace --all-features` 77 passed (monorepo `cargo test -p siralos-godot` also 77)            | pass    |
+| Monorepo stays green with shim retained | `Cargo.toml:3-6` 4 members, `check-rust-architecture.mjs:29-67` 4 crates, `cargo test --workspace` / `node scripts/check-rust-architecture.mjs` PASS | pass    |
+| No circular git dep introduced          | No `git =` dep added to `Cargo.toml` in this slice — circular avoided, `FORBIDDEN_CORE_SYMBOL_PATTERN` still passes                                  | pass    |
+| Distribution channel documented         | `../siralos-godot/README.md:1` states `github.com/CrimsX/siralos-godot` origin `e2c3540` + `decisions/61 C3` digest flow via `siralos.toml/lock`     | pass    |
+| Human decision recorded                 | Q1 answer verbatim                                                                                                                                   | pass    |
 
 ## Next
 

@@ -31,19 +31,18 @@ impl HostCredential {
         let name = &value[4..];
         if name.is_empty()
             || name.len() > 64
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            || !name.chars().all(|c| {
+                c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
+            })
         {
             return Err(
                 "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
                     .to_owned(),
             );
         }
-        let var = std::env::var(name).map_err(|_| format!("env var {name} is not set"))?;
-        Ok(Self {
-            bytes: var.into_bytes(),
-        })
+        let var = std::env::var(name)
+            .map_err(|_| format!("env var {name} is not set"))?;
+        Ok(Self { bytes: var.into_bytes() })
     }
 
     /// Expose the bytes only to the `ModelProvider` adapters in this crate.
@@ -87,9 +86,7 @@ mod tests {
 
     #[test]
     fn debug_is_redacted() {
-        let cred = HostCredential {
-            bytes: b"sk-secret".to_vec(),
-        };
+        let cred = HostCredential { bytes: b"sk-secret".to_vec() };
         assert_eq!(format!("{cred:?}"), "HostCredential([REDACTED])");
         assert_eq!(format!("{cred}"), "[REDACTED]");
     }

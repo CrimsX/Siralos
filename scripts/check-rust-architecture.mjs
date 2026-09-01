@@ -25,11 +25,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** The only crates allowed in the workspace. */
-const EXPECTED_CRATES = [
-  "crates/siralos-core",
-  "crates/siralos-adapters",
-  "crates/siralos-cli",
-];
+const EXPECTED_CRATES = ["crates/siralos-core", "crates/siralos-adapters", "crates/siralos-cli"];
 
 /** Godot-domain symbols forbidden in `siralos-core` sources. */
 export const FORBIDDEN_CORE_SYMBOL_PATTERN =

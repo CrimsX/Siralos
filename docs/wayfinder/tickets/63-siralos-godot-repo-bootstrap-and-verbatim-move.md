@@ -26,6 +26,6 @@ Do not yet modify monorepo `Cargo.toml` members or `check-rust-architecture.mjs`
 
 ## Resolution
 
-Closed — bootstrap Verified at `d098926150cb73d29269584c32d107ee45f3cc09` (external repo `C:/Users/L7490/Desktop/Repos/siralos-godot`, `Cargo.toml` + `rust-toolchain.toml` + `rustfmt.toml` + `src/lib.rs` + `src/godot/**` 40 files verbatim, `README.md`/`LICENSE`/`ARCHITECTURE.md`/`..gitignore`, `cargo test --workspace --all-features` **77 passed** at `crates/siralos-godot` via `path = "../siralos/crates/siralos-core"` local dev). Monorepo `crates/siralos-godot` retained as shim until pin slice — no `Cargo.toml` members changed, no `check:rust` break. This unblocks slice 4.
+Closed — bootstrap Verified at `d098926150cb73d29269584c32d107ee45f3cc09` (external repo `../siralos-godot`, `Cargo.toml` + `rust-toolchain.toml` + `rustfmt.toml` + `src/lib.rs` + `src/godot/**` 40 files verbatim, `README.md`/`LICENSE`/`ARCHITECTURE.md`/`..gitignore`, `cargo test --workspace --all-features` **77 passed** at `crates/siralos-godot` via `path = "../siralos/crates/siralos-core"` local dev). Monorepo `crates/siralos-godot` retained as shim until pin slice — no `Cargo.toml` members changed, no `check:rust` break. This unblocks slice 4.
 
 Blocked by: 62 cutover plan (closed). Frontier is this ticket.
