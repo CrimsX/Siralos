@@ -6,7 +6,7 @@
 //! network call, with a diagnostic that never echoes the credential.
 
 use crate::provider::credential::HostCredential;
-use siralos_core::provider::{ModelProvider, ModelRequest, ProviderEvent};
+use siralos_core::provider::{ModelProvider, ProviderEvent};
 
 /// The three provider kinds the Host can construct. `DeterministicFake` is
 /// the only one that does not require a `HostCredential`.
@@ -63,27 +63,20 @@ pub fn provider_kind_from_str(s: &str) -> Result<ProviderKind, UnknownProvider> 
 /// adapters (which are Host-observed, bounded, and replay-recordable via
 /// `siralos_core::determinism` and `siralos_core::identity`).
 ///
-/// For this slice the `openai`/`anthropic` variants are typed stubs that
-/// return a `ProviderFailed` event without performing network I/O, so the
-/// `UnknownProvider` path and the `HostCredential` redaction can be
-/// verified without a live network. The next slice will replace the stubs
-/// with the `reqwest`/`hyper` adapters that use the `Clock` and record
-/// via `identity` digests for `determinism-replay`.
+/// For this slice the `openai`/`anthropic` variants delegate to the typed
+/// `OpenAiProvider`/`AnthropicProvider` stubs that return a `ProviderFailed`
+/// event without performing network I/O, so the `UnknownProvider` path and
+/// the `HostCredential` redaction can be verified without a live network.
+/// The next slice will replace the stub bodies with the `reqwest::blocking`
+/// call that uses the `Clock` for timeouts and records via `identity`
+/// digests for `determinism-replay`.
 pub enum HostProvider {
     /// Deterministic fake provider (no credential, echo).
     Fake(crate::provider::deterministic_fake::DeterministicFakeProvider),
-    /// OpenAI provider stub (credential redacted, no network in this slice).
-    OpenAi {
-        /// Redacted credential for openai.
-        #[allow(dead_code)]
-        credential: HostCredential,
-    },
-    /// Anthropic provider stub (credential redacted, no network in this slice).
-    Anthropic {
-        /// Redacted credential for anthropic.
-        #[allow(dead_code)]
-        credential: HostCredential,
-    },
+    /// OpenAI provider (credential redacted, Host-observed stub in this slice).
+    OpenAi(crate::provider::openai::OpenAiProvider),
+    /// Anthropic provider (credential redacted, Host-observed stub in this slice).
+    Anthropic(crate::provider::anthropic::AnthropicProvider),
 }
 
 impl HostProvider {
@@ -103,12 +96,20 @@ impl HostProvider {
             ProviderKind::OpenAi => {
                 let credential = credential
                     .ok_or_else(|| "openai provider requires a credential".to_owned())?;
-                Ok(Self::OpenAi { credential })
+                Ok(Self::OpenAi(crate::provider::openai::OpenAiProvider::new(
+                    credential,
+                    "gpt-4o".to_owned(),
+                )))
             }
             ProviderKind::Anthropic => {
                 let credential = credential
                     .ok_or_else(|| "anthropic provider requires a credential".to_owned())?;
-                Ok(Self::Anthropic { credential })
+                Ok(Self::Anthropic(
+                    crate::provider::anthropic::AnthropicProvider::new(
+                        credential,
+                        "claude-3-5-sonnet".to_owned(),
+                    ),
+                ))
             }
         }
     }
@@ -123,8 +124,8 @@ impl ModelProvider for HostProvider {
     fn id(&self) -> &str {
         match self {
             Self::Fake(provider) => provider.id(),
-            Self::OpenAi { .. } => "openai",
-            Self::Anthropic { .. } => "anthropic",
+            Self::OpenAi(provider) => provider.id(),
+            Self::Anthropic(provider) => provider.id(),
         }
     }
 
@@ -135,15 +136,8 @@ impl ModelProvider for HostProvider {
     ) -> Self::Stream<'a> {
         match self {
             Self::Fake(provider) => Box::new(provider.stream(request, cancellation)),
-            Self::OpenAi { .. } | Self::Anthropic { .. } => {
-                // Stub: Host-observed, bounded, no network I/O in this slice.
-                // The next slice will replace this with the `determinism` clock
-                // and `identity` digest recording for `determinism-replay`.
-                let _ = (request, cancellation);
-                Box::new(std::iter::once(ProviderEvent::Failed(
-                    "provider not yet implemented — use deterministic-fake for replay".to_owned(),
-                )))
-            }
+            Self::OpenAi(provider) => Box::new(provider.stream(request, cancellation)),
+            Self::Anthropic(provider) => Box::new(provider.stream(request, cancellation)),
         }
     }
 }

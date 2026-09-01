@@ -52,6 +52,14 @@ impl HostCredential {
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    /// Test-only constructor that bypasses `env:` resolution. The bytes are
+    /// held as `HostCredential` with the same redaction guarantees, but no
+    /// `std::env::var` is called, so no `unsafe` is required.
+    #[cfg(test)]
+    pub fn from_bytes_for_test(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
 }
 
 impl fmt::Debug for HostCredential {

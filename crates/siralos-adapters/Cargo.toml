@@ -40,6 +40,15 @@ serde_json = "1"
 # Add Plugin manifest + workspace plugin record parsing: the standard
 # library has no TOML parser.
 toml = "1.1"
+# Real provider HTTP adapters (openai, anthropic): the standard library
+# has no HTTP client; `reqwest` with `blocking` and `json` uses `hyper`
+# + `tokio` + `serde_json` under the hood, but the `ModelProvider` seam
+# stays synchronous (Iterator) and Host-observed via `siralos_core::determinism`.
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-tls",
+] }
 
 [lints]
 workspace = true

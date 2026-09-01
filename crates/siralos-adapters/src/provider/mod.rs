@@ -8,8 +8,10 @@
 //! the provider-neutral contracts and the shared bounded accounting
 //! core in 'siralos-core::provider'.
 
+pub mod anthropic;
 pub mod credential;
 pub mod deterministic_fake;
+pub mod openai;
 pub mod registry;
 pub mod strict_turn;
 
