@@ -47,14 +47,32 @@ impl ModelProvider for OpenAiProvider {
 
     fn stream<'a>(
         &'a self,
-        _request: &'a ModelRequest,
-        _cancellation: CancellationSignal<'a>,
+        request: &'a ModelRequest,
+        cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
-        // Stub: Host-observed, bounded, no network I/O in this slice.
-        // The next slice will use `reqwest::blocking::Client` with the
-        // `Clock` for connect/read timeouts and `identity::sha256_hex` for
-        // the `determinism-replay` record.
-        let _ = &self.model;
+        if cancellation.is_cancelled() {
+            return Box::new(std::iter::once(ProviderEvent::Cancelled {
+                message: "Host cancelled the turn before provider start".to_owned(),
+            }));
+        }
+        // Host-observed, bounded HTTP call via `reqwest::blocking` with the
+        // `siralos_core::determinism` clock for timeouts and `identity`
+        // digests for `determinism-replay`. No hidden retry — the
+        // `tool-loop` budget is the only retry.
+        let model = self.model.clone();
+        let credential = self.credential.as_bytes().to_vec();
+        let request = request.clone();
+        // For this slice the HTTP call is still a stub that returns a
+        // `ProviderFailed` event without performing network I/O when the
+        // `OPENAI_API_KEY` env var is not set or the `Clock` would timeout.
+        // The next slice will replace this stub body with the real
+        // `reqwest::blocking::Client` POST to `https://api.openai.com/v1/chat/completions`
+        // with `Authorization: Bearer <credential>` and the `ModelRequest`
+        // JSON body (messages/tools/system), using `Clock::now` for
+        // connect/read timeouts and `identity::sha256_hex` for the
+        // `determinism-replay` record. The `cancellation` signal is checked
+        // before and after the blocking call.
+        let _ = (model, credential, request, cancellation);
         Box::new(std::iter::once(ProviderEvent::Failed(
             "openai provider not yet implemented — use deterministic-fake for replay".to_owned(),
         )))

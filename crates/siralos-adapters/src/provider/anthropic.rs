@@ -40,10 +40,18 @@ impl ModelProvider for AnthropicProvider {
 
     fn stream<'a>(
         &'a self,
-        _request: &'a ModelRequest,
-        _cancellation: CancellationSignal<'a>,
+        request: &'a ModelRequest,
+        cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
-        let _ = &self.model;
+        if cancellation.is_cancelled() {
+            return Box::new(std::iter::once(ProviderEvent::Cancelled {
+                message: "Host cancelled the turn before provider start".to_owned(),
+            }));
+        }
+        let model = self.model.clone();
+        let credential = self.credential.as_bytes().to_vec();
+        let request = request.clone();
+        let _ = (model, credential, request, cancellation);
         Box::new(std::iter::once(ProviderEvent::Failed(
             "anthropic provider not yet implemented — use deterministic-fake for replay".to_owned(),
         )))
