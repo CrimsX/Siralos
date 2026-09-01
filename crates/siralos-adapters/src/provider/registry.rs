@@ -80,12 +80,22 @@ pub enum HostProvider {
 }
 
 impl HostProvider {
-    /// Construct a `HostProvider` from a `ProviderKind` and an optional
-    /// `HostCredential`. `DeterministicFake` requires no credential;
-    /// `OpenAi`/`Anthropic` require `Some(credential)`.
+    /// Construct a `HostProvider` from a `ProviderKind`, an optional
+    /// `HostCredential`, and an optional `model` id. `DeterministicFake`
+    /// requires no credential; `OpenAi`/`Anthropic` require `Some(credential)`.
+    /// When `model` is `None`, the provider's default model is used.
     pub fn from_kind(
         kind: ProviderKind,
         credential: Option<HostCredential>,
+    ) -> Result<Self, String> {
+        Self::from_kind_with_model(kind, credential, None)
+    }
+
+    /// Construct a `HostProvider` with an explicit `model` id.
+    pub fn from_kind_with_model(
+        kind: ProviderKind,
+        credential: Option<HostCredential>,
+        model: Option<String>,
     ) -> Result<Self, String> {
         match kind {
             ProviderKind::DeterministicFake => {
@@ -96,19 +106,18 @@ impl HostProvider {
             ProviderKind::OpenAi => {
                 let credential = credential
                     .ok_or_else(|| "openai provider requires a credential".to_owned())?;
+                let model = model.unwrap_or_else(|| "gpt-4o".to_owned());
                 Ok(Self::OpenAi(crate::provider::openai::OpenAiProvider::new(
-                    credential,
-                    "gpt-4o".to_owned(),
+                    credential, model,
                 )))
             }
             ProviderKind::Anthropic => {
                 let credential = credential
                     .ok_or_else(|| "anthropic provider requires a credential".to_owned())?;
+                let model =
+                    model.unwrap_or_else(|| "claude-3-5-sonnet".to_owned());
                 Ok(Self::Anthropic(
-                    crate::provider::anthropic::AnthropicProvider::new(
-                        credential,
-                        "claude-3-5-sonnet".to_owned(),
-                    ),
+                    crate::provider::anthropic::AnthropicProvider::new(credential, model),
                 ))
             }
         }

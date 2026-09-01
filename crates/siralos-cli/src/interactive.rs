@@ -19,7 +19,10 @@ use siralos_adapters::lockfile::{LockVerification, verify_workspace_lock};
 use siralos_adapters::profile_config::{
     WorkspaceProfileLoad, load_workspace_profile,
 };
-use siralos_adapters::provider::DeterministicFakeProvider;
+use siralos_adapters::provider::{
+    DeterministicFakeProvider, HostCredential, HostProvider, ProviderKind,
+    provider_kind_from_str,
+};
 use siralos_adapters::skills_loader::{
     SkillCatalogLoad, load_workspace_skills,
 };
@@ -195,7 +198,6 @@ where
             .map_err(InteractiveError::CurrentDirectory)?,
     };
     let workspace_root = resolve_workspace_root(&workspace_root)?;
-    let provider = DeterministicFakeProvider::new();
     let tools: Vec<Box<dyn siralos_core::tool::Tool>> = vec![
         Box::new(WorkspaceListTool::new(&workspace_root)?),
         Box::new(WorkspaceReadTool::new(&workspace_root)?),
@@ -226,6 +228,35 @@ where
         }
     };
     let effective = compose_effective_policy(&host_rules, &declared);
+    let provider = {
+        let (provider_name, model, credential) = match &loaded_profile {
+            WorkspaceProfileLoad::Record(record) if effective.applied_profile.is_some() => {
+                let cred = record.credential.as_deref().and_then(|c| {
+                    match HostCredential::from_env_ref(c) {
+                        Ok(cred) => Some(cred),
+                        Err(e) => {
+                            eprintln!("siralos: credential error: {e}");
+                            None
+                        }
+                    }
+                });
+                (
+                    record.provider.as_deref().unwrap_or("deterministic-fake"),
+                    record.model.clone(),
+                    cred,
+                )
+            }
+            _ => ("deterministic-fake", None, None),
+        };
+        let kind = provider_kind_from_str(provider_name).unwrap_or(ProviderKind::DeterministicFake);
+        match HostProvider::from_kind_with_model(kind, credential, model) {
+            Ok(host_provider) => host_provider,
+            Err(err) => {
+                eprintln!("siralos: provider error: {err} — falling back to deterministic-fake");
+                HostProvider::Fake(DeterministicFakeProvider::new())
+            }
+        }
+    };
     if let Some(diagnostic) = &effective.diagnostic {
         // Host-side startup diagnostic (never model output): the declared
         // profile was not applied; the session proceeds on pure Host
