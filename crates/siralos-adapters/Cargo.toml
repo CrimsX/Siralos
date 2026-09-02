@@ -27,7 +27,7 @@ wasmtime = { version = "=47.0.3", default-features = false, features = [
 # empty context: no filesystem, network, process, or ambient WASI
 # capability is ever exposed (the conformance component's import list
 # is asserted in tests).
-wasmtime-wasi = { version = "=47.0.3", default-features = false, features = [
+wasmtime-wasi = { version = "=48.0.1", default-features = false, features = [
     "p2",
 ] }
 # `dirs` provides the OS user-database home fallback (Windows
