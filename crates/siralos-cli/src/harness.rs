@@ -113,6 +113,11 @@ const SUBJECT_EVOLVE_CORPUS: &str = "evolve-corpus";
 const SUBJECT_EVOLVE_WORKFLOW: &str = "evolve-workflow";
 const SUBJECT_EVOLVE_PROPOSAL: &str = "evolve-proposal";
 const SUBJECT_PROVIDER_GENERIC: &str = "provider-generic";
+/// Hermetic endpoint pinned by the harness for provider subjects: an
+/// unreachable loopback address, so the executed provider call never
+/// performs live network I/O and the `reqwest` refusal is deterministic
+/// (offline-stable, no real credential is ever transmitted).
+const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
@@ -12426,22 +12431,17 @@ fn recovery_taxonomy_record(input: &Value) -> Result<Value, HarnessError> {
 /// Canonical provider-generic record: one canonical observation per input.
 /// The input is the `provider-generic` subject's `input` object which
 /// carries `provider`/`model`/`credential`/`endpoint`/`messages`/`tools`.
-/// This exercises the `GenericProvider` path via `HostProvider` without
-/// requiring a live network — the `endpoint` is validated but the call
-/// itself is Host-observed and bounded, and the test corpus uses a
-/// loopback/unreachable endpoint so the `reqwest` error is the expected
-/// `ProviderEvent::Failed` (never panics, never leaks credential).
+/// This exercises the `GenericProvider` path via `HostProvider`
+/// hermetically (ADR 0033): the declared `provider`/`model`/`credential`/
+/// `endpoint` are validated, but the executed call is pinned to
+/// `HERMETIC_PROVIDER_ENDPOINT` (unreachable loopback) with a fake
+/// credential, so the canonical outcome is the typed, deterministic
+/// `ProviderEvent::Failed` refusal — no live network I/O, no real
+/// credential ever transmitted, no panic, no credential leak.
 fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
     let provider = scenario_string(input, "provider")?;
     let model = scenario_string(input, "model")
         .unwrap_or_else(|_| "gpt-4o".to_owned());
-    let credential = input
-        .get("credential")
-        .and_then(|v| v.as_str())
-        .unwrap_or("env:TEST_GENERIC")
-        .to_owned();
-    let endpoint =
-        input.get("endpoint").and_then(|v| v.as_str()).map(|s| s.to_owned());
     let messages = input
         .get("messages")
         .and_then(|v| v.as_array())
@@ -12486,18 +12486,13 @@ fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
             })
         })
         .collect::<Vec<_>>();
-    let cred = siralos_adapters::provider::HostCredential::from_env_ref(
-        &credential,
-    )
-    .unwrap_or_else(|_| {
-        siralos_adapters::provider::HostCredential::from_bytes_fallback(
-            b"sk-test-generic".to_vec(),
-        )
-    });
+    let cred = siralos_adapters::provider::HostCredential::from_bytes_for_test(
+        b"sk-test-generic".to_vec(),
+    );
     let generic = siralos_adapters::provider::generic::GenericProvider::new(
         provider.clone(),
         model.clone(),
-        endpoint.clone(),
+        Some(HERMETIC_PROVIDER_ENDPOINT.to_owned()),
         Some(cred),
     );
     let request = siralos_core::provider::ModelRequest {

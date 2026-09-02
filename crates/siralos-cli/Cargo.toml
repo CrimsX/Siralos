@@ -8,7 +8,13 @@ publish = false
 
 [features]
 default = []
-differential-harness = ["dep:serde", "dep:serde_json", "dep:sha2", "dep:toml"]
+differential-harness = [
+    "dep:serde",
+    "dep:serde_json",
+    "dep:sha2",
+    "dep:toml",
+    "siralos-adapters/differential-harness",
+]
 
 [dependencies]
 siralos-core = { workspace = true }
