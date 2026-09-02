@@ -1110,3 +1110,71 @@ fn retaining_recorder_round_trip_through_generic() {
     );
     assert_eq!(events[1], ProviderEvent::Event(ModelEvent::Completed));
 }
+
+#[test]
+fn replay_composition_round_trip_from_recorder() {
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecorder, RetainingReplayRecorder,
+    };
+    let recorder = RetainingReplayRecorder::new();
+    let bodies = [
+        r#"{"choices":[{"message":{"content":"alpha"}}]}"#,
+        r#"{"choices":[{"message":{"content":"beta"}}]}"#,
+    ];
+    for body in bodies {
+        let body_sha256 = crate::provider::response_body_sha256(body);
+        let identity = ProviderResponseIdentity {
+            provider_id: "my-provider".to_owned(),
+            model: "my-model".to_owned(),
+            status: Some(200),
+            body_sha256,
+            body_bytes: body.len() as u64,
+            observed_at_ms: Some(1),
+        };
+        recorder.record_provider_response(&identity);
+        recorder.record_provider_response_with_body(&identity, body);
+    }
+    let provider = crate::provider::replay::replay_provider_from_recorder(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        &recorder,
+    );
+    assert_eq!(provider.recordings_remaining(), 2);
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let first: Vec<_> = provider.stream(&request, token.signal()).collect();
+    assert_eq!(first.len(), 2);
+    assert_eq!(
+        first[0],
+        ProviderEvent::Event(ModelEvent::TextDelta {
+            text: "alpha".to_owned()
+        })
+    );
+    assert_eq!(first[1], ProviderEvent::Event(ModelEvent::Completed));
+    assert_eq!(provider.recordings_remaining(), 1);
+    let token2 = CancellationToken::new();
+    let second: Vec<_> = provider.stream(&request, token2.signal()).collect();
+    assert_eq!(second.len(), 2);
+    assert_eq!(
+        second[0],
+        ProviderEvent::Event(ModelEvent::TextDelta {
+            text: "beta".to_owned()
+        })
+    );
+    assert_eq!(second[1], ProviderEvent::Event(ModelEvent::Completed));
+    assert_eq!(provider.recordings_remaining(), 0);
+    let token3 = CancellationToken::new();
+    let third: Vec<_> = provider.stream(&request, token3.signal()).collect();
+    assert_eq!(third.len(), 1);
+    match &third[0] {
+        ProviderEvent::Failed(message) => {
+            assert!(
+                message.contains("recording exhausted"),
+                "message {message:?} should contain 'recording exhausted'"
+            );
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert_eq!(recorder.records_snapshot().len(), 2);
+}

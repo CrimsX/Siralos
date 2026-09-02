@@ -241,3 +241,19 @@ impl std::fmt::Display for RecordedReplayProvider {
         write!(f, "RecordedReplayProvider({}:[REDACTED])", self.provider_id)
     }
 }
+
+/// composes a replay provider from the recorder's detached snapshot
+/// (recordings_snapshot()); the recorder keeps its recordings — the provider
+/// serves a copy.
+#[must_use]
+pub fn replay_provider_from_recorder(
+    provider_id: String,
+    model: String,
+    recorder: &siralos_core::determinism::RetainingReplayRecorder,
+) -> RecordedReplayProvider {
+    RecordedReplayProvider::new(
+        provider_id,
+        model,
+        recorder.records_snapshot(),
+    )
+}
