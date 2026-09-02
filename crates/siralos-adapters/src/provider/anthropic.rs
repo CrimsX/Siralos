@@ -158,19 +158,11 @@ impl AnthropicProvider {
             }];
         }
         let status = response.status();
-        let text = match response.text() {
-            Ok(text) => {
-                const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
-                let mut bounded = text;
-                if bounded.len() > MAX_RESPONSE_BYTES {
-                    bounded.truncate(MAX_RESPONSE_BYTES);
-                    bounded.push_str("...[truncated]");
-                }
-                bounded
-                    .chars()
-                    .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-                    .collect::<String>()
-            }
+        // Bound the response body at READ time (at most 1 MiB is buffered)
+        // and sanitize untrusted data before embedding it in the
+        // Host-visible diagnostic.
+        let text = match crate::provider::bounded_body_text(response) {
+            Ok(text) => text,
             Err(err) => {
                 return vec![ProviderEvent::Failed(format!(
                     "anthropic response read failed: {err}"
@@ -190,8 +182,9 @@ impl AnthropicProvider {
         let value: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(err) => {
+                let snippet: String = text.chars().take(512).collect();
                 return vec![ProviderEvent::Failed(format!(
-                    "anthropic response JSON parse failed: {err}: {text}"
+                    "anthropic response JSON parse failed: {err}: {snippet}"
                 ))];
             }
         };

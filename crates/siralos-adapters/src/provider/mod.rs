@@ -30,3 +30,29 @@ pub use strict_turn::{
     BoundedModelToolCall, BoundedModelTurnLimits, BoundedModelTurnOutcome,
     collect_bounded_model_turn,
 };
+
+/// Maximum provider response body bytes accepted before truncation.
+pub(crate) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+
+/// Read an HTTP response body bounded at READ time: at most
+/// `MAX_RESPONSE_BYTES + 1` bytes are buffered (via `io::Read::take`), so a
+/// hostile endpoint cannot exhaust memory through an unbounded body. The
+/// returned text is lossily UTF-8, stripped of control characters (newlines
+/// and tabs kept), and marked `...[truncated]` when the bound was hit. The
+/// `Err` payload is the raw I/O error for the caller to prefix.
+pub(crate) fn bounded_body_text(
+    response: reqwest::blocking::Response,
+) -> Result<String, String> {
+    use std::io::Read;
+    let mut limited = response.take((MAX_RESPONSE_BYTES + 1) as u64);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes).map_err(|err| err.to_string())?;
+    let truncated = bytes.len() > MAX_RESPONSE_BYTES;
+    bytes.truncate(MAX_RESPONSE_BYTES);
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    text.retain(|c| !c.is_control() || c == '\n' || c == '\t');
+    if truncated {
+        text.push_str("...[truncated]");
+    }
+    Ok(text)
+}
