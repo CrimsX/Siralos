@@ -56,8 +56,8 @@ pub use ports::{
 };
 pub use provider_replay::{
     CollectingReplayRecorder, NoopReplayRecorder, ProviderReplayAvailability,
-    ProviderResponseIdentity, ReplayRecorder,
-    compute_provider_response_identity_digest,
+    ProviderResponseIdentity, ReplayRecorder, ReplayRecording,
+    RetainingReplayRecorder, compute_provider_response_identity_digest,
 };
 pub use reproducibility::{
     ClockPolicy, ProviderInputIdentity, ReproducibilityManifest,

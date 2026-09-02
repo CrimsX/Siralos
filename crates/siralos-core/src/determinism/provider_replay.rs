@@ -96,8 +96,78 @@ impl ProviderReplayAvailability {
 pub trait ReplayRecorder: std::fmt::Debug {
     /// Record one provider response identity.
     fn record_provider_response(&self, identity: &ProviderResponseIdentity);
+    /// Called after `record_provider_response` when the sanitized bounded body
+    /// text is available; default ignores it; trait stays object-safe.
+    fn record_provider_response_with_body(
+        &self,
+        _identity: &ProviderResponseIdentity,
+        _body: &str,
+    ) {
+    }
     /// Whether this recorder is actively recording.
     fn is_recording(&self) -> bool;
+}
+
+/// Recorded provider response with bounded sanitized body.
+///
+/// `body` is the sanitized bounded response text retained in memory only,
+/// never persisted, never contains credentials.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplayRecording {
+    /// Response identity.
+    pub identity: ProviderResponseIdentity,
+    /// Sanitized bounded body text.
+    pub body: String,
+}
+
+/// Retaining recorder that keeps full response recordings in memory for replay.
+///
+/// Recordings live in memory only. The retaining recorder captures both the
+/// identity and the sanitized bounded body text via
+/// `record_provider_response_with_body`; the base `record_provider_response`
+/// call alone does not create a body-bearing record.
+#[derive(Debug, Default)]
+pub struct RetainingReplayRecorder {
+    /// Insertion-order recordings.
+    records: core::cell::RefCell<Vec<ReplayRecording>>,
+}
+
+impl RetainingReplayRecorder {
+    /// Create a new empty retaining recorder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { records: core::cell::RefCell::new(Vec::new()) }
+    }
+
+    /// Snapshot the recorded [`ReplayRecording`]s in insertion order.
+    ///
+    /// The returned vector is detached; mutating it does not affect the
+    /// recorder's internal state.
+    #[must_use]
+    pub fn records_snapshot(&self) -> Vec<ReplayRecording> {
+        self.records.borrow().clone()
+    }
+}
+
+impl ReplayRecorder for RetainingReplayRecorder {
+    fn record_provider_response(&self, _identity: &ProviderResponseIdentity) {}
+
+    fn record_provider_response_with_body(
+        &self,
+        identity: &ProviderResponseIdentity,
+        body: &str,
+    ) {
+        if compute_provider_response_identity_digest(identity).is_ok() {
+            self.records.borrow_mut().push(ReplayRecording {
+                identity: identity.clone(),
+                body: body.to_owned(),
+            });
+        }
+    }
+
+    fn is_recording(&self) -> bool {
+        true
+    }
 }
 
 /// No-op recorder that never records.
@@ -284,5 +354,60 @@ mod tests {
             unavailable.as_diagnostic(),
             "replay unavailable: live call not recorded"
         );
+    }
+
+    #[test]
+    fn retaining_recorder_captures_identity_and_body() {
+        use super::RetainingReplayRecorder;
+        let recorder = RetainingReplayRecorder::new();
+        assert!(recorder.is_recording());
+        let identity = base_identity();
+        let body = "hello body";
+        recorder.record_provider_response_with_body(&identity, body);
+        let snapshot = recorder.records_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].identity, identity);
+        assert_eq!(snapshot[0].body, body);
+        // Digest of stored identity matches computed digest.
+        let expected = compute_provider_response_identity_digest(&identity)
+            .expect("digest");
+        let actual =
+            compute_provider_response_identity_digest(&snapshot[0].identity)
+                .expect("digest");
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn retaining_recorder_snapshot_is_detached() {
+        use super::RetainingReplayRecorder;
+        let recorder = RetainingReplayRecorder::new();
+        let identity = base_identity();
+        recorder.record_provider_response_with_body(&identity, "body");
+        let mut snapshot = recorder.records_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        snapshot.clear();
+        assert_eq!(snapshot.len(), 0);
+        let again = recorder.records_snapshot();
+        assert_eq!(again.len(), 1);
+    }
+
+    #[test]
+    fn retaining_recorder_base_record_does_not_add_body_bearing_record() {
+        use super::RetainingReplayRecorder;
+        let recorder = RetainingReplayRecorder::new();
+        let identity = base_identity();
+        recorder.record_provider_response(&identity);
+        assert_eq!(recorder.records_snapshot().len(), 0);
+        // Now the with_body call adds exactly one.
+        recorder.record_provider_response_with_body(&identity, "body");
+        assert_eq!(recorder.records_snapshot().len(), 1);
+    }
+
+    #[test]
+    fn noop_unaffected_by_new_method() {
+        let recorder = NoopReplayRecorder;
+        let identity = base_identity();
+        recorder.record_provider_response_with_body(&identity, "ignored");
+        assert!(!recorder.is_recording());
     }
 }

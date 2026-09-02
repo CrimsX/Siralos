@@ -961,3 +961,152 @@ fn replay_record_debug_does_not_contain_credential_bytes() {
         "record debug must not leak credential fragments"
     );
 }
+
+#[test]
+fn replay_serves_recorded_body_as_events() {
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecording,
+    };
+    let body = r#"{"choices":[{"message":{"content":"hello"}}]}"#;
+    let body_sha256 = crate::provider::response_body_sha256(body);
+    let identity = ProviderResponseIdentity {
+        provider_id: "my-provider".to_owned(),
+        model: "my-model".to_owned(),
+        status: Some(200),
+        body_sha256,
+        body_bytes: body.len() as u64,
+        observed_at_ms: Some(1),
+    };
+    let recording = ReplayRecording { identity, body: body.to_owned() };
+    let provider = crate::provider::replay::RecordedReplayProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        vec![recording],
+    );
+    assert_eq!(provider.recordings_remaining(), 1);
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let events: Vec<_> = provider.stream(&request, token.signal()).collect();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0],
+        ProviderEvent::Event(ModelEvent::TextDelta {
+            text: "hello".to_owned()
+        })
+    );
+    assert_eq!(events[1], ProviderEvent::Event(ModelEvent::Completed));
+    assert_eq!(provider.recordings_remaining(), 0);
+}
+
+#[test]
+fn replay_exhausted_is_typed_failure() {
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecording,
+    };
+    let body = r#"{"choices":[{"message":{"content":"hello"}}]}"#;
+    let body_sha256 = crate::provider::response_body_sha256(body);
+    let identity = ProviderResponseIdentity {
+        provider_id: "my-provider".to_owned(),
+        model: "my-model".to_owned(),
+        status: Some(200),
+        body_sha256,
+        body_bytes: body.len() as u64,
+        observed_at_ms: Some(1),
+    };
+    let recording = ReplayRecording { identity, body: body.to_owned() };
+    let provider = crate::provider::replay::RecordedReplayProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        vec![recording],
+    );
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let _first: Vec<_> = provider.stream(&request, token.signal()).collect();
+    assert_eq!(provider.recordings_remaining(), 0);
+    let token2 = CancellationToken::new();
+    let second: Vec<_> = provider.stream(&request, token2.signal()).collect();
+    assert_eq!(second.len(), 1);
+    match &second[0] {
+        ProviderEvent::Failed(message) => {
+            assert!(
+                message.contains("recording exhausted"),
+                "message {message:?} should contain 'recording exhausted'"
+            );
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+}
+
+#[test]
+fn replay_cancellation_before_start() {
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecording,
+    };
+    let body = r#"{"choices":[{"message":{"content":"hello"}}]}"#;
+    let body_sha256 = crate::provider::response_body_sha256(body);
+    let identity = ProviderResponseIdentity {
+        provider_id: "my-provider".to_owned(),
+        model: "my-model".to_owned(),
+        status: Some(200),
+        body_sha256,
+        body_bytes: body.len() as u64,
+        observed_at_ms: Some(1),
+    };
+    let recording = ReplayRecording { identity, body: body.to_owned() };
+    let provider = crate::provider::replay::RecordedReplayProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        vec![recording],
+    );
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    token.cancel();
+    let events: Vec<_> = provider.stream(&request, token.signal()).collect();
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], ProviderEvent::Cancelled { .. }));
+    assert_eq!(provider.recordings_remaining(), 1);
+}
+
+#[test]
+fn retaining_recorder_round_trip_through_generic() {
+    use siralos_core::determinism::{FixedClock, RetainingReplayRecorder};
+    use std::rc::Rc;
+    let clock = Rc::new(FixedClock::new(7));
+    let recorder = Rc::new(RetainingReplayRecorder::new());
+    let cred = super::credential::HostCredential::from_bytes_for_test(
+        b"sk-test".to_vec(),
+    );
+    let provider = super::generic::GenericProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        Some("http://127.0.0.1:1/invalid".to_owned()),
+        Some(cred),
+    )
+    .with_replay_support(clock, recorder.clone());
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let _ = provider.stream(&request, token.signal()).collect::<Vec<_>>();
+    let snapshot = recorder.records_snapshot();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].body, "");
+    assert_eq!(snapshot[0].identity.status, None);
+    // Feed into replay provider -> empty TextDelta fallback then Completed.
+    let replay_provider = crate::provider::replay::RecordedReplayProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        snapshot,
+    );
+    let token2 = CancellationToken::new();
+    let events: Vec<_> =
+        replay_provider.stream(&request, token2.signal()).collect();
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0],
+        ProviderEvent::Event(ModelEvent::TextDelta { text: String::new() })
+    );
+    assert_eq!(events[1], ProviderEvent::Event(ModelEvent::Completed));
+}

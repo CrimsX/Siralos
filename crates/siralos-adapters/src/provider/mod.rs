@@ -14,6 +14,7 @@ pub mod deterministic_fake;
 pub mod generic;
 pub mod openai;
 pub mod registry;
+pub mod replay;
 pub mod strict_turn;
 
 #[cfg(test)]
@@ -26,6 +27,7 @@ pub use deterministic_fake::{
 pub use registry::{
     HostProvider, ProviderKind, UnknownProvider, provider_kind_from_str,
 };
+pub use replay::RecordedReplayProvider;
 pub use strict_turn::{
     BoundedModelToolCall, BoundedModelTurnLimits, BoundedModelTurnOutcome,
     collect_bounded_model_turn,
@@ -91,6 +93,7 @@ pub(crate) fn record_outcome(
         };
         if let Some(recorder) = hooks.recorder.as_ref() {
             recorder.record_provider_response(&identity);
+            recorder.record_provider_response_with_body(&identity, body_text);
         }
         let digest =
             siralos_core::determinism::compute_provider_response_identity_digest(

@@ -25,7 +25,7 @@ use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
 };
 use siralos_core::provider::{
-    CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
+    CancellationSignal, ModelProvider, ModelRequest, ProviderEvent,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -325,160 +325,13 @@ impl GenericProvider {
                 return events;
             }
         };
-        let mut events = Vec::new();
-        // OpenAI-compatible: choices[0].message.content / tool_calls
-        // Anthropic: content[0].text / tool_use
-        // Try both shapes; whichever yields events is used.
-        let choices = value
-            .get("choices")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        for choice in choices {
-            let message =
-                choice.get("message").cloned().unwrap_or(Value::Null);
-            if let Some(content) =
-                message.get("content").and_then(|v| v.as_str())
-            {
-                if !content.is_empty() {
-                    events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                        text: content.to_owned(),
-                    }));
-                }
-            }
-            if let Some(tool_calls) =
-                message.get("tool_calls").and_then(|v| v.as_array())
-            {
-                for call in tool_calls {
-                    let id = call
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let name = call
-                        .get("function")
-                        .and_then(|v| v.get("name"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let args_str = call
-                        .get("function")
-                        .and_then(|v| v.get("arguments"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("{}");
-                    let input_val = serde_json::from_str::<Value>(args_str)
-                        .unwrap_or(Value::String(args_str.to_owned()));
-                    if id.is_empty() || name.is_empty() {
-                        continue;
-                    }
-                    let input =
-                        siralos_core::provider::ToolCallInput::from_value(
-                            input_val,
-                        );
-                    events.push(ProviderEvent::Event(ModelEvent::ToolCall {
-                        call_id: id,
-                        tool_name: name,
-                        input,
-                    }));
-                }
-            }
-        }
-        if events.is_empty() {
-            if let Some(content) = value
-                .get("content")
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-            {
-                if let Some(text) =
-                    content.get("text").and_then(|v| v.as_str())
-                {
-                    if !text.is_empty() {
-                        events.push(ProviderEvent::Event(
-                            ModelEvent::TextDelta { text: text.to_owned() },
-                        ));
-                    }
-                }
-                if content.get("type").and_then(|v| v.as_str())
-                    == Some("tool_use")
-                {
-                    let id = content
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let name = content
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let input_val =
-                        content.get("input").cloned().unwrap_or(Value::Null);
-                    if !id.is_empty() && !name.is_empty() {
-                        let input =
-                            siralos_core::provider::ToolCallInput::from_value(
-                                input_val,
-                            );
-                        events.push(ProviderEvent::Event(
-                            ModelEvent::ToolCall {
-                                call_id: id,
-                                tool_name: name,
-                                input,
-                            },
-                        ));
-                    }
-                }
-            }
-            if let Some(content_arr) =
-                value.get("content").and_then(|v| v.as_array())
-            {
-                for block in content_arr.iter().skip(1) {
-                    if block.get("type").and_then(|v| v.as_str())
-                        == Some("tool_use")
-                    {
-                        let id = block
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_owned();
-                        let name = block
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_owned();
-                        let input_val =
-                            block.get("input").cloned().unwrap_or(Value::Null);
-                        if !id.is_empty() && !name.is_empty() {
-                            let input =
-                                siralos_core::provider::ToolCallInput::from_value(input_val);
-                            events.push(ProviderEvent::Event(
-                                ModelEvent::ToolCall {
-                                    call_id: id,
-                                    tool_name: name,
-                                    input,
-                                },
-                            ));
-                        }
-                    } else if let Some(text) =
-                        block.get("text").and_then(|v| v.as_str())
-                    {
-                        if !text.is_empty() {
-                            events.push(ProviderEvent::Event(
-                                ModelEvent::TextDelta {
-                                    text: text.to_owned(),
-                                },
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        if events.is_empty() {
-            // No content — still complete the turn so the Host doesn't hang.
-            events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                text: String::new(),
-            }));
-        }
-        events.push(ProviderEvent::Event(ModelEvent::Completed));
+        // Body-to-events conversion is centralized in
+        // `crate::provider::replay::completion_events_from_body` for reuse by
+        // `RecordedReplayProvider`; validate the value is usable before
+        // delegating to avoid double-parse divergence on malformed JSON.
+        let _ = &value;
+        let events =
+            crate::provider::replay::completion_events_from_body(&text);
         record_outcome(
             hooks,
             last_replay,
