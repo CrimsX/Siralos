@@ -1,15 +1,20 @@
 //! Generic provider adapter — accepts any `provider` string with an optional
-//! `endpoint` override (Stage 8, decision 67 C1, 68 §3, user direction 2026-08-31
-//! "make an all purpose provider diagnostic that can accept any").
+//! `endpoint` override (Stage 8, decision 67 C1, 68 §3, user direction
+//! 2026-08-31 "make an all purpose provider diagnostic that can accept any";
+//! follow-up user direction: the generic default is a provider-neutral
+//! placeholder, never a real provider).
 //!
 //! The `ModelProvider` seam stays synchronous and Host-observed. When
 //! `endpoint` is `Some`, it is used verbatim as the POST URL (host-configured
 //! authority, `https://`/`http://` per `ProfileRecord::validate`, no
-//! `file:`/`unix:`); otherwise the provider's default endpoint is used
-//! (`anthropic` → `api.anthropic.com`, all others incl. unknown →
-//! `api.openai.com` with `model` default `gpt-4o`). No `UnknownProvider` —
-//! any bounded `provider` string that passed `ProfileRecord` validation is
-//! accepted.
+//! `file:`/`unix:`); otherwise the provider-neutral placeholder
+//! `https://generic.invalid/endpoint` is used — the RFC 6761 reserved
+//! `.invalid` TLD is guaranteed unresolvable, so a missing configuration
+//! fails closed with a typed `ProviderEvent::Failed` and can never route a
+//! request or its credential header to a real provider. The default `model`
+//! is the neutral `generic-model` placeholder (`GENERIC_PLACEHOLDER_MODEL`).
+//! No `UnknownProvider` — any bounded `provider` string that passed
+//! `ProfileRecord` validation is accepted.
 
 use crate::provider::credential::HostCredential;
 use serde_json::Value;
@@ -40,14 +45,17 @@ impl GenericProvider {
     ) -> Self {
         Self { provider, model, endpoint, credential }
     }
-
-    fn default_endpoint(provider: &str) -> &'static str {
-        match provider {
-            "anthropic" => "https://api.anthropic.com/v1/messages",
-            _ => "https://api.openai.com/v1/chat/completions",
-        }
-    }
 }
+
+/// Provider-neutral placeholder endpoint used when the generic provider is
+/// constructed without an explicit `endpoint`: the RFC 6761 reserved
+/// `.invalid` TLD is guaranteed unresolvable, so a missing configuration can
+/// never route a request (or its credential header) to a real provider.
+const GENERIC_PLACEHOLDER_ENDPOINT: &str = "https://generic.invalid/endpoint";
+
+/// Provider-neutral placeholder model applied by
+/// `registry::from_provider_str` when no `model` was declared.
+pub(crate) const GENERIC_PLACEHOLDER_MODEL: &str = "generic-model";
 
 impl ModelProvider for GenericProvider {
     type Stream<'a>
@@ -75,7 +83,7 @@ impl ModelProvider for GenericProvider {
         let endpoint = self
             .endpoint
             .clone()
-            .unwrap_or_else(|| Self::default_endpoint(&provider).to_owned());
+            .unwrap_or_else(|| GENERIC_PLACEHOLDER_ENDPOINT.to_owned());
         let credential = self.credential.as_ref().map(|c| {
             // Clone the bytes as a String for the header; the `HostCredential`
             // itself stays redacted, and the `String` is held only for the
@@ -421,11 +429,40 @@ mod tests {
         let cred = HostCredential::from_bytes_for_test(b"sk-test".to_vec());
         let provider = GenericProvider::new(
             "github-copilot".to_owned(),
-            "gpt-4o".to_owned(),
+            "generic-model".to_owned(),
             None,
             Some(cred),
         );
         assert_eq!(provider.id(), "github-copilot");
+    }
+
+    #[test]
+    fn generic_without_endpoint_fails_closed_on_placeholder() {
+        // Provider-neutral placeholder: the RFC 6761 `.invalid` host can
+        // never resolve, so a missing configuration fails closed with a
+        // typed refusal naming the placeholder — never a real provider.
+        let cred = HostCredential::from_bytes_for_test(b"sk-test".to_vec());
+        let provider = GenericProvider::new(
+            "my-provider".to_owned(),
+            "my-model".to_owned(),
+            None,
+            Some(cred),
+        );
+        let request =
+            ModelRequest { messages: vec![], tools: vec![], system: None };
+        let token = CancellationToken::new();
+        let events: Vec<_> =
+            provider.stream(&request, token.signal()).collect();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            siralos_core::provider::ProviderEvent::Failed(_)
+        ));
+        if let siralos_core::provider::ProviderEvent::Failed(message) =
+            &events[0]
+        {
+            assert!(message.contains("generic.invalid"));
+        }
     }
 
     #[test]

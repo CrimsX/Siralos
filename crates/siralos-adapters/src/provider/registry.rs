@@ -136,7 +136,10 @@ impl HostProvider {
             ),
             Ok(ProviderKind::DeterministicFake) => unreachable!(),
             Err(_) => {
-                let model = model.unwrap_or_else(|| "gpt-4o".to_owned());
+                let model = model.unwrap_or_else(|| {
+                    crate::provider::generic::GENERIC_PLACEHOLDER_MODEL
+                        .to_owned()
+                });
                 Ok(Self::Generic(
                     crate::provider::generic::GenericProvider::new(
                         provider.to_owned(),
