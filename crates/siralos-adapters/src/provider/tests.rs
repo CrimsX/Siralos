@@ -837,3 +837,127 @@ fn strict_external_validation_uses_the_production_validator() {
         Ok(ModelEvent::Completed)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Provider response replay recording (decision 68 §3).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn generic_replay_records_transport_failure_with_typed_availability() {
+    use siralos_core::determinism::{CollectingReplayRecorder, FixedClock};
+    use std::rc::Rc;
+    let clock = Rc::new(FixedClock::new(1234));
+    let recorder = Rc::new(CollectingReplayRecorder::new());
+    let cred = super::credential::HostCredential::from_bytes_for_test(
+        b"sk-secret-123".to_vec(),
+    );
+    let provider = super::generic::GenericProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        Some("http://127.0.0.1:1/invalid".to_owned()),
+        Some(cred),
+    )
+    .with_replay_support(clock, recorder.clone());
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let events: Vec<_> = provider.stream(&request, token.signal()).collect();
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], ProviderEvent::Failed(_)));
+    let snapshot = recorder.records_snapshot();
+    assert_eq!(snapshot.len(), 1);
+    let (identity, digest) = &snapshot[0];
+    assert_eq!(identity.status, None);
+    assert_eq!(identity.body_bytes, 0);
+    assert_eq!(identity.observed_at_ms, Some(1234));
+    assert_eq!(digest.len(), 64);
+    assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
+    // Second identical stream produces the same digest (deterministic replay).
+    let token2 = CancellationToken::new();
+    let events2: Vec<_> = provider.stream(&request, token2.signal()).collect();
+    assert!(matches!(events2[0], ProviderEvent::Failed(_)));
+    let snapshot2 = recorder.records_snapshot();
+    assert_eq!(snapshot2.len(), 2);
+    assert_eq!(snapshot2[1].1, *digest);
+    // take_last_replay_availability returns Recorded then resets to Unavailable.
+    let availability = provider.take_last_replay_availability();
+    match availability {
+        siralos_core::determinism::ProviderReplayAvailability::Recorded {
+            digest: d,
+        } => {
+            assert_eq!(d.len(), 64);
+            assert_eq!(d, snapshot2[1].1);
+        }
+        other => panic!("expected Recorded, got {other:?}"),
+    }
+    let second = provider.take_last_replay_availability();
+    match second {
+        siralos_core::determinism::ProviderReplayAvailability::Unavailable { reason } => {
+            assert_eq!(reason, "no provider response observed yet");
+        }
+        other => panic!("expected Unavailable reset, got {other:?}"),
+    }
+}
+
+#[test]
+fn generic_without_replay_support_is_unavailable_not_recorded() {
+    let cred = super::credential::HostCredential::from_bytes_for_test(
+        b"sk-secret-xyz".to_vec(),
+    );
+    let provider = super::generic::GenericProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        Some("http://127.0.0.1:1/invalid".to_owned()),
+        Some(cred),
+    );
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let events: Vec<_> = provider.stream(&request, token.signal()).collect();
+    assert!(matches!(events[0], ProviderEvent::Failed(_)));
+    let availability = provider.take_last_replay_availability();
+    match availability {
+        siralos_core::determinism::ProviderReplayAvailability::Unavailable { reason } => {
+            assert!(
+                reason.contains("not recorded"),
+                "reason {reason:?} should contain 'not recorded'"
+            );
+        }
+        other => panic!("expected Unavailable, got {other:?}"),
+    }
+}
+
+#[test]
+fn replay_record_debug_does_not_contain_credential_bytes() {
+    use siralos_core::determinism::{CollectingReplayRecorder, FixedClock};
+    use std::rc::Rc;
+    let credential_bytes = b"sk-super-secret-credential-999";
+    let clock = Rc::new(FixedClock::new(1234));
+    let recorder = Rc::new(CollectingReplayRecorder::new());
+    let cred = super::credential::HostCredential::from_bytes_for_test(
+        credential_bytes.to_vec(),
+    );
+    let provider = super::generic::GenericProvider::new(
+        "my-provider".to_owned(),
+        "my-model".to_owned(),
+        Some("http://127.0.0.1:1/invalid".to_owned()),
+        Some(cred),
+    )
+    .with_replay_support(clock, recorder.clone());
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let _ = provider.stream(&request, token.signal()).collect::<Vec<_>>();
+    let snapshot = recorder.records_snapshot();
+    assert_eq!(snapshot.len(), 1);
+    let debug = format!("{:?}", snapshot[0]);
+    let credential_str = String::from_utf8_lossy(credential_bytes);
+    assert!(
+        !debug.contains(credential_str.as_ref()),
+        "record debug must not contain credential"
+    );
+    assert!(
+        !debug.contains("super-secret"),
+        "record debug must not leak credential fragments"
+    );
+}

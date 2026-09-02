@@ -13,14 +13,22 @@
 //! fails closed with a typed `ProviderEvent::Failed` and can never route a
 //! request or its credential header to a real provider. The default `model`
 //! is the neutral `generic-model` placeholder (`GENERIC_PLACEHOLDER_MODEL`).
-//! No `UnknownProvider` — any bounded `provider` string that passed
+//! Response recording is implemented via the determinism ports with typed
+//! availability. Records never contain the credential or raw body text (only
+//! its `sha256`). No `UnknownProvider` — any bounded `provider` string that passed
 //! `ProfileRecord` validation is accepted.
 
 use crate::provider::credential::HostCredential;
+use crate::provider::{ReplayHooks, record_outcome};
 use serde_json::Value;
+use siralos_core::determinism::{
+    Clock, ProviderReplayAvailability, ReplayRecorder,
+};
 use siralos_core::provider::{
     CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Generic provider — holds the bounded `provider`/`model`/`endpoint` and a
 /// redacted `HostCredential` (if any). `Debug`/`Display` redacted.
@@ -30,6 +38,10 @@ pub struct GenericProvider {
     model: String,
     endpoint: Option<String>,
     credential: Option<HostCredential>,
+    /// Replay hooks for determinism recording.
+    hooks: ReplayHooks,
+    /// Last replay availability, set on each terminal outcome.
+    last_replay: RefCell<ProviderReplayAvailability>,
 }
 
 impl GenericProvider {
@@ -43,7 +55,38 @@ impl GenericProvider {
         endpoint: Option<String>,
         credential: Option<HostCredential>,
     ) -> Self {
-        Self { provider, model, endpoint, credential }
+        Self {
+            provider,
+            model,
+            endpoint,
+            credential,
+            hooks: ReplayHooks::default(),
+            last_replay: RefCell::new(
+                ProviderReplayAvailability::Unavailable {
+                    reason: "no provider response observed yet".to_owned(),
+                },
+            ),
+        }
+    }
+
+    /// Attach replay support via an explicit clock and recorder.
+    #[must_use]
+    pub fn with_replay_support(
+        mut self,
+        clock: Rc<dyn Clock>,
+        recorder: Rc<dyn ReplayRecorder>,
+    ) -> Self {
+        self.hooks =
+            ReplayHooks { clock: Some(clock), recorder: Some(recorder) };
+        self
+    }
+
+    /// Take the last replay availability, resetting it to unavailable.
+    #[must_use]
+    pub fn take_last_replay_availability(&self) -> ProviderReplayAvailability {
+        self.last_replay.replace(ProviderReplayAvailability::Unavailable {
+            reason: "no provider response observed yet".to_owned(),
+        })
     }
 }
 
@@ -101,12 +144,15 @@ impl ModelProvider for GenericProvider {
             credential,
             &request,
             cancellation,
+            &self.hooks,
+            &self.last_replay,
         );
         Box::new(events.into_iter())
     }
 }
 
 impl GenericProvider {
+    #[allow(clippy::too_many_arguments)]
     fn call_generic(
         provider: &str,
         model: &str,
@@ -114,6 +160,8 @@ impl GenericProvider {
         credential: Option<String>,
         request: &ModelRequest,
         cancellation: CancellationSignal<'_>,
+        hooks: &ReplayHooks,
+        last_replay: &RefCell<ProviderReplayAvailability>,
     ) -> Vec<ProviderEvent> {
         if cancellation.is_cancelled() {
             return vec![ProviderEvent::Cancelled {
@@ -127,9 +175,11 @@ impl GenericProvider {
         {
             Ok(client) => client,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "{provider} client build failed: {err}"
                 ))];
+                record_outcome(hooks, last_replay, provider, model, None, "");
+                return events;
             }
         };
         let mut messages = Vec::new();
@@ -212,9 +262,11 @@ impl GenericProvider {
         let response = match response {
             Ok(resp) => resp,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "{provider} request failed: {err}"
                 ))];
+                record_outcome(hooks, last_replay, provider, model, None, "");
+                return events;
             }
         };
         if cancellation.is_cancelled() {
@@ -229,9 +281,11 @@ impl GenericProvider {
         let text = match crate::provider::bounded_body_text(response) {
             Ok(text) => text,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "{provider} response read failed: {err}"
                 ))];
+                record_outcome(hooks, last_replay, provider, model, None, "");
+                return events;
             }
         };
         if !status.is_success() {
@@ -240,17 +294,35 @@ impl GenericProvider {
                 .chars()
                 .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
                 .collect();
-            return vec![ProviderEvent::Failed(format!(
+            let events = vec![ProviderEvent::Failed(format!(
                 "{provider} error {status}: {safe}"
             ))];
+            record_outcome(
+                hooks,
+                last_replay,
+                provider,
+                model,
+                Some(status.as_u16()),
+                &text,
+            );
+            return events;
         }
         let value: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(err) => {
                 let snippet: String = text.chars().take(512).collect();
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "{provider} response JSON parse failed: {err}: {snippet}"
                 ))];
+                record_outcome(
+                    hooks,
+                    last_replay,
+                    provider,
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                );
+                return events;
             }
         };
         let mut events = Vec::new();
@@ -407,6 +479,14 @@ impl GenericProvider {
             }));
         }
         events.push(ProviderEvent::Event(ModelEvent::Completed));
+        record_outcome(
+            hooks,
+            last_replay,
+            provider,
+            model,
+            Some(status.as_u16()),
+            &text,
+        );
         events
     }
 }

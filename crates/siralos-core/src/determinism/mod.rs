@@ -21,6 +21,7 @@ pub mod environment;
 pub mod helpers;
 pub mod ownership;
 pub mod ports;
+pub mod provider_replay;
 pub mod reproducibility;
 
 pub use decisions::{
@@ -52,6 +53,11 @@ pub use ownership::{
 pub use ports::{
     Clock, FixedClock, IdKeyed, RandomSource, SeededRandomSource, SystemClock,
     compare_code_units, normalize_keyed_results, stable_sort_by_key,
+};
+pub use provider_replay::{
+    CollectingReplayRecorder, NoopReplayRecorder, ProviderReplayAvailability,
+    ProviderResponseIdentity, ReplayRecorder,
+    compute_provider_response_identity_digest,
 };
 pub use reproducibility::{
     ClockPolicy, ProviderInputIdentity, ReproducibilityManifest,

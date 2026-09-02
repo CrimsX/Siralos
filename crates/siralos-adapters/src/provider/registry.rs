@@ -10,7 +10,11 @@
 //! `provider_kind_from_str`.
 
 use crate::provider::credential::HostCredential;
+use siralos_core::determinism::{
+    Clock, ProviderReplayAvailability, ReplayRecorder,
+};
 use siralos_core::provider::{ModelProvider, ProviderEvent};
+use std::rc::Rc;
 
 /// The three provider kinds the Host can construct. `DeterministicFake` is
 /// the only one that does not require a `HostCredential`.
@@ -181,6 +185,47 @@ impl HostProvider {
                     crate::provider::anthropic::AnthropicProvider::new(credential, model),
                 ))
             }
+        }
+    }
+
+    /// Attach replay support via an explicit clock and recorder.
+    ///
+    /// Wires the `OpenAi`/`Anthropic`/`Generic` variants; returns `Fake`
+    /// unchanged.
+    #[must_use]
+    pub fn with_replay_support(
+        self,
+        clock: Rc<dyn Clock>,
+        recorder: Rc<dyn ReplayRecorder>,
+    ) -> Self {
+        match self {
+            Self::Fake(provider) => Self::Fake(provider),
+            Self::OpenAi(provider) => {
+                Self::OpenAi(provider.with_replay_support(clock, recorder))
+            }
+            Self::Anthropic(provider) => {
+                Self::Anthropic(provider.with_replay_support(clock, recorder))
+            }
+            Self::Generic(provider) => {
+                Self::Generic(provider.with_replay_support(clock, recorder))
+            }
+        }
+    }
+
+    /// Take the last replay availability from the inner provider.
+    ///
+    /// `Fake` returns `Unavailable` with reason
+    /// `"deterministic-fake records no HTTP responses (inherently deterministic echo)"`;
+    /// others delegate to their inner provider.
+    #[must_use]
+    pub fn take_last_replay_availability(&self) -> ProviderReplayAvailability {
+        match self {
+            Self::Fake(_) => ProviderReplayAvailability::Unavailable {
+                reason: "deterministic-fake records no HTTP responses (inherently deterministic echo)".to_owned(),
+            },
+            Self::OpenAi(provider) => provider.take_last_replay_availability(),
+            Self::Anthropic(provider) => provider.take_last_replay_availability(),
+            Self::Generic(provider) => provider.take_last_replay_availability(),
         }
     }
 }

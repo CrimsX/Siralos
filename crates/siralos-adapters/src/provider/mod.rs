@@ -31,6 +31,93 @@ pub use strict_turn::{
     collect_bounded_model_turn,
 };
 
+/// Hooks for determinism replay recording of provider HTTP responses.
+///
+/// Holds an optional clock for `observed_at_ms` and an optional recorder for
+/// the response identity. The struct is `pub(crate)` and intentionally keeps
+/// providers' derived `Debug` intact via a manual `Debug` impl.
+#[derive(Default)]
+pub(crate) struct ReplayHooks {
+    /// Clock for `observed_at_ms` when recording.
+    pub clock: Option<std::rc::Rc<dyn siralos_core::determinism::Clock>>,
+    /// Recorder for the response identity.
+    pub recorder:
+        Option<std::rc::Rc<dyn siralos_core::determinism::ReplayRecorder>>,
+}
+
+impl std::fmt::Debug for ReplayHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.clock.is_some() || self.recorder.is_some() {
+            f.write_str("ReplayHooks(present)")
+        } else {
+            f.write_str("ReplayHooks(absent)")
+        }
+    }
+}
+
+/// Compute the `sha256` hex of the sanitized bounded body text.
+pub(crate) fn response_body_sha256(text: &str) -> String {
+    siralos_core::identity::sha256_hex(text.as_bytes())
+}
+
+/// Record one provider HTTP outcome for replay.
+///
+/// `body_text` must be the sanitized bounded text (never the credential).
+/// When a recorder is present and recording, the response identity is recorded
+/// and `last_replay` is set to `Recorded { digest }`; on digest failure it is
+/// set to `Unavailable { reason: "response identity digest failed" }`.
+/// Otherwise `last_replay` is set to `Unavailable { reason: "live call not recorded" }`.
+pub(crate) fn record_outcome(
+    hooks: &ReplayHooks,
+    last_replay: &core::cell::RefCell<
+        siralos_core::determinism::ProviderReplayAvailability,
+    >,
+    provider_id: &str,
+    model: &str,
+    status: Option<u16>,
+    body_text: &str,
+) {
+    let body_sha256 = response_body_sha256(body_text);
+    let body_bytes = body_text.len() as u64;
+    let observed_at_ms = hooks.clock.as_ref().map(|c| c.now_ms());
+    if hooks.recorder.as_ref().is_some_and(|r| r.is_recording()) {
+        let identity = siralos_core::determinism::ProviderResponseIdentity {
+            provider_id: provider_id.to_owned(),
+            model: model.to_owned(),
+            status,
+            body_sha256,
+            body_bytes,
+            observed_at_ms,
+        };
+        if let Some(recorder) = hooks.recorder.as_ref() {
+            recorder.record_provider_response(&identity);
+        }
+        let digest =
+            siralos_core::determinism::compute_provider_response_identity_digest(
+                &identity,
+            );
+        match digest {
+            Ok(digest) => {
+                *last_replay.borrow_mut() =
+                    siralos_core::determinism::ProviderReplayAvailability::Recorded {
+                        digest,
+                    };
+            }
+            Err(_) => {
+                *last_replay.borrow_mut() =
+                    siralos_core::determinism::ProviderReplayAvailability::Unavailable {
+                        reason: "response identity digest failed".to_owned(),
+                    };
+            }
+        }
+    } else {
+        *last_replay.borrow_mut() =
+            siralos_core::determinism::ProviderReplayAvailability::Unavailable {
+                reason: "live call not recorded".to_owned(),
+            };
+    }
+}
+
 /// Maximum provider response body bytes accepted before truncation.
 pub(crate) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 

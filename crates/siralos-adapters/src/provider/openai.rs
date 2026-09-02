@@ -2,21 +2,29 @@
 //!
 //! The `ModelProvider` seam stays synchronous (`Iterator<Item = ProviderEvent>`)
 //! and Host-observed via `siralos_core::determinism::Clock` and
-//! `siralos_core::identity` digests for `determinism-replay`. No hidden
-//! unbounded retry — the `tool-loop` budget is the only retry.
+//! `siralos_core::identity` digests for `determinism-replay`. Response
+//! recording is implemented via the determinism ports with typed availability.
+//! No hidden unbounded retry — the `tool-loop` budget is the only retry.
 //!
 //! The adapter performs a bounded `reqwest::blocking` POST to
 //! `https://api.openai.com/v1/chat/completions` with `Authorization: Bearer`
 //! and the `ModelRequest` JSON body (messages/tools/system), 10s connect /
 //! 60s read timeouts, and `CancellationSignal` checks before and after the
 //! blocking call. Responses are bounded to 1 MiB and sanitized before
-//! embedding in `ProviderEvent::Failed` diagnostics.
+//! embedding in `ProviderEvent::Failed` diagnostics. Records never contain the
+//! credential or raw body text (only its `sha256`).
 
 use crate::provider::credential::HostCredential;
+use crate::provider::{ReplayHooks, record_outcome};
 use serde_json::Value;
+use siralos_core::determinism::{
+    Clock, ProviderReplayAvailability, ReplayRecorder,
+};
 use siralos_core::provider::{
     CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// OpenAI provider — Host-constructed, credential redacted, bounded
 /// real-HTTP adapter.
@@ -26,6 +34,10 @@ pub struct OpenAiProvider {
     credential: HostCredential,
     /// Model identifier (bounded, validated at `ProfileRecord` boundary).
     model: String,
+    /// Replay hooks for determinism recording.
+    hooks: ReplayHooks,
+    /// Last replay availability, set on each terminal outcome.
+    last_replay: RefCell<ProviderReplayAvailability>,
 }
 
 impl OpenAiProvider {
@@ -33,7 +45,36 @@ impl OpenAiProvider {
     /// bounded `model` id. The credential is held in memory only for the
     /// `ModelProvider` call and never written to `siralos.toml`/`siralos.lock`.
     pub fn new(credential: HostCredential, model: String) -> Self {
-        Self { credential, model }
+        Self {
+            credential,
+            model,
+            hooks: ReplayHooks::default(),
+            last_replay: RefCell::new(
+                ProviderReplayAvailability::Unavailable {
+                    reason: "no provider response observed yet".to_owned(),
+                },
+            ),
+        }
+    }
+
+    /// Attach replay support via an explicit clock and recorder.
+    #[must_use]
+    pub fn with_replay_support(
+        mut self,
+        clock: Rc<dyn Clock>,
+        recorder: Rc<dyn ReplayRecorder>,
+    ) -> Self {
+        self.hooks =
+            ReplayHooks { clock: Some(clock), recorder: Some(recorder) };
+        self
+    }
+
+    /// Take the last replay availability, resetting it to unavailable.
+    #[must_use]
+    pub fn take_last_replay_availability(&self) -> ProviderReplayAvailability {
+        self.last_replay.replace(ProviderReplayAvailability::Unavailable {
+            reason: "no provider response observed yet".to_owned(),
+        })
     }
 }
 
@@ -62,13 +103,14 @@ impl ModelProvider for OpenAiProvider {
         let credential =
             String::from_utf8_lossy(self.credential.as_bytes()).to_string();
         let request = request.clone();
-        // Host-observed, bounded HTTP call via `reqwest::blocking` with
-        // connect/read timeouts. No hidden retry — the `tool-loop` budget
-        // is the only retry. The real POST yields `ProviderEvent`s;
-        // identity digest recording for `determinism-replay` is a
-        // follow-up slice.
-        let events =
-            Self::call_openai(&model, &credential, &request, cancellation);
+        let events = Self::call_openai(
+            &model,
+            &credential,
+            &request,
+            cancellation,
+            &self.hooks,
+            &self.last_replay,
+        );
         Box::new(events.into_iter())
     }
 }
@@ -79,6 +121,8 @@ impl OpenAiProvider {
         credential: &str,
         request: &ModelRequest,
         cancellation: CancellationSignal<'_>,
+        hooks: &ReplayHooks,
+        last_replay: &RefCell<ProviderReplayAvailability>,
     ) -> Vec<ProviderEvent> {
         if cancellation.is_cancelled() {
             return vec![ProviderEvent::Cancelled {
@@ -92,9 +136,11 @@ impl OpenAiProvider {
         {
             Ok(client) => client,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "openai client build failed: {err}"
                 ))];
+                record_outcome(hooks, last_replay, "openai", model, None, "");
+                return events;
             }
         };
         let mut messages = Vec::new();
@@ -168,9 +214,11 @@ impl OpenAiProvider {
         let response = match response {
             Ok(resp) => resp,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "openai request failed: {err}"
                 ))];
+                record_outcome(hooks, last_replay, "openai", model, None, "");
+                return events;
             }
         };
         if cancellation.is_cancelled() {
@@ -185,9 +233,11 @@ impl OpenAiProvider {
         let text = match crate::provider::bounded_body_text(response) {
             Ok(text) => text,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "openai response read failed: {err}"
                 ))];
+                record_outcome(hooks, last_replay, "openai", model, None, "");
+                return events;
             }
         };
         if !status.is_success() {
@@ -197,17 +247,35 @@ impl OpenAiProvider {
                 .chars()
                 .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
                 .collect();
-            return vec![ProviderEvent::Failed(format!(
+            let events = vec![ProviderEvent::Failed(format!(
                 "openai error {status}: {safe}"
             ))];
+            record_outcome(
+                hooks,
+                last_replay,
+                "openai",
+                model,
+                Some(status.as_u16()),
+                &text,
+            );
+            return events;
         }
         let value: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(err) => {
                 let snippet: String = text.chars().take(512).collect();
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "openai response JSON parse failed: {err}: {snippet}"
                 ))];
+                record_outcome(
+                    hooks,
+                    last_replay,
+                    "openai",
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                );
+                return events;
             }
         };
         let mut events = Vec::new();
@@ -266,6 +334,14 @@ impl OpenAiProvider {
             }
         }
         events.push(ProviderEvent::Event(ModelEvent::Completed));
+        record_outcome(
+            hooks,
+            last_replay,
+            "openai",
+            model,
+            Some(status.as_u16()),
+            &text,
+        );
         events
     }
 }

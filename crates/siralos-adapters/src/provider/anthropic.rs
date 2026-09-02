@@ -4,13 +4,21 @@
 //! Host-observed, with a bounded `reqwest::blocking` POST to
 //! `https://api.anthropic.com/v1/messages` (`x-api-key` + `anthropic-version`),
 //! 10s connect / 60s read, `CancellationSignal` checks, 1 MiB bound and
-//! sanitized diagnostics.
+//! sanitized diagnostics. Response recording is implemented via the determinism
+//! ports with typed availability. Records never contain the credential or raw
+//! body text (only its `sha256`).
 
 use crate::provider::credential::HostCredential;
+use crate::provider::{ReplayHooks, record_outcome};
 use serde_json::Value;
+use siralos_core::determinism::{
+    Clock, ProviderReplayAvailability, ReplayRecorder,
+};
 use siralos_core::provider::{
     CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Anthropic provider — Host-constructed, credential redacted, bounded
 /// real-HTTP adapter.
@@ -20,13 +28,46 @@ pub struct AnthropicProvider {
     credential: HostCredential,
     /// Model identifier (bounded, validated at `ProfileRecord` boundary).
     model: String,
+    /// Replay hooks for determinism recording.
+    hooks: ReplayHooks,
+    /// Last replay availability, set on each terminal outcome.
+    last_replay: RefCell<ProviderReplayAvailability>,
 }
 
 impl AnthropicProvider {
     /// Create a new `AnthropicProvider` with a redacted `HostCredential` and a
     /// bounded `model` id.
     pub fn new(credential: HostCredential, model: String) -> Self {
-        Self { credential, model }
+        Self {
+            credential,
+            model,
+            hooks: ReplayHooks::default(),
+            last_replay: RefCell::new(
+                ProviderReplayAvailability::Unavailable {
+                    reason: "no provider response observed yet".to_owned(),
+                },
+            ),
+        }
+    }
+
+    /// Attach replay support via an explicit clock and recorder.
+    #[must_use]
+    pub fn with_replay_support(
+        mut self,
+        clock: Rc<dyn Clock>,
+        recorder: Rc<dyn ReplayRecorder>,
+    ) -> Self {
+        self.hooks =
+            ReplayHooks { clock: Some(clock), recorder: Some(recorder) };
+        self
+    }
+
+    /// Take the last replay availability, resetting it to unavailable.
+    #[must_use]
+    pub fn take_last_replay_availability(&self) -> ProviderReplayAvailability {
+        self.last_replay.replace(ProviderReplayAvailability::Unavailable {
+            reason: "no provider response observed yet".to_owned(),
+        })
     }
 }
 
@@ -55,8 +96,14 @@ impl ModelProvider for AnthropicProvider {
         let credential =
             String::from_utf8_lossy(self.credential.as_bytes()).to_string();
         let request = request.clone();
-        let events =
-            Self::call_anthropic(&model, &credential, &request, cancellation);
+        let events = Self::call_anthropic(
+            &model,
+            &credential,
+            &request,
+            cancellation,
+            &self.hooks,
+            &self.last_replay,
+        );
         Box::new(events.into_iter())
     }
 }
@@ -67,6 +114,8 @@ impl AnthropicProvider {
         credential: &str,
         request: &ModelRequest,
         cancellation: CancellationSignal<'_>,
+        hooks: &ReplayHooks,
+        last_replay: &RefCell<ProviderReplayAvailability>,
     ) -> Vec<ProviderEvent> {
         if cancellation.is_cancelled() {
             return vec![ProviderEvent::Cancelled {
@@ -80,9 +129,18 @@ impl AnthropicProvider {
         {
             Ok(client) => client,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "anthropic client build failed: {err}"
                 ))];
+                record_outcome(
+                    hooks,
+                    last_replay,
+                    "anthropic",
+                    model,
+                    None,
+                    "",
+                );
+                return events;
             }
         };
         let mut messages = Vec::new();
@@ -147,9 +205,18 @@ impl AnthropicProvider {
         let response = match response {
             Ok(resp) => resp,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "anthropic request failed: {err}"
                 ))];
+                record_outcome(
+                    hooks,
+                    last_replay,
+                    "anthropic",
+                    model,
+                    None,
+                    "",
+                );
+                return events;
             }
         };
         if cancellation.is_cancelled() {
@@ -164,9 +231,18 @@ impl AnthropicProvider {
         let text = match crate::provider::bounded_body_text(response) {
             Ok(text) => text,
             Err(err) => {
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "anthropic response read failed: {err}"
                 ))];
+                record_outcome(
+                    hooks,
+                    last_replay,
+                    "anthropic",
+                    model,
+                    None,
+                    "",
+                );
+                return events;
             }
         };
         if !status.is_success() {
@@ -175,17 +251,35 @@ impl AnthropicProvider {
                 .chars()
                 .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
                 .collect();
-            return vec![ProviderEvent::Failed(format!(
+            let events = vec![ProviderEvent::Failed(format!(
                 "anthropic error {status}: {safe}"
             ))];
+            record_outcome(
+                hooks,
+                last_replay,
+                "anthropic",
+                model,
+                Some(status.as_u16()),
+                &text,
+            );
+            return events;
         }
         let value: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(err) => {
                 let snippet: String = text.chars().take(512).collect();
-                return vec![ProviderEvent::Failed(format!(
+                let events = vec![ProviderEvent::Failed(format!(
                     "anthropic response JSON parse failed: {err}: {snippet}"
                 ))];
+                record_outcome(
+                    hooks,
+                    last_replay,
+                    "anthropic",
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                );
+                return events;
             }
         };
         let mut events = Vec::new();
@@ -277,6 +371,14 @@ impl AnthropicProvider {
             }
         }
         events.push(ProviderEvent::Event(ModelEvent::Completed));
+        record_outcome(
+            hooks,
+            last_replay,
+            "anthropic",
+            model,
+            Some(status.as_u16()),
+            &text,
+        );
         events
     }
 }
