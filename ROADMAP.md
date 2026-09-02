@@ -415,3 +415,15 @@ evaluation; it prefers configuration over Host complexity and may recommend
 deletion.
 
 Status: complete and **Verified** at `e2c3540` — four slices across decisions 58–59 (6.1 Evaluation Corpus a79f613, 6.2 Workflow 0ba256f, 6.3 Proposal ddb18a4, 6.4 Packaging e2c3540) with differential parity 315/315 at corpus v52/320, 81 expectation records, pinned v32 oracle untouched, zero spawn paths; recorded in decisions 58–59 and the Wayfinder map.
+
+## 7. Godot externalization
+
+Stage 7 — Godot externalization (lean vision, ADR 0036): the Godot domain and its host adapters move to the standalone siralos-godot repository, pinned in the monorepo as an external path dependency, keeping the core domain-neutral and adapters core-only.
+
+Status: complete per decisions 60–65 — the plugin is fully self-contained at external 1bf2ca3 (41 domain files + host adapters, 234 tests), the monorepo pins it as siralos-godot = { path = "../siralos-godot" } (3-member workspace, shim removed at 87bfd35), and differential parity held (315/315 at v52). The plugin repository is pushed to GitHub and managed independently.
+
+## 8. Real Model/Provider
+
+Real Model/Provider (lean vision, ADR 0036): declarative provider/model/credential/endpoint in ProfileRecord with env-only credentials, Host-mediated bounded HTTP adapters, an all-purpose generic provider with provider-neutral placeholder defaults, and determinism-port replay recording of provider responses.
+
+Status: complete and **Verified** per decisions 66–71 — ProfileRecord fields + siralos.toml parsing (67 C1), env-only HostCredential (68), the registry with typed OpenAI/Anthropic adapters and the all-purpose GenericProvider, bounded 1 MiB sanitized HTTP adapters (2d6f5d9-era hardening), replay recording with typed Recorded/Unavailable availability and the recorded 68 §4 secret-hygiene sweep (70), the hermetic provider-generic subject at corpus v53/321 files (316/316 applicable required, 82 expectation records, pinned v32 oracle untouched), and the fresh full-gate run in the roll-up (71); zero spawn paths.

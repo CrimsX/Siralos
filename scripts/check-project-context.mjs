@@ -36,7 +36,10 @@ const REQUIRED_METADATA = new Map([
   ["Public stages", "6"],
   ["Migration track", "Stage 3R"],
   ["Current completed milestone", "Stage 7 — Godot externalization (complete per decisions 60–65)"],
-  ["Next milestone", "Real Model/Provider completion and verification (decisions 66–68)"],
+  [
+    "Next milestone",
+    "none ticketed — any next work starts with a new ticket + entry review per ADR 0036",
+  ],
   ["Canonical repository", "https://github.com/CrimsX/Siralos"],
 ]);
 

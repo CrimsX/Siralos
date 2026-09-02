@@ -147,11 +147,13 @@ product, composition, and extension model is frozen in
   implemented and Verified (Stages 4–6, decisions 41–59); Views where
   justified and additional Domains remain targets in their owning stages
   (ADR 0036)
-- Real provider integrations are **in progress** per decisions 66–68
+- Real provider integrations are **Verified** per decisions 66–71
   (user-directed 2026-08-31): `ProfileRecord`
-  provider/model/credential/endpoint, env-only `HostCredential`, and
+  provider/model/credential/endpoint, env-only `HostCredential`,
   `reqwest` blocking OpenAI/Anthropic adapters plus the all-purpose
-  `GenericProvider`; completion and verification are the active slice
+  `GenericProvider` with provider-neutral placeholder defaults, replay
+  recording via the determinism ports with typed availability, and the
+  recorded secret-hygiene sweep
 
 Unavailable effects return typed failures before execution, approval,
 checkpoint creation, or cleanup. See the [roadmap](ROADMAP.md) for exact status.
