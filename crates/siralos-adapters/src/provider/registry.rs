@@ -83,9 +83,11 @@ pub fn is_known_provider(s: &str) -> bool {
 pub enum HostProvider {
     /// Deterministic fake provider (no credential, echo).
     Fake(crate::provider::deterministic_fake::DeterministicFakeProvider),
-    /// OpenAI provider (credential redacted, Host-observed stub in this slice).
+    /// OpenAI provider (credential redacted, Host-observed bounded HTTP
+    /// adapter).
     OpenAi(crate::provider::openai::OpenAiProvider),
-    /// Anthropic provider (credential redacted, Host-observed stub in this slice).
+    /// Anthropic provider (credential redacted, Host-observed bounded HTTP
+    /// adapter).
     Anthropic(crate::provider::anthropic::AnthropicProvider),
     /// Generic provider — accepts any bounded `provider` string with an
     /// optional `endpoint` and `credential`, Host-observed and bounded.
@@ -119,8 +121,8 @@ impl HostProvider {
                 crate::provider::deterministic_fake::DeterministicFakeProvider::new(),
             ));
         }
-        // For known providers, keep the typed OpenAi/Anthropic stubs for
-        // backward compatibility; for any other provider, use Generic.
+        // For known providers, use the typed OpenAi/Anthropic adapters;
+        // for any other provider, use Generic.
         match provider_kind_from_str(provider) {
             Ok(ProviderKind::OpenAi) => Self::from_kind_with_model(
                 ProviderKind::OpenAi,

@@ -13103,20 +13103,21 @@ fn validate_provider_generic_input(input: &Value) -> Result<(), HarnessError> {
         let Some(val) = obj.get(key) else {
             continue;
         };
-        match key {
-            "provider" | "model" | "credential" | "endpoint" => {
-                if !val.is_string() {
-                    return Err(HarnessError::corpus(format!(
-                        "provider-generic {key} must be a string"
-                    )));
-                }
+        match (key, val) {
+            (
+                "provider" | "model" | "credential" | "endpoint",
+                Value::String(_),
+            ) => {}
+            ("provider" | "model" | "credential" | "endpoint", _) => {
+                return Err(HarnessError::corpus(format!(
+                    "provider-generic {key} must be a string"
+                )));
             }
-            "messages" | "tools" => {
-                if !val.is_array() {
-                    return Err(HarnessError::corpus(format!(
-                        "provider-generic {key} must be an array"
-                    )));
-                }
+            ("messages" | "tools", Value::Array(_)) => {}
+            ("messages" | "tools", _) => {
+                return Err(HarnessError::corpus(format!(
+                    "provider-generic {key} must be an array"
+                )));
             }
             _ => {}
         }

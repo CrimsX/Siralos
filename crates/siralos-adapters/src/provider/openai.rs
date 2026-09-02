@@ -18,12 +18,11 @@ use siralos_core::provider::{
     CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
 };
 
-/// OpenAI provider — Host-constructed, credential redacted, no network in
-/// this slice (stub).
+/// OpenAI provider — Host-constructed, credential redacted, bounded
+/// real-HTTP adapter.
 #[derive(Debug)]
 pub struct OpenAiProvider {
     /// Redacted credential for openai.
-    #[allow(dead_code)]
     credential: HostCredential,
     /// Model identifier (bounded, validated at `ProfileRecord` boundary).
     model: String,
@@ -65,10 +64,9 @@ impl ModelProvider for OpenAiProvider {
         let request = request.clone();
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget
-        // is the only retry. Responses are recorded via
-        // `siralos_core::identity` digests for `determinism-replay` (the
-        // next slice will add the `Clock` + `identity` recording; this
-        // slice already does the real POST and yields `ProviderEvent`s).
+        // is the only retry. The real POST yields `ProviderEvent`s;
+        // identity digest recording for `determinism-replay` is a
+        // follow-up slice.
         let events =
             Self::call_openai(&model, &credential, &request, cancellation);
         Box::new(events.into_iter())

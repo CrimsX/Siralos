@@ -139,14 +139,19 @@ product, composition, and extension model is frozen in
   Godot execution remain intentionally unavailable where the current host
   cannot mechanically enforce the required identity guarantees
 
-### Target (not yet implemented)
+### Target concepts and current status
 
-- Profiles, portable `siralos.toml`/`siralos.lock` semantics, full Context
-  controls (Live / Pinned / Frozen), Skills and the Skill Creator, Plugins,
-  Tools, Views where justified, optional Domains, and the measured
-  `/evolve` workflow are TARGET concepts in their owning stages
-  (ADR 0036) — none are implemented
-- Real provider integrations and additional domains are future milestones
+- Profiles, portable `siralos.toml`/`siralos.lock` semantics, Context
+  controls (Live / Pinned / Frozen), Skills, Plugins, the generic
+  Controlled Runtime surfaces, and the bounded `/evolve` workflow are
+  implemented and Verified (Stages 4–6, decisions 41–59); Views where
+  justified and additional Domains remain targets in their owning stages
+  (ADR 0036)
+- Real provider integrations are **in progress** per decisions 66–68
+  (user-directed 2026-08-31): `ProfileRecord`
+  provider/model/credential/endpoint, env-only `HostCredential`, and
+  `reqwest` blocking OpenAI/Anthropic adapters plus the all-purpose
+  `GenericProvider`; completion and verification are the active slice
 
 Unavailable effects return typed failures before execution, approval,
 checkpoint creation, or cleanup. See the [roadmap](ROADMAP.md) for exact status.
@@ -184,15 +189,18 @@ TypeScript historical oracle (archived at 5da5cde, v32 234/234, pinned; prior v3
   apps/cli → packages/adapters → packages/core — removed from live tree; historical replay requires worktree at freeze SHA
 
 Rust successor — sole source of truth (live)
-  siralos-cli → siralos-adapters → siralos-godot → siralos-core
-  (siralos-godot owns the Godot domain as an in-repo Plugin crate during
-   Stage 4 extraction; siralos-core stays domain-neutral)
+  siralos-cli → siralos-adapters → siralos-core
+  siralos-godot → siralos-core (standalone plugin repo, pinned path dep)
+  (siralos-godot was externalized to github.com/CrimsX/siralos-godot at
+   1bf2ca3 per decisions 60–65; the monorepo is a 3-member workspace with
+   `siralos-godot = { path = "../siralos-godot" }`; siralos-core stays
+   domain-neutral)
 ```
 
-The core owns domain-neutral policy and contracts. `siralos-godot` owns the
-Godot domain surfaces (extraction landed per decision 37); adapters own
-infrastructure and the optional Godot adapters. The CLI is the composition and
-terminal boundary. The historical TypeScript oracle is retained by SHA as pinned digest-bound evidence; the differential harness runs in **pinned mode** (historical replay requires worktree at freeze SHA); it never grants product authority.
+The core owns domain-neutral policy and contracts. `siralos-godot` (standalone
+repo, pinned path dep) owns the Godot domain surfaces (moved per decisions 37
+and 60–65); adapters own infrastructure and the provider HTTP adapters. The
+CLI is the composition and terminal boundary. The historical TypeScript oracle is retained by SHA as pinned digest-bound evidence; the differential harness runs in **pinned mode** (historical replay requires worktree at freeze SHA); it never grants product authority.
 
 See the [architecture index](docs/architecture/README.md),
 [ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md),
@@ -284,8 +292,8 @@ installation are separate, explicit concerns.
   authority across policy contexts), and the deterministic
   product-neutral synthetic conformance Domain proving the boundary —
   at differential parity)
-- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified; R12 retires the TypeScript oracle — **Rust is now the sole source of truth**. **TypeScript archive removal is complete** per decision 40 at `e6c49f1` (freeze `5da5cde` v32 234/234, pinned, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed). **Stage 4 (Controlled Execution) is complete and Verified** at `9566eee` — the frozen seven-step sequence (decision 08) is fully consumed: generic runtime execution + evidence (4.1 with 4.2 folded in, subjects landed at the v32 reconciliation), Godot runtime adapter (`5bedf57`), visual evidence (`4a250d8`), controlled interaction (`42ee5ab`), QA workflows (`a83c2a4`), and run-profiling sessions (`b206a4a`); differential parity is 259/259 applicable required at corpus v38 (264 files) with 25 digest-bound expectation records, the pinned v32 oracle untouched, and zero spawn paths; recorded in decisions 41–46 and the Wayfinder map. **Stage 5 (Composition) is complete and Verified** at `c2c30f0` — ten slices across decisions 47–56 (5.1 Profiles be030e3, 5.2 Profile Composition 4c562c8, 5.3 Context Controls ce3e7dc, 5.4 siralos.lock 0a6d592, 5.5 Plugin Selection 5e1b3e0, 5.6 Skills fcf61c5, 5.7 Session Plugin Activation Gate 926ac71, 5.8 Session Context Controls 6dc830e, 5.9 Session Lock Verification 6e38804, 5.10 Session Skill Consumption 579f1e9) with differential parity 299/299 at v48/304, 65 expectation records, pinned v32 oracle untouched, zero spawn paths; recorded in decisions 47–57 and the Wayfinder map. **Stage 6 (Evolution & Stabilization) is complete and Verified** at `e2c3540` — four slices across decisions 58–59 (6.1 Evaluation Corpus a79f613, 6.2 Workflow 0ba256f, 6.3 Proposal ddb18a4, 6.4 Packaging e2c3540) with differential parity 315/315 at corpus v52/320, 81 expectation records, pinned v32 oracle untouched, zero spawn paths; recorded in decisions 58–59 and the Wayfinder map.
-- Next: Stage 6 is Verified at `e2c3540` — four slices across decisions 58–59 (differential 315/315 at v52/320, 81 expectations, pinned v32 oracle untouched); the map’s Not-yet-specified section is empty and any next work starts with a new ticket + entry review per ADR 0036
+- **Current:** Stage 3R R12 is **Verified (retired)** — R1–R13 all Verified; R12 retires the TypeScript oracle — **Rust is now the sole source of truth**. **TypeScript archive removal is complete** per decision 40 at `e6c49f1` (freeze `5da5cde` v32 234/234, pinned, corpus v33 `01ba53a…`; live `apps/` + `packages/` removed). **Stage 4 (Controlled Execution) is complete and Verified** at `9566eee` — the frozen seven-step sequence (decision 08) is fully consumed: generic runtime execution + evidence (4.1 with 4.2 folded in, subjects landed at the v32 reconciliation), Godot runtime adapter (`5bedf57`), visual evidence (`4a250d8`), controlled interaction (`42ee5ab`), QA workflows (`a83c2a4`), and run-profiling sessions (`b206a4a`); differential parity is 259/259 applicable required at corpus v38 (264 files) with 25 digest-bound expectation records, the pinned v32 oracle untouched, and zero spawn paths; recorded in decisions 41–46 and the Wayfinder map. **Stage 5 (Composition) is complete and Verified** at `c2c30f0` — ten slices across decisions 47–56 (5.1 Profiles be030e3, 5.2 Profile Composition 4c562c8, 5.3 Context Controls ce3e7dc, 5.4 siralos.lock 0a6d592, 5.5 Plugin Selection 5e1b3e0, 5.6 Skills fcf61c5, 5.7 Session Plugin Activation Gate 926ac71, 5.8 Session Context Controls 6dc830e, 5.9 Session Lock Verification 6e38804, 5.10 Session Skill Consumption 579f1e9) with differential parity 299/299 at v48/304, 65 expectation records, pinned v32 oracle untouched, zero spawn paths; recorded in decisions 47–57 and the Wayfinder map. **Stage 6 (Evolution & Stabilization) is complete and Verified** at `e2c3540` — four slices across decisions 58–59 (6.1 Evaluation Corpus a79f613, 6.2 Workflow 0ba256f, 6.3 Proposal ddb18a4, 6.4 Packaging e2c3540) with differential parity 315/315 at corpus v52/320, 81 expectation records, pinned v32 oracle untouched, zero spawn paths; recorded in decisions 58–59 and the Wayfinder map. **Stage 7 (Godot externalization) is complete** per decisions 60–65 — the Godot domain + host adapters moved verbatim to the standalone `https://github.com/CrimsX/siralos-godot` repo (41 files + host adapters self-contained at `1bf2ca3`), the monorepo pins it as an external path dep (3-member workspace, shim removed at `87bfd35`), and differential parity held (315/315 at v52).
+- Next: **Real Model/Provider (decisions 66–68, user-directed 2026-08-31) is in progress** — `ProfileRecord` provider/model/credential/endpoint (67 C1), the provider registry with env-only `HostCredential` (68), `reqwest` blocking OpenAI/Anthropic adapters (68 §3), and the all-purpose `GenericProvider` with the `provider-generic` differential subject at corpus v53 (316/316 applicable required, pinned v32 oracle untouched); completion and verification are the active slice
 
 The [Rust migration register](docs/development/RUST_MIGRATION.md) is the
 authoritative R1–R12 sequence. The [Stage 4 entry gate](docs/development/stage4-entry-gate.md)

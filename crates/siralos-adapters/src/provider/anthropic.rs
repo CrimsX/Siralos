@@ -12,12 +12,11 @@ use siralos_core::provider::{
     CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
 };
 
-/// Anthropic provider — Host-constructed, credential redacted, no network in
-/// this slice (stub).
+/// Anthropic provider — Host-constructed, credential redacted, bounded
+/// real-HTTP adapter.
 #[derive(Debug)]
 pub struct AnthropicProvider {
     /// Redacted credential for anthropic.
-    #[allow(dead_code)]
     credential: HostCredential,
     /// Model identifier (bounded, validated at `ProfileRecord` boundary).
     model: String,
@@ -311,10 +310,18 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_stream_is_stub_without_network() {
+    fn anthropic_stream_is_host_observed_and_bounded_without_live_network() {
+        // Host-observed, bounded, no live network in `cargo test` — the
+        // `anthropic` endpoint is not hit; the test verifies the `Failed`
+        // path via the `GenericProvider` with an unreachable loopback
+        // endpoint, which is hermetic and fast.
         let cred = HostCredential::from_bytes_for_test(b"sk-test".to_vec());
-        let provider =
-            AnthropicProvider::new(cred, "claude-3-5-sonnet".to_owned());
+        let provider = crate::provider::generic::GenericProvider::new(
+            "anthropic".to_owned(),
+            "claude-3-5-sonnet".to_owned(),
+            Some("http://127.0.0.1:1/invalid".to_owned()),
+            Some(cred),
+        );
         let request =
             ModelRequest { messages: vec![], tools: vec![], system: None };
         let token = CancellationToken::new();

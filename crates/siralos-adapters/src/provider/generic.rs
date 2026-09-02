@@ -436,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_stream_is_stub_without_network_when_no_endpoint() {
+    fn generic_stream_fails_closed_on_unreachable_endpoint() {
         // Without a live endpoint the call will fail with a reqwest error,
         // which is still Host-observed and bounded — not a panic.
         let cred = HostCredential::from_bytes_for_test(b"sk-test".to_vec());
