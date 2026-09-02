@@ -237,9 +237,11 @@ export async function createCliApplication(): Promise<CliApplication> {
 }
 ```
 
-No dependency-injection container, service locator, or reflection. The registry rejects duplicate tool names at startup and never mutates afterwards. `apps/cli/src/bootstrap/sandbox-doctor.ts` hosts the `--sandbox-doctor` diagnostic (also the only place that runs probes from the CLI).
+No dependency-injection container, service locator, or reflection. The registry rejects duplicate tool names at startup and never mutates afterwards. `apps/cli/src/bootstrap/sandbox-doctor.ts` hosted the `--sandbox-doctor` diagnostic (also the only place that ran probes from the CLI); that tree is removed from the live repository and retained only at the freeze SHA.
 
-## Current dependency direction
+## Historical TypeScript dependency direction (archived at `5da5cde`)
+
+The TypeScript tree was removed from the live repository per decision 40 (Rust is the sole source of truth); the rules below describe the archived oracle and remain the historical record of its dependency ownership.
 
 ```text
 CLI ───────────────→ Core
