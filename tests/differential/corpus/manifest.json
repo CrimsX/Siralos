@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 56,
+  "corpusVersion": 57,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -241,6 +241,10 @@
     {
       "file": "context-controls.pinned-stale.json",
       "sha256": "3acfa5fe2566949af992302f5752dd7e37eddd97c4d71d70efccffcb8f36d1ba"
+    },
+    {
+      "file": "context-graph.json",
+      "sha256": "43d2337c9922c3d1212cfcdb31e99f62d0c09779c4dbd15797af254a43ef6c04"
     },
     {
       "file": "context-projection.estimate.json",
@@ -1299,5 +1303,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "acee88e8b6da08f999ac1c76faf0be814d63112993e83b993a38bc22cedfb144"
+  "corpusSha256": "a72e2323b1eeca2c2a5d712da9656126ad7b5ee9e16b54df152b5489e6e2b9de"
 }

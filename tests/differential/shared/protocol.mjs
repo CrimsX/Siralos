@@ -2248,6 +2248,49 @@ function validateReplayStoreResult(record, label) {
   }
 }
 
+function validateContextGraphResult(record, label) {
+  assertExactKeys(
+    record.result,
+    [
+      "danglingEdgeError",
+      "edgeCount",
+      "graphDigest",
+      "nodeCount",
+      "staleAfter",
+      "staleBefore",
+      "staleBindings",
+    ],
+    `${label}.result`,
+  );
+  if (!Number.isInteger(record.result.nodeCount) || record.result.nodeCount < 0) {
+    throw new Error(`${label}.result.nodeCount must be a non-negative integer`);
+  }
+  if (!Number.isInteger(record.result.edgeCount) || record.result.edgeCount < 0) {
+    throw new Error(`${label}.result.edgeCount must be a non-negative integer`);
+  }
+  if (
+    typeof record.result.graphDigest !== "string" ||
+    !LOWER_SHA256.test(record.result.graphDigest)
+  ) {
+    throw new Error(`${label}.result.graphDigest must be a lowercase SHA-256 digest`);
+  }
+  if (!Array.isArray(record.result.staleBefore)) {
+    throw new Error(`${label}.result.staleBefore must be an array`);
+  }
+  if (!Array.isArray(record.result.staleAfter)) {
+    throw new Error(`${label}.result.staleAfter must be an array`);
+  }
+  if (!Array.isArray(record.result.staleBindings)) {
+    throw new Error(`${label}.result.staleBindings must be an array`);
+  }
+  if (
+    typeof record.result.danglingEdgeError !== "string" ||
+    record.result.danglingEdgeError.length === 0
+  ) {
+    throw new Error(`${label}.result.danglingEdgeError must be a non-empty string`);
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -4144,6 +4187,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "replay-store") {
     validateReplayStoreResult(record, label);
+    return;
+  }
+  if (record.subject === "context-graph") {
+    validateContextGraphResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

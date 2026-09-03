@@ -14,6 +14,7 @@
 pub mod commands;
 pub mod composition;
 pub mod context;
+pub mod context_graph;
 pub mod determinism;
 pub mod doctor;
 pub mod domain;

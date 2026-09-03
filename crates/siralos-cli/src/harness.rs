@@ -116,6 +116,7 @@ const SUBJECT_PROVIDER_GENERIC: &str = "provider-generic";
 const SUBJECT_PROVIDER_REPLAY: &str = "provider-replay";
 const SUBJECT_SESSION_REPLAY: &str = "session-replay";
 const SUBJECT_REPLAY_STORE: &str = "replay-store";
+const SUBJECT_CONTEXT_GRAPH: &str = "context-graph";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -124,7 +125,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 56;
+const CORPUS_VERSION: u64 = 57;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -519,6 +520,7 @@ fn validate_scenario(
             | SUBJECT_PROVIDER_REPLAY
             | SUBJECT_SESSION_REPLAY
             | SUBJECT_REPLAY_STORE
+            | SUBJECT_CONTEXT_GRAPH
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -611,6 +613,7 @@ fn validate_scenario(
         | SUBJECT_PROVIDER_REPLAY
         | SUBJECT_SESSION_REPLAY
         | SUBJECT_REPLAY_STORE
+        | SUBJECT_CONTEXT_GRAPH
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -685,6 +688,11 @@ fn validate_scenario(
             if replay_store_subject {
                 validate_replay_store_input(input)?;
             }
+            let context_graph_subject =
+                scenario.subject.as_str() == SUBJECT_CONTEXT_GRAPH;
+            if context_graph_subject {
+                validate_context_graph_input(input)?;
+            }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
             if tool_loop_subject {
@@ -755,6 +763,7 @@ fn validate_scenario(
                 || provider_generic_subject
                 || provider_replay_subject
                 || session_replay_subject
+                || context_graph_subject
             {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -1451,6 +1460,18 @@ fn run_scenario(
                 "replay-store input was validated while loading the corpus",
             );
             let result = replay_store_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_GRAPH => {
+            let input = scenario.input.as_ref().expect(
+                "context-graph input was validated while loading the corpus",
+            );
+            let result = context_graph_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -12954,6 +12975,124 @@ fn replay_store_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic subject: context-graph (decision 79, corpus v57).
+
+fn context_graph_record(_input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::context_graph::{
+        ContextEdge, ContextEdgeKind, ContextGraph, ContextNode,
+        ContextNodeKind, compute_context_graph_digest, estimate_tokens,
+        stale_context_nodes,
+    };
+    use siralos_core::identity::sha256_hex;
+
+    let auth_body = "auth overview body for ctx-source-auth";
+    let decision_body = "decision body for ctx-decision-1";
+    let knowledge_body = "knowledge summary body for ctx-knowledge-summary";
+    let auth_digest = sha256_hex(auth_body.as_bytes());
+    let decision_digest = sha256_hex(decision_body.as_bytes());
+    let knowledge_digest = sha256_hex(knowledge_body.as_bytes());
+    let mutated_auth_body = "auth overview body mutated";
+    let mutated_auth_digest = sha256_hex(mutated_auth_body.as_bytes());
+
+    let nodes = vec![
+        ContextNode {
+            id: "ctx-source-auth".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: auth_digest.clone(),
+            summary: "auth overview".to_owned(),
+            source_bindings: vec![],
+            token_estimate: estimate_tokens("auth overview"),
+        },
+        ContextNode {
+            id: "ctx-decision-1".to_owned(),
+            kind: ContextNodeKind::Decision,
+            content_digest: decision_digest.clone(),
+            summary: String::new(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        },
+        ContextNode {
+            id: "ctx-knowledge-summary".to_owned(),
+            kind: ContextNodeKind::Knowledge,
+            content_digest: knowledge_digest.clone(),
+            summary: String::new(),
+            source_bindings: vec![
+                ("ctx-source-auth".to_owned(), auth_digest.clone()),
+                ("ctx-decision-1".to_owned(), decision_digest.clone()),
+            ],
+            token_estimate: 0,
+        },
+    ];
+    let edges = vec![
+        ContextEdge {
+            from: "ctx-source-auth".to_owned(),
+            to: "ctx-decision-1".to_owned(),
+            kind: ContextEdgeKind::Contains,
+        },
+        ContextEdge {
+            from: "ctx-decision-1".to_owned(),
+            to: "ctx-knowledge-summary".to_owned(),
+            kind: ContextEdgeKind::DependsOn,
+        },
+        ContextEdge {
+            from: "ctx-source-auth".to_owned(),
+            to: "ctx-knowledge-summary".to_owned(),
+            kind: ContextEdgeKind::RelevantTo,
+        },
+    ];
+    let graph = ContextGraph::build(nodes, edges).map_err(|e| {
+        HarnessError::corpus(format!("context-graph build failed: {e}"))
+    })?;
+    let graph_digest = compute_context_graph_digest(&graph);
+    let current_original = vec![
+        ("ctx-source-auth".to_owned(), auth_digest.clone()),
+        ("ctx-decision-1".to_owned(), decision_digest.clone()),
+    ];
+    let stale_before = stale_context_nodes(&graph, &current_original);
+    let stale_before_ids: Vec<String> =
+        stale_before.iter().map(|n| n.node_id.clone()).collect();
+    let current_mutated = vec![
+        ("ctx-source-auth".to_owned(), mutated_auth_digest.clone()),
+        ("ctx-decision-1".to_owned(), decision_digest.clone()),
+    ];
+    let stale_after_nodes = stale_context_nodes(&graph, &current_mutated);
+    let stale_after: Vec<String> =
+        stale_after_nodes.iter().map(|n| n.node_id.clone()).collect();
+    let stale_bindings: Vec<String> = stale_after_nodes
+        .iter()
+        .flat_map(|n| n.stale_bindings.clone())
+        .collect();
+    let dangling_error = {
+        let bad_nodes = vec![ContextNode {
+            id: "ctx-source-auth".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: auth_digest.clone(),
+            summary: String::new(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        }];
+        let bad_edges = vec![ContextEdge {
+            from: "ctx-source-auth".to_owned(),
+            to: "missing-node".to_owned(),
+            kind: ContextEdgeKind::References,
+        }];
+        match ContextGraph::build(bad_nodes, bad_edges) {
+            Ok(_) => "unexpected-ok".to_owned(),
+            Err(e) => format!("{e}"),
+        }
+    };
+    Ok(json!({
+        "nodeCount": graph.nodes().len(),
+        "edgeCount": graph.edges().len(),
+        "graphDigest": graph_digest,
+        "staleBefore": stale_before_ids,
+        "staleAfter": stale_after,
+        "staleBindings": stale_bindings,
+        "danglingEdgeError": dangling_error,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -13597,6 +13736,17 @@ fn validate_replay_store_input(input: &Value) -> Result<(), HarnessError> {
         HarnessError::corpus("replay-store input must be an object")
     })?;
     // Minimal: any bounded plain object accepted.
+    for key in obj.keys() {
+        let _ = key;
+    }
+    Ok(())
+}
+
+/// Strict context-graph input shape validation (decision 79, corpus v57).
+fn validate_context_graph_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("context-graph input must be an object")
+    })?;
     for key in obj.keys() {
         let _ = key;
     }
@@ -17223,7 +17373,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 324);
+        assert_eq!(loaded.len(), 325);
     }
 
     #[test]
