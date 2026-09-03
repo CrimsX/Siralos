@@ -21,6 +21,10 @@ use siralos_adapters::profile_config::{
 };
 use siralos_adapters::provider::{
     DeterministicFakeProvider, HostCredential, HostProvider,
+    replay::RecordedReplayProvider,
+};
+use siralos_adapters::replay_store::{
+    ReplayStoreLoadError, load_replay_store, write_replay_store,
 };
 use siralos_adapters::skills_loader::{
     SkillCatalogLoad, load_workspace_skills,
@@ -43,6 +47,7 @@ use siralos_core::composition::{
     decide_plugin_activation, declare_profile,
 };
 use siralos_core::context::ContextPolicy;
+use siralos_core::determinism::RetainingReplayRecorder;
 use siralos_core::domain::capability::HostAuthority;
 use siralos_core::domain::lifecycle::{ActivationRequest, RuntimeCheckResult};
 use siralos_core::projection::{
@@ -55,6 +60,7 @@ use siralos_core::tool::{
     PermissionPolicy, PermissionRule, PolicyRule, SiralosApplication,
     ToolLoopEvent, ToolRegistry, ToolRegistryError,
 };
+use std::rc::Rc;
 
 use crate::configuration::{
     ConfigurationError, DEFAULT_REVIEW_PROVIDER_ID, load_user_configuration,
@@ -64,6 +70,37 @@ use crate::output::{
     format_tool_projection, format_tools,
 };
 use crate::sanitize::{TerminalSanitizer, sanitize_for_display};
+
+/// Session provider enum for B2 replay/record composition.
+enum SessionProvider {
+    Host(HostProvider),
+    Replay(RecordedReplayProvider),
+}
+
+impl siralos_core::provider::ModelProvider for SessionProvider {
+    type Stream<'a>
+        = Box<dyn Iterator<Item = siralos_core::provider::ProviderEvent> + 'a>
+    where
+        Self: 'a;
+
+    fn id(&self) -> &str {
+        match self {
+            Self::Host(p) => p.id(),
+            Self::Replay(p) => p.id(),
+        }
+    }
+
+    fn stream<'a>(
+        &'a self,
+        request: &'a siralos_core::provider::ModelRequest,
+        cancellation: siralos_core::provider::CancellationSignal<'a>,
+    ) -> Self::Stream<'a> {
+        match self {
+            Self::Host(p) => Box::new(p.stream(request, cancellation)),
+            Self::Replay(p) => Box::new(p.stream(request, cancellation)),
+        }
+    }
+}
 
 /// The stable product-neutral segment supplied by the CLI composition root.
 ///
@@ -227,53 +264,135 @@ where
         }
     };
     let effective = compose_effective_policy(&host_rules, &declared);
-    let provider = {
-        let (provider_name, model, credential, endpoint) =
-            match &loaded_profile {
-                WorkspaceProfileLoad::Record(record)
-                    if effective.applied_profile.is_some() =>
-                {
-                    let cred = record.credential.as_deref().and_then(|c| {
-                        match HostCredential::from_env_ref(c) {
-                            Ok(cred) => Some(cred),
-                            Err(e) => {
-                                eprintln!("siralos: credential error: {e}");
-                                None
-                            }
+    if let Some(diagnostic) = &effective.diagnostic {
+        // Host-side startup diagnostic (never model output): the declared
+        // profile was not applied; the session proceeds on pure Host
+        // policy.
+        eprintln!("siralos: profile not applied: {diagnostic}");
+    }
+    // Stage 8 B2: additive [profile] record-replay / replay wiring
+    let replay_store_path =
+        workspace_root.join(".siralos").join("replay-store.json");
+    let (want_record_replay, want_replay) = match &loaded_profile {
+        WorkspaceProfileLoad::Record(record)
+            if effective.applied_profile.is_some() =>
+        {
+            (record.record_replay, record.replay)
+        }
+        _ => (false, false),
+    };
+    let (provider_name_owned, model_opt, credential_opt, endpoint_opt) =
+        match &loaded_profile {
+            WorkspaceProfileLoad::Record(record)
+                if effective.applied_profile.is_some() =>
+            {
+                let cred = record.credential.as_deref().and_then(|c| {
+                    match HostCredential::from_env_ref(c) {
+                        Ok(cred) => Some(cred),
+                        Err(e) => {
+                            eprintln!("siralos: credential error: {e}");
+                            None
                         }
-                    });
-                    (
-                        record
-                            .provider
-                            .as_deref()
-                            .unwrap_or("deterministic-fake"),
-                        record.model.clone(),
-                        cred,
-                        record.endpoint.clone(),
-                    )
-                }
-                _ => ("deterministic-fake", None, None, None),
-            };
-        match HostProvider::from_provider_str(
-            provider_name,
-            model,
-            credential,
-            endpoint,
+                    }
+                });
+                (
+                    record
+                        .provider
+                        .as_deref()
+                        .unwrap_or("deterministic-fake")
+                        .to_owned(),
+                    record.model.clone(),
+                    cred,
+                    record.endpoint.clone(),
+                )
+            }
+            _ => ("deterministic-fake".to_owned(), None, None, None),
+        };
+    let mut live_host_provider: Option<HostProvider> = None;
+    let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
+    let mut record_recorder: Option<Rc<RetainingReplayRecorder>> = None;
+    if want_replay {
+        let pid = provider_name_owned.clone();
+        let model =
+            model_opt.clone().unwrap_or_else(|| "generic-model".to_owned());
+        match load_replay_store(&replay_store_path) {
+            Ok(store) => {
+                let digest = siralos_core::determinism::replay_store::compute_replay_store_digest(&store.recordings);
+                eprintln!(
+                    "siralos: replay store loaded: digest {digest} count {}",
+                    store.recordings.len()
+                );
+                replay_provider_holder = Some(RecordedReplayProvider::new(
+                    pid,
+                    model,
+                    store.recordings,
+                ));
+            }
+            Err(ReplayStoreLoadError::NotFound) => {
+                eprintln!(
+                    "siralos: replay store absent: no recordings to replay"
+                );
+                replay_provider_holder =
+                    Some(RecordedReplayProvider::new(pid, model, Vec::new()));
+            }
+            Err(err) => {
+                let msg = match &err {
+                    ReplayStoreLoadError::UntrustedDigest => {
+                        "replay store untrusted: digest mismatch".to_owned()
+                    }
+                    ReplayStoreLoadError::Malformed(r) => {
+                        format!("replay store malformed: {r}")
+                    }
+                    ReplayStoreLoadError::Bounds(e) => {
+                        format!("replay store bounds: {e}")
+                    }
+                    ReplayStoreLoadError::Io(m) => {
+                        format!("replay store I/O: {m}")
+                    }
+                    ReplayStoreLoadError::NotFound => unreachable!(),
+                };
+                eprintln!("siralos: {msg}");
+                replay_provider_holder =
+                    Some(RecordedReplayProvider::new(pid, model, Vec::new()));
+            }
+        }
+    } else if want_record_replay {
+        let raw = match HostProvider::from_provider_str(
+            &provider_name_owned,
+            model_opt.clone(),
+            credential_opt,
+            endpoint_opt.clone(),
         ) {
-            Ok(host_provider) => host_provider,
+            Ok(p) => p,
             Err(err) => {
                 eprintln!(
                     "siralos: provider error: {err} — falling back to deterministic-fake"
                 );
                 HostProvider::Fake(DeterministicFakeProvider::new())
             }
-        }
-    };
-    if let Some(diagnostic) = &effective.diagnostic {
-        // Host-side startup diagnostic (never model output): the declared
-        // profile was not applied; the session proceeds on pure Host
-        // policy.
-        eprintln!("siralos: profile not applied: {diagnostic}");
+        };
+        let recorder = Rc::new(RetainingReplayRecorder::new());
+        let clock: Rc<dyn siralos_core::determinism::Clock> =
+            Rc::new(siralos_core::determinism::SystemClock);
+        let with = raw.with_replay_support(clock, recorder.clone());
+        record_recorder = Some(recorder);
+        live_host_provider = Some(with);
+    } else {
+        let raw = match HostProvider::from_provider_str(
+            &provider_name_owned,
+            model_opt,
+            credential_opt,
+            endpoint_opt,
+        ) {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!(
+                    "siralos: provider error: {err} — falling back to deterministic-fake"
+                );
+                HostProvider::Fake(DeterministicFakeProvider::new())
+            }
+        };
+        live_host_provider = Some(raw);
     }
     // Stage 5.7 (decision 53): the applied profile's plugin selection
     // narrows /domains-activate. Only an actually-applied profile
@@ -331,8 +450,16 @@ where
         segments,
         ..ApplicationProjectionConfig::default()
     };
+    // Choose the provider for this session based on B2 flags.
+    let session_provider = if let Some(rp) = replay_provider_holder {
+        SessionProvider::Replay(rp)
+    } else if let Some(hp) = live_host_provider {
+        SessionProvider::Host(hp)
+    } else {
+        unreachable!("session provider must be present");
+    };
     let mut application = SiralosApplication::new(
-        &provider,
+        &session_provider,
         &registry,
         policy.clone(),
         None,
@@ -466,6 +593,19 @@ where
                     )?;
                     drain_events(&mut application, &mut writer)?;
                 }
+            }
+        }
+    }
+    // Decision 78 B2: flush retaining recorder for record-replay at session exit
+    if let Some(recorder) = record_recorder {
+        let snapshot = recorder.records_snapshot();
+        match write_replay_store(&replay_store_path, &snapshot) {
+            Ok(count) => {
+                eprintln!("siralos: replay store persisted: {count}");
+            }
+            Err(err) => {
+                let msg = format!("{err}");
+                eprintln!("siralos: replay store not persisted: {msg}");
             }
         }
     }
@@ -1478,5 +1618,114 @@ mod tests {
         assert!(output.contains("Context projection: not yet computed"));
         assert!(!output.contains("Context control:"));
         let _ = remove_dir_all(root);
+    }
+    #[test]
+    fn session_replay_store_hermetic() {
+        use siralos_adapters::replay_store::{
+            load_replay_store, write_replay_store,
+        };
+        use siralos_core::determinism::{
+            ProviderResponseIdentity, ReplayRecorder, ReplayRecording,
+            RetainingReplayRecorder,
+        };
+        use siralos_core::provider::{
+            CancellationToken, ModelProvider, ModelRequest,
+        };
+        fn recording(body: &str) -> ReplayRecording {
+            let sha = siralos_core::identity::sha256_hex(body.as_bytes());
+            ReplayRecording {
+                identity: ProviderResponseIdentity {
+                    provider_id: "replay-subject".to_owned(),
+                    model: "replay-model".to_owned(),
+                    status: Some(200),
+                    body_sha256: sha,
+                    body_bytes: body.len() as u64,
+                    observed_at_ms: Some(1000),
+                },
+                body: body.to_owned(),
+            }
+        }
+        // Seeded store replays recordings.
+        let root = temporary_directory("replay-seeded");
+        let store_path = root.join(".siralos").join("replay-store.json");
+        std::fs::create_dir_all(store_path.parent().expect("parent"))
+            .expect("mkdir");
+        let body1 = r#"{"choices":[{"message":{"content":"alpha"}}]}"#;
+        let body2 = r#"{"choices":[{"message":{"content":"beta"}}]}"#;
+        let recs = vec![recording(body1), recording(body2)];
+        let persisted = write_replay_store(&store_path, &recs).expect("write");
+        assert_eq!(persisted, 2);
+        let loaded = load_replay_store(&store_path).expect("load");
+        assert_eq!(loaded.recordings.len(), 2);
+        let provider =
+            siralos_adapters::provider::replay::RecordedReplayProvider::new(
+                "replay-subject".to_owned(),
+                "replay-model".to_owned(),
+                loaded.recordings.clone(),
+            );
+        let req =
+            ModelRequest { messages: vec![], tools: vec![], system: None };
+        let t1: Vec<_> =
+            provider.stream(&req, CancellationToken::new().signal()).collect();
+        assert!(t1.iter().any(|e| format!("{e:?}").contains("alpha")));
+        let t2: Vec<_> =
+            provider.stream(&req, CancellationToken::new().signal()).collect();
+        assert!(t2.iter().any(|e| format!("{e:?}").contains("beta")));
+        let t3: Vec<_> =
+            provider.stream(&req, CancellationToken::new().signal()).collect();
+        assert!(t3.iter().any(|e| format!("{e:?}").contains("exhausted")));
+        let _ = remove_dir_all(root);
+        // Absent store -> typed diagnostic + exhausted provider (hermetic).
+        let root2 = temporary_directory("replay-absent");
+        let absent_path = root2.join(".siralos").join("replay-store.json");
+        let err = load_replay_store(&absent_path).expect_err("absent");
+        assert!(matches!(
+            err,
+            siralos_adapters::replay_store::ReplayStoreLoadError::NotFound
+        ));
+        let empty_provider =
+            siralos_adapters::provider::replay::RecordedReplayProvider::new(
+                "replay-subject".to_owned(),
+                "replay-model".to_owned(),
+                vec![],
+            );
+        let t: Vec<_> = empty_provider
+            .stream(&req, CancellationToken::new().signal())
+            .collect();
+        assert!(t.iter().any(|e| format!("{e:?}").contains("exhausted")));
+        let _ = remove_dir_all(root2);
+        // Untrusted store -> fail-closed (UntrustedDigest).
+        let root3 = temporary_directory("replay-untrusted");
+        let p3 = root3.join(".siralos").join("replay-store.json");
+        std::fs::create_dir_all(p3.parent().expect("parent")).expect("mkdir");
+        write_replay_store(&p3, &recs).expect("write");
+        let mut raw = std::fs::read_to_string(&p3).expect("read");
+        raw = raw.replacen("alpha", "AlpHa", 1);
+        std::fs::write(&p3, raw).expect("tamper");
+        let err = load_replay_store(&p3).expect_err("untrusted");
+        assert!(matches!(err, siralos_adapters::replay_store::ReplayStoreLoadError::UntrustedDigest));
+        let _ = remove_dir_all(root3);
+        // Record-replay exit-flush writes a store that load verifies (hermetic).
+        let root4 = temporary_directory("replay-record-flush");
+        let p4 = root4.join(".siralos").join("replay-store.json");
+        std::fs::create_dir_all(p4.parent().expect("parent")).expect("mkdir");
+        let recorder = RetainingReplayRecorder::new();
+        let id1 = ProviderResponseIdentity {
+            provider_id: "x".to_owned(),
+            model: "m".to_owned(),
+            status: Some(200),
+            body_sha256: siralos_core::identity::sha256_hex(body1.as_bytes()),
+            body_bytes: body1.len() as u64,
+            observed_at_ms: Some(1),
+        };
+        recorder.record_provider_response(&id1);
+        recorder.record_provider_response_with_body(&id1, body1);
+        let snap = recorder.records_snapshot();
+        let persisted = write_replay_store(&p4, &snap).expect("flush write");
+        assert_eq!(persisted, 1);
+        let loaded = load_replay_store(&p4).expect("flush load verifies");
+        assert_eq!(loaded.recordings.len(), 1);
+        assert_eq!(loaded.recordings[0].body, body1);
+        let _ = remove_dir_all(root4);
     }
 }

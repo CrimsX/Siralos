@@ -1,4 +1,4 @@
-//! Bounded persisted recordings store (Stage 8, decision 78 B1).
+//! Bounded persisted recordings store (decision 78 B1).
 //!
 //! On-disk shape is `{ "version": 1, "digest": "<hex>", "recordings": [...] }`
 //! where each recording carries the canonical identity fields plus `body`.

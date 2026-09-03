@@ -2212,6 +2212,42 @@ function validateProviderReplayResult(record, label) {
   }
 }
 
+function validateReplayStoreResult(record, label) {
+  assertExactKeys(
+    record.result,
+    [
+      "loadedCount",
+      "persistedCount",
+      "storeDigest",
+      "tamperedLoad",
+      "turn1Events",
+      "turn2Events",
+      "turn3Events",
+    ],
+    `${label}.result`,
+  );
+  if (
+    typeof record.result.storeDigest !== "string" ||
+    !LOWER_SHA256.test(record.result.storeDigest)
+  ) {
+    throw new Error(`${label}.result.storeDigest must be a lowercase SHA-256 digest`);
+  }
+  if (record.result.tamperedLoad !== "untrusted-digest") {
+    throw new Error(`${label}.result.tamperedLoad must be "untrusted-digest"`);
+  }
+  if (!Number.isInteger(record.result.loadedCount) || record.result.loadedCount < 0) {
+    throw new Error(`${label}.result.loadedCount must be a non-negative integer`);
+  }
+  if (!Number.isInteger(record.result.persistedCount) || record.result.persistedCount < 0) {
+    throw new Error(`${label}.result.persistedCount must be a non-negative integer`);
+  }
+  for (const key of ["turn1Events", "turn2Events", "turn3Events"]) {
+    if (!Array.isArray(record.result[key])) {
+      throw new Error(`${label}.result.${key} must be an array`);
+    }
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -4104,6 +4140,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "session-replay") {
     validateSessionReplayResult(record, label);
+    return;
+  }
+  if (record.subject === "replay-store") {
+    validateReplayStoreResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

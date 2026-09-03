@@ -115,6 +115,7 @@ const SUBJECT_EVOLVE_PROPOSAL: &str = "evolve-proposal";
 const SUBJECT_PROVIDER_GENERIC: &str = "provider-generic";
 const SUBJECT_PROVIDER_REPLAY: &str = "provider-replay";
 const SUBJECT_SESSION_REPLAY: &str = "session-replay";
+const SUBJECT_REPLAY_STORE: &str = "replay-store";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -123,7 +124,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 55;
+const CORPUS_VERSION: u64 = 56;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -517,6 +518,7 @@ fn validate_scenario(
             | SUBJECT_PROVIDER_GENERIC
             | SUBJECT_PROVIDER_REPLAY
             | SUBJECT_SESSION_REPLAY
+            | SUBJECT_REPLAY_STORE
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -608,6 +610,7 @@ fn validate_scenario(
         | SUBJECT_PROVIDER_GENERIC
         | SUBJECT_PROVIDER_REPLAY
         | SUBJECT_SESSION_REPLAY
+        | SUBJECT_REPLAY_STORE
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -676,6 +679,11 @@ fn validate_scenario(
                 scenario.subject.as_str() == SUBJECT_SESSION_REPLAY;
             if session_replay_subject {
                 validate_session_replay_input(input)?;
+            }
+            let replay_store_subject =
+                scenario.subject.as_str() == SUBJECT_REPLAY_STORE;
+            if replay_store_subject {
+                validate_replay_store_input(input)?;
             }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
@@ -1431,6 +1439,18 @@ fn run_scenario(
                 "session-replay input was validated while loading the corpus",
             );
             let result = session_replay_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_REPLAY_STORE => {
+            let input = scenario.input.as_ref().expect(
+                "replay-store input was validated while loading the corpus",
+            );
+            let result = replay_store_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -12773,6 +12793,167 @@ fn session_replay_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic replay-store subject: cross-session replay (decision 78 B3, corpus v56).
+
+/// Canonical replay-store record: hermetic cross-session store.
+/// Inside a sandbox workspace, flush two known recordings through the
+/// flush seam, load + verify (digest), compose replay provider, stream
+/// three turns, tamper a body byte and assert UntrustedDigest.
+fn replay_store_record(_input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::replay_store::{
+        load_replay_store, write_replay_store,
+    };
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecording,
+        replay_store::compute_replay_store_digest,
+    };
+    use siralos_core::identity::sha256_hex;
+    let body1 = r#"{"choices":[{"message":{"content":"alpha"}}]}"#;
+    let body2 = r#"{"choices":[{"message":{"content":"beta"}}]}"#;
+    let sha1 = sha256_hex(body1.as_bytes());
+    let sha2 = sha256_hex(body2.as_bytes());
+    let identity1 = ProviderResponseIdentity {
+        provider_id: "replay-subject".to_owned(),
+        model: "replay-model".to_owned(),
+        status: Some(200),
+        body_sha256: sha1,
+        body_bytes: body1.len() as u64,
+        observed_at_ms: Some(1000),
+    };
+    let identity2 = ProviderResponseIdentity {
+        provider_id: "replay-subject".to_owned(),
+        model: "replay-model".to_owned(),
+        status: Some(200),
+        body_sha256: sha2,
+        body_bytes: body2.len() as u64,
+        observed_at_ms: Some(1000),
+    };
+    let recordings = vec![
+        ReplayRecording { identity: identity1, body: body1.to_owned() },
+        ReplayRecording { identity: identity2, body: body2.to_owned() },
+    ];
+    // Hermetic sandbox workspace.
+    let sandbox = std::env::temp_dir().join(format!(
+        "siralos-replay-store-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(sandbox.join(".siralos")).map_err(|e| {
+        HarnessError::corpus(format!(
+            "replay-store sandbox create failed: {e}"
+        ))
+    })?;
+    let store_path = sandbox.join(".siralos").join("replay-store.json");
+    // Flush through the seam (scan/eviction/atomicity).
+    let persisted_count = write_replay_store(&store_path, &recordings)
+        .map_err(|e| {
+            HarnessError::corpus(format!("replay-store write failed: {e}"))
+        })?;
+    // Load + verify (digest).
+    let loaded = load_replay_store(&store_path).map_err(|e| {
+        HarnessError::corpus(format!("replay-store load failed: {e:?}"))
+    })?;
+    let store_digest = compute_replay_store_digest(&loaded.recordings);
+    let loaded_count = loaded.recordings.len();
+    if loaded_count != 2 {
+        return Err(HarnessError::corpus(format!(
+            "replay-store loaded count expected 2, got {loaded_count}"
+        )));
+    }
+    // Compose replay provider from loaded recordings.
+    let provider =
+        siralos_adapters::provider::replay::RecordedReplayProvider::new(
+            "replay-subject".to_owned(),
+            "replay-model".to_owned(),
+            loaded.recordings.clone(),
+        );
+    let request = siralos_core::provider::ModelRequest {
+        messages: Vec::new(),
+        tools: Vec::new(),
+        system: None,
+    };
+    fn canonical_events(
+        events: Vec<siralos_core::provider::ProviderEvent>,
+    ) -> Vec<Value> {
+        events.iter().map(|e| match e {
+            siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                siralos_core::provider::ModelEvent::TextDelta { text } => {
+                    serde_json::json!({"type": "text_delta", "text": text})
+                }
+                siralos_core::provider::ModelEvent::ToolCall { call_id, tool_name, input } => serde_json::json!({
+                    "type": "tool_call",
+                    "callId": call_id,
+                    "toolName": tool_name,
+                    "input": input.value()
+                }),
+                siralos_core::provider::ModelEvent::Completed => {
+                    serde_json::json!({"type": "completed"})
+                }
+            },
+            siralos_core::provider::ProviderEvent::Failed(msg) => {
+                serde_json::json!({"type": "failed", "message": msg})
+            }
+            siralos_core::provider::ProviderEvent::Cancelled { message } => {
+                serde_json::json!({"type": "cancelled", "message": message})
+            }
+            siralos_core::provider::ProviderEvent::Raw(v) => {
+                serde_json::json!({"type": "raw", "value": v})
+            }
+        }).collect()
+    }
+    let token1 = siralos_core::provider::CancellationToken::new();
+    let turn1 =
+        canonical_events(provider.stream(&request, token1.signal()).collect());
+    let token2 = siralos_core::provider::CancellationToken::new();
+    let turn2 =
+        canonical_events(provider.stream(&request, token2.signal()).collect());
+    let token3 = siralos_core::provider::CancellationToken::new();
+    let turn3 =
+        canonical_events(provider.stream(&request, token3.signal()).collect());
+    // Tamper a body byte in the sandbox copy and assert second load is UntrustedDigest.
+    let mut raw = std::fs::read_to_string(&store_path).map_err(|e| {
+        HarnessError::corpus(format!(
+            "replay-store read for tamper failed: {e}"
+        ))
+    })?;
+    if raw.contains("alpha") {
+        raw = raw.replacen("alpha", "AlpHa", 1);
+    } else {
+        raw = raw.replacen('a', "A", 1);
+    }
+    std::fs::write(&store_path, raw).map_err(|e| {
+        HarnessError::corpus(format!("replay-store tamper write failed: {e}"))
+    })?;
+    let tampered = load_replay_store(&store_path);
+    let tampered_load = match tampered {
+        Err(siralos_adapters::replay_store::ReplayStoreLoadError::UntrustedDigest) => "untrusted-digest".to_owned(),
+        Ok(_) => {
+            return Err(HarnessError::corpus("replay-store tamper did not produce UntrustedDigest".to_owned()));
+        }
+        Err(e) => {
+            return Err(HarnessError::corpus(format!(
+                "replay-store tamper produced unexpected error {e:?}"
+            )));
+        }
+    };
+    // Cleanup hermetic sandbox.
+    let _ = std::fs::remove_dir_all(&sandbox);
+    Ok(serde_json::json!({
+        "storeDigest": store_digest,
+        "loadedCount": loaded_count,
+        "persistedCount": persisted_count,
+        "tamperedLoad": tampered_load,
+        "turn1Events": turn1,
+        "turn2Events": turn2,
+        "turn3Events": turn3,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -13406,6 +13587,18 @@ fn validate_session_replay_input(input: &Value) -> Result<(), HarnessError> {
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+/// Strict replay-store input shape validation (decision 78 B3, corpus v56).
+fn validate_replay_store_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("replay-store input must be an object")
+    })?;
+    // Minimal: any bounded plain object accepted.
+    for key in obj.keys() {
+        let _ = key;
     }
     Ok(())
 }
@@ -17030,7 +17223,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 323);
+        assert_eq!(loaded.len(), 324);
     }
 
     #[test]

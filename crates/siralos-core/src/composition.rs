@@ -100,6 +100,13 @@ pub struct ProfileRecord {
     /// `None`, the provider's default endpoint is used. No code
     /// execution, no `file:` or `unix:` scheme.
     pub endpoint: Option<String>,
+    /// When true, the session attaches the retaining recorder to the
+    /// live provider and flushes to `.siralos/replay-store.json`
+    /// (decision 78 B2).
+    pub record_replay: bool,
+    /// When true, the session composes a replay provider over the
+    /// workspace store (decision 78 B2).
+    pub replay: bool,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -184,6 +191,11 @@ impl ProfileRecord {
         validate_model_field(&self.model)?;
         validate_credential_field(&self.credential)?;
         validate_endpoint_field(&self.endpoint)?;
+        if self.record_replay && self.replay {
+            return Err(ProfileValidationError {
+                message: "The profile cannot set both record-replay and replay; they are contradictory.".to_owned(),
+            });
+        }
         Ok(())
     }
 }
@@ -1489,6 +1501,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1519,6 +1533,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1543,6 +1559,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1564,6 +1582,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -1581,6 +1601,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -1604,6 +1626,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -1649,6 +1673,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -1843,6 +1869,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let error = record.validate().expect_err("duplicate refused");
         assert!(error.message.contains("more than once"));
@@ -1856,6 +1884,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         let error = record.validate().expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
@@ -1869,6 +1899,8 @@ mod tests {
             model: None,
             credential: None,
             endpoint: None,
+            record_replay: false,
+            replay: false,
         };
         record.validate().expect("valid");
     }

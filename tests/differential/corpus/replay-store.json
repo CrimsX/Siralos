@@ -1,0 +1,8 @@
+{
+  "id": "replay-store",
+  "subject": "replay-store",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {}
+}

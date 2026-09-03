@@ -43,6 +43,7 @@ fn error(message: impl Into<String>) -> ProfileDocumentError {
 /// never blocks session composition - it is simply not applied, with a
 /// truthful diagnostic - so there is no error variant to propagate.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum WorkspaceProfileLoad {
     /// No `siralos.toml` profile document in the workspace.
     Absent,
@@ -247,6 +248,8 @@ pub fn parse_profile_value(
             && key != "model"
             && key != "credential"
             && key != "endpoint"
+            && key != "record-replay"
+            && key != "replay"
         {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
@@ -362,6 +365,30 @@ pub fn parse_profile_value(
         };
         endpoint = Some(text.to_owned());
     }
+    let mut record_replay = false;
+    if let Some(value) = profile.get("record-replay") {
+        let Some(flag) = value.as_bool() else {
+            return Err(error(
+                "The [profile.record-replay] entry must be a boolean."
+                    .to_owned(),
+            ));
+        };
+        record_replay = flag;
+    }
+    let mut replay = false;
+    if let Some(value) = profile.get("replay") {
+        let Some(flag) = value.as_bool() else {
+            return Err(error(
+                "The [profile.replay] entry must be a boolean.".to_owned(),
+            ));
+        };
+        replay = flag;
+    }
+    if record_replay && replay {
+        return Err(error(
+            "The profile cannot set both record-replay and replay; they are contradictory.".to_owned(),
+        ));
+    }
     Ok(ProfileRecord {
         name: name.to_owned(),
         overlay,
@@ -372,6 +399,8 @@ pub fn parse_profile_value(
         model,
         credential,
         endpoint,
+        record_replay,
+        replay,
     })
 }
 
@@ -590,5 +619,65 @@ widgets = ["x"]
             panic!("expected invalid, got {load:?}");
         };
         assert!(diagnostic.contains("does not parse"));
+    }
+
+    #[test]
+    fn replay_flags_parse_and_validate() {
+        // Valid booleans.
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nrecord-replay = true\n",
+        )
+        .expect("record-replay true");
+        assert!(record.record_replay);
+        assert!(!record.replay);
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nreplay = true\n",
+        )
+        .expect("replay true");
+        assert!(record.replay);
+        assert!(!record.record_replay);
+        // Absent -> transparent false.
+        let record = parse_profile_document("\n[profile]\nname = \"dev\"\n")
+            .expect("absent");
+        assert!(!record.record_replay);
+        assert!(!record.replay);
+        // Malformed string -> whole profile unapplied (Invalid via parse error).
+        let malformed = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nreplay = \"true\"\n",
+        );
+        assert!(malformed.is_err());
+        assert!(malformed.unwrap_err().message.contains("must be a boolean"));
+        let malformed = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nrecord-replay = \"true\"\n",
+        );
+        assert!(malformed.is_err());
+        // Both true -> contradictory, profile unapplied.
+        let both = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nrecord-replay = true\nreplay = true\n",
+        );
+        assert!(both.is_err());
+        assert!(both.unwrap_err().message.contains("both record-replay"));
+        // Also via workspace load -> Invalid.
+        let root = workspace();
+        std::fs::write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\nreplay = \"true\"\n",
+        )
+        .expect("write");
+        let load = super::load_workspace_profile(&root);
+        let super::WorkspaceProfileLoad::Invalid { diagnostic } = load else {
+            panic!("expected invalid");
+        };
+        assert!(diagnostic.contains("must be a boolean"));
+        std::fs::write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\nrecord-replay = true\nreplay = true\n",
+        )
+        .expect("write");
+        let load = super::load_workspace_profile(&root);
+        let super::WorkspaceProfileLoad::Invalid { diagnostic } = load else {
+            panic!("expected invalid");
+        };
+        assert!(diagnostic.contains("both record-replay"));
     }
 }
