@@ -18,6 +18,7 @@ pub mod process;
 pub mod profile_config;
 pub mod provider;
 pub mod reference;
+pub mod replay_store;
 pub mod research;
 pub mod skills_loader;
 pub mod tool;

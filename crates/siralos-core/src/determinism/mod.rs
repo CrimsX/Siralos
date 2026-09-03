@@ -22,6 +22,7 @@ pub mod helpers;
 pub mod ownership;
 pub mod ports;
 pub mod provider_replay;
+pub mod replay_store;
 pub mod reproducibility;
 
 pub use decisions::{
@@ -60,6 +61,11 @@ pub use provider_replay::{
     RetainingReplayRecorder, SessionReplayEvidence,
     compute_provider_response_identity_digest,
     compute_session_replay_evidence_digest,
+};
+pub use replay_store::{
+    REPLAY_STORE_MAX_RECORDINGS, REPLAY_STORE_MAX_TOTAL_BODY_BYTES,
+    ReplayStore, ReplayStoreBoundsError, compute_replay_store_digest,
+    validate_replay_store_bounds,
 };
 pub use reproducibility::{
     ClockPolicy, ProviderInputIdentity, ReproducibilityManifest,
