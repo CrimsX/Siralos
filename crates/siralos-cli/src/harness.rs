@@ -117,6 +117,7 @@ const SUBJECT_PROVIDER_REPLAY: &str = "provider-replay";
 const SUBJECT_SESSION_REPLAY: &str = "session-replay";
 const SUBJECT_REPLAY_STORE: &str = "replay-store";
 const SUBJECT_CONTEXT_GRAPH: &str = "context-graph";
+const SUBJECT_CONTEXT_REPRESENTATION: &str = "context-representation";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -125,7 +126,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 57;
+const CORPUS_VERSION: u64 = 58;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -521,6 +522,7 @@ fn validate_scenario(
             | SUBJECT_SESSION_REPLAY
             | SUBJECT_REPLAY_STORE
             | SUBJECT_CONTEXT_GRAPH
+            | SUBJECT_CONTEXT_REPRESENTATION
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -614,6 +616,7 @@ fn validate_scenario(
         | SUBJECT_SESSION_REPLAY
         | SUBJECT_REPLAY_STORE
         | SUBJECT_CONTEXT_GRAPH
+        | SUBJECT_CONTEXT_REPRESENTATION
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -693,6 +696,11 @@ fn validate_scenario(
             if context_graph_subject {
                 validate_context_graph_input(input)?;
             }
+            let context_representation_subject =
+                scenario.subject.as_str() == SUBJECT_CONTEXT_REPRESENTATION;
+            if context_representation_subject {
+                validate_context_representation_input(input)?;
+            }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
             if tool_loop_subject {
@@ -764,6 +772,7 @@ fn validate_scenario(
                 || provider_replay_subject
                 || session_replay_subject
                 || context_graph_subject
+                || context_representation_subject
             {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -1472,6 +1481,18 @@ fn run_scenario(
                 "context-graph input was validated while loading the corpus",
             );
             let result = context_graph_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_REPRESENTATION => {
+            let input = scenario.input.as_ref().expect(
+                "context-representation input was validated while loading the corpus",
+            );
+            let result = context_representation_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -13093,6 +13114,137 @@ fn context_graph_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic subject: context-representation (decision 79 slice 2, corpus v58).
+
+fn context_representation_record(
+    _input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_core::context_representation::{
+        ContextRepresentationStore, NodeRepresentation, NodeRepresentationSet,
+        RepresentationLevel, RepresentationOrigin, content_digest_of,
+        representation_store_digest, resolve_representation,
+    };
+
+    let identity_content = r#"{"id":"ctx-source-auth","kind":"source"}"#;
+    let summary_content = "summary prose for ctx-source-auth";
+    let structured_content = r#"["fact1","fact2"]"#;
+    let source_content = "";
+
+    let identity_digest = content_digest_of(identity_content);
+    let summary_digest = content_digest_of(summary_content);
+    let structured_digest = content_digest_of(structured_content);
+    let source_digest = content_digest_of(source_content);
+
+    let reps = vec![
+        NodeRepresentation {
+            level: RepresentationLevel::Identity,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: identity_digest.clone(),
+            derived_from: vec![],
+            content: identity_content.to_owned(),
+        },
+        NodeRepresentation {
+            level: RepresentationLevel::Summary,
+            origin: RepresentationOrigin::ModelDerived,
+            content_digest: summary_digest.clone(),
+            derived_from: vec![(
+                "ctx-source-auth".to_owned(),
+                identity_digest.clone(),
+            )],
+            content: summary_content.to_owned(),
+        },
+        NodeRepresentation {
+            level: RepresentationLevel::Structured,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: structured_digest.clone(),
+            derived_from: vec![],
+            content: structured_content.to_owned(),
+        },
+        NodeRepresentation {
+            level: RepresentationLevel::Source,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: source_digest.clone(),
+            derived_from: vec![],
+            content: source_content.to_owned(),
+        },
+    ];
+
+    let set = NodeRepresentationSet::build("ctx-source-auth".to_owned(), reps)
+        .map_err(|e| {
+            HarnessError::corpus(format!(
+                "context-representation build failed: {e}"
+            ))
+        })?;
+    let store =
+        ContextRepresentationStore::build(vec![set.clone()]).map_err(|e| {
+            HarnessError::corpus(format!(
+                "context-representation store build failed: {e}"
+            ))
+        })?;
+    let store_digest = representation_store_digest(&store);
+    let resolved_l2 =
+        resolve_representation(&set, RepresentationLevel::Structured)
+            .map(|r| r.content_digest.clone())
+            .unwrap_or_default();
+
+    let model_derived_l2_error = {
+        let bad = NodeRepresentation {
+            level: RepresentationLevel::Structured,
+            origin: RepresentationOrigin::ModelDerived,
+            content_digest: structured_digest.clone(),
+            derived_from: vec![(
+                "ctx-source-auth".to_owned(),
+                identity_digest.clone(),
+            )],
+            content: structured_content.to_owned(),
+        };
+        match NodeRepresentationSet::build(
+            "ctx-source-auth".to_owned(),
+            vec![bad],
+        ) {
+            Ok(_) => "unexpected-ok".to_owned(),
+            Err(e) => match e {
+                siralos_core::context_representation::RepresentationError::ModelDerivedStructured { .. } => {
+                    "ModelDerivedStructured".to_owned()
+                }
+                _ => format!("{e}"),
+            },
+        }
+    };
+
+    let unprovenanced_error = {
+        let bad = NodeRepresentation {
+            level: RepresentationLevel::Summary,
+            origin: RepresentationOrigin::ModelDerived,
+            content_digest: summary_digest.clone(),
+            derived_from: vec![],
+            content: summary_content.to_owned(),
+        };
+        match NodeRepresentationSet::build(
+            "ctx-source-auth".to_owned(),
+            vec![bad],
+        ) {
+            Ok(_) => "unexpected-ok".to_owned(),
+            Err(e) => match e {
+                siralos_core::context_representation::RepresentationError::UnprovenancedDerived { .. } => {
+                    "UnprovenancedDerived".to_owned()
+                }
+                _ => format!("{e}"),
+            },
+        }
+    };
+
+    Ok(json!({
+        "setCount": store.sets().len(),
+        "repCount": store.sets().iter().map(|s| s.representations.len()).sum::<usize>(),
+        "storeDigest": store_digest,
+        "resolvedL2Digest": resolved_l2,
+        "modelDerivedL2Error": model_derived_l2_error,
+        "unprovenancedDerivedError": unprovenanced_error,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -13746,6 +13898,19 @@ fn validate_replay_store_input(input: &Value) -> Result<(), HarnessError> {
 fn validate_context_graph_input(input: &Value) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
         HarnessError::corpus("context-graph input must be an object")
+    })?;
+    for key in obj.keys() {
+        let _ = key;
+    }
+    Ok(())
+}
+
+/// Strict context-representation input shape validation (decision 79 slice 2, corpus v58).
+fn validate_context_representation_input(
+    input: &Value,
+) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("context-representation input must be an object")
     })?;
     for key in obj.keys() {
         let _ = key;
@@ -17373,7 +17538,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 325);
+        assert_eq!(loaded.len(), 326);
     }
 
     #[test]

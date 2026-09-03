@@ -2291,6 +2291,51 @@ function validateContextGraphResult(record, label) {
   }
 }
 
+function validateContextRepresentationResult(record, label) {
+  assertExactKeys(
+    record.result,
+    [
+      "modelDerivedL2Error",
+      "repCount",
+      "resolvedL2Digest",
+      "setCount",
+      "storeDigest",
+      "unprovenancedDerivedError",
+    ],
+    `${label}.result`,
+  );
+  if (!Number.isInteger(record.result.setCount) || record.result.setCount < 0) {
+    throw new Error(`${label}.result.setCount must be a non-negative integer`);
+  }
+  if (!Number.isInteger(record.result.repCount) || record.result.repCount < 0) {
+    throw new Error(`${label}.result.repCount must be a non-negative integer`);
+  }
+  if (
+    typeof record.result.storeDigest !== "string" ||
+    !LOWER_SHA256.test(record.result.storeDigest)
+  ) {
+    throw new Error(`${label}.result.storeDigest must be a lowercase SHA-256 digest`);
+  }
+  if (
+    typeof record.result.resolvedL2Digest !== "string" ||
+    !LOWER_SHA256.test(record.result.resolvedL2Digest)
+  ) {
+    throw new Error(`${label}.result.resolvedL2Digest must be a lowercase SHA-256 digest`);
+  }
+  if (
+    typeof record.result.modelDerivedL2Error !== "string" ||
+    record.result.modelDerivedL2Error.length === 0
+  ) {
+    throw new Error(`${label}.result.modelDerivedL2Error must be a non-empty string`);
+  }
+  if (
+    typeof record.result.unprovenancedDerivedError !== "string" ||
+    record.result.unprovenancedDerivedError.length === 0
+  ) {
+    throw new Error(`${label}.result.unprovenancedDerivedError must be a non-empty string`);
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -4191,6 +4236,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-graph") {
     validateContextGraphResult(record, label);
+    return;
+  }
+  if (record.subject === "context-representation") {
+    validateContextRepresentationResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {
