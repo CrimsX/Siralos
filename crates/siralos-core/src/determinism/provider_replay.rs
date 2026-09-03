@@ -7,6 +7,42 @@
 
 use serde_json::{Value, json};
 
+/// In-process record-then-replay run evidence; nothing persisted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionReplayEvidence {
+    /// Provider identifier recorded in the session.
+    pub provider_id: String,
+    /// Model identifier recorded in the session.
+    pub model: String,
+    /// Number of responses recorded during the record phase.
+    pub recorded_count: usize,
+    /// Snapshot count of the retaining recorder after recording.
+    pub recorder_snapshot_count: usize,
+}
+
+/// Digest one session replay evidence value (`SessionReplayEvidence` v1).
+///
+/// The payload binds `providerId`, `model`, `recordedCount`, and
+/// `recorderSnapshotCount` through the domain-separated artifact primitive
+/// `siralos:SessionReplayEvidence:v1\0` + canonical JSON, mirroring
+/// [`compute_provider_response_identity_digest`].
+pub fn compute_session_replay_evidence_digest(
+    evidence: &SessionReplayEvidence,
+) -> String {
+    let payload = json!({
+        "providerId": evidence.provider_id,
+        "model": evidence.model,
+        "recordedCount": evidence.recorded_count,
+        "recorderSnapshotCount": evidence.recorder_snapshot_count,
+    });
+    crate::determinism::helpers::digest_artifact_payload(
+        "SessionReplayEvidence",
+        1,
+        &payload,
+    )
+    .expect("SessionReplayEvidence digest is infallible")
+}
+
 /// Identity of one provider HTTP response for replay.
 ///
 /// The record never contains a credential or the raw body text, only the
@@ -409,5 +445,41 @@ mod tests {
         let identity = base_identity();
         recorder.record_provider_response_with_body(&identity, "ignored");
         assert!(!recorder.is_recording());
+    }
+
+    #[test]
+    fn session_replay_evidence_digest_is_stable_and_canonical() {
+        use super::{
+            SessionReplayEvidence, compute_session_replay_evidence_digest,
+        };
+        use serde_json::json;
+
+        let evidence = SessionReplayEvidence {
+            provider_id: "session-subject".to_owned(),
+            model: "session-model".to_owned(),
+            recorded_count: 2,
+            recorder_snapshot_count: 2,
+        };
+        let clone = evidence.clone();
+        assert_eq!(evidence, clone);
+        let first = compute_session_replay_evidence_digest(&evidence);
+        let second = compute_session_replay_evidence_digest(&clone);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        // Must match the canonical payload digest.
+        let payload = json!({
+            "providerId": evidence.provider_id,
+            "model": evidence.model,
+            "recordedCount": evidence.recorded_count,
+            "recorderSnapshotCount": evidence.recorder_snapshot_count,
+        });
+        let canonical = crate::determinism::helpers::digest_artifact_payload(
+            "SessionReplayEvidence",
+            1,
+            &payload,
+        )
+        .expect("digest");
+        assert_eq!(first, canonical);
     }
 }

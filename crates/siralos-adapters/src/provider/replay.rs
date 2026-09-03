@@ -1,3 +1,6 @@
+//! Session replay-run composition for decision 77 — in-process
+//! record-then-replay; nothing persisted.
+//!
 //! Recorded-response playback for decision 68 section 3 — serves
 //! determinism-port recordings as `ProviderEvent`s; recordings live in memory
 //! only.
@@ -256,4 +259,61 @@ pub fn replay_provider_from_recorder(
         model,
         recorder.records_snapshot(),
     )
+}
+
+/// Session replay-run composition: in-process record-then-replay.
+///
+/// The composer owns a retaining recorder for the record phase and composes a
+/// replay provider from its detached snapshot. Nothing is persisted.
+#[derive(Debug)]
+pub struct SessionReplayComposer {
+    provider_id: String,
+    model: String,
+    recorder: std::rc::Rc<siralos_core::determinism::RetainingReplayRecorder>,
+}
+
+impl SessionReplayComposer {
+    /// Create a composer that owns its retaining recorder.
+    #[must_use]
+    pub fn new(provider_id: String, model: String) -> Self {
+        Self {
+            provider_id,
+            model,
+            recorder: std::rc::Rc::new(
+                siralos_core::determinism::RetainingReplayRecorder::new(),
+            ),
+        }
+    }
+
+    /// The recorder to attach to the live provider for the record phase.
+    #[must_use]
+    pub fn recorder(
+        &self,
+    ) -> std::rc::Rc<siralos_core::determinism::RetainingReplayRecorder> {
+        std::rc::Rc::clone(&self.recorder)
+    }
+
+    /// Compose a replay provider from the recorder's detached snapshot.
+    #[must_use]
+    pub fn compose(&self) -> RecordedReplayProvider {
+        replay_provider_from_recorder(
+            self.provider_id.clone(),
+            self.model.clone(),
+            &self.recorder,
+        )
+    }
+
+    /// Evidence for the current recorder state.
+    #[must_use]
+    pub fn evidence(
+        &self,
+    ) -> siralos_core::determinism::SessionReplayEvidence {
+        let len = self.recorder.records_snapshot().len();
+        siralos_core::determinism::SessionReplayEvidence {
+            provider_id: self.provider_id.clone(),
+            model: self.model.clone(),
+            recorded_count: len,
+            recorder_snapshot_count: len,
+        }
+    }
 }

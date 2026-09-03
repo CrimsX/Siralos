@@ -1,0 +1,8 @@
+{
+  "id": "session-replay",
+  "subject": "session-replay",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {}
+}

@@ -1178,3 +1178,126 @@ fn replay_composition_round_trip_from_recorder() {
     }
     assert_eq!(recorder.records_snapshot().len(), 2);
 }
+
+#[test]
+fn session_composer_round_trip() {
+    use siralos_core::determinism::ReplayRecorder;
+    use siralos_core::provider::ModelProvider;
+    let composer = crate::provider::replay::SessionReplayComposer::new(
+        "session-subject".to_owned(),
+        "session-model".to_owned(),
+    );
+    let bodies = [
+        r#"{"choices":[{"message":{"content":"alpha"}}]}"#,
+        r#"{"choices":[{"message":{"content":"beta"}}]}"#,
+    ];
+    for body in bodies {
+        let body_sha256 = crate::provider::response_body_sha256(body);
+        let identity = siralos_core::determinism::ProviderResponseIdentity {
+            provider_id: "session-subject".to_owned(),
+            model: "session-model".to_owned(),
+            status: Some(200),
+            body_sha256,
+            body_bytes: body.len() as u64,
+            observed_at_ms: Some(1),
+        };
+        composer.recorder().record_provider_response(&identity);
+        composer
+            .recorder()
+            .record_provider_response_with_body(&identity, body);
+    }
+    let provider = composer.compose();
+    assert_eq!(provider.recordings_remaining(), 2);
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let first: Vec<_> = provider.stream(&request, token.signal()).collect();
+    assert_eq!(first.len(), 2);
+    assert_eq!(
+        first[0],
+        ProviderEvent::Event(ModelEvent::TextDelta {
+            text: "alpha".to_owned()
+        })
+    );
+    assert_eq!(first[1], ProviderEvent::Event(ModelEvent::Completed));
+    assert_eq!(provider.recordings_remaining(), 1);
+    let token2 = CancellationToken::new();
+    let second: Vec<_> = provider.stream(&request, token2.signal()).collect();
+    assert_eq!(second.len(), 2);
+    assert_eq!(
+        second[0],
+        ProviderEvent::Event(ModelEvent::TextDelta {
+            text: "beta".to_owned()
+        })
+    );
+    assert_eq!(second[1], ProviderEvent::Event(ModelEvent::Completed));
+    assert_eq!(provider.recordings_remaining(), 0);
+    let token3 = CancellationToken::new();
+    let third: Vec<_> = provider.stream(&request, token3.signal()).collect();
+    assert_eq!(third.len(), 1);
+    match &third[0] {
+        ProviderEvent::Failed(message) => {
+            assert!(
+                message.contains("recording exhausted"),
+                "message {message:?} should contain 'recording exhausted'"
+            );
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    let evidence = composer.evidence();
+    assert_eq!(evidence.recorded_count, 2);
+    assert_eq!(evidence.recorder_snapshot_count, 2);
+    assert_eq!(composer.recorder().records_snapshot().len(), 2);
+}
+
+#[test]
+fn session_composer_evidence_digest_matches_core() {
+    use siralos_core::determinism::ReplayRecorder;
+    use siralos_core::provider::ModelProvider;
+    let composer = crate::provider::replay::SessionReplayComposer::new(
+        "session-subject".to_owned(),
+        "session-model".to_owned(),
+    );
+    let bodies = [
+        r#"{"choices":[{"message":{"content":"alpha"}}]}"#,
+        r#"{"choices":[{"message":{"content":"beta"}}]}"#,
+    ];
+    for body in bodies {
+        let body_sha256 = crate::provider::response_body_sha256(body);
+        let identity = siralos_core::determinism::ProviderResponseIdentity {
+            provider_id: "session-subject".to_owned(),
+            model: "session-model".to_owned(),
+            status: Some(200),
+            body_sha256,
+            body_bytes: body.len() as u64,
+            observed_at_ms: Some(1),
+        };
+        composer.recorder().record_provider_response(&identity);
+        composer
+            .recorder()
+            .record_provider_response_with_body(&identity, body);
+    }
+    let evidence = composer.evidence();
+    let digest =
+        siralos_core::determinism::compute_session_replay_evidence_digest(
+            &evidence,
+        );
+    let recomputed =
+        siralos_core::determinism::compute_session_replay_evidence_digest(
+            &evidence,
+        );
+    assert_eq!(digest, recomputed);
+    assert_eq!(digest.len(), 64);
+    // Digest unchanged after playback (evidence is snapshot value).
+    let provider = composer.compose();
+    let request =
+        ModelRequest { messages: vec![], tools: vec![], system: None };
+    let token = CancellationToken::new();
+    let _first: Vec<_> = provider.stream(&request, token.signal()).collect();
+    let evidence_after = composer.evidence();
+    let digest_after =
+        siralos_core::determinism::compute_session_replay_evidence_digest(
+            &evidence_after,
+        );
+    assert_eq!(digest, digest_after);
+}

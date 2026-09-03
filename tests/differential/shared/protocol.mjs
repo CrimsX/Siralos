@@ -2212,6 +2212,55 @@ function validateProviderReplayResult(record, label) {
   }
 }
 
+function validateSessionReplayResult(record, label) {
+  assertExactKeys(
+    record.result,
+    [
+      "evidenceDigest",
+      "model",
+      "providerId",
+      "recordedCount",
+      "remainingCounts",
+      "snapshotCount",
+      "turn1Events",
+      "turn2Events",
+      "turn3Events",
+    ],
+    `${label}.result`,
+  );
+  if (typeof record.result.providerId !== "string" || record.result.providerId.length === 0) {
+    throw new Error(`${label}.result.providerId must be a non-empty string`);
+  }
+  if (typeof record.result.model !== "string" || record.result.model.length === 0) {
+    throw new Error(`${label}.result.model must be a non-empty string`);
+  }
+  if (!Array.isArray(record.result.remainingCounts) || record.result.remainingCounts.length !== 3) {
+    throw new Error(`${label}.result.remainingCounts must be an array of length 3`);
+  }
+  for (const [index, value] of record.result.remainingCounts.entries()) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`${label}.result.remainingCounts[${index}] must be a non-negative integer`);
+    }
+  }
+  for (const key of ["turn1Events", "turn2Events", "turn3Events"]) {
+    if (!Array.isArray(record.result[key])) {
+      throw new Error(`${label}.result.${key} must be an array`);
+    }
+  }
+  if (!Number.isInteger(record.result.recordedCount) || record.result.recordedCount < 0) {
+    throw new Error(`${label}.result.recordedCount must be a non-negative integer`);
+  }
+  if (!Number.isInteger(record.result.snapshotCount) || record.result.snapshotCount < 0) {
+    throw new Error(`${label}.result.snapshotCount must be a non-negative integer`);
+  }
+  if (
+    typeof record.result.evidenceDigest !== "string" ||
+    !LOWER_SHA256.test(record.result.evidenceDigest)
+  ) {
+    throw new Error(`${label}.result.evidenceDigest must be a lowercase SHA-256 digest`);
+  }
+}
+
 function validateProviderTurnResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (!Array.isArray(record.result.cases) || record.result.cases.length > 32) {
@@ -4051,6 +4100,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "provider-replay") {
     validateProviderReplayResult(record, label);
+    return;
+  }
+  if (record.subject === "session-replay") {
+    validateSessionReplayResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

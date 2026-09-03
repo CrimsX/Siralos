@@ -114,6 +114,7 @@ const SUBJECT_EVOLVE_WORKFLOW: &str = "evolve-workflow";
 const SUBJECT_EVOLVE_PROPOSAL: &str = "evolve-proposal";
 const SUBJECT_PROVIDER_GENERIC: &str = "provider-generic";
 const SUBJECT_PROVIDER_REPLAY: &str = "provider-replay";
+const SUBJECT_SESSION_REPLAY: &str = "session-replay";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -122,7 +123,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 54;
+const CORPUS_VERSION: u64 = 55;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -515,6 +516,7 @@ fn validate_scenario(
             | SUBJECT_EVOLVE_PACKAGING
             | SUBJECT_PROVIDER_GENERIC
             | SUBJECT_PROVIDER_REPLAY
+            | SUBJECT_SESSION_REPLAY
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -605,6 +607,7 @@ fn validate_scenario(
         | SUBJECT_PROVIDER_TURN
         | SUBJECT_PROVIDER_GENERIC
         | SUBJECT_PROVIDER_REPLAY
+        | SUBJECT_SESSION_REPLAY
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -668,6 +671,11 @@ fn validate_scenario(
                 scenario.subject.as_str() == SUBJECT_PROVIDER_REPLAY;
             if provider_replay_subject {
                 validate_provider_replay_input(input)?;
+            }
+            let session_replay_subject =
+                scenario.subject.as_str() == SUBJECT_SESSION_REPLAY;
+            if session_replay_subject {
+                validate_session_replay_input(input)?;
             }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
@@ -738,6 +746,7 @@ fn validate_scenario(
             let max_input_bytes = if provider_subject
                 || provider_generic_subject
                 || provider_replay_subject
+                || session_replay_subject
             {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -1410,6 +1419,18 @@ fn run_scenario(
                 "provider-replay input was validated while loading the corpus",
             );
             let result = provider_replay_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_SESSION_REPLAY => {
+            let input = scenario.input.as_ref().expect(
+                "session-replay input was validated while loading the corpus",
+            );
+            let result = session_replay_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -12644,6 +12665,114 @@ fn provider_replay_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic replay subject: session-replay (decision 77, corpus v55).
+
+/// Canonical session-replay record: hermetic record-then-replay via
+/// SessionReplayComposer; in-process only, nothing persisted.
+fn session_replay_record(_input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::determinism::ReplayRecorder;
+    let body1 = r#"{"choices":[{"message":{"content":"alpha"}}]}"#;
+    let body2 = r#"{"choices":[{"message":{"content":"beta"}}]}"#;
+    let sha1 = siralos_core::identity::sha256_hex(body1.as_bytes());
+    let sha2 = siralos_core::identity::sha256_hex(body2.as_bytes());
+    let identity1 = siralos_core::determinism::ProviderResponseIdentity {
+        provider_id: "session-subject".to_owned(),
+        model: "session-model".to_owned(),
+        status: Some(200),
+        body_sha256: sha1,
+        body_bytes: body1.len() as u64,
+        observed_at_ms: Some(1000),
+    };
+    let identity2 = siralos_core::determinism::ProviderResponseIdentity {
+        provider_id: "session-subject".to_owned(),
+        model: "session-model".to_owned(),
+        status: Some(200),
+        body_sha256: sha2,
+        body_bytes: body2.len() as u64,
+        observed_at_ms: Some(1000),
+    };
+    let composer =
+        siralos_adapters::provider::replay::SessionReplayComposer::new(
+            "session-subject".to_owned(),
+            "session-model".to_owned(),
+        );
+    composer.recorder().record_provider_response(&identity1);
+    composer.recorder().record_provider_response_with_body(&identity1, body1);
+    composer.recorder().record_provider_response(&identity2);
+    composer.recorder().record_provider_response_with_body(&identity2, body2);
+    let evidence = composer.evidence();
+    let evidence_digest =
+        siralos_core::determinism::compute_session_replay_evidence_digest(
+            &evidence,
+        );
+    let provider = composer.compose();
+    let request = siralos_core::provider::ModelRequest {
+        messages: Vec::new(),
+        tools: Vec::new(),
+        system: None,
+    };
+    fn canonical_events(
+        events: Vec<siralos_core::provider::ProviderEvent>,
+    ) -> Vec<Value> {
+        events
+            .iter()
+            .map(|e| match e {
+                siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                    siralos_core::provider::ModelEvent::TextDelta { text } => {
+                        serde_json::json!({"type": "text_delta", "text": text})
+                    }
+                    siralos_core::provider::ModelEvent::ToolCall {
+                        call_id,
+                        tool_name,
+                        input,
+                    } => serde_json::json!({
+                        "type": "tool_call",
+                        "callId": call_id,
+                        "toolName": tool_name,
+                        "input": input.value()
+                    }),
+                    siralos_core::provider::ModelEvent::Completed => {
+                        serde_json::json!({"type": "completed"})
+                    }
+                },
+                siralos_core::provider::ProviderEvent::Failed(msg) => {
+                    serde_json::json!({"type": "failed", "message": msg})
+                }
+                siralos_core::provider::ProviderEvent::Cancelled { message } => {
+                    serde_json::json!({"type": "cancelled", "message": message})
+                }
+                siralos_core::provider::ProviderEvent::Raw(v) => {
+                    serde_json::json!({"type": "raw", "value": v})
+                }
+            })
+            .collect()
+    }
+    let remaining_before1 = provider.recordings_remaining();
+    let token1 = siralos_core::provider::CancellationToken::new();
+    let turn1 =
+        canonical_events(provider.stream(&request, token1.signal()).collect());
+    let remaining_before2 = provider.recordings_remaining();
+    let token2 = siralos_core::provider::CancellationToken::new();
+    let turn2 =
+        canonical_events(provider.stream(&request, token2.signal()).collect());
+    let remaining_before3 = provider.recordings_remaining();
+    let token3 = siralos_core::provider::CancellationToken::new();
+    let turn3 =
+        canonical_events(provider.stream(&request, token3.signal()).collect());
+    Ok(serde_json::json!({
+        "providerId": provider.id(),
+        "model": "session-model",
+        "remainingCounts": [remaining_before1, remaining_before2, remaining_before3],
+        "turn1Events": turn1,
+        "turn2Events": turn2,
+        "turn3Events": turn3,
+        "recordedCount": evidence.recorded_count,
+        "snapshotCount": evidence.recorder_snapshot_count,
+        "evidenceDigest": evidence_digest,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -13239,6 +13368,40 @@ fn validate_provider_replay_input(input: &Value) -> Result<(), HarnessError> {
             ("messages" | "tools", _) => {
                 return Err(HarnessError::corpus(format!(
                     "provider-replay {key} must be an array"
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Strict session-replay input shape validation (decision 77, corpus v55).
+fn validate_session_replay_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("session-replay input must be an object")
+    })?;
+    // Minimal: any bounded plain object is accepted; validate optional string fields if present.
+    for key in
+        ["provider", "model", "credential", "endpoint", "messages", "tools"]
+    {
+        let Some(val) = obj.get(key) else {
+            continue;
+        };
+        match (key, val) {
+            (
+                "provider" | "model" | "credential" | "endpoint",
+                Value::String(_),
+            ) => {}
+            ("provider" | "model" | "credential" | "endpoint", _) => {
+                return Err(HarnessError::corpus(format!(
+                    "session-replay {key} must be a string"
+                )));
+            }
+            ("messages" | "tools", Value::Array(_)) => {}
+            ("messages" | "tools", _) => {
+                return Err(HarnessError::corpus(format!(
+                    "session-replay {key} must be an array"
                 )));
             }
             _ => {}
@@ -16867,7 +17030,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 322);
+        assert_eq!(loaded.len(), 323);
     }
 
     #[test]

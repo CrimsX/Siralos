@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 54,
+  "corpusVersion": 55,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -1031,6 +1031,10 @@
       "sha256": "3deda5f722770841094b5f777a8bdcead7eaac08bb70691bc0502d9dee38a05f"
     },
     {
+      "file": "session-replay.json",
+      "sha256": "87cac821d7863ec66b8812b93cdd3eed62314da7f7954e8ae55ee96f4053f9f6"
+    },
+    {
       "file": "state-dir.fallback.posix.json",
       "sha256": "232416906832b4a92dfa3729cd2016d9a16254abb21401268cbbec01174a1655"
     },
@@ -1291,5 +1295,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "2c7a7c2dc6a0f13336303e241b6217130a2439bf23eb57978655cae4cbaa929c"
+  "corpusSha256": "1e00ef13d6695bd3e00302cabc2464bd0aca8fbcdbe1bd0583e282ca747a93ac"
 }
