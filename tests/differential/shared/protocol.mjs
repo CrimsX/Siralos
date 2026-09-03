@@ -2171,6 +2171,47 @@ function validateProviderGenericResult(record, label) {
   }
 }
 
+function validateProviderReplayResult(record, label) {
+  assertExactKeys(
+    record.result,
+    [
+      "model",
+      "providerId",
+      "recorderSnapshotCount",
+      "remainingCounts",
+      "turn1Events",
+      "turn2Events",
+      "turn3Events",
+    ],
+    `${label}.result`,
+  );
+  if (typeof record.result.providerId !== "string" || record.result.providerId.length === 0) {
+    throw new Error(`${label}.result.providerId must be a non-empty string`);
+  }
+  if (typeof record.result.model !== "string" || record.result.model.length === 0) {
+    throw new Error(`${label}.result.model must be a non-empty string`);
+  }
+  if (!Array.isArray(record.result.remainingCounts) || record.result.remainingCounts.length !== 3) {
+    throw new Error(`${label}.result.remainingCounts must be an array of length 3`);
+  }
+  for (const [index, value] of record.result.remainingCounts.entries()) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`${label}.result.remainingCounts[${index}] must be a non-negative integer`);
+    }
+  }
+  for (const key of ["turn1Events", "turn2Events", "turn3Events"]) {
+    if (!Array.isArray(record.result[key])) {
+      throw new Error(`${label}.result.${key} must be an array`);
+    }
+  }
+  if (
+    !Number.isInteger(record.result.recorderSnapshotCount) ||
+    record.result.recorderSnapshotCount < 0
+  ) {
+    throw new Error(`${label}.result.recorderSnapshotCount must be a non-negative integer`);
+  }
+}
+
 function validateProviderTurnResult(record, label) {
   assertExactKeys(record.result, ["cases"], `${label}.result`);
   if (!Array.isArray(record.result.cases) || record.result.cases.length > 32) {
@@ -4006,6 +4047,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "provider-generic") {
     validateProviderGenericResult(record, label);
+    return;
+  }
+  if (record.subject === "provider-replay") {
+    validateProviderReplayResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

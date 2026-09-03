@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 53;
+export const CORPUS_VERSION = 54;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -30,6 +30,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "domain-capability",
   "provider-turn",
   "provider-generic",
+  "provider-replay",
   "tool-loop",
   "context-projection",
   "user-config",
@@ -727,6 +728,19 @@ function validateSubjectInputs(scenario, label) {
     // bounded provider string with optional endpoint/credential is accepted.
     return;
   }
+  if (scenario.subject === "provider-replay") {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(`${label} provider-replay inputs must use platforms ["*"] and an empty env`);
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.providerInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.providerInputBytes} UTF-8 bytes`);
+    }
+    // Minimal: any bounded plain object accepted.
+    return;
+  }
   if (scenario.subject === "context-projection") {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
       throw new Error(
@@ -1126,6 +1140,7 @@ export function validateScenario(scenario, file) {
     "domain-capability",
     "provider-turn",
     "provider-generic",
+    "provider-replay",
     "tool-loop",
     "context-projection",
     "user-config",

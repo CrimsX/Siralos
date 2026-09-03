@@ -1,0 +1,8 @@
+{
+  "id": "provider-replay",
+  "subject": "provider-replay",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {}
+}

@@ -113,6 +113,7 @@ const SUBJECT_EVOLVE_CORPUS: &str = "evolve-corpus";
 const SUBJECT_EVOLVE_WORKFLOW: &str = "evolve-workflow";
 const SUBJECT_EVOLVE_PROPOSAL: &str = "evolve-proposal";
 const SUBJECT_PROVIDER_GENERIC: &str = "provider-generic";
+const SUBJECT_PROVIDER_REPLAY: &str = "provider-replay";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -121,7 +122,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 53;
+const CORPUS_VERSION: u64 = 54;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -513,6 +514,7 @@ fn validate_scenario(
             | SUBJECT_EVOLVE_PROPOSAL
             | SUBJECT_EVOLVE_PACKAGING
             | SUBJECT_PROVIDER_GENERIC
+            | SUBJECT_PROVIDER_REPLAY
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -602,6 +604,7 @@ fn validate_scenario(
         | SUBJECT_DOMAIN_CAPABILITY
         | SUBJECT_PROVIDER_TURN
         | SUBJECT_PROVIDER_GENERIC
+        | SUBJECT_PROVIDER_REPLAY
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -660,6 +663,11 @@ fn validate_scenario(
                 scenario.subject.as_str() == SUBJECT_PROVIDER_GENERIC;
             if provider_generic_subject {
                 validate_provider_generic_input(input)?;
+            }
+            let provider_replay_subject =
+                scenario.subject.as_str() == SUBJECT_PROVIDER_REPLAY;
+            if provider_replay_subject {
+                validate_provider_replay_input(input)?;
             }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
@@ -727,32 +735,34 @@ fn validate_scenario(
             if cli_session_subject {
                 crate::harness_cli_session::validate_cli_session_input(input)?;
             }
-            let max_input_bytes =
-                if provider_subject || provider_generic_subject {
-                    MAX_PROVIDER_INPUT_BYTES
-                } else if tool_loop_subject {
-                    MAX_TOOL_LOOP_INPUT_BYTES
-                } else if context_projection_subject {
-                    MAX_CONTEXT_PROJECTION_INPUT_BYTES
-                } else if user_config_subject {
-                    MAX_USER_CONFIG_INPUT_BYTES
-                } else if r13_authority_subject {
-                    MAX_R13_AUTHORITY_INPUT_BYTES
-                } else if r13_guidance_subject {
-                    MAX_R13_GUIDANCE_INPUT_BYTES
-                } else if r13_external_knowledge_subject {
-                    MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES
-                } else if r13_planning_briefing_subject {
-                    crate::harness_r134::MAX_R13_PLANNING_BRIEFING_INPUT_BYTES
-                } else if cli_session_subject {
-                    MAX_CLI_SESSION_INPUT_BYTES
-                } else if language_subject {
-                    MAX_LANGUAGE_INPUT_BYTES
-                } else if domain_subject {
-                    MAX_DOMAIN_INPUT_BYTES
-                } else {
-                    MAX_WORKSPACE_INPUT_BYTES
-                };
+            let max_input_bytes = if provider_subject
+                || provider_generic_subject
+                || provider_replay_subject
+            {
+                MAX_PROVIDER_INPUT_BYTES
+            } else if tool_loop_subject {
+                MAX_TOOL_LOOP_INPUT_BYTES
+            } else if context_projection_subject {
+                MAX_CONTEXT_PROJECTION_INPUT_BYTES
+            } else if user_config_subject {
+                MAX_USER_CONFIG_INPUT_BYTES
+            } else if r13_authority_subject {
+                MAX_R13_AUTHORITY_INPUT_BYTES
+            } else if r13_guidance_subject {
+                MAX_R13_GUIDANCE_INPUT_BYTES
+            } else if r13_external_knowledge_subject {
+                MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES
+            } else if r13_planning_briefing_subject {
+                crate::harness_r134::MAX_R13_PLANNING_BRIEFING_INPUT_BYTES
+            } else if cli_session_subject {
+                MAX_CLI_SESSION_INPUT_BYTES
+            } else if language_subject {
+                MAX_LANGUAGE_INPUT_BYTES
+            } else if domain_subject {
+                MAX_DOMAIN_INPUT_BYTES
+            } else {
+                MAX_WORKSPACE_INPUT_BYTES
+            };
             if serialized.len() > max_input_bytes {
                 return Err(HarnessError::corpus(format!(
                     "scenario {} input exceeds {max_input_bytes} bytes",
@@ -1388,6 +1398,18 @@ fn run_scenario(
                 "provider-generic input was validated while loading the corpus",
             );
             let result = provider_generic_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_PROVIDER_REPLAY => {
+            let input = scenario.input.as_ref().expect(
+                "provider-replay input was validated while loading the corpus",
+            );
+            let result = provider_replay_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -12518,6 +12540,110 @@ fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic replay subject: provider-replay (decisions 73/74, corpus v54).
+
+/// Canonical provider-replay record: hermetic ordered playback, typed
+/// exhausted failure, and copy semantics. All in-memory, no network.
+fn provider_replay_record(_input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecorder, RetainingReplayRecorder,
+    };
+    let body1 = r#"{"choices":[{"message":{"content":"alpha"}}]}"#;
+    let body2 = r#"{"choices":[{"message":{"content":"beta"}}]}"#;
+    let sha1 = siralos_core::identity::sha256_hex(body1.as_bytes());
+    let sha2 = siralos_core::identity::sha256_hex(body2.as_bytes());
+    let identity1 = ProviderResponseIdentity {
+        provider_id: "replay-subject".to_owned(),
+        model: "replay-model".to_owned(),
+        status: Some(200),
+        body_sha256: sha1,
+        body_bytes: body1.len() as u64,
+        observed_at_ms: Some(1000),
+    };
+    let identity2 = ProviderResponseIdentity {
+        provider_id: "replay-subject".to_owned(),
+        model: "replay-model".to_owned(),
+        status: Some(200),
+        body_sha256: sha2,
+        body_bytes: body2.len() as u64,
+        observed_at_ms: Some(1000),
+    };
+    let recorder = RetainingReplayRecorder::new();
+    recorder.record_provider_response(&identity1);
+    recorder.record_provider_response_with_body(&identity1, body1);
+    recorder.record_provider_response(&identity2);
+    recorder.record_provider_response_with_body(&identity2, body2);
+    let provider =
+        siralos_adapters::provider::replay::replay_provider_from_recorder(
+            "replay-subject".to_owned(),
+            "replay-model".to_owned(),
+            &recorder,
+        );
+    let request = siralos_core::provider::ModelRequest {
+        messages: Vec::new(),
+        tools: Vec::new(),
+        system: None,
+    };
+    fn canonical_events(
+        events: Vec<siralos_core::provider::ProviderEvent>,
+    ) -> Vec<Value> {
+        events
+            .iter()
+            .map(|e| match e {
+                siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                    siralos_core::provider::ModelEvent::TextDelta { text } => {
+                        serde_json::json!({"type": "text_delta", "text": text})
+                    }
+                    siralos_core::provider::ModelEvent::ToolCall {
+                        call_id,
+                        tool_name,
+                        input,
+                    } => serde_json::json!({
+                        "type": "tool_call",
+                        "callId": call_id,
+                        "toolName": tool_name,
+                        "input": input.value()
+                    }),
+                    siralos_core::provider::ModelEvent::Completed => {
+                        serde_json::json!({"type": "completed"})
+                    }
+                },
+                siralos_core::provider::ProviderEvent::Failed(msg) => {
+                    serde_json::json!({"type": "failed", "message": msg})
+                }
+                siralos_core::provider::ProviderEvent::Cancelled { message } => {
+                    serde_json::json!({"type": "cancelled", "message": message})
+                }
+                siralos_core::provider::ProviderEvent::Raw(v) => {
+                    serde_json::json!({"type": "raw", "value": v})
+                }
+            })
+            .collect()
+    }
+    let remaining_before1 = provider.recordings_remaining();
+    let token1 = siralos_core::provider::CancellationToken::new();
+    let turn1 =
+        canonical_events(provider.stream(&request, token1.signal()).collect());
+    let remaining_before2 = provider.recordings_remaining();
+    let token2 = siralos_core::provider::CancellationToken::new();
+    let turn2 =
+        canonical_events(provider.stream(&request, token2.signal()).collect());
+    let remaining_before3 = provider.recordings_remaining();
+    let token3 = siralos_core::provider::CancellationToken::new();
+    let turn3 =
+        canonical_events(provider.stream(&request, token3.signal()).collect());
+    Ok(serde_json::json!({
+        "providerId": provider.id(),
+        "model": "replay-model",
+        "remainingCounts": [remaining_before1, remaining_before2, remaining_before3],
+        "turn1Events": turn1,
+        "turn2Events": turn2,
+        "turn3Events": turn3,
+        "recorderSnapshotCount": recorder.records_snapshot().len(),
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -13085,6 +13211,40 @@ fn is_repeat_marker(value: &Value) -> bool {
         }
         _ => false,
     }
+}
+
+/// Strict provider-replay input shape validation (decisions 73/74, corpus v54).
+fn validate_provider_replay_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("provider-replay input must be an object")
+    })?;
+    // Minimal: any bounded plain object is accepted; validate optional string fields if present.
+    for key in
+        ["provider", "model", "credential", "endpoint", "messages", "tools"]
+    {
+        let Some(val) = obj.get(key) else {
+            continue;
+        };
+        match (key, val) {
+            (
+                "provider" | "model" | "credential" | "endpoint",
+                Value::String(_),
+            ) => {}
+            ("provider" | "model" | "credential" | "endpoint", _) => {
+                return Err(HarnessError::corpus(format!(
+                    "provider-replay {key} must be a string"
+                )));
+            }
+            ("messages" | "tools", Value::Array(_)) => {}
+            ("messages" | "tools", _) => {
+                return Err(HarnessError::corpus(format!(
+                    "provider-replay {key} must be an array"
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Strict provider-generic input shape validation (Stage 8, all-purpose provider).
@@ -16707,7 +16867,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 321);
+        assert_eq!(loaded.len(), 322);
     }
 
     #[test]
