@@ -2483,6 +2483,67 @@ function validateContextToolResult(record, label) {
   }
 }
 
+function validateContextBenchmarkResult(record, label) {
+  assertExactKeys(
+    record.result,
+    ["aggregates", "go", "reason", "scenarioMetrics"],
+    `${label}.result`,
+  );
+  if (!Array.isArray(record.result.scenarioMetrics) || record.result.scenarioMetrics.length === 0) {
+    throw new Error(`${label}.result.scenarioMetrics must be a non-empty array`);
+  }
+  for (const [index, entry] of record.result.scenarioMetrics.entries()) {
+    const entryLabel = `${label}.result.scenarioMetrics[${index}]`;
+    assertExactKeys(
+      entry,
+      ["name", "recallBaseline", "recallPaged", "tokensBaseline", "tokensPaged", "toolCalls"],
+      entryLabel,
+    );
+    if (typeof entry.name !== "string" || entry.name.length === 0) {
+      throw new Error(`${entryLabel}.name must be a non-empty string`);
+    }
+    for (const key of [
+      "recallBaseline",
+      "recallPaged",
+      "tokensBaseline",
+      "tokensPaged",
+      "toolCalls",
+    ]) {
+      if (!Number.isSafeInteger(entry[key]) || entry[key] < 0) {
+        throw new Error(`${entryLabel}.${key} must be a non-negative integer`);
+      }
+    }
+  }
+  assertExactKeys(
+    record.result.aggregates,
+    ["totalBaseline", "totalPaged", "totalRecallBaseline", "totalRecallPaged", "totalToolCalls"],
+    `${label}.result.aggregates`,
+  );
+  for (const key of [
+    "totalBaseline",
+    "totalPaged",
+    "totalRecallBaseline",
+    "totalRecallPaged",
+    "totalToolCalls",
+  ]) {
+    if (!Number.isSafeInteger(record.result.aggregates[key]) || record.result.aggregates[key] < 0) {
+      throw new Error(`${label}.result.aggregates.${key} must be a non-negative integer`);
+    }
+  }
+  if (typeof record.result.go !== "boolean") {
+    throw new Error(`${label}.result.go must be a boolean`);
+  }
+  if (typeof record.result.reason !== "string" || record.result.reason.length === 0) {
+    throw new Error(`${label}.result.reason must be a non-empty string`);
+  }
+  if (
+    !record.result.reason.includes("total_recall_paged") ||
+    !record.result.reason.includes("total_paged")
+  ) {
+    throw new Error(`${label}.result.reason must cite the compared numbers`);
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -4395,6 +4456,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-tool") {
     validateContextToolResult(record, label);
+    return;
+  }
+  if (record.subject === "context-benchmark") {
+    validateContextBenchmarkResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

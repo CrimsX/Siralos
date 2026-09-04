@@ -120,6 +120,7 @@ const SUBJECT_CONTEXT_GRAPH: &str = "context-graph";
 const SUBJECT_CONTEXT_REPRESENTATION: &str = "context-representation";
 const SUBJECT_CONTEXT_SCHEDULER: &str = "context-scheduler";
 const SUBJECT_CONTEXT_TOOL: &str = "context-tool";
+const SUBJECT_CONTEXT_BENCHMARK: &str = "context-benchmark";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -128,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 60;
+const CORPUS_VERSION: u64 = 61;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -527,6 +528,7 @@ fn validate_scenario(
             | SUBJECT_CONTEXT_REPRESENTATION
             | SUBJECT_CONTEXT_SCHEDULER
             | SUBJECT_CONTEXT_TOOL
+            | SUBJECT_CONTEXT_BENCHMARK
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -623,6 +625,7 @@ fn validate_scenario(
         | SUBJECT_CONTEXT_REPRESENTATION
         | SUBJECT_CONTEXT_SCHEDULER
         | SUBJECT_CONTEXT_TOOL
+        | SUBJECT_CONTEXT_BENCHMARK
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -717,6 +720,11 @@ fn validate_scenario(
             if context_tool_subject {
                 validate_context_tool_input(input)?;
             }
+            let context_benchmark_subject =
+                scenario.subject.as_str() == SUBJECT_CONTEXT_BENCHMARK;
+            if context_benchmark_subject {
+                validate_context_benchmark_input(input)?;
+            }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
             if tool_loop_subject {
@@ -789,6 +797,9 @@ fn validate_scenario(
                 || session_replay_subject
                 || context_graph_subject
                 || context_representation_subject
+                || context_scheduler_subject
+                || context_tool_subject
+                || context_benchmark_subject
             {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -1533,6 +1544,18 @@ fn run_scenario(
                 "context-tool input was validated while loading the corpus",
             );
             let result = context_tool_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_BENCHMARK => {
+            let input = scenario.input.as_ref().expect(
+                "context-benchmark input was validated while loading the corpus",
+            );
+            let result = context_benchmark_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -13712,6 +13735,46 @@ fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic subject: context-benchmark (decision 79 slice 5, corpus v61).
+// ---------------------------------------------------------------------------
+
+fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::tool::context_benchmark::{gold_set, run_benchmark};
+    let scenarios = gold_set().map_err(|e| {
+        HarnessError::corpus(format!("context-benchmark gold_set failed: {e}"))
+    })?;
+    let report = run_benchmark(&scenarios).map_err(|e| {
+        HarnessError::corpus(format!("context-benchmark run failed: {e}"))
+    })?;
+    let scenario_metrics: Vec<Value> = report
+        .scenarios
+        .iter()
+        .map(|m| {
+            json!({
+                "name": m.name,
+                "tokensBaseline": m.tokens_baseline,
+                "tokensPaged": m.tokens_paged,
+                "recallBaseline": m.recall_baseline,
+                "recallPaged": m.recall_paged,
+                "toolCalls": m.tool_calls
+            })
+        })
+        .collect();
+    Ok(json!({
+        "scenarioMetrics": scenario_metrics,
+        "aggregates": {
+            "totalBaseline": report.total_baseline,
+            "totalPaged": report.total_paged,
+            "totalRecallBaseline": report.total_recall_baseline,
+            "totalRecallPaged": report.total_recall_paged,
+            "totalToolCalls": report.total_tool_calls
+        },
+        "go": report.go,
+        "reason": report.reason
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -14402,6 +14465,19 @@ fn validate_context_scheduler_input(
 fn validate_context_tool_input(input: &Value) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
         HarnessError::corpus("context-tool input must be an object")
+    })?;
+    for key in obj.keys() {
+        let _ = key;
+    }
+    Ok(())
+}
+
+/// Strict context-benchmark input shape validation (decision 79 slice 5, corpus v61).
+fn validate_context_benchmark_input(
+    input: &Value,
+) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("context-benchmark input must be an object")
     })?;
     for key in obj.keys() {
         let _ = key;
@@ -18029,7 +18105,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 328);
+        assert_eq!(loaded.len(), 329);
     }
 
     #[test]

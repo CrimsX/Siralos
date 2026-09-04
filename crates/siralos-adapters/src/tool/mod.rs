@@ -8,6 +8,7 @@
 //! authorization.
 
 pub mod context;
+pub mod context_benchmark;
 pub mod workspace_tools;
 
 pub use context::{
