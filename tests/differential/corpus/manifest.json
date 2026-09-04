@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 59,
+  "corpusVersion": 60,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -297,6 +297,10 @@
     {
       "file": "context-scheduler.json",
       "sha256": "2c12637f0f893d4a78cb02dbd65724fa2ad091398f9c537d3ec0b64289ae3ab8"
+    },
+    {
+      "file": "context-tool.json",
+      "sha256": "5012c57af2c9eb68b390882ace6a9260c1c77d0fb4a349aacc0f8ede4274f4fc"
     },
     {
       "file": "determinism-replay.full.json",
@@ -1311,5 +1315,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "2384e0aac6d38836ca361e7453854787c635df6082646579c1affed81f448549"
+  "corpusSha256": "35967a6c012e8c6a74e21adc1aa9a6085a0449a18767e9ed28c15324b0935b0b"
 }

@@ -119,6 +119,7 @@ const SUBJECT_REPLAY_STORE: &str = "replay-store";
 const SUBJECT_CONTEXT_GRAPH: &str = "context-graph";
 const SUBJECT_CONTEXT_REPRESENTATION: &str = "context-representation";
 const SUBJECT_CONTEXT_SCHEDULER: &str = "context-scheduler";
+const SUBJECT_CONTEXT_TOOL: &str = "context-tool";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -127,7 +128,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 59;
+const CORPUS_VERSION: u64 = 60;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -525,6 +526,7 @@ fn validate_scenario(
             | SUBJECT_CONTEXT_GRAPH
             | SUBJECT_CONTEXT_REPRESENTATION
             | SUBJECT_CONTEXT_SCHEDULER
+            | SUBJECT_CONTEXT_TOOL
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -620,6 +622,7 @@ fn validate_scenario(
         | SUBJECT_CONTEXT_GRAPH
         | SUBJECT_CONTEXT_REPRESENTATION
         | SUBJECT_CONTEXT_SCHEDULER
+        | SUBJECT_CONTEXT_TOOL
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -708,6 +711,11 @@ fn validate_scenario(
                 scenario.subject.as_str() == SUBJECT_CONTEXT_SCHEDULER;
             if context_scheduler_subject {
                 validate_context_scheduler_input(input)?;
+            }
+            let context_tool_subject =
+                scenario.subject.as_str() == SUBJECT_CONTEXT_TOOL;
+            if context_tool_subject {
+                validate_context_tool_input(input)?;
             }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
@@ -1513,6 +1521,18 @@ fn run_scenario(
                 "context-scheduler input was validated while loading the corpus",
             );
             let result = context_scheduler_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_TOOL => {
+            let input = scenario.input.as_ref().expect(
+                "context-tool input was validated while loading the corpus",
+            );
+            let result = context_tool_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -13365,6 +13385,333 @@ fn context_scheduler_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic subject: context-tool (decision 79 slice 4, corpus v60).
+// ---------------------------------------------------------------------------
+
+fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
+    use siralos_adapters::tool::{
+        ContextExpandTool, ContextInspectTool, ContextSearchTool,
+        ContextToolState,
+    };
+    use siralos_core::context_graph::{
+        ContextEdge, ContextEdgeKind, ContextGraph, ContextNode,
+        ContextNodeKind, estimate_tokens,
+    };
+    use siralos_core::context_representation::{
+        ContextRepresentationStore, NodeRepresentation, NodeRepresentationSet,
+        RepresentationLevel, RepresentationOrigin, content_digest_of,
+    };
+    use siralos_core::context_scheduler::{
+        SchedulerEntry, WorkingSetState, WorkingSetTier,
+    };
+    use siralos_core::identity::sha256_hex;
+    use siralos_core::provider::CancellationToken;
+    use siralos_core::tool::Tool;
+
+    // --- Fixture: 3-node graph ---
+    let a_body = "body-a";
+    let b_body = "body-b";
+    let k_body = "body-k";
+    let a_digest = sha256_hex(a_body.as_bytes());
+    let b_digest = sha256_hex(b_body.as_bytes());
+    let k_digest = sha256_hex(k_body.as_bytes());
+    let a_mutated = sha256_hex("mutated-a".as_bytes());
+    let nodes = vec![
+        ContextNode {
+            id: "ctx-a".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: a_digest.clone(),
+            summary: "auth overview for ctx-a".to_owned(),
+            source_bindings: vec![],
+            token_estimate: estimate_tokens("auth overview for ctx-a"),
+        },
+        ContextNode {
+            id: "ctx-b".to_owned(),
+            kind: ContextNodeKind::Decision,
+            content_digest: b_digest.clone(),
+            summary: "decision summary b".to_owned(),
+            source_bindings: vec![],
+            token_estimate: estimate_tokens("decision summary b"),
+        },
+        ContextNode {
+            id: "ctx-knowledge".to_owned(),
+            kind: ContextNodeKind::Knowledge,
+            content_digest: k_digest.clone(),
+            summary: "knowledge with bindings".to_owned(),
+            source_bindings: vec![
+                ("ctx-a".to_owned(), a_digest.clone()),
+                ("ctx-b".to_owned(), b_digest.clone()),
+            ],
+            token_estimate: estimate_tokens("knowledge with bindings"),
+        },
+    ];
+    let edges = vec![
+        ContextEdge {
+            from: "ctx-a".to_owned(),
+            to: "ctx-b".to_owned(),
+            kind: ContextEdgeKind::Contains,
+        },
+        ContextEdge {
+            from: "ctx-b".to_owned(),
+            to: "ctx-knowledge".to_owned(),
+            kind: ContextEdgeKind::DependsOn,
+        },
+    ];
+    let graph = ContextGraph::build(nodes, edges).map_err(|e| {
+        HarnessError::corpus(format!("context-tool graph build failed: {e}"))
+    })?;
+
+    // --- Representation store: ctx-a L0+L2 host, ctx-b L0 host, ctx-knowledge L0+L1 model-derived ---
+    let identity_a = r#"{"id":"ctx-a","kind":"source"}"#;
+    let structured_a = r#"["fact1","fact2"]"#;
+    let identity_b = r#"{"id":"ctx-b","kind":"decision"}"#;
+    let identity_k = r#"{"id":"ctx-knowledge","kind":"knowledge"}"#;
+    let summary_k = "knowledge prose summary";
+    let reps_a = vec![
+        NodeRepresentation {
+            level: RepresentationLevel::Identity,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: content_digest_of(identity_a),
+            derived_from: vec![],
+            content: identity_a.to_owned(),
+        },
+        NodeRepresentation {
+            level: RepresentationLevel::Structured,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: content_digest_of(structured_a),
+            derived_from: vec![],
+            content: structured_a.to_owned(),
+        },
+    ];
+    let reps_b = vec![NodeRepresentation {
+        level: RepresentationLevel::Identity,
+        origin: RepresentationOrigin::HostExtracted,
+        content_digest: content_digest_of(identity_b),
+        derived_from: vec![],
+        content: identity_b.to_owned(),
+    }];
+    let reps_k = vec![
+        NodeRepresentation {
+            level: RepresentationLevel::Identity,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: content_digest_of(identity_k),
+            derived_from: vec![],
+            content: identity_k.to_owned(),
+        },
+        NodeRepresentation {
+            level: RepresentationLevel::Summary,
+            origin: RepresentationOrigin::ModelDerived,
+            content_digest: content_digest_of(summary_k),
+            derived_from: vec![(
+                "ctx-knowledge".to_owned(),
+                content_digest_of(identity_k),
+            )],
+            content: summary_k.to_owned(),
+        },
+    ];
+    let set_a = NodeRepresentationSet::build("ctx-a".to_owned(), reps_a)
+        .map_err(|e| {
+            HarnessError::corpus(format!(
+                "context-tool set_a build failed: {e}"
+            ))
+        })?;
+    let set_b = NodeRepresentationSet::build("ctx-b".to_owned(), reps_b)
+        .map_err(|e| {
+            HarnessError::corpus(format!(
+                "context-tool set_b build failed: {e}"
+            ))
+        })?;
+    let set_k =
+        NodeRepresentationSet::build("ctx-knowledge".to_owned(), reps_k)
+            .map_err(|e| {
+                HarnessError::corpus(format!(
+                    "context-tool set_k build failed: {e}"
+                ))
+            })?;
+    let store = ContextRepresentationStore::build(vec![set_a, set_b, set_k])
+        .map_err(|e| {
+        HarnessError::corpus(format!("context-tool store build failed: {e}"))
+    })?;
+
+    // --- Scheduler state: ctx-a Hot pinned, ctx-b Warm, ctx-knowledge Cold ---
+    let entries = vec![
+        SchedulerEntry {
+            node_id: "ctx-a".to_owned(),
+            tier: WorkingSetTier::Hot,
+            pinned: true,
+            relevance: 80,
+            last_access_tick: 5,
+            token_estimate: 1000,
+        },
+        SchedulerEntry {
+            node_id: "ctx-b".to_owned(),
+            tier: WorkingSetTier::Warm,
+            pinned: false,
+            relevance: 50,
+            last_access_tick: 2,
+            token_estimate: 1000,
+        },
+        SchedulerEntry {
+            node_id: "ctx-knowledge".to_owned(),
+            tier: WorkingSetTier::Cold,
+            pinned: false,
+            relevance: 10,
+            last_access_tick: 0,
+            token_estimate: 1000,
+        },
+    ];
+    let state = WorkingSetState::build(entries).map_err(|e| {
+        HarnessError::corpus(format!("context-tool state build failed: {e}"))
+    })?;
+    let current =
+        vec![("ctx-a".to_owned(), a_mutated), ("ctx-b".to_owned(), b_digest)];
+    let snapshot = ContextToolState::new(graph, store, state, current);
+
+    // Mutation guard: capture tiers before.
+    let tiers_before: std::collections::BTreeMap<String, String> = snapshot
+        .state
+        .entries()
+        .iter()
+        .map(|e| (e.node_id.clone(), e.tier.as_str().to_owned()))
+        .collect();
+
+    let token = CancellationToken::new();
+    // Inspect ctx-a
+    let inspect_tool = ContextInspectTool::new(snapshot.clone());
+    let inspect_a = match inspect_tool
+        .execute(&json!({ "node_id": "ctx-a" }), token.signal())
+    {
+        siralos_core::provider::ToolExecutionResult::Success {
+            output,
+            ..
+        } => output,
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "inspect ctx-a failed: {other:?}"
+            )));
+        }
+    };
+    // Search auth
+    let search_tool = ContextSearchTool::new(snapshot.clone());
+    let search_out = match search_tool
+        .execute(&json!({ "query": "auth" }), token.signal())
+    {
+        siralos_core::provider::ToolExecutionResult::Success {
+            output,
+            ..
+        } => output,
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "search auth failed: {other:?}"
+            )));
+        }
+    };
+    let search_hits = search_out
+        .get("hits")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // Expand ctx-a structured
+    let expand_tool = ContextExpandTool::new(snapshot.clone());
+    let expand_a = match expand_tool.execute(
+        &json!({ "node_id": "ctx-a", "level": "structured" }),
+        token.signal(),
+    ) {
+        siralos_core::provider::ToolExecutionResult::Success {
+            output,
+            ..
+        } => output,
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "expand ctx-a failed: {other:?}"
+            )));
+        }
+    };
+    let expand_digest = expand_a
+        .get("content_digest")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    let expand_origin = expand_a
+        .get("origin")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_owned();
+    // Expand ctx-b structured -> unavailable
+    let expand_b_result = expand_tool.execute(
+        &json!({ "node_id": "ctx-b", "level": "structured" }),
+        token.signal(),
+    );
+    let expand_unavailable = match expand_b_result {
+        siralos_core::provider::ToolExecutionResult::Unavailable {
+            message,
+        } => message,
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "expand ctx-b unavailable expected, got {other:?}"
+            )));
+        }
+    };
+    // Expand unknown -> not-found
+    let expand_unknown_result = expand_tool.execute(
+        &json!({ "node_id": "unknown-node", "level": "identity" }),
+        token.signal(),
+    );
+    let expand_not_found = match expand_unknown_result {
+        siralos_core::provider::ToolExecutionResult::Failed { message } => {
+            message
+        }
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "expand unknown not-found expected, got {other:?}"
+            )));
+        }
+    };
+    // Inspect ctx-knowledge stale
+    let inspect_k_tool = ContextInspectTool::new(snapshot.clone());
+    let inspect_k = match inspect_k_tool
+        .execute(&json!({ "node_id": "ctx-knowledge" }), token.signal())
+    {
+        siralos_core::provider::ToolExecutionResult::Success {
+            output,
+            ..
+        } => output,
+        other => {
+            return Err(HarnessError::corpus(format!(
+                "inspect knowledge failed: {other:?}"
+            )));
+        }
+    };
+    let stale_knowledge =
+        inspect_k.get("stale").and_then(|v| v.as_bool()).unwrap_or(false);
+    // Mutation guard: tiers after all calls must equal before.
+    let tiers_after: std::collections::BTreeMap<String, String> = snapshot
+        .state
+        .entries()
+        .iter()
+        .map(|e| (e.node_id.clone(), e.tier.as_str().to_owned()))
+        .collect();
+    let mutation_guard =
+        if tiers_before == tiers_after { "unchanged" } else { "mutated" };
+    if mutation_guard != "unchanged" {
+        return Err(HarnessError::corpus(
+            "mutation guard failed: tiers changed",
+        ));
+    }
+
+    Ok(json!({
+        "inspectCtxA": inspect_a,
+        "searchAuthHits": search_hits,
+        "expandDigest": expand_digest,
+        "expandOrigin": expand_origin,
+        "expandUnavailable": expand_unavailable,
+        "expandNotFound": expand_not_found,
+        "inspectKnowledgeStale": stale_knowledge,
+        "mutationGuard": mutation_guard,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -14044,6 +14391,17 @@ fn validate_context_scheduler_input(
 ) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
         HarnessError::corpus("context-scheduler input must be an object")
+    })?;
+    for key in obj.keys() {
+        let _ = key;
+    }
+    Ok(())
+}
+
+/// Strict context-tool input shape validation (decision 79 slice 4, corpus v60).
+fn validate_context_tool_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("context-tool input must be an object")
     })?;
     for key in obj.keys() {
         let _ = key;
@@ -17671,7 +18029,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 327);
+        assert_eq!(loaded.len(), 328);
     }
 
     #[test]

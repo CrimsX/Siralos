@@ -7,8 +7,12 @@
 //! or optional-domain Tool exists here, and adapters never decide Host
 //! authorization.
 
+pub mod context;
 pub mod workspace_tools;
 
+pub use context::{
+    ContextExpandTool, ContextInspectTool, ContextSearchTool, ContextToolState,
+};
 pub use workspace_tools::{
     WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
 };

@@ -2386,6 +2386,103 @@ function validateContextSchedulerResult(record, label) {
   }
 }
 
+function validateContextToolResult(record, label) {
+  assertExactKeys(
+    record.result,
+    [
+      "expandDigest",
+      "expandNotFound",
+      "expandOrigin",
+      "expandUnavailable",
+      "inspectCtxA",
+      "inspectKnowledgeStale",
+      "mutationGuard",
+      "searchAuthHits",
+    ],
+    `${label}.result`,
+  );
+  if (!isObject(record.result.inspectCtxA)) {
+    throw new Error(`${label}.result.inspectCtxA must be an object`);
+  }
+  assertExactKeys(
+    record.result.inspectCtxA,
+    [
+      "availableLevels",
+      "content_digest",
+      "id",
+      "kind",
+      "pinned",
+      "stale",
+      "summary",
+      "tier",
+      "tokenEstimate",
+    ],
+    `${label}.result.inspectCtxA`,
+  );
+  if (
+    typeof record.result.inspectCtxA.id !== "string" ||
+    record.result.inspectCtxA.id.length === 0
+  ) {
+    throw new Error(`${label}.result.inspectCtxA.id must be a non-empty string`);
+  }
+  if (
+    typeof record.result.inspectCtxA.kind !== "string" ||
+    record.result.inspectCtxA.kind.length === 0
+  ) {
+    throw new Error(`${label}.result.inspectCtxA.kind must be a non-empty string`);
+  }
+  if (
+    typeof record.result.inspectCtxA.content_digest !== "string" ||
+    !LOWER_SHA256.test(record.result.inspectCtxA.content_digest)
+  ) {
+    throw new Error(
+      `${label}.result.inspectCtxA.content_digest must be a lowercase SHA-256 digest`,
+    );
+  }
+  if (!Array.isArray(record.result.inspectCtxA.availableLevels)) {
+    throw new Error(`${label}.result.inspectCtxA.availableLevels must be an array`);
+  }
+  if (!Array.isArray(record.result.searchAuthHits)) {
+    throw new Error(`${label}.result.searchAuthHits must be an array`);
+  }
+  if (
+    typeof record.result.expandDigest !== "string" ||
+    !LOWER_SHA256.test(record.result.expandDigest)
+  ) {
+    throw new Error(`${label}.result.expandDigest must be a lowercase SHA-256 digest`);
+  }
+  if (typeof record.result.expandOrigin !== "string" || record.result.expandOrigin.length === 0) {
+    throw new Error(`${label}.result.expandOrigin must be a non-empty string`);
+  }
+  if (
+    typeof record.result.expandUnavailable !== "string" ||
+    !record.result.expandUnavailable.includes("not resident at level") ||
+    !record.result.expandUnavailable.includes("available:")
+  ) {
+    throw new Error(
+      `${label}.result.expandUnavailable must be a not-resident message with available list`,
+    );
+  }
+  if (
+    typeof record.result.expandNotFound !== "string" ||
+    !record.result.expandNotFound.includes("unknown node")
+  ) {
+    throw new Error(`${label}.result.expandNotFound must be a not-found message`);
+  }
+  if (typeof record.result.inspectKnowledgeStale !== "boolean") {
+    throw new Error(`${label}.result.inspectKnowledgeStale must be a boolean`);
+  }
+  if (record.result.inspectKnowledgeStale !== true) {
+    throw new Error(`${label}.result.inspectKnowledgeStale must be true`);
+  }
+  if (
+    typeof record.result.mutationGuard !== "string" ||
+    record.result.mutationGuard !== "unchanged"
+  ) {
+    throw new Error(`${label}.result.mutationGuard must be "unchanged"`);
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -4294,6 +4391,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-scheduler") {
     validateContextSchedulerResult(record, label);
+    return;
+  }
+  if (record.subject === "context-tool") {
+    validateContextToolResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {
