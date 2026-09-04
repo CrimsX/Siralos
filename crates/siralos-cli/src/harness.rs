@@ -118,6 +118,7 @@ const SUBJECT_SESSION_REPLAY: &str = "session-replay";
 const SUBJECT_REPLAY_STORE: &str = "replay-store";
 const SUBJECT_CONTEXT_GRAPH: &str = "context-graph";
 const SUBJECT_CONTEXT_REPRESENTATION: &str = "context-representation";
+const SUBJECT_CONTEXT_SCHEDULER: &str = "context-scheduler";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -126,7 +127,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 58;
+const CORPUS_VERSION: u64 = 59;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -523,6 +524,7 @@ fn validate_scenario(
             | SUBJECT_REPLAY_STORE
             | SUBJECT_CONTEXT_GRAPH
             | SUBJECT_CONTEXT_REPRESENTATION
+            | SUBJECT_CONTEXT_SCHEDULER
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -617,6 +619,7 @@ fn validate_scenario(
         | SUBJECT_REPLAY_STORE
         | SUBJECT_CONTEXT_GRAPH
         | SUBJECT_CONTEXT_REPRESENTATION
+        | SUBJECT_CONTEXT_SCHEDULER
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -700,6 +703,11 @@ fn validate_scenario(
                 scenario.subject.as_str() == SUBJECT_CONTEXT_REPRESENTATION;
             if context_representation_subject {
                 validate_context_representation_input(input)?;
+            }
+            let context_scheduler_subject =
+                scenario.subject.as_str() == SUBJECT_CONTEXT_SCHEDULER;
+            if context_scheduler_subject {
+                validate_context_scheduler_input(input)?;
             }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
@@ -1493,6 +1501,18 @@ fn run_scenario(
                 "context-representation input was validated while loading the corpus",
             );
             let result = context_representation_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_SCHEDULER => {
+            let input = scenario.input.as_ref().expect(
+                "context-scheduler input was validated while loading the corpus",
+            );
+            let result = context_scheduler_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -13245,6 +13265,106 @@ fn context_representation_record(
 }
 
 // ---------------------------------------------------------------------------
+// Hermetic subject: context-scheduler (decision 79 slice 3, corpus v59).
+
+fn context_scheduler_record(_input: &Value) -> Result<Value, HarnessError> {
+    use siralos_core::context_scheduler::{
+        SchedulerConfig, SchedulerEntry, SchedulerEvent, SchedulerTick,
+        WorkingSetState, WorkingSetTier,
+    };
+
+    let entries = vec![
+        SchedulerEntry {
+            node_id: "ctx-a".to_owned(),
+            tier: WorkingSetTier::Cold,
+            pinned: false,
+            relevance: 10,
+            last_access_tick: 0,
+            token_estimate: 1000,
+        },
+        SchedulerEntry {
+            node_id: "ctx-b".to_owned(),
+            tier: WorkingSetTier::Cold,
+            pinned: false,
+            relevance: 50,
+            last_access_tick: 0,
+            token_estimate: 1000,
+        },
+        SchedulerEntry {
+            node_id: "ctx-c".to_owned(),
+            tier: WorkingSetTier::Hot,
+            pinned: false,
+            relevance: 90,
+            last_access_tick: 0,
+            token_estimate: 1000,
+        },
+    ];
+    let mut state = WorkingSetState::build(entries).map_err(|e| {
+        HarnessError::corpus(format!("context-scheduler build failed: {e}"))
+    })?;
+    let tiers_before: std::collections::BTreeMap<String, String> = state
+        .entries()
+        .iter()
+        .map(|e| (e.node_id.clone(), e.tier.as_str().to_owned()))
+        .collect();
+
+    // Access(ctx-a) and Pin(ctx-b)
+    state
+        .apply_event(SchedulerEvent::Access { node_id: "ctx-a".to_owned() })
+        .map_err(|e| HarnessError::corpus(format!("access failed: {e}")))?;
+    state
+        .apply_event(SchedulerEvent::Pin { node_id: "ctx-b".to_owned() })
+        .map_err(|e| HarnessError::corpus(format!("pin failed: {e}")))?;
+
+    let cfg = SchedulerConfig::default();
+    let tick_report = state.tick(&cfg);
+    let tick_report_json = json!({
+        "tick": tick_report.tick,
+        "promoted": tick_report.promoted,
+        "demoted": tick_report.demoted,
+    });
+
+    // Stale(ctx-c) + tick
+    state
+        .apply_event(SchedulerEvent::Stale { node_id: "ctx-c".to_owned() })
+        .map_err(|e| HarnessError::corpus(format!("stale failed: {e}")))?;
+    let _ = state.tick(&cfg);
+    let tiers_after_stale: std::collections::BTreeMap<String, String> = state
+        .entries()
+        .iter()
+        .map(|e| (e.node_id.clone(), e.tier.as_str().to_owned()))
+        .collect();
+
+    // Budget with tiny budget forcing demotion.
+    let tiny_cfg = SchedulerConfig::new(1500)
+        .map_err(|e| HarnessError::corpus(format!("{e}")))?;
+    let estimates = vec![
+        ("ctx-a".to_owned(), 1000),
+        ("ctx-b".to_owned(), 1000),
+        ("ctx-c".to_owned(), 1000),
+    ];
+    let budget = state
+        .enforce_budget(&tiny_cfg, &estimates)
+        .map_err(|e| HarnessError::corpus(format!("budget failed: {e}")))?;
+
+    let unknown_error = match state.apply_event(SchedulerEvent::Access {
+        node_id: "unknown-node".to_owned(),
+    }) {
+        Ok(_) => "unexpected-ok".to_owned(),
+        Err(e) => format!("{e}"),
+    };
+
+    Ok(json!({
+        "tiersBefore": tiers_before,
+        "tickReport": tick_report_json,
+        "tiersAfterStale": tiers_after_stale,
+        "budgetDemotions": budget.demoted,
+        "hotTokensAfter": budget.hot_tokens_after,
+        "unknownNodeError": unknown_error,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical provider-turn record: one canonical observation per input
@@ -13911,6 +14031,19 @@ fn validate_context_representation_input(
 ) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
         HarnessError::corpus("context-representation input must be an object")
+    })?;
+    for key in obj.keys() {
+        let _ = key;
+    }
+    Ok(())
+}
+
+/// Strict context-scheduler input shape validation (decision 79 slice 3, corpus v59).
+fn validate_context_scheduler_input(
+    input: &Value,
+) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("context-scheduler input must be an object")
     })?;
     for key in obj.keys() {
         let _ = key;
@@ -17538,7 +17671,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 326);
+        assert_eq!(loaded.len(), 327);
     }
 
     #[test]

@@ -2336,6 +2336,56 @@ function validateContextRepresentationResult(record, label) {
   }
 }
 
+function validateContextSchedulerResult(record, label) {
+  assertExactKeys(
+    record.result,
+    [
+      "budgetDemotions",
+      "hotTokensAfter",
+      "tiersAfterStale",
+      "tiersBefore",
+      "tickReport",
+      "unknownNodeError",
+    ],
+    `${label}.result`,
+  );
+  if (!isObject(record.result.tiersBefore)) {
+    throw new Error(`${label}.result.tiersBefore must be an object`);
+  }
+  if (!isObject(record.result.tiersAfterStale)) {
+    throw new Error(`${label}.result.tiersAfterStale must be an object`);
+  }
+  if (!isObject(record.result.tickReport)) {
+    throw new Error(`${label}.result.tickReport must be an object`);
+  }
+  assertExactKeys(
+    record.result.tickReport,
+    ["demoted", "promoted", "tick"],
+    `${label}.result.tickReport`,
+  );
+  if (!Number.isInteger(record.result.tickReport.tick) || record.result.tickReport.tick < 0) {
+    throw new Error(`${label}.result.tickReport.tick must be a non-negative integer`);
+  }
+  if (!Array.isArray(record.result.tickReport.promoted)) {
+    throw new Error(`${label}.result.tickReport.promoted must be an array`);
+  }
+  if (!Array.isArray(record.result.tickReport.demoted)) {
+    throw new Error(`${label}.result.tickReport.demoted must be an array`);
+  }
+  if (!Array.isArray(record.result.budgetDemotions)) {
+    throw new Error(`${label}.result.budgetDemotions must be an array`);
+  }
+  if (!Number.isInteger(record.result.hotTokensAfter) || record.result.hotTokensAfter < 0) {
+    throw new Error(`${label}.result.hotTokensAfter must be a non-negative integer`);
+  }
+  if (
+    typeof record.result.unknownNodeError !== "string" ||
+    record.result.unknownNodeError.length === 0
+  ) {
+    throw new Error(`${label}.result.unknownNodeError must be a non-empty string`);
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -4240,6 +4290,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-representation") {
     validateContextRepresentationResult(record, label);
+    return;
+  }
+  if (record.subject === "context-scheduler") {
+    validateContextSchedulerResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {
