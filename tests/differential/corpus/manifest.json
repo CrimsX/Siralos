@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 66,
+  "corpusVersion": 67,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -299,6 +299,10 @@
       "sha256": "02624548ed2c4b2c0f40414555ed17e4e6229619977445959091d11084fa4a3e"
     },
     {
+      "file": "context-scheduler.assembly-l1-default.json",
+      "sha256": "81f508d01480252d4bbd57a33a5d62fead5563539381a61a3a19a5694a273c15"
+    },
+    {
       "file": "context-scheduler.coalescing.json",
       "sha256": "ad31e89e4a005d35c8d2924db32cecd9260c8016378ff44dc54930d305016ec6"
     },
@@ -313,6 +317,10 @@
     {
       "file": "context-scheduler.json",
       "sha256": "2c12637f0f893d4a78cb02dbd65724fa2ad091398f9c537d3ec0b64289ae3ab8"
+    },
+    {
+      "file": "context-scheduler.neighbor-prefetch.json",
+      "sha256": "41e57d63e4dca93019e0269cfc3bd4544552c15748706df0bedfde31b475e511"
     },
     {
       "file": "context-scheduler.pin-quota.json",
@@ -1335,5 +1343,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "1b796039467d674a3a412b271336ac5b43032efee845c18fdac6feae1d1359fb"
+  "corpusSha256": "485483047736881c009fb00367b0235760acfbe9a37f78a624bdcc53cc218f04"
 }

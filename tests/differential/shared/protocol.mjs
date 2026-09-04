@@ -2340,6 +2340,7 @@ function validateContextSchedulerResult(record, label) {
   assertExactKeys(
     record.result,
     [
+      "assembly",
       "budgetDemotions",
       "hotTokensAfter",
       "tiersAfterStale",
@@ -2383,6 +2384,86 @@ function validateContextSchedulerResult(record, label) {
     record.result.unknownNodeError.length === 0
   ) {
     throw new Error(`${label}.result.unknownNodeError must be a non-empty string`);
+  }
+  if (!isObject(record.result.assembly)) {
+    throw new Error(`${label}.result.assembly must be an object`);
+  }
+  assertExactKeys(
+    record.result.assembly,
+    ["demoted", "entries", "totalTokensAfter", "totalTokensBefore"],
+    `${label}.result.assembly`,
+  );
+  if (!Array.isArray(record.result.assembly.entries)) {
+    throw new Error(`${label}.result.assembly.entries must be an array`);
+  }
+  for (const [index, entry] of record.result.assembly.entries.entries()) {
+    assertExactKeys(
+      entry,
+      ["contentDigest", "neighbors", "nodeId", "summary", "tokenEstimate"],
+      `${label}.result.assembly.entries[${index}]`,
+    );
+    if (typeof entry.nodeId !== "string" || entry.nodeId.length === 0) {
+      throw new Error(
+        `${label}.result.assembly.entries[${index}].nodeId must be a non-empty string`,
+      );
+    }
+    if (typeof entry.contentDigest !== "string" || !LOWER_SHA256.test(entry.contentDigest)) {
+      throw new Error(
+        `${label}.result.assembly.entries[${index}].contentDigest must be a lowercase SHA-256 digest`,
+      );
+    }
+    if (typeof entry.summary !== "string") {
+      throw new Error(`${label}.result.assembly.entries[${index}].summary must be a string`);
+    }
+    if (!Number.isInteger(entry.tokenEstimate) || entry.tokenEstimate < 0) {
+      throw new Error(
+        `${label}.result.assembly.entries[${index}].tokenEstimate must be a non-negative integer`,
+      );
+    }
+    if (!Array.isArray(entry.neighbors)) {
+      throw new Error(`${label}.result.assembly.entries[${index}].neighbors must be an array`);
+    }
+    if (entry.neighbors.length > 8) {
+      throw new Error(
+        `${label}.result.assembly.entries[${index}].neighbors must have at most 8 entries`,
+      );
+    }
+    for (const [nIdx, neigh] of entry.neighbors.entries()) {
+      assertExactKeys(
+        neigh,
+        ["contentDigest", "nodeId"],
+        `${label}.result.assembly.entries[${index}].neighbors[${nIdx}]`,
+      );
+      if (typeof neigh.nodeId !== "string" || neigh.nodeId.length === 0) {
+        throw new Error(
+          `${label}.result.assembly.entries[${index}].neighbors[${nIdx}].nodeId must be a non-empty string`,
+        );
+      }
+      if (typeof neigh.contentDigest !== "string" || !LOWER_SHA256.test(neigh.contentDigest)) {
+        throw new Error(
+          `${label}.result.assembly.entries[${index}].neighbors[${nIdx}].contentDigest must be a lowercase SHA-256 digest`,
+        );
+      }
+    }
+    // No content leak: neighbors must not contain summary/content
+    if ("content" in entry || "summaryDigest" in entry) {
+      throw new Error(`${label}.result.assembly.entries[${index}] must not leak content`);
+    }
+  }
+  if (
+    !Number.isInteger(record.result.assembly.totalTokensBefore) ||
+    record.result.assembly.totalTokensBefore < 0
+  ) {
+    throw new Error(`${label}.result.assembly.totalTokensBefore must be a non-negative integer`);
+  }
+  if (
+    !Number.isInteger(record.result.assembly.totalTokensAfter) ||
+    record.result.assembly.totalTokensAfter < 0
+  ) {
+    throw new Error(`${label}.result.assembly.totalTokensAfter must be a non-negative integer`);
+  }
+  if (!Array.isArray(record.result.assembly.demoted)) {
+    throw new Error(`${label}.result.assembly.demoted must be an array`);
   }
 }
 

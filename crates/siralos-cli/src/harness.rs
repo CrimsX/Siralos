@@ -129,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 66;
+const CORPUS_VERSION: u64 = 67;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -13400,6 +13400,133 @@ fn context_scheduler_record(_input: &Value) -> Result<Value, HarnessError> {
         Err(e) => format!("{e}"),
     };
 
+    // Assembly B1/B2 (decision 90): HOT L1 summaries + bounded neighbor stubs, counted in budget
+    let assembly_ctx = {
+        use siralos_core::context_graph::{
+            ContextEdge, ContextEdgeKind, ContextGraph, ContextNode,
+            ContextNodeKind, estimate_tokens,
+        };
+        use siralos_core::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        let nodes = vec![
+            ContextNode {
+                id: "ctx-a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "a".repeat(64),
+                summary: "summary-ctx-a".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-ctx-a"),
+            },
+            ContextNode {
+                id: "ctx-b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "b".repeat(64),
+                summary: "summary-ctx-b".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-ctx-b"),
+            },
+            ContextNode {
+                id: "ctx-c".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "c".repeat(64),
+                summary: "summary-ctx-c".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-ctx-c"),
+            },
+        ];
+        let edges = vec![
+            ContextEdge {
+                from: "ctx-a".to_owned(),
+                to: "ctx-b".to_owned(),
+                kind: ContextEdgeKind::Contains,
+            },
+            ContextEdge {
+                from: "ctx-a".to_owned(),
+                to: "ctx-c".to_owned(),
+                kind: ContextEdgeKind::Contains,
+            },
+            ContextEdge {
+                from: "ctx-b".to_owned(),
+                to: "ctx-c".to_owned(),
+                kind: ContextEdgeKind::DependsOn,
+            },
+        ];
+        let graph = ContextGraph::build(nodes, edges).expect("harness graph");
+        // Store with deeper structured for ctx-a to prove L1-only assembly (B1)
+        let set_a = NodeRepresentationSet::build(
+            "ctx-a".to_owned(),
+            vec![
+                NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("identity-ctx-a"),
+                    derived_from: vec![],
+                    content: "identity-ctx-a".to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-ctx-a"),
+                    derived_from: vec![],
+                    content: "summary-ctx-a".to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Structured,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("structured-ctx-a"),
+                    derived_from: vec![],
+                    content: "structured-ctx-a".to_owned(),
+                },
+            ],
+        )
+        .expect("set_a");
+        let set_b = NodeRepresentationSet::build(
+            "ctx-b".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of("summary-ctx-b"),
+                derived_from: vec![],
+                content: "summary-ctx-b".to_owned(),
+            }],
+        )
+        .expect("set_b");
+        let set_c = NodeRepresentationSet::build(
+            "ctx-c".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of("summary-ctx-c"),
+                derived_from: vec![],
+                content: "summary-ctx-c".to_owned(),
+            }],
+        )
+        .expect("set_c");
+        let store =
+            ContextRepresentationStore::build(vec![set_a, set_b, set_c])
+                .expect("store");
+        // Assemble with default budget (4096) and pinned quota (1024) counting summaries+stubs
+        state.assemble(&graph, &store, &cfg)
+    };
+    let assembly_json = json!({
+        "entries": assembly_ctx.entries.iter().map(|e| json!({
+            "nodeId": e.node_id,
+            "contentDigest": e.content_digest,
+            "summary": e.summary,
+            "tokenEstimate": e.token_estimate,
+            "neighbors": e.neighbor_stubs.iter().map(|s| json!({
+                "nodeId": s.node_id,
+                "contentDigest": s.content_digest
+            })).collect::<Vec<Value>>()
+        })).collect::<Vec<Value>>(),
+        "totalTokensBefore": assembly_ctx.total_tokens_before,
+        "totalTokensAfter": assembly_ctx.total_tokens_after,
+        "demoted": assembly_ctx.demoted,
+    });
+
     Ok(json!({
         "tiersBefore": tiers_before,
         "tickReport": tick_report_json,
@@ -13407,6 +13534,7 @@ fn context_scheduler_record(_input: &Value) -> Result<Value, HarnessError> {
         "budgetDemotions": budget.demoted,
         "hotTokensAfter": budget.hot_tokens_after,
         "unknownNodeError": unknown_error,
+        "assembly": assembly_json,
     }))
 }
 
@@ -18240,7 +18368,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 333);
+        assert_eq!(loaded.len(), 335);
     }
 
     #[test]

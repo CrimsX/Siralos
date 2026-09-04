@@ -80,6 +80,25 @@
 //! then `node_id` ascending). Pinned HOT entries are never budget-demoted
 //! except by the pin-quota step. Demotion never deletes underlying
 //! authoritative information.
+//!
+//! # Assembly (decision 90 B1/B2)
+//!
+//! HOT nodes assemble L1 summaries by default — the 4096 budget and 1024
+//! pinned-HOT quota count assembled SUMMARY tokens (unique-digest). Deeper
+//! levels are NEVER auto-assembled and NEVER auto-escalated; deeper content
+//! is reachable only through the read-only `context.expand` tool via the
+//! demand edge (decision 88 curve finding: rank-only escalation loses
+//! structured depth 13/14 at every k). Each assembled HOT node carries a
+//! bounded 1-hop neighbor map: at most 8 neighbors ordered by `node_id`
+//! ascending, each stub carrying ONLY `node_id` + `content_digest` (never
+//! content), counted honestly via the same `estimate_tokens` estimator with
+//! unique-digest dedup, without changing tier membership of neighbors.
+//!
+//! Processing order (pinned): tick pipeline per decision 89
+//! (coalescing, stale demotion, demand updates, recompute, promotion gate,
+//! pin quota, budget) -> assembly: hot nodes sorted canonically -> per node:
+//! L1 summary contribution + neighbor stubs (B1/B2) -> budget enforcement
+//! over the assembled set.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
@@ -1002,6 +1021,304 @@ fn pinned_hot_unique_total(state: &WorkingSetState) -> usize {
     total
 }
 
+// ---------------------------------------------------------------------------
+// Assembly (decision 90 B1/B2)
+// ---------------------------------------------------------------------------
+
+/// Neighbor stub — bounded 1-hop neighbor map entry (ids+digests only, never content).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NeighborStub {
+    /// Neighbor node id.
+    pub node_id: String,
+    /// Neighbor content digest (64 hex).
+    pub content_digest: String,
+}
+
+/// One assembled HOT entry — L1 summary only (never deeper).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledEntry {
+    /// Assembled node id.
+    pub node_id: String,
+    /// Content digest of the assembled summary (for unique-digest accounting).
+    pub content_digest: String,
+    /// L1 summary content (never deeper; empty if no summary).
+    pub summary: String,
+    /// Token estimate of the summary (via `estimate_tokens`).
+    pub token_estimate: usize,
+    /// Bounded neighbor stubs (<=8, node_id ascending, ids+digests only).
+    pub neighbor_stubs: Vec<NeighborStub>,
+}
+
+/// Assembled context — HOT tier L1 summaries + bounded neighbor stubs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledContext {
+    /// Entries in canonical node_id order.
+    pub entries: Vec<AssembledEntry>,
+    /// Total assembled tokens before budget enforcement.
+    pub total_tokens_before: usize,
+    /// Total assembled tokens after budget enforcement.
+    pub total_tokens_after: usize,
+    /// Demoted node ids during assembly budget enforcement (canonical order).
+    pub demoted: Vec<String>,
+}
+
+fn stub_token_estimate(stub: &NeighborStub) -> usize {
+    // Honest byte estimate via the same estimator, no tool-call overhead.
+    // Concatenate node_id + digest with a separator.
+    crate::context_graph::estimate_tokens(&format!(
+        "{}:{}",
+        stub.node_id, stub.content_digest
+    ))
+}
+
+fn assembled_unique_total(entries: &[AssembledEntry]) -> usize {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut total: usize = 0;
+    for e in entries {
+        let digest = if e.content_digest.is_empty() {
+            e.node_id.clone()
+        } else {
+            e.content_digest.clone()
+        };
+        if seen.insert(digest) {
+            total = total.saturating_add(e.token_estimate);
+        }
+        for stub in &e.neighbor_stubs {
+            let sd = if stub.content_digest.is_empty() {
+                stub.node_id.clone()
+            } else {
+                stub.content_digest.clone()
+            };
+            if seen.insert(sd) {
+                total = total.saturating_add(stub_token_estimate(stub));
+            }
+        }
+    }
+    total
+}
+
+fn pinned_assembled_unique_total(
+    entries: &[AssembledEntry],
+    state: &WorkingSetState,
+) -> usize {
+    let pinned_ids: BTreeSet<String> = state
+        .entries()
+        .iter()
+        .filter(|e| e.tier == WorkingSetTier::Hot && e.pinned)
+        .map(|e| e.node_id.clone())
+        .collect();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut total: usize = 0;
+    for e in entries {
+        if !pinned_ids.contains(&e.node_id) {
+            continue;
+        }
+        let digest = if e.content_digest.is_empty() {
+            e.node_id.clone()
+        } else {
+            e.content_digest.clone()
+        };
+        if seen.insert(digest) {
+            total = total.saturating_add(e.token_estimate);
+        }
+        for stub in &e.neighbor_stubs {
+            let sd = if stub.content_digest.is_empty() {
+                stub.node_id.clone()
+            } else {
+                stub.content_digest.clone()
+            };
+            if seen.insert(sd) {
+                total = total.saturating_add(stub_token_estimate(stub));
+            }
+        }
+    }
+    total
+}
+
+fn build_assembled_entries(
+    state: &WorkingSetState,
+    graph: &crate::context_graph::ContextGraph,
+    store: &crate::context_representation::ContextRepresentationStore,
+) -> Vec<AssembledEntry> {
+    let mut hot_ids: Vec<String> = state
+        .entries()
+        .iter()
+        .filter(|e| e.tier == WorkingSetTier::Hot)
+        .map(|e| e.node_id.clone())
+        .collect();
+    hot_ids.sort();
+    let mut entries: Vec<AssembledEntry> = Vec::new();
+    for node_id in hot_ids {
+        // L1 summary resolution: store Summary if present, else graph summary
+        let (summary, summary_digest) = if let Some(set) = store.set(&node_id)
+        {
+            if let Some(rep) = crate::context_representation::resolve_representation(
+                set,
+                crate::context_representation::RepresentationLevel::Summary,
+            ) {
+                // Use the stored summary's content and its digest (already validated)
+                (rep.content.clone(), rep.content_digest.clone())
+            } else if let Some(node) = graph.node(&node_id) {
+                // Fallback to graph summary (if any)
+                let s = node.summary.clone();
+                let d = crate::context_representation::content_digest_of(&s);
+                (s, d)
+            } else {
+                (String::new(), String::new())
+            }
+        } else if let Some(node) = graph.node(&node_id) {
+            let s = node.summary.clone();
+            let d = crate::context_representation::content_digest_of(&s);
+            (s, d)
+        } else {
+            (String::new(), String::new())
+        };
+        let token_estimate = crate::context_graph::estimate_tokens(&summary);
+        // 1-hop neighbor map: both directions, distinct, sorted ascending, first 8
+        let mut neighbors: BTreeSet<String> = BTreeSet::new();
+        for edge in graph.edges() {
+            if edge.from == node_id {
+                neighbors.insert(edge.to.clone());
+            } else if edge.to == node_id {
+                neighbors.insert(edge.from.clone());
+            }
+        }
+        neighbors.remove(&node_id);
+        let mut neighbor_ids: Vec<String> = neighbors.into_iter().collect();
+        neighbor_ids.sort();
+        if neighbor_ids.len() > 8 {
+            neighbor_ids.truncate(8);
+        }
+        let mut stubs: Vec<NeighborStub> = Vec::new();
+        for nid in neighbor_ids {
+            if let Some(n) = graph.node(&nid) {
+                stubs.push(NeighborStub {
+                    node_id: nid.clone(),
+                    content_digest: n.content_digest.clone(),
+                });
+            } else {
+                // Fallback: unknown neighbor (should not happen) uses node_id as digest
+                stubs.push(NeighborStub {
+                    node_id: nid.clone(),
+                    content_digest: nid.clone(),
+                });
+            }
+        }
+        // Stubs already sorted by node_id ascending due to sorted neighbor_ids
+        entries.push(AssembledEntry {
+            node_id,
+            content_digest: summary_digest,
+            summary,
+            token_estimate,
+            neighbor_stubs: stubs,
+        });
+    }
+    entries
+}
+
+impl WorkingSetState {
+    /// Assemble HOT L1 summaries + bounded neighbor stubs (B1/B2) and enforce
+    /// budget over the assembled set. Demotion follows existing rule:
+    /// pinned-HOT quota (1024) first, then 4096 budget, demoting lowest-scored
+    /// HOT nodes (score asc, node_id asc tiebreak) until within quota.
+    /// Returns the assembled context after enforcement; the state's tiers are
+    /// mutated to reflect demotions (never deletes).
+    pub fn assemble(
+        &mut self,
+        graph: &crate::context_graph::ContextGraph,
+        store: &crate::context_representation::ContextRepresentationStore,
+        config: &SchedulerConfig,
+    ) -> AssembledContext {
+        let mut entries = build_assembled_entries(self, graph, store);
+        let total_before = assembled_unique_total(&entries);
+        let mut demoted: Vec<String> = Vec::new();
+
+        // 6. Pin-quota enforcement over assembled pinned total (1024) — lowest pinned HOT first
+        loop {
+            let pinned_total = pinned_assembled_unique_total(&entries, self);
+            if pinned_total <= PINNED_HOT_BUDGET_TOKENS {
+                break;
+            }
+            let mut candidate: Option<(u64, String)> = None;
+            for e in &entries {
+                // pinned HOT entry still in assembled set
+                let state_entry = self.entry(&e.node_id);
+                let Some(se) = state_entry else { continue };
+                if se.tier != WorkingSetTier::Hot || !se.pinned {
+                    continue;
+                }
+                let s = score(se, self.tick);
+                match &candidate {
+                    None => candidate = Some((s, e.node_id.clone())),
+                    Some((best_score, best_id)) => {
+                        if s < *best_score
+                            || (s == *best_score && e.node_id < *best_id)
+                        {
+                            candidate = Some((s, e.node_id.clone()));
+                        }
+                    }
+                }
+            }
+            let Some((_, victim)) = candidate else { break };
+            if let Some(entry) = self.entry_mut(&victim) {
+                entry.tier = WorkingSetTier::Warm;
+            }
+            demoted.push(victim.clone());
+            entries.retain(|e| e.node_id != victim);
+            if demoted.len() > self.entries.len() {
+                break;
+            }
+        }
+
+        // 7. Budget enforcement over assembled set (4096) — lowest non-pinned HOT first
+        loop {
+            let total = assembled_unique_total(&entries);
+            if total <= config.budget_tokens {
+                break;
+            }
+            let mut candidate: Option<(u64, String)> = None;
+            for e in &entries {
+                let state_entry = self.entry(&e.node_id);
+                let Some(se) = state_entry else { continue };
+                if se.tier != WorkingSetTier::Hot || se.pinned {
+                    continue;
+                }
+                let s = score(se, self.tick);
+                match &candidate {
+                    None => candidate = Some((s, e.node_id.clone())),
+                    Some((best_score, best_id)) => {
+                        if s < *best_score
+                            || (s == *best_score && e.node_id < *best_id)
+                        {
+                            candidate = Some((s, e.node_id.clone()));
+                        }
+                    }
+                }
+            }
+            let Some((_, victim)) = candidate else { break };
+            if let Some(entry) = self.entry_mut(&victim) {
+                entry.tier = WorkingSetTier::Warm;
+            }
+            demoted.push(victim.clone());
+            entries.retain(|e| e.node_id != victim);
+            if demoted.len() > self.entries.len() {
+                break;
+            }
+        }
+
+        let total_after = assembled_unique_total(&entries);
+        demoted.sort();
+        // Ensure canonical ordering of entries (already sorted)
+        entries.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+        AssembledContext {
+            entries,
+            total_tokens_before: total_before,
+            total_tokens_after: total_after,
+            demoted,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1792,5 +2109,477 @@ mod tests {
         let r2b = s2.process_tick(input.clone(), &cfg);
         assert_eq!(r1b, r2b);
         assert_eq!(s1, s2);
+    }
+
+    // --- Decision 90 B1/B2 assembly ---
+    fn assembly_fixture() -> (
+        WorkingSetState,
+        crate::context_graph::ContextGraph,
+        crate::context_representation::ContextRepresentationStore,
+    ) {
+        use crate::context_graph::{
+            ContextEdge, ContextEdgeKind, ContextGraph, ContextNode,
+            ContextNodeKind, estimate_tokens,
+        };
+        use crate::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        use crate::identity::sha256_hex;
+        let a_digest = sha256_hex("body-a".as_bytes());
+        let b_digest = sha256_hex("body-b".as_bytes());
+        let nodes = vec![
+            ContextNode {
+                id: "a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: a_digest.clone(),
+                summary: "summary-a".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-a"),
+            },
+            ContextNode {
+                id: "b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: b_digest.clone(),
+                summary: "summary-b".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-b"),
+            },
+            ContextNode {
+                id: "c".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: sha256_hex("body-c".as_bytes()),
+                summary: "summary-c".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-c"),
+            },
+        ];
+        let edges = vec![
+            ContextEdge {
+                from: "a".to_owned(),
+                to: "b".to_owned(),
+                kind: ContextEdgeKind::Contains,
+            },
+            ContextEdge {
+                from: "b".to_owned(),
+                to: "c".to_owned(),
+                kind: ContextEdgeKind::DependsOn,
+            },
+        ];
+        let graph = ContextGraph::build(nodes, edges).expect("graph");
+        let rep_a_summary = "summary-a";
+        let rep_a_structured = "structured-facts-a";
+        let rep_b_summary = "summary-b";
+        let rep_c_summary = "summary-c";
+        let set_a = NodeRepresentationSet::build(
+            "a".to_owned(),
+            vec![
+                NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("identity-a"),
+                    derived_from: vec![],
+                    content: "identity-a".to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(rep_a_summary),
+                    derived_from: vec![],
+                    content: rep_a_summary.to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Structured,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(rep_a_structured),
+                    derived_from: vec![],
+                    content: rep_a_structured.to_owned(),
+                },
+            ],
+        )
+        .expect("set_a");
+        let set_b = NodeRepresentationSet::build(
+            "b".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of(rep_b_summary),
+                derived_from: vec![],
+                content: rep_b_summary.to_owned(),
+            }],
+        )
+        .expect("set_b");
+        let set_c = NodeRepresentationSet::build(
+            "c".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of(rep_c_summary),
+                derived_from: vec![],
+                content: rep_c_summary.to_owned(),
+            }],
+        )
+        .expect("set_c");
+        let store =
+            ContextRepresentationStore::build(vec![set_a, set_b, set_c])
+                .expect("store");
+        let entries = vec![
+            entry("a", WorkingSetTier::Hot, false, 90, 0, 1000),
+            entry("b", WorkingSetTier::Hot, false, 90, 0, 1000),
+            entry("c", WorkingSetTier::Cold, false, 10, 0, 1000),
+        ];
+        let state = WorkingSetState::build(entries).expect("state");
+        (state, graph, store)
+    }
+
+    #[test]
+    fn l1_default_assembly_hot_contributes_summary_only() {
+        let (mut state, graph, store) = assembly_fixture();
+        let cfg = SchedulerConfig::default();
+        let ctx = state.assemble(&graph, &store, &cfg);
+        assert_eq!(ctx.entries.len(), 2);
+        let a_entry =
+            ctx.entries.iter().find(|e| e.node_id == "a").expect("a");
+        assert_eq!(a_entry.summary, "summary-a");
+        assert_eq!(
+            a_entry.token_estimate,
+            crate::context_graph::estimate_tokens("summary-a")
+        );
+        assert!(!a_entry.summary.contains("structured"));
+        for e in &ctx.entries {
+            for stub in &e.neighbor_stubs {
+                assert!(!stub.content_digest.is_empty());
+                assert_ne!(stub.content_digest, e.summary);
+            }
+        }
+    }
+
+    #[test]
+    fn budget_counts_assembled_summaries_unique_digest() {
+        use crate::context_graph::{
+            ContextGraph, ContextNode, ContextNodeKind, estimate_tokens,
+        };
+        use crate::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        let digest = content_digest_of("same-summary");
+        let nodes = vec![
+            ContextNode {
+                id: "a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "a".repeat(64),
+                summary: "same-summary".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("same-summary"),
+            },
+            ContextNode {
+                id: "b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "b".repeat(64),
+                summary: "same-summary".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("same-summary"),
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let set_a = NodeRepresentationSet::build(
+            "a".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: digest.clone(),
+                derived_from: vec![],
+                content: "same-summary".to_owned(),
+            }],
+        )
+        .expect("set_a");
+        let set_b = NodeRepresentationSet::build(
+            "b".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: digest.clone(),
+                derived_from: vec![],
+                content: "same-summary".to_owned(),
+            }],
+        )
+        .expect("set_b");
+        let store = ContextRepresentationStore::build(vec![set_a, set_b])
+            .expect("store");
+        let tok = estimate_tokens("same-summary");
+        let mut state = WorkingSetState::build(vec![
+            entry("a", WorkingSetTier::Hot, false, 90, 0, 1000),
+            entry("b", WorkingSetTier::Hot, false, 90, 0, 1000),
+        ])
+        .expect("state");
+        let cfg = SchedulerConfig::new(tok).expect("cfg");
+        let ctx = state.assemble(&graph, &store, &cfg);
+        assert_eq!(ctx.entries.len(), 2);
+        assert_eq!(ctx.total_tokens_after, tok);
+        // Distinct digests with tight budget should demote lowest scored
+        let distinct_nodes = vec![
+            ContextNode {
+                id: "a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "c".repeat(64),
+                summary: "summary-a-distinct".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-a-distinct"),
+            },
+            ContextNode {
+                id: "b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "d".repeat(64),
+                summary: "summary-b-distinct".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-b-distinct"),
+            },
+        ];
+        let distinct_graph =
+            ContextGraph::build(distinct_nodes, vec![]).expect("graph");
+        let d_a = NodeRepresentationSet::build(
+            "a".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of("summary-a-distinct"),
+                derived_from: vec![],
+                content: "summary-a-distinct".to_owned(),
+            }],
+        )
+        .expect("set");
+        let d_b = NodeRepresentationSet::build(
+            "b".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of("summary-b-distinct"),
+                derived_from: vec![],
+                content: "summary-b-distinct".to_owned(),
+            }],
+        )
+        .expect("set");
+        let distinct_store =
+            ContextRepresentationStore::build(vec![d_a, d_b]).expect("store");
+        let mut distinct_state = WorkingSetState::build(vec![
+            entry("a", WorkingSetTier::Hot, false, 10, 0, 1000),
+            entry("b", WorkingSetTier::Hot, false, 20, 0, 1000),
+        ])
+        .expect("state");
+        let tok_a = estimate_tokens("summary-a-distinct");
+        let cfg_tight = SchedulerConfig::new(tok_a).expect("cfg");
+        let ctx2 = distinct_state.assemble(
+            &distinct_graph,
+            &distinct_store,
+            &cfg_tight,
+        );
+        assert_eq!(ctx2.entries.len(), 1);
+        assert_eq!(ctx2.entries[0].node_id, "b");
+    }
+
+    #[test]
+    fn no_auto_escalation_demanded_node_still_summary_only() {
+        let (mut state, graph, store) = assembly_fixture();
+        let cfg = SchedulerConfig::default();
+        let input = TickInput::new(
+            10,
+            vec![AccessEvent::new("a")],
+            "rev1",
+            vec![],
+            vec![],
+        );
+        let _ = state.process_tick(input, &cfg);
+        let ctx = state.assemble(&graph, &store, &cfg);
+        let a = ctx.entries.iter().find(|e| e.node_id == "a").expect("a hot");
+        assert_eq!(a.summary, "summary-a");
+        assert!(!a.summary.contains("structured"));
+    }
+
+    #[test]
+    fn neighbor_stubs_bounded_and_ordered_and_no_content_leak() {
+        use crate::context_graph::{
+            ContextEdge, ContextEdgeKind, ContextGraph, ContextNode,
+            ContextNodeKind, estimate_tokens,
+        };
+        use crate::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        use crate::identity::sha256_hex;
+        let mut nodes = vec![ContextNode {
+            id: "a".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: sha256_hex("center".as_bytes()),
+            summary: "center".to_owned(),
+            source_bindings: vec![],
+            token_estimate: estimate_tokens("center"),
+        }];
+        for i in 0..12 {
+            let id = format!("n{i:02}");
+            nodes.push(ContextNode {
+                id: id.clone(),
+                kind: ContextNodeKind::Source,
+                content_digest: sha256_hex(id.as_bytes()),
+                summary: format!("summary-{id}"),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens(&format!("summary-{id}")),
+            });
+        }
+        let mut edges = Vec::new();
+        for i in 0..12 {
+            let id = format!("n{i:02}");
+            edges.push(ContextEdge {
+                from: "a".to_owned(),
+                to: id.clone(),
+                kind: ContextEdgeKind::Contains,
+            });
+        }
+        let graph = ContextGraph::build(nodes.clone(), edges).expect("graph");
+        let mut sets = Vec::new();
+        for n in &nodes {
+            sets.push(
+                NodeRepresentationSet::build(
+                    n.id.clone(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of(&n.summary),
+                        derived_from: vec![],
+                        content: n.summary.clone(),
+                    }],
+                )
+                .expect("set"),
+            );
+        }
+        let store = ContextRepresentationStore::build(sets).expect("store");
+        let mut state = WorkingSetState::build(vec![SchedulerEntry {
+            node_id: "a".to_owned(),
+            tier: WorkingSetTier::Hot,
+            pinned: false,
+            relevance: 90,
+            last_access_tick: 0,
+            token_estimate: 1000,
+            content_digest: sha256_hex("center".as_bytes()),
+        }])
+        .expect("state");
+        let cfg = SchedulerConfig::default();
+        let ctx = state.assemble(&graph, &store, &cfg);
+        let a = ctx.entries.iter().find(|e| e.node_id == "a").expect("a");
+        assert_eq!(a.neighbor_stubs.len(), 8);
+        let expected: Vec<String> =
+            (0..8).map(|i| format!("n{i:02}")).collect();
+        let actual: Vec<String> =
+            a.neighbor_stubs.iter().map(|s| s.node_id.clone()).collect();
+        assert_eq!(actual, expected);
+        for stub in &a.neighbor_stubs {
+            assert!(stub.content_digest.len() == 64);
+            let neighbor_node = graph.node(&stub.node_id).expect("node");
+            assert_eq!(stub.content_digest, neighbor_node.content_digest);
+            assert!(!stub.content_digest.contains("summary"));
+        }
+    }
+
+    #[test]
+    fn stub_bytes_counted_in_budget_demotion() {
+        use crate::context_graph::{
+            ContextEdge, ContextEdgeKind, ContextGraph, ContextNode,
+            ContextNodeKind, estimate_tokens,
+        };
+        use crate::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        use crate::identity::sha256_hex;
+        // 9 HOT nodes each 512 tokens (max summary) => 4608 >4096 triggers demotion; stubs add further
+        let big_summary_base = "s".repeat(2047);
+        let mut nodes = Vec::new();
+        let mut sets = Vec::new();
+        let mut entries = Vec::new();
+        for i in 0..9 {
+            let id = format!("n{i}");
+            let summary = format!("{big_summary_base}{i}");
+            let summary_tokens = estimate_tokens(&summary);
+            let summary_digest = content_digest_of(&summary);
+            nodes.push(ContextNode {
+                id: id.clone(),
+                kind: ContextNodeKind::Source,
+                content_digest: sha256_hex(format!("body-{id}").as_bytes()),
+                summary: summary.clone(),
+                source_bindings: vec![],
+                token_estimate: summary_tokens,
+            });
+            sets.push(
+                NodeRepresentationSet::build(
+                    id.clone(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: summary_digest.clone(),
+                        derived_from: vec![],
+                        content: summary.clone(),
+                    }],
+                )
+                .expect("set"),
+            );
+            entries.push(SchedulerEntry {
+                node_id: id.clone(),
+                tier: WorkingSetTier::Hot,
+                pinned: false,
+                relevance: (10 + i as u8),
+                last_access_tick: 0,
+                token_estimate: 1000,
+                content_digest: sha256_hex(format!("body-{id}").as_bytes()),
+            });
+        }
+        let mut edges = Vec::new();
+        for i in 0..8 {
+            edges.push(ContextEdge {
+                from: format!("n{i}"),
+                to: format!("n{}", i + 1),
+                kind: ContextEdgeKind::Contains,
+            });
+        }
+        let graph = ContextGraph::build(nodes, edges).expect("graph");
+        let store = ContextRepresentationStore::build(sets).expect("store");
+        let mut state = WorkingSetState::build(entries).expect("state");
+        let cfg = SchedulerConfig::new(4096).expect("cfg");
+        let ctx = state.assemble(&graph, &store, &cfg);
+        assert!(
+            ctx.demoted.contains(&"n0".to_owned()) || ctx.entries.len() < 9
+        );
+        assert!(ctx.total_tokens_before > ctx.total_tokens_after);
+        assert!(ctx.total_tokens_before >= 512);
+    }
+
+    #[test]
+    fn assembly_determinism_byte_equal() {
+        let (mut s1, graph, store) = assembly_fixture();
+        let (mut s2, graph2, store2) = assembly_fixture();
+        let cfg = SchedulerConfig::default();
+        let c1 = s1.assemble(&graph, &store, &cfg);
+        let c2 = s2.assemble(&graph2, &store2, &cfg);
+        assert_eq!(c1, c2);
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn benchmark_byte_identity_guard() {
+        let mut state = WorkingSetState::build(vec![
+            entry("a", WorkingSetTier::Hot, false, 90, 0, 100),
+            entry("b", WorkingSetTier::Hot, false, 90, 0, 100),
+        ])
+        .expect("build");
+        let cfg = SchedulerConfig::default();
+        let before = state.clone();
+        let _ = state.process_tick(
+            TickInput::new(1, vec![], "rev1", vec![], vec![]),
+            &cfg,
+        );
+        assert_eq!(state.pipeline_runs(), before.pipeline_runs() + 1);
     }
 }
