@@ -2601,6 +2601,80 @@ function validateContextBenchmarkResult(record, label) {
       }
     }
   }
+  // v63 additions: decomposition, sensitivity, informational
+  if (!result.decomposition || typeof result.decomposition !== "object") {
+    throw new Error(`${label}.result.decomposition is required`);
+  }
+  assertExactKeys(
+    result.decomposition,
+    ["dedupSaved", "rerankSaved", "levelSaved", "dedupSharePct", "dedupGuardOk"],
+    `${label}.result.decomposition`,
+  );
+  for (const key of ["dedupSaved", "rerankSaved", "levelSaved", "dedupSharePct"]) {
+    if (!Number.isSafeInteger(result.decomposition[key]) || result.decomposition[key] < 0) {
+      throw new Error(`${label}.result.decomposition.${key} must be a non-negative integer`);
+    }
+  }
+  if (typeof result.decomposition.dedupGuardOk !== "boolean") {
+    throw new Error(`${label}.result.decomposition.dedupGuardOk must be a boolean`);
+  }
+  if (!result.sensitivity || typeof result.sensitivity !== "object") {
+    throw new Error(`${label}.result.sensitivity is required`);
+  }
+  assertExactKeys(result.sensitivity, ["cells", "allOk"], `${label}.result.sensitivity`);
+  if (!Array.isArray(result.sensitivity.cells) || result.sensitivity.cells.length !== 9) {
+    throw new Error(`${label}.result.sensitivity.cells must be a 9-element array`);
+  }
+  for (const [index, cell] of result.sensitivity.cells.entries()) {
+    const cellLabel = `${label}.result.sensitivity.cells[${index}]`;
+    assertExactKeys(
+      cell,
+      ["bytesPerToken", "overhead", "recallOk", "marginOk", "dedupOk"],
+      cellLabel,
+    );
+    if (!Number.isSafeInteger(cell.bytesPerToken) || ![3, 4, 5].includes(cell.bytesPerToken)) {
+      throw new Error(`${cellLabel}.bytesPerToken must be 3, 4, or 5`);
+    }
+    if (!Number.isSafeInteger(cell.overhead) || ![0, 8, 16].includes(cell.overhead)) {
+      throw new Error(`${cellLabel}.overhead must be 0, 8, or 16`);
+    }
+    for (const k of ["recallOk", "marginOk", "dedupOk"]) {
+      if (typeof cell[k] !== "boolean") {
+        throw new Error(`${cellLabel}.${k} must be a boolean`);
+      }
+    }
+  }
+  if (typeof result.sensitivity.allOk !== "boolean") {
+    throw new Error(`${label}.result.sensitivity.allOk must be a boolean`);
+  }
+  if (!result.informational || typeof result.informational !== "object") {
+    throw new Error(`${label}.result.informational is required`);
+  }
+  assertExactKeys(result.informational, ["paraphraseGap"], `${label}.result.informational`);
+  const pg = result.informational.paraphraseGap;
+  assertExactKeys(
+    pg,
+    ["queryTokens", "keyOverlapCount", "inHits"],
+    `${label}.result.informational.paraphraseGap`,
+  );
+  if (!Array.isArray(pg.queryTokens) || pg.queryTokens.length === 0) {
+    throw new Error(`${label}.result.informational.paraphraseGap.queryTokens must be non-empty`);
+  }
+  for (const tok of pg.queryTokens) {
+    if (typeof tok !== "string" || tok.length === 0) {
+      throw new Error(
+        `${label}.result.informational.paraphraseGap.queryTokens entries must be non-empty strings`,
+      );
+    }
+  }
+  if (!Number.isSafeInteger(pg.keyOverlapCount) || pg.keyOverlapCount < 0) {
+    throw new Error(
+      `${label}.result.informational.paraphraseGap.keyOverlapCount must be non-negative integer`,
+    );
+  }
+  if (typeof pg.inHits !== "boolean") {
+    throw new Error(`${label}.result.informational.paraphraseGap.inHits must be a boolean`);
+  }
 }
 
 function validateSessionReplayResult(record, label) {

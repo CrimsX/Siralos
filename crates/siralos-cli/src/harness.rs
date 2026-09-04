@@ -129,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 62;
+const CORPUS_VERSION: u64 = 63;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -13739,8 +13739,10 @@ fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
 // ---------------------------------------------------------------------------
 
 fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
-    use siralos_adapters::tool::context_benchmark::{gold_set, run_benchmark};
-    let scenarios = gold_set().map_err(|e| {
+    use siralos_adapters::tool::context_benchmark::{
+        gold_set_v3, run_benchmark,
+    };
+    let scenarios = gold_set_v3().map_err(|e| {
         HarnessError::corpus(format!("context-benchmark gold_set failed: {e}"))
     })?;
     let report = run_benchmark(&scenarios).map_err(|e| {
@@ -13765,6 +13767,30 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
     };
     let v1_metrics = mk_metrics(&report.v1.scenarios);
     let v2_metrics = mk_metrics(&report.v2.scenarios);
+    let decomposition = json!({
+        "dedupSaved": report.decomposition.dedup_saved,
+        "rerankSaved": report.decomposition.rerank_saved,
+        "levelSaved": report.decomposition.level_saved,
+        "dedupSharePct": report.decomposition.dedup_share_bps,
+        "dedupGuardOk": report.decomposition.dedup_guard_ok
+    });
+    let sensitivity = json!({
+        "cells": report.sensitivity.cells.iter().map(|c| json!({
+            "bytesPerToken": c.bytes_per_token,
+            "overhead": c.overhead,
+            "recallOk": c.recall_ok,
+            "marginOk": c.margin_ok,
+            "dedupOk": c.dedup_ok
+        })).collect::<Vec<Value>>(),
+        "allOk": report.sensitivity.all_ok
+    });
+    let informational = json!({
+        "paraphraseGap": {
+            "queryTokens": report.informational.paraphrase_gap.query_tokens,
+            "keyOverlapCount": report.informational.paraphrase_gap.key_overlap,
+            "inHits": report.informational.paraphrase_gap.in_hits
+        }
+    });
     Ok(json!({
         "baseline": {
             "totalBaseline": report.v1.total_baseline,
@@ -13791,6 +13817,9 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
             "totalToolCalls": report.v2.total_tool_calls
         },
         "scenarioMetrics": v2_metrics,
+        "decomposition": decomposition,
+        "sensitivity": sensitivity,
+        "informational": informational,
         "go": report.go,
         "reason": report.reason
     }))
