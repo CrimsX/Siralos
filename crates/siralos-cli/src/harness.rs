@@ -129,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 64;
+const CORPUS_VERSION: u64 = 65;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -13863,7 +13863,43 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
         "pagedV2": report.paged_v2,
         "depthPremiumBps": report.depth_premium_bps,
         "perScenario": per_scenario,
-        "levelCensus": level_census
+        "levelCensus": level_census,
+        "depthAwareRecall": {
+            "v1": report.depth_aware_recall_v1,
+            "v2": report.depth_aware_recall_v2,
+            "v3": report.depth_aware_recall_v3
+        },
+        "answerLevelCensus": {
+            "preCommitted": {
+                "summary": report.answer_level_census.pre_committed_summary,
+                "structured": report.answer_level_census.pre_committed_structured
+            },
+            "asRun": {
+                "summary": report.answer_level_census.as_run_summary,
+                "structured": report.answer_level_census.as_run_structured
+            },
+            "floorOk": report.answer_level_census.floor_ok
+        },
+        "perLevelRecallSplit": {
+            "summaryKeys": {
+                "total": report.per_level_recall_split.summary_total,
+                "recallV2": report.per_level_recall_split.summary_recall_v2,
+                "recallV3": report.per_level_recall_split.summary_recall_v3
+            },
+            "structuredKeys": {
+                "total": report.per_level_recall_split.structured_total,
+                "recallV2": report.per_level_recall_split.structured_recall_v2,
+                "recallV3": report.per_level_recall_split.structured_recall_v3
+            }
+        },
+        "escalationCurve": report.escalation_curve.iter().map(|p| json!({
+            "k": p.k,
+            "cost": p.cost,
+            "depthAwareRecall": p.depth_aware_recall,
+            "toolCalls": p.tool_calls
+        })).collect::<Vec<Value>>(),
+        "policyAdopted": report.policy_adopted,
+        "policyReason": report.policy_reason
     }))
 }
 

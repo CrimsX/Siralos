@@ -2749,6 +2749,88 @@ function validateContextBenchmarkResult(record, label) {
       }
     }
   }
+  // D88: depthAwareRecall + answerLevelCensus + perLevelRecallSplit + escalationCurve + policyAdopted
+  if (!result.depthAwareRecall || typeof result.depthAwareRecall !== "object") {
+    throw new Error(`${label}.result.depthAwareRecall is required`);
+  }
+  assertExactKeys(result.depthAwareRecall, ["v1", "v2", "v3"], `${label}.result.depthAwareRecall`);
+  for (const k of ["v1", "v2", "v3"]) {
+    if (!Number.isSafeInteger(result.depthAwareRecall[k]) || result.depthAwareRecall[k] < 0) {
+      throw new Error(`${label}.result.depthAwareRecall.${k} must be a non-negative integer`);
+    }
+  }
+  if (!result.answerLevelCensus || typeof result.answerLevelCensus !== "object") {
+    throw new Error(`${label}.result.answerLevelCensus is required`);
+  }
+  assertExactKeys(
+    result.answerLevelCensus,
+    ["asRun", "floorOk", "preCommitted"],
+    `${label}.result.answerLevelCensus`,
+  );
+  for (const part of ["preCommitted", "asRun"]) {
+    const obj = result.answerLevelCensus[part];
+    if (!obj || typeof obj !== "object") {
+      throw new Error(`${label}.result.answerLevelCensus.${part} must be an object`);
+    }
+    assertExactKeys(obj, ["structured", "summary"], `${label}.result.answerLevelCensus.${part}`);
+    for (const k of ["structured", "summary"]) {
+      if (!Number.isSafeInteger(obj[k]) || obj[k] < 0) {
+        throw new Error(
+          `${label}.result.answerLevelCensus.${part}.${k} must be a non-negative integer`,
+        );
+      }
+    }
+  }
+  if (typeof result.answerLevelCensus.floorOk !== "boolean") {
+    throw new Error(`${label}.result.answerLevelCensus.floorOk must be a boolean`);
+  }
+  if (!result.perLevelRecallSplit || typeof result.perLevelRecallSplit !== "object") {
+    throw new Error(`${label}.result.perLevelRecallSplit is required`);
+  }
+  assertExactKeys(
+    result.perLevelRecallSplit,
+    ["structuredKeys", "summaryKeys"],
+    `${label}.result.perLevelRecallSplit`,
+  );
+  for (const part of ["summaryKeys", "structuredKeys"]) {
+    const obj = result.perLevelRecallSplit[part];
+    if (!obj || typeof obj !== "object") {
+      throw new Error(`${label}.result.perLevelRecallSplit.${part} must be an object`);
+    }
+    assertExactKeys(
+      obj,
+      ["recallV2", "recallV3", "total"],
+      `${label}.result.perLevelRecallSplit.${part}`,
+    );
+    for (const k of ["total", "recallV2", "recallV3"]) {
+      if (!Number.isSafeInteger(obj[k]) || obj[k] < 0) {
+        throw new Error(
+          `${label}.result.perLevelRecallSplit.${part}.${k} must be a non-negative integer`,
+        );
+      }
+    }
+  }
+  if (!Array.isArray(result.escalationCurve) || result.escalationCurve.length !== 3) {
+    throw new Error(`${label}.result.escalationCurve must be a 3-element array`);
+  }
+  for (const [index, entry] of result.escalationCurve.entries()) {
+    const eLabel = `${label}.result.escalationCurve[${index}]`;
+    assertExactKeys(entry, ["cost", "depthAwareRecall", "k", "toolCalls"], eLabel);
+    if (![1, 2, 3].includes(entry.k)) {
+      throw new Error(`${eLabel}.k must be 1,2,or 3`);
+    }
+    for (const k of ["cost", "depthAwareRecall", "toolCalls"]) {
+      if (!Number.isSafeInteger(entry[k]) || entry[k] < 0) {
+        throw new Error(`${eLabel}.${k} must be a non-negative integer`);
+      }
+    }
+  }
+  if (typeof result.policyAdopted !== "boolean") {
+    throw new Error(`${label}.result.policyAdopted must be a boolean`);
+  }
+  if (typeof result.policyReason !== "string" || result.policyReason.length === 0) {
+    throw new Error(`${label}.result.policyReason must be a non-empty string`);
+  }
 }
 
 function validateSessionReplayResult(record, label) {

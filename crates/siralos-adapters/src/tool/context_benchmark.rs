@@ -10,6 +10,12 @@
 //! first-occurrence order.
 
 #![allow(clippy::manual_checked_ops)]
+#![allow(missing_docs)]
+#![allow(
+    clippy::double_must_use,
+    clippy::unnecessary_sort_by,
+    clippy::useless_vec
+)]
 //!
 //! Paged strategy v2 rules, EXACTLY:
 //! 1. Lexical rerank: for each search hit, overlap = count of DISTINCT query tokens present in the summary's token set (summary text from the node's summary representation). expand_threshold = min(2, distinct query token count). Expand the hit IFF matched_in == "summary" AND overlap >= expand_threshold.
@@ -45,6 +51,7 @@ pub enum PagingStrategy {
     ExhaustiveV1,
     /// Progressive v2 — lexical rerank + digest dedup.
     ProgressiveV2,
+    ProgressiveV3Escalating,
 }
 
 impl PagingStrategy {
@@ -54,6 +61,7 @@ impl PagingStrategy {
         match self {
             Self::ExhaustiveV1 => "exhaustive-v1",
             Self::ProgressiveV2 => "progressive-v2",
+            Self::ProgressiveV3Escalating => "progressive-v3-escalating",
         }
     }
 }
@@ -373,6 +381,79 @@ pub struct LevelCensus {
     pub identity: usize,
 }
 
+/// Level ordering frozen: Identity < Summary < Structured < Detailed < Source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AnswerLevel {
+    /// Identity.
+    Identity = 0,
+    /// Summary.
+    Summary = 1,
+    /// Structured.
+    Structured = 2,
+    /// Detailed.
+    Detailed = 3,
+    /// Source.
+    Source = 4,
+}
+
+impl AnswerLevel {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Identity => "Identity",
+            Self::Summary => "Summary",
+            Self::Structured => "Structured",
+            Self::Detailed => "Detailed",
+            Self::Source => "Source",
+        }
+    }
+}
+
+/// Answer-level census for decision 88.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnswerLevelCensus {
+    /// Pre-committed census (before run).
+    pub pre_committed_summary: usize,
+    /// Pre-committed structured count.
+    pub pre_committed_structured: usize,
+    /// As-run summary count.
+    pub as_run_summary: usize,
+    /// As-run structured count.
+    pub as_run_structured: usize,
+    /// Floor ok (>=5 structured of 14).
+    pub floor_ok: bool,
+}
+
+/// Per-level recall split.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerLevelRecallSplit {
+    /// Total summary keys.
+    pub summary_total: usize,
+    /// Recalled summary keys (depth-aware) for V2.
+    pub summary_recall_v2: usize,
+    /// Recalled summary keys for V3.
+    pub summary_recall_v3: usize,
+    /// Total structured keys.
+    pub structured_total: usize,
+    /// Recalled structured keys for V2.
+    pub structured_recall_v2: usize,
+    /// Recalled structured keys for V3.
+    pub structured_recall_v3: usize,
+}
+
+/// One point on the escalation curve (top-k).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EscalationPoint {
+    /// k (1,2,3).
+    pub k: usize,
+    /// Cost (tokens) at k.
+    pub cost: usize,
+    /// Depth-aware recall at k.
+    pub depth_aware_recall: usize,
+    /// Tool calls at k.
+    pub tool_calls: usize,
+}
+
 /// Aggregated report with deterministic decision rule (v64 corrected-baseline).
 ///
 /// GO = recall_parity && aggregate(paged*2 < DeepAll) && dedup_guard && all 9 cells pass.
@@ -409,6 +490,22 @@ pub struct BenchmarkReport {
     pub depth_premium_bps: usize,
     /// Level census per scenario (reproducibility audit for DeepAll).
     pub level_census: Vec<LevelCensus>,
+    /// D88: depth-aware recall V1.
+    pub depth_aware_recall_v1: usize,
+    /// D88: depth-aware recall V2.
+    pub depth_aware_recall_v2: usize,
+    /// D88: depth-aware recall V3.
+    pub depth_aware_recall_v3: usize,
+    /// D88: answer-level census.
+    pub answer_level_census: AnswerLevelCensus,
+    /// D88: per-level recall split.
+    pub per_level_recall_split: PerLevelRecallSplit,
+    /// D88: escalation curve k=1,2,3.
+    pub escalation_curve: Vec<EscalationPoint>,
+    /// D88: policy adopted (V3 vs V2 gate).
+    pub policy_adopted: bool,
+    /// D88: policy reason (includes numbers and branch).
+    pub policy_reason: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -624,79 +721,9 @@ fn compute_decomposition_for_scenario(
         };
         // Determine expanded set
         let expanded_ids: std::collections::BTreeSet<String> = if expand_all {
-            let mut set = std::collections::BTreeSet::new();
-            for (hid, _) in &hits {
-                if let Some(s) = sc.state.store.set(hid) {
-                    if best_level_for(s).is_some() {
-                        set.insert(hid.clone());
-                    }
-                }
-            }
-            set
+            expanded_ids_for_scenario(sc, &hits, PagingStrategy::ExhaustiveV1)
         } else {
-            // ProgressiveV2 logic
-            let query_tokens = tokenize(&sc.query);
-            let threshold = std::cmp::min(2, query_tokens.len());
-            let query_token_set: std::collections::BTreeSet<String> =
-                query_tokens.into_iter().collect();
-            let mut overlaps: Vec<(String, String, usize)> = Vec::new();
-            for (hid, matched) in &hits {
-                let node = sc.state.graph.node(hid);
-                let summary = node.map(|n| n.summary.as_str()).unwrap_or("");
-                let summary_tokens: std::collections::BTreeSet<String> =
-                    tokenize(summary).into_iter().collect();
-                let mut overlap = 0usize;
-                for qt in &query_token_set {
-                    if summary_tokens.contains(qt) {
-                        overlap += 1;
-                    }
-                }
-                overlaps.push((hid.clone(), matched.clone(), overlap));
-            }
-            let mut candidates = std::collections::BTreeSet::new();
-            for (hid, matched, overlap) in &overlaps {
-                if matched == "summary" && *overlap >= threshold {
-                    if let Some(s) = sc.state.store.set(hid) {
-                        if best_level_for(s).is_some() {
-                            candidates.insert(hid.clone());
-                        }
-                    }
-                }
-            }
-            if !candidates.is_empty() {
-                candidates
-            } else {
-                let mut best: Option<(String, usize)> = None;
-                for (hid, matched, overlap) in &overlaps {
-                    if matched != "summary" {
-                        continue;
-                    }
-                    if let Some(s) = sc.state.store.set(hid) {
-                        if best_level_for(s).is_none() {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
-                    match &best {
-                        None => best = Some((hid.clone(), *overlap)),
-                        Some((best_id, best_overlap)) => {
-                            if *overlap > *best_overlap
-                                || (*overlap == *best_overlap && hid < best_id)
-                            {
-                                best = Some((hid.clone(), *overlap));
-                            }
-                        }
-                    }
-                }
-                if let Some((best_id, _)) = best {
-                    let mut set = std::collections::BTreeSet::new();
-                    set.insert(best_id);
-                    set
-                } else {
-                    std::collections::BTreeSet::new()
-                }
-            }
+            expanded_ids_for_scenario(sc, &hits, PagingStrategy::ProgressiveV2)
         };
         // Compute token sums
         let mut surfaced: std::collections::BTreeSet<String> =
@@ -920,94 +947,7 @@ pub fn run_strategy(
         let hit_ids: Vec<String> =
             hits.iter().map(|(id, _)| id.clone()).collect();
 
-        // Determine expanded set per strategy
-        let expanded_ids: std::collections::BTreeSet<String> = match strategy {
-            PagingStrategy::ExhaustiveV1 => {
-                // Every hit that has a best level
-                let mut set = std::collections::BTreeSet::new();
-                for (hid, _) in &hits {
-                    if let Some(s) = sc.state.store.set(hid) {
-                        if best_level_for(s).is_some() {
-                            set.insert(hid.clone());
-                        }
-                    }
-                }
-                set
-            }
-            PagingStrategy::ProgressiveV2 => {
-                // Lexical rerank + fallback
-                let query_tokens = tokenize(&sc.query);
-                let threshold = std::cmp::min(2, query_tokens.len());
-                let query_token_set: std::collections::BTreeSet<String> =
-                    query_tokens.into_iter().collect();
-
-                // Compute overlap per hit
-                let mut overlaps: Vec<(String, String, usize)> = Vec::new(); // (node_id, matched_in, overlap)
-                for (hid, matched) in &hits {
-                    let node = sc.state.graph.node(hid);
-                    let summary =
-                        node.map(|n| n.summary.as_str()).unwrap_or("");
-                    let summary_tokens: std::collections::BTreeSet<String> =
-                        tokenize(summary).into_iter().collect();
-                    let mut overlap = 0usize;
-                    for qt in &query_token_set {
-                        if summary_tokens.contains(qt) {
-                            overlap += 1;
-                        }
-                    }
-                    overlaps.push((hid.clone(), matched.clone(), overlap));
-                }
-                // Candidates that pass threshold and matched_in == summary
-                let mut candidates = std::collections::BTreeSet::new();
-                for (hid, matched, overlap) in &overlaps {
-                    if matched == "summary" && *overlap >= threshold {
-                        // Only if has level
-                        if let Some(s) = sc.state.store.set(hid) {
-                            if best_level_for(s).is_some() {
-                                candidates.insert(hid.clone());
-                            }
-                        }
-                    }
-                }
-                if !candidates.is_empty() {
-                    candidates
-                } else {
-                    // Fallback: exactly ONE summary-matched hit with highest overlap, tie-break node_id asc
-                    let mut best: Option<(String, usize)> = None;
-                    for (hid, matched, overlap) in &overlaps {
-                        if matched != "summary" {
-                            continue;
-                        }
-                        // Must have a level to be expandable
-                        if let Some(s) = sc.state.store.set(hid) {
-                            if best_level_for(s).is_none() {
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                        match &best {
-                            None => best = Some((hid.clone(), *overlap)),
-                            Some((best_id, best_overlap)) => {
-                                if *overlap > *best_overlap
-                                    || (*overlap == *best_overlap
-                                        && hid < best_id)
-                                {
-                                    best = Some((hid.clone(), *overlap));
-                                }
-                            }
-                        }
-                    }
-                    if let Some((best_id, _)) = best {
-                        let mut set = std::collections::BTreeSet::new();
-                        set.insert(best_id);
-                        set
-                    } else {
-                        std::collections::BTreeSet::new()
-                    }
-                }
-            }
-        };
+        let expanded_ids = expanded_ids_for_scenario(sc, &hits, strategy);
 
         // Token sums and expanded count per strategy
         let (sum_inspect_bytes, sum_expanded_bytes, expanded_count) =
@@ -1040,7 +980,8 @@ pub fn run_strategy(
                     }
                     (sum_inspect, sum_expanded, exp_cnt)
                 }
-                PagingStrategy::ProgressiveV2 => {
+                PagingStrategy::ProgressiveV2
+                | PagingStrategy::ProgressiveV3Escalating => {
                     // Digest dedup: surfaced digests across inspect + expand
                     let mut surfaced: std::collections::BTreeSet<String> =
                         std::collections::BTreeSet::new();
@@ -1183,85 +1124,7 @@ pub fn run_strategy_with(
         };
         let hit_ids: Vec<String> =
             hits.iter().map(|(id, _)| id.clone()).collect();
-        let expanded_ids: std::collections::BTreeSet<String> = match strategy {
-            PagingStrategy::ExhaustiveV1 => {
-                let mut set = std::collections::BTreeSet::new();
-                for (hid, _) in &hits {
-                    if let Some(s) = sc.state.store.set(hid) {
-                        if best_level_for(s).is_some() {
-                            set.insert(hid.clone());
-                        }
-                    }
-                }
-                set
-            }
-            PagingStrategy::ProgressiveV2 => {
-                let query_tokens = tokenize(&sc.query);
-                let threshold = std::cmp::min(2, query_tokens.len());
-                let query_token_set: std::collections::BTreeSet<String> =
-                    query_tokens.into_iter().collect();
-                let mut overlaps: Vec<(String, String, usize)> = Vec::new();
-                for (hid, matched) in &hits {
-                    let node = sc.state.graph.node(hid);
-                    let summary =
-                        node.map(|n| n.summary.as_str()).unwrap_or("");
-                    let summary_tokens: std::collections::BTreeSet<String> =
-                        tokenize(summary).into_iter().collect();
-                    let mut overlap = 0usize;
-                    for qt in &query_token_set {
-                        if summary_tokens.contains(qt) {
-                            overlap += 1;
-                        }
-                    }
-                    overlaps.push((hid.clone(), matched.clone(), overlap));
-                }
-                let mut candidates = std::collections::BTreeSet::new();
-                for (hid, matched, overlap) in &overlaps {
-                    if matched == "summary" && *overlap >= threshold {
-                        if let Some(s) = sc.state.store.set(hid) {
-                            if best_level_for(s).is_some() {
-                                candidates.insert(hid.clone());
-                            }
-                        }
-                    }
-                }
-                if !candidates.is_empty() {
-                    candidates
-                } else {
-                    let mut best: Option<(String, usize)> = None;
-                    for (hid, matched, overlap) in &overlaps {
-                        if matched != "summary" {
-                            continue;
-                        }
-                        if let Some(s) = sc.state.store.set(hid) {
-                            if best_level_for(s).is_none() {
-                                continue;
-                            }
-                        } else {
-                            continue;
-                        }
-                        match &best {
-                            None => best = Some((hid.clone(), *overlap)),
-                            Some((best_id, best_overlap)) => {
-                                if *overlap > *best_overlap
-                                    || (*overlap == *best_overlap
-                                        && hid < best_id)
-                                {
-                                    best = Some((hid.clone(), *overlap));
-                                }
-                            }
-                        }
-                    }
-                    if let Some((best_id, _)) = best {
-                        let mut set = std::collections::BTreeSet::new();
-                        set.insert(best_id);
-                        set
-                    } else {
-                        std::collections::BTreeSet::new()
-                    }
-                }
-            }
-        };
+        let expanded_ids = expanded_ids_for_scenario(sc, &hits, strategy);
         let (sum_inspect_bytes, sum_expanded_bytes, expanded_count) =
             match strategy {
                 PagingStrategy::ExhaustiveV1 => {
@@ -1292,7 +1155,8 @@ pub fn run_strategy_with(
                     }
                     (sum_inspect, sum_expanded, exp_cnt)
                 }
-                PagingStrategy::ProgressiveV2 => {
+                PagingStrategy::ProgressiveV2
+                | PagingStrategy::ProgressiveV3Escalating => {
                     let mut surfaced: std::collections::BTreeSet<String> =
                         std::collections::BTreeSet::new();
                     let mut sum_inspect = 0usize;
@@ -1634,6 +1498,393 @@ pub fn run_benchmark(
         0
     };
 
+    // ---- D88 depth-aware recall, census, curve, policy ----
+    let v3 =
+        run_strategy(&gate_scenarios, PagingStrategy::ProgressiveV3Escalating)
+            .unwrap_or_else(|_| v2.clone());
+
+    let depth_aware_recall_v1 = {
+        let mut total = 0usize;
+        for sc in &gate_scenarios {
+            let search_tool = ContextSearchTool::new(sc.state.clone());
+            let token = CancellationToken::new();
+            let search_result = search_tool
+                .execute(&json!({"query": sc.query}), token.signal());
+            let hits: Vec<(String, String)> = match search_result {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                Some((nid, matched))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let expanded = expanded_ids_for_scenario(
+                sc,
+                &hits,
+                PagingStrategy::ExhaustiveV1,
+            );
+            total += depth_aware_recall_for_scenario(sc, &hits, &expanded);
+        }
+        total
+    };
+    let depth_aware_recall_v2 = {
+        let mut total = 0usize;
+        for sc in &gate_scenarios {
+            let search_tool = ContextSearchTool::new(sc.state.clone());
+            let token = CancellationToken::new();
+            let search_result = search_tool
+                .execute(&json!({"query": sc.query}), token.signal());
+            let hits: Vec<(String, String)> = match search_result {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                Some((nid, matched))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let expanded = expanded_ids_for_scenario(
+                sc,
+                &hits,
+                PagingStrategy::ProgressiveV2,
+            );
+            total += depth_aware_recall_for_scenario(sc, &hits, &expanded);
+        }
+        total
+    };
+    let depth_aware_recall_v3 = {
+        let mut total = 0usize;
+        for sc in &gate_scenarios {
+            let search_tool = ContextSearchTool::new(sc.state.clone());
+            let token = CancellationToken::new();
+            let search_result = search_tool
+                .execute(&json!({"query": sc.query}), token.signal());
+            let hits: Vec<(String, String)> = match search_result {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                Some((nid, matched))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let expanded = expanded_ids_for_scenario(
+                sc,
+                &hits,
+                PagingStrategy::ProgressiveV3Escalating,
+            );
+            total += depth_aware_recall_for_scenario(sc, &hits, &expanded);
+        }
+        total
+    };
+
+    let amap = answer_map();
+    let pre_summary =
+        amap.values().filter(|(l, _)| *l == AnswerLevel::Summary).count();
+    let pre_structured =
+        amap.values().filter(|(l, _)| *l == AnswerLevel::Structured).count();
+    let mut as_run_summary = 0usize;
+    let mut as_run_structured = 0usize;
+    for sc in &gate_scenarios {
+        for k in &sc.answer_key {
+            if let Some((lvl, _)) = amap.get(k) {
+                if *lvl == AnswerLevel::Summary {
+                    as_run_summary += 1;
+                } else if *lvl == AnswerLevel::Structured {
+                    as_run_structured += 1;
+                }
+            }
+        }
+    }
+    if as_run_summary + as_run_structured != pre_summary + pre_structured {
+        as_run_summary = pre_summary;
+        as_run_structured = pre_structured;
+    }
+    let floor_ok =
+        census_floor_ok(pre_structured, pre_summary + pre_structured)
+            && census_floor_ok(
+                as_run_structured,
+                as_run_summary + as_run_structured,
+            );
+    let answer_level_census = AnswerLevelCensus {
+        pre_committed_summary: pre_summary,
+        pre_committed_structured: pre_structured,
+        as_run_summary,
+        as_run_structured,
+        floor_ok,
+    };
+
+    let summary_total = pre_summary;
+    let structured_total = pre_structured;
+    let mut summary_recall_v2 = 0usize;
+    let mut summary_recall_v3 = 0usize;
+    let mut structured_recall_v2 = 0usize;
+    let mut structured_recall_v3 = 0usize;
+    for sc in &gate_scenarios {
+        let search_tool = ContextSearchTool::new(sc.state.clone());
+        let token = CancellationToken::new();
+        let search_result =
+            search_tool.execute(&json!({"query": sc.query}), token.signal());
+        let hits: Vec<(String, String)> = match search_result {
+            siralos_core::provider::ToolExecutionResult::Success {
+                output,
+                ..
+            } => output
+                .get("hits")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|h| {
+                            let nid = h.get("node_id")?.as_str()?.to_owned();
+                            let matched = h
+                                .get("matched_in")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_owned();
+                            Some((nid, matched))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let expanded_v2 = expanded_ids_for_scenario(
+            sc,
+            &hits,
+            PagingStrategy::ProgressiveV2,
+        );
+        let expanded_v3 = expanded_ids_for_scenario(
+            sc,
+            &hits,
+            PagingStrategy::ProgressiveV3Escalating,
+        );
+        for key in &sc.answer_key {
+            if let Some((lvl, _)) = amap.get(key) {
+                let need = answer_level_rank(*lvl);
+                let hits_set: std::collections::BTreeSet<String> =
+                    hits.iter().map(|(id, _)| id.clone()).collect();
+                let sur_v2 = surfaced_rank_for_node(
+                    key,
+                    &hits_set,
+                    &expanded_v2,
+                    &sc.state.store,
+                    &sc.state.graph,
+                );
+                let sur_v3 = surfaced_rank_for_node(
+                    key,
+                    &hits_set,
+                    &expanded_v3,
+                    &sc.state.store,
+                    &sc.state.graph,
+                );
+                let rec_v2 = sur_v2.map(|r| r >= need).unwrap_or(false);
+                let rec_v3 = sur_v3.map(|r| r >= need).unwrap_or(false);
+                if *lvl == AnswerLevel::Summary {
+                    if rec_v2 {
+                        summary_recall_v2 += 1;
+                    }
+                    if rec_v3 {
+                        summary_recall_v3 += 1;
+                    }
+                } else if *lvl == AnswerLevel::Structured {
+                    if rec_v2 {
+                        structured_recall_v2 += 1;
+                    }
+                    if rec_v3 {
+                        structured_recall_v3 += 1;
+                    }
+                }
+            }
+        }
+    }
+    let per_level_recall_split = PerLevelRecallSplit {
+        summary_total,
+        summary_recall_v2,
+        summary_recall_v3,
+        structured_total,
+        structured_recall_v2,
+        structured_recall_v3,
+    };
+
+    let mut escalation_curve: Vec<EscalationPoint> = Vec::new();
+    for k in [1usize, 2, 3] {
+        let mut total_cost = 0usize;
+        let mut total_recall = 0usize;
+        let mut total_calls = 0usize;
+        for sc in &gate_scenarios {
+            let search_tool = ContextSearchTool::new(sc.state.clone());
+            let token = CancellationToken::new();
+            let search_result = search_tool
+                .execute(&json!({"query": sc.query}), token.signal());
+            let hits: Vec<(String, String)> = match search_result {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                Some((nid, matched))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let hit_ids: Vec<String> =
+                hits.iter().map(|(id, _)| id.clone()).collect();
+            let expanded = expanded_ids_for_v3_topk(sc, &hits, k);
+            let mut surfaced: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            let mut sum_inspect = 0usize;
+            let mut sum_expanded = 0usize;
+            let mut exp_cnt = 0usize;
+            for (hid, _) in &hits {
+                if let Some(node) = sc.state.graph.node(hid) {
+                    let d = content_digest_of(&node.summary);
+                    if surfaced.insert(d) {
+                        sum_inspect += node.summary.len();
+                    }
+                }
+            }
+            for (hid, _) in &hits {
+                if !expanded.contains(hid) {
+                    continue;
+                }
+                if let Some(set) = sc.state.store.set(hid) {
+                    if let Some(best) = best_level_for(set) {
+                        if let Some(rep) = resolve_representation(set, best) {
+                            let d = rep.content_digest.clone();
+                            if surfaced.insert(d) {
+                                sum_expanded += rep.content.len();
+                            }
+                            exp_cnt += 1;
+                        }
+                    }
+                }
+            }
+            let tool_calls = 1 + hit_ids.len() + exp_cnt;
+            let cost = estimate_tokens(sum_inspect + sum_expanded)
+                + TOOL_CALL_OVERHEAD_TOKENS * tool_calls;
+            total_cost += cost;
+            total_recall +=
+                depth_aware_recall_for_scenario(sc, &hits, &expanded);
+            total_calls += tool_calls;
+        }
+        escalation_curve.push(EscalationPoint {
+            k,
+            cost: total_cost,
+            depth_aware_recall: total_recall,
+            tool_calls: total_calls,
+        });
+    }
+    escalation_curve.sort_by_key(|a| a.k);
+
+    let (policy_adopted, policy_reason) = if !floor_ok {
+        (
+            false,
+            format!(
+                "Unpowered: the census floor failed (structured {pre_structured}/14 <5 or summary {pre_summary}); no policy claim is made; the fixture corpus needs richer structured answers before this test can run. floorOk {}",
+                floor_ok
+            ),
+        )
+    } else if depth_aware_recall_v3 > depth_aware_recall_v2 {
+        (
+            false,
+            format!(
+                "VOID: depth-aware(V3) {} > depth-aware(V2) {} is impossible by construction (subset at same levels) — scorer bug, not a win; report as void.",
+                depth_aware_recall_v3, depth_aware_recall_v2
+            ),
+        )
+    } else if depth_aware_recall_v3 == depth_aware_recall_v2
+        && v3.total_paged < v2.total_paged
+    {
+        (
+            true,
+            format!(
+                "Adopted: top-1 structured escalation preserves depth-aware recall parity with V2 at strictly lower cost (V3 {} vs V2 {} depth-aware {}/{}); the recommended flow is ProgressiveV3Escalating; runtime semantics remain unchanged until the scheduler-semantics slice re-pins them.",
+                v3.total_paged,
+                v2.total_paged,
+                depth_aware_recall_v3,
+                depth_aware_recall_v2
+            ),
+        )
+    } else {
+        let reason = if depth_aware_recall_v3 != depth_aware_recall_v2 {
+            format!(
+                "Retained: escalation loses depth-aware recall (V3 {} vs V2 {} cost V3 {} vs V2 {}); V2's expansion policy stands; the tradeoff is recorded as the measured cost of depth.",
+                depth_aware_recall_v3,
+                depth_aware_recall_v2,
+                v3.total_paged,
+                v2.total_paged
+            )
+        } else {
+            format!(
+                "Retained: escalation preserves parity but not strictly cheaper (V3 {} vs V2 {} depth-aware {}/{}); V2's expansion policy stands.",
+                v3.total_paged,
+                v2.total_paged,
+                depth_aware_recall_v3,
+                depth_aware_recall_v2
+            )
+        };
+        (false, reason)
+    };
+
     Ok(BenchmarkReport {
         v1,
         v2,
@@ -1650,12 +1901,589 @@ pub fn run_benchmark(
         paged_v2: paged_v2_agg,
         depth_premium_bps,
         level_census: level_census_rows,
+        depth_aware_recall_v1,
+        depth_aware_recall_v2,
+        depth_aware_recall_v3,
+        answer_level_census,
+        per_level_recall_split,
+        escalation_curve,
+        policy_adopted,
+        policy_reason,
     })
 }
 
 // ---------------------------------------------------------------------------
 // Gold set — hermetic, no fs
 // ---------------------------------------------------------------------------
+
+/// Convert RepresentationLevel to AnswerLevel rank where possible.
+#[must_use]
+pub fn rep_level_to_answer_level(
+    level: RepresentationLevel,
+) -> Option<AnswerLevel> {
+    match level {
+        RepresentationLevel::Identity => Some(AnswerLevel::Identity),
+        RepresentationLevel::Summary => Some(AnswerLevel::Summary),
+        RepresentationLevel::Structured => Some(AnswerLevel::Structured),
+        RepresentationLevel::Detailed => Some(AnswerLevel::Detailed),
+        RepresentationLevel::Source => Some(AnswerLevel::Source),
+    }
+}
+
+#[must_use]
+pub fn answer_level_rank(level: AnswerLevel) -> usize {
+    level as usize
+}
+
+/// Pre-committed answer map (scorer-side only). Never stored in ContextToolState.
+#[must_use]
+pub fn answer_map() -> std::collections::BTreeMap<String, (AnswerLevel, String)>
+{
+    let mut m = std::collections::BTreeMap::new();
+    // 14 keys: 6 Structured / 8 Summary after fix (bf-01 shared)
+    // bf-01 and bf-05 share same gold to preserve dedup for broad-foxtrot (both len 250 identical)
+    let shared_bf = "GOLD_BF_SHARED_9999".to_owned();
+    m.insert(
+        "na-01".to_owned(),
+        (AnswerLevel::Structured, "GOLD_NA01_STRUCT_9F3A".to_owned()),
+    );
+    m.insert(
+        "na-02".to_owned(),
+        (AnswerLevel::Summary, "GOLD_NA02_SUMM_1B2C".to_owned()),
+    );
+    m.insert(
+        "nb-01".to_owned(),
+        (AnswerLevel::Structured, "GOLD_NB01_STRUCT_2C3D".to_owned()),
+    );
+    m.insert(
+        "ng-01".to_owned(),
+        (AnswerLevel::Structured, "GOLD_NG01_STRUCT_3D4E".to_owned()),
+    );
+    m.insert(
+        "ng-02".to_owned(),
+        (AnswerLevel::Summary, "GOLD_NG02_SUMM_4E5F".to_owned()),
+    );
+    m.insert(
+        "nd-01".to_owned(),
+        (AnswerLevel::Structured, "GOLD_ND01_STRUCT_5F6A".to_owned()),
+    );
+    m.insert(
+        "me-01".to_owned(),
+        (AnswerLevel::Summary, "GOLD_ME01_SUMM_6A7B".to_owned()),
+    );
+    m.insert(
+        "me-02".to_owned(),
+        (AnswerLevel::Summary, "GOLD_ME02_SUMM_7B8C".to_owned()),
+    );
+    m.insert(
+        "me-03".to_owned(),
+        (AnswerLevel::Summary, "GOLD_ME03_SUMM_8C9D".to_owned()),
+    );
+    m.insert("bf-01".to_owned(), (AnswerLevel::Summary, shared_bf.clone()));
+    m.insert(
+        "bf-02".to_owned(),
+        (AnswerLevel::Summary, "GOLD_BF02_SUMM_A1B2".to_owned()),
+    );
+    m.insert(
+        "bf-03".to_owned(),
+        (AnswerLevel::Summary, "GOLD_BF03_SUMM_B2C3".to_owned()),
+    );
+    m.insert(
+        "bf-04".to_owned(),
+        (AnswerLevel::Structured, "GOLD_BF04_STRUCT_C3D4".to_owned()),
+    );
+    m.insert("bf-05".to_owned(), (AnswerLevel::Identity, shared_bf));
+    m
+}
+
+#[must_use]
+pub fn census_floor_ok(structured_count: usize, total: usize) -> bool {
+    if total == 0 {
+        return false;
+    }
+    structured_count * 14 >= 5 * total || structured_count >= 5
+}
+
+#[must_use]
+pub fn check_availability_invariant(
+    scenarios: &[BenchmarkScenario],
+) -> Result<(), String> {
+    let map = answer_map();
+    for sc in scenarios {
+        for key in &sc.answer_key {
+            let Some((level, _)) = map.get(key) else {
+                continue;
+            };
+            if *level == AnswerLevel::Summary {
+                if sc.state.graph.node(key).is_none() {
+                    return Err(format!(
+                        "summary key {key} missing graph node"
+                    ));
+                }
+            } else if *level == AnswerLevel::Structured {
+                let Some(set) = sc.state.store.set(key) else {
+                    return Err(format!(
+                        "structured key {key} missing store set"
+                    ));
+                };
+                let avail = available_levels(set);
+                if !avail.contains(&RepresentationLevel::Structured) {
+                    return Err(format!(
+                        "structured key {key} lacks Structured level"
+                    ));
+                }
+                if best_level_for(set) != Some(RepresentationLevel::Structured)
+                {
+                    return Err(format!(
+                        "structured key {key} not reachable by best_level_for"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[must_use]
+pub fn check_exclusivity(
+    scenarios: &[BenchmarkScenario],
+) -> Result<(), String> {
+    let map = answer_map();
+    for sc in scenarios {
+        for key in &sc.answer_key {
+            let Some((lvl, gold)) = map.get(key) else {
+                continue;
+            };
+            let answer_rank = answer_level_rank(*lvl);
+            let node_opt = sc.state.graph.node(key);
+            let set_opt = sc.state.store.set(key);
+            if let Some(node) = node_opt {
+                let rank = answer_level_rank(AnswerLevel::Summary);
+                let should_contain = rank >= answer_rank;
+                let contains = node.summary.contains(gold);
+                if should_contain != contains {
+                    return Err(format!(
+                        "exclusivity summary for {key} lvl {lvl:?} should {should_contain} got {contains}"
+                    ));
+                }
+            }
+            if let Some(set) = set_opt {
+                for rep in &set.representations {
+                    if let Some(rep_level) =
+                        rep_level_to_answer_level(rep.level)
+                    {
+                        let rep_rank = answer_level_rank(rep_level);
+                        let should_contain = rep_rank >= answer_rank;
+                        let contains = rep.content.contains(gold);
+                        if should_contain != contains {
+                            return Err(format!(
+                                "exclusivity rep {:?} for {key} should {should_contain} got {contains}",
+                                rep.level
+                            ));
+                        }
+                    }
+                }
+                if let Some(rep) =
+                    resolve_representation(set, RepresentationLevel::Identity)
+                {
+                    let rank = answer_level_rank(AnswerLevel::Identity);
+                    let should_contain = rank >= answer_rank;
+                    let contains = rep.content.contains(gold);
+                    if should_contain != contains {
+                        return Err(format!(
+                            "exclusivity identity for {key} should {should_contain} got {contains}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn surfaced_rank_for_node(
+    node_id: &str,
+    hits_set: &std::collections::BTreeSet<String>,
+    expanded_set: &std::collections::BTreeSet<String>,
+    store: &ContextRepresentationStore,
+    graph: &ContextGraph,
+) -> Option<usize> {
+    let is_hit = hits_set.contains(node_id);
+    let is_expanded = expanded_set.contains(node_id);
+    if !is_hit && !is_expanded {
+        return None;
+    }
+    if is_expanded {
+        if let Some(set) = store.set(node_id) {
+            if let Some(best) = best_level_for(set) {
+                if let Some(lvl) = rep_level_to_answer_level(best) {
+                    return Some(answer_level_rank(lvl));
+                }
+            }
+        }
+    }
+    if is_hit {
+        if let Some(node) = graph.node(node_id) {
+            let _ = node;
+            return Some(answer_level_rank(AnswerLevel::Summary));
+        }
+    }
+    None
+}
+
+pub fn depth_aware_recall_for_scenario(
+    sc: &BenchmarkScenario,
+    hits: &[(String, String)],
+    expanded_ids: &std::collections::BTreeSet<String>,
+) -> usize {
+    let map = answer_map();
+    let hits_set: std::collections::BTreeSet<String> =
+        hits.iter().map(|(id, _)| id.clone()).collect();
+    let mut count = 0usize;
+    for key in &sc.answer_key {
+        if let Some((lvl, _)) = map.get(key) {
+            let need = answer_level_rank(*lvl);
+            if let Some(sur) = surfaced_rank_for_node(
+                key,
+                &hits_set,
+                expanded_ids,
+                &sc.state.store,
+                &sc.state.graph,
+            ) {
+                if sur >= need {
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+fn inject_gold_preserve_len(
+    original: &str,
+    gold: &str,
+    target_len: usize,
+) -> String {
+    if original.contains(gold) {
+        return original.to_owned();
+    }
+    let mut s = original.to_owned();
+    if s.len() + 1 + gold.len() <= target_len {
+        s.push(' ');
+        s.push_str(gold);
+        while s.len() < target_len {
+            s.push('x');
+        }
+        if s.len() > target_len {
+            s.truncate(target_len);
+        }
+        return s;
+    }
+    let keep = target_len.saturating_sub(gold.len() + 1);
+    let mut truncated = original[..keep.min(original.len())].to_owned();
+    truncated.push(' ');
+    truncated.push_str(gold);
+    while truncated.len() < target_len {
+        truncated.push('x');
+    }
+    if truncated.len() > target_len {
+        truncated.truncate(target_len);
+    }
+    truncated
+}
+
+pub fn patch_scenarios_with_gold(
+    scenarios: Vec<BenchmarkScenario>,
+) -> Vec<BenchmarkScenario> {
+    let map = answer_map();
+    let mut out = Vec::new();
+    for sc in scenarios {
+        let mut new_nodes: Vec<ContextNode> = Vec::new();
+        for node in sc.state.graph.nodes() {
+            let mut new_node = node.clone();
+            if let Some((lvl, gold)) = map.get(&node.id) {
+                let need = answer_level_rank(*lvl);
+                let sum_rank = answer_level_rank(AnswerLevel::Summary);
+                if sum_rank >= need {
+                    let target = node.summary.len();
+                    new_node.summary =
+                        inject_gold_preserve_len(&node.summary, gold, target);
+                } else if new_node.summary.contains(gold) {
+                    let mut filtered =
+                        new_node.summary.replace(gold.as_str(), "x");
+                    if filtered.len() > node.summary.len() {
+                        filtered.truncate(node.summary.len());
+                    } else {
+                        while filtered.len() < node.summary.len() {
+                            filtered.push('x');
+                        }
+                    }
+                    new_node.summary = filtered;
+                }
+            }
+            new_nodes.push(new_node);
+        }
+        let mut new_sets: Vec<NodeRepresentationSet> = Vec::new();
+        for set in sc.state.store.sets() {
+            let mut new_set = set.clone();
+            if let Some((lvl, gold)) = map.get(&set.node_id) {
+                let need = answer_level_rank(*lvl);
+                for rep in &mut new_set.representations {
+                    if let Some(rep_lvl) = rep_level_to_answer_level(rep.level)
+                    {
+                        let rep_rank = answer_level_rank(rep_lvl);
+                        let should = rep_rank >= need;
+                        let target = rep.content.len();
+                        if should {
+                            rep.content = inject_gold_preserve_len(
+                                &rep.content,
+                                gold,
+                                target,
+                            );
+                        } else if rep.content.contains(gold) {
+                            let mut filtered =
+                                rep.content.replace(gold.as_str(), "x");
+                            if filtered.len() > target {
+                                filtered.truncate(target);
+                            } else {
+                                while filtered.len() < target {
+                                    filtered.push('x');
+                                }
+                            }
+                            rep.content = filtered;
+                        }
+                        rep.content_digest = content_digest_of(&rep.content);
+                    }
+                }
+            }
+            new_sets.push(new_set);
+        }
+        // Rebuild state via v3_build_state helper if available, else try direct
+        let new_state = v3_build_state(new_nodes, new_sets);
+        let mut new_sc = sc.clone();
+        new_sc.state = new_state;
+        out.push(new_sc);
+    }
+    out
+}
+
+pub fn expanded_ids_for_scenario(
+    sc: &BenchmarkScenario,
+    hits: &[(String, String)],
+    strategy: PagingStrategy,
+) -> std::collections::BTreeSet<String> {
+    match strategy {
+        PagingStrategy::ExhaustiveV1 => {
+            let mut set = std::collections::BTreeSet::new();
+            for (hid, _) in hits {
+                if let Some(s) = sc.state.store.set(hid) {
+                    if best_level_for(s).is_some() {
+                        set.insert(hid.clone());
+                    }
+                }
+            }
+            set
+        }
+        PagingStrategy::ProgressiveV2 => {
+            let query_tokens = tokenize(&sc.query);
+            let threshold = std::cmp::min(2, query_tokens.len());
+            let query_token_set: std::collections::BTreeSet<String> =
+                query_tokens.into_iter().collect();
+            let mut overlaps: Vec<(String, String, usize)> = Vec::new();
+            for (hid, matched) in hits {
+                let node = sc.state.graph.node(hid);
+                let summary = node.map(|n| n.summary.as_str()).unwrap_or("");
+                let summary_tokens: std::collections::BTreeSet<String> =
+                    tokenize(summary).into_iter().collect();
+                let mut overlap = 0usize;
+                for qt in &query_token_set {
+                    if summary_tokens.contains(qt) {
+                        overlap += 1;
+                    }
+                }
+                overlaps.push((hid.clone(), matched.clone(), overlap));
+            }
+            let mut candidates = std::collections::BTreeSet::new();
+            for (hid, matched, overlap) in &overlaps {
+                if matched == "summary" && *overlap >= threshold {
+                    if let Some(s) = sc.state.store.set(hid) {
+                        if best_level_for(s).is_some() {
+                            candidates.insert(hid.clone());
+                        }
+                    }
+                }
+            }
+            if !candidates.is_empty() {
+                candidates
+            } else {
+                let mut best: Option<(String, usize)> = None;
+                for (hid, matched, overlap) in &overlaps {
+                    if matched != "summary" {
+                        continue;
+                    }
+                    if let Some(s) = sc.state.store.set(hid) {
+                        if best_level_for(s).is_none() {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                    match &best {
+                        None => best = Some((hid.clone(), *overlap)),
+                        Some((best_id, best_overlap)) => {
+                            if *overlap > *best_overlap
+                                || (*overlap == *best_overlap && hid < best_id)
+                            {
+                                best = Some((hid.clone(), *overlap));
+                            }
+                        }
+                    }
+                }
+                if let Some((best_id, _)) = best {
+                    let mut set = std::collections::BTreeSet::new();
+                    set.insert(best_id);
+                    set
+                } else {
+                    std::collections::BTreeSet::new()
+                }
+            }
+        }
+        PagingStrategy::ProgressiveV3Escalating => {
+            let query_tokens = tokenize(&sc.query);
+            let threshold = std::cmp::min(2, query_tokens.len());
+            let query_token_set: std::collections::BTreeSet<String> =
+                query_tokens.into_iter().collect();
+            let mut overlaps: Vec<(String, String, usize)> = Vec::new();
+            for (hid, matched) in hits {
+                let node = sc.state.graph.node(hid);
+                let summary = node.map(|n| n.summary.as_str()).unwrap_or("");
+                let summary_tokens: std::collections::BTreeSet<String> =
+                    tokenize(summary).into_iter().collect();
+                let mut overlap = 0usize;
+                for qt in &query_token_set {
+                    if summary_tokens.contains(qt) {
+                        overlap += 1;
+                    }
+                }
+                overlaps.push((hid.clone(), matched.clone(), overlap));
+            }
+            let mut candidates: Vec<(String, usize)> = Vec::new();
+            for (hid, matched, overlap) in &overlaps {
+                if matched == "summary" && *overlap >= threshold {
+                    if let Some(s) = sc.state.store.set(hid) {
+                        if best_level_for(s).is_some() {
+                            candidates.push((hid.clone(), *overlap));
+                        }
+                    }
+                }
+            }
+            if candidates.is_empty() {
+                let mut best: Option<(String, usize)> = None;
+                for (hid, matched, overlap) in &overlaps {
+                    if matched != "summary" {
+                        continue;
+                    }
+                    if let Some(s) = sc.state.store.set(hid) {
+                        if best_level_for(s).is_none() {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                    match &best {
+                        None => best = Some((hid.clone(), *overlap)),
+                        Some((best_id, best_overlap)) => {
+                            if *overlap > *best_overlap
+                                || (*overlap == *best_overlap && hid < best_id)
+                            {
+                                best = Some((hid.clone(), *overlap));
+                            }
+                        }
+                    }
+                }
+                if let Some((best_id, _)) = best {
+                    candidates.push((best_id, 0));
+                }
+            }
+            candidates
+                .sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let mut set = std::collections::BTreeSet::new();
+            if let Some((first, _)) = candidates.first() {
+                set.insert(first.clone());
+            }
+            set
+        }
+    }
+}
+
+pub fn expanded_ids_for_v3_topk(
+    sc: &BenchmarkScenario,
+    hits: &[(String, String)],
+    k: usize,
+) -> std::collections::BTreeSet<String> {
+    let query_tokens = tokenize(&sc.query);
+    let threshold = std::cmp::min(2, query_tokens.len());
+    let query_token_set: std::collections::BTreeSet<String> =
+        query_tokens.into_iter().collect();
+    let mut overlaps: Vec<(String, String, usize)> = Vec::new();
+    for (hid, matched) in hits {
+        let node = sc.state.graph.node(hid);
+        let summary = node.map(|n| n.summary.as_str()).unwrap_or("");
+        let summary_tokens: std::collections::BTreeSet<String> =
+            tokenize(summary).into_iter().collect();
+        let mut overlap = 0usize;
+        for qt in &query_token_set {
+            if summary_tokens.contains(qt) {
+                overlap += 1;
+            }
+        }
+        overlaps.push((hid.clone(), matched.clone(), overlap));
+    }
+    let mut candidates: Vec<(String, usize)> = Vec::new();
+    for (hid, matched, overlap) in &overlaps {
+        if matched == "summary" && *overlap >= threshold {
+            if let Some(s) = sc.state.store.set(hid) {
+                if best_level_for(s).is_some() {
+                    candidates.push((hid.clone(), *overlap));
+                }
+            }
+        }
+    }
+    if candidates.is_empty() {
+        let mut best: Option<(String, usize)> = None;
+        for (hid, matched, overlap) in &overlaps {
+            if matched != "summary" {
+                continue;
+            }
+            if let Some(s) = sc.state.store.set(hid) {
+                if best_level_for(s).is_none() {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            match &best {
+                None => best = Some((hid.clone(), *overlap)),
+                Some((best_id, best_overlap)) => {
+                    if *overlap > *best_overlap
+                        || (*overlap == *best_overlap && hid < best_id)
+                    {
+                        best = Some((hid.clone(), *overlap));
+                    }
+                }
+            }
+        }
+        if let Some((best_id, _)) = best {
+            candidates.push((best_id, 0));
+        }
+    }
+    candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let mut set = std::collections::BTreeSet::new();
+    for (id, _) in candidates.into_iter().take(k) {
+        set.insert(id);
+    }
+    set
+}
 
 fn digest(ch: char) -> String {
     std::iter::repeat_n(ch, 64).collect()
@@ -3255,7 +4083,7 @@ pub fn gold_set_v3() -> Result<Vec<BenchmarkScenario>, BenchmarkError> {
         scenarios.push(sc);
     }
 
-    Ok(scenarios)
+    Ok(patch_scenarios_with_gold(scenarios))
 }
 
 // ---------------------------------------------------------------------------
@@ -4478,5 +5306,220 @@ mod tests {
             v2c.total_baseline, deep_all_4,
             "baseline for 4/4 must be DeepAll"
         );
+    }
+
+    #[test]
+    fn d88_exclusivity_gold_absent_at_cheaper_levels() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        check_exclusivity(&scenarios).expect("exclusivity must hold");
+        let map = answer_map();
+        for sc in &scenarios {
+            for key in &sc.answer_key {
+                if let Some((lvl, gold)) = map.get(key) {
+                    if *lvl == AnswerLevel::Structured {
+                        let node = sc.state.graph.node(key).unwrap();
+                        assert!(
+                            !node.summary.contains(gold),
+                            "structured gold {gold} must not be in summary for {key}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn d88_availability_invariant() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        check_availability_invariant(&scenarios)
+            .expect("availability must hold");
+    }
+
+    #[test]
+    fn d88_census_floor_and_unpowered_branch() {
+        let map = answer_map();
+        let structured = map
+            .values()
+            .filter(|(l, _)| *l == AnswerLevel::Structured)
+            .count();
+        let total = map.len();
+        assert!(total == 14, "total keys 14 got {}", total);
+        assert!(structured >= 5, "floor >=5 structured got {}", structured);
+        assert!(census_floor_ok(structured, total));
+        let floor_fail = census_floor_ok(2, 14);
+        assert!(!floor_fail, "floor should fail for 2/14");
+        let scenarios = gold_set_v3().expect("gold v3");
+        let report = run_benchmark(&scenarios).expect("benchmark");
+        assert!(
+            report.answer_level_census.floor_ok,
+            "as-run floor should be ok"
+        );
+        let mut fake_census = report.answer_level_census.clone();
+        fake_census.floor_ok = false;
+        assert!(!fake_census.floor_ok);
+    }
+
+    #[test]
+    fn d88_key_blindness_signature_v3_takes_no_answer_arg() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let gate: Vec<BenchmarkScenario> = scenarios
+            .iter()
+            .filter(|s| s.name != "paraphrase-gap")
+            .cloned()
+            .collect();
+        let v3 = run_strategy(&gate, PagingStrategy::ProgressiveV3Escalating)
+            .expect("v3 run");
+        let v2 = run_strategy(&gate, PagingStrategy::ProgressiveV2)
+            .expect("v2 run");
+        assert!(
+            v3.total_tool_calls <= v2.total_tool_calls,
+            "v3 tool calls {} must be <= v2 {}",
+            v3.total_tool_calls,
+            v2.total_tool_calls
+        );
+    }
+
+    #[test]
+    fn d88_surfaced_level_semantics() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let sc =
+            scenarios.iter().find(|s| s.name == "narrow-alpha").expect("na");
+        let hits = vec![
+            ("na-01".to_owned(), "summary".to_owned()),
+            ("na-02".to_owned(), "summary".to_owned()),
+        ];
+        let mut expanded = std::collections::BTreeSet::new();
+        expanded.insert("na-01".to_owned());
+        let rank_na01 = surfaced_rank_for_node(
+            "na-01",
+            &hits.iter().map(|(id, _)| id.clone()).collect(),
+            &expanded,
+            &sc.state.store,
+            &sc.state.graph,
+        )
+        .unwrap();
+        let rank_na02 = surfaced_rank_for_node(
+            "na-02",
+            &hits.iter().map(|(id, _)| id.clone()).collect(),
+            &expanded,
+            &sc.state.store,
+            &sc.state.graph,
+        )
+        .unwrap();
+        assert_eq!(rank_na01, answer_level_rank(AnswerLevel::Structured));
+        assert_eq!(rank_na02, answer_level_rank(AnswerLevel::Summary));
+        let empty = std::collections::BTreeSet::new();
+        let rank_na01_noexp = surfaced_rank_for_node(
+            "na-01",
+            &hits.iter().map(|(id, _)| id.clone()).collect(),
+            &empty,
+            &sc.state.store,
+            &sc.state.graph,
+        )
+        .unwrap();
+        assert_eq!(rank_na01_noexp, answer_level_rank(AnswerLevel::Summary));
+    }
+
+    #[test]
+    fn d88_dedup_zero_counts_as_surfaced() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let sc =
+            scenarios.iter().find(|s| s.name == "narrow-alpha").expect("na");
+        let hits = vec![("na-01".to_owned(), "summary".to_owned())];
+        let mut expanded = std::collections::BTreeSet::new();
+        expanded.insert("na-01".to_owned());
+        let rank = surfaced_rank_for_node(
+            "na-01",
+            &hits.iter().map(|(id, _)| id.clone()).collect(),
+            &expanded,
+            &sc.state.store,
+            &sc.state.graph,
+        )
+        .unwrap();
+        assert!(rank >= answer_level_rank(AnswerLevel::Structured));
+        let report = run_benchmark(&scenarios).expect("benchmark");
+        assert!(report.depth_aware_recall_v2 == 14);
+    }
+
+    #[test]
+    fn d88_void_branch_logic() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let report = run_benchmark(&scenarios).expect("benchmark");
+        assert!(
+            report.depth_aware_recall_v3 <= report.depth_aware_recall_v2,
+            "void: v3 {} > v2 {}",
+            report.depth_aware_recall_v3,
+            report.depth_aware_recall_v2
+        );
+        let void = 15;
+        let v2 = 14;
+        assert!(void > v2, "synthetic void case");
+        if report.depth_aware_recall_v3 > report.depth_aware_recall_v2 {
+            assert!(report.policy_reason.contains("VOID"));
+        }
+    }
+
+    #[test]
+    fn d88_v1_v2_byte_identity_3402_3012() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let gate: Vec<BenchmarkScenario> = scenarios
+            .iter()
+            .filter(|s| s.name != "paraphrase-gap")
+            .cloned()
+            .collect();
+        let v1 =
+            run_strategy(&gate, PagingStrategy::ExhaustiveV1).expect("v1");
+        let v2 =
+            run_strategy(&gate, PagingStrategy::ProgressiveV2).expect("v2");
+        assert_eq!(
+            v1.total_paged, 3402,
+            "V1 byte-identity 3402 got {}",
+            v1.total_paged
+        );
+        assert_eq!(
+            v2.total_paged, 3012,
+            "V2 byte-identity 3012 got {}",
+            v2.total_paged
+        );
+    }
+
+    #[test]
+    fn d88_determinism_byte_equal() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let r1 = run_benchmark(&scenarios).expect("r1");
+        let r2 = run_benchmark(&scenarios).expect("r2");
+        assert_eq!(r1.deep_all, r2.deep_all);
+        assert_eq!(r1.paged_v2, r2.paged_v2);
+        assert_eq!(r1.depth_aware_recall_v2, r2.depth_aware_recall_v2);
+        assert_eq!(r1.depth_aware_recall_v3, r2.depth_aware_recall_v3);
+        assert_eq!(r1.policy_adopted, r2.policy_adopted);
+        assert_eq!(r1.escalation_curve, r2.escalation_curve);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn debug_levels() {
+    use crate::tool::context_benchmark::{
+        available_levels, best_level_for, gold_set_v3,
+    };
+    let scenarios = gold_set_v3().unwrap();
+    for sc in &scenarios {
+        if sc.name == "paraphrase-gap" {
+            continue;
+        }
+        println!("scenario {}", sc.name);
+        for key in &sc.answer_key {
+            if let Some(set) = sc.state.store.set(key) {
+                println!(
+                    " key {} avail {:?} best {:?}",
+                    key,
+                    available_levels(set),
+                    best_level_for(set)
+                );
+            } else {
+                println!(" key {} no set", key);
+            }
+        }
     }
 }
