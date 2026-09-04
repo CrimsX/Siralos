@@ -2484,63 +2484,122 @@ function validateContextToolResult(record, label) {
 }
 
 function validateContextBenchmarkResult(record, label) {
-  assertExactKeys(
-    record.result,
-    ["aggregates", "go", "reason", "scenarioMetrics"],
-    `${label}.result`,
-  );
-  if (!Array.isArray(record.result.scenarioMetrics) || record.result.scenarioMetrics.length === 0) {
-    throw new Error(`${label}.result.scenarioMetrics must be a non-empty array`);
+  // New canonical shape (v62): { baseline, strategyV1, strategyV2, go, reason } plus backward aggregates/scenarioMetrics for compatibility
+  const result = record.result;
+  if (typeof result.go !== "boolean") {
+    throw new Error(`${label}.result.go must be a boolean`);
   }
-  for (const [index, entry] of record.result.scenarioMetrics.entries()) {
-    const entryLabel = `${label}.result.scenarioMetrics[${index}]`;
+  if (typeof result.reason !== "string" || result.reason.length === 0) {
+    throw new Error(`${label}.result.reason must be a non-empty string`);
+  }
+  if (!result.reason.includes("total_recall_paged") || !result.reason.includes("total_paged")) {
+    throw new Error(`${label}.result.reason must cite the compared numbers`);
+  }
+  const hasNew = result.baseline && result.strategyV1 && result.strategyV2;
+  const hasOld = result.aggregates && result.scenarioMetrics;
+  if (!hasNew) {
+    throw new Error(`${label}.result must contain baseline, strategyV1 and strategyV2`);
+  }
+  if (hasNew) {
     assertExactKeys(
-      entry,
-      ["name", "recallBaseline", "recallPaged", "tokensBaseline", "tokensPaged", "toolCalls"],
-      entryLabel,
+      result.baseline,
+      ["totalBaseline", "totalKey", "totalRecallBaseline"],
+      `${label}.result.baseline`,
     );
-    if (typeof entry.name !== "string" || entry.name.length === 0) {
-      throw new Error(`${entryLabel}.name must be a non-empty string`);
+    for (const key of ["totalBaseline", "totalKey", "totalRecallBaseline"]) {
+      if (!Number.isSafeInteger(result.baseline[key]) || result.baseline[key] < 0) {
+        throw new Error(`${label}.result.baseline.${key} must be a non-negative integer`);
+      }
     }
-    for (const key of [
-      "recallBaseline",
-      "recallPaged",
-      "tokensBaseline",
-      "tokensPaged",
-      "toolCalls",
-    ]) {
-      if (!Number.isSafeInteger(entry[key]) || entry[key] < 0) {
-        throw new Error(`${entryLabel}.${key} must be a non-negative integer`);
+    for (const strat of ["strategyV1", "strategyV2"]) {
+      const s = result[strat];
+      const sLabel = `${label}.result.${strat}`;
+      assertExactKeys(
+        s,
+        ["scenarioMetrics", "totalPaged", "totalRecallPaged", "totalToolCalls"],
+        sLabel,
+      );
+      if (!Array.isArray(s.scenarioMetrics) || s.scenarioMetrics.length === 0) {
+        throw new Error(`${sLabel}.scenarioMetrics must be a non-empty array`);
+      }
+      for (const [index, entry] of s.scenarioMetrics.entries()) {
+        const entryLabel = `${sLabel}.scenarioMetrics[${index}]`;
+        assertExactKeys(
+          entry,
+          ["name", "recallBaseline", "recallPaged", "tokensBaseline", "tokensPaged", "toolCalls"],
+          entryLabel,
+        );
+        if (typeof entry.name !== "string" || entry.name.length === 0) {
+          throw new Error(`${entryLabel}.name must be a non-empty string`);
+        }
+        for (const key of [
+          "recallBaseline",
+          "recallPaged",
+          "tokensBaseline",
+          "tokensPaged",
+          "toolCalls",
+        ]) {
+          if (!Number.isSafeInteger(entry[key]) || entry[key] < 0) {
+            throw new Error(`${entryLabel}.${key} must be a non-negative integer`);
+          }
+        }
+      }
+      for (const key of ["totalPaged", "totalRecallPaged", "totalToolCalls"]) {
+        if (!Number.isSafeInteger(s[key]) || s[key] < 0) {
+          throw new Error(`${sLabel}.${key} must be a non-negative integer`);
+        }
       }
     }
   }
-  assertExactKeys(
-    record.result.aggregates,
-    ["totalBaseline", "totalPaged", "totalRecallBaseline", "totalRecallPaged", "totalToolCalls"],
-    `${label}.result.aggregates`,
-  );
-  for (const key of [
-    "totalBaseline",
-    "totalPaged",
-    "totalRecallBaseline",
-    "totalRecallPaged",
-    "totalToolCalls",
-  ]) {
-    if (!Number.isSafeInteger(record.result.aggregates[key]) || record.result.aggregates[key] < 0) {
-      throw new Error(`${label}.result.aggregates.${key} must be a non-negative integer`);
+  // Backward compatibility: if top-level aggregates/scenarioMetrics present, validate them as before
+  if (hasOld || Object.hasOwn(result, "aggregates")) {
+    assertExactKeys(
+      result.aggregates,
+      ["totalBaseline", "totalPaged", "totalRecallBaseline", "totalRecallPaged", "totalToolCalls"],
+      `${label}.result.aggregates`,
+    );
+    for (const key of [
+      "totalBaseline",
+      "totalPaged",
+      "totalRecallBaseline",
+      "totalRecallPaged",
+      "totalToolCalls",
+    ]) {
+      if (!Number.isSafeInteger(result.aggregates[key]) || result.aggregates[key] < 0) {
+        throw new Error(`${label}.result.aggregates.${key} must be a non-negative integer`);
+      }
     }
   }
-  if (typeof record.result.go !== "boolean") {
-    throw new Error(`${label}.result.go must be a boolean`);
-  }
-  if (typeof record.result.reason !== "string" || record.result.reason.length === 0) {
-    throw new Error(`${label}.result.reason must be a non-empty string`);
-  }
-  if (
-    !record.result.reason.includes("total_recall_paged") ||
-    !record.result.reason.includes("total_paged")
-  ) {
-    throw new Error(`${label}.result.reason must cite the compared numbers`);
+  if (hasOld || Object.hasOwn(result, "scenarioMetrics")) {
+    if (!hasOld && !Object.hasOwn(result, "scenarioMetrics")) {
+      // No-op if neither, but validated above
+    } else {
+      if (!Array.isArray(result.scenarioMetrics) || result.scenarioMetrics.length === 0) {
+        throw new Error(`${label}.result.scenarioMetrics must be a non-empty array`);
+      }
+      for (const [index, entry] of result.scenarioMetrics.entries()) {
+        const entryLabel = `${label}.result.scenarioMetrics[${index}]`;
+        assertExactKeys(
+          entry,
+          ["name", "recallBaseline", "recallPaged", "tokensBaseline", "tokensPaged", "toolCalls"],
+          entryLabel,
+        );
+        if (typeof entry.name !== "string" || entry.name.length === 0) {
+          throw new Error(`${entryLabel}.name must be a non-empty string`);
+        }
+        for (const key of [
+          "recallBaseline",
+          "recallPaged",
+          "tokensBaseline",
+          "tokensPaged",
+          "toolCalls",
+        ]) {
+          if (!Number.isSafeInteger(entry[key]) || entry[key] < 0) {
+            throw new Error(`${entryLabel}.${key} must be a non-negative integer`);
+          }
+        }
+      }
+    }
   }
 }
 

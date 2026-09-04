@@ -129,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 61;
+const CORPUS_VERSION: u64 = 62;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -13735,7 +13735,7 @@ fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
-// Hermetic subject: context-benchmark (decision 79 slice 5, corpus v61).
+// Hermetic subject: context-benchmark (decision 79 slice 5, corpus v61; v2 at v62).
 // ---------------------------------------------------------------------------
 
 fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
@@ -13746,29 +13746,51 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
     let report = run_benchmark(&scenarios).map_err(|e| {
         HarnessError::corpus(format!("context-benchmark run failed: {e}"))
     })?;
-    let scenario_metrics: Vec<Value> = report
-        .scenarios
-        .iter()
-        .map(|m| {
-            json!({
-                "name": m.name,
-                "tokensBaseline": m.tokens_baseline,
-                "tokensPaged": m.tokens_paged,
-                "recallBaseline": m.recall_baseline,
-                "recallPaged": m.recall_paged,
-                "toolCalls": m.tool_calls
+    let mk_metrics = |scenarios: &Vec<
+        siralos_adapters::tool::context_benchmark::ScenarioMetrics,
+    >| {
+        scenarios
+            .iter()
+            .map(|m| {
+                json!({
+                    "name": m.name,
+                    "tokensBaseline": m.tokens_baseline,
+                    "tokensPaged": m.tokens_paged,
+                    "recallBaseline": m.recall_baseline,
+                    "recallPaged": m.recall_paged,
+                    "toolCalls": m.tool_calls
+                })
             })
-        })
-        .collect();
+            .collect::<Vec<Value>>()
+    };
+    let v1_metrics = mk_metrics(&report.v1.scenarios);
+    let v2_metrics = mk_metrics(&report.v2.scenarios);
     Ok(json!({
-        "scenarioMetrics": scenario_metrics,
-        "aggregates": {
-            "totalBaseline": report.total_baseline,
-            "totalPaged": report.total_paged,
-            "totalRecallBaseline": report.total_recall_baseline,
-            "totalRecallPaged": report.total_recall_paged,
-            "totalToolCalls": report.total_tool_calls
+        "baseline": {
+            "totalBaseline": report.v1.total_baseline,
+            "totalKey": report.v1.total_key,
+            "totalRecallBaseline": report.v1.total_recall_baseline
         },
+        "strategyV1": {
+            "totalPaged": report.v1.total_paged,
+            "totalRecallPaged": report.v1.total_recall_paged,
+            "totalToolCalls": report.v1.total_tool_calls,
+            "scenarioMetrics": v1_metrics
+        },
+        "strategyV2": {
+            "totalPaged": report.v2.total_paged,
+            "totalRecallPaged": report.v2.total_recall_paged,
+            "totalToolCalls": report.v2.total_tool_calls,
+            "scenarioMetrics": v2_metrics
+        },
+        "aggregates": {
+            "totalBaseline": report.v2.total_baseline,
+            "totalPaged": report.v2.total_paged,
+            "totalRecallBaseline": report.v2.total_recall_baseline,
+            "totalRecallPaged": report.v2.total_recall_paged,
+            "totalToolCalls": report.v2.total_tool_calls
+        },
+        "scenarioMetrics": v2_metrics,
         "go": report.go,
         "reason": report.reason
     }))

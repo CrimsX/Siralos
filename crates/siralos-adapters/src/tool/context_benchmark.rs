@@ -1,9 +1,19 @@
-//! Benchmark decision gate — slice 5 (decision 79 clause g).
+//! Benchmark decision gate — slice 5 (decision 79 clause g) + slice 5 v2 (decision 85).
 //!
 //! Measures whether demand-paging over the graph/store/scheduler surfaces
 //! answer-key content at materially lower token cost than dump-everything.
 //! The verdict is computed, not asserted, and includes a broad-query
 //! scenario where paging cannot win (anti-cherry-pick).
+//!
+//! Tokenizer: `fn tokenize(text: &str) -> Vec<String>` — lowercase, split on
+//! non-alphanumeric, DROP tokens shorter than 3 chars, dedup preserving
+//! first-occurrence order.
+//!
+//! Paged strategy v2 rules, EXACTLY:
+//! 1. Lexical rerank: for each search hit, overlap = count of DISTINCT query tokens present in the summary's token set (summary text from the node's summary representation). expand_threshold = min(2, distinct query token count). Expand the hit IFF matched_in == "summary" AND overlap >= expand_threshold.
+//! 2. Fallback: if NO hit passes the threshold, expand exactly ONE hit — the summary-matched hit with the highest overlap; tie-break node_id ascending. (Prevents recall collapse on degenerate queries.)
+//! 3. Digest dedup: maintain a surfaced-digest set across the whole flow; a summary or expansion whose content digest is already surfaced contributes zero additional tokens (the content is not re-surfaced). Summaries surfaced by inspect seed the set.
+//! 4. Deep-expansion priority unchanged from v1 (structured > detailed > summary > identity); a summary-level expansion of an already-inspected node naturally costs zero via rule 3.
 
 use siralos_core::context_graph::{
     ContextGraph, ContextNode, ContextNodeKind,
@@ -21,6 +31,51 @@ use super::context::{ContextSearchTool, ContextToolState};
 use serde_json::json;
 use siralos_core::provider::CancellationToken;
 use siralos_core::tool::Tool;
+
+// ---------------------------------------------------------------------------
+// Paging strategy
+// ---------------------------------------------------------------------------
+
+/// Paging strategy selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PagingStrategy {
+    /// Exhaustive v1 — expand every hit.
+    ExhaustiveV1,
+    /// Progressive v2 — lexical rerank + digest dedup.
+    ProgressiveV2,
+}
+
+impl PagingStrategy {
+    /// Canonical string for the strategy.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ExhaustiveV1 => "exhaustive-v1",
+            Self::ProgressiveV2 => "progressive-v2",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tokenizer
+// ---------------------------------------------------------------------------
+
+/// Lowercase, split on non-alphanumeric, DROP tokens shorter than 3 chars, dedup preserving first-occurrence order.
+#[must_use]
+pub fn tokenize(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for token in lower.split(|c: char| !c.is_alphanumeric()) {
+        if token.is_empty() || token.len() < 3 {
+            continue;
+        }
+        if seen.insert(token.to_owned()) {
+            out.push(token.to_owned());
+        }
+    }
+    out
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -186,9 +241,9 @@ pub struct ScenarioMetrics {
     pub tool_calls: usize,
 }
 
-/// Aggregated report with deterministic decision rule.
+/// Aggregated metrics for one strategy.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BenchmarkReport {
+pub struct StrategyAggregate {
     /// Per-scenario metrics, canonical by name.
     pub scenarios: Vec<ScenarioMetrics>,
     /// Sum of baseline tokens.
@@ -203,9 +258,18 @@ pub struct BenchmarkReport {
     pub total_recall_paged: usize,
     /// Sum of tool calls.
     pub total_tool_calls: usize,
-    /// Deterministic GO verdict.
+}
+
+/// Aggregated report with deterministic decision rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BenchmarkReport {
+    /// V1 exhaustive aggregate.
+    pub v1: StrategyAggregate,
+    /// V2 progressive aggregate.
+    pub v2: StrategyAggregate,
+    /// Deterministic GO verdict computed on V2.
     pub go: bool,
-    /// Mechanical reason citing the two compared numbers.
+    /// Mechanical reason citing the two compared numbers (v2).
     pub reason: String,
 }
 
@@ -240,14 +304,26 @@ fn best_level_for(set: &NodeRepresentationSet) -> Option<RepresentationLevel> {
     .find(|lvl| levels.contains(lvl))
 }
 
-/// Run all scenarios, aggregate and apply deterministic decision rule:
-///
-/// `go = (total_recall_paged == total_recall_baseline) && (total_paged *2 < total_baseline)`
-pub fn run_benchmark(
+fn compute_baseline_tokens(state: &ContextToolState) -> usize {
+    let mut tokens = 0usize;
+    for node in state.graph.nodes() {
+        if let Some(set) = state.store.set(&node.id) {
+            if let Some(rep) =
+                resolve_representation(set, RepresentationLevel::Identity)
+            {
+                tokens =
+                    tokens.saturating_add(estimate_tokens(rep.content.len()));
+            }
+        }
+    }
+    tokens
+}
+
+/// Run one strategy over all scenarios.
+pub fn run_strategy(
     scenarios: &[BenchmarkScenario],
-) -> Result<BenchmarkReport, BenchmarkError> {
-    // Validate that scenarios are build-valid? Already built, but ensure no mutation.
-    // Compute per-scenario metrics.
+    strategy: PagingStrategy,
+) -> Result<StrategyAggregate, BenchmarkError> {
     let mut metrics: Vec<ScenarioMetrics> = Vec::new();
     let mut total_baseline = 0usize;
     let mut total_paged = 0usize;
@@ -256,31 +332,16 @@ pub fn run_benchmark(
     let mut total_recall_paged = 0usize;
     let mut total_tool_calls = 0usize;
 
-    // Capture state before to ensure no mutation later checked externally; here we just compute.
     for sc in scenarios {
-        // Baseline
-        let mut baseline_bytes_sum = 0usize;
-        let mut baseline_tokens = 0usize;
-        for node in sc.state.graph.nodes() {
-            if let Some(set) = sc.state.store.set(&node.id) {
-                if let Some(rep) =
-                    resolve_representation(set, RepresentationLevel::Identity)
-                {
-                    baseline_bytes_sum =
-                        baseline_bytes_sum.saturating_add(rep.content.len());
-                    // Per spec: sum of estimate per node
-                    baseline_tokens = baseline_tokens
-                        .saturating_add(estimate_tokens(rep.content.len()));
-                }
-            }
-        }
-        // Alternative: baseline_tokens as sum per node ceil, already done.
-        // paged strategy key-blind
+        let baseline_tokens = compute_baseline_tokens(&sc.state);
+
+        // Search hits via real tool
         let search_tool = ContextSearchTool::new(sc.state.clone());
         let token = CancellationToken::new();
         let search_result =
             search_tool.execute(&json!({"query": sc.query}), token.signal());
-        let hits: Vec<String> = match search_result {
+        // Collect hits with matched_in
+        let hits: Vec<(String, String)> = match search_result {
             siralos_core::provider::ToolExecutionResult::Success {
                 output,
                 ..
@@ -290,55 +351,198 @@ pub fn run_benchmark(
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|h| {
-                            h.get("node_id")
+                            let nid = h.get("node_id")?.as_str()?.to_owned();
+                            let matched = h
+                                .get("matched_in")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_owned())
+                                .unwrap_or("")
+                                .to_owned();
+                            Some((nid, matched))
                         })
                         .collect()
                 })
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
-        // Inspect + expand
-        let mut sum_inspect_summary_bytes = 0usize;
-        let mut sum_expanded_bytes = 0usize;
-        let mut expanded_count = 0usize;
-        for hit_id in &hits {
-            // Inspect summary bytes: node.summary
-            if let Some(node) = sc.state.graph.node(hit_id) {
-                sum_inspect_summary_bytes = sum_inspect_summary_bytes
-                    .saturating_add(node.summary.len());
-            } else if let Some(set) = sc.state.store.set(hit_id) {
-                // Fallback? shouldn't happen
-                let _ = set;
+        let hit_ids: Vec<String> =
+            hits.iter().map(|(id, _)| id.clone()).collect();
+
+        // Determine expanded set per strategy
+        let expanded_ids: std::collections::BTreeSet<String> = match strategy {
+            PagingStrategy::ExhaustiveV1 => {
+                // Every hit that has a best level
+                let mut set = std::collections::BTreeSet::new();
+                for (hid, _) in &hits {
+                    if let Some(s) = sc.state.store.set(hid) {
+                        if best_level_for(s).is_some() {
+                            set.insert(hid.clone());
+                        }
+                    }
+                }
+                set
             }
-            // Expand best level
-            if let Some(set) = sc.state.store.set(hit_id) {
-                if let Some(best) = best_level_for(set) {
-                    if let Some(rep) = resolve_representation(set, best) {
-                        sum_expanded_bytes = sum_expanded_bytes
-                            .saturating_add(rep.content.len());
-                        expanded_count += 1;
+            PagingStrategy::ProgressiveV2 => {
+                // Lexical rerank + fallback
+                let query_tokens = tokenize(&sc.query);
+                let threshold = std::cmp::min(2, query_tokens.len());
+                let query_token_set: std::collections::BTreeSet<String> =
+                    query_tokens.into_iter().collect();
+
+                // Compute overlap per hit
+                let mut overlaps: Vec<(String, String, usize)> = Vec::new(); // (node_id, matched_in, overlap)
+                for (hid, matched) in &hits {
+                    let node = sc.state.graph.node(hid);
+                    let summary =
+                        node.map(|n| n.summary.as_str()).unwrap_or("");
+                    let summary_tokens: std::collections::BTreeSet<String> =
+                        tokenize(summary).into_iter().collect();
+                    let mut overlap = 0usize;
+                    for qt in &query_token_set {
+                        if summary_tokens.contains(qt) {
+                            overlap += 1;
+                        }
+                    }
+                    overlaps.push((hid.clone(), matched.clone(), overlap));
+                }
+                // Candidates that pass threshold and matched_in == summary
+                let mut candidates = std::collections::BTreeSet::new();
+                for (hid, matched, overlap) in &overlaps {
+                    if matched == "summary" && *overlap >= threshold {
+                        // Only if has level
+                        if let Some(s) = sc.state.store.set(hid) {
+                            if best_level_for(s).is_some() {
+                                candidates.insert(hid.clone());
+                            }
+                        }
+                    }
+                }
+                if !candidates.is_empty() {
+                    candidates
+                } else {
+                    // Fallback: exactly ONE summary-matched hit with highest overlap, tie-break node_id asc
+                    let mut best: Option<(String, usize)> = None;
+                    for (hid, matched, overlap) in &overlaps {
+                        if matched != "summary" {
+                            continue;
+                        }
+                        // Must have a level to be expandable
+                        if let Some(s) = sc.state.store.set(hid) {
+                            if best_level_for(s).is_none() {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                        match &best {
+                            None => best = Some((hid.clone(), *overlap)),
+                            Some((best_id, best_overlap)) => {
+                                if *overlap > *best_overlap
+                                    || (*overlap == *best_overlap
+                                        && hid < best_id)
+                                {
+                                    best = Some((hid.clone(), *overlap));
+                                }
+                            }
+                        }
+                    }
+                    if let Some((best_id, _)) = best {
+                        let mut set = std::collections::BTreeSet::new();
+                        set.insert(best_id);
+                        set
+                    } else {
+                        std::collections::BTreeSet::new()
                     }
                 }
             }
-        }
-        let tool_calls =
-            1usize.saturating_add(hits.len()).saturating_add(expanded_count);
+        };
+
+        // Token sums and expanded count per strategy
+        let (sum_inspect_bytes, sum_expanded_bytes, expanded_count) =
+            match strategy {
+                PagingStrategy::ExhaustiveV1 => {
+                    let mut sum_inspect = 0usize;
+                    let mut sum_expanded = 0usize;
+                    let mut exp_cnt = 0usize;
+                    for (hid, _) in &hits {
+                        if let Some(node) = sc.state.graph.node(hid) {
+                            sum_inspect =
+                                sum_inspect.saturating_add(node.summary.len());
+                        }
+                    }
+                    for (hid, _) in &hits {
+                        if !expanded_ids.contains(hid) {
+                            continue;
+                        }
+                        if let Some(set) = sc.state.store.set(hid) {
+                            if let Some(best) = best_level_for(set) {
+                                if let Some(rep) =
+                                    resolve_representation(set, best)
+                                {
+                                    sum_expanded = sum_expanded
+                                        .saturating_add(rep.content.len());
+                                    exp_cnt += 1;
+                                }
+                            }
+                        }
+                    }
+                    (sum_inspect, sum_expanded, exp_cnt)
+                }
+                PagingStrategy::ProgressiveV2 => {
+                    // Digest dedup: surfaced digests across inspect + expand
+                    let mut surfaced: std::collections::BTreeSet<String> =
+                        std::collections::BTreeSet::new();
+                    let mut sum_inspect = 0usize;
+                    let mut sum_expanded = 0usize;
+                    let mut exp_cnt = 0usize;
+                    for (hid, _) in &hits {
+                        if let Some(node) = sc.state.graph.node(hid) {
+                            let digest = content_digest_of(&node.summary);
+                            if surfaced.insert(digest) {
+                                sum_inspect = sum_inspect
+                                    .saturating_add(node.summary.len());
+                            }
+                        }
+                    }
+                    for (hid, _) in &hits {
+                        if !expanded_ids.contains(hid) {
+                            continue;
+                        }
+                        if let Some(set) = sc.state.store.set(hid) {
+                            if let Some(best) = best_level_for(set) {
+                                if let Some(rep) =
+                                    resolve_representation(set, best)
+                                {
+                                    let digest = rep.content_digest.clone();
+                                    if surfaced.insert(digest) {
+                                        sum_expanded = sum_expanded
+                                            .saturating_add(rep.content.len());
+                                    }
+                                    exp_cnt += 1;
+                                }
+                            }
+                        }
+                    }
+                    (sum_inspect, sum_expanded, exp_cnt)
+                }
+            };
+
+        let tool_calls = 1usize
+            .saturating_add(hit_ids.len())
+            .saturating_add(expanded_count);
         let paged_tokens = estimate_tokens(
-            sum_expanded_bytes.saturating_add(sum_inspect_summary_bytes),
+            sum_expanded_bytes.saturating_add(sum_inspect_bytes),
         )
         .saturating_add(TOOL_CALL_OVERHEAD_TOKENS * tool_calls);
 
         let key_size = sc.answer_key.len();
         let recall_baseline = key_size;
-        // recall_paged = |key nodes that appear in hits AND got expanded|
         let hits_set: std::collections::BTreeSet<&str> =
-            hits.iter().map(|s| s.as_str()).collect();
+            hit_ids.iter().map(|s| s.as_str()).collect();
         let mut recall_paged = 0usize;
         for key_id in &sc.answer_key {
-            if hits_set.contains(key_id.as_str()) {
-                // Check expanded: node has at least one level
+            if hits_set.contains(key_id.as_str())
+                && expanded_ids.contains(key_id)
+            {
                 if let Some(set) = sc.state.store.set(key_id) {
                     if best_level_for(set).is_some() {
                         recall_paged += 1;
@@ -364,28 +568,11 @@ pub fn run_benchmark(
             recall_paged,
             tool_calls,
         });
-        // Avoid unused variable baseline_bytes_sum (kept for clarity)
-        let _ = baseline_bytes_sum;
     }
 
     metrics.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let go = total_recall_paged == total_recall_baseline
-        && total_paged.saturating_mul(2) < total_baseline;
-    let recall_eq = total_recall_paged == total_recall_baseline;
-    let token_win = total_paged.saturating_mul(2) < total_baseline;
-    let reason = format!(
-        "total_recall_paged {} == total_recall_baseline {} is {}, total_paged {} *2 < total_baseline {} is {} => {}",
-        total_recall_paged,
-        total_recall_baseline,
-        recall_eq,
-        total_paged,
-        total_baseline,
-        token_win,
-        if go { "GO" } else { "NO-GO" }
-    );
-
-    Ok(BenchmarkReport {
+    Ok(StrategyAggregate {
         scenarios: metrics,
         total_baseline,
         total_paged,
@@ -393,9 +580,35 @@ pub fn run_benchmark(
         total_recall_baseline,
         total_recall_paged,
         total_tool_calls,
-        go,
-        reason,
     })
+}
+
+/// Run all scenarios, aggregate and apply deterministic decision rule:
+///
+/// `go = (total_recall_paged == total_recall_baseline) && (total_paged *2 < total_baseline)`
+/// Computed on V2.
+pub fn run_benchmark(
+    scenarios: &[BenchmarkScenario],
+) -> Result<BenchmarkReport, BenchmarkError> {
+    let v1 = run_strategy(scenarios, PagingStrategy::ExhaustiveV1)?;
+    let v2 = run_strategy(scenarios, PagingStrategy::ProgressiveV2)?;
+
+    let go = v2.total_recall_paged == v2.total_recall_baseline
+        && v2.total_paged.saturating_mul(2) < v2.total_baseline;
+    let recall_eq = v2.total_recall_paged == v2.total_recall_baseline;
+    let token_win = v2.total_paged.saturating_mul(2) < v2.total_baseline;
+    let reason = format!(
+        "total_recall_paged {} == total_recall_baseline {} is {}, total_paged {} *2 < total_baseline {} is {} => {}",
+        v2.total_recall_paged,
+        v2.total_recall_baseline,
+        recall_eq,
+        v2.total_paged,
+        v2.total_baseline,
+        token_win,
+        if go { "GO" } else { "NO-GO" }
+    );
+
+    Ok(BenchmarkReport { v1, v2, go, reason })
 }
 
 // ---------------------------------------------------------------------------
@@ -762,7 +975,7 @@ pub fn gold_set() -> Result<Vec<BenchmarkScenario>, BenchmarkError> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests (~10)
+// Tests (~10 + 7 new)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -900,7 +1113,11 @@ mod tests {
     fn recall_baseline_equals_key_size() {
         let scenarios = gold_set().expect("gold");
         for sc in &scenarios {
-            let report = run_benchmark(std::slice::from_ref(sc)).expect("run");
+            let report = run_strategy(
+                std::slice::from_ref(sc),
+                PagingStrategy::ExhaustiveV1,
+            )
+            .expect("run");
             assert_eq!(
                 report.scenarios[0].recall_baseline,
                 report.scenarios[0].key_size
@@ -920,19 +1137,19 @@ mod tests {
             .find(|s| s.name == "narrow-alpha")
             .expect("alpha")
             .clone();
-        let report_a =
-            run_benchmark(std::slice::from_ref(&sc)).expect("run a");
+        let report_a = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ExhaustiveV1,
+        )
+        .expect("run a");
         let tokens_a = report_a.scenarios[0].tokens_paged;
-        // Change key to different node (still valid key with L0) — should not affect tokens_paged
         let mut sc2 = sc.clone();
-        // pick a different valid key node that is not original key but exists and has L0
-        // Use na-03 which has L0 but was not hit; still valid key
         sc2.answer_key = vec!["na-03".to_owned()];
-        // need to rebuild to validate? directly mutate answer_key without rebuild — paged tokens should be same
-        // But our run_benchmark doesn't re-validate; it just uses answer_key as is.
-        // To keep validation, we must ensure key still has L0 (it does). So we can reuse sc2 without re-build.
-        let report_b =
-            run_benchmark(std::slice::from_ref(&sc2)).expect("run b");
+        let report_b = run_strategy(
+            std::slice::from_ref(&sc2),
+            PagingStrategy::ExhaustiveV1,
+        )
+        .expect("run b");
         assert_eq!(tokens_a, report_b.scenarios[0].tokens_paged);
         assert_eq!(
             report_a.scenarios[0].tool_calls,
@@ -948,7 +1165,11 @@ mod tests {
             .find(|s| s.name == "broad-foxtrot")
             .expect("broad")
             .clone();
-        let report = run_benchmark(std::slice::from_ref(&sc)).expect("run");
+        let report = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ExhaustiveV1,
+        )
+        .expect("run");
         let m = &report.scenarios[0];
         assert!(
             m.tokens_paged >= m.tokens_baseline,
@@ -966,7 +1187,11 @@ mod tests {
             .find(|s| s.name == "narrow-alpha")
             .expect("alpha")
             .clone();
-        let report = run_benchmark(std::slice::from_ref(&sc)).expect("run");
+        let report = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ExhaustiveV1,
+        )
+        .expect("run");
         let m = &report.scenarios[0];
         assert!(
             m.tokens_paged < m.tokens_baseline,
@@ -980,18 +1205,24 @@ mod tests {
     fn aggregate_decision_rule() {
         let scenarios = gold_set().expect("gold");
         let report = run_benchmark(&scenarios).expect("run");
-        let expected_go = report.total_recall_paged
-            == report.total_recall_baseline
-            && report.total_paged * 2 < report.total_baseline;
+        // v1 rule
+        let expected_go_v1 = report.v1.total_recall_paged
+            == report.v1.total_recall_baseline
+            && report.v1.total_paged * 2 < report.v1.total_baseline;
+        // v2 is the verdict
+        let expected_go = report.v2.total_recall_paged
+            == report.v2.total_recall_baseline
+            && report.v2.total_paged * 2 < report.v2.total_baseline;
         assert_eq!(report.go, expected_go);
+        let _ = expected_go_v1;
     }
 
     #[test]
     fn report_canonical_order() {
         let mut scenarios = gold_set().expect("gold");
-        // Shuffle order
         scenarios.reverse();
-        let report = run_benchmark(&scenarios).expect("run");
+        let report = run_strategy(&scenarios, PagingStrategy::ExhaustiveV1)
+            .expect("run");
         let names: Vec<String> =
             report.scenarios.iter().map(|m| m.name.clone()).collect();
         let mut sorted = names.clone();
@@ -1002,9 +1233,14 @@ mod tests {
     #[test]
     fn deterministic_run_twice_byte_equal() {
         let scenarios = gold_set().expect("gold");
-        let r1 = run_benchmark(&scenarios).expect("r1");
-        let r2 = run_benchmark(&scenarios).expect("r2");
+        let r1 = run_strategy(&scenarios, PagingStrategy::ExhaustiveV1)
+            .expect("r1");
+        let r2 = run_strategy(&scenarios, PagingStrategy::ExhaustiveV1)
+            .expect("r2");
         assert_eq!(r1, r2);
+        let b1 = run_benchmark(&scenarios).expect("b1");
+        let b2 = run_benchmark(&scenarios).expect("b2");
+        assert_eq!(b1, b2);
     }
 
     #[test]
@@ -1041,5 +1277,392 @@ mod tests {
                 "narrow-gamma"
             ]
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // New v2 tests (~7)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tokenizer_lowercase_split_short_drop_dedup() {
+        assert_eq!(tokenize("Hello HELLO hello"), vec!["hello"]);
+        assert_eq!(tokenize("one-two three"), vec!["one", "two", "three"]);
+        // short tokens dropped
+        assert_eq!(tokenize("ab abc abcd"), vec!["abc", "abcd"]);
+        // split on non-alphanumeric, dedup preserving order
+        assert_eq!(
+            tokenize("alpha, beta! alpha; gamma"),
+            vec!["alpha", "beta", "gamma"]
+        );
+        // lowercase
+        assert_eq!(tokenize("Alpha BETA"), vec!["alpha", "beta"]);
+        // non-alphanumeric delimiters
+        assert_eq!(
+            tokenize("foo/bar.baz-qux"),
+            vec!["foo", "bar", "baz", "qux"]
+        );
+    }
+
+    #[test]
+    fn rerank_threshold_two_plus_word_query() {
+        // Query "alpha abc" -> tokens ["alpha","abc"] threshold 2. Both summaries contain phrase "alpha abc" as substring.
+        // Summary "alpha abc ..." has both tokens => overlap 2 passes, "alpha abcde ..." has "alpha" + "abcde" not "abc" => overlap 1 fails.
+        let l0 = "I".repeat(120);
+        let mk_set = |id: &str| {
+            NodeRepresentationSet::build(
+                id.to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&l0),
+                    derived_from: vec![],
+                    content: l0.clone(),
+                }],
+            )
+            .expect("set")
+        };
+        let n1 = ContextNode {
+            id: "hit-01".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: "alpha abc hit summary pad".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let n2 = ContextNode {
+            id: "hit-02".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('b'),
+            summary: "alpha abcde hit summary pad".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let state = minimal_state_with_nodes(
+            vec![n1, n2],
+            vec![mk_set("hit-01"), mk_set("hit-02")],
+        );
+        let sc = BenchmarkScenario::build(
+            "threshold-test".to_owned(),
+            state,
+            "alpha abc".to_owned(),
+            vec!["hit-01".to_owned()],
+        )
+        .expect("scenario");
+        let report = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run");
+        let m = &report.scenarios[0];
+        // Should expand only hit-01 (overlap 2), not hit-02 (overlap 1)
+        assert_eq!(m.tool_calls, 4, "threshold filters to single expand");
+        assert_eq!(m.recall_paged, 1);
+    }
+
+    #[test]
+    fn single_token_query_threshold_one() {
+        // Single token "alpha" threshold 1. Summary "alpha ..." passes, "alphabet ..." contains "alpha" as substring (hit) but token "alphabet" != "alpha" => overlap 0 fails.
+        let l0 = "I".repeat(120);
+        let mk_set = |id: &str| {
+            NodeRepresentationSet::build(
+                id.to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&l0),
+                    derived_from: vec![],
+                    content: l0.clone(),
+                }],
+            )
+            .expect("set")
+        };
+        let n1 = ContextNode {
+            id: "hit-01".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: "alpha something".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let n2 = ContextNode {
+            id: "hit-02".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('b'),
+            summary: "alphabet something".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let state = minimal_state_with_nodes(
+            vec![n1, n2],
+            vec![mk_set("hit-01"), mk_set("hit-02")],
+        );
+        let sc = BenchmarkScenario::build(
+            "single-token".to_owned(),
+            state,
+            "alpha".to_owned(),
+            vec!["hit-01".to_owned()],
+        )
+        .expect("scenario");
+        let report = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run");
+        let m = &report.scenarios[0];
+        // Only hit-01 should be expanded
+        assert_eq!(m.tool_calls, 4); // 1+2+1
+        assert_eq!(m.recall_paged, 1);
+    }
+
+    #[test]
+    fn fallback_fires_exactly_once_highest_overlap_tie_break() {
+        // Query "alpha abc" threshold 2. Both summaries contain phrase "alpha abc" as prefix but have overlap 1 each (<2) => none pass => fallback picks one via tie-break.
+        let l0 = "I".repeat(120);
+        let mk_set = |id: &str| {
+            NodeRepresentationSet::build(
+                id.to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&l0),
+                    derived_from: vec![],
+                    content: l0.clone(),
+                }],
+            )
+            .expect("set")
+        };
+        let n1 = ContextNode {
+            id: "hit-01".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: "alpha abcde hit pad".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let n2 = ContextNode {
+            id: "hit-02".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('b'),
+            summary: "alpha abcfg hit pad".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let n3 = ContextNode {
+            id: "hit-03".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('c'),
+            summary: "alpha abchh hit pad".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let state = minimal_state_with_nodes(
+            vec![n1, n2, n3],
+            vec![mk_set("hit-01"), mk_set("hit-02"), mk_set("hit-03")],
+        );
+        let sc = BenchmarkScenario::build(
+            "fallback".to_owned(),
+            state,
+            "alpha abc".to_owned(),
+            vec!["hit-01".to_owned()],
+        )
+        .expect("scenario");
+        let report = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run");
+        let m = &report.scenarios[0];
+        // Fallback should expand exactly one: tie break node_id asc => hit-01
+        assert_eq!(m.tool_calls, 5); // 1+3+1 =5
+        assert_eq!(m.recall_paged, 1);
+        // Highest overlap wins variant: query "alpha" threshold1, both "alphabet" (0) tie, but make one with higher overlap via "alpha"
+        let n1b = ContextNode {
+            id: "hit-01".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: "alphabet hit".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let n2b = ContextNode {
+            id: "hit-02".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('b'),
+            summary: "alphabet hit".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        // Both 0, tie break => hit-01
+        let state2 = minimal_state_with_nodes(
+            vec![n1b, n2b],
+            vec![mk_set("hit-01"), mk_set("hit-02")],
+        );
+        let sc2 = BenchmarkScenario::build(
+            "fallback-highest".to_owned(),
+            state2,
+            "alpha".to_owned(),
+            vec!["hit-01".to_owned()],
+        )
+        .expect("sc2");
+        // This still fallback with tie, but we also test that fallback picks highest when one has 1 and others 0? For single token, one with 1 would pass, not fallback. So we keep tie test.
+        let report2 = run_strategy(
+            std::slice::from_ref(&sc2),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run2");
+        // Both have 0 <1, none pass, fallback picks hit-01 => recall 1 if key is hit-01
+        assert_eq!(report2.scenarios[0].tool_calls, 4); // 1+2+1
+        assert_eq!(report2.scenarios[0].recall_paged, 1);
+    }
+
+    #[test]
+    fn digest_dedup_duplicate_summary_costs_once() {
+        let l0 = "I".repeat(120);
+        let mk_set = |id: &str| {
+            NodeRepresentationSet::build(
+                id.to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&l0),
+                    derived_from: vec![],
+                    content: l0.clone(),
+                }],
+            )
+            .expect("set")
+        };
+        // Use a 32-byte dup summary matching gold_set hit_summary length
+        let dup_summary = {
+            let base = "alpha hit summary pad";
+            format!("{base}{}", "x".repeat(32 - base.len()))
+        };
+        assert_eq!(dup_summary.len(), 32);
+        let n1 = ContextNode {
+            id: "hit-01".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: dup_summary.clone(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let n2 = ContextNode {
+            id: "hit-02".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('b'),
+            summary: dup_summary.clone(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let state = minimal_state_with_nodes(
+            vec![n1, n2],
+            vec![mk_set("hit-01"), mk_set("hit-02")],
+        );
+        let sc = BenchmarkScenario::build(
+            "dedup".to_owned(),
+            state,
+            "alpha".to_owned(),
+            vec!["hit-01".to_owned()],
+        )
+        .expect("scenario");
+        let v1 = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ExhaustiveV1,
+        )
+        .expect("v1");
+        let v2 = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("v2");
+        assert!(
+            v2.scenarios[0].tokens_paged < v1.scenarios[0].tokens_paged,
+            "dedup reduces tokens"
+        );
+        assert_eq!(v1.scenarios[0].tokens_paged, 96);
+        assert_eq!(v2.scenarios[0].tokens_paged, 58);
+    }
+
+    #[test]
+    fn v2_key_blindness() {
+        let scenarios = gold_set().expect("gold");
+        let sc = scenarios
+            .iter()
+            .find(|s| s.name == "narrow-alpha")
+            .expect("alpha")
+            .clone();
+        let report_a = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run a");
+        let tokens_a = report_a.scenarios[0].tokens_paged;
+        let mut sc2 = sc.clone();
+        sc2.answer_key = vec!["na-03".to_owned()];
+        let report_b = run_strategy(
+            std::slice::from_ref(&sc2),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run b");
+        assert_eq!(tokens_a, report_b.scenarios[0].tokens_paged);
+        assert_eq!(
+            report_a.scenarios[0].tool_calls,
+            report_b.scenarios[0].tool_calls
+        );
+    }
+
+    #[test]
+    fn v1_results_byte_identical_to_pre_v2() {
+        let scenarios = gold_set().expect("gold");
+        let v1 = run_strategy(&scenarios, PagingStrategy::ExhaustiveV1)
+            .expect("v1");
+        // Pre-committed v1 aggregates from decision 83
+        assert_eq!(v1.total_baseline, 1230);
+        assert_eq!(v1.total_paged, 650);
+        assert_eq!(v1.total_recall_baseline, 14);
+        assert_eq!(v1.total_recall_paged, 14);
+        assert_eq!(v1.total_tool_calls, 38);
+        // Per-scenario
+        let mut map = std::collections::BTreeMap::new();
+        for m in &v1.scenarios {
+            map.insert(
+                m.name.as_str(),
+                (m.tokens_baseline, m.tokens_paged, m.tool_calls),
+            );
+        }
+        assert_eq!(map["narrow-alpha"], (180, 74, 5));
+        assert_eq!(map["narrow-beta"], (180, 86, 5));
+        assert_eq!(map["narrow-gamma"], (210, 74, 5));
+        assert_eq!(map["narrow-delta"], (240, 96, 5));
+        assert_eq!(map["medium-echo"], (240, 114, 7));
+        assert_eq!(map["broad-foxtrot"], (180, 206, 11));
+    }
+
+    #[test]
+    fn v2_fixture_preserves_recall() {
+        let scenarios = gold_set().expect("gold");
+        let v2 = run_strategy(&scenarios, PagingStrategy::ProgressiveV2)
+            .expect("v2");
+        assert_eq!(
+            v2.total_recall_paged, v2.total_recall_baseline,
+            "v2 must preserve recall 14/14 on gold_set"
+        );
+        assert_eq!(v2.total_recall_paged, 14);
+    }
+
+    #[test]
+    fn v2_no_mutation_still_holds() {
+        let scenarios = gold_set().expect("gold");
+        let before: Vec<(Vec<SchedulerEntry>, u64)> = scenarios
+            .iter()
+            .map(|sc| {
+                (sc.state.state.entries().to_vec(), sc.state.state.tick())
+            })
+            .collect();
+        let _ = run_strategy(&scenarios, PagingStrategy::ProgressiveV2)
+            .expect("run");
+        for (sc, (entries, tick)) in scenarios.iter().zip(before) {
+            assert_eq!(sc.state.state.entries(), entries.as_slice());
+            assert_eq!(sc.state.state.tick(), tick);
+        }
     }
 }
