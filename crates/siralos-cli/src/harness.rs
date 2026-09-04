@@ -129,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 65;
+const CORPUS_VERSION: u64 = 66;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -13324,6 +13324,7 @@ fn context_scheduler_record(_input: &Value) -> Result<Value, HarnessError> {
             relevance: 10,
             last_access_tick: 0,
             token_estimate: 1000,
+            content_digest: "a".repeat(64),
         },
         SchedulerEntry {
             node_id: "ctx-b".to_owned(),
@@ -13332,6 +13333,7 @@ fn context_scheduler_record(_input: &Value) -> Result<Value, HarnessError> {
             relevance: 50,
             last_access_tick: 0,
             token_estimate: 1000,
+            content_digest: "b".repeat(64),
         },
         SchedulerEntry {
             node_id: "ctx-c".to_owned(),
@@ -13340,6 +13342,7 @@ fn context_scheduler_record(_input: &Value) -> Result<Value, HarnessError> {
             relevance: 90,
             last_access_tick: 0,
             token_estimate: 1000,
+            content_digest: "c".repeat(64),
         },
     ];
     let mut state = WorkingSetState::build(entries).map_err(|e| {
@@ -13565,6 +13568,7 @@ fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
             relevance: 80,
             last_access_tick: 5,
             token_estimate: 1000,
+            content_digest: "a".repeat(64),
         },
         SchedulerEntry {
             node_id: "ctx-b".to_owned(),
@@ -13573,6 +13577,7 @@ fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
             relevance: 50,
             last_access_tick: 2,
             token_estimate: 1000,
+            content_digest: "b".repeat(64),
         },
         SchedulerEntry {
             node_id: "ctx-knowledge".to_owned(),
@@ -13581,6 +13586,7 @@ fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
             relevance: 10,
             last_access_tick: 0,
             token_estimate: 1000,
+            content_digest: "k".repeat(64),
         },
     ];
     let state = WorkingSetState::build(entries).map_err(|e| {
@@ -18234,7 +18240,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 329);
+        assert_eq!(loaded.len(), 333);
     }
 
     #[test]

@@ -2559,6 +2559,7 @@ fn build_state(
             relevance: 10,
             last_access_tick: 0,
             token_estimate: 0,
+            content_digest: n.content_digest.clone(),
         })
         .collect();
     let state = WorkingSetState::build(entries).expect("state");
@@ -2970,6 +2971,7 @@ fn v3_build_state(
                 relevance: 10,
                 last_access_tick: 0,
                 token_estimate: token_est,
+                content_digest: n.content_digest.clone(),
             }
         })
         .collect();
@@ -4124,6 +4126,7 @@ mod tests {
                 relevance: 0,
                 last_access_tick: 0,
                 token_estimate: 0,
+                content_digest: n.content_digest.clone(),
             })
             .collect();
         let state = WorkingSetState::build(entries).expect("state");

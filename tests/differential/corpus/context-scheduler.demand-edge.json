@@ -1,0 +1,8 @@
+{
+  "id": "context-scheduler.demand-edge",
+  "subject": "context-scheduler",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {}
+}

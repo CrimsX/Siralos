@@ -719,6 +719,7 @@ mod tests {
                 relevance: 80,
                 last_access_tick: 5,
                 token_estimate: 1000,
+                content_digest: a_digest.clone(),
             },
             SchedulerEntry {
                 node_id: "ctx-b".to_owned(),
@@ -727,6 +728,7 @@ mod tests {
                 relevance: 50,
                 last_access_tick: 2,
                 token_estimate: 1000,
+                content_digest: b_digest.clone(),
             },
             SchedulerEntry {
                 node_id: "ctx-knowledge".to_owned(),
@@ -735,6 +737,7 @@ mod tests {
                 relevance: 10,
                 last_access_tick: 0,
                 token_estimate: 1000,
+                content_digest: k_digest.clone(),
             },
         ];
         let state = WorkingSetState::build(entries).expect("state");
@@ -842,6 +845,7 @@ mod tests {
                 relevance: 1,
                 last_access_tick: 0,
                 token_estimate: 10,
+                content_digest: format!("{:064x}", i),
             });
         }
         snapshot.state = WorkingSetState::build(entries).expect("state");

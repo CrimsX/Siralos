@@ -9,6 +9,7 @@
 
 pub mod context;
 pub mod context_benchmark;
+pub mod context_events;
 pub mod workspace_tools;
 
 pub use context::{
