@@ -2675,6 +2675,80 @@ function validateContextBenchmarkResult(record, label) {
   if (typeof pg.inHits !== "boolean") {
     throw new Error(`${label}.result.informational.paraphraseGap.inHits must be a boolean`);
   }
+  // v64 corrected-baseline re-gate: require DeepAll as sole gated reference plus informational SummariesAll / IdentityDiag and audit tables
+  for (const key of [
+    "deepAll",
+    "summariesAll",
+    "identityDiag",
+    "pagedV1",
+    "pagedV2",
+    "depthPremiumBps",
+  ]) {
+    if (!Number.isSafeInteger(result[key]) || result[key] < 0) {
+      throw new Error(`${label}.result.${key} must be a non-negative integer`);
+    }
+  }
+  if (!Array.isArray(result.perScenario) || result.perScenario.length !== 6) {
+    throw new Error(
+      `${label}.result.perScenario must be a 6-element array (one per gated scenario)`,
+    );
+  }
+  for (const [index, entry] of result.perScenario.entries()) {
+    const eLabel = `${label}.result.perScenario[${index}]`;
+    assertExactKeys(
+      entry,
+      [
+        "name",
+        "deepAll",
+        "summariesAll",
+        "identityDiag",
+        "pagedV1",
+        "pagedV2",
+        "recallV1",
+        "recallV2",
+        "toolCallsV1",
+        "toolCallsV2",
+      ],
+      eLabel,
+    );
+    if (typeof entry.name !== "string" || entry.name.length === 0) {
+      throw new Error(`${eLabel}.name must be a non-empty string`);
+    }
+    for (const k of [
+      "deepAll",
+      "summariesAll",
+      "identityDiag",
+      "pagedV1",
+      "pagedV2",
+      "recallV1",
+      "recallV2",
+      "toolCallsV1",
+      "toolCallsV2",
+    ]) {
+      if (!Number.isSafeInteger(entry[k]) || entry[k] < 0) {
+        throw new Error(`${eLabel}.${k} must be a non-negative integer`);
+      }
+    }
+  }
+  if (!Array.isArray(result.levelCensus) || result.levelCensus.length !== 6) {
+    throw new Error(`${label}.result.levelCensus must be a 6-element array`);
+  }
+  for (const [index, entry] of result.levelCensus.entries()) {
+    const cLabel = `${label}.result.levelCensus[${index}]`;
+    assertExactKeys(
+      entry,
+      ["name", "source", "detailed", "structured", "summary", "identity"],
+      cLabel,
+    );
+    if (typeof entry.name !== "string" || entry.name.length === 0) {
+      throw new Error(`${cLabel}.name must be a non-empty string`);
+    }
+    for (const k of ["source", "detailed", "structured", "summary", "identity"]) {
+      if (!Number.isSafeInteger(entry[k]) || entry[k] < 0) {
+        throw new Error(`${cLabel}.${k} must be a non-negative integer`);
+      }
+    }
+  }
 }
 
 function validateSessionReplayResult(record, label) {

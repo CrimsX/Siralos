@@ -325,44 +325,129 @@ pub struct Informational {
     pub paraphrase_gap: ParaphraseGap,
 }
 
-/// Aggregated report with deterministic decision rule.
+/// Per-scenario deterministic row for the v64 corrected-baseline table.
+///
+/// For each of the 6 gated scenarios: deepAll, summariesAll, identityDiag,
+/// pagedV1, pagedV2, recallV1, recallV2, toolCallsV1, toolCallsV2.
+/// `paraphrase-gap` is excluded (informational only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PerScenarioRow {
+    /// Scenario name, canonical.
+    pub name: String,
+    /// DeepAll = sum estimate(deepest_available) over all nodes, zero overhead, no dedup.
+    pub deep_all: usize,
+    /// SummariesAll = sum estimate(summary bytes) over all nodes, zero overhead, no dedup.
+    pub summaries_all: usize,
+    /// Identity diagnostic = sum estimate(Identity content bytes) over all nodes, zero overhead, no dedup (retired, non-gated).
+    pub identity_diag: usize,
+    /// Paged V1 tokens (inspect+expand+overhead, dedup disabled).
+    pub paged_v1: usize,
+    /// Paged V2 tokens (inspect+expand+overhead, dedup enabled).
+    pub paged_v2: usize,
+    /// Recall V1 (key nodes hit and expanded).
+    pub recall_v1: usize,
+    /// Recall V2.
+    pub recall_v2: usize,
+    /// Tool calls V1 (1 + inspects + expands).
+    pub tool_calls_v1: usize,
+    /// Tool calls V2.
+    pub tool_calls_v2: usize,
+}
+
+/// Deepest-availability audit record per scenario.
+///
+/// Counts how many nodes hold each representation level so DeepAll is reproducible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LevelCensus {
+    /// Scenario name.
+    pub name: String,
+    /// Nodes that have Source.
+    pub source: usize,
+    /// Nodes that have Detailed.
+    pub detailed: usize,
+    /// Nodes that have Structured.
+    pub structured: usize,
+    /// Nodes that have Summary.
+    pub summary: usize,
+    /// Nodes that have Identity.
+    pub identity: usize,
+}
+
+/// Aggregated report with deterministic decision rule (v64 corrected-baseline).
+///
+/// GO = recall_parity && aggregate(paged*2 < DeepAll) && dedup_guard && all 9 cells pass.
+/// Only DeepAll gates. Pre-commit: "Paged is expected to beat DeepAll and lose to SummariesAll; neither informational outcome affects the verdict."
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchmarkReport {
-    /// V1 exhaustive aggregate.
+    /// V1 exhaustive aggregate (baseline = DeepAll).
     pub v1: StrategyAggregate,
-    /// V2 progressive aggregate.
+    /// V2 progressive aggregate (baseline = DeepAll).
     pub v2: StrategyAggregate,
-    /// Deterministic GO verdict computed on V2.
+    /// Deterministic GO verdict computed on V2 vs DeepAll.
     pub go: bool,
     /// Mechanical reason citing the two compared numbers (v2).
     pub reason: String,
-    /// Decomposition (aggregate).
+    /// Decomposition (aggregate) re-based to DeepAll.
     pub decomposition: Decomposition,
-    /// Sensitivity 9-cell.
+    /// Sensitivity 9-cell (bpt {3,4,5} x overhead {0,8,16} vs DeepAll).
     pub sensitivity: Sensitivity,
-    /// Informational.
+    /// Informational (paraphrase-gap excluded).
     pub informational: Informational,
+    /// Per-scenario table (6 gated rows).
+    pub per_scenario: Vec<PerScenarioRow>,
+    /// Aggregate DeepAll (sum over gated scenarios).
+    pub deep_all: usize,
+    /// Aggregate SummariesAll (sum over gated scenarios).
+    pub summaries_all: usize,
+    /// Aggregate Identity diagnostic (retired, non-gated).
+    pub identity_diag: usize,
+    /// Aggregate paged V1.
+    pub paged_v1: usize,
+    /// Aggregate paged V2.
+    pub paged_v2: usize,
+    /// Depth-premium ratio pagedV2 / SummariesAll in basis points (integer, 0 if summariesAll==0).
+    pub depth_premium_bps: usize,
+    /// Level census per scenario (reproducibility audit for DeepAll).
+    pub level_census: Vec<LevelCensus>,
 }
 
 // ---------------------------------------------------------------------------
 // Core benchmark
 // ---------------------------------------------------------------------------
 
-/// Baseline strategy (documented): surface every node's L0 summary content
-/// -> `tokens_baseline = sum of estimate(L0 content bytes) over all nodes`.
-/// `recall_baseline = |key|` (every key node's L0 is surfaced) — but ONLY
-/// if every key node HAS an L0; `build()` requires it.
-/// Paged strategy — KEY-BLIND, deterministic, realistic tool flow:
+/// Corrected baseline (v64): DeepAll is the SOLE gated reference.
+/// DeepAll = sum of estimate(deepest_available(node)) over ALL nodes,
+/// deepest ordering Source > Detailed > Structured > Summary > Identity
+/// (the existing deepest_level_for ordering); ZERO tool-call overhead on
+/// DeepAll (a dump, not a tool flow); same estimator (ceil(bytes/4),
+/// primary bpt=4/oh=4, 9-cell sweep {3,4,5}x{0,8,16}); NO dedup on reference
+/// dumps — DeepAll counts every node's bytes even across shared digests
+/// (the maximal dump; the asymmetry vs paged's surfaced-digest dedup is
+/// intentional and must be stated).
+/// Documented asymmetry: paged's expansion priority (best_level_for:
+/// Structured > Detailed > Summary > Identity, Source EXCLUDED) is shallower
+/// than DeepAll's deepest (Source included) — paged wins partly by delivering
+/// structured depth instead of source depth; state it, do NOT fix it.
+///
+/// SummariesAll (informational, non-gated): sum of estimate(node L1 summary
+/// bytes) over all nodes (the same bytes the paged inspect step counts);
+/// zero overhead, no dedup; report depth-premium ratio paged/SummariesAll.
+///
+/// Identity retired but PRINTED: one diagnostic row (non-gated) per scenario
+/// and aggregate, so the audit trail shows the Fact-1 inversion.
+///
+/// Paged strategy — KEY-BLIND, deterministic, realistic tool flow (UNCHANGED):
 /// (1) search {query} -> hits (canonical order, cap 16);
 /// (2) inspect every hit -> metadata (its summary content counts toward tokens_paged);
 /// (3) expand every hit at its best available level with priority
-///     structured > detailed > summary > identity
+///     structured > detailed > summary > identity (Source EXCLUDED)
 ///     (a hit with NO levels contributes only its inspect summary);
 /// `tokens_paged = estimate(sum of all expanded content bytes + all inspect
-///  summary bytes) + TOOL_CALL_OVERHEAD_TOKENS * tool_calls`
-/// where `tool_calls = 1 search + hits inspects + expands`.
+///  summary bytes — paged counts inspect summary bytes + expansion bytes — a deliberate headwind vs DeepAll) + TOOL_CALL_OVERHEAD_TOKENS * tool_calls`
+/// where `tool_calls = 1 search + hits inspects + expands` (unchanged).
 /// `recall_paged = |key nodes that appear in the search hits AND got expanded|`.
 /// The flow never reads the answer key; it surfaces what the query finds.
+/// Dedup posture per flow: references NONE (DeepAll/SummariesAll/Identity count every node's bytes, no dedup), paged uses surfaced-digest dedup. Tool-call counting on paged unchanged, zero overhead on all references.
 fn best_level_for(set: &NodeRepresentationSet) -> Option<RepresentationLevel> {
     let levels = available_levels(set);
     [
@@ -375,22 +460,13 @@ fn best_level_for(set: &NodeRepresentationSet) -> Option<RepresentationLevel> {
     .find(|lvl| levels.contains(lvl))
 }
 
-fn compute_baseline_tokens(state: &ContextToolState) -> usize {
-    let mut tokens = 0usize;
-    for node in state.graph.nodes() {
-        if let Some(set) = state.store.set(&node.id) {
-            if let Some(rep) =
-                resolve_representation(set, RepresentationLevel::Identity)
-            {
-                tokens =
-                    tokens.saturating_add(estimate_tokens(rep.content.len()));
-            }
-        }
-    }
-    tokens
+/// Identity diagnostic (retired baseline) — sum of L0 Identity bytes, zero overhead, no dedup.
+fn compute_identity_diag_tokens(state: &ContextToolState) -> usize {
+    compute_identity_diag_with(state, TOKEN_BYTES_PER_TOKEN)
 }
 
-fn compute_baseline_with(state: &ContextToolState, bpt: usize) -> usize {
+/// Parameterized Identity diagnostic.
+fn compute_identity_diag_with(state: &ContextToolState, bpt: usize) -> usize {
     let mut tokens = 0usize;
     for node in state.graph.nodes() {
         if let Some(set) = state.store.set(&node.id) {
@@ -405,6 +481,92 @@ fn compute_baseline_with(state: &ContextToolState, bpt: usize) -> usize {
         }
     }
     tokens
+}
+
+/// DeepAll — the sole gated reference (v64). Zero overhead, no dedup.
+fn compute_deep_all_tokens(state: &ContextToolState) -> usize {
+    compute_deep_all_with(state, TOKEN_BYTES_PER_TOKEN)
+}
+
+/// Parameterized DeepAll.
+fn compute_deep_all_with(state: &ContextToolState, bpt: usize) -> usize {
+    let mut tokens = 0usize;
+    for node in state.graph.nodes() {
+        if let Some(set) = state.store.set(&node.id) {
+            if let Some(level) = deepest_level_for(set) {
+                if let Some(rep) = resolve_representation(set, level) {
+                    tokens = tokens.saturating_add(estimate_tokens_with(
+                        rep.content.len(),
+                        bpt,
+                    ));
+                }
+            }
+        }
+    }
+    tokens
+}
+
+/// SummariesAll — informational, zero overhead, no dedup.
+/// Sum of estimate(node summary bytes) where summary is the graph node's `summary` field
+/// (the same bytes the paged inspect step counts).
+fn compute_summaries_all_tokens(state: &ContextToolState) -> usize {
+    compute_summaries_all_with(state, TOKEN_BYTES_PER_TOKEN)
+}
+
+/// Parameterized SummariesAll.
+fn compute_summaries_all_with(state: &ContextToolState, bpt: usize) -> usize {
+    let mut tokens = 0usize;
+    for node in state.graph.nodes() {
+        tokens = tokens
+            .saturating_add(estimate_tokens_with(node.summary.len(), bpt));
+    }
+    tokens
+}
+
+/// Level census for one state's store.
+fn level_census_for_state(state: &ContextToolState) -> LevelCensus {
+    let mut source = 0usize;
+    let mut detailed = 0usize;
+    let mut structured = 0usize;
+    let mut summary = 0usize;
+    let mut identity = 0usize;
+    for node in state.graph.nodes() {
+        if let Some(set) = state.store.set(&node.id) {
+            let levels = available_levels(set);
+            if levels.contains(&RepresentationLevel::Source) {
+                source += 1;
+            }
+            if levels.contains(&RepresentationLevel::Detailed) {
+                detailed += 1;
+            }
+            if levels.contains(&RepresentationLevel::Structured) {
+                structured += 1;
+            }
+            if levels.contains(&RepresentationLevel::Summary) {
+                summary += 1;
+            }
+            if levels.contains(&RepresentationLevel::Identity) {
+                identity += 1;
+            }
+        }
+    }
+    LevelCensus {
+        name: String::new(),
+        source,
+        detailed,
+        structured,
+        summary,
+        identity,
+    }
+}
+
+/// Legacy alias — compute_baseline now maps to DeepAll for gating (v64).
+fn compute_baseline_tokens(state: &ContextToolState) -> usize {
+    compute_deep_all_tokens(state)
+}
+
+fn compute_baseline_with(state: &ContextToolState, bpt: usize) -> usize {
+    compute_deep_all_with(state, bpt)
 }
 
 #[allow(dead_code)]
@@ -1418,6 +1580,60 @@ pub fn run_benchmark(
     };
     let sensitivity = Sensitivity { cells, all_ok };
 
+    // Per-scenario table (6 gated rows) + aggregates + level census
+    // Compute per scenario deepAll / summariesAll / identityDiag etc with same bpt=4
+    let mut per_scenario_rows: Vec<PerScenarioRow> = Vec::new();
+    let mut level_census_rows: Vec<LevelCensus> = Vec::new();
+    let mut deep_all_agg = 0usize;
+    let mut summaries_all_agg = 0usize;
+    let mut identity_diag_agg = 0usize;
+    let mut paged_v1_agg = 0usize;
+    let mut paged_v2_agg = 0usize;
+    // Map scenario name -> v1/v2 metrics for paged and recall/toolCalls
+    let v1_map: std::collections::BTreeMap<&str, &ScenarioMetrics> =
+        v1.scenarios.iter().map(|m| (m.name.as_str(), m)).collect();
+    let v2_map: std::collections::BTreeMap<&str, &ScenarioMetrics> =
+        v2.scenarios.iter().map(|m| (m.name.as_str(), m)).collect();
+    for sc in &gate_scenarios {
+        let name = sc.name.clone();
+        let deep = compute_deep_all_tokens(&sc.state);
+        let sum_all = compute_summaries_all_tokens(&sc.state);
+        let ident = compute_identity_diag_tokens(&sc.state);
+        let v1m = v1_map.get(name.as_str()).expect("v1 metrics present");
+        let v2m = v2_map.get(name.as_str()).expect("v2 metrics present");
+        per_scenario_rows.push(PerScenarioRow {
+            name: name.clone(),
+            deep_all: deep,
+            summaries_all: sum_all,
+            identity_diag: ident,
+            paged_v1: v1m.tokens_paged,
+            paged_v2: v2m.tokens_paged,
+            recall_v1: v2m.recall_paged, // actually recall_v1 per v1? use v1m
+            recall_v2: v2m.recall_paged,
+            tool_calls_v1: v1m.tool_calls,
+            tool_calls_v2: v2m.tool_calls,
+        });
+        // Correct recall_v1
+        if let Some(last) = per_scenario_rows.last_mut() {
+            last.recall_v1 = v1m.recall_paged;
+        }
+        let mut census = level_census_for_state(&sc.state);
+        census.name = name.clone();
+        level_census_rows.push(census);
+        deep_all_agg = deep_all_agg.saturating_add(deep);
+        summaries_all_agg = summaries_all_agg.saturating_add(sum_all);
+        identity_diag_agg = identity_diag_agg.saturating_add(ident);
+        paged_v1_agg = paged_v1_agg.saturating_add(v1m.tokens_paged);
+        paged_v2_agg = paged_v2_agg.saturating_add(v2m.tokens_paged);
+    }
+    per_scenario_rows.sort_by(|a, b| a.name.cmp(&b.name));
+    level_census_rows.sort_by(|a, b| a.name.cmp(&b.name));
+    let depth_premium_bps = if summaries_all_agg > 0 {
+        (v2.total_paged.saturating_mul(10000)) / summaries_all_agg
+    } else {
+        0
+    };
+
     Ok(BenchmarkReport {
         v1,
         v2,
@@ -1426,6 +1642,14 @@ pub fn run_benchmark(
         decomposition,
         sensitivity,
         informational,
+        per_scenario: per_scenario_rows,
+        deep_all: deep_all_agg,
+        summaries_all: summaries_all_agg,
+        identity_diag: identity_diag_agg,
+        paged_v1: paged_v1_agg,
+        paged_v2: paged_v2_agg,
+        depth_premium_bps,
+        level_census: level_census_rows,
     })
 }
 
@@ -3675,29 +3899,54 @@ mod tests {
 
     #[test]
     fn v1_results_byte_identical_to_pre_v2() {
-        let scenarios = gold_set().expect("gold");
-        let v1 = run_strategy(&scenarios, PagingStrategy::ExhaustiveV1)
-            .expect("v1");
-        // Pre-committed v1 aggregates from decision 83
-        assert_eq!(v1.total_baseline, 1230);
-        assert_eq!(v1.total_paged, 650);
-        assert_eq!(v1.total_recall_baseline, 14);
-        assert_eq!(v1.total_recall_paged, 14);
-        assert_eq!(v1.total_tool_calls, 38);
-        // Per-scenario
+        // Guard rail (decision 87): V1 paged-flow token numbers MUST be byte-identical to decision 86 run.
+        // Only gated scenarios (paraphrase-gap excluded) are compared — the flow code is untouched.
+        let scenarios = gold_set_v3().expect("gold v3");
+        let gate: Vec<_> = scenarios
+            .iter()
+            .filter(|s| s.name != "paraphrase-gap")
+            .cloned()
+            .collect();
+        let v1 =
+            run_strategy(&gate, PagingStrategy::ExhaustiveV1).expect("v1");
+        let v2 =
+            run_strategy(&gate, PagingStrategy::ProgressiveV2).expect("v2");
+        assert_eq!(
+            v1.total_paged, 3402,
+            "V1 paged aggregate must stay 3402 (decision 86 gated)"
+        );
+        assert_eq!(
+            v2.total_paged, 3012,
+            "V2 paged aggregate must stay 3012 (decision 86 gated)"
+        );
+        let report = run_benchmark(&scenarios).expect("report");
+        assert_eq!(report.paged_v1, v1.total_paged);
+        assert_eq!(report.paged_v2, v2.total_paged);
+        assert_eq!(
+            report.identity_diag, 2286,
+            "identity diagnostic must remain 2286 (Fact-1 inversion audit)"
+        );
+        // Per-scenario V1 paged values must match decision 86 record (gated only)
         let mut map = std::collections::BTreeMap::new();
         for m in &v1.scenarios {
-            map.insert(
-                m.name.as_str(),
-                (m.tokens_baseline, m.tokens_paged, m.tool_calls),
-            );
+            map.insert(m.name.as_str(), m.tokens_paged);
         }
-        assert_eq!(map["narrow-alpha"], (180, 74, 5));
-        assert_eq!(map["narrow-beta"], (180, 86, 5));
-        assert_eq!(map["narrow-gamma"], (210, 74, 5));
-        assert_eq!(map["narrow-delta"], (240, 96, 5));
-        assert_eq!(map["medium-echo"], (240, 114, 7));
-        assert_eq!(map["broad-foxtrot"], (180, 206, 11));
+        assert_eq!(map["broad-foxtrot"], 931);
+        assert_eq!(map["medium-echo"], 800);
+        assert_eq!(map["narrow-alpha"], 488);
+        assert_eq!(map["narrow-beta"], 345);
+        assert_eq!(map["narrow-delta"], 350);
+        assert_eq!(map["narrow-gamma"], 488);
+        let mut map2 = std::collections::BTreeMap::new();
+        for m in &v2.scenarios {
+            map2.insert(m.name.as_str(), m.tokens_paged);
+        }
+        assert_eq!(map2["broad-foxtrot"], 868);
+        assert_eq!(map2["medium-echo"], 800);
+        assert_eq!(map2["narrow-alpha"], 379);
+        assert_eq!(map2["narrow-beta"], 236);
+        assert_eq!(map2["narrow-delta"], 350);
+        assert_eq!(map2["narrow-gamma"], 379);
     }
 
     #[test]
@@ -3871,13 +4120,25 @@ mod tests {
 
     #[test]
     fn v3_decomposition_sum_identity() {
+        // Decomposition re-based to DeepAll with sum-identity test (amendment 4)
         let scenarios = gold_set_v3().expect("gold v3");
         let report = run_benchmark(&scenarios).expect("benchmark");
         let d = &report.decomposition;
+        let total_saved =
+            report.deep_all.saturating_sub(report.v2.total_paged);
+        assert_eq!(
+            d.dedup_saved + d.rerank_saved + d.level_saved,
+            total_saved,
+            "decomposition sum must equal DeepAll - paged (re-based)"
+        );
+        // Also matches v2 baseline (which is now DeepAll)
+        assert_eq!(
+            report.v2.total_baseline, report.deep_all,
+            "v2 baseline must be DeepAll"
+        );
         assert_eq!(
             d.dedup_saved + d.rerank_saved + d.level_saved,
             report.v2.total_baseline.saturating_sub(report.v2.total_paged),
-            "decomposition sum must equal total_saved"
         );
     }
 
@@ -3927,6 +4188,8 @@ mod tests {
 
     #[test]
     fn v3_broad_foxtrot_loses_on_v1() {
+        // Under corrected baseline (DeepAll) the broad scenario wins even on V1 because DeepAll is maximal dump (Source included).
+        // The old Identity-based expectation (lose) is now covered by the identity diagnostic: paged > identityDiag but paged < DeepAll.
         let scenarios = gold_set_v3().expect("gold v3");
         let sc = scenarios
             .iter()
@@ -3938,11 +4201,20 @@ mod tests {
         )
         .expect("v1");
         let m = &v1.scenarios[0];
+        // Vs DeepAll (now baseline) paged wins — the corrected baseline is dominated by selective retrieval
         assert!(
-            m.tokens_paged >= m.tokens_baseline,
-            "broad-foxtrot should lose or tie on v1: paged {} vs baseline {}",
+            m.tokens_paged < m.tokens_baseline,
+            "broad-foxtrot vs DeepAll should win on v1: paged {} vs DeepAll {}",
             m.tokens_paged,
             m.tokens_baseline
+        );
+        // Vs Identity diagnostic (retired) it would lose — audit that inversion is printed
+        let ident = compute_identity_diag_tokens(&sc.state);
+        assert!(
+            m.tokens_paged > ident,
+            "broad vs Identity diagnostic should still lose (audit): paged {} vs identity {}",
+            m.tokens_paged,
+            ident
         );
     }
 
@@ -3957,5 +4229,254 @@ mod tests {
         assert_eq!(r1.go, r2.go);
         assert_eq!(r1.reason, r2.reason);
         assert_eq!(r1.decomposition, r2.decomposition);
+    }
+
+    // --- Decision 87 additions ---
+
+    #[test]
+    fn deep_all_ordering_zero_overhead_no_dedup() {
+        // DeepAll = sum estimate(deepest_available) with ordering Source > Detailed > Structured > Summary > Identity
+        // ZERO overhead, NO dedup (maximal dump)
+        // Build a tiny state with one node that has both Source and Structured; DeepAll should pick Source.
+        let summary = "summary".to_owned();
+        let source_content = "S".repeat(100);
+        let structured_content = "T".repeat(80);
+        let node = ContextNode {
+            id: "n-01".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: summary.clone(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let ident_content = "I".repeat(20);
+        let set = NodeRepresentationSet::build(
+            "n-01".to_owned(),
+            vec![
+                NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&ident_content),
+                    derived_from: vec![],
+                    content: ident_content.clone(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Structured,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&structured_content),
+                    derived_from: vec![],
+                    content: structured_content.clone(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Source,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&source_content),
+                    derived_from: vec![],
+                    content: source_content.clone(),
+                },
+            ],
+        )
+        .expect("set");
+        let state = minimal_state_with_nodes(vec![node], vec![set]);
+        let deep = compute_deep_all_tokens(&state);
+        let expected = estimate_tokens(source_content.len());
+        assert_eq!(
+            deep, expected,
+            "DeepAll must pick deepest Source over Structured"
+        );
+        // Zero overhead: DeepAll must not include TOOL_CALL_OVERHEAD_TOKENS
+        let deep_with = compute_deep_all_with(&state, 4);
+        assert_eq!(deep_with, expected);
+        // No dedup: duplicate digest across two nodes still counts twice
+        let dup_content = "DUP".repeat(40); // ~120 bytes
+        let node2 = ContextNode {
+            id: "n-02".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('b'),
+            summary: "other".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let set2 = NodeRepresentationSet::build(
+            "n-02".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Source,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of(&dup_content),
+                derived_from: vec![],
+                content: dup_content.clone(),
+            }],
+        )
+        .expect("set2");
+        let node1_dup = ContextNode {
+            id: "n-01d".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: "s".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        };
+        let set1_dup = NodeRepresentationSet::build(
+            "n-01d".to_owned(),
+            vec![NodeRepresentation {
+                level: RepresentationLevel::Source,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: content_digest_of(&dup_content),
+                derived_from: vec![],
+                content: dup_content.clone(),
+            }],
+        )
+        .expect("set1");
+        let state_dup = minimal_state_with_nodes(
+            vec![node1_dup, node2],
+            vec![set1_dup, set2],
+        );
+        let deep_dup = compute_deep_all_tokens(&state_dup);
+        let exp_dup = estimate_tokens(dup_content.len()) * 2;
+        assert_eq!(
+            deep_dup, exp_dup,
+            "DeepAll must count every node's bytes even across shared digests (no dedup)"
+        );
+        // Asymmetry documented: best_level_for excludes Source, deepest includes Source — state it
+        assert!(
+            best_level_for(
+                &NodeRepresentationSet::build(
+                    "x".to_owned(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Source,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of(&source_content),
+                        derived_from: vec![],
+                        content: source_content.clone(),
+                    }]
+                )
+                .expect("x")
+            )
+            .is_none()
+                || best_level_for(
+                    &NodeRepresentationSet::build(
+                        "x".to_owned(),
+                        vec![NodeRepresentation {
+                            level: RepresentationLevel::Source,
+                            origin: RepresentationOrigin::HostExtracted,
+                            content_digest: content_digest_of(&source_content),
+                            derived_from: vec![],
+                            content: source_content.clone(),
+                        }]
+                    )
+                    .expect("y")
+                ) != deepest_level_for(
+                    &NodeRepresentationSet::build(
+                        "y".to_owned(),
+                        vec![NodeRepresentation {
+                            level: RepresentationLevel::Source,
+                            origin: RepresentationOrigin::HostExtracted,
+                            content_digest: content_digest_of(&source_content),
+                            derived_from: vec![],
+                            content: source_content.clone(),
+                        }]
+                    )
+                    .expect("y")
+                )
+        );
+    }
+
+    #[test]
+    fn summaries_all_equals_sum_of_summary_bytes() {
+        // SummariesAll = sum estimate(node L1 summary bytes) over all nodes, zero overhead, no dedup
+        let scenarios = gold_set_v3().expect("gold v3");
+        for sc in &scenarios {
+            let sum_all = compute_summaries_all_tokens(&sc.state);
+            let mut expected = 0usize;
+            for node in sc.state.graph.nodes() {
+                expected = expected
+                    .saturating_add(estimate_tokens(node.summary.len()));
+            }
+            assert_eq!(
+                sum_all, expected,
+                "SummariesAll must equal sum of summary bytes for {}",
+                sc.name
+            );
+            // Zero overhead: with different bpt the sum matches estimate_tokens_with
+            let sum_all_3 = compute_summaries_all_with(&sc.state, 3);
+            let mut exp3 = 0usize;
+            for node in sc.state.graph.nodes() {
+                exp3 = exp3.saturating_add(estimate_tokens_with(
+                    node.summary.len(),
+                    3,
+                ));
+            }
+            assert_eq!(sum_all_3, exp3);
+        }
+        // Also aggregate check via report
+        let report = run_benchmark(&scenarios).expect("report");
+        let mut agg = 0usize;
+        for sc in scenarios.iter().filter(|s| s.name != "paraphrase-gap") {
+            agg = agg.saturating_add(compute_summaries_all_tokens(&sc.state));
+        }
+        assert_eq!(report.summaries_all, agg);
+        // Depth-premium ratio integer basis points: paged / SummariesAll * 10000
+        let expected_bps =
+            if agg > 0 { (report.v2.total_paged * 10000) / agg } else { 0 };
+        assert_eq!(report.depth_premium_bps, expected_bps);
+    }
+
+    #[test]
+    fn go_rule_vs_deep_all_not_identity() {
+        // GO = recall_parity && aggregate(paged*2 < DeepAll) && dedup_guard && all 9 cells pass. Only DeepAll gates.
+        let scenarios = gold_set_v3().expect("gold v3");
+        let report = run_benchmark(&scenarios).expect("report");
+        let recall_ok =
+            report.v2.total_recall_paged == report.v2.total_recall_baseline;
+        let margin_ok =
+            report.v2.total_paged.saturating_mul(2) < report.deep_all;
+        let dedup_ok = report.decomposition.dedup_guard_ok;
+        let cells_ok = report.sensitivity.all_ok;
+        let expected_go = recall_ok && margin_ok && dedup_ok && cells_ok;
+        assert_eq!(report.go, expected_go, "GO must be vs DeepAll only");
+        // Also reason must cite total_paged and total_baseline (which is DeepAll)
+        assert!(report.reason.contains("total_paged"));
+        assert!(report.reason.contains("total_recall_paged"));
+        // Identity diagnostic must not gate: even if paged beats Identity, GO still requires DeepAll win
+        // Paged expected to beat DeepAll and lose to SummariesAll; neither informational outcome affects verdict — checked elsewhere
+    }
+
+    #[test]
+    fn nine_cell_sweep_unchanged_logic_vs_deep_all() {
+        // 9-cell sweep {3,4,5}x{0,8,16} unchanged logic, but vs DeepAll baseline
+        let scenarios = gold_set_v3().expect("gold v3");
+        let report = run_benchmark(&scenarios).expect("report");
+        assert_eq!(report.sensitivity.cells.len(), 9);
+        for bpt in [3usize, 4, 5] {
+            for oh in [0usize, 8, 16] {
+                assert!(
+                    report
+                        .sensitivity
+                        .cells
+                        .iter()
+                        .any(|c| c.bytes_per_token == bpt && c.overhead == oh),
+                    "missing cell bpt {} overhead {}",
+                    bpt,
+                    oh
+                );
+            }
+        }
+        // Verify cells were computed vs DeepAll: recompute one cell manually
+        let gate: Vec<BenchmarkScenario> = scenarios
+            .iter()
+            .filter(|s| s.name != "paraphrase-gap")
+            .cloned()
+            .collect();
+        let v2c =
+            run_strategy_with(&gate, PagingStrategy::ProgressiveV2, 4, 4)
+                .expect("v2c");
+        let deep_all_4: usize = gate
+            .iter()
+            .map(|sc| compute_deep_all_with(&sc.state, 4))
+            .fold(0usize, |a, v| a.saturating_add(v));
+        assert_eq!(
+            v2c.total_baseline, deep_all_4,
+            "baseline for 4/4 must be DeepAll"
+        );
     }
 }

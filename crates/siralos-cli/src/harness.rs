@@ -129,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 63;
+const CORPUS_VERSION: u64 = 64;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -13735,7 +13735,9 @@ fn context_tool_record(_input: &Value) -> Result<Value, HarnessError> {
 }
 
 // ---------------------------------------------------------------------------
-// Hermetic subject: context-benchmark (decision 79 slice 5, corpus v61; v2 at v62).
+// Hermetic subject: context-benchmark (decision 79 slice 5, corpus v61; v2 at v62; v64 corrected-baseline re-gate).
+// DeepAll is the sole gated reference (zero overhead, no dedup, deepest Source>Detailed>Structured>Summary>Identity);
+// SummariesAll and IdentityDiag are informational; paged expansion priority shallow excludes Source vs DeepAll includes Source — intentional.
 // ---------------------------------------------------------------------------
 
 fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
@@ -13791,6 +13793,38 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
             "inHits": report.informational.paraphrase_gap.in_hits
         }
     });
+    let per_scenario = report
+        .per_scenario
+        .iter()
+        .map(|r| {
+            json!({
+                "name": r.name,
+                "deepAll": r.deep_all,
+                "summariesAll": r.summaries_all,
+                "identityDiag": r.identity_diag,
+                "pagedV1": r.paged_v1,
+                "pagedV2": r.paged_v2,
+                "recallV1": r.recall_v1,
+                "recallV2": r.recall_v2,
+                "toolCallsV1": r.tool_calls_v1,
+                "toolCallsV2": r.tool_calls_v2
+            })
+        })
+        .collect::<Vec<Value>>();
+    let level_census = report
+        .level_census
+        .iter()
+        .map(|c| {
+            json!({
+                "name": c.name,
+                "source": c.source,
+                "detailed": c.detailed,
+                "structured": c.structured,
+                "summary": c.summary,
+                "identity": c.identity
+            })
+        })
+        .collect::<Vec<Value>>();
     Ok(json!({
         "baseline": {
             "totalBaseline": report.v1.total_baseline,
@@ -13801,13 +13835,13 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
             "totalPaged": report.v1.total_paged,
             "totalRecallPaged": report.v1.total_recall_paged,
             "totalToolCalls": report.v1.total_tool_calls,
-            "scenarioMetrics": v1_metrics
+            "scenarioMetrics": v1_metrics.clone()
         },
         "strategyV2": {
             "totalPaged": report.v2.total_paged,
             "totalRecallPaged": report.v2.total_recall_paged,
             "totalToolCalls": report.v2.total_tool_calls,
-            "scenarioMetrics": v2_metrics
+            "scenarioMetrics": v2_metrics.clone()
         },
         "aggregates": {
             "totalBaseline": report.v2.total_baseline,
@@ -13821,7 +13855,15 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
         "sensitivity": sensitivity,
         "informational": informational,
         "go": report.go,
-        "reason": report.reason
+        "reason": report.reason,
+        "deepAll": report.deep_all,
+        "summariesAll": report.summaries_all,
+        "identityDiag": report.identity_diag,
+        "pagedV1": report.paged_v1,
+        "pagedV2": report.paged_v2,
+        "depthPremiumBps": report.depth_premium_bps,
+        "perScenario": per_scenario,
+        "levelCensus": level_census
     }))
 }
 
