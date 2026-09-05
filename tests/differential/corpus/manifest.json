@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 70,
+  "corpusVersion": 71,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -297,6 +297,22 @@
     {
       "file": "context-representation.json",
       "sha256": "02624548ed2c4b2c0f40414555ed17e4e6229619977445959091d11084fa4a3e"
+    },
+    {
+      "file": "context-scan.scan-bounds-truncation.json",
+      "sha256": "b9c3315029fd543d1ffdc5ad5eead9f5c3591e426ae34ec9e240e8d66ff11de9"
+    },
+    {
+      "file": "context-scan.scan-oversized-skip.json",
+      "sha256": "34f41c1ba021d05d686d943deeffebff1d8fc346444cff7dd826bc7e6e31fb06"
+    },
+    {
+      "file": "context-scan.scan-protected-skip.json",
+      "sha256": "f518eb2249ef81d6caa1c0b9e69416d8d53eb3e24a52a6ca61a593b33247a916"
+    },
+    {
+      "file": "context-scan.scan-small.json",
+      "sha256": "e911db84c8c0c85693a0cb095d0c85c05458a390f48556db939acc217f1c1260"
     },
     {
       "file": "context-scheduler.assembly-l1-default.json",
@@ -1363,5 +1379,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "7918f7357970d8f000756a4654299296c20308ee0750edee68df0de8c7390dc4"
+  "corpusSha256": "32cfb378819433d5409648c82e9466b517c95cf620ad526b5e15db3f0762b308"
 }

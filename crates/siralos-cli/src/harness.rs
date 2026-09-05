@@ -120,6 +120,7 @@ const SUBJECT_CONTEXT_GRAPH: &str = "context-graph";
 const SUBJECT_CONTEXT_REPRESENTATION: &str = "context-representation";
 const SUBJECT_CONTEXT_SCHEDULER: &str = "context-scheduler";
 const SUBJECT_CONTEXT_TOOL: &str = "context-tool";
+const SUBJECT_CONTEXT_SCAN: &str = "context-scan";
 const SUBJECT_CONTEXT_BENCHMARK: &str = "context-benchmark";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
@@ -129,7 +130,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 70;
+const CORPUS_VERSION: u64 = 71;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -528,6 +529,7 @@ fn validate_scenario(
             | SUBJECT_CONTEXT_REPRESENTATION
             | SUBJECT_CONTEXT_SCHEDULER
             | SUBJECT_CONTEXT_TOOL
+            | SUBJECT_CONTEXT_SCAN
             | SUBJECT_CONTEXT_BENCHMARK
             | SUBJECT_CLI_SESSION
     ) {
@@ -625,6 +627,7 @@ fn validate_scenario(
         | SUBJECT_CONTEXT_REPRESENTATION
         | SUBJECT_CONTEXT_SCHEDULER
         | SUBJECT_CONTEXT_TOOL
+        | SUBJECT_CONTEXT_SCAN
         | SUBJECT_CONTEXT_BENCHMARK
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
@@ -1350,6 +1353,18 @@ fn run_scenario(
             );
             let result =
                 workspace_record(&scenario.id, &scenario.subject, input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_SCAN => {
+            let input = scenario.input.as_ref().expect(
+                "context-scan input was validated while loading the corpus",
+            );
+            let result = context_scan_record(&scenario.id, input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -10121,6 +10136,39 @@ fn icm_dependency_manifests_record(
     }
 }
 
+fn context_scan_record(
+    scenario_id: &str,
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    with_fixture_workspace(scenario_id, input, |root| {
+        let scan = siralos_adapters::context_scan::scan_workspace(root)
+            .map_err(|error| {
+                HarnessError::new(
+                    HarnessErrorKind::ProbeSpawn,
+                    format!("context-scan failed: {error}"),
+                )
+            })?;
+        let nodes: Vec<Value> = scan
+            .nodes
+            .iter()
+            .map(|node| {
+                json!({
+                    "relativePath": node.relative_path,
+                    "contentDigest": node.content_digest,
+                    "byteLen": node.byte_len
+                })
+            })
+            .collect();
+        Ok(json!({
+            "nodes": nodes,
+            "protectedSkipped": scan.protected_skipped,
+            "oversizedSkipped": scan.oversized_skipped,
+            "filesNotScanned": scan.files_not_scanned,
+            "truncated": scan.truncated
+        }))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
@@ -18741,7 +18789,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 340);
+        assert_eq!(loaded.len(), 344);
     }
 
     #[test]

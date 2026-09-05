@@ -5347,6 +5347,49 @@ function validateCompletedResult(record, label) {
     }
   }
 
+  if (record.subject === "context-scan") {
+    assertExactKeys(
+      record.result,
+      ["filesNotScanned", "nodes", "oversizedSkipped", "protectedSkipped", "truncated"],
+      `${label}.result`,
+    );
+    if (!Array.isArray(record.result.nodes) || record.result.nodes.length > 512) {
+      throw new Error(`${label}.result.nodes must be a bounded array`);
+    }
+    for (const [index, node] of record.result.nodes.entries()) {
+      const nodeLabel = `${label}.result.nodes[${index}]`;
+      assertExactKeys(node, ["byteLen", "contentDigest", "relativePath"], nodeLabel);
+      if (typeof node.relativePath !== "string" || node.relativePath.length === 0) {
+        throw new Error(`${nodeLabel}.relativePath is invalid`);
+      }
+      if (typeof node.contentDigest !== "string" || !LOWER_SHA256.test(node.contentDigest)) {
+        throw new Error(`${nodeLabel}.contentDigest is invalid`);
+      }
+      if (!Number.isSafeInteger(node.byteLen) || node.byteLen < 0) {
+        throw new Error(`${nodeLabel}.byteLen is invalid`);
+      }
+    }
+    if (
+      !Number.isSafeInteger(record.result.protectedSkipped) ||
+      record.result.protectedSkipped < 0
+    ) {
+      throw new Error(`${label}.result.protectedSkipped is invalid`);
+    }
+    if (
+      !Number.isSafeInteger(record.result.oversizedSkipped) ||
+      record.result.oversizedSkipped < 0
+    ) {
+      throw new Error(`${label}.result.oversizedSkipped is invalid`);
+    }
+    if (!Number.isSafeInteger(record.result.filesNotScanned) || record.result.filesNotScanned < 0) {
+      throw new Error(`${label}.result.filesNotScanned is invalid`);
+    }
+    if (typeof record.result.truncated !== "boolean") {
+      throw new Error(`${label}.result.truncated is invalid`);
+    }
+    return;
+  }
+
   assertExactKeys(record.result, ["version"], `${label}.result`);
   if (
     typeof record.result.version !== "string" ||

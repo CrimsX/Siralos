@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 70;
+export const CORPUS_VERSION = 71;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -91,6 +91,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "evolve-packaging",
   "context-scheduler",
   "context-tool",
+  "context-scan",
   "context-benchmark",
   "cli-session",
 ]);
@@ -659,6 +660,7 @@ function validateSubjectInputs(scenario, label) {
     "workspace-apply",
     "checkpoint",
     "git-inspection",
+    "context-scan",
   ]);
   if (WORKSPACE_SUBJECTS.has(scenario.subject)) {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
@@ -1306,6 +1308,7 @@ export function validateScenario(scenario, file) {
     "evolve-workflow",
     "evolve-proposal",
     "evolve-packaging",
+    "context-scan",
     "cli-session",
   ]);
   const expectedKeys = withInput.has(scenario.subject)

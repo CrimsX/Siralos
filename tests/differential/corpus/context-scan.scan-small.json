@@ -1,0 +1,27 @@
+{
+  "id": "context-scan.scan-small",
+  "subject": "context-scan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "hello"
+      },
+      {
+        "path": "b.txt",
+        "content": "world"
+      },
+      {
+        "path": "sub/c.txt",
+        "content": "nested content\n"
+      },
+      {
+        "path": "z.txt",
+        "content": "zebra"
+      }
+    ]
+  }
+}

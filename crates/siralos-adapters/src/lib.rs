@@ -10,6 +10,7 @@
 //! (enforced by `npm run check:rust`).
 
 pub mod config;
+pub mod context_scan;
 pub mod domain;
 pub mod language;
 pub mod lockfile;

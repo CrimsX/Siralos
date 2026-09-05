@@ -1,0 +1,43 @@
+{
+  "id": "context-scan.scan-protected-skip",
+  "subject": "context-scan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "keep.txt",
+        "content": "keep"
+      },
+      {
+        "path": "AGENTS.md",
+        "content": "protected root"
+      },
+      {
+        "path": "sub/AGENTS.md",
+        "content": "protected deep"
+      },
+      {
+        "path": ".siralos/secret.txt",
+        "content": "protected siralos"
+      },
+      {
+        "path": ".siralos/nested/inner.txt",
+        "content": "also protected"
+      },
+      {
+        "path": ".git/config",
+        "content": "protected git"
+      },
+      {
+        "path": ".git/objects/obj.txt",
+        "content": "protected git deep"
+      },
+      {
+        "path": "a/.siralos/deep.txt",
+        "content": "protected any-depth"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "context-scan.scan-bounds-truncation",
+  "subject": "context-scan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "bulk",
+        "kind": "bulk",
+        "count": 300,
+        "content": "x"
+      }
+    ]
+  }
+}

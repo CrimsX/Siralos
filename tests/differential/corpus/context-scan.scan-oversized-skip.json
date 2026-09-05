@@ -1,0 +1,29 @@
+{
+  "id": "context-scan.scan-oversized-skip",
+  "subject": "context-scan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "small.txt",
+        "content": "ok"
+      },
+      {
+        "path": "also-small.txt",
+        "content": "also ok"
+      },
+      {
+        "path": "big.bin",
+        "size": 70000,
+        "fill": "x"
+      },
+      {
+        "path": "just-over.txt",
+        "size": 65537,
+        "fill": "y"
+      }
+    ]
+  }
+}
