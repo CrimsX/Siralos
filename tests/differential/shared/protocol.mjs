@@ -2526,6 +2526,28 @@ function validateContextToolResult(record, label) {
   if (!Array.isArray(record.result.searchAuthHits)) {
     throw new Error(`${label}.result.searchAuthHits must be an array`);
   }
+  for (const [index, hit] of record.result.searchAuthHits.entries()) {
+    const hitLabel = `${label}.result.searchAuthHits[${index}]`;
+    if (!isObject(hit)) {
+      throw new Error(`${hitLabel} must be an object`);
+    }
+    assertExactKeys(hit, ["kind", "matched_in", "node_id", "score", "tier"], hitLabel);
+    if (typeof hit.node_id !== "string" || hit.node_id.length === 0) {
+      throw new Error(`${hitLabel}.node_id must be a non-empty string`);
+    }
+    if (typeof hit.kind !== "string" || hit.kind.length === 0) {
+      throw new Error(`${hitLabel}.kind must be a non-empty string`);
+    }
+    if (typeof hit.tier !== "string" || hit.tier.length === 0) {
+      throw new Error(`${hitLabel}.tier must be a non-empty string`);
+    }
+    if (typeof hit.matched_in !== "string" || !["id", "summary"].includes(hit.matched_in)) {
+      throw new Error(`${hitLabel}.matched_in must be "id" or "summary"`);
+    }
+    if (!Number.isSafeInteger(hit.score)) {
+      throw new Error(`${hitLabel}.score must be an integer`);
+    }
+  }
   if (
     typeof record.result.expandDigest !== "string" ||
     !LOWER_SHA256.test(record.result.expandDigest)

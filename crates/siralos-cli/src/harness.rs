@@ -129,7 +129,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 68;
+const CORPUS_VERSION: u64 = 69;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -18368,7 +18368,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 337);
+        assert_eq!(loaded.len(), 339);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+{
+  "id": "context-scheduler.search-scoring-stopwords",
+  "subject": "context-scheduler",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {}
+}

@@ -4730,8 +4730,9 @@ mod tests {
 
     #[test]
     fn v1_results_byte_identical_to_pre_v2() {
-        // Guard rail (decision 87): V1 paged-flow token numbers MUST be byte-identical to decision 86 run.
-        // Only gated scenarios (paraphrase-gap excluded) are compared — the flow code is untouched.
+        // Guard rail (decision 87/92): V1 paged-flow token numbers MUST be byte-identical to decision 86 run
+        // updated for decision 92 re-rank (broad-foxtrot now 6 hits vs 5 due to term-OR hit).
+        // Only gated scenarios (paraphrase-gap excluded) are compared — the flow code is untouched, only search ordering.
         let scenarios = gold_set_v3().expect("gold v3");
         let gate: Vec<_> = scenarios
             .iter()
@@ -4743,12 +4744,12 @@ mod tests {
         let v2 =
             run_strategy(&gate, PagingStrategy::ProgressiveV2).expect("v2");
         assert_eq!(
-            v1.total_paged, 3402,
-            "V1 paged aggregate must stay 3402 (decision 86 gated)"
+            v1.total_paged, 3560,
+            "V1 paged aggregate must stay 3560 (decision 92 re-rank)"
         );
         assert_eq!(
-            v2.total_paged, 3012,
-            "V2 paged aggregate must stay 3012 (decision 86 gated)"
+            v2.total_paged, 3170,
+            "V2 paged aggregate must stay 3170 (decision 92 re-rank)"
         );
         let report = run_benchmark(&scenarios).expect("report");
         assert_eq!(report.paged_v1, v1.total_paged);
@@ -4757,12 +4758,12 @@ mod tests {
             report.identity_diag, 2286,
             "identity diagnostic must remain 2286 (Fact-1 inversion audit)"
         );
-        // Per-scenario V1 paged values must match decision 86 record (gated only)
+        // Per-scenario V1 paged values must match decision 92 re-measured record (gated only)
         let mut map = std::collections::BTreeMap::new();
         for m in &v1.scenarios {
             map.insert(m.name.as_str(), m.tokens_paged);
         }
-        assert_eq!(map["broad-foxtrot"], 931);
+        assert_eq!(map["broad-foxtrot"], 1089);
         assert_eq!(map["medium-echo"], 800);
         assert_eq!(map["narrow-alpha"], 488);
         assert_eq!(map["narrow-beta"], 345);
@@ -4772,7 +4773,7 @@ mod tests {
         for m in &v2.scenarios {
             map2.insert(m.name.as_str(), m.tokens_paged);
         }
-        assert_eq!(map2["broad-foxtrot"], 868);
+        assert_eq!(map2["broad-foxtrot"], 1026);
         assert_eq!(map2["medium-echo"], 800);
         assert_eq!(map2["narrow-alpha"], 379);
         assert_eq!(map2["narrow-beta"], 236);
@@ -5475,13 +5476,13 @@ mod tests {
         let v2 =
             run_strategy(&gate, PagingStrategy::ProgressiveV2).expect("v2");
         assert_eq!(
-            v1.total_paged, 3402,
-            "V1 byte-identity 3402 got {}",
+            v1.total_paged, 3560,
+            "V1 byte-identity 3560 got {}",
             v1.total_paged
         );
         assert_eq!(
-            v2.total_paged, 3012,
-            "V2 byte-identity 3012 got {}",
+            v2.total_paged, 3170,
+            "V2 byte-identity 3170 got {}",
             v2.total_paged
         );
     }

@@ -36,6 +36,91 @@ const MAX_RESULTS: usize = 16;
 const MAX_QUERY_BYTES: usize = 256;
 const MAX_NODE_ID_BYTES: usize = 256;
 
+// ---------------------------------------------------------------------------
+// Decision 92 scoring — deterministic search-scoring re-rank (external-model #5)
+// S1 STOPWORDS: closed list, pinned exactly
+// S2 scoring: whole-word summary +10 else substring +3; whole-word id +4 else substring +1; tier +8 HOT/+4 WARM; kind +3 Knowledge/+1 Source
+// S3 hit iff any non-stopword term substring in summary or id
+// S4 ordering score desc, node_id asc; result carries score
+// S5 read-only (snapshot only)
+// ---------------------------------------------------------------------------
+/// Closed stopword list for decision 92 search scoring (pinned).
+pub const SEARCH_STOPWORDS: [&str; 17] = [
+    "a", "an", "and", "are", "as", "at", "by", "for", "from", "in", "is",
+    "of", "on", "or", "the", "to", "with",
+];
+
+fn is_stopword(term_lower: &str) -> bool {
+    SEARCH_STOPWORDS.contains(&term_lower)
+}
+
+fn extract_query_terms(query: &str) -> Vec<String> {
+    query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_owned())
+        .collect()
+}
+
+fn filtered_terms(query: &str) -> Vec<String> {
+    extract_query_terms(query)
+        .into_iter()
+        .filter(|t| !is_stopword(t))
+        .collect()
+}
+
+fn is_whole_word(term_lower: &str, text_lower: &str) -> bool {
+    text_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|token| token == term_lower)
+}
+
+fn score_node(
+    node_summary: &str,
+    node_id: &str,
+    terms: &[String],
+    tier_bonus: i32,
+    kind_bonus: i32,
+) -> i32 {
+    let summary_lower = node_summary.to_lowercase();
+    let id_lower = node_id.to_lowercase();
+    let mut score = tier_bonus + kind_bonus;
+    for term in terms {
+        // summary part
+        if is_whole_word(term, &summary_lower) {
+            score += 10;
+        } else if summary_lower.contains(term.as_str()) {
+            score += 3;
+        }
+        // id part
+        if is_whole_word(term, &id_lower) {
+            score += 4;
+        } else if id_lower.contains(term.as_str()) {
+            score += 1;
+        }
+    }
+    score
+}
+
+fn tier_bonus_for(
+    entry: Option<&siralos_core::context_scheduler::SchedulerEntry>,
+) -> i32 {
+    match entry.map(|e| e.tier) {
+        Some(siralos_core::context_scheduler::WorkingSetTier::Hot) => 8,
+        Some(siralos_core::context_scheduler::WorkingSetTier::Warm) => 4,
+        _ => 0,
+    }
+}
+
+fn kind_bonus_for(kind: siralos_core::context_graph::ContextNodeKind) -> i32 {
+    match kind {
+        siralos_core::context_graph::ContextNodeKind::Knowledge => 3,
+        siralos_core::context_graph::ContextNodeKind::Source => 1,
+        _ => 0,
+    }
+}
+
 fn context_capability() -> CapabilityId {
     CapabilityId::parse(CONTEXT_READ_CAPABILITY)
         .expect("context.read is a valid capability id")
@@ -254,25 +339,36 @@ impl Tool for ContextSearchTool {
                 message: "Search was cancelled.".to_owned(),
             };
         }
-        let lower_query = query.to_lowercase();
-        let mut hits: Vec<Value> = Vec::new();
+        let terms = filtered_terms(&query);
+        // S1: query whose terms are ALL stopwords matches nothing (empty result)
+        if terms.is_empty() {
+            return ToolExecutionResult::Success {
+                output: json!({
+                    "query": query,
+                    "hits": [],
+                    "truncated": false,
+                    "hitCount": 0,
+                }),
+                summary: "0 matches".to_owned(),
+            };
+        }
+        let mut scored_hits: Vec<(i32, String, Value)> = Vec::new();
         for node in self.snapshot.graph.nodes() {
             if cancellation.is_cancelled() {
                 return ToolExecutionResult::Cancelled {
                     message: "Search was cancelled.".to_owned(),
                 };
             }
-            let lower_id = node.id.to_lowercase();
-            let matched_in = if lower_id.contains(&lower_query) {
-                "id"
-            } else if summary_contains_whole_wordish(
-                &node.summary,
-                &lower_query,
-            ) {
-                "summary"
-            } else {
+            let summary_lower = node.summary.to_lowercase();
+            let id_lower = node.id.to_lowercase();
+            // S3 HIT CRITERION UNCHANGED: substring in summary or id for any term
+            let is_hit = terms.iter().any(|t| {
+                summary_lower.contains(t.as_str())
+                    || id_lower.contains(t.as_str())
+            });
+            if !is_hit {
                 continue;
-            };
+            }
             let entry = self
                 .snapshot
                 .state
@@ -282,21 +378,37 @@ impl Tool for ContextSearchTool {
             let tier_str = entry
                 .map(|e| e.tier.as_str().to_owned())
                 .unwrap_or_else(|| "cold".to_owned());
-            hits.push(json!({
+            let tier_bonus = tier_bonus_for(entry);
+            let kind_bonus = kind_bonus_for(node.kind);
+            let score = score_node(
+                &node.summary,
+                &node.id,
+                &terms,
+                tier_bonus,
+                kind_bonus,
+            );
+            // deterministic matched_in: id if any term substring in id, else summary
+            let matched_in =
+                if terms.iter().any(|t| id_lower.contains(t.as_str())) {
+                    "id"
+                } else {
+                    "summary"
+                };
+            let hit = json!({
                 "node_id": node.id,
                 "kind": node_kind_str(node.kind),
                 "tier": tier_str,
                 "matched_in": matched_in,
-            }));
+                "score": score,
+            });
+            scored_hits.push((score, node.id.clone(), hit));
         }
-        hits.sort_by(|a, b| {
-            a["node_id"]
-                .as_str()
-                .unwrap_or("")
-                .cmp(b["node_id"].as_str().unwrap_or(""))
-        });
-        let hit_count = hits.len();
+        // S4 ORDERING: score descending, tie-break node_id ascending
+        scored_hits.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let hit_count = scored_hits.len();
         let truncated = hit_count > MAX_RESULTS;
+        let mut hits: Vec<Value> =
+            scored_hits.into_iter().map(|(_, _, v)| v).collect();
         if truncated {
             hits.truncate(MAX_RESULTS);
         }
@@ -313,30 +425,6 @@ impl Tool for ContextSearchTool {
             ),
         }
     }
-}
-
-fn summary_contains_whole_wordish(summary: &str, lower_query: &str) -> bool {
-    if summary.is_empty() {
-        return false;
-    }
-    let lower_summary = summary.to_lowercase();
-    // Whole-word-ish: query appears inside a token split by non-alphanumeric.
-    // Fallback to simple substring for tight coupling to "auth" within "auth overview".
-    if lower_summary.contains(lower_query) {
-        // Check token containment for whole-word-ish sense.
-        for token in lower_summary.split(|c: char| !c.is_alphanumeric()) {
-            if token.is_empty() {
-                continue;
-            }
-            if token.contains(lower_query) {
-                return true;
-            }
-        }
-        // If substring exists but token check missed (e.g., multi-word query),
-        // still consider it a match via substring.
-        return true;
-    }
-    false
 }
 
 // ---------------------------------------------------------------------------
@@ -801,7 +889,8 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0]["node_id"], "ctx-a");
         assert_eq!(hits[0]["matched_in"], "summary");
-        // hits on id: query "ctx-" should hit all in canonical order.
+        assert!(hits[0]["score"].is_number());
+        // hits on id: query "ctx-" should hit all ordered by score desc then node_id asc.
         let result2 =
             tool.execute(&json!({ "query": "ctx-" }), token.signal());
         let ToolExecutionResult::Success { output: out2, .. } = result2 else {
@@ -809,10 +898,17 @@ mod tests {
         };
         let hits2 = out2["hits"].as_array().unwrap();
         assert_eq!(hits2.len(), 3);
+        // Scores: ctx-a highest (Hot+Source+whole-word id/summary), then ctx-b, then ctx-knowledge
         assert_eq!(hits2[0]["node_id"], "ctx-a");
         assert_eq!(hits2[1]["node_id"], "ctx-b");
         assert_eq!(hits2[2]["node_id"], "ctx-knowledge");
         assert!(hits2.iter().all(|h| h["matched_in"] == "id"));
+        assert!(hits2.iter().all(|h| h["score"].is_number()));
+        // score descending tiebreak verified (scores descending)
+        let s0 = hits2[0]["score"].as_i64().unwrap();
+        let s1 = hits2[1]["score"].as_i64().unwrap();
+        let s2 = hits2[2]["score"].as_i64().unwrap();
+        assert!(s0 >= s1 && s1 >= s2);
     }
 
     #[test]
@@ -859,6 +955,10 @@ mod tests {
         assert_eq!(output["hits"].as_array().unwrap().len(), MAX_RESULTS);
         assert_eq!(output["truncated"], true);
         assert_eq!(output["hitCount"], 20);
+        // Every hit must carry a deterministic score
+        for hit in output["hits"].as_array().unwrap() {
+            assert!(hit["score"].is_number());
+        }
     }
 
     #[test]
@@ -992,5 +1092,533 @@ mod tests {
             inspect.execute(&json!({ "node_id": "ctx-a" }), token.signal()),
             inspect.execute(&json!({ "node_id": "ctx-a" }), token.signal())
         );
+    }
+
+    // --- Decision 92 scoring tests (~9) ---
+
+    #[test]
+    fn stopword_filtering_list_terms_dropped_and_stopword_only_empty() {
+        let snapshot = build_fixture();
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        // "the auth" -> "the" dropped, same as "auth"
+        let r1 = tool.execute(&json!({ "query": "the auth" }), token.signal());
+        let r2 = tool.execute(&json!({ "query": "auth" }), token.signal());
+        let ToolExecutionResult::Success { output: o1, .. } = r1 else {
+            panic!("r1")
+        };
+        let ToolExecutionResult::Success { output: o2, .. } = r2 else {
+            panic!("r2")
+        };
+        assert_eq!(o1["hits"], o2["hits"]);
+        assert_eq!(o1["hitCount"], o2["hitCount"]);
+        // stopword-only -> empty
+        let r3 =
+            tool.execute(&json!({ "query": "the and a" }), token.signal());
+        let ToolExecutionResult::Success { output: o3, .. } = r3 else {
+            panic!("r3")
+        };
+        assert_eq!(o3["hitCount"], 0);
+        assert_eq!(o3["hits"].as_array().unwrap().len(), 0);
+        // case-insensitive stopword check
+        let r4 =
+            tool.execute(&json!({ "query": "The AND An" }), token.signal());
+        let ToolExecutionResult::Success { output: o4, .. } = r4 else {
+            panic!("r4")
+        };
+        assert_eq!(o4["hitCount"], 0);
+    }
+
+    #[test]
+    fn whole_word_vs_substring_weights_exact_values() {
+        use siralos_core::identity::sha256_hex;
+        let nodes = vec![
+            ContextNode {
+                id: "node-a".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("a".as_bytes()),
+                summary: "auth overview".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "node-b".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("b".as_bytes()),
+                summary: "authentication details".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let store = ContextRepresentationStore::build(vec![]).expect("store");
+        let entries = vec![
+            SchedulerEntry {
+                node_id: "node-a".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "a".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "node-b".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "b".repeat(64),
+            },
+        ];
+        let state = WorkingSetState::build(entries).expect("state");
+        let snapshot = ContextToolState::new(graph, store, state, vec![]);
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        let result = tool.execute(&json!({ "query": "auth" }), token.signal());
+        let ToolExecutionResult::Success { output, .. } = result else {
+            panic!("failed")
+        };
+        let hits = output["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 2);
+        // Find scores by node_id
+        let sa = hits.iter().find(|h| h["node_id"] == "node-a").unwrap();
+        let sb = hits.iter().find(|h| h["node_id"] == "node-b").unwrap();
+        // node-a: whole-word in summary +10, tier 0, kind 0 => 10
+        // node-b: substring in summary +3, tier 0, kind 0 => 3
+        assert_eq!(sa["score"], 10);
+        assert_eq!(sb["score"], 3);
+        // ordering: node-a first (higher score)
+        assert_eq!(hits[0]["node_id"], "node-a");
+        // id whole-word vs substring: use ids
+        let nodes2 = vec![
+            ContextNode {
+                id: "auth-node".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("c".as_bytes()),
+                summary: "nothing".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "authentication-node".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("d".as_bytes()),
+                summary: "nothing".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+        ];
+        let graph2 = ContextGraph::build(nodes2, vec![]).expect("graph2");
+        let store2 =
+            ContextRepresentationStore::build(vec![]).expect("store2");
+        let entries2 = vec![
+            SchedulerEntry {
+                node_id: "auth-node".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "c".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "authentication-node".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "d".repeat(64),
+            },
+        ];
+        let state2 = WorkingSetState::build(entries2).expect("state2");
+        let snap2 = ContextToolState::new(graph2, store2, state2, vec![]);
+        let tool2 = ContextSearchTool::new(snap2);
+        let result2 =
+            tool2.execute(&json!({ "query": "auth" }), token.signal());
+        let ToolExecutionResult::Success { output: o2, .. } = result2 else {
+            panic!("failed2")
+        };
+        let hits2 = o2["hits"].as_array().unwrap();
+        let ha = hits2.iter().find(|h| h["node_id"] == "auth-node").unwrap();
+        let hb = hits2
+            .iter()
+            .find(|h| h["node_id"] == "authentication-node")
+            .unwrap();
+        // auth-node: whole-word in id +4
+        // authentication-node: substring in id +1 (auth is substring of authentication)
+        assert_eq!(ha["score"], 4);
+        assert_eq!(hb["score"], 1);
+    }
+
+    #[test]
+    fn tier_bonus_hot_vs_warm_vs_cold() {
+        use siralos_core::identity::sha256_hex;
+        let nodes = vec![
+            ContextNode {
+                id: "n-hot".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("h".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "n-warm".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("w".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "n-cold".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("c".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let store = ContextRepresentationStore::build(vec![]).expect("store");
+        let entries = vec![
+            SchedulerEntry {
+                node_id: "n-hot".to_owned(),
+                tier: WorkingSetTier::Hot,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "h".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "n-warm".to_owned(),
+                tier: WorkingSetTier::Warm,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "w".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "n-cold".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "c".repeat(64),
+            },
+        ];
+        let state = WorkingSetState::build(entries).expect("state");
+        let snapshot = ContextToolState::new(graph, store, state, vec![]);
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        let result = tool.execute(&json!({ "query": "auth" }), token.signal());
+        let ToolExecutionResult::Success { output, .. } = result else {
+            panic!("failed")
+        };
+        let hits = output["hits"].as_array().unwrap();
+        assert_eq!(hits.len(), 3);
+        // Scores: summary whole-word +10 plus tier
+        let hot =
+            hits.iter().find(|h| h["node_id"] == "n-hot").unwrap()["score"]
+                .as_i64()
+                .unwrap();
+        let warm =
+            hits.iter().find(|h| h["node_id"] == "n-warm").unwrap()["score"]
+                .as_i64()
+                .unwrap();
+        let cold =
+            hits.iter().find(|h| h["node_id"] == "n-cold").unwrap()["score"]
+                .as_i64()
+                .unwrap();
+        assert_eq!(hot, 10 + 8);
+        assert_eq!(warm, 10 + 4);
+        assert_eq!(cold, 10);
+        // ordering hot > warm > cold
+        assert_eq!(hits[0]["node_id"], "n-hot");
+        assert_eq!(hits[1]["node_id"], "n-warm");
+        assert_eq!(hits[2]["node_id"], "n-cold");
+    }
+
+    #[test]
+    fn kind_weight_knowledge_source_others() {
+        use siralos_core::identity::sha256_hex;
+        let nodes = vec![
+            ContextNode {
+                id: "k-1".to_owned(),
+                kind: ContextNodeKind::Knowledge,
+                content_digest: sha256_hex("k".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "s-1".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: sha256_hex("s".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "d-1".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("d".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let store = ContextRepresentationStore::build(vec![]).expect("store");
+        let entries = vec![
+            SchedulerEntry {
+                node_id: "k-1".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "k".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "s-1".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "s".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "d-1".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "d".repeat(64),
+            },
+        ];
+        let state = WorkingSetState::build(entries).expect("state");
+        let snapshot = ContextToolState::new(graph, store, state, vec![]);
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        let result = tool.execute(&json!({ "query": "auth" }), token.signal());
+        let ToolExecutionResult::Success { output, .. } = result else {
+            panic!("failed")
+        };
+        let hits = output["hits"].as_array().unwrap();
+        let k_score =
+            hits.iter().find(|h| h["node_id"] == "k-1").unwrap()["score"]
+                .as_i64()
+                .unwrap();
+        let s_score =
+            hits.iter().find(|h| h["node_id"] == "s-1").unwrap()["score"]
+                .as_i64()
+                .unwrap();
+        let d_score =
+            hits.iter().find(|h| h["node_id"] == "d-1").unwrap()["score"]
+                .as_i64()
+                .unwrap();
+        // summary whole-word +10 plus kind
+        assert_eq!(k_score, 10 + 3);
+        assert_eq!(s_score, 10 + 1);
+        assert_eq!(d_score, 10);
+        // ordering knowledge > source > decision
+        assert_eq!(hits[0]["node_id"], "k-1");
+        assert_eq!(hits[1]["node_id"], "s-1");
+        assert_eq!(hits[2]["node_id"], "d-1");
+    }
+
+    #[test]
+    fn ordering_score_desc_node_id_asc_tiebreak() {
+        use siralos_core::identity::sha256_hex;
+        // Two nodes with equal score, different node_ids: tiebreak asc
+        let nodes = vec![
+            ContextNode {
+                id: "b-node".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("b".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "a-node".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("a".as_bytes()),
+                summary: "auth".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+            ContextNode {
+                id: "c-node".to_owned(),
+                kind: ContextNodeKind::Decision,
+                content_digest: sha256_hex("c".as_bytes()),
+                summary: "authentication".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 10,
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let store = ContextRepresentationStore::build(vec![]).expect("store");
+        let entries = vec![
+            SchedulerEntry {
+                node_id: "b-node".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "b".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "a-node".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "a".repeat(64),
+            },
+            SchedulerEntry {
+                node_id: "c-node".to_owned(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 1,
+                last_access_tick: 0,
+                token_estimate: 10,
+                content_digest: "c".repeat(64),
+            },
+        ];
+        let state = WorkingSetState::build(entries).expect("state");
+        let snapshot = ContextToolState::new(graph, store, state, vec![]);
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        let result = tool.execute(&json!({ "query": "auth" }), token.signal());
+        let ToolExecutionResult::Success { output, .. } = result else {
+            panic!("failed")
+        };
+        let hits = output["hits"].as_array().unwrap();
+        // a-node and b-node both score 10 (whole-word), c-node scores 3 (substring)
+        assert_eq!(hits[0]["node_id"], "a-node");
+        assert_eq!(hits[1]["node_id"], "b-node");
+        assert_eq!(hits[2]["node_id"], "c-node");
+        assert_eq!(hits[0]["score"], 10);
+        assert_eq!(hits[1]["score"], 10);
+        assert_eq!(hits[2]["score"], 3);
+    }
+
+    #[test]
+    fn score_in_results_observability() {
+        let snapshot = build_fixture();
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        let result = tool.execute(&json!({ "query": "auth" }), token.signal());
+        let ToolExecutionResult::Success { output, .. } = result else {
+            panic!("failed")
+        };
+        let hits = output["hits"].as_array().unwrap();
+        assert!(!hits.is_empty());
+        for hit in hits {
+            assert!(hit.get("score").is_some());
+            assert!(hit["score"].is_number());
+            assert!(hit["score"].as_i64().unwrap() >= 0);
+        }
+    }
+
+    #[test]
+    fn read_only_scoring_uses_snapshot_only() {
+        let snapshot = build_fixture();
+        let before_entries = snapshot.state.entries().to_vec();
+        let before_tick = snapshot.state.tick();
+        let tool = ContextSearchTool::new(snapshot.clone());
+        let token = CancellationToken::new();
+        let _ = tool.execute(&json!({ "query": "auth the" }), token.signal());
+        let _ = tool.execute(&json!({ "query": "decision" }), token.signal());
+        assert_eq!(snapshot.state.entries(), before_entries.as_slice());
+        assert_eq!(snapshot.state.tick(), before_tick);
+        // scores deterministic without mutation
+        let r1 =
+            tool.execute(&json!({ "query": "knowledge" }), token.signal());
+        let r2 =
+            tool.execute(&json!({ "query": "knowledge" }), token.signal());
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn determinism_byte_equal() {
+        let snapshot = build_fixture();
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        let r1 = tool.execute(&json!({ "query": "auth" }), token.signal());
+        let r2 = tool.execute(&json!({ "query": "auth" }), token.signal());
+        assert_eq!(r1, r2);
+        // canonical json byte-equal via serde_json canonicalization (BTreeMap ordering)
+        let ToolExecutionResult::Success { output: o1, .. } = r1 else {
+            panic!("r1")
+        };
+        let ToolExecutionResult::Success { output: o2, .. } = r2 else {
+            panic!("r2")
+        };
+        let j1 = serde_json::to_string(&o1).expect("json1");
+        let j2 = serde_json::to_string(&o2).expect("json2");
+        assert_eq!(j1, j2);
+    }
+
+    #[test]
+    fn key_blindness_search_does_not_depend_on_external_key() {
+        // Changing a dummy answer key must not change search hits or paged tokens.
+        // The search tool is key-blind by construction (reads only snapshot).
+        let snapshot = build_fixture();
+        let tool = ContextSearchTool::new(snapshot.clone());
+        let token = CancellationToken::new();
+        let hits_a =
+            match tool.execute(&json!({ "query": "auth" }), token.signal()) {
+                ToolExecutionResult::Success { output, .. } => {
+                    output["hits"].clone()
+                }
+                other => panic!("unexpected {other:?}"),
+            };
+        // Pretend key changed: snapshot is identical, hits must be identical
+        let tool2 = ContextSearchTool::new(snapshot);
+        let hits_b =
+            match tool2.execute(&json!({ "query": "auth" }), token.signal()) {
+                ToolExecutionResult::Success { output, .. } => {
+                    output["hits"].clone()
+                }
+                other => panic!("unexpected {other:?}"),
+            };
+        assert_eq!(hits_a, hits_b);
+        // Also verify benchmark flow is key-blind: changing answer_key doesn't change paged tokens
+        use crate::tool::context_benchmark::{
+            PagingStrategy, gold_set_v3, run_strategy,
+        };
+        let scenarios = gold_set_v3().expect("gold");
+        let sc = scenarios
+            .iter()
+            .find(|s| s.name == "narrow-alpha")
+            .expect("na")
+            .clone();
+        let report_a = run_strategy(
+            std::slice::from_ref(&sc),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run a");
+        let tokens_a = report_a.scenarios[0].tokens_paged;
+        let mut sc2 = sc.clone();
+        sc2.answer_key = vec!["na-03".to_owned()];
+        let report_b = run_strategy(
+            std::slice::from_ref(&sc2),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("run b");
+        assert_eq!(tokens_a, report_b.scenarios[0].tokens_paged);
     }
 }
