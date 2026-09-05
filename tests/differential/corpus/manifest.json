@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 69,
+  "corpusVersion": 70,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -333,6 +333,10 @@
     {
       "file": "context-scheduler.pin-quota.json",
       "sha256": "d23b6c15d6f166dc0d0197c774d6ae6d5a66dcbe6d18d761283ce231a4551429"
+    },
+    {
+      "file": "context-scheduler.search-score-retention.json",
+      "sha256": "74dd79285e8b9b79c2d790d6d8fc887b99c7afe6495c67c01fc0582df9ab649e"
     },
     {
       "file": "context-scheduler.search-scoring-stopwords.json",
@@ -1359,5 +1363,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "b992dc37d9c69efa85db185e7a773ef924a930134a99dbbeef9fc0296c9e624e"
+  "corpusSha256": "7918f7357970d8f000756a4654299296c20308ee0750edee68df0de8c7390dc4"
 }

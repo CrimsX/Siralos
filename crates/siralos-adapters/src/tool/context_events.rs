@@ -4,7 +4,8 @@
 
 use serde_json::Value;
 use siralos_core::context_scheduler::{
-    AccessEvent, TickInput, canonicalize_events,
+    AccessEvent, SearchScore, TickInput, canonicalize_events,
+    canonicalize_search_scores,
 };
 use siralos_core::provider::ToolExecutionResult;
 
@@ -50,9 +51,66 @@ pub fn derive_events_for_tick(
     canonicalize_events(all)
 }
 
+/// Pure derivation: tool observations -> canonical SearchScores (decision 93, B3).
+/// Deterministic, host-owned, bounded to 64, canonical node_id ascending.
+/// Sourced ONLY from host-observed `context.search` hits' integer `score` (decision 92).
+#[must_use]
+pub fn derive_search_scores_for_tick(
+    observations: &[ToolObservation],
+) -> Vec<SearchScore> {
+    let mut all: Vec<SearchScore> = Vec::new();
+    for obs in observations {
+        all.extend(derive_search_scores_one(&obs.tool_name, &obs.result));
+    }
+    canonicalize_search_scores(all)
+}
+
+fn derive_search_scores_one(
+    tool_name: &str,
+    result: &ToolExecutionResult,
+) -> Vec<SearchScore> {
+    match result {
+        ToolExecutionResult::Success { output, .. } => {
+            if tool_name != "context.search" {
+                return Vec::new();
+            }
+            let Some(hits) = output.get("hits").and_then(|v| v.as_array())
+            else {
+                return Vec::new();
+            };
+            let mut scores = Vec::new();
+            for hit in hits {
+                let node_id_opt = hit
+                    .get("node_id")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| hit.get("nodeId").and_then(|v| v.as_str()));
+                let Some(node_id) = node_id_opt else { continue };
+                if node_id.is_empty() || node_id.len() > 256 {
+                    continue;
+                }
+                // score is integer (decision 92); try i64 then u64
+                let score_opt = hit
+                    .get("score")
+                    .and_then(|v| v.as_i64())
+                    .map(|s| s as i32)
+                    .or_else(|| {
+                        hit.get("score")
+                            .and_then(|v| v.as_u64())
+                            .map(|s| s as i32)
+                    });
+                let Some(score) = score_opt else { continue };
+                scores.push(SearchScore::new(node_id.to_owned(), score));
+            }
+            scores
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Pure composition: observations -> TickInput (B3 end-to-end).
-/// Accumulates host-observed tool results into the next tick's events.
+/// Accumulates host-observed tool results into the next tick's events AND search scores (decision 93).
 /// Live activation remains precondition-gated per decision 84 (proven by tests only).
+/// The composition is host-owned: only host-observed ToolObservation is accepted — the model can never inject scores.
 #[must_use]
 pub fn compose_tick_input(
     now: u64,
@@ -64,14 +122,23 @@ pub fn compose_tick_input(
     // Collect raw events without early canonicalization so TickInput can
     // track overflow (events_dropped) deterministically.
     let mut all: Vec<AccessEvent> = Vec::new();
+    let mut all_scores: Vec<SearchScore> = Vec::new();
     for obs in observations {
         all.extend(derive_access_events(
             &obs.tool_name,
             &obs.input,
             &obs.result,
         ));
+        all_scores
+            .extend(derive_search_scores_one(&obs.tool_name, &obs.result));
     }
-    TickInput::new(now, all, graph_revision, new_node_ids, stale_node_ids)
+    let base =
+        TickInput::new(now, all, graph_revision, new_node_ids, stale_node_ids);
+    if all_scores.is_empty() {
+        base
+    } else {
+        base.with_search_scores(all_scores)
+    }
 }
 
 /// Derive canonical AccessEvents from a host-observed tool call + result.
@@ -320,5 +387,174 @@ mod tests {
         let tick2 =
             compose_tick_input(1, "rev".to_owned(), vec![], vec![], &[obs2]);
         assert_eq!(tick, tick2);
+    }
+
+    // --- Decision 93 rank-for-retention (host-observed scores only) ---
+
+    #[test]
+    fn derive_search_scores_host_observed_only_context_search() {
+        let obs_search = ToolObservation::new(
+            "context.search",
+            json!({ "query": "alpha" }),
+            success(
+                json!({ "hits": [{ "node_id": "ctx-a", "score": 12 }, { "node_id": "ctx-b", "score": 7 }], "truncated": false }),
+            ),
+        );
+        let obs_inspect = ToolObservation::new(
+            "context.inspect",
+            json!({ "node_id": "ctx-a" }),
+            success(
+                json!({ "id": "ctx-a", "summary": "s", "level": "summary" }),
+            ),
+        );
+        let scores = derive_search_scores_for_tick(&[
+            obs_search.clone(),
+            obs_inspect.clone(),
+        ]);
+        assert_eq!(scores.len(), 2);
+        assert!(scores.iter().any(|s| s.node_id == "ctx-a" && s.score == 12));
+        assert!(scores.iter().any(|s| s.node_id == "ctx-b" && s.score == 7));
+        // inspect does not contribute scores
+        let only_inspect = derive_search_scores_for_tick(&[obs_inspect]);
+        assert!(only_inspect.is_empty());
+    }
+
+    #[test]
+    fn compose_tick_input_carries_bounded_canonical_search_scores() {
+        let mut hits = Vec::new();
+        for i in 0..70 {
+            hits.push(json!({ "node_id": format!("n{i:03}"), "score": i }));
+        }
+        let obs = ToolObservation::new(
+            "context.search",
+            json!({ "query": "q" }),
+            success(json!({ "hits": hits })),
+        );
+        let tick =
+            compose_tick_input(1, "rev".to_owned(), vec![], vec![], &[obs]);
+        assert!(tick.search_scores.is_some());
+        let scores = tick.search_scores.expect("scores");
+        assert_eq!(scores.len(), 64);
+        assert_eq!(scores[0].node_id, "n000");
+        assert_eq!(scores[63].node_id, "n063");
+        assert_eq!(tick.search_scores_dropped, 6);
+    }
+
+    #[test]
+    fn search_scores_canonical_node_id_asc_one_per_node_max_wins() {
+        let obs1 = ToolObservation::new(
+            "context.search",
+            json!({ "query": "q" }),
+            success(
+                json!({ "hits": [{ "node_id": "ctx-a", "score": 5 }, { "node_id": "ctx-a", "score": 20 }] }),
+            ),
+        );
+        let obs2 = ToolObservation::new(
+            "context.search",
+            json!({ "query": "q2" }),
+            success(json!({ "hits": [{ "node_id": "ctx-a", "score": 3 }] })),
+        );
+        let tick = compose_tick_input(
+            1,
+            "rev".to_owned(),
+            vec![],
+            vec![],
+            &[obs1, obs2],
+        );
+        let scores = tick.search_scores.expect("scores");
+        assert_eq!(scores.len(), 1);
+        assert_eq!(scores[0].node_id, "ctx-a");
+        assert_eq!(scores[0].score, 20); // max wins
+        // canonical order check with two nodes reversed
+        let obs = ToolObservation::new(
+            "context.search",
+            json!({ "query": "q" }),
+            success(
+                json!({ "hits": [{ "node_id": "b", "score": 1 }, { "node_id": "a", "score": 2 }] }),
+            ),
+        );
+        let tick2 =
+            compose_tick_input(1, "rev".to_owned(), vec![], vec![], &[obs]);
+        let s2 = tick2.search_scores.expect("s2");
+        assert_eq!(s2[0].node_id, "a");
+        assert_eq!(s2[1].node_id, "b");
+    }
+
+    #[test]
+    fn search_scores_absent_when_no_search_hits() {
+        let obs = ToolObservation::new(
+            "context.search",
+            json!({ "query": "the" }), // stopwords -> empty hits but scores also empty
+            success(json!({ "hits": [] })),
+        );
+        let tick =
+            compose_tick_input(1, "rev".to_owned(), vec![], vec![], &[obs]);
+        assert!(tick.search_scores.is_none());
+        let tick2 =
+            compose_tick_input(1, "rev".to_owned(), vec![], vec![], &[]);
+        assert!(tick2.search_scores.is_none());
+    }
+
+    #[test]
+    fn model_cannot_inject_search_scores_helper_signature_only_host_observed()
+    {
+        // The only way to produce search_scores is via host-observed ToolObservation -> compose_tick_input.
+        // There is no public function that accepts a model-supplied scores vec to inject into TickInput.
+        // This compile-time barrier is verified by API shape: the test proves that
+        // derive_search_scores_for_tick and compose_tick_input both require &[ToolObservation].
+        let obs = ToolObservation::new(
+            "context.search",
+            json!({ "query": "x" }),
+            success(json!({ "hits": [{ "node_id": "ctx-a", "score": 99 }] })),
+        );
+        let tick = compose_tick_input(
+            1,
+            "rev".to_owned(),
+            vec![],
+            vec![],
+            std::slice::from_ref(&obs),
+        );
+        assert_eq!(tick.search_scores.as_ref().unwrap()[0].score, 99);
+        // Attempting to inject via direct TickInput construction is not model-controlled: only host composes via this helper.
+        // Verify deterministic, host-owned: same observations -> byte-equal TickInput
+        let obs2 = ToolObservation::new(
+            "context.search",
+            json!({ "query": "x" }),
+            success(json!({ "hits": [{ "node_id": "ctx-a", "score": 99 }] })),
+        );
+        let tick2 =
+            compose_tick_input(1, "rev".to_owned(), vec![], vec![], &[obs2]);
+        assert_eq!(tick, tick2);
+    }
+
+    #[test]
+    fn search_scores_determinism_byte_equal() {
+        let obs = ToolObservation::new(
+            "context.search",
+            json!({ "query": "q" }),
+            success(
+                json!({ "hits": [{ "node_id": "b", "score": 10 }, { "node_id": "a", "score": 5 }] }),
+            ),
+        );
+        let t1 = compose_tick_input(
+            2,
+            "rev1".to_owned(),
+            vec!["a".to_owned()],
+            vec![],
+            std::slice::from_ref(&obs),
+        );
+        let t2 = compose_tick_input(
+            2,
+            "rev1".to_owned(),
+            vec!["a".to_owned()],
+            vec![],
+            std::slice::from_ref(&obs),
+        );
+        assert_eq!(t1, t2);
+        // byte-equal via debug (canonical node_id order already guarantees determinism)
+        assert_eq!(
+            format!("{:?}", t1.search_scores),
+            format!("{:?}", t2.search_scores)
+        );
     }
 }

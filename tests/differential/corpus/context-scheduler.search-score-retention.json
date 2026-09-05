@@ -1,0 +1,10 @@
+{
+  "id": "context-scheduler.search-score-retention",
+  "subject": "context-scheduler",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "searchScoreRetention": true
+  }
+}

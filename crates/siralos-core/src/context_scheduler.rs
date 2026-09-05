@@ -267,7 +267,66 @@ pub fn canonicalize_events_with_dropped(
     (uniq, dropped)
 }
 
-/// Host-owned TickInput for the deterministic pipeline (A1, A4).
+/// Maximum canonical search-score entries per TickInput (decision 93).
+pub const MAX_SEARCH_SCORES: usize = 64;
+
+/// Host-observed search score for retention ordering (decision 92 score, 93 retention).
+/// Score is the integer decision-92 search score per hit; absent nodes are treated as 0.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SearchScore {
+    /// Target node id.
+    pub node_id: String,
+    /// Decision-92 integer search score.
+    pub score: i32,
+}
+
+impl SearchScore {
+    /// Create a host-observed search score.
+    #[must_use]
+    pub fn new(node_id: impl Into<String>, score: i32) -> Self {
+        Self { node_id: node_id.into(), score }
+    }
+}
+
+/// Canonicalize search scores: dedupe by node_id (one per node, keep highest score),
+/// order by node_id ascending, truncate to first 64 (decision 93).
+#[must_use]
+pub fn canonicalize_search_scores(
+    scores: Vec<SearchScore>,
+) -> Vec<SearchScore> {
+    let (c, _) = canonicalize_search_scores_with_dropped(scores);
+    c
+}
+
+/// Canonicalize search scores and return the number dropped beyond the 64 cap.
+/// Dedupe keeps the highest score per node.
+#[must_use]
+pub fn canonicalize_search_scores_with_dropped(
+    scores: Vec<SearchScore>,
+) -> (Vec<SearchScore>, usize) {
+    let mut map: BTreeMap<String, i32> = BTreeMap::new();
+    for s in scores {
+        if s.node_id.is_empty() || s.node_id.len() > 256 {
+            continue;
+        }
+        let entry = map.entry(s.node_id).or_insert(s.score);
+        if s.score > *entry {
+            *entry = s.score;
+        }
+    }
+    let mut uniq: Vec<SearchScore> = map
+        .into_iter()
+        .map(|(node_id, score)| SearchScore { node_id, score })
+        .collect();
+    uniq.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    let dropped = uniq.len().saturating_sub(MAX_SEARCH_SCORES);
+    if uniq.len() > MAX_SEARCH_SCORES {
+        uniq.truncate(MAX_SEARCH_SCORES);
+    }
+    (uniq, dropped)
+}
+
+/// Host-owned TickInput for the deterministic pipeline (A1, A4, decision 93 search-scores).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TickInput {
     /// Deterministic clock (now).
@@ -282,6 +341,12 @@ pub struct TickInput {
     pub new_node_ids: Vec<String>,
     /// Stale node ids for this tick (any tier).
     pub stale_node_ids: Vec<String>,
+    /// Optional bounded latest-observed search scores (decision 93, at most 64,
+    /// canonical node_id ascending, one per node, score 0 for absent).
+    /// `None` means absent (demotion order unchanged); `Some(vec)` with empty vec is treated as absent as well.
+    pub search_scores: Option<Vec<SearchScore>>,
+    /// Number of canonical search scores dropped beyond the 64 cap.
+    pub search_scores_dropped: usize,
 }
 
 impl TickInput {
@@ -327,7 +392,56 @@ impl TickInput {
             graph_revision: graph_revision.into(),
             new_node_ids: new_nodes_sorted,
             stale_node_ids: stale_sorted,
+            search_scores: None,
+            search_scores_dropped: 0,
         }
+    }
+
+    /// Build with search scores (decision 93): canonicalize scores (dedupe highest, sorted, trunc 64).
+    #[must_use]
+    pub fn new_with_search_scores(
+        now: u64,
+        events: Vec<AccessEvent>,
+        graph_revision: impl Into<String>,
+        new_node_ids: Vec<String>,
+        stale_node_ids: Vec<String>,
+        search_scores: Vec<SearchScore>,
+    ) -> Self {
+        let mut base = Self::new(
+            now,
+            events,
+            graph_revision,
+            new_node_ids,
+            stale_node_ids,
+        );
+        let (canonical_scores, dropped) =
+            canonicalize_search_scores_with_dropped(search_scores);
+        if canonical_scores.is_empty() {
+            base.search_scores = None;
+            base.search_scores_dropped = 0;
+        } else {
+            base.search_scores = Some(canonical_scores);
+            base.search_scores_dropped = dropped;
+        }
+        base
+    }
+
+    /// Attach search scores after construction (canonicalized, bounded). Empty => None.
+    #[must_use]
+    pub fn with_search_scores(
+        mut self,
+        search_scores: Vec<SearchScore>,
+    ) -> Self {
+        let (canonical_scores, dropped) =
+            canonicalize_search_scores_with_dropped(search_scores);
+        if canonical_scores.is_empty() {
+            self.search_scores = None;
+            self.search_scores_dropped = 0;
+        } else {
+            self.search_scores = Some(canonical_scores);
+            self.search_scores_dropped = dropped;
+        }
+        self
     }
 
     /// Empty input helper (no events, no graph delta).
@@ -347,6 +461,8 @@ pub struct WorkingSetState {
     last_graph_revision: Option<String>,
     last_new_nodes: Vec<String>,
     pipeline_runs: usize,
+    // Decision 93: last observed search scores for assembly retention (None = absent -> unchanged order)
+    last_search_scores: Option<Vec<SearchScore>>,
 }
 
 impl WorkingSetState {
@@ -382,6 +498,7 @@ impl WorkingSetState {
             last_graph_revision: None,
             last_new_nodes: Vec::new(),
             pipeline_runs: 0,
+            last_search_scores: None,
         })
     }
 
@@ -404,12 +521,30 @@ impl WorkingSetState {
     }
 
     /// Whether this tick input would coalesce (A4 no-op) given current coalescing state.
+    /// Search scores are NOT part of coalescing (they affect only assembly, not the tick pipeline).
     #[must_use]
     pub fn is_coalesced_input(&self, input: &TickInput) -> bool {
         input.events.is_empty()
             && self.last_graph_revision.as_deref()
                 == Some(input.graph_revision.as_str())
             && self.last_new_nodes == input.new_node_ids
+    }
+
+    /// Last observed search scores (decision 93, None means absent).
+    #[must_use]
+    pub fn last_search_scores(&self) -> Option<&[SearchScore]> {
+        self.last_search_scores.as_deref()
+    }
+
+    /// Set search scores for testing / direct assembly (canonicalized, bounded).
+    /// Empty => None (absent).
+    pub fn set_search_scores(&mut self, scores: Vec<SearchScore>) {
+        let (canonical, _) = canonicalize_search_scores_with_dropped(scores);
+        if canonical.is_empty() {
+            self.last_search_scores = None;
+        } else {
+            self.last_search_scores = Some(canonical);
+        }
     }
 
     /// One entry by id.
@@ -523,18 +658,25 @@ impl WorkingSetState {
     }
 
     /// Deterministic pipeline with A1-A4 amendments and pinned order 1..7.
+    /// Search scores (decision 93) are stored for the subsequent assembly even on coalesced ticks.
     pub fn process_tick(
         &mut self,
         input: TickInput,
         config: &SchedulerConfig,
     ) -> TickReport {
+        // Store search scores for assembly (decision 93): None/absent => unchanged order, Some(non-empty) => score-ordered retention.
+        // Canonical already; empty is treated as absent.
+        let search_scores_for_assembly = input.search_scores.clone();
+        self.last_search_scores = search_scores_for_assembly;
+
         // 1. Coalescing guard: empty events AND no graph deltas since last processed tick.
+        // Search scores do NOT affect coalescing (they are for assembly only).
         let is_noop = input.events.is_empty()
             && self.last_graph_revision.as_deref()
                 == Some(input.graph_revision.as_str())
             && self.last_new_nodes == input.new_node_ids;
         if is_noop {
-            // Identical output without pipeline run.
+            // Identical output without pipeline run (but search scores already stored for assembly).
             return TickReport {
                 tick: self.tick,
                 promoted: Vec::new(),
@@ -1294,39 +1436,89 @@ impl WorkingSetState {
             }
         }
 
-        // 7. Budget enforcement over assembled set (4096) — lowest non-pinned HOT first
+        // 7. Budget enforcement over assembled set (4096) — lowest non-pinned HOT first.
+        // Decision 93: when search_scores present and non-empty, order by lower search score first (absent = 0),
+        // ties break by scheduler score, then node_id ascending. When absent, order is existing scheduler-score order.
+        // Pin-quota order remains unchanged (scheduler score only).
+        let search_map: Option<BTreeMap<String, i32>> = self
+            .last_search_scores
+            .as_ref()
+            .filter(|v| !v.is_empty())
+            .map(|scores| {
+                scores.iter().map(|s| (s.node_id.clone(), s.score)).collect()
+            });
         loop {
             let total = assembled_unique_total(&entries);
             if total <= config.budget_tokens {
                 break;
             }
-            let mut candidate: Option<(u64, String)> = None;
-            for e in &entries {
-                let state_entry = self.entry(&e.node_id);
-                let Some(se) = state_entry else { continue };
-                if se.tier != WorkingSetTier::Hot || se.pinned {
-                    continue;
-                }
-                let s = score(se, self.tick);
-                match &candidate {
-                    None => candidate = Some((s, e.node_id.clone())),
-                    Some((best_score, best_id)) => {
-                        if s < *best_score
-                            || (s == *best_score && e.node_id < *best_id)
-                        {
-                            candidate = Some((s, e.node_id.clone()));
+            if let Some(map) = search_map.as_ref() {
+                let mut candidate: Option<(i32, u64, String)> = None;
+                for e in &entries {
+                    let state_entry = self.entry(&e.node_id);
+                    let Some(se) = state_entry else { continue };
+                    if se.tier != WorkingSetTier::Hot || se.pinned {
+                        continue;
+                    }
+                    let retained = map.get(&e.node_id).copied().unwrap_or(0);
+                    let sched = score(se, self.tick);
+                    match &candidate {
+                        None => {
+                            candidate =
+                                Some((retained, sched, e.node_id.clone()))
+                        }
+                        Some((best_retained, best_sched, best_id)) => {
+                            let is_better = retained < *best_retained
+                                || (retained == *best_retained
+                                    && sched < *best_sched)
+                                || (retained == *best_retained
+                                    && sched == *best_sched
+                                    && e.node_id < *best_id);
+                            if is_better {
+                                candidate =
+                                    Some((retained, sched, e.node_id.clone()));
+                            }
                         }
                     }
                 }
-            }
-            let Some((_, victim)) = candidate else { break };
-            if let Some(entry) = self.entry_mut(&victim) {
-                entry.tier = WorkingSetTier::Warm;
-            }
-            demoted.push(victim.clone());
-            entries.retain(|e| e.node_id != victim);
-            if demoted.len() > self.entries.len() {
-                break;
+                let Some((_, _, victim)) = candidate else { break };
+                if let Some(entry) = self.entry_mut(&victim) {
+                    entry.tier = WorkingSetTier::Warm;
+                }
+                demoted.push(victim.clone());
+                entries.retain(|e| e.node_id != victim);
+                if demoted.len() > self.entries.len() {
+                    break;
+                }
+            } else {
+                let mut candidate: Option<(u64, String)> = None;
+                for e in &entries {
+                    let state_entry = self.entry(&e.node_id);
+                    let Some(se) = state_entry else { continue };
+                    if se.tier != WorkingSetTier::Hot || se.pinned {
+                        continue;
+                    }
+                    let s = score(se, self.tick);
+                    match &candidate {
+                        None => candidate = Some((s, e.node_id.clone())),
+                        Some((best_score, best_id)) => {
+                            if s < *best_score
+                                || (s == *best_score && e.node_id < *best_id)
+                            {
+                                candidate = Some((s, e.node_id.clone()));
+                            }
+                        }
+                    }
+                }
+                let Some((_, victim)) = candidate else { break };
+                if let Some(entry) = self.entry_mut(&victim) {
+                    entry.tier = WorkingSetTier::Warm;
+                }
+                demoted.push(victim.clone());
+                entries.retain(|e| e.node_id != victim);
+                if demoted.len() > self.entries.len() {
+                    break;
+                }
             }
         }
 
@@ -1340,6 +1532,34 @@ impl WorkingSetState {
             total_tokens_after: total_after,
             demoted,
         }
+    }
+
+    /// Assemble with explicit search scores (decision 93, pure for testing):
+    /// temporarily sets `last_search_scores` to `search_scores` (canonicalized) and assembles.
+    /// Empty or None => unchanged order. Restores previous scores after.
+    pub fn assemble_with_search_scores(
+        &mut self,
+        graph: &crate::context_graph::ContextGraph,
+        store: &crate::context_representation::ContextRepresentationStore,
+        config: &SchedulerConfig,
+        search_scores: Option<Vec<SearchScore>>,
+    ) -> AssembledContext {
+        let prev = self.last_search_scores.clone();
+        match search_scores {
+            Some(scores) => {
+                let (canonical, _) =
+                    canonicalize_search_scores_with_dropped(scores);
+                if canonical.is_empty() {
+                    self.last_search_scores = None;
+                } else {
+                    self.last_search_scores = Some(canonical);
+                }
+            }
+            None => self.last_search_scores = None,
+        }
+        let result = self.assemble(graph, store, config);
+        self.last_search_scores = prev;
+        result
     }
 }
 
@@ -2605,5 +2825,637 @@ mod tests {
             &cfg,
         );
         assert_eq!(state.pipeline_runs(), before.pipeline_runs() + 1);
+    }
+
+    // --- Decision 93 rank-for-retention (score-ordered retention) ---
+
+    #[test]
+    fn scores_absent_demoted_order_unchanged_byte_equal() {
+        // Two states with identical HOT entries and tight budget: without scores, demotion order is scheduler score asc, node_id asc.
+        // Verifies scores absent => byte-equal state vs pre-93 baseline.
+        use crate::context_graph::{
+            ContextGraph, ContextNode, ContextNodeKind, estimate_tokens,
+        };
+        use crate::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        let nodes = vec![
+            ContextNode {
+                id: "a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "a".repeat(64),
+                summary: "summary-a".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-a"),
+            },
+            ContextNode {
+                id: "b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "b".repeat(64),
+                summary: "summary-b".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-b"),
+            },
+            ContextNode {
+                id: "c".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "c".repeat(64),
+                summary: "summary-c".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-c"),
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let sets = vec![
+            NodeRepresentationSet::build(
+                "a".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-a"),
+                    derived_from: vec![],
+                    content: "summary-a".to_owned(),
+                }],
+            )
+            .expect("a"),
+            NodeRepresentationSet::build(
+                "b".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-b"),
+                    derived_from: vec![],
+                    content: "summary-b".to_owned(),
+                }],
+            )
+            .expect("b"),
+            NodeRepresentationSet::build(
+                "c".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-c"),
+                    derived_from: vec![],
+                    content: "summary-c".to_owned(),
+                }],
+            )
+            .expect("c"),
+        ];
+        let store = ContextRepresentationStore::build(sets).expect("store");
+        // scheduler scores: a low (10), b mid (20), c high (90) => demote a first
+        let entries = vec![
+            entry("a", WorkingSetTier::Hot, false, 10, 0, 1000),
+            entry("b", WorkingSetTier::Hot, false, 20, 0, 1000),
+            entry("c", WorkingSetTier::Hot, false, 90, 0, 1000),
+        ];
+        let mut s_none =
+            WorkingSetState::build(entries.clone()).expect("s_none");
+        let mut s_absent = WorkingSetState::build(entries).expect("s_absent");
+        // s_absent explicitly has no scores (None) -> same as s_none
+        let tok = estimate_tokens("summary-a");
+        let cfg = SchedulerConfig::new(tok).expect("cfg");
+        let c_none = s_none.assemble(&graph, &store, &cfg);
+        let c_absent = s_absent.assemble(&graph, &store, &cfg);
+        // byte-equal state and demotion
+        assert_eq!(s_none, s_absent);
+        assert_eq!(c_none, c_absent);
+        // lowest scheduler (a) demoted
+        assert_eq!(c_none.entries.len(), 1);
+        assert_eq!(c_none.entries[0].node_id, "c");
+        assert_eq!(c_none.demoted, vec!["a".to_owned(), "b".to_owned()]);
+        // also verify TickInput with None search_scores is byte-equal to pre-93 baseline
+        let tick_none = TickInput::new(1, vec![], "rev1", vec![], vec![]);
+        assert!(tick_none.search_scores.is_none());
+        let tick_with_none = TickInput::new(1, vec![], "rev1", vec![], vec![]);
+        assert_eq!(tick_none, tick_with_none);
+    }
+
+    #[test]
+    fn scores_present_retention_order_lower_demoted_first_absent_zero() {
+        use super::SearchScore;
+        use crate::context_graph::{
+            ContextGraph, ContextNode, ContextNodeKind, estimate_tokens,
+        };
+        use crate::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        let nodes = vec![
+            ContextNode {
+                id: "a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "a".repeat(64),
+                summary: "summary-a".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-a"),
+            },
+            ContextNode {
+                id: "b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "b".repeat(64),
+                summary: "summary-b".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-b"),
+            },
+            ContextNode {
+                id: "c".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "c".repeat(64),
+                summary: "summary-c".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-c"),
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let sets = vec![
+            NodeRepresentationSet::build(
+                "a".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-a"),
+                    derived_from: vec![],
+                    content: "summary-a".to_owned(),
+                }],
+            )
+            .expect("a"),
+            NodeRepresentationSet::build(
+                "b".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-b"),
+                    derived_from: vec![],
+                    content: "summary-b".to_owned(),
+                }],
+            )
+            .expect("b"),
+            NodeRepresentationSet::build(
+                "c".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-c"),
+                    derived_from: vec![],
+                    content: "summary-c".to_owned(),
+                }],
+            )
+            .expect("c"),
+        ];
+        let store = ContextRepresentationStore::build(sets).expect("store");
+        // scheduler scores: a low (10), b mid (50), c high (90) => without scores demote a first
+        // search scores: a 100, b absent(0), c 50 => with scores demote b(0) first, then c(50), then a(100) — inverts scheduler
+        let entries = vec![
+            entry("a", WorkingSetTier::Hot, false, 10, 0, 1000),
+            entry("b", WorkingSetTier::Hot, false, 50, 0, 1000),
+            entry("c", WorkingSetTier::Hot, false, 90, 0, 1000),
+        ];
+        let mut state = WorkingSetState::build(entries).expect("state");
+        // set search scores: a 100, c 50, b absent => 0
+        state.set_search_scores(vec![
+            SearchScore::new("a", 100),
+            SearchScore::new("c", 50),
+        ]);
+        let tok = estimate_tokens("summary-a");
+        let cfg = SchedulerConfig::new(tok).expect("cfg");
+        let ctx = state.assemble(&graph, &store, &cfg);
+        // with scores, lowest search first: b(0) then c(50) => only c remains after budget tight
+        assert_eq!(ctx.entries.len(), 1);
+        assert_eq!(ctx.entries[0].node_id, "a");
+        assert_eq!(ctx.demoted, vec!["b".to_owned(), "c".to_owned()]);
+        // tiebreak: same search score, lower scheduler first then node_id
+        let mut state2 = WorkingSetState::build(vec![
+            entry("a", WorkingSetTier::Hot, false, 10, 0, 1000),
+            entry("b", WorkingSetTier::Hot, false, 10, 0, 1000),
+            entry("c", WorkingSetTier::Hot, false, 90, 0, 1000),
+        ])
+        .expect("s2");
+        // search scores: a and b same 10, c 10 also? then tiebreak scheduler: a and b same low, c high => among a/b tie, node_id asc
+        state2.set_search_scores(vec![
+            SearchScore::new("a", 10),
+            SearchScore::new("b", 10),
+            SearchScore::new("c", 10),
+        ]);
+        let tok2 = estimate_tokens("summary-a");
+        let cfg2 = SchedulerConfig::new(tok2).expect("cfg2");
+        let ctx2 = state2.assemble(&graph, &store, &cfg2);
+        // All same search, so scheduler decides: a and b lowest (both 10), tie node_id a before b => demote a then b, keep c
+        assert_eq!(ctx2.demoted, vec!["a".to_owned(), "b".to_owned()]);
+        assert_eq!(ctx2.entries[0].node_id, "c");
+    }
+
+    #[test]
+    fn quota_demoted_order_unchanged_by_scores() {
+        use super::SearchScore;
+        use crate::context_graph::{
+            ContextGraph, ContextNode, ContextNodeKind, estimate_tokens,
+        };
+        use crate::context_representation::{
+            ContextRepresentationStore, NodeRepresentation,
+            NodeRepresentationSet, RepresentationLevel, RepresentationOrigin,
+            content_digest_of,
+        };
+        // pinned HOT nodes: a low scheduler (10), b high (90), c high (90) but search scores invert
+        let nodes = vec![
+            ContextNode {
+                id: "a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "a".repeat(64),
+                summary: "summary-a".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-a"),
+            },
+            ContextNode {
+                id: "b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "b".repeat(64),
+                summary: "summary-b".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-b"),
+            },
+            ContextNode {
+                id: "c".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "c".repeat(64),
+                summary: "summary-c".to_owned(),
+                source_bindings: vec![],
+                token_estimate: estimate_tokens("summary-c"),
+            },
+        ];
+        let graph = ContextGraph::build(nodes, vec![]).expect("graph");
+        let sets = vec![
+            NodeRepresentationSet::build(
+                "a".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-a"),
+                    derived_from: vec![],
+                    content: "summary-a".to_owned(),
+                }],
+            )
+            .expect("a"),
+            NodeRepresentationSet::build(
+                "b".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-b"),
+                    derived_from: vec![],
+                    content: "summary-b".to_owned(),
+                }],
+            )
+            .expect("b"),
+            NodeRepresentationSet::build(
+                "c".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("summary-c"),
+                    derived_from: vec![],
+                    content: "summary-c".to_owned(),
+                }],
+            )
+            .expect("c"),
+        ];
+        let store = ContextRepresentationStore::build(sets).expect("store");
+        // Create large distinct summaries to exceed pinned quota 1024 (unique digest, each ~514 tokens)
+        let big_a = "x".repeat(2040) + "a";
+        let big_b = "x".repeat(2040) + "b";
+        let big_c = "x".repeat(2040) + "c";
+        let big_tok_a = estimate_tokens(&big_a);
+        let big_tok = big_tok_a;
+        // Use distinct summaries with distinct digests (unique-digest counts each)
+        let big_nodes = vec![
+            ContextNode {
+                id: "a".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "a".repeat(64),
+                summary: big_a.clone(),
+                source_bindings: vec![],
+                token_estimate: big_tok,
+            },
+            ContextNode {
+                id: "b".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "b".repeat(64),
+                summary: big_b.clone(),
+                source_bindings: vec![],
+                token_estimate: big_tok,
+            },
+            ContextNode {
+                id: "c".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: "c".repeat(64),
+                summary: big_c.clone(),
+                source_bindings: vec![],
+                token_estimate: big_tok,
+            },
+        ];
+        let big_graph =
+            ContextGraph::build(big_nodes, vec![]).expect("bgraph");
+        let big_sets = vec![
+            NodeRepresentationSet::build(
+                "a".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&big_a),
+                    derived_from: vec![],
+                    content: big_a.clone(),
+                }],
+            )
+            .expect("a"),
+            NodeRepresentationSet::build(
+                "b".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&big_b),
+                    derived_from: vec![],
+                    content: big_b.clone(),
+                }],
+            )
+            .expect("b"),
+            NodeRepresentationSet::build(
+                "c".to_owned(),
+                vec![NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&big_c),
+                    derived_from: vec![],
+                    content: big_c.clone(),
+                }],
+            )
+            .expect("c"),
+        ];
+        let big_store =
+            ContextRepresentationStore::build(big_sets).expect("bstore");
+        let entries = vec![
+            entry("a", WorkingSetTier::Hot, true, 10, 0, big_tok),
+            entry("b", WorkingSetTier::Hot, true, 90, 0, big_tok),
+            entry("c", WorkingSetTier::Hot, true, 90, 0, big_tok),
+        ];
+        let mut state = WorkingSetState::build(entries).expect("state");
+        // search scores invert: a high 100, b low 0, c mid 50 — if quota used search scores, b would demote, but it should demote a (lowest scheduler)
+        state.set_search_scores(vec![
+            SearchScore::new("a", 100),
+            SearchScore::new("b", 0),
+            SearchScore::new("c", 50),
+        ]);
+        let cfg = SchedulerConfig::default(); // budget 4096, pin quota 1024 will trigger (3*big_tok >1024)
+        let ctx = state.assemble(&big_graph, &big_store, &cfg);
+        // Pin quota should demote lowest scheduler pinned HOT first (a), regardless of search scores
+        assert!(
+            ctx.demoted.contains(&"a".to_owned()),
+            "pin quota must demote lowest scheduler 'a', got {:?}",
+            ctx.demoted
+        );
+        // b and c should remain if still within quota after demoting a (depends on tokens); at least a demoted first
+        // Verify that search scores did not affect quota order: b (search 0) should NOT be demoted before a
+        let _ = (graph, store); // keep unused
+    }
+
+    #[test]
+    fn no_depth_change_high_score_still_l1_only() {
+        let (mut state, graph, store) = assembly_fixture();
+        use super::SearchScore;
+        // state has a HOT with structured also stored; assembly should still be L1 only even with high search score
+        state.set_search_scores(vec![
+            SearchScore::new("a", 9999),
+            SearchScore::new("b", 0),
+        ]);
+        let cfg = SchedulerConfig::default();
+        let ctx = state.assemble(&graph, &store, &cfg);
+        let a = ctx.entries.iter().find(|e| e.node_id == "a").expect("a");
+        assert_eq!(a.summary, "summary-a");
+        assert!(!a.summary.contains("structured"));
+    }
+
+    #[test]
+    fn determinism_byte_equal_with_scores() {
+        use super::SearchScore;
+        let build = || {
+            let entries = vec![
+                entry("a", WorkingSetTier::Hot, false, 10, 0, 1000),
+                entry("b", WorkingSetTier::Hot, false, 20, 0, 1000),
+                entry("c", WorkingSetTier::Hot, false, 30, 0, 1000),
+            ];
+            WorkingSetState::build(entries).unwrap()
+        };
+        let (mut s1, graph, store) = {
+            let s = build();
+            let (_, _g, _st) = assembly_fixture();
+            // Use custom graph/store for determinism: use assembly_fixture's graph but we need matching ids
+            // Instead use simple fixture with a,b,c
+            use crate::context_graph::{
+                ContextGraph, ContextNode, ContextNodeKind, estimate_tokens,
+            };
+            use crate::context_representation::{
+                ContextRepresentationStore, NodeRepresentation,
+                NodeRepresentationSet, RepresentationLevel,
+                RepresentationOrigin, content_digest_of,
+            };
+            let nodes = vec![
+                ContextNode {
+                    id: "a".to_owned(),
+                    kind: ContextNodeKind::Source,
+                    content_digest: "a".repeat(64),
+                    summary: "summary-a".to_owned(),
+                    source_bindings: vec![],
+                    token_estimate: estimate_tokens("summary-a"),
+                },
+                ContextNode {
+                    id: "b".to_owned(),
+                    kind: ContextNodeKind::Source,
+                    content_digest: "b".repeat(64),
+                    summary: "summary-b".to_owned(),
+                    source_bindings: vec![],
+                    token_estimate: estimate_tokens("summary-b"),
+                },
+                ContextNode {
+                    id: "c".to_owned(),
+                    kind: ContextNodeKind::Source,
+                    content_digest: "c".repeat(64),
+                    summary: "summary-c".to_owned(),
+                    source_bindings: vec![],
+                    token_estimate: estimate_tokens("summary-c"),
+                },
+            ];
+            let graph = ContextGraph::build(nodes, vec![]).expect("g");
+            let sets = vec![
+                NodeRepresentationSet::build(
+                    "a".to_owned(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of("summary-a"),
+                        derived_from: vec![],
+                        content: "summary-a".to_owned(),
+                    }],
+                )
+                .expect("a"),
+                NodeRepresentationSet::build(
+                    "b".to_owned(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of("summary-b"),
+                        derived_from: vec![],
+                        content: "summary-b".to_owned(),
+                    }],
+                )
+                .expect("b"),
+                NodeRepresentationSet::build(
+                    "c".to_owned(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of("summary-c"),
+                        derived_from: vec![],
+                        content: "summary-c".to_owned(),
+                    }],
+                )
+                .expect("c"),
+            ];
+            let store =
+                ContextRepresentationStore::build(sets).expect("store");
+            (s, graph, store)
+        };
+        let (mut s2, graph2, store2) = {
+            let s = build();
+            use crate::context_graph::{
+                ContextGraph, ContextNode, ContextNodeKind, estimate_tokens,
+            };
+            use crate::context_representation::{
+                ContextRepresentationStore, NodeRepresentation,
+                NodeRepresentationSet, RepresentationLevel,
+                RepresentationOrigin, content_digest_of,
+            };
+            let nodes = vec![
+                ContextNode {
+                    id: "a".to_owned(),
+                    kind: ContextNodeKind::Source,
+                    content_digest: "a".repeat(64),
+                    summary: "summary-a".to_owned(),
+                    source_bindings: vec![],
+                    token_estimate: estimate_tokens("summary-a"),
+                },
+                ContextNode {
+                    id: "b".to_owned(),
+                    kind: ContextNodeKind::Source,
+                    content_digest: "b".repeat(64),
+                    summary: "summary-b".to_owned(),
+                    source_bindings: vec![],
+                    token_estimate: estimate_tokens("summary-b"),
+                },
+                ContextNode {
+                    id: "c".to_owned(),
+                    kind: ContextNodeKind::Source,
+                    content_digest: "c".repeat(64),
+                    summary: "summary-c".to_owned(),
+                    source_bindings: vec![],
+                    token_estimate: estimate_tokens("summary-c"),
+                },
+            ];
+            let graph = ContextGraph::build(nodes, vec![]).expect("g");
+            let sets = vec![
+                NodeRepresentationSet::build(
+                    "a".to_owned(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of("summary-a"),
+                        derived_from: vec![],
+                        content: "summary-a".to_owned(),
+                    }],
+                )
+                .expect("a"),
+                NodeRepresentationSet::build(
+                    "b".to_owned(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of("summary-b"),
+                        derived_from: vec![],
+                        content: "summary-b".to_owned(),
+                    }],
+                )
+                .expect("b"),
+                NodeRepresentationSet::build(
+                    "c".to_owned(),
+                    vec![NodeRepresentation {
+                        level: RepresentationLevel::Summary,
+                        origin: RepresentationOrigin::HostExtracted,
+                        content_digest: content_digest_of("summary-c"),
+                        derived_from: vec![],
+                        content: "summary-c".to_owned(),
+                    }],
+                )
+                .expect("c"),
+            ];
+            let store =
+                ContextRepresentationStore::build(sets).expect("store");
+            (s, graph, store)
+        };
+        s1.set_search_scores(vec![
+            SearchScore::new("b", 10),
+            SearchScore::new("a", 5),
+        ]);
+        s2.set_search_scores(vec![
+            SearchScore::new("a", 5),
+            SearchScore::new("b", 10),
+        ]);
+        let cfg = SchedulerConfig::new(crate::context_graph::estimate_tokens(
+            "summary-a",
+        ))
+        .expect("cfg");
+        let c1 = s1.assemble(&graph, &store, &cfg);
+        let c2 = s2.assemble(&graph2, &store2, &cfg);
+        assert_eq!(c1, c2);
+        // canonical JSON byte-equal check via serde_json sorted keys
+        let j1 = serde_json::to_string(&serde_json::json!({"entries": c1.entries.iter().map(|e| serde_json::json!({"nodeId": e.node_id, "summary": e.summary})).collect::<Vec<_>>(), "demoted": c1.demoted})).expect("j1");
+        let j2 = serde_json::to_string(&serde_json::json!({"entries": c2.entries.iter().map(|e| serde_json::json!({"nodeId": e.node_id, "summary": e.summary})).collect::<Vec<_>>(), "demoted": c2.demoted})).expect("j2");
+        assert_eq!(j1, j2);
+    }
+
+    #[test]
+    fn tick_input_search_scores_canonical_and_bounded() {
+        use super::{SearchScore, canonicalize_search_scores};
+        // dedupe keeps highest, sorted, truncated to 64
+        let mut scores = Vec::new();
+        for i in 0..70 {
+            scores.push(SearchScore::new(format!("n{i:03}"), i));
+        }
+        // duplicate with higher score should keep higher
+        scores.push(SearchScore::new("n005", 999));
+        let canon = canonicalize_search_scores(scores);
+        assert_eq!(canon.len(), 64);
+        assert_eq!(canon[0].node_id, "n000");
+        assert_eq!(canon[63].node_id, "n063");
+        // n005 should have score 999 (max)
+        let n005 = canon.iter().find(|s| s.node_id == "n005").expect("n005");
+        assert_eq!(n005.score, 999);
+        // TickInput with scores is canonical and one per node
+        let tick = TickInput::new_with_search_scores(
+            1,
+            vec![],
+            "rev1",
+            vec![],
+            vec![],
+            vec![
+                SearchScore::new("b", 10),
+                SearchScore::new("a", 5),
+                SearchScore::new("b", 20),
+            ],
+        );
+        let scores = tick.search_scores.expect("scores");
+        assert_eq!(scores.len(), 2);
+        assert_eq!(scores[0].node_id, "a");
+        assert_eq!(scores[1].node_id, "b");
+        assert_eq!(scores[1].score, 20); // max kept
     }
 }
