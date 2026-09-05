@@ -1,12 +1,19 @@
-//! Activation B1: the bounded read-only workspace scan.
+//! Activation B1/B2: the bounded read-only workspace scan + node taxonomy.
 //!
-//! A deterministic, read-only scan producing graph-reconstruction material
+//! B1: a deterministic, read-only scan producing graph-reconstruction material
 //! over the existing digest seam. No persistence, no spawn, fail-closed.
 //! The scan composes the existing bounded exact-read primitive
 //! (`read_complete_file_bounded`) only; listing is deterministic
 //! lexicographic. Protected and oversized paths are skipped and counted,
 //! the node cap truncates deterministically, and no partial reads ever
 //! contribute a digest. Staleness is out of scope for B1.
+//! B2 (decision 97): the approved taxonomy at binding time — Source (default),
+//! Decision (`docs/adr/**` and `docs/wayfinder/decisions/**` with segment
+//! boundary, normalized separators), Knowledge reserved with no producer;
+//! classification is pure `classify_node` applied inside the binding;
+//! the B1 scan output stays byte-identical (kind-agnostic); per-kind bounds
+//! none beyond global B1 bounds; L0 digest only; no model-visible surface;
+//! the decision 92 kind-weight table is untouched (Decision +0).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -249,14 +256,40 @@ pub fn scan_workspace(root: &Path) -> Result<BoundedScan, ScanError> {
 }
 
 // ---------------------------------------------------------------------------
-// Provisional graph binding (B2 revisits kinds and per-kind bounds)
+// Graph binding with the approved B2 taxonomy (decision 97)
 // ---------------------------------------------------------------------------
 
-/// Pure provisional binding of ScanNodes into the decision 79 ContextGraph.
+/// Pure taxonomy classifier applied at graph-binding time only (T2).
 ///
-/// Uses `ContextNodeKind::Source` for every node via the graph's existing
-/// validated constructor (`ContextGraph::build`). The binding is provisional
-/// until the B2 taxonomy review; staleness marking is out of scope for B1.
+/// Every scanned file is `Source` by default. Paths under `docs/adr/` or
+/// `docs/wayfinder/decisions/` (normalized separators, prefix match on path
+/// segments) classify as `Decision`. `Knowledge` is reserved and never produced
+/// by the scan in this arc (T1). No per-kind bounds beyond the global B1 scan
+/// bounds (T4). The binding stays at L0 digest only (T5), host-side with no
+/// model-visible surface (T6). The decision 92 kind-weight table is untouched:
+/// `Knowledge +3, Source +1, all other kinds +0` — `Decision` falls in the
+/// `+0` bucket.
+pub fn classify_node(relative_path: &str) -> ContextNodeKind {
+    // Normalize host separators to '/'.
+    let normalized = relative_path.replace('\\', "/");
+    // Decision prefixes: docs/adr/** and docs/wayfinder/decisions/** with
+    // segment-boundary prefix match so docs/adrbogus/x does NOT match.
+    if normalized == "docs/adr" || normalized.starts_with("docs/adr/") {
+        return ContextNodeKind::Decision;
+    }
+    if normalized == "docs/wayfinder/decisions"
+        || normalized.starts_with("docs/wayfinder/decisions/")
+    {
+        return ContextNodeKind::Decision;
+    }
+    ContextNodeKind::Source
+}
+
+/// Binding of ScanNodes into the decision 79 ContextGraph using the B2 taxonomy.
+///
+/// The scan output (`BoundedScan`/`ScanNode`) is kind-agnostic and byte-identical
+/// to B1 (T2). Classification happens only here via `classify_node`. The binding
+/// stays L0 digest only; staleness is out of scope.
 pub fn bind_scan_to_graph(
     scan: &BoundedScan,
 ) -> Result<ContextGraph, ContextGraphError> {
@@ -265,7 +298,7 @@ pub fn bind_scan_to_graph(
         .iter()
         .map(|n| ContextNode {
             id: n.relative_path.clone(),
-            kind: ContextNodeKind::Source,
+            kind: classify_node(&n.relative_path),
             content_digest: n.content_digest.clone(),
             summary: String::new(),
             source_bindings: Vec::new(),
@@ -283,8 +316,10 @@ pub fn bind_scan_to_graph(
 mod tests {
     use super::{
         DEFAULT_SCAN_BOUNDS, ScanBounds, ScanError, bind_scan_to_graph,
-        is_protected, scan_workspace, scan_workspace_with_bounds,
+        classify_node, is_protected, scan_workspace,
+        scan_workspace_with_bounds,
     };
+    use siralos_core::context_graph::ContextNodeKind;
     use std::path::Path;
 
     fn tmp_root(label: &str) -> PathBuf {
@@ -531,6 +566,177 @@ mod tests {
         assert!(!is_protected(".siralos2/x"));
         assert!(is_protected("a/.siralos/x"));
         assert!(is_protected("a/b/.git/c.txt"));
+    }
+
+    // -----------------------------------------------------------------------
+    // B2 taxonomy tests (decision 97 T1-T6)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn classify_decision_prefix_docs_adr() {
+        assert_eq!(classify_node("docs/adr/x"), ContextNodeKind::Decision);
+        assert_eq!(
+            classify_node("docs/adr/nested/y.md"),
+            ContextNodeKind::Decision
+        );
+        assert_eq!(
+            classify_node("docs/adr/0036-lean.md"),
+            ContextNodeKind::Decision
+        );
+        // exact prefix directory file
+        assert_eq!(classify_node("docs/adr"), ContextNodeKind::Decision);
+        // normalized separators
+        assert_eq!(
+            classify_node("docs\\adr\\win.md"),
+            ContextNodeKind::Decision
+        );
+    }
+
+    #[test]
+    fn classify_decision_prefix_wayfinder() {
+        assert_eq!(
+            classify_node("docs/wayfinder/decisions/x"),
+            ContextNodeKind::Decision
+        );
+        assert_eq!(
+            classify_node("docs/wayfinder/decisions/nested/file.md"),
+            ContextNodeKind::Decision
+        );
+        assert_eq!(
+            classify_node("docs/wayfinder/decisions"),
+            ContextNodeKind::Decision
+        );
+        assert_eq!(
+            classify_node("docs\\wayfinder\\decisions\\win.md"),
+            ContextNodeKind::Decision
+        );
+    }
+
+    #[test]
+    fn classify_non_matching_near_misses_are_source() {
+        assert_eq!(classify_node("docs/adrbogus/x"), ContextNodeKind::Source);
+        assert_eq!(classify_node("docs/adr.txt"), ContextNodeKind::Source);
+        assert_eq!(classify_node("docs/adrbogus"), ContextNodeKind::Source);
+        assert_eq!(
+            classify_node("docs/wayfinder/decisionsbogus/x"),
+            ContextNodeKind::Source
+        );
+        assert_eq!(
+            classify_node("docs/wayfinder/decisions.txt"),
+            ContextNodeKind::Source
+        );
+        assert_eq!(
+            classify_node("docs/wayfinder/other/x"),
+            ContextNodeKind::Source
+        );
+        assert_eq!(classify_node("other/docs/adr/x"), ContextNodeKind::Source);
+    }
+
+    #[test]
+    fn classify_default_source() {
+        assert_eq!(classify_node("a.txt"), ContextNodeKind::Source);
+        assert_eq!(classify_node("src/lib.rs"), ContextNodeKind::Source);
+        assert_eq!(classify_node("docs/readme.md"), ContextNodeKind::Source);
+        assert_eq!(classify_node(""), ContextNodeKind::Source);
+    }
+
+    #[test]
+    fn binding_never_produces_knowledge() {
+        let root = tmp_root("no-knowledge");
+        write(&root, "docs/adr/001.md", b"decision");
+        write(&root, "docs/wayfinder/decisions/002.md", b"decision2");
+        write(&root, "src/a.txt", b"source");
+        write(&root, "knowledge.txt", b"looks like knowledge but is Source");
+        let scan = scan_workspace(&root).unwrap();
+        let graph = bind_scan_to_graph(&scan).expect("graph");
+        for node in graph.nodes() {
+            assert_ne!(
+                node.kind,
+                ContextNodeKind::Knowledge,
+                "no Knowledge nodes: {}",
+                node.id
+            );
+        }
+        // Also directly: classify never returns Knowledge
+        assert_ne!(classify_node("docs/adr/x"), ContextNodeKind::Knowledge);
+        assert_ne!(classify_node("any/path"), ContextNodeKind::Knowledge);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_output_unchanged_byte_equal() {
+        let root = tmp_root("scan-unchanged");
+        write(&root, "docs/adr/1.md", b"d1");
+        write(&root, "docs/wayfinder/decisions/2.md", b"d2");
+        write(&root, "a.txt", b"plain");
+        let scan1 = scan_workspace(&root).unwrap();
+        let scan2 = scan_workspace(&root).unwrap();
+        // BoundedScan byte-equal (kind-agnostic)
+        assert_eq!(scan1, scan2);
+        let json1 = serde_json::to_string(&serde_json::json!({
+            "nodes": scan1.nodes.iter().map(|n| serde_json::json!({"path": n.relative_path, "digest": n.content_digest, "len": n.byte_len})).collect::<Vec<_>>(),
+            "protected_skipped": scan1.protected_skipped,
+            "oversized_skipped": scan1.oversized_skipped,
+            "files_not_scanned": scan1.files_not_scanned,
+            "truncated": scan1.truncated,
+        }))
+        .unwrap();
+        let json2 = serde_json::to_string(&serde_json::json!({
+            "nodes": scan2.nodes.iter().map(|n| serde_json::json!({"path": n.relative_path, "digest": n.content_digest, "len": n.byte_len})).collect::<Vec<_>>(),
+            "protected_skipped": scan2.protected_skipped,
+            "oversized_skipped": scan2.oversized_skipped,
+            "files_not_scanned": scan2.files_not_scanned,
+            "truncated": scan2.truncated,
+        }))
+        .unwrap();
+        assert_eq!(json1, json2);
+        // Binding does not mutate scan
+        let scan_before = scan1.clone();
+        let _ = bind_scan_to_graph(&scan1).expect("bind");
+        assert_eq!(scan1, scan_before, "bind must not mutate scan");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn kind_weight_decision_is_zero() {
+        // Decision 92 table: Knowledge +3, Source +1, all other kinds +0. Decision is +0.
+        fn kind_bonus(kind: ContextNodeKind) -> i32 {
+            match kind {
+                ContextNodeKind::Knowledge => 3,
+                ContextNodeKind::Source => 1,
+                _ => 0,
+            }
+        }
+        assert_eq!(kind_bonus(ContextNodeKind::Decision), 0);
+        assert_eq!(kind_bonus(ContextNodeKind::Source), 1);
+        assert_eq!(kind_bonus(ContextNodeKind::Knowledge), 3);
+        // Other kinds also +0
+        assert_eq!(kind_bonus(ContextNodeKind::Run), 0);
+        assert_eq!(kind_bonus(ContextNodeKind::Skill), 0);
+        assert_eq!(kind_bonus(ContextNodeKind::Task), 0);
+    }
+
+    #[test]
+    fn determinism_binding_byte_equal() {
+        let root = tmp_root("bind-determinism");
+        write(&root, "docs/adr/a.md", b"hello");
+        write(&root, "b.txt", b"world");
+        let scan = scan_workspace(&root).unwrap();
+        let g1 = bind_scan_to_graph(&scan).unwrap();
+        let g2 = bind_scan_to_graph(&scan).unwrap();
+        // Graphs byte-equal deterministically (nodes sorted by id, same kinds/digests)
+        assert_eq!(g1.nodes(), g2.nodes());
+        assert_eq!(g1.edges().len(), g2.edges().len());
+        let json1 = serde_json::to_string(&serde_json::json!({
+            "nodes": g1.nodes().iter().map(|n| serde_json::json!({"id": n.id, "kind": format!("{:?}", n.kind), "digest": n.content_digest})).collect::<Vec<_>>()
+        }))
+        .unwrap();
+        let json2 = serde_json::to_string(&serde_json::json!({
+            "nodes": g2.nodes().iter().map(|n| serde_json::json!({"id": n.id, "kind": format!("{:?}", n.kind), "digest": n.content_digest})).collect::<Vec<_>>()
+        }))
+        .unwrap();
+        assert_eq!(json1, json2);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // Adjust is_protected to handle any-depth .siralos/.git would be caught by component check.

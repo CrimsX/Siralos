@@ -1,0 +1,43 @@
+{
+  "id": "context-scan.scan-classification",
+  "subject": "context-scan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "README.md",
+        "content": "ordinary readme"
+      },
+      {
+        "path": "docs/adr/001-lean.md",
+        "content": "decision adr"
+      },
+      {
+        "path": "docs/adr/nested/002.md",
+        "content": "nested adr"
+      },
+      {
+        "path": "docs/adrbogus/x.txt",
+        "content": "should be source — prefix near-miss"
+      },
+      {
+        "path": "docs/adr.txt",
+        "content": "also source — not a Decision segment"
+      },
+      {
+        "path": "docs/wayfinder/decisions/003.md",
+        "content": "wayfinder decision"
+      },
+      {
+        "path": "docs/wayfinder/decisions/nested/004.md",
+        "content": "nested wayfinder"
+      },
+      {
+        "path": "src/app.txt",
+        "content": "source file"
+      }
+    ]
+  }
+}
