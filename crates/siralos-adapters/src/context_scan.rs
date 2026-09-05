@@ -21,6 +21,13 @@ use std::path::{Path, PathBuf};
 use siralos_core::context_graph::{
     ContextGraph, ContextGraphError, ContextNode, ContextNodeKind,
 };
+use siralos_core::context_representation::{
+    ContextRepresentationStore, NodeRepresentation, NodeRepresentationSet,
+    RepresentationLevel, RepresentationOrigin, content_digest_of,
+};
+use siralos_core::language::structure::{
+    DEFAULT_SUMMARY_MAX_BYTES, SUMMARY_FOOTER, SUMMARY_TRUNCATION_MARKER,
+};
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -306,6 +313,135 @@ pub fn bind_scan_to_graph(
         })
         .collect();
     ContextGraph::build(nodes, Vec::new())
+}
+
+// ---------------------------------------------------------------------------
+// B3a: deterministic L1 summary generation (decision 98 G1-G2)
+// ---------------------------------------------------------------------------
+
+/// Deterministic L1 summary — pure function of file bytes under the R5
+/// advisory summary formatter's output-bounding behavior (4096 bytes + footer
+/// + truncation marker). Identical content yields identical summaries.
+fn render_l1_summary(bytes: &[u8]) -> String {
+    use siralos_core::language::truncate::{
+        utf16_len, utf16_prefix_byte_len, utf16_prefix_lossy,
+    };
+    let body = String::from_utf8_lossy(bytes).into_owned();
+    let footer = SUMMARY_FOOTER;
+    let marker = SUMMARY_TRUNCATION_MARKER;
+    let max_bytes = DEFAULT_SUMMARY_MAX_BYTES;
+    if body.len() + footer.len() <= max_bytes {
+        return format!("{body}{footer}");
+    }
+    let mut low = 0usize;
+    let mut high = utf16_len(&body);
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        if utf16_prefix_byte_len(&body, mid) + marker.len() + footer.len()
+            <= max_bytes
+        {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    format!("{}{}{}", utf16_prefix_lossy(&body, low), marker, footer)
+}
+
+/// Host-side workspace context: the classified graph plus per-node L1
+/// summaries wired into the decision 80 representation-store seam
+/// (L0 digest + L1 summary per node, nothing above L1, L2 host-only untouched).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceContext {
+    /// The bounded scan (admitted nodes, counts, truncation) — unchanged byte-for-byte.
+    pub scan: BoundedScan,
+    /// Classified graph (Source/Decision via B2, byte-unchanged scan, sorted by id).
+    pub graph: ContextGraph,
+    /// Per-node representation store: L0 identity + L1 summary per admitted node.
+    pub store: ContextRepresentationStore,
+}
+
+/// Pure composition: B1 scan + B2 binding + bounded re-read per node via the
+/// established exact-read primitive (same `max_file_bytes` bound) producing the
+/// L1 summary via the R5 deterministic advisory summary formatter.
+///
+/// G2: summaries are pure functions of file content with the R5 formatter's
+/// own deterministic bounds; identical content -> identical summaries.
+/// G3: no new surfaces, no persistence, no spawn, fail-closed typed
+/// unavailability. G4: staleness out of scope.
+pub fn build_workspace_context(
+    root: &Path,
+    bounds: ScanBounds,
+) -> Result<WorkspaceContext, ScanError> {
+    let scan = scan_workspace_with_bounds(root, bounds)?;
+    let graph =
+        bind_scan_to_graph(&scan).map_err(|error| ScanError::Unavailable {
+            message: format!("graph binding failed: {error}"),
+        })?;
+    let mut sets: Vec<NodeRepresentationSet> =
+        Vec::with_capacity(scan.nodes.len());
+    for node in &scan.nodes {
+        let abs = root.join(&node.relative_path);
+        let bytes = match crate::workspace::fs::read_complete_file_bounded(
+            &abs,
+            bounds.max_file_bytes,
+        ) {
+            crate::workspace::fs::BoundedFileRead::Complete(b) => b,
+            crate::workspace::fs::BoundedFileRead::TooLarge => {
+                return Err(ScanError::Unavailable {
+                    message: format!(
+                        "unexpected oversized on re-read: {}",
+                        node.relative_path
+                    ),
+                });
+            }
+            crate::workspace::fs::BoundedFileRead::NotReadable
+            | crate::workspace::fs::BoundedFileRead::IoError(_) => {
+                return Err(ScanError::Unavailable {
+                    message: format!("re-read failed: {}", node.relative_path),
+                });
+            }
+        };
+        let summary_text = render_l1_summary(&bytes);
+        let identity_content = node.content_digest.clone();
+        let identity_digest = content_digest_of(&identity_content);
+        let summary_digest = content_digest_of(&summary_text);
+        let reps = vec![
+            NodeRepresentation {
+                level: RepresentationLevel::Identity,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: identity_digest,
+                derived_from: Vec::new(),
+                content: identity_content,
+            },
+            NodeRepresentation {
+                level: RepresentationLevel::Summary,
+                origin: RepresentationOrigin::HostExtracted,
+                content_digest: summary_digest,
+                derived_from: Vec::new(),
+                content: summary_text,
+            },
+        ];
+        let set =
+            NodeRepresentationSet::build(node.relative_path.clone(), reps)
+                .map_err(|error| ScanError::Unavailable {
+                    message: format!("store build failed: {error}"),
+                })?;
+        sets.push(set);
+    }
+    let store = ContextRepresentationStore::build(sets).map_err(|error| {
+        ScanError::Unavailable {
+            message: format!("store build failed: {error}"),
+        }
+    })?;
+    Ok(WorkspaceContext { scan, graph, store })
+}
+
+/// Convenience with pinned defaults.
+pub fn build_workspace_context_default(
+    root: &Path,
+) -> Result<WorkspaceContext, ScanError> {
+    build_workspace_context(root, DEFAULT_SCAN_BOUNDS)
 }
 
 // ---------------------------------------------------------------------------
@@ -736,6 +872,268 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(json1, json2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // -----------------------------------------------------------------------
+    // B3a summary-generation tests (decision 98 G1-G4)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_determinism_run_twice_byte_equal_workspace_context() {
+        let root = tmp_root("build-determinism");
+        write(&root, "a.txt", b"hello dedup");
+        write(&root, "b.txt", b"world");
+        write(&root, "docs/adr/001.md", b"decision content");
+        let w1 = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .expect("build1");
+        let w2 = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .expect("build2");
+        assert_eq!(w1, w2);
+        let j1 = serde_json::to_string(&json_store(&w1.store)).unwrap();
+        let j2 = serde_json::to_string(&json_store(&w2.store)).unwrap();
+        assert_eq!(j1, j2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn json_store(
+        store: &siralos_core::context_representation::ContextRepresentationStore,
+    ) -> serde_json::Value {
+        let sets: Vec<serde_json::Value> = store
+            .sets()
+            .iter()
+            .map(|set| {
+                serde_json::json!({
+                    "nodeId": set.node_id,
+                    "representations": set.representations.iter().map(|r| serde_json::json!({
+                        "level": r.level.as_str(),
+                        "contentDigest": r.content_digest,
+                        "content": r.content
+                    })).collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        serde_json::json!({ "sets": sets })
+    }
+
+    #[test]
+    fn summary_presence_and_l0_l1_availability_per_admitted_node() {
+        let root = tmp_root("summary-presence");
+        write(&root, "a.txt", b"alpha");
+        write(&root, "b.txt", b"beta");
+        let ctx = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .unwrap();
+        assert_eq!(ctx.graph.nodes().len(), 2);
+        assert_eq!(ctx.store.sets().len(), 2);
+        for node in ctx.graph.nodes() {
+            let set = ctx.store.set(&node.id).expect("store set per node");
+            assert_eq!(
+                siralos_core::context_representation::available_levels(set),
+                vec![
+                    siralos_core::context_representation::RepresentationLevel::Identity,
+                    siralos_core::context_representation::RepresentationLevel::Summary
+                ]
+            );
+            let l0 = siralos_core::context_representation::resolve_representation(
+                set,
+                siralos_core::context_representation::RepresentationLevel::Identity,
+            )
+            .unwrap();
+            assert_eq!(l0.content, node.content_digest);
+            let l1 = siralos_core::context_representation::resolve_representation(
+                set,
+                siralos_core::context_representation::RepresentationLevel::Summary,
+            )
+            .unwrap();
+            assert!(!l1.content.is_empty());
+            assert!(l1.content.contains("advisory structural summary"));
+            // Nothing above L1: Structured/Detailed/Source absent
+            assert!(siralos_core::context_representation::resolve_representation(
+                set,
+                siralos_core::context_representation::RepresentationLevel::Structured
+            )
+            .is_none());
+            assert!(siralos_core::context_representation::resolve_representation(
+                set,
+                siralos_core::context_representation::RepresentationLevel::Detailed
+            )
+            .is_none());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn summary_determinism_same_content_same_summary_and_dedup() {
+        let root = tmp_root("summary-dedup");
+        let content = b"identical content for dedup test";
+        write(&root, "a.txt", content);
+        write(&root, "b.txt", content);
+        write(&root, "c.txt", b"different");
+        let ctx = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .unwrap();
+        let a = ctx.store.set("a.txt").unwrap();
+        let b = ctx.store.set("b.txt").unwrap();
+        let c = ctx.store.set("c.txt").unwrap();
+        let a_sum = siralos_core::context_representation::resolve_representation(
+            a,
+            siralos_core::context_representation::RepresentationLevel::Summary,
+        )
+        .unwrap()
+        .content
+        .clone();
+        let b_sum = siralos_core::context_representation::resolve_representation(
+            b,
+            siralos_core::context_representation::RepresentationLevel::Summary,
+        )
+        .unwrap()
+        .content
+        .clone();
+        let c_sum = siralos_core::context_representation::resolve_representation(
+            c,
+            siralos_core::context_representation::RepresentationLevel::Summary,
+        )
+        .unwrap()
+        .content
+        .clone();
+        assert_eq!(
+            a_sum, b_sum,
+            "identical content -> identical summaries (dedup)"
+        );
+        assert_ne!(a_sum, c_sum);
+        // Pure function across builds: second build same content same summary
+        let root2 = tmp_root("summary-dedup-2");
+        write(&root2, "x.txt", content);
+        let ctx2 = super::build_workspace_context(&root2, DEFAULT_SCAN_BOUNDS)
+            .unwrap();
+        let x_sum = siralos_core::context_representation::resolve_representation(
+            ctx2.store.set("x.txt").unwrap(),
+            siralos_core::context_representation::RepresentationLevel::Summary,
+        )
+        .unwrap()
+        .content
+        .clone();
+        assert_eq!(a_sum, x_sum);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root2);
+    }
+
+    #[test]
+    fn classification_preserved_through_build() {
+        let root = tmp_root("class-through-build");
+        write(&root, "docs/adr/001.md", b"adr");
+        write(&root, "docs/wayfinder/decisions/002.md", b"decision");
+        write(&root, "src/main.rs", b"source");
+        let ctx = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .unwrap();
+        let kind_of = |id: &str| {
+            ctx.graph.nodes().iter().find(|n| n.id == id).unwrap().kind
+        };
+        assert_eq!(kind_of("docs/adr/001.md"), ContextNodeKind::Decision);
+        assert_eq!(
+            kind_of("docs/wayfinder/decisions/002.md"),
+            ContextNodeKind::Decision
+        );
+        assert_eq!(kind_of("src/main.rs"), ContextNodeKind::Source);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn oversized_still_absent_no_node_no_summary() {
+        let root = tmp_root("oversized-build");
+        write(&root, "small.txt", b"ok");
+        let big = vec![b'x'; DEFAULT_SCAN_BOUNDS.max_file_bytes + 1];
+        write(&root, "big.txt", &big);
+        let ctx = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .unwrap();
+        assert_eq!(ctx.scan.oversized_skipped, 1);
+        assert_eq!(ctx.graph.nodes().len(), 1);
+        assert!(ctx.graph.nodes().iter().any(|n| n.id == "small.txt"));
+        assert!(!ctx.graph.nodes().iter().any(|n| n.id == "big.txt"));
+        assert!(ctx.store.set("big.txt").is_none());
+        assert!(ctx.store.set("small.txt").is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn typed_unavailability_through_build() {
+        let missing =
+            Path::new("/tmp/siralos-build-missing-workspace-404-not-exist");
+        let _ = std::fs::remove_dir_all(missing);
+        let err = super::build_workspace_context(missing, DEFAULT_SCAN_BOUNDS)
+            .unwrap_err();
+        assert!(matches!(err, ScanError::Unavailable { .. }));
+    }
+
+    #[test]
+    fn no_mutation_read_only_build_regression() {
+        let root = tmp_root("readonly-build");
+        write(&root, "a.txt", b"content");
+        let before = walkdir(&root);
+        let _ = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .unwrap();
+        let after = walkdir(&root);
+        assert_eq!(before, after);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn representation_store_seam_correctness_l1_bound_to_node_digests() {
+        let root = tmp_root("store-seam");
+        write(&root, "a.txt", b"hello");
+        write(&root, "b.txt", b"hello");
+        write(&root, "c.txt", b"world");
+        let ctx = super::build_workspace_context(&root, DEFAULT_SCAN_BOUNDS)
+            .unwrap();
+        for node in ctx.graph.nodes() {
+            let set = ctx.store.set(&node.id).unwrap();
+            let l0 = siralos_core::context_representation::resolve_representation(
+                set,
+                siralos_core::context_representation::RepresentationLevel::Identity,
+            )
+            .unwrap();
+            assert_eq!(l0.content, node.content_digest);
+            assert_eq!(
+                l0.content_digest,
+                siralos_core::context_representation::content_digest_of(
+                    &node.content_digest
+                )
+            );
+            let l1 = siralos_core::context_representation::resolve_representation(
+                set,
+                siralos_core::context_representation::RepresentationLevel::Summary,
+            )
+            .unwrap();
+            // L1 content digest matches content
+            assert_eq!(
+                l1.content_digest,
+                siralos_core::context_representation::content_digest_of(
+                    &l1.content
+                )
+            );
+            // L1 host-extracted (no derived_from) and content bounded by R5 4096 + footer
+            assert_eq!(
+                l1.origin,
+                siralos_core::context_representation::RepresentationOrigin::HostExtracted
+            );
+            assert!(l1.content.len() <= 8192);
+            assert!(l1.content.contains("advisory structural summary"));
+        }
+        // dedup: a and b same content -> same summary
+        let a_sum = siralos_core::context_representation::resolve_representation(
+            ctx.store.set("a.txt").unwrap(),
+            siralos_core::context_representation::RepresentationLevel::Summary,
+        )
+        .unwrap()
+        .content
+        .clone();
+        let b_sum = siralos_core::context_representation::resolve_representation(
+            ctx.store.set("b.txt").unwrap(),
+            siralos_core::context_representation::RepresentationLevel::Summary,
+        )
+        .unwrap()
+        .content
+        .clone();
+        assert_eq!(a_sum, b_sum);
         let _ = std::fs::remove_dir_all(&root);
     }
 

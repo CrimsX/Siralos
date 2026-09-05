@@ -1,0 +1,23 @@
+{
+  "id": "context-scan.build-summaries-small",
+  "subject": "context-scan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "hello small summary"
+      },
+      {
+        "path": "b.txt",
+        "content": "world small summary with a bit more text to exercise the advisory formatter bounds"
+      },
+      {
+        "path": "sub/c.txt",
+        "content": "nested content for small summary scenario\nsecond line\n"
+      }
+    ]
+  }
+}

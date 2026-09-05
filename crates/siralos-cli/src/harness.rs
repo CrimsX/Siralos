@@ -130,7 +130,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 72;
+const CORPUS_VERSION: u64 = 73;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -10141,6 +10141,44 @@ fn context_scan_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     with_fixture_workspace(scenario_id, input, |root| {
+        // Build scenarios exercise the B3a composition (scan + classify + L1 summary)
+        // but keep the differential record byte-identical to the B1/B2 shape so the
+        // 5 existing scenarios remain unchanged.
+        if scenario_id.contains("build-summaries") {
+            let ctx = siralos_adapters::context_scan::build_workspace_context(
+                root,
+                siralos_adapters::context_scan::DEFAULT_SCAN_BOUNDS,
+            )
+            .map_err(|error| {
+                HarnessError::new(
+                    HarnessErrorKind::ProbeSpawn,
+                    format!("context-scan build failed: {error}"),
+                )
+            })?;
+            // Confirm the store seam invariant (L0+L1 per node, host-only) without
+            // changing the record shape — byte-identical to the B1/B2 scenarios.
+            debug_assert_eq!(ctx.scan.nodes.len(), ctx.graph.nodes().len());
+            debug_assert_eq!(ctx.scan.nodes.len(), ctx.store.sets().len());
+            let scan = ctx.scan;
+            let nodes: Vec<Value> = scan
+                .nodes
+                .iter()
+                .map(|node| {
+                    json!({
+                        "relativePath": node.relative_path,
+                        "contentDigest": node.content_digest,
+                        "byteLen": node.byte_len
+                    })
+                })
+                .collect();
+            return Ok(json!({
+                "nodes": nodes,
+                "protectedSkipped": scan.protected_skipped,
+                "oversizedSkipped": scan.oversized_skipped,
+                "filesNotScanned": scan.files_not_scanned,
+                "truncated": scan.truncated
+            }));
+        }
         let scan = siralos_adapters::context_scan::scan_workspace(root)
             .map_err(|error| {
                 HarnessError::new(
@@ -18789,7 +18827,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 345);
+        assert_eq!(loaded.len(), 347);
     }
 
     #[test]

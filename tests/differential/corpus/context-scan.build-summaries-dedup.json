@@ -1,0 +1,23 @@
+{
+  "id": "context-scan.build-summaries-dedup",
+  "subject": "context-scan",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "identical dedup content for summary test"
+      },
+      {
+        "path": "b.txt",
+        "content": "identical dedup content for summary test"
+      },
+      {
+        "path": "c.txt",
+        "content": "different content to ensure not all deduped"
+      }
+    ]
+  }
+}
