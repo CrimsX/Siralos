@@ -15,6 +15,7 @@ pub mod commands;
 pub mod composition;
 pub mod context;
 pub mod context_graph;
+pub mod context_metrics;
 pub mod context_representation;
 pub mod context_scheduler;
 pub mod determinism;

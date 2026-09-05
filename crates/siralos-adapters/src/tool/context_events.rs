@@ -61,8 +61,17 @@ pub fn compose_tick_input(
     stale_node_ids: Vec<String>,
     observations: &[ToolObservation],
 ) -> TickInput {
-    let events = derive_events_for_tick(observations);
-    TickInput::new(now, events, graph_revision, new_node_ids, stale_node_ids)
+    // Collect raw events without early canonicalization so TickInput can
+    // track overflow (events_dropped) deterministically.
+    let mut all: Vec<AccessEvent> = Vec::new();
+    for obs in observations {
+        all.extend(derive_access_events(
+            &obs.tool_name,
+            &obs.input,
+            &obs.result,
+        ));
+    }
+    TickInput::new(now, all, graph_revision, new_node_ids, stale_node_ids)
 }
 
 /// Derive canonical AccessEvents from a host-observed tool call + result.

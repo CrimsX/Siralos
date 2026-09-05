@@ -242,6 +242,16 @@ impl AccessEvent {
 /// ascending, truncate to first 64 (A1).
 #[must_use]
 pub fn canonicalize_events(events: Vec<AccessEvent>) -> Vec<AccessEvent> {
+    let (c, _) = canonicalize_events_with_dropped(events);
+    c
+}
+
+/// Canonicalize events and return the number dropped beyond the 64 cap.
+/// Dropped counts only the truncation beyond 64 after dedupe, not duplicates.
+#[must_use]
+pub fn canonicalize_events_with_dropped(
+    events: Vec<AccessEvent>,
+) -> (Vec<AccessEvent>, usize) {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut uniq: Vec<AccessEvent> = Vec::new();
     for ev in events {
@@ -250,10 +260,11 @@ pub fn canonicalize_events(events: Vec<AccessEvent>) -> Vec<AccessEvent> {
         }
     }
     uniq.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    let dropped = uniq.len().saturating_sub(MAX_TICK_EVENTS);
     if uniq.len() > MAX_TICK_EVENTS {
         uniq.truncate(MAX_TICK_EVENTS);
     }
-    uniq
+    (uniq, dropped)
 }
 
 /// Host-owned TickInput for the deterministic pipeline (A1, A4).
@@ -263,6 +274,8 @@ pub struct TickInput {
     pub now: u64,
     /// Canonical events (<=64, deduped, sorted).
     pub events: Vec<AccessEvent>,
+    /// Number of canonical events dropped beyond the 64 cap (A1 overflow).
+    pub events_dropped: usize,
     /// Graph revision digest (for coalescing).
     pub graph_revision: String,
     /// Canonical new-node set (sorted, deduped).
@@ -282,7 +295,8 @@ impl TickInput {
         new_node_ids: Vec<String>,
         stale_node_ids: Vec<String>,
     ) -> Self {
-        let canonical_events = canonicalize_events(events);
+        let (canonical_events, events_dropped) =
+            canonicalize_events_with_dropped(events);
         let new_nodes_sorted: Vec<String> = {
             let mut seen = BTreeSet::new();
             let mut v = Vec::new();
@@ -309,6 +323,7 @@ impl TickInput {
         Self {
             now,
             events: canonical_events,
+            events_dropped,
             graph_revision: graph_revision.into(),
             new_node_ids: new_nodes_sorted,
             stale_node_ids: stale_sorted,
@@ -386,6 +401,15 @@ impl WorkingSetState {
     #[must_use]
     pub fn pipeline_runs(&self) -> usize {
         self.pipeline_runs
+    }
+
+    /// Whether this tick input would coalesce (A4 no-op) given current coalescing state.
+    #[must_use]
+    pub fn is_coalesced_input(&self, input: &TickInput) -> bool {
+        input.events.is_empty()
+            && self.last_graph_revision.as_deref()
+                == Some(input.graph_revision.as_str())
+            && self.last_new_nodes == input.new_node_ids
     }
 
     /// One entry by id.
@@ -1062,7 +1086,7 @@ pub struct AssembledContext {
     pub demoted: Vec<String>,
 }
 
-fn stub_token_estimate(stub: &NeighborStub) -> usize {
+pub(crate) fn stub_token_estimate(stub: &NeighborStub) -> usize {
     // Honest byte estimate via the same estimator, no tool-call overhead.
     // Concatenate node_id + digest with a separator.
     crate::context_graph::estimate_tokens(&format!(
@@ -1071,7 +1095,7 @@ fn stub_token_estimate(stub: &NeighborStub) -> usize {
     ))
 }
 
-fn assembled_unique_total(entries: &[AssembledEntry]) -> usize {
+pub(crate) fn assembled_unique_total(entries: &[AssembledEntry]) -> usize {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut total: usize = 0;
     for e in entries {
