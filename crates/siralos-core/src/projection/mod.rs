@@ -10,6 +10,7 @@
 //! are implemented here.
 
 pub mod cache;
+pub mod calibration;
 pub mod capacity;
 pub mod estimator;
 pub mod evidence;

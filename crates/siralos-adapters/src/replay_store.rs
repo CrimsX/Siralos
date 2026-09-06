@@ -355,25 +355,60 @@ pub fn write_replay_store(
     // 3. Recompute digest.
     let digest = compute_replay_store_digest(&kept);
 
-    // 4. Build canonical JSON.
+    // 4. Build canonical JSON (with optional usage fields when present).
+    let has_usage = kept.iter().any(|r| {
+        r.identity.input_tokens.is_some()
+            || r.identity.output_tokens.is_some()
+            || r.identity.cached_tokens.is_some()
+    });
     let recordings_json: Vec<Value> = kept
         .iter()
         .map(|recording| {
-            json!({
-                "providerId": recording.identity.provider_id,
-                "model": recording.identity.model,
-                "status": match recording.identity.status {
-                    Some(value) => json!(value),
-                    None => Value::Null,
-                },
-                "bodySha256": recording.identity.body_sha256,
-                "bodyBytes": recording.identity.body_bytes,
-                "observedAtMs": match recording.identity.observed_at_ms {
-                    Some(value) => json!(value),
-                    None => Value::Null,
-                },
-                "body": recording.body,
-            })
+            if has_usage {
+                json!({
+                    "providerId": recording.identity.provider_id,
+                    "model": recording.identity.model,
+                    "status": match recording.identity.status {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "bodySha256": recording.identity.body_sha256,
+                    "bodyBytes": recording.identity.body_bytes,
+                    "observedAtMs": match recording.identity.observed_at_ms {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "inputTokens": match recording.identity.input_tokens {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "outputTokens": match recording.identity.output_tokens {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "cachedTokens": match recording.identity.cached_tokens {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "body": recording.body,
+                })
+            } else {
+                json!({
+                    "providerId": recording.identity.provider_id,
+                    "model": recording.identity.model,
+                    "status": match recording.identity.status {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "bodySha256": recording.identity.body_sha256,
+                    "bodyBytes": recording.identity.body_bytes,
+                    "observedAtMs": match recording.identity.observed_at_ms {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "body": recording.body,
+                })
+            }
         })
         .collect();
     let document = json!({
@@ -590,6 +625,49 @@ pub fn load_replay_store(
                 ));
             }
         };
+        // Usage fields: optional, backward-compatible with pre-102 stores.
+        let input_tokens = match table.get("inputTokens") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(n)) => Some(n.as_u64().ok_or_else(|| {
+                ReplayStoreLoadError::Malformed(
+                    "recording inputTokens must be a number".to_owned(),
+                )
+            })?),
+            Some(_) => {
+                return Err(ReplayStoreLoadError::Malformed(
+                    "recording inputTokens must be a number or null"
+                        .to_owned(),
+                ));
+            }
+        };
+        let output_tokens = match table.get("outputTokens") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(n)) => Some(n.as_u64().ok_or_else(|| {
+                ReplayStoreLoadError::Malformed(
+                    "recording outputTokens must be a number".to_owned(),
+                )
+            })?),
+            Some(_) => {
+                return Err(ReplayStoreLoadError::Malformed(
+                    "recording outputTokens must be a number or null"
+                        .to_owned(),
+                ));
+            }
+        };
+        let cached_tokens = match table.get("cachedTokens") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(n)) => Some(n.as_u64().ok_or_else(|| {
+                ReplayStoreLoadError::Malformed(
+                    "recording cachedTokens must be a number".to_owned(),
+                )
+            })?),
+            Some(_) => {
+                return Err(ReplayStoreLoadError::Malformed(
+                    "recording cachedTokens must be a number or null"
+                        .to_owned(),
+                ));
+            }
+        };
         let body = table
             .get("body")
             .and_then(Value::as_str)
@@ -608,6 +686,9 @@ pub fn load_replay_store(
                 body_sha256,
                 body_bytes,
                 observed_at_ms,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
             },
             body,
         });
@@ -654,6 +735,9 @@ mod tests {
                 body_sha256: format!("sha{id}"),
                 body_bytes: body.len() as u64,
                 observed_at_ms: Some(id as u64),
+                input_tokens: None,
+                output_tokens: None,
+                cached_tokens: None,
             },
             body: body.to_owned(),
         }

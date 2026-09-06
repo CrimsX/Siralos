@@ -23,38 +23,76 @@ pub struct ReplayStore {
     pub recordings: Vec<ReplayRecording>,
 }
 
-/// Digest the bounded store's canonical contents (`ReplayStore` v1).
+/// Digest the bounded store's canonical contents (`ReplayStore` v1/v2).
 ///
 /// The payload is the array in order of `{providerId, model, status,
-/// bodySha256, bodyBytes, observedAtMs, body}` per recording, through
-/// the domain-separated artifact primitive `siralos:ReplayStore:v1\0` +
-/// canonical JSON, mirroring `siralos.lock` digest semantics.
+/// bodySha256, bodyBytes, observedAtMs[, inputTokens, outputTokens,
+/// cachedTokens], body}` per recording through the domain-separated artifact
+/// primitive `siralos:ReplayStore:v{1|2}\0` + canonical JSON. When no recording
+/// carries usage fields, v1 is used (byte-identical to the pre-102 digest);
+/// otherwise v2 includes the usage bindings (null when absent within v2).
 #[must_use]
 pub fn compute_replay_store_digest(recordings: &[ReplayRecording]) -> String {
+    let has_usage = recordings.iter().any(|r| {
+        r.identity.input_tokens.is_some()
+            || r.identity.output_tokens.is_some()
+            || r.identity.cached_tokens.is_some()
+    });
     let entries: Vec<Value> = recordings
         .iter()
         .map(|recording| {
-            json!({
-                "providerId": recording.identity.provider_id,
-                "model": recording.identity.model,
-                "status": match recording.identity.status {
-                    Some(value) => json!(value),
-                    None => Value::Null,
-                },
-                "bodySha256": recording.identity.body_sha256,
-                "bodyBytes": recording.identity.body_bytes,
-                "observedAtMs": match recording.identity.observed_at_ms {
-                    Some(value) => json!(value),
-                    None => Value::Null,
-                },
-                "body": recording.body,
-            })
+            if has_usage {
+                json!({
+                    "providerId": recording.identity.provider_id,
+                    "model": recording.identity.model,
+                    "status": match recording.identity.status {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "bodySha256": recording.identity.body_sha256,
+                    "bodyBytes": recording.identity.body_bytes,
+                    "observedAtMs": match recording.identity.observed_at_ms {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "inputTokens": match recording.identity.input_tokens {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "outputTokens": match recording.identity.output_tokens {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "cachedTokens": match recording.identity.cached_tokens {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "body": recording.body,
+                })
+            } else {
+                json!({
+                    "providerId": recording.identity.provider_id,
+                    "model": recording.identity.model,
+                    "status": match recording.identity.status {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "bodySha256": recording.identity.body_sha256,
+                    "bodyBytes": recording.identity.body_bytes,
+                    "observedAtMs": match recording.identity.observed_at_ms {
+                        Some(value) => json!(value),
+                        None => Value::Null,
+                    },
+                    "body": recording.body,
+                })
+            }
         })
         .collect();
     let payload = Value::Array(entries);
+    let version = if has_usage { 2 } else { 1 };
     crate::determinism::helpers::digest_artifact_payload(
         "ReplayStore",
-        1,
+        version,
         &payload,
     )
     .expect("ReplayStore digest is infallible")
@@ -131,6 +169,9 @@ mod tests {
                 body_sha256: format!("sha{id}"),
                 body_bytes: body.len() as u64,
                 observed_at_ms: Some(id as u64),
+                input_tokens: None,
+                output_tokens: None,
+                cached_tokens: None,
             },
             body: body.to_owned(),
         }
@@ -160,6 +201,9 @@ mod tests {
                 body_sha256: "abc".to_owned(),
                 body_bytes: 5,
                 observed_at_ms: Some(42),
+                input_tokens: None,
+                output_tokens: None,
+                cached_tokens: None,
             },
             body: "hello".to_owned(),
         }];

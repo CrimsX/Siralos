@@ -1773,6 +1773,9 @@ mod tests {
                     body_sha256: sha,
                     body_bytes: body.len() as u64,
                     observed_at_ms: Some(1000),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cached_tokens: None,
                 },
                 body: body.to_owned(),
             }
@@ -1849,6 +1852,9 @@ mod tests {
             body_sha256: siralos_core::identity::sha256_hex(body1.as_bytes()),
             body_bytes: body1.len() as u64,
             observed_at_ms: Some(1),
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
         };
         recorder.record_provider_response(&id1);
         recorder.record_provider_response_with_body(&id1, body1);

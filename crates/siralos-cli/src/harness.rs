@@ -12979,6 +12979,9 @@ fn provider_replay_record(_input: &Value) -> Result<Value, HarnessError> {
         body_sha256: sha1,
         body_bytes: body1.len() as u64,
         observed_at_ms: Some(1000),
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
     };
     let identity2 = ProviderResponseIdentity {
         provider_id: "replay-subject".to_owned(),
@@ -12987,6 +12990,9 @@ fn provider_replay_record(_input: &Value) -> Result<Value, HarnessError> {
         body_sha256: sha2,
         body_bytes: body2.len() as u64,
         observed_at_ms: Some(1000),
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
     };
     let recorder = RetainingReplayRecorder::new();
     recorder.record_provider_response(&identity1);
@@ -13081,6 +13087,9 @@ fn session_replay_record(_input: &Value) -> Result<Value, HarnessError> {
         body_sha256: sha1,
         body_bytes: body1.len() as u64,
         observed_at_ms: Some(1000),
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
     };
     let identity2 = siralos_core::determinism::ProviderResponseIdentity {
         provider_id: "session-subject".to_owned(),
@@ -13089,6 +13098,9 @@ fn session_replay_record(_input: &Value) -> Result<Value, HarnessError> {
         body_sha256: sha2,
         body_bytes: body2.len() as u64,
         observed_at_ms: Some(1000),
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
     };
     let composer =
         siralos_adapters::provider::replay::SessionReplayComposer::new(
@@ -13198,6 +13210,9 @@ fn replay_store_record(_input: &Value) -> Result<Value, HarnessError> {
         body_sha256: sha1,
         body_bytes: body1.len() as u64,
         observed_at_ms: Some(1000),
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
     };
     let identity2 = ProviderResponseIdentity {
         provider_id: "replay-subject".to_owned(),
@@ -13206,6 +13221,9 @@ fn replay_store_record(_input: &Value) -> Result<Value, HarnessError> {
         body_sha256: sha2,
         body_bytes: body2.len() as u64,
         observed_at_ms: Some(1000),
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
     };
     let recordings = vec![
         ReplayRecording { identity: identity1, body: body1.to_owned() },

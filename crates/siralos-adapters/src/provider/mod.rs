@@ -82,6 +82,10 @@ pub(crate) fn record_outcome(
     let body_sha256 = response_body_sha256(body_text);
     let body_bytes = body_text.len() as u64;
     let observed_at_ms = hooks.clock.as_ref().map(|c| c.now_ms());
+    let usage =
+        siralos_core::determinism::provider_replay::parse_provider_usage(
+            body_text,
+        );
     if hooks.recorder.as_ref().is_some_and(|r| r.is_recording()) {
         let identity = siralos_core::determinism::ProviderResponseIdentity {
             provider_id: provider_id.to_owned(),
@@ -90,6 +94,9 @@ pub(crate) fn record_outcome(
             body_sha256,
             body_bytes,
             observed_at_ms,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cached_tokens: usage.cached_tokens,
         };
         if let Some(recorder) = hooks.recorder.as_ref() {
             recorder.record_provider_response(&identity);

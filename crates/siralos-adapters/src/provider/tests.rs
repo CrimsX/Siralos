@@ -975,6 +975,9 @@ fn replay_serves_recorded_body_as_events() {
         status: Some(200),
         body_sha256,
         body_bytes: body.len() as u64,
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
         observed_at_ms: Some(1),
     };
     let recording = ReplayRecording { identity, body: body.to_owned() };
@@ -1012,6 +1015,9 @@ fn replay_exhausted_is_typed_failure() {
         status: Some(200),
         body_sha256,
         body_bytes: body.len() as u64,
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
         observed_at_ms: Some(1),
     };
     let recording = ReplayRecording { identity, body: body.to_owned() };
@@ -1052,6 +1058,9 @@ fn replay_cancellation_before_start() {
         status: Some(200),
         body_sha256,
         body_bytes: body.len() as u64,
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
         observed_at_ms: Some(1),
     };
     let recording = ReplayRecording { identity, body: body.to_owned() };
@@ -1129,6 +1138,9 @@ fn replay_composition_round_trip_from_recorder() {
             status: Some(200),
             body_sha256,
             body_bytes: body.len() as u64,
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
             observed_at_ms: Some(1),
         };
         recorder.record_provider_response(&identity);
@@ -1199,6 +1211,9 @@ fn session_composer_round_trip() {
             status: Some(200),
             body_sha256,
             body_bytes: body.len() as u64,
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
             observed_at_ms: Some(1),
         };
         composer.recorder().record_provider_response(&identity);
@@ -1270,6 +1285,9 @@ fn session_composer_evidence_digest_matches_core() {
             status: Some(200),
             body_sha256,
             body_bytes: body.len() as u64,
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
             observed_at_ms: Some(1),
         };
         composer.recorder().record_provider_response(&identity);

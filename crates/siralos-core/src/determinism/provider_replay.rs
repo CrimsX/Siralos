@@ -1,9 +1,14 @@
-//! Provider response replay recording (Stage 8, decision 68 §3).
+//! Provider response replay recording (Stage 8, decision 68 §3, decision 102 usage capture).
 //!
 //! Records provider HTTP responses via the determinism ports for replay. A
 //! non-recorded live call is a typed `unavailable` for replay. The input side
 //! is [`super::reproducibility::ProviderInputIdentity`]; this module adds the
 //! response side without changing the closed `ProviderEvent`/`ModelEvent` set.
+//!
+//! Decision 102 extends [`ProviderResponseIdentity`] with optional usage fields
+//! parsed from response bodies where present (OpenAI and Anthropic shapes).
+//! Absent usage is recorded as `None`, never fabricated. The fields are
+//! bounded `u64`s; no credentials, no raw bodies on portable surfaces.
 
 use serde_json::{Value, json};
 
@@ -46,8 +51,9 @@ pub fn compute_session_replay_evidence_digest(
 /// Identity of one provider HTTP response for replay.
 ///
 /// The record never contains a credential or the raw body text, only the
-/// `sha256` of the sanitized bounded text and its byte length.
-#[derive(Debug, Clone, PartialEq)]
+/// `sha256` of the sanitized bounded text and its byte length. Decision 102
+/// adds optional usage fields captured from the response body where present.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ProviderResponseIdentity {
     /// Provider identifier (e.g. `"openai"`, `"anthropic"`).
     pub provider_id: String,
@@ -61,36 +67,169 @@ pub struct ProviderResponseIdentity {
     pub body_bytes: u64,
     /// Wall-clock time when the response was observed, when a clock is bound.
     pub observed_at_ms: Option<u64>,
+    /// Provider-reported input/prompt tokens where present.
+    pub input_tokens: Option<u64>,
+    /// Provider-reported output/completion tokens where present.
+    pub output_tokens: Option<u64>,
+    /// Provider-reported cached tokens where present (e.g. OpenAI `cached_tokens`).
+    pub cached_tokens: Option<u64>,
 }
 
-/// Digest one provider response identity (`ProviderResponseIdentity` v1).
+/// Parsed provider usage from a response body (bounded, sanitized `u64`s).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderUsage {
+    /// Input/prompt tokens.
+    pub input_tokens: Option<u64>,
+    /// Output/completion tokens.
+    pub output_tokens: Option<u64>,
+    /// Cached tokens (where provider reports it).
+    pub cached_tokens: Option<u64>,
+}
+
+/// Parse provider-reported usage from a sanitized bounded body text.
 ///
-/// The payload binds `providerId`, `model`, `status`, `bodySha256`,
-/// `bodyBytes`, and `observedAtMs` through the domain-separated artifact
-/// primitive `siralos:ProviderResponseIdentity:v1\0` + canonical JSON, matching
-/// [`super::reproducibility::compute_provider_input_identity_digest`].
+/// Supports:
+/// - OpenAI shape: `{usage:{input_tokens|prompt_tokens, output_tokens|completion_tokens, ...cached_tokens}}`
+///   and `prompt_tokens_details.cached_tokens` / `cached_tokens_details`
+/// - Anthropic shape: `{usage:{input_tokens, output_tokens}}`
+///
+/// Returns `None`-fields when the body has no usage object or fields are
+/// absent/non-numeric. Never fabricates — absent stays absent. Numbers are
+/// bounded `u64` (negative or non-integer JSON numbers are treated as absent).
+/// `cached_tokens` inside `prompt_tokens_details` or nested `cached_tokens_details`
+/// is also recognized for OpenAI cache reporting.
+#[must_use]
+pub fn parse_provider_usage(body_text: &str) -> ProviderUsage {
+    let value: Value = match serde_json::from_str(body_text) {
+        Ok(v) => v,
+        Err(_) => {
+            return ProviderUsage {
+                input_tokens: None,
+                output_tokens: None,
+                cached_tokens: None,
+            };
+        }
+    };
+    let usage = match value.get("usage") {
+        Some(v) if v.is_object() => v,
+        _ => {
+            return ProviderUsage {
+                input_tokens: None,
+                output_tokens: None,
+                cached_tokens: None,
+            };
+        }
+    };
+    let input_tokens = extract_u64(usage, "input_tokens")
+        .or_else(|| extract_u64(usage, "prompt_tokens"));
+    let output_tokens = extract_u64(usage, "output_tokens")
+        .or_else(|| extract_u64(usage, "completion_tokens"));
+    // cached_tokens may appear at usage.cached_tokens, or nested in
+    // usage.prompt_tokens_details.cached_tokens, or
+    // usage.prompt_tokens_details.cached_tokens_details or similar.
+    let cached_tokens = extract_u64(usage, "cached_tokens").or_else(|| {
+        usage
+            .get("prompt_tokens_details")
+            .and_then(|v| v.as_object())
+            .and_then(|obj| {
+                extract_u64_obj(obj, "cached_tokens").or_else(|| {
+                    obj.get("cached_tokens_details")
+                        .and_then(|v| v.as_object())
+                        .and_then(|inner| {
+                            extract_u64_obj(inner, "cached_tokens")
+                        })
+                })
+            })
+    });
+    ProviderUsage { input_tokens, output_tokens, cached_tokens }
+}
+
+fn extract_u64(obj: &Value, key: &str) -> Option<u64> {
+    obj.get(key).and_then(as_bounded_u64)
+}
+
+fn extract_u64_obj(
+    obj: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Option<u64> {
+    obj.get(key).and_then(as_bounded_u64)
+}
+
+fn as_bounded_u64(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(n) => n.as_u64(),
+        _ => None,
+    }
+}
+
+/// Digest one provider response identity (`ProviderResponseIdentity` v1/v2).
+///
+/// When no usage fields are present (`input_tokens`, `output_tokens`,
+/// `cached_tokens` all `None`), the payload is the v1 shape binding
+/// `providerId`, `model`, `status`, `bodySha256`, `bodyBytes`, and
+/// `observedAtMs` — byte-identical to the pre-102 digest for existing
+/// recordings (no re-pin required). When any usage field is `Some`, the
+/// payload is v2 additionally binding `inputTokens`, `outputTokens`, and
+/// `cachedTokens` (null when absent within v2).
 pub fn compute_provider_response_identity_digest(
     record: &ProviderResponseIdentity,
 ) -> Result<String, String> {
-    let payload = json!({
-        "providerId": record.provider_id,
-        "model": record.model,
-        "status": match record.status {
-            Some(value) => json!(value),
-            None => Value::Null,
-        },
-        "bodySha256": record.body_sha256,
-        "bodyBytes": record.body_bytes,
-        "observedAtMs": match record.observed_at_ms {
-            Some(value) => json!(value),
-            None => Value::Null,
-        },
-    });
-    crate::determinism::helpers::digest_artifact_payload(
-        "ProviderResponseIdentity",
-        1,
-        &payload,
-    )
+    let has_usage = record.input_tokens.is_some()
+        || record.output_tokens.is_some()
+        || record.cached_tokens.is_some();
+    if has_usage {
+        let payload = json!({
+            "providerId": record.provider_id,
+            "model": record.model,
+            "status": match record.status {
+                Some(value) => json!(value),
+                None => Value::Null,
+            },
+            "bodySha256": record.body_sha256,
+            "bodyBytes": record.body_bytes,
+            "observedAtMs": match record.observed_at_ms {
+                Some(value) => json!(value),
+                None => Value::Null,
+            },
+            "inputTokens": match record.input_tokens {
+                Some(value) => json!(value),
+                None => Value::Null,
+            },
+            "outputTokens": match record.output_tokens {
+                Some(value) => json!(value),
+                None => Value::Null,
+            },
+            "cachedTokens": match record.cached_tokens {
+                Some(value) => json!(value),
+                None => Value::Null,
+            },
+        });
+        crate::determinism::helpers::digest_artifact_payload(
+            "ProviderResponseIdentity",
+            2,
+            &payload,
+        )
+    } else {
+        let payload = json!({
+            "providerId": record.provider_id,
+            "model": record.model,
+            "status": match record.status {
+                Some(value) => json!(value),
+                None => Value::Null,
+            },
+            "bodySha256": record.body_sha256,
+            "bodyBytes": record.body_bytes,
+            "observedAtMs": match record.observed_at_ms {
+                Some(value) => json!(value),
+                None => Value::Null,
+            },
+        });
+        crate::determinism::helpers::digest_artifact_payload(
+            "ProviderResponseIdentity",
+            1,
+            &payload,
+        )
+    }
 }
 
 /// Typed availability of a provider response for replay.
@@ -260,7 +399,7 @@ mod tests {
     use super::{
         CollectingReplayRecorder, NoopReplayRecorder,
         ProviderReplayAvailability, ProviderResponseIdentity, ReplayRecorder,
-        compute_provider_response_identity_digest,
+        compute_provider_response_identity_digest, parse_provider_usage,
     };
 
     fn base_identity() -> ProviderResponseIdentity {
@@ -271,6 +410,9 @@ mod tests {
             body_sha256: "abc".to_owned(),
             body_bytes: 3,
             observed_at_ms: Some(1234),
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
         }
     }
 
@@ -340,6 +482,9 @@ mod tests {
             body_sha256: "aaa".to_owned(),
             body_bytes: 3,
             observed_at_ms: Some(1),
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
         };
         let second = ProviderResponseIdentity {
             provider_id: "anthropic".to_owned(),
@@ -348,6 +493,9 @@ mod tests {
             body_sha256: "bbb".to_owned(),
             body_bytes: 0,
             observed_at_ms: Some(2),
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
         };
         recorder.record_provider_response(&first);
         recorder.record_provider_response(&second);
@@ -481,5 +629,125 @@ mod tests {
         )
         .expect("digest");
         assert_eq!(first, canonical);
+    }
+
+    // --- Decision 102: usage parsing ---
+
+    #[test]
+    fn parse_usage_openai_shape() {
+        let body = r#"{"choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"cached_tokens":10}}"#;
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(50));
+        assert_eq!(usage.cached_tokens, Some(10));
+    }
+
+    #[test]
+    fn parse_usage_openai_input_tokens_alias() {
+        let body = r#"{"usage":{"input_tokens":77,"output_tokens":33}}"#;
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, Some(77));
+        assert_eq!(usage.output_tokens, Some(33));
+        assert_eq!(usage.cached_tokens, None);
+    }
+
+    #[test]
+    fn parse_usage_anthropic_shape() {
+        let body = r#"{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":200,"output_tokens":40}}"#;
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, Some(200));
+        assert_eq!(usage.output_tokens, Some(40));
+        assert_eq!(usage.cached_tokens, None);
+    }
+
+    #[test]
+    fn parse_usage_absent_is_none() {
+        let body = r#"{"choices":[{"message":{"content":"hi"}}]}"#;
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, None);
+        assert_eq!(usage.output_tokens, None);
+        assert_eq!(usage.cached_tokens, None);
+    }
+
+    #[test]
+    fn parse_usage_malformed_body_is_none() {
+        let usage = parse_provider_usage("not json at all");
+        assert_eq!(usage.input_tokens, None);
+        assert_eq!(usage.output_tokens, None);
+        assert_eq!(usage.cached_tokens, None);
+    }
+
+    #[test]
+    fn parse_usage_cached_in_prompt_tokens_details() {
+        let body = r#"{"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":42}}}"#;
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(20));
+        assert_eq!(usage.cached_tokens, Some(42));
+    }
+
+    #[test]
+    fn parse_usage_non_numeric_ignored() {
+        let body = r#"{"usage":{"input_tokens":"100","output_tokens":null}}"#;
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, None);
+        assert_eq!(usage.output_tokens, None);
+    }
+
+    #[test]
+    fn usage_fields_are_bounded_and_sanitized() {
+        // Very large u64 is bounded by JSON number handling; negative ignored.
+        let body =
+            r#"{"usage":{"input_tokens":-1,"output_tokens":999999999999999}}"#;
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, None);
+        assert_eq!(usage.output_tokens, Some(999999999999999));
+    }
+
+    #[test]
+    fn digest_v1_stable_when_no_usage() {
+        let identity = base_identity();
+        // v1 digest must be stable — same as before 102.
+        let d1 = compute_provider_response_identity_digest(&identity)
+            .expect("digest");
+        let d2 = compute_provider_response_identity_digest(&identity)
+            .expect("digest");
+        assert_eq!(d1, d2);
+        assert_eq!(d1.len(), 64);
+    }
+
+    #[test]
+    fn digest_v2_differs_when_usage_present() {
+        let base = base_identity();
+        let base_digest =
+            compute_provider_response_identity_digest(&base).expect("digest");
+        let mut with_usage = base.clone();
+        with_usage.input_tokens = Some(100);
+        with_usage.output_tokens = Some(50);
+        let usage_digest =
+            compute_provider_response_identity_digest(&with_usage)
+                .expect("digest");
+        assert_ne!(base_digest, usage_digest);
+        assert_eq!(usage_digest.len(), 64);
+        // With usage present, digest is v2 (different domain separation).
+        // Verify determinism.
+        let again = compute_provider_response_identity_digest(&with_usage)
+            .expect("digest");
+        assert_eq!(usage_digest, again);
+    }
+
+    #[test]
+    fn digest_v2_cached_tokens_affects_digest() {
+        let base = base_identity();
+        let mut a = base.clone();
+        a.input_tokens = Some(10);
+        let mut b = base.clone();
+        b.input_tokens = Some(10);
+        b.cached_tokens = Some(2);
+        let da =
+            compute_provider_response_identity_digest(&a).expect("digest");
+        let db =
+            compute_provider_response_identity_digest(&b).expect("digest");
+        assert_ne!(da, db);
     }
 }
