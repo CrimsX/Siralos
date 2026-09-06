@@ -123,6 +123,9 @@ const SUBJECT_CONTEXT_TOOL: &str = "context-tool";
 const SUBJECT_CONTEXT_SCAN: &str = "context-scan";
 const SUBJECT_CONTEXT_BENCHMARK: &str = "context-benchmark";
 const SUBJECT_CONTEXT_SESSION: &str = "context-session";
+/// T4 (decision 108): the pinned TUI render-model subject — four
+/// `TestBackend` frame snapshots over the production draw path.
+const SUBJECT_TUI_RENDER: &str = "tui-render";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -131,7 +134,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 75;
+const CORPUS_VERSION: u64 = 76;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -533,6 +536,7 @@ fn validate_scenario(
             | SUBJECT_CONTEXT_SCAN
             | SUBJECT_CONTEXT_BENCHMARK
             | SUBJECT_CONTEXT_SESSION
+            | SUBJECT_TUI_RENDER
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -632,6 +636,7 @@ fn validate_scenario(
         | SUBJECT_CONTEXT_SCAN
         | SUBJECT_CONTEXT_BENCHMARK
         | SUBJECT_CONTEXT_SESSION
+        | SUBJECT_TUI_RENDER
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -736,6 +741,11 @@ fn validate_scenario(
             if context_session_subject {
                 validate_context_session_input(input)?;
             }
+            let tui_render_subject =
+                scenario.subject.as_str() == SUBJECT_TUI_RENDER;
+            if tui_render_subject {
+                validate_tui_render_input(input)?;
+            }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
             if tool_loop_subject {
@@ -812,6 +822,7 @@ fn validate_scenario(
                 || context_tool_subject
                 || context_benchmark_subject
                 || context_session_subject
+                || tui_render_subject
             {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -1592,6 +1603,18 @@ fn run_scenario(
                 "context-session input was validated while loading the corpus",
             );
             let result = context_session_record(&scenario.id, input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_TUI_RENDER => {
+            let input = scenario.input.as_ref().expect(
+                "tui-render input was validated while loading the corpus",
+            );
+            let result = tui_render_record(&scenario.id, input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -10396,6 +10419,251 @@ fn context_session_record(
 }
 
 // ---------------------------------------------------------------------------
+// T4 (decision 108): the `tui-render` subject — the pinned render model.
+//
+// The builder constructs a `TuiState` from the scenario input and renders
+// it over a FIXED 80x24 `TestBackend` viewport via the PRODUCTION draw
+// path (`draw` / `draw_with_pane`) — no render re-implementation inside
+// the harness. The harness only constructs inputs and serializes the
+// produced buffer: one line per buffer row, exact characters. The builder
+// is DETERMINISTIC — same input yields a byte-equal record.
+
+/// Fixed `tui-render` viewport width in columns.
+const TUI_RENDER_WIDTH: u16 = 80;
+
+/// Fixed `tui-render` viewport height in rows.
+const TUI_RENDER_HEIGHT: u16 = 24;
+
+/// Build one `tui-render` record: scenario echo + the canonical frame.
+///
+/// The record shape is `{ scenario, frame }`: `scenario` echoes the input
+/// fields (`transcript_lines`, `input`, `status`, `scroll_offset`,
+/// `pending_approval` lines or null, `pane` presence), and `frame` is the
+/// 24-row canonical rendering (one string per buffer row, exact
+/// characters, trailing spaces trimmed per row for JSON stability — the
+/// row count and order are what the snapshot pins).
+fn tui_render_record(
+    scenario_id: &str,
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use crate::tui::{
+        ApprovalModal, ContextPaneData, ToolActivityEntry, TuiState, draw,
+        draw_with_pane,
+    };
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use siralos_core::context_metrics::{
+        ContextMetrics, DemotionKindCounts, TickRecord, TierCounts,
+    };
+
+    let transcript: Vec<String> = input
+        .get("transcript_lines")
+        .and_then(Value::as_array)
+        .map(|lines| {
+            lines.iter().filter_map(Value::as_str).map(str::to_owned).collect()
+        })
+        .ok_or_else(|| {
+            HarnessError::corpus(
+                "tui-render transcript_lines must be an array of strings",
+            )
+        })?;
+    let input_text =
+        input.get("input").and_then(Value::as_str).ok_or_else(|| {
+            HarnessError::corpus("tui-render input must be a string")
+        })?;
+    let status =
+        input.get("status").and_then(Value::as_str).ok_or_else(|| {
+            HarnessError::corpus("tui-render status must be a string")
+        })?;
+    let scroll_offset = input
+        .get("scroll_offset")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            HarnessError::corpus(
+                "tui-render scroll_offset must be a non-negative integer",
+            )
+        })?;
+    let pending: Option<Vec<String>> = match input.get("pending_approval") {
+        Some(Value::Null) | None => None,
+        Some(Value::Array(request)) => Some(
+            request
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        ),
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render pending_approval must be null or an array of strings",
+            ));
+        }
+    };
+    // Optional pane snapshot: counters pairs + ring records + activity.
+    // Ring records use the harness-shipped `{ now, events }` fixture
+    // shape; the remaining `TickRecord` fields are zero (the snapshots pin
+    // the RENDERED frame, not the metrics values — counters carry the
+    // scenario's values verbatim).
+    let pane_data: Option<ContextPaneData> = match input.get("pane") {
+        Some(Value::Null) | None => None,
+        Some(Value::Object(pane)) => {
+            let counters: Vec<(String, u64)> = pane
+                .get("counters")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|entry| {
+                            let pair = entry.as_array()?;
+                            Some((
+                                pair.first()?.as_str()?.to_owned(),
+                                pair.get(1)?.as_u64()?,
+                            ))
+                        })
+                        .collect()
+                })
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "tui-render pane.counters must be [name, value] pairs",
+                    )
+                })?;
+            let ring: Vec<TickRecord> = pane
+                .get("ring")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .map(|entry| TickRecord {
+                            now: entry
+                                .get("now")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0),
+                            canonical_event_count: entry
+                                .get("events")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0)
+                                as usize,
+                            events_dropped: 0,
+                            tier_counts: TierCounts {
+                                hot: 0,
+                                warm: 0,
+                                cold: 0,
+                                archive: 0,
+                            },
+                            assembled_unique_total: 0,
+                            assembled_summary_total: 0,
+                            stub_total: 0,
+                            demotion_counts: DemotionKindCounts {
+                                stale: 0,
+                                pin_quota: 0,
+                                budget: 0,
+                            },
+                            promotion_count: 0,
+                        })
+                        .collect()
+                })
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "tui-render pane.ring must be an array",
+                    )
+                })?;
+            let activity: Vec<ToolActivityEntry> = pane
+                .get("activity")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .map(|entry| ToolActivityEntry {
+                            tool_name: entry
+                                .get("tool_name")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            status: entry
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                        })
+                        .collect()
+                })
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "tui-render pane.activity must be an array",
+                    )
+                })?;
+            // The pane snapshot needs live metrics for `context_pane_lines`
+            // only through the owned `ContextPaneData` — construct it
+            // directly (same struct the production builder returns).
+            let _ = ContextMetrics::new();
+            Some(ContextPaneData { counters, ring, activity })
+        }
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render pane must be null or an object",
+            ));
+        }
+    };
+
+    let mut state = TuiState::new();
+    state.transcript_lines = transcript.clone();
+    state.input = input_text.to_owned();
+    state.status = status.to_owned();
+    state.scroll_offset = scroll_offset.min(u16::MAX as u64) as u16;
+    state.pending_approval = pending.clone().map(ApprovalModal::new);
+
+    // Production draw path over the fixed viewport — no re-implementation.
+    let backend = TestBackend::new(TUI_RENDER_WIDTH, TUI_RENDER_HEIGHT);
+    let mut terminal = Terminal::new(backend).map_err(|error| {
+        HarnessError::new(
+            HarnessErrorKind::ProbeProtocol,
+            format!("tui-render terminal failed: {error}"),
+        )
+    })?;
+    let pane_ref = pane_data.as_ref();
+    terminal
+        .draw(|frame| match pane_ref {
+            Some(pane) => draw_with_pane(&state, Some(pane), frame),
+            None => draw(&state, frame),
+        })
+        .map_err(|error| {
+            HarnessError::new(
+                HarnessErrorKind::ProbeProtocol,
+                format!("tui-render draw failed: {error}"),
+            )
+        })?;
+    let buffer = terminal.backend().buffer().clone();
+    let area = buffer.area;
+    debug_assert_eq!(area.width, TUI_RENDER_WIDTH);
+    debug_assert_eq!(area.height, TUI_RENDER_HEIGHT);
+    let mut frame: Vec<String> = Vec::with_capacity(area.height as usize);
+    for row in 0..area.height {
+        let mut line = String::new();
+        for col in 0..area.width {
+            if let Some(cell) = buffer.cell((col, row)) {
+                line.push_str(cell.symbol());
+            }
+        }
+        // Trim trailing spaces per row for JSON stability; the row count
+        // (24) and order pin the snapshot.
+        frame.push(line.trim_end().to_owned());
+    }
+
+    Ok(json!({
+        "scenario": {
+            "id": scenario_id,
+            "transcript_lines": transcript,
+            "input": input_text,
+            "status": status,
+            "scroll_offset": scroll_offset,
+            "pending_approval": pending,
+            "pane_present": pane_data.is_some(),
+        },
+        "viewport": { "width": TUI_RENDER_WIDTH, "height": TUI_RENDER_HEIGHT },
+        "frame": frame,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
 /// Canonical runtime-readiness record (Stage 3R R10c subjects).
@@ -15427,6 +15695,177 @@ fn validate_context_session_input(input: &Value) -> Result<(), HarnessError> {
     Ok(())
 }
 
+/// T4 (decision 108): `tui-render` input shape.
+///
+/// The input is one object with exactly the render-model fields:
+/// `transcript_lines` (array of strings), `input` (string), `status`
+/// (string), `scroll_offset` (u64), `pending_approval` (null or array of
+/// strings), and `pane` (null or `{ counters, ring, activity }`). Unknown
+/// fields are rejected; the record is candidate-authored and digest-bound.
+fn validate_tui_render_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("tui-render input must be an object")
+    })?;
+    const EXPECTED: [&str; 6] = [
+        "transcript_lines",
+        "input",
+        "status",
+        "scroll_offset",
+        "pending_approval",
+        "pane",
+    ];
+    if obj.len() != EXPECTED.len()
+        || !EXPECTED.iter().all(|key| obj.contains_key(*key))
+    {
+        return Err(HarnessError::corpus(
+            "tui-render input must contain exactly transcript_lines, input, status, scroll_offset, pending_approval, pane",
+        ));
+    }
+    let lines = obj
+        .get("transcript_lines")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            HarnessError::corpus(
+                "tui-render transcript_lines must be an array",
+            )
+        })?;
+    if lines.len() > 200
+        || lines
+            .iter()
+            .any(|line| line.as_str().is_none_or(|text| text.len() > 512))
+    {
+        return Err(HarnessError::corpus(
+            "tui-render transcript_lines must hold at most 200 lines of at most 512 bytes",
+        ));
+    }
+    let text = obj.get("input").and_then(Value::as_str).ok_or_else(|| {
+        HarnessError::corpus("tui-render input must be a string")
+    })?;
+    if text.len() > 512 {
+        return Err(HarnessError::corpus(
+            "tui-render input must be at most 512 bytes",
+        ));
+    }
+    let status =
+        obj.get("status").and_then(Value::as_str).ok_or_else(|| {
+            HarnessError::corpus("tui-render status must be a string")
+        })?;
+    if status.len() > 512 {
+        return Err(HarnessError::corpus(
+            "tui-render status must be at most 512 bytes",
+        ));
+    }
+    if obj.get("scroll_offset").and_then(Value::as_u64).is_none() {
+        return Err(HarnessError::corpus(
+            "tui-render scroll_offset must be a non-negative integer",
+        ));
+    }
+    match obj.get("pending_approval") {
+        Some(Value::Null) => {}
+        Some(Value::Array(request)) => {
+            if request.len() > 40
+                || request.iter().any(|line| {
+                    line.as_str().is_none_or(|text| text.len() > 512)
+                })
+            {
+                return Err(HarnessError::corpus(
+                    "tui-render pending_approval must hold at most 40 lines of at most 512 bytes",
+                ));
+            }
+        }
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render pending_approval must be null or an array of strings",
+            ));
+        }
+    }
+    match obj.get("pane") {
+        Some(Value::Null) => {}
+        Some(Value::Object(pane)) => {
+            const PANE_KEYS: [&str; 3] = ["counters", "ring", "activity"];
+            if pane.len() != PANE_KEYS.len()
+                || !PANE_KEYS.iter().all(|key| pane.contains_key(*key))
+            {
+                return Err(HarnessError::corpus(
+                    "tui-render pane must contain exactly counters, ring, activity",
+                ));
+            }
+            let counters = pane
+                .get("counters")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "tui-render pane.counters must be an array",
+                    )
+                })?;
+            if counters.len() > 12
+                || counters.iter().any(|entry| {
+                    entry.as_array().is_none_or(|pair| {
+                        pair.len() != 2
+                            || pair[0].as_str().is_none()
+                            || pair[1].as_u64().is_none()
+                    })
+                })
+            {
+                return Err(HarnessError::corpus(
+                    "tui-render pane.counters must hold at most 12 [name, value] pairs",
+                ));
+            }
+            let ring = pane.get("ring").and_then(Value::as_array).ok_or_else(
+                || {
+                    HarnessError::corpus(
+                        "tui-render pane.ring must be an array",
+                    )
+                },
+            )?;
+            if ring.len() > 8
+                || ring.iter().any(|entry| {
+                    entry.as_object().is_none_or(|record| {
+                        !record.contains_key("now")
+                            || !record.contains_key("events")
+                    })
+                })
+            {
+                return Err(HarnessError::corpus(
+                    "tui-render pane.ring must hold at most 8 records with now and events",
+                ));
+            }
+            let activity = pane
+                .get("activity")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    HarnessError::corpus(
+                        "tui-render pane.activity must be an array",
+                    )
+                })?;
+            if activity.len() > 8
+                || activity.iter().any(|entry| {
+                    entry.as_object().is_none_or(|record| {
+                        record
+                            .get("tool_name")
+                            .and_then(Value::as_str)
+                            .is_none()
+                            || record
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .is_none()
+                    })
+                })
+            {
+                return Err(HarnessError::corpus(
+                    "tui-render pane.activity must hold at most 8 {tool_name, status} records",
+                ));
+            }
+        }
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render pane must be null or an object",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Strict provider-generic input shape validation (Stage 8, all-purpose provider).
 fn validate_provider_generic_input(input: &Value) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
@@ -19047,7 +19486,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 353);
+        assert_eq!(loaded.len(), 357);
     }
 
     #[test]

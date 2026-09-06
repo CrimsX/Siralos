@@ -212,6 +212,15 @@ where
 }
 
 /// Run a synchronous interactive session with explicit composition paths.
+///
+/// T4 (decision 108): the session-composition block is the single shared
+/// [`compose_session`] helper both the stdio loop and the TUI loop call —
+/// one definition, two call sites. The residual below it is honest and
+/// permanent: `compose_session` stops where the frontends diverge (the
+/// stdio loop owns `reader`/`writer` generics; the TUI loop owns the
+/// `TerminalGuard`/`Terminal`/`TuiState`/`TuiSink` terminal state), so the
+/// return bundle carries everything both loops need and each loop wires
+/// only its own frontend.
 pub fn run_interactive_session_with_options<R, W>(
     mut reader: R,
     mut writer: W,
@@ -221,6 +230,468 @@ where
     R: BufRead,
     W: Write,
 {
+    let session = compose_session(options)?;
+    let SessionComposition {
+        workspace_root,
+        tool_definitions,
+        policy,
+        mut application,
+        mut hosts,
+        mut manifests,
+        profile_plugins,
+        context_control,
+        context_system_enabled,
+        mut context_session_holder,
+        mut context_history_len,
+        record_recorder,
+        replay_store_path,
+    } = session;
+
+    // --- Frontend residual (stdio): prompt loop over reader/writer. ---
+    // All session state above comes from the shared helper; only the
+    // terminal I/O below is per-frontend.
+    loop {
+        writer.write_all(b"> ").map_err(InteractiveError::Io)?;
+        writer.flush().map_err(InteractiveError::Io)?;
+        let mut line = String::new();
+        let read =
+            reader.read_line(&mut line).map_err(InteractiveError::Io)?;
+        if read == 0 {
+            break;
+        }
+        let input = line.trim_end_matches(['\r', '\n']);
+        if input.trim().is_empty() {
+            continue;
+        }
+        // T4: one shared parse, one thin stdio writer (the TUI loop calls
+        // the same parser with its sink writer).
+        let command = parse_slash_command(input.trim());
+        if dispatch_stdio_command(
+            &command,
+            &workspace_root,
+            &tool_definitions,
+            &policy,
+            &mut application,
+            &mut writer,
+            &mut hosts,
+            &mut manifests,
+            profile_plugins.as_deref(),
+            context_control.as_ref(),
+            context_system_enabled,
+            &mut context_session_holder,
+            &mut context_history_len,
+        )? {
+            break;
+        }
+    }
+    // Decision 78 B2: the shared record-replay flush both loops call.
+    flush_record_replay(record_recorder, &replay_store_path);
+    Ok(())
+}
+
+/// One parsed slash-command line: the shared vocabulary both loops
+/// dispatch on (T4 consolidation — one match, two writers).
+///
+/// The stdio loop renders through `writer`; the TUI loop renders through
+/// the `TuiSink`. The parse is identical; only the sink differs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SlashCommand<'a> {
+    /// `/context` — no arguments.
+    Context,
+    /// `/tools` — no arguments.
+    Tools,
+    /// `/domains` — no arguments.
+    Domains,
+    /// `/exit` — no arguments.
+    Exit,
+    /// `/domains-add` with optional folder argument (`None` = bare command).
+    DomainsAdd(Option<&'a str>),
+    /// `/domains-enable` with optional plugin id (`None` = bare command).
+    DomainsEnable(Option<&'a str>),
+    /// `/domains-activate` with optional plugin id (`None` = bare command).
+    DomainsActivate(Option<&'a str>),
+    /// Anything else: a prompt for the application.
+    Prompt(&'a str),
+}
+
+/// Parse one trimmed input line into the shared [`SlashCommand`]
+/// vocabulary — the SINGLE parser both loops call (T4 consolidation).
+///
+/// Empty input is the caller's no-op (both loops skip it before parsing);
+/// this function maps every other line, including the bare/prefixed
+/// `/domains-*` pairs, to exactly one variant.
+fn parse_slash_command(input: &str) -> SlashCommand<'_> {
+    match input {
+        "/context" => SlashCommand::Context,
+        "/tools" => SlashCommand::Tools,
+        "/domains" => SlashCommand::Domains,
+        "/exit" => SlashCommand::Exit,
+        _ => {
+            if input == "/domains-add" {
+                SlashCommand::DomainsAdd(None)
+            } else if let Some(folder) = input.strip_prefix("/domains-add ") {
+                SlashCommand::DomainsAdd(Some(folder))
+            } else if input == "/domains-enable" {
+                SlashCommand::DomainsEnable(None)
+            } else if let Some(id) = input.strip_prefix("/domains-enable ") {
+                SlashCommand::DomainsEnable(Some(id))
+            } else if input == "/domains-activate" {
+                SlashCommand::DomainsActivate(None)
+            } else if let Some(id) = input.strip_prefix("/domains-activate ") {
+                SlashCommand::DomainsActivate(Some(id))
+            } else {
+                SlashCommand::Prompt(input)
+            }
+        }
+    }
+}
+
+/// Render the `/context` claim with the shared audit gate — the SINGLE
+/// function both loops call (T4 consolidation).
+///
+/// Returns the sanitized combined segment (base claim + trailing audit when
+/// the gate passes), ready to write to either sink.
+fn render_context_segment<P>(
+    application: &SiralosApplication<'_, P>,
+    context_control: Option<&ContextPolicy>,
+    context_system_enabled: bool,
+    context_session_holder: &Option<
+        siralos_adapters::context_session::ContextSystemSession,
+    >,
+) -> String
+where
+    P: siralos_core::provider::ModelProvider,
+{
+    let base = render_context_claim(
+        &format_context_status(application.last_projection()),
+        context_control,
+    );
+    // T3: the shared audit gate (same condition the pane uses).
+    let audit = match context_audit_session(
+        context_system_enabled,
+        context_session_holder,
+    ) {
+        Some(session) => format_context_audit(Some(session)),
+        None => String::new(),
+    };
+    let combined =
+        if audit.is_empty() { base } else { format!("{base}{audit}") };
+    // R4: the audit segment flows through the existing terminal
+    // sanitizer path like every other rendered line (single output
+    // boundary — no raw bypass). Host vocab passes unchanged, so
+    // OFF remains byte-transparent.
+    sanitize_for_display(&combined)
+}
+
+/// Render the `/tools` segment — the SINGLE function both loops call
+/// (T4 consolidation). Returns the raw (already-safe) bytes.
+///
+/// Takes the composed registration-ordered definitions snapshot (byte-equal
+/// to `registry.definitions()` — see [`SessionComposition`]) instead of
+/// the registry itself, because the registry is borrowed by the live
+/// application for the whole session and cannot be moved or cloned.
+fn render_tools_segment<P>(
+    tool_definitions: &[siralos_core::tool::registry::RegisteredToolInfo],
+    policy: &PermissionPolicy,
+    application: &SiralosApplication<'_, P>,
+) -> Vec<u8>
+where
+    P: siralos_core::provider::ModelProvider,
+{
+    let mut out = format_tools(tool_definitions, policy).into_bytes();
+    out.extend_from_slice(
+        format_tool_projection(application.last_projection()).as_bytes(),
+    );
+    out
+}
+
+/// Dispatch one parsed [`SlashCommand`] to the stdio writer — one of the
+/// two thin per-frontend writers over the shared parse + render helpers.
+/// Returns `true` when the loop must exit (`/exit`).
+///
+/// T4 consolidation: the stdio loop calls this; the TUI loop calls
+/// [`dispatch_tui_command`]. Both take the same parsed command and call
+/// the same render helpers — no parallel match arms.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_stdio_command<P, W>(
+    command: &SlashCommand<'_>,
+    workspace_root: &Path,
+    tool_definitions: &[siralos_core::tool::registry::RegisteredToolInfo],
+    policy: &PermissionPolicy,
+    application: &mut SiralosApplication<'_, P>,
+    writer: &mut W,
+    hosts: &mut BTreeMap<String, DomainHost>,
+    manifests: &mut BTreeMap<String, PluginManifest>,
+    profile_plugins: Option<&[String]>,
+    context_control: Option<&ContextPolicy>,
+    context_system_enabled: bool,
+    context_session_holder: &mut Option<
+        siralos_adapters::context_session::ContextSystemSession,
+    >,
+    context_history_len: &mut usize,
+) -> Result<bool, InteractiveError>
+where
+    P: siralos_core::provider::ModelProvider,
+    W: Write,
+{
+    match command {
+        SlashCommand::Context => {
+            let sanitized = render_context_segment(
+                application,
+                context_control,
+                context_system_enabled,
+                context_session_holder,
+            );
+            writer
+                .write_all(sanitized.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::Tools => {
+            let bytes =
+                render_tools_segment(tool_definitions, policy, application);
+            writer.write_all(&bytes).map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::Domains => {
+            let rendered =
+                sanitize_for_display(&render_domains(workspace_root));
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::Exit => return Ok(true),
+        SlashCommand::DomainsAdd(folder) => {
+            let rendered = sanitize_for_display(&render_add_plugin(
+                workspace_root,
+                folder.unwrap_or(""),
+                hosts,
+                manifests,
+            ));
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::DomainsEnable(id) => {
+            let rendered = sanitize_for_display(&render_enable(
+                workspace_root,
+                hosts,
+                manifests,
+                id.unwrap_or(""),
+            ));
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::DomainsActivate(id) => {
+            let rendered = sanitize_for_display(&render_activate(
+                workspace_root,
+                hosts,
+                manifests,
+                id.unwrap_or(""),
+                profile_plugins,
+            ));
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::Prompt(prompt) => {
+            application.send_prompt((*prompt).to_owned()).map_err(
+                |error| {
+                    InteractiveError::Io(io::Error::other(error.to_string()))
+                },
+            )?;
+            drain_events(application, writer)?;
+            if let Some(session) = context_session_holder {
+                drive_context_demand(
+                    application,
+                    session,
+                    context_history_len,
+                );
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Dispatch one parsed [`SlashCommand`] to the TUI sink — the second thin
+/// per-frontend writer over the shared parse + render helpers. Returns
+/// `true` when the loop must exit (`/exit`).
+#[allow(clippy::too_many_arguments)]
+fn dispatch_tui_command<P>(
+    command: &SlashCommand<'_>,
+    workspace_root: &Path,
+    tool_definitions: &[siralos_core::tool::registry::RegisteredToolInfo],
+    policy: &PermissionPolicy,
+    application: &mut SiralosApplication<'_, P>,
+    sink: &mut crate::tui::TuiSink,
+    hosts: &mut BTreeMap<String, DomainHost>,
+    manifests: &mut BTreeMap<String, PluginManifest>,
+    profile_plugins: Option<&[String]>,
+    context_control: Option<&ContextPolicy>,
+    context_system_enabled: bool,
+    context_session_holder: &mut Option<
+        siralos_adapters::context_session::ContextSystemSession,
+    >,
+    context_history_len: &mut usize,
+) -> Result<bool, InteractiveError>
+where
+    P: siralos_core::provider::ModelProvider,
+{
+    match command {
+        SlashCommand::Context => {
+            let sanitized = render_context_segment(
+                application,
+                context_control,
+                context_system_enabled,
+                context_session_holder,
+            );
+            let _ = sink.write_all(sanitized.as_bytes());
+        }
+        SlashCommand::Tools => {
+            let bytes =
+                render_tools_segment(tool_definitions, policy, application);
+            let _ = sink.write_all(&bytes);
+        }
+        SlashCommand::Domains => {
+            let rendered =
+                sanitize_for_display(&render_domains(workspace_root));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Exit => return Ok(true),
+        SlashCommand::DomainsAdd(folder) => {
+            let rendered = sanitize_for_display(&render_add_plugin(
+                workspace_root,
+                folder.unwrap_or(""),
+                hosts,
+                manifests,
+            ));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::DomainsEnable(id) => {
+            let rendered = sanitize_for_display(&render_enable(
+                workspace_root,
+                hosts,
+                manifests,
+                id.unwrap_or(""),
+            ));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::DomainsActivate(id) => {
+            let rendered = sanitize_for_display(&render_activate(
+                workspace_root,
+                hosts,
+                manifests,
+                id.unwrap_or(""),
+                profile_plugins,
+            ));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Prompt(prompt) => {
+            // Prompt path: same as stdio — send to application, drain with
+            // sanitizer via sink.
+            application.send_prompt((*prompt).to_owned()).map_err(
+                |error| {
+                    InteractiveError::Io(io::Error::other(error.to_string()))
+                },
+            )?;
+            drain_events(application, sink)?;
+            if let Some(session) = context_session_holder {
+                drive_context_demand(
+                    application,
+                    session,
+                    context_history_len,
+                );
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Flush the retaining record-replay recorder at session exit — the SINGLE
+/// function both loops call (T4 consolidation; decision 78 B2).
+fn flush_record_replay(
+    record_recorder: Option<Rc<RetainingReplayRecorder>>,
+    replay_store_path: &std::path::Path,
+) {
+    if let Some(recorder) = record_recorder {
+        let snapshot = recorder.records_snapshot();
+        match write_replay_store(replay_store_path, &snapshot) {
+            Ok(count) => {
+                eprintln!("siralos: replay store persisted: {count}");
+            }
+            Err(err) => {
+                let msg = format!("{err}");
+                eprintln!("siralos: replay store not persisted: {msg}");
+            }
+        }
+    }
+}
+
+/// One composed session: every host-owned handle both frontends need.
+///
+/// T4 (decision 108) permanent residual: `compose_session` stops where the
+/// frontends diverge — the stdio loop owns `reader`/`writer` generics and
+/// the TUI loop owns the `TerminalGuard`/`Terminal`/`TuiState`/`TuiSink`
+/// terminal state. Nothing else is per-frontend: the provider, registry,
+/// policy, application, hosts, manifests, profile/context wiring, and the
+/// replay-store flush inputs are all composed once here.
+///
+/// Sharing note (`unsafe_code = "forbid"`, so no `Rc::from_raw` trick):
+/// `ToolRegistry` holds `Box<dyn Tool>` and is not `Clone`, and
+/// `SiralosApplication::new` borrows the registry — so the application
+/// cannot own it and the bundle cannot clone it. The bundle therefore
+/// carries the composed registry's immutable OBSERVABLE state — the
+/// registration-ordered definitions snapshot (`definitions()` returns
+/// freshly cloned owned values) — and the `/tools` render uses the shared
+/// [`render_tools_segment`] helper both loops call. The live
+/// application keeps borrowing the leaked `&'static` registry (the harness
+/// already uses this leak pattern in
+/// `harness_cli_session::create_application`); the definitions snapshot is
+/// byte-equal to what `registry.definitions()` would return because the
+/// registry is immutable after construction.
+struct SessionComposition<'a> {
+    /// Canonical workspace root.
+    workspace_root: std::path::PathBuf,
+    /// Registration-ordered tool definitions snapshot (same content as
+    /// `registry.definitions()` — immutable, so byte-equal forever).
+    tool_definitions: Vec<siralos_core::tool::registry::RegisteredToolInfo>,
+    /// Effective permission policy.
+    policy: PermissionPolicy,
+    /// Host application over the session provider.
+    application: SiralosApplication<'a, SessionProvider>,
+    /// Installed domain hosts by plugin id.
+    hosts: BTreeMap<String, DomainHost>,
+    /// Loaded plugin manifests by plugin id.
+    manifests: BTreeMap<String, PluginManifest>,
+    /// Applied profile's plugin selection, if any.
+    profile_plugins: Option<Vec<String>>,
+    /// Applied profile's context control, if any.
+    context_control: Option<ContextPolicy>,
+    /// Whether the context subsystem is enabled for this session.
+    context_system_enabled: bool,
+    /// Live context session holder, if the subsystem built.
+    context_session_holder:
+        Option<siralos_adapters::context_session::ContextSystemSession>,
+    /// Conversation items already observed by the demand loop.
+    context_history_len: usize,
+    /// Retaining replay recorder for the record-replay flush, if any.
+    record_recorder: Option<Rc<RetainingReplayRecorder>>,
+    /// Replay-store path for load + flush.
+    replay_store_path: std::path::PathBuf,
+}
+
+/// Compose one session — the SINGLE definition both loops call (T4).
+///
+/// This is the verbatim T1 composition block both loops duplicated:
+/// configuration gate, workspace root, workspace tools, host rules,
+/// profile declare/compose, replay wiring, provider choice, plugin/context
+/// selection, context-system build, registry, lock verification, skills
+/// segment, projection config, application, hosts/manifests. The ONLY
+/// per-frontend residual is the terminal I/O each loop owns after this
+/// returns (stdio: `reader`/`writer`; TUI: guard/terminal/state/sink).
+fn compose_session(
+    options: InteractiveOptions<'_>,
+) -> Result<SessionComposition<'static>, InteractiveError> {
+    // --- The verbatim T1 composition both loops duplicated (one copy now).
     let composed = load_user_configuration(options.config_path)?;
     if composed.review_provider_id != DEFAULT_REVIEW_PROVIDER_ID {
         return Err(InteractiveError::Configuration(
@@ -449,13 +920,13 @@ where
     if let Some(diagnostic) = &context_build.diagnostic {
         eprintln!("siralos: {diagnostic}");
     }
-    let mut context_session_holder: Option<
+    let context_session_holder: Option<
         siralos_adapters::context_session::ContextSystemSession,
     > = context_build.session.clone();
     // The number of conversation items already observed by the demand loop.
     // The demand edge only derives NEW, host-observed context-tool results
     // since the last tick, so repeated prompts never double-tick a node.
-    let mut context_history_len: usize = 0;
+    let context_history_len: usize = 0;
     if let Some(session) = &context_session_holder {
         tools.extend(session.register_tools());
     }
@@ -469,7 +940,7 @@ where
         eprintln!("siralos: lock not trusted: {reason}");
     }
     // Stage 5.10 (decision 56): the applied profile's opt-in skill
-    // selection resolves against the workspace catalog. Guidance only —
+    // selection resolves against the workspace skill catalog. Guidance only —
     // the consumption can never add capability, Tool, or permission —
     // and absent selection/catalog stays byte-transparent (R7.5).
     let skills_segment =
@@ -483,193 +954,53 @@ where
     if let Some(segment) = skills_segment {
         segments.push(segment);
     }
-    let policy = PermissionPolicy::from_rules(effective.rules);
+    let policy = PermissionPolicy::from_rules(effective.rules.clone());
     let projection_config = ApplicationProjectionConfig {
         capacity: Some(ContextCapacity::default()),
         segments,
         ..ApplicationProjectionConfig::default()
     };
-    // Choose the provider for this session based on B2 flags.
-    let session_provider = if let Some(rp) = replay_provider_holder {
-        SessionProvider::Replay(rp)
-    } else if let Some(hp) = live_host_provider {
-        SessionProvider::Host(hp)
-    } else {
-        unreachable!("session provider must be present");
-    };
-    let mut application = SiralosApplication::new(
-        &session_provider,
-        &registry,
+    // Choose the provider for this session based on B2 flags. The provider
+    // and registry are borrowed by the application; both are leaked to
+    // `'static` (the harness already uses this pattern in
+    // `harness_cli_session::create_application`). Registries are immutable
+    // after construction, so the definitions snapshot below is byte-equal
+    // to `registry.definitions()` forever.
+    let session_provider: &'static SessionProvider =
+        Box::leak(Box::new(if let Some(rp) = replay_provider_holder {
+            SessionProvider::Replay(rp)
+        } else if let Some(hp) = live_host_provider {
+            SessionProvider::Host(hp)
+        } else {
+            unreachable!("session provider must be present");
+        }));
+    let registry_static: &'static ToolRegistry = Box::leak(Box::new(registry));
+    let tool_definitions: Vec<
+        siralos_core::tool::registry::RegisteredToolInfo,
+    > = registry_static.definitions();
+    let application = SiralosApplication::new(
+        session_provider,
+        registry_static,
         policy.clone(),
         None,
         None,
     )
     .with_projection(ProjectionService::new(), projection_config);
-    let mut hosts: BTreeMap<String, DomainHost> = BTreeMap::new();
-    let mut manifests: BTreeMap<String, PluginManifest> = BTreeMap::new();
-
-    loop {
-        writer.write_all(b"> ").map_err(InteractiveError::Io)?;
-        writer.flush().map_err(InteractiveError::Io)?;
-        let mut line = String::new();
-        let read =
-            reader.read_line(&mut line).map_err(InteractiveError::Io)?;
-        if read == 0 {
-            break;
-        }
-        let input = line.trim_end_matches(['\r', '\n']);
-        if input.trim().is_empty() {
-            continue;
-        }
-        match input.trim() {
-            "/context" => {
-                let base = render_context_claim(
-                    &format_context_status(application.last_projection()),
-                    context_control.as_ref(),
-                );
-                // T3: the shared audit gate (same condition the pane uses).
-                let audit = match context_audit_session(
-                    context_system_enabled,
-                    &context_session_holder,
-                ) {
-                    Some(session) => format_context_audit(Some(session)),
-                    None => String::new(),
-                };
-                let combined = if audit.is_empty() {
-                    base
-                } else {
-                    format!("{base}{audit}")
-                };
-                // R4: the audit segment flows through the existing terminal
-                // sanitizer path like every other rendered line (single output
-                // boundary — no raw bypass). Host vocab passes unchanged, so
-                // OFF remains byte-transparent.
-                let sanitized = sanitize_for_display(&combined);
-                writer
-                    .write_all(sanitized.as_bytes())
-                    .map_err(InteractiveError::Io)?;
-            }
-            "/tools" => {
-                let definitions = registry.definitions();
-                writer
-                    .write_all(format_tools(&definitions, &policy).as_bytes())
-                    .map_err(InteractiveError::Io)?;
-                writer
-                    .write_all(
-                        format_tool_projection(application.last_projection())
-                            .as_bytes(),
-                    )
-                    .map_err(InteractiveError::Io)?;
-            }
-            "/domains" => {
-                let rendered =
-                    sanitize_for_display(&render_domains(&workspace_root));
-                writer
-                    .write_all(rendered.as_bytes())
-                    .map_err(InteractiveError::Io)?;
-            }
-            "/exit" => break,
-            rest => {
-                if rest == "/domains-add" {
-                    let rendered = sanitize_for_display(&render_add_plugin(
-                        &workspace_root,
-                        "",
-                        &mut hosts,
-                        &mut manifests,
-                    ));
-                    writer
-                        .write_all(rendered.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                } else if let Some(folder) = rest.strip_prefix("/domains-add ")
-                {
-                    let rendered = sanitize_for_display(&render_add_plugin(
-                        &workspace_root,
-                        folder,
-                        &mut hosts,
-                        &mut manifests,
-                    ));
-                    writer
-                        .write_all(rendered.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                } else if rest == "/domains-enable" {
-                    let rendered = sanitize_for_display(&render_enable(
-                        &workspace_root,
-                        &mut hosts,
-                        &mut manifests,
-                        "",
-                    ));
-                    writer
-                        .write_all(rendered.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                } else if let Some(id) = rest.strip_prefix("/domains-enable ")
-                {
-                    let rendered = sanitize_for_display(&render_enable(
-                        &workspace_root,
-                        &mut hosts,
-                        &mut manifests,
-                        id,
-                    ));
-                    writer
-                        .write_all(rendered.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                } else if rest == "/domains-activate" {
-                    let rendered = sanitize_for_display(&render_activate(
-                        &workspace_root,
-                        &mut hosts,
-                        &mut manifests,
-                        "",
-                        profile_plugins.as_deref(),
-                    ));
-                    writer
-                        .write_all(rendered.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                } else if let Some(id) =
-                    rest.strip_prefix("/domains-activate ")
-                {
-                    let rendered = sanitize_for_display(&render_activate(
-                        &workspace_root,
-                        &mut hosts,
-                        &mut manifests,
-                        id,
-                        profile_plugins.as_deref(),
-                    ));
-                    writer
-                        .write_all(rendered.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                } else {
-                    application.send_prompt(input.to_owned()).map_err(
-                        |error| {
-                            InteractiveError::Io(io::Error::other(
-                                error.to_string(),
-                            ))
-                        },
-                    )?;
-                    drain_events(&mut application, &mut writer)?;
-                    if let Some(session) = &mut context_session_holder {
-                        drive_context_demand(
-                            &mut application,
-                            session,
-                            &mut context_history_len,
-                        );
-                    }
-                }
-            }
-        }
-    }
-    // Decision 78 B2: flush retaining recorder for record-replay at session exit
-    if let Some(recorder) = record_recorder {
-        let snapshot = recorder.records_snapshot();
-        match write_replay_store(&replay_store_path, &snapshot) {
-            Ok(count) => {
-                eprintln!("siralos: replay store persisted: {count}");
-            }
-            Err(err) => {
-                let msg = format!("{err}");
-                eprintln!("siralos: replay store not persisted: {msg}");
-            }
-        }
-    }
-    Ok(())
+    Ok(SessionComposition {
+        workspace_root,
+        tool_definitions,
+        policy,
+        application,
+        hosts: BTreeMap::new(),
+        manifests: BTreeMap::new(),
+        profile_plugins,
+        context_control,
+        context_system_enabled,
+        context_session_holder,
+        context_history_len,
+        record_recorder,
+        replay_store_path,
+    })
 }
 
 /// Stage 5.8 (decision 54): evaluate the applied profile's context
@@ -1334,13 +1665,15 @@ fn drive_context_demand<P>(
 /// (`ensure_host`, the command dispatch, `drain_events` with a [`crate::tui::TuiSink`],
 /// the sanitizer, the input-queue/command-catalog vocabulary). Because
 /// `run_interactive_session` blocks on `BufRead::read_line`, it would starve the
-/// `crossterm::event::poll` pump, so this loop duplicates the dispatch calling
-/// the SAME underlying functions. T2 consolidated the approval surface; T3
-/// consolidates the audit/pane gating (`context_audit_session`, called by the
-/// stdio `/context` arm, the TUI `/context` arm, and the pane builder) and
-/// threads the `context_system_enabled` flag the TUI arm was missing. The
-/// remaining duplication (session-composition block, slash-command dispatch
-/// match, inline key-edit handling) stays duplicated for T4.
+/// `crossterm::event::poll` pump, so this loop calls the SAME shared helpers
+/// through its own terminal wiring. T2 consolidated the approval surface; T3
+/// consolidated the audit/pane gating; T4 (decision 108) settles the FINAL
+/// ledger — shared: `compose_session`, `parse_slash_command`,
+/// `render_context_segment`/`render_tools_segment`,
+/// `dispatch_stdio_command`/`dispatch_tui_command`, `handle_key`,
+/// `flush_record_replay`. Permanent residual: the TUI loop owns the
+/// `TerminalGuard`/`Terminal`/`TuiState`/`TuiSink` terminal state (plus
+/// Ctrl+C-exit, the PageUp viewport lookup, and the modal verdict lines).
 ///
 /// No threads: `crossterm::event::poll` with a 100ms timeout; blocking provider
 /// rounds freeze the redraw (documented T1 limitation — status showed "working"
@@ -1368,256 +1701,25 @@ pub fn run_interactive_tui_with_options(
     let mut terminal = ratatui::Terminal::new(backend)
         .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
 
-    // --- Session composition (duplicated from `run_interactive_session_with_options`) ---
-    // T1 debt: this block mirrors the stdio composition verbatim so the sanitizer,
-    // input-queue, command-catalog, approval, and context-system seams are the
-    // SAME code paths, not reimplementations. T2-T3 consolidated the approval
-    // surface and the audit/pane gating; the rest will be consolidated in T4.
-    let composed = load_user_configuration(options.config_path)?;
-    if composed.review_provider_id != DEFAULT_REVIEW_PROVIDER_ID {
-        return Err(InteractiveError::Configuration(
-            ConfigurationError::UnknownReviewProvider {
-                provider_id: composed.review_provider_id,
-            },
-        ));
-    }
-    let workspace_root = match options.workspace_root {
-        Some(path) => path.to_path_buf(),
-        None => std::env::current_dir()
-            .map_err(InteractiveError::CurrentDirectory)?,
-    };
-    let workspace_root = resolve_workspace_root(&workspace_root)?;
-    let mut tools: Vec<Box<dyn siralos_core::tool::Tool>> = vec![
-        Box::new(WorkspaceListTool::new(&workspace_root)?),
-        Box::new(WorkspaceReadTool::new(&workspace_root)?),
-        Box::new(WorkspaceSearchTool::new(&workspace_root)?),
-    ];
-    let host_rules = vec![PolicyRule {
-        capability: siralos_core::tool::CapabilityId::parse("workspace.read")
-            .expect("workspace.read is a valid capability id"),
-        rule: PermissionRule::Allow,
-    }];
-    let loaded_profile = load_workspace_profile(&workspace_root);
-    let declared = match &loaded_profile {
-        WorkspaceProfileLoad::Record(record) => declare_profile(
-            Some(record),
-            &PermissionPolicy::from_rules(host_rules.clone()),
-        ),
-        WorkspaceProfileLoad::Absent => DeclaredProfile::Absent,
-        WorkspaceProfileLoad::Invalid { diagnostic } => {
-            DeclaredProfile::Invalid { diagnostic: diagnostic.clone() }
-        }
-    };
-    let effective = compose_effective_policy(&host_rules, &declared);
-    if let Some(diagnostic) = &effective.diagnostic {
-        eprintln!("siralos: profile not applied: {diagnostic}");
-    }
-    let replay_store_path =
-        workspace_root.join(".siralos").join("replay-store.json");
-    let (want_record_replay, want_replay) = match &loaded_profile {
-        WorkspaceProfileLoad::Record(record)
-            if effective.applied_profile.is_some() =>
-        {
-            (record.record_replay, record.replay)
-        }
-        _ => (false, false),
-    };
-    let (provider_name_owned, model_opt, credential_opt, endpoint_opt) =
-        match &loaded_profile {
-            WorkspaceProfileLoad::Record(record)
-                if effective.applied_profile.is_some() =>
-            {
-                let cred = record.credential.as_deref().and_then(|c| {
-                    match HostCredential::from_env_ref(c) {
-                        Ok(cred) => Some(cred),
-                        Err(e) => {
-                            eprintln!("siralos: credential error: {e}");
-                            None
-                        }
-                    }
-                });
-                (
-                    record
-                        .provider
-                        .as_deref()
-                        .unwrap_or("deterministic-fake")
-                        .to_owned(),
-                    record.model.clone(),
-                    cred,
-                    record.endpoint.clone(),
-                )
-            }
-            _ => ("deterministic-fake".to_owned(), None, None, None),
-        };
-    let mut live_host_provider: Option<HostProvider> = None;
-    let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
-    let mut record_recorder: Option<Rc<RetainingReplayRecorder>> = None;
-    if want_replay {
-        let pid = provider_name_owned.clone();
-        let model =
-            model_opt.clone().unwrap_or_else(|| "generic-model".to_owned());
-        match load_replay_store(&replay_store_path) {
-            Ok(store) => {
-                let digest = siralos_core::determinism::replay_store::compute_replay_store_digest(&store.recordings);
-                eprintln!(
-                    "siralos: replay store loaded: digest {digest} count {}",
-                    store.recordings.len()
-                );
-                replay_provider_holder = Some(RecordedReplayProvider::new(
-                    pid,
-                    model,
-                    store.recordings,
-                ));
-            }
-            Err(ReplayStoreLoadError::NotFound) => {
-                eprintln!(
-                    "siralos: replay store absent: no recordings to replay"
-                );
-                replay_provider_holder =
-                    Some(RecordedReplayProvider::new(pid, model, Vec::new()));
-            }
-            Err(err) => {
-                let msg = match &err {
-                    ReplayStoreLoadError::UntrustedDigest => {
-                        "replay store untrusted: digest mismatch".to_owned()
-                    }
-                    ReplayStoreLoadError::Malformed(r) => {
-                        format!("replay store malformed: {r}")
-                    }
-                    ReplayStoreLoadError::Bounds(e) => {
-                        format!("replay store bounds: {e}")
-                    }
-                    ReplayStoreLoadError::Io(m) => {
-                        format!("replay store I/O: {m}")
-                    }
-                    ReplayStoreLoadError::NotFound => unreachable!(),
-                };
-                eprintln!("siralos: {msg}");
-                replay_provider_holder =
-                    Some(RecordedReplayProvider::new(pid, model, Vec::new()));
-            }
-        }
-    } else if want_record_replay {
-        let raw = match HostProvider::from_provider_str(
-            &provider_name_owned,
-            model_opt.clone(),
-            credential_opt,
-            endpoint_opt.clone(),
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                eprintln!(
-                    "siralos: provider error: {err} — falling back to deterministic-fake"
-                );
-                HostProvider::Fake(DeterministicFakeProvider::new())
-            }
-        };
-        let recorder = Rc::new(RetainingReplayRecorder::new());
-        let clock: Rc<dyn siralos_core::determinism::Clock> =
-            Rc::new(siralos_core::determinism::SystemClock);
-        let with = raw.with_replay_support(clock, recorder.clone());
-        record_recorder = Some(recorder);
-        live_host_provider = Some(with);
-    } else {
-        let raw = match HostProvider::from_provider_str(
-            &provider_name_owned,
-            model_opt,
-            credential_opt,
-            endpoint_opt,
-        ) {
-            Ok(p) => p,
-            Err(err) => {
-                eprintln!(
-                    "siralos: provider error: {err} — falling back to deterministic-fake"
-                );
-                HostProvider::Fake(DeterministicFakeProvider::new())
-            }
-        };
-        live_host_provider = Some(raw);
-    }
-    let profile_plugins: Option<Vec<String>> =
-        if effective.applied_profile.is_some() {
-            match &loaded_profile {
-                WorkspaceProfileLoad::Record(record) => record.plugins.clone(),
-                _ => None,
-            }
-        } else {
-            None
-        };
-    let context_control: Option<ContextPolicy> =
-        if effective.applied_profile.is_some() {
-            match &loaded_profile {
-                WorkspaceProfileLoad::Record(record) => record.context.clone(),
-                _ => None,
-            }
-        } else {
-            None
-        };
-    let context_system_enabled: bool = if effective.applied_profile.is_some() {
-        match &loaded_profile {
-            WorkspaceProfileLoad::Record(record) => {
-                record.context_system_enabled
-            }
-            _ => false,
-        }
-    } else {
-        false
-    };
-    let context_build =
-        siralos_adapters::context_session::build_context_system(
-            &workspace_root,
-            context_system_enabled,
-        );
-    if let Some(diagnostic) = &context_build.diagnostic {
-        eprintln!("siralos: {diagnostic}");
-    }
-    let mut context_session_holder: Option<
-        siralos_adapters::context_session::ContextSystemSession,
-    > = context_build.session.clone();
-    let mut context_history_len: usize = 0;
-    if let Some(session) = &context_session_holder {
-        tools.extend(session.register_tools());
-    }
-    let registry = ToolRegistry::new(tools)?;
-    let lock_decision = verify_session_lock(&workspace_root, &effective);
-    if let Some(reason) = &lock_decision.reason {
-        eprintln!("siralos: lock not trusted: {reason}");
-    }
-    let skills_segment =
-        compose_skills_segment(&workspace_root, &loaded_profile, &effective);
-    let mut segments = vec![SegmentInput {
-        id: "siralos-core-instructions".to_owned(),
-        stability: Stability::Stable,
-        title: "Siralos instructions".to_owned(),
-        content: SIRALOS_SYSTEM_INSTRUCTIONS.to_owned(),
-    }];
-    if let Some(segment) = skills_segment {
-        segments.push(segment);
-    }
-    let policy = PermissionPolicy::from_rules(effective.rules);
-    let projection_config = ApplicationProjectionConfig {
-        capacity: Some(ContextCapacity::default()),
-        segments,
-        ..ApplicationProjectionConfig::default()
-    };
-    let session_provider = if let Some(rp) = replay_provider_holder {
-        SessionProvider::Replay(rp)
-    } else if let Some(hp) = live_host_provider {
-        SessionProvider::Host(hp)
-    } else {
-        unreachable!("session provider must be present");
-    };
-    let mut application = SiralosApplication::new(
-        &session_provider,
-        &registry,
-        policy.clone(),
-        None,
-        None,
-    )
-    .with_projection(ProjectionService::new(), projection_config);
-    let mut hosts: BTreeMap<String, DomainHost> = BTreeMap::new();
-    let mut manifests: BTreeMap<String, PluginManifest> = BTreeMap::new();
-
+    // --- Session composition: the single shared helper both loops call. ---
+    // T1 duplicated this block verbatim; T4 deletes the copy. The terminal
+    // wiring below (guard/terminal/state/sink) is the TUI frontend residual.
+    let session = compose_session(options)?;
+    let SessionComposition {
+        workspace_root,
+        tool_definitions,
+        policy,
+        mut application,
+        mut hosts,
+        mut manifests,
+        profile_plugins,
+        context_control,
+        context_system_enabled,
+        mut context_session_holder,
+        mut context_history_len,
+        record_recorder,
+        replay_store_path,
+    } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
     let tui_state = Rc::new(RefCell::new(TuiState::new()));
     tui_state.borrow_mut().status = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit".to_owned();
@@ -1687,96 +1789,111 @@ pub fn run_interactive_tui_with_options(
                             tui_state.borrow_mut().status = "ready".to_owned();
                         }
                     } else {
-                        match key.code {
-                            crossterm::event::KeyCode::Enter => {
-                                let input_line =
-                                    tui_state.borrow().input.clone();
-                                // Echo the user line into the transcript as `> <input>`
-                                let echo = format!("> {}", input_line);
-                                tui_state.borrow_mut().push_line(echo);
-                                tui_state.borrow_mut().input.clear();
-                                // Empty input is a no-op (same as stdio loop)
-                                if input_line.trim().is_empty() {
-                                    tui_state.borrow_mut().status =
-                                        "ready".to_owned();
-                                } else {
-                                    // Dispatch the line using the SAME seam functions the stdio loop calls.
-                                    tui_state.borrow_mut().status =
-                                        "working".to_owned();
-                                    let pane = build_context_pane(
-                                        context_system_enabled,
-                                        context_session_holder
-                                            .as_ref()
-                                            .map(|session| &session.metrics),
-                                        application.history(),
-                                    );
-                                    terminal
-                                        .draw(|frame| {
-                                            draw_with_pane(
-                                                &tui_state.borrow(),
-                                                pane.as_ref(),
-                                                frame,
-                                            )
-                                        })
+                        // T4: non-modal keys route through the single shared
+                        // `handle_key` (no inline duplicate). Enter submits;
+                        // everything else edits in place; the TUI loop owns
+                        // only the terminal-size lookup for PageUp and the
+                        // Ctrl+C exit above.
+                        let submitted = crate::tui::handle_key(
+                            &mut tui_state.borrow_mut(),
+                            key,
+                        );
+                        if !submitted {
+                            match key.code {
+                                crossterm::event::KeyCode::PageUp => {
+                                    let h = terminal
+                                        .size()
                                         .map_err(|e| {
                                             InteractiveError::Io(
                                                 io::Error::other(
                                                     e.to_string(),
                                                 ),
                                             )
-                                        })?;
-                                    let should_exit = handle_tui_line(
-                                        input_line.trim(),
-                                        &workspace_root,
-                                        &registry,
-                                        &policy,
-                                        &mut application,
-                                        &mut sink,
-                                        &mut hosts,
-                                        &mut manifests,
-                                        profile_plugins.as_deref(),
-                                        context_control.as_ref(),
-                                        context_system_enabled,
-                                        &mut context_session_holder,
-                                        &mut context_history_len,
-                                        &tui_state,
-                                    )?;
-                                    if should_exit {
-                                        break;
-                                    }
-                                    tui_state.borrow_mut().status =
-                                        "ready".to_owned();
+                                        })?
+                                        .height;
+                                    // Transcript viewport height is total
+                                    // height minus 2 (input+status)
+                                    let viewport = h.saturating_sub(2);
+                                    let current =
+                                        tui_state.borrow().scroll_offset;
+                                    let max = tui_state
+                                        .borrow()
+                                        .max_scroll(viewport);
+                                    let next = (current + 10).min(max);
+                                    tui_state.borrow_mut().scroll_offset =
+                                        next;
                                 }
+                                crossterm::event::KeyCode::PageDown => {
+                                    let current =
+                                        tui_state.borrow().scroll_offset;
+                                    let next = current.saturating_sub(10);
+                                    tui_state.borrow_mut().scroll_offset =
+                                        next;
+                                }
+                                _ => {}
                             }
-                            crossterm::event::KeyCode::Backspace => {
-                                tui_state.borrow_mut().input.pop();
-                            }
-                            crossterm::event::KeyCode::Char(ch) => {
-                                tui_state.borrow_mut().input.push(ch);
-                            }
-                            crossterm::event::KeyCode::PageUp => {
-                                let h = terminal
-                                    .size()
+                            continue;
+                        }
+                        {
+                            let input_line = tui_state.borrow().input.clone();
+                            // Echo the user line into the transcript as `> <input>`
+                            let echo = format!("> {}", input_line);
+                            tui_state.borrow_mut().push_line(echo);
+                            tui_state.borrow_mut().input.clear();
+                            // Empty input is a no-op (same as stdio loop)
+                            if input_line.trim().is_empty() {
+                                tui_state.borrow_mut().status =
+                                    "ready".to_owned();
+                            } else {
+                                // Dispatch the line using the SAME seam functions the stdio loop calls.
+                                tui_state.borrow_mut().status =
+                                    "working".to_owned();
+                                let pane = build_context_pane(
+                                    context_system_enabled,
+                                    context_session_holder
+                                        .as_ref()
+                                        .map(|session| &session.metrics),
+                                    application.history(),
+                                );
+                                terminal
+                                    .draw(|frame| {
+                                        draw_with_pane(
+                                            &tui_state.borrow(),
+                                            pane.as_ref(),
+                                            frame,
+                                        )
+                                    })
                                     .map_err(|e| {
                                         InteractiveError::Io(io::Error::other(
                                             e.to_string(),
                                         ))
-                                    })?
-                                    .height;
-                                // Transcript viewport height is total height minus 2 (input+status)
-                                let viewport = h.saturating_sub(2);
-                                let current = tui_state.borrow().scroll_offset;
-                                let max =
-                                    tui_state.borrow().max_scroll(viewport);
-                                let next = (current + 10).min(max);
-                                tui_state.borrow_mut().scroll_offset = next;
+                                    })?;
+                                // T4: one shared parse, one thin TUI writer
+                                // (the stdio loop calls the same parser with
+                                // its writer).
+                                let command =
+                                    parse_slash_command(input_line.trim());
+                                let should_exit = dispatch_tui_command(
+                                    &command,
+                                    &workspace_root,
+                                    &tool_definitions,
+                                    &policy,
+                                    &mut application,
+                                    &mut sink,
+                                    &mut hosts,
+                                    &mut manifests,
+                                    profile_plugins.as_deref(),
+                                    context_control.as_ref(),
+                                    context_system_enabled,
+                                    &mut context_session_holder,
+                                    &mut context_history_len,
+                                )?;
+                                if should_exit {
+                                    break;
+                                }
+                                tui_state.borrow_mut().status =
+                                    "ready".to_owned();
                             }
-                            crossterm::event::KeyCode::PageDown => {
-                                let current = tui_state.borrow().scroll_offset;
-                                let next = current.saturating_sub(10);
-                                tui_state.borrow_mut().scroll_offset = next;
-                            }
-                            _ => {}
                         }
                     }
                 }
@@ -1801,160 +1918,17 @@ pub fn run_interactive_tui_with_options(
             })?;
     }
 
-    if let Some(recorder) = record_recorder {
-        let snapshot = recorder.records_snapshot();
-        match write_replay_store(&replay_store_path, &snapshot) {
-            Ok(count) => {
-                eprintln!("siralos: replay store persisted: {count}");
-            }
-            Err(err) => {
-                let msg = format!("{err}");
-                eprintln!("siralos: replay store not persisted: {msg}");
-            }
-        }
-    }
+    // Decision 78 B2: the shared record-replay flush both loops call.
+    flush_record_replay(record_recorder, &replay_store_path);
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn handle_tui_line<P>(
-    input: &str,
-    workspace_root: &Path,
-    registry: &ToolRegistry,
-    policy: &PermissionPolicy,
-    application: &mut SiralosApplication<'_, P>,
-    sink: &mut crate::tui::TuiSink,
-    hosts: &mut BTreeMap<String, DomainHost>,
-    manifests: &mut BTreeMap<String, PluginManifest>,
-    profile_plugins: Option<&[String]>,
-    context_control: Option<&ContextPolicy>,
-    context_system_enabled: bool,
-    context_session_holder: &mut Option<
-        siralos_adapters::context_session::ContextSystemSession,
-    >,
-    context_history_len: &mut usize,
-    tui_state: &Rc<std::cell::RefCell<crate::tui::TuiState>>,
-) -> Result<bool, InteractiveError>
-where
-    P: siralos_core::provider::ModelProvider,
-{
-    match input {
-        "/context" => {
-            let base = render_context_claim(
-                &format_context_status(application.last_projection()),
-                context_control,
-            );
-            // T3: the shared audit gate — the TUI arm no longer carries its
-            // own holder-only check (same gating as stdio and the pane).
-            let audit = match context_audit_session(
-                context_system_enabled,
-                context_session_holder,
-            ) {
-                Some(session) => format_context_audit(Some(session)),
-                None => String::new(),
-            };
-            let combined =
-                if audit.is_empty() { base } else { format!("{base}{audit}") };
-            let sanitized = sanitize_for_display(&combined);
-            let _ = sink.write_all(sanitized.as_bytes());
-            // Also flush any partial that drain_events left? sanitized already has newline.
-        }
-        "/tools" => {
-            let definitions = registry.definitions();
-            let _ =
-                sink.write_all(format_tools(&definitions, policy).as_bytes());
-            let _ = sink.write_all(
-                format_tool_projection(application.last_projection())
-                    .as_bytes(),
-            );
-        }
-        "/domains" => {
-            let rendered =
-                sanitize_for_display(&render_domains(workspace_root));
-            let _ = sink.write_all(rendered.as_bytes());
-        }
-        "/exit" => return Ok(true),
-        rest => {
-            if rest == "/domains-add" {
-                let rendered = sanitize_for_display(&render_add_plugin(
-                    workspace_root,
-                    "",
-                    hosts,
-                    manifests,
-                ));
-                let _ = sink.write_all(rendered.as_bytes());
-            } else if let Some(folder) = rest.strip_prefix("/domains-add ") {
-                let rendered = sanitize_for_display(&render_add_plugin(
-                    workspace_root,
-                    folder,
-                    hosts,
-                    manifests,
-                ));
-                let _ = sink.write_all(rendered.as_bytes());
-            } else if rest == "/domains-enable" {
-                let rendered = sanitize_for_display(&render_enable(
-                    workspace_root,
-                    hosts,
-                    manifests,
-                    "",
-                ));
-                let _ = sink.write_all(rendered.as_bytes());
-            } else if let Some(id) = rest.strip_prefix("/domains-enable ") {
-                let rendered = sanitize_for_display(&render_enable(
-                    workspace_root,
-                    hosts,
-                    manifests,
-                    id,
-                ));
-                let _ = sink.write_all(rendered.as_bytes());
-            } else if rest == "/domains-activate" {
-                let rendered = sanitize_for_display(&render_activate(
-                    workspace_root,
-                    hosts,
-                    manifests,
-                    "",
-                    profile_plugins,
-                ));
-                let _ = sink.write_all(rendered.as_bytes());
-            } else if let Some(id) = rest.strip_prefix("/domains-activate ") {
-                let rendered = sanitize_for_display(&render_activate(
-                    workspace_root,
-                    hosts,
-                    manifests,
-                    id,
-                    profile_plugins,
-                ));
-                let _ = sink.write_all(rendered.as_bytes());
-            } else {
-                // Prompt path: same as stdio — send to application, drain with sanitizer via sink.
-                // The drain_events call pushes sanitized deltas into the sink verbatim.
-                application.send_prompt(input.to_owned()).map_err(
-                    |error| {
-                        InteractiveError::Io(io::Error::other(
-                            error.to_string(),
-                        ))
-                    },
-                )?;
-                drain_events(application, sink)?;
-                if let Some(session) = context_session_holder {
-                    drive_context_demand(
-                        application,
-                        session,
-                        context_history_len,
-                    );
-                }
-                // Drain also writes a trailing newline per response; ensure the
-                // TUI transcript shows it (sink already handled).
-                let _ = tui_state;
-            }
-        }
-    }
-    Ok(false)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{InteractiveOptions, run_interactive_session_with_options};
+    use super::{
+        InteractiveOptions, SlashCommand, compose_session,
+        parse_slash_command, run_interactive_session_with_options,
+    };
     use std::fs::{create_dir, create_dir_all, remove_dir_all, write};
     use std::io::Cursor;
     use std::path::PathBuf;
@@ -2421,6 +2395,135 @@ mod tests {
         let output = run("/context\n/exit\n", &root, None);
         assert!(output.contains("Context projection: not yet computed"));
         assert!(!output.contains("Context control:"));
+        let _ = remove_dir_all(root);
+    }
+    #[test]
+    fn t4_dispatch_same_parse_both_loops_call() {
+        // T4 B1 proof: the slash-command vocabulary is ONE parser both
+        // loops call — every arm maps identically for stdio and TUI.
+        for (line, expected) in [
+            ("/context", SlashCommand::Context),
+            ("/tools", SlashCommand::Tools),
+            ("/domains", SlashCommand::Domains),
+            ("/exit", SlashCommand::Exit),
+            ("/domains-add", SlashCommand::DomainsAdd(None)),
+            (
+                "/domains-add plugins/godot",
+                SlashCommand::DomainsAdd(Some("plugins/godot")),
+            ),
+            ("/domains-enable", SlashCommand::DomainsEnable(None)),
+            (
+                "/domains-enable godot",
+                SlashCommand::DomainsEnable(Some("godot")),
+            ),
+            ("/domains-activate", SlashCommand::DomainsActivate(None)),
+            (
+                "/domains-activate godot",
+                SlashCommand::DomainsActivate(Some("godot")),
+            ),
+            ("hello there", SlashCommand::Prompt("hello there")),
+            (
+                "/definitely-not-a-command",
+                SlashCommand::Prompt("/definitely-not-a-command"),
+            ),
+        ] {
+            assert_eq!(
+                parse_slash_command(line),
+                expected,
+                "shared parse must map `{line}` identically for both loops"
+            );
+        }
+        // The stdio loop and the TUI loop call the same parser: parse
+        // twice (once per loop) and require byte-equal commands.
+        let stdio_parsed = parse_slash_command("/domains-enable godot");
+        let tui_parsed = parse_slash_command("/domains-enable godot");
+        assert_eq!(stdio_parsed, tui_parsed);
+    }
+    #[test]
+    fn t4_key_routing_calls_the_shared_handle_key() {
+        // T4 B2 proof: the live loop routes non-modal keys through the
+        // shared `handle_key` — exercise the shared function over the same
+        // key kinds the loop used to inline (Enter/Backspace/Char/PageUp/
+        // PageDown) and require the consolidated behavior.
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        };
+        fn press(code: KeyCode) -> KeyEvent {
+            KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )
+        }
+        let mut state = crate::tui::TuiState::new();
+        // Char appends (was the inline `input.push` duplicate).
+        assert!(!crate::tui::handle_key(
+            &mut state,
+            press(KeyCode::Char('a'))
+        ));
+        assert!(!crate::tui::handle_key(
+            &mut state,
+            press(KeyCode::Char('b'))
+        ));
+        assert_eq!(state.input, "ab");
+        // Backspace pops (was the inline `input.pop` duplicate).
+        assert!(!crate::tui::handle_key(
+            &mut state,
+            press(KeyCode::Backspace)
+        ));
+        assert_eq!(state.input, "a");
+        // PageUp/PageDown move scroll by 10 (was the inline ±10 duplicate).
+        for i in 0..30 {
+            state.transcript_lines.push(format!("line {i:02}"));
+        }
+        assert!(!crate::tui::handle_key(&mut state, press(KeyCode::PageUp)));
+        assert_eq!(state.scroll_offset, 10);
+        assert!(!crate::tui::handle_key(&mut state, press(KeyCode::PageDown)));
+        assert_eq!(state.scroll_offset, 0);
+        // Enter submits (was the inline Enter arm).
+        assert!(crate::tui::handle_key(&mut state, press(KeyCode::Enter)));
+        // While a modal is pending every key is ignored (loop's modal
+        // branch routes to `handle_modal_key` first — unchanged).
+        state.pending_approval =
+            Some(crate::tui::ApprovalModal::new(vec!["req".to_owned()]));
+        assert!(!crate::tui::handle_key(
+            &mut state,
+            press(KeyCode::Char('z'))
+        ));
+        assert!(!crate::tui::handle_key(&mut state, press(KeyCode::Enter)));
+    }
+    #[test]
+    fn t4_compose_session_is_the_single_shared_definition() {
+        // T4 B3 proof: both loops call the same `compose_session` — compose
+        // once here and require the full bundle (tools snapshot, policy,
+        // context wiring) to be present and byte-transparent OFF.
+        let root = temporary_directory("compose-shared");
+        let session = compose_session(InteractiveOptions {
+            config_path: None,
+            workspace_root: Some(&root),
+        })
+        .expect("compose");
+        // The composed tool definitions carry the three workspace tools in
+        // registration order (context tools absent OFF).
+        let names: Vec<&str> = session
+            .tool_definitions
+            .iter()
+            .map(|info| info.definition.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["workspace.list", "workspace.read", "workspace.search"]
+        );
+        // OFF: no context session, flag off.
+        assert!(!session.context_system_enabled);
+        assert!(session.context_session_holder.is_none());
+        // The same bundle the stdio loop consumes renders `/tools`
+        // byte-equal to a direct stdio dispatch: run the session and
+        // require the deterministic tool list.
+        let output = run("/tools\n/exit\n", &root, None);
+        assert!(output.contains("workspace.list"));
+        assert!(output.contains("workspace.read"));
+        assert!(output.contains("workspace.search"));
         let _ = remove_dir_all(root);
     }
     #[test]

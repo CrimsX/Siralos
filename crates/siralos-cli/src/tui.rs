@@ -861,22 +861,34 @@ impl Drop for TerminalGuard {
     }
 }
 
-// T1 composition note (updated T3): `run_interactive_session` blocks on
+// T1 composition note (updated T4): `run_interactive_session` blocks on
 // `BufRead::read_line`, which would starve the `crossterm::event::poll` pump,
 // so the live TUI loop duplicates the dispatch calling the SAME underlying seam
 // functions (sanitizer, `ensure_host`, command dispatch, `drain_events` with the
-// `TuiSink`). T2 started the consolidation: the shared helpers
-// `evaluate_approval_input` / `ApprovalModal::new` / `modal_key_decision` are the
-// SAME functions both loops call for the approval surface. T3 continues it
-// where the pane work touches: the audit/pane gating is the single shared
-// helper `interactive::context_audit_session` (enabled flag + session
-// presence — the same gating the decision 100 `/context` segment uses), the
-// TUI `/context` arm calls it instead of its own holder-only check, and the
-// pane snapshot (`build_context_pane`) reads the SAME `ContextMetrics` the
-// audit segment reads. Still duplicated (T4 owes it): the session-composition
-// block, the slash-command dispatch match (`handle_tui_line` vs the stdio
-// loop), and the inline key-edit handling in the live loop (which `handle_key`
-// shadows but the loop does not yet call). No forced big-bang refactor.
+// `TuiSink`). T2 consolidated the approval surface (`evaluate_approval_input` /
+// `ApprovalModal::new` / `modal_key_decision` + the `interactive.rs` shims);
+// T3 consolidated the audit/pane gating (the single shared helper
+// `interactive::context_audit_session` the stdio `/context` arm, the TUI
+// `/context` arm, and the pane builder all call) and the pane snapshot
+// builders (`build_context_pane`, `context_counters`, `context_ring_tail`,
+// `format_tick_record_line`, `tool_activity_from_history`,
+// `context_pane_lines`). T4 (decision 108) settles the rest — FINAL LEDGER:
+// SHARED now: `interactive::compose_session` (the whole session-composition
+// block — config gate, workspace root, tools, host rules, profile
+// declare/compose, replay wiring, provider choice, plugin/context selection,
+// context-system build, registry, lock verification, skills segment,
+// projection config, application, hosts/manifests); `parse_slash_command`
+// (the slash-command vocabulary) + `render_context_segment` /
+// `render_tools_segment` + `dispatch_stdio_command` / `dispatch_tui_command`
+// (the two thin per-frontend writers over the shared parse — one match, two
+// sinks); `handle_key` (the live loop routes ALL non-modal keys through it,
+// no inline duplicate); `flush_record_replay` (the decision 78 B2 exit
+// flush). PERMANENT RESIDUAL (per-frontend by construction, recorded with
+// the why): the stdio loop owns `reader`/`writer` generics; the TUI loop
+// owns the `TerminalGuard`/`Terminal`/`TuiState`/`TuiSink` terminal state;
+// Ctrl+C-exit, the PageUp viewport lookup (`terminal.size`), and the modal
+// verdict lines stay in the TUI loop because they need live terminal state.
+// No forced unification beyond this — the residual is the shape, not debt.
 // During a blocking provider round the UI simply does not redraw — the status
 // line showed "working" before the step and the freeze is documented.
 // Helpers for tests: expose scroll operations
@@ -1221,6 +1233,215 @@ mod tests {
         let ch_fn: fn(char) -> ApprovalDecision = evaluate_approval_char;
         assert_eq!(ch_fn('y'), ApprovalDecision::Approve);
         assert_eq!(ch_fn('n'), ApprovalDecision::Deny);
+    }
+
+    // T4 (decision 108) — render-model pinning: the four corpus scenarios
+    // as unit TestBackend snapshots over the PRODUCTION draw path (the same
+    // frames the harness `tui-render` records pin). Each test mirrors one
+    // `tests/differential/corpus/tui-render.*.json` input exactly; the
+    // harness record path pins the same frames as candidate-authored
+    // expectations at corpus v76.
+    mod t4_frame_snapshot_tests {
+        use super::super::*;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        /// Canonical frame: 24 row strings over the fixed 80x24 viewport,
+        /// trailing spaces trimmed per row (same serialization as the
+        /// harness `tui-render` record).
+        fn canonical_frame(
+            state: &TuiState,
+            pane: Option<&ContextPaneData>,
+            width: u16,
+            height: u16,
+        ) -> Vec<String> {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("terminal");
+            match pane {
+                Some(pane) => {
+                    terminal
+                        .draw(|frame| draw_with_pane(state, Some(pane), frame))
+                        .expect("draw");
+                }
+                None => {
+                    terminal.draw(|frame| draw(state, frame)).expect("draw");
+                }
+            }
+            let buffer = terminal.backend().buffer().clone();
+            let area = buffer.area;
+            let mut rows = Vec::with_capacity(area.height as usize);
+            for row in 0..area.height {
+                let mut line = String::new();
+                for col in 0..area.width {
+                    if let Some(cell) = buffer.cell((col, row)) {
+                        line.push_str(cell.symbol());
+                    }
+                }
+                rows.push(line.trim_end().to_owned());
+            }
+            rows
+        }
+
+        fn pane_fixture() -> ContextPaneData {
+            ContextPaneData {
+                counters: vec![
+                    ("ticks_total".to_owned(), 3),
+                    ("coalesced_noop_ticks_total".to_owned(), 0),
+                    ("events_total".to_owned(), 3),
+                    ("events_dropped_total".to_owned(), 0),
+                    ("demand_updates_total".to_owned(), 2),
+                    ("promotions_total".to_owned(), 1),
+                    ("demotions_total".to_owned(), 0),
+                    ("stale_demotions_total".to_owned(), 0),
+                    ("pin_quota_demotions_total".to_owned(), 0),
+                    ("budget_demotions_total".to_owned(), 0),
+                    ("assembled_summary_tokens_total".to_owned(), 300),
+                    ("neighbor_stub_tokens_total".to_owned(), 24),
+                ],
+                ring: (1..=3u64)
+                    .map(|now| siralos_core::context_metrics::TickRecord {
+                        now,
+                        canonical_event_count: 1,
+                        events_dropped: 0,
+                        tier_counts:
+                            siralos_core::context_metrics::TierCounts {
+                                hot: 0,
+                                warm: 0,
+                                cold: 0,
+                                archive: 0,
+                            },
+                        assembled_unique_total: 0,
+                        assembled_summary_total: 0,
+                        stub_total: 0,
+                        demotion_counts:
+                            siralos_core::context_metrics::DemotionKindCounts {
+                                stale: 0,
+                                pin_quota: 0,
+                                budget: 0,
+                            },
+                        promotion_count: 0,
+                    })
+                    .collect(),
+                activity: vec![
+                    ToolActivityEntry {
+                        tool_name: "context.inspect".to_owned(),
+                        status: "success".to_owned(),
+                    },
+                    ToolActivityEntry {
+                        tool_name: "context.search".to_owned(),
+                        status: "success".to_owned(),
+                    },
+                    ToolActivityEntry {
+                        tool_name: "workspace.read".to_owned(),
+                        status: "success".to_owned(),
+                    },
+                ],
+            }
+        }
+
+        #[test]
+        fn t4_frame_shell_basic_matches_harness_record() {
+            // Mirrors `tui-render.shell-basic`: transcript + input + status,
+            // no pane, no modal.
+            let mut state = TuiState::new();
+            state.transcript_lines = vec![
+                "Siralos received: hello".to_owned(),
+                "Context projection (mode generic)".to_owned(),
+                "Type /help for the list of available commands.".to_owned(),
+            ];
+            state.input = "help me".to_owned();
+            state.status = "ready".to_owned();
+            let frame = canonical_frame(&state, None, 80, 24);
+            assert_eq!(frame.len(), 24);
+            assert_eq!(frame[0], "Siralos received: hello");
+            assert_eq!(frame[1], "Context projection (mode generic)");
+            assert_eq!(
+                frame[2],
+                "Type /help for the list of available commands."
+            );
+            assert_eq!(frame[22], "> help me");
+            assert_eq!(frame[23], "ready");
+            // Deterministic: same input -> byte-equal frame.
+            assert_eq!(frame, canonical_frame(&state, None, 80, 24));
+        }
+
+        #[test]
+        fn t4_frame_transcript_scroll_matches_harness_record() {
+            // Mirrors `tui-render.transcript-scroll`: 40 lines, offset 8 —
+            // the tail window minus the offset (lines 10..31 visible).
+            let mut state = TuiState::new();
+            state.transcript_lines =
+                (0..40).map(|i| format!("line {i:02}")).collect();
+            state.status = "ready".to_owned();
+            state.scroll_offset = 8;
+            let frame = canonical_frame(&state, None, 80, 24);
+            assert_eq!(frame.len(), 24);
+            assert_eq!(frame[0], "line 10");
+            assert_eq!(frame[21], "line 31");
+            assert!(!frame.iter().any(|row| row.contains("line 39")));
+            assert!(!frame.iter().any(|row| row.contains("line 09")));
+            assert_eq!(frame, canonical_frame(&state, None, 80, 24));
+        }
+
+        #[test]
+        fn t4_frame_approval_modal_matches_harness_record() {
+            // Mirrors `tui-render.approval-modal`: modal over dimmed
+            // transcript, status `awaiting approval`.
+            let mut state = TuiState::new();
+            state.transcript_lines = vec![
+                "Siralos received: add a greeting".to_owned(),
+                "Tool call: workspace.read src/app.ts".to_owned(),
+                "Awaiting approval for the prepared change set.".to_owned(),
+            ];
+            state.status = "awaiting approval".to_owned();
+            state.pending_approval = Some(ApprovalModal::new(vec![
+                "Approve applying 1 change to src/app.ts?".to_owned(),
+                "  + export const greeting = \"hello\";".to_owned(),
+            ]));
+            let frame = canonical_frame(&state, None, 80, 24);
+            assert_eq!(frame.len(), 24);
+            let joined = frame.join("\n");
+            assert!(joined.contains("Approval required (y/n, Esc deny)"));
+            assert!(
+                joined.contains("Approve applying 1 change to src/app.ts?")
+            );
+            assert_eq!(frame[23], "awaiting approval");
+            // No-modal baseline differs.
+            let mut plain = TuiState::new();
+            plain.transcript_lines = state.transcript_lines.clone();
+            plain.status = state.status.clone();
+            assert_ne!(frame, canonical_frame(&plain, None, 80, 24));
+            assert_eq!(frame, canonical_frame(&state, None, 80, 24));
+        }
+
+        #[test]
+        fn t4_frame_context_pane_matches_harness_record() {
+            // Mirrors `tui-render.context-pane`: pane with the metrics
+            // snapshot (counters, 3 ring lines, 3 tool-activity lines).
+            let mut state = TuiState::new();
+            state.transcript_lines = vec![
+                "Siralos received: inspect the workspace".to_owned(),
+                "Tool call: context.inspect a.txt".to_owned(),
+                "Context projection (mode generic)".to_owned(),
+            ];
+            state.input = "what changed".to_owned();
+            state.status = "ready".to_owned();
+            let pane = pane_fixture();
+            let frame = canonical_frame(&state, Some(&pane), 80, 24);
+            assert_eq!(frame.len(), 24);
+            let joined = frame.join("\n");
+            assert!(joined.contains("counters:"));
+            assert!(joined.contains("ticks_total: 3"));
+            assert!(joined.contains("ring (last 8):"));
+            assert!(joined.contains("tools (last 8):"));
+            assert!(joined.contains("context.inspect success"));
+            assert_eq!(frame, canonical_frame(&state, Some(&pane), 80, 24));
+            // OFF (no pane) is byte-identical to the no-pane render.
+            assert_eq!(
+                canonical_frame(&state, None, 80, 24),
+                canonical_frame(&state, None, 80, 24)
+            );
+        }
     }
 
     // T3 (decision 107) — context pane tests (~7).

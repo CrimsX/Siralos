@@ -3097,6 +3097,59 @@ function validateContextSessionResult(record, label) {
   }
 }
 
+function validateTuiRenderResult(record, label) {
+  assertExactKeys(record.result, ["frame", "scenario", "viewport"], `${label}.result`);
+  const scenario = record.result.scenario;
+  assertExactKeys(
+    scenario,
+    [
+      "id",
+      "input",
+      "pane_present",
+      "pending_approval",
+      "scroll_offset",
+      "status",
+      "transcript_lines",
+    ],
+    `${label}.result.scenario`,
+  );
+  if (typeof scenario.id !== "string" || scenario.id.length === 0) {
+    throw new Error(`${label}.result.scenario.id must be a non-empty string`);
+  }
+  if (!Array.isArray(scenario.transcript_lines) || scenario.transcript_lines.length > 200) {
+    throw new Error(`${label}.result.scenario.transcript_lines must be a bounded array`);
+  }
+  for (const line of scenario.transcript_lines) {
+    if (typeof line !== "string") {
+      throw new Error(`${label}.result.scenario.transcript_lines entries must be strings`);
+    }
+  }
+  if (typeof scenario.input !== "string" || typeof scenario.status !== "string") {
+    throw new Error(`${label}.result.scenario.input/status must be strings`);
+  }
+  if (!Number.isSafeInteger(scenario.scroll_offset) || scenario.scroll_offset < 0) {
+    throw new Error(`${label}.result.scenario.scroll_offset must be a non-negative integer`);
+  }
+  if (scenario.pending_approval !== null && !Array.isArray(scenario.pending_approval)) {
+    throw new Error(`${label}.result.scenario.pending_approval must be null or an array`);
+  }
+  if (typeof scenario.pane_present !== "boolean") {
+    throw new Error(`${label}.result.scenario.pane_present must be a boolean`);
+  }
+  assertExactKeys(record.result.viewport, ["height", "width"], `${label}.result.viewport`);
+  if (record.result.viewport.width !== 80 || record.result.viewport.height !== 24) {
+    throw new Error(`${label}.result.viewport must be the fixed 80x24 viewport`);
+  }
+  if (!Array.isArray(record.result.frame) || record.result.frame.length !== 24) {
+    throw new Error(`${label}.result.frame must be exactly 24 row strings`);
+  }
+  for (const row of record.result.frame) {
+    if (typeof row !== "string" || row.length > 80) {
+      throw new Error(`${label}.result.frame rows must be strings of at most 80 characters`);
+    }
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -5017,6 +5070,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-session") {
     validateContextSessionResult(record, label);
+    return;
+  }
+  if (record.subject === "tui-render") {
+    validateTuiRenderResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

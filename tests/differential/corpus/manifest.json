@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 75,
+  "corpusVersion": 76,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -1311,6 +1311,22 @@
       "sha256": "2742dd9c3b070f2ecefb293914ca5ea1c72ffc15cf4ec56272ba1ae782ccbbfb"
     },
     {
+      "file": "tui-render.approval-modal.json",
+      "sha256": "2bf5ba1479df8b81da2434a77deb60c6d818c203095af826f06bafd49680eace"
+    },
+    {
+      "file": "tui-render.context-pane.json",
+      "sha256": "f3af3d120aed342114a68640b7643df4d45b76fcf8521d685b3104c1e7d958fa"
+    },
+    {
+      "file": "tui-render.shell-basic.json",
+      "sha256": "883a22fe4d4f151610d4d659212991552ca44132e05c1b3db4d604791bebc8c1"
+    },
+    {
+      "file": "tui-render.transcript-scroll.json",
+      "sha256": "f6d75cbce1b4d1c11f9b68a68084adb3359c5baaf851c91d251e4337da743c7d"
+    },
+    {
       "file": "user-config-matrix.json",
       "sha256": "5c50ed7508faa104a8f186043c0ba076c32f97bd8f3c9470fda5bdaeea94ad7f"
     },
@@ -1415,5 +1431,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "d76ebc8924ad674e1e85cce4f88ec3984b1972fc39ef2612c8f493de831829e6"
+  "corpusSha256": "bc2f973cb23b0aebcd85a7a41d4c1308d4b325426650e1455e74393994e87f6d"
 }

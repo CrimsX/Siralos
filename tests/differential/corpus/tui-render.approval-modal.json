@@ -1,0 +1,22 @@
+{
+  "id": "tui-render.approval-modal",
+  "subject": "tui-render",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "transcript_lines": [
+      "Siralos received: add a greeting",
+      "Tool call: workspace.read src/app.ts",
+      "Awaiting approval for the prepared change set."
+    ],
+    "input": "",
+    "status": "awaiting approval",
+    "scroll_offset": 0,
+    "pending_approval": [
+      "Approve applying 1 change to src/app.ts?",
+      "  + export const greeting = \"hello\";"
+    ],
+    "pane": null
+  }
+}

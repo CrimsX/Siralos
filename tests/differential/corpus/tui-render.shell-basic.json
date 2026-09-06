@@ -1,0 +1,19 @@
+{
+  "id": "tui-render.shell-basic",
+  "subject": "tui-render",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "transcript_lines": [
+      "Siralos received: hello",
+      "Context projection (mode generic)",
+      "Type /help for the list of available commands."
+    ],
+    "input": "help me",
+    "status": "ready",
+    "scroll_offset": 0,
+    "pending_approval": null,
+    "pane": null
+  }
+}

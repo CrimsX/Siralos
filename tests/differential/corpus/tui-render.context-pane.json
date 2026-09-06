@@ -1,0 +1,44 @@
+{
+  "id": "tui-render.context-pane",
+  "subject": "tui-render",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "transcript_lines": [
+      "Siralos received: inspect the workspace",
+      "Tool call: context.inspect a.txt",
+      "Context projection (mode generic)"
+    ],
+    "input": "what changed",
+    "status": "ready",
+    "scroll_offset": 0,
+    "pending_approval": null,
+    "pane": {
+      "counters": [
+        ["ticks_total", 3],
+        ["coalesced_noop_ticks_total", 0],
+        ["events_total", 3],
+        ["events_dropped_total", 0],
+        ["demand_updates_total", 2],
+        ["promotions_total", 1],
+        ["demotions_total", 0],
+        ["stale_demotions_total", 0],
+        ["pin_quota_demotions_total", 0],
+        ["budget_demotions_total", 0],
+        ["assembled_summary_tokens_total", 300],
+        ["neighbor_stub_tokens_total", 24]
+      ],
+      "ring": [
+        { "now": 1, "events": 1 },
+        { "now": 2, "events": 1 },
+        { "now": 3, "events": 1 }
+      ],
+      "activity": [
+        { "tool_name": "context.inspect", "status": "success" },
+        { "tool_name": "context.search", "status": "success" },
+        { "tool_name": "workspace.read", "status": "success" }
+      ]
+    }
+  }
+}
