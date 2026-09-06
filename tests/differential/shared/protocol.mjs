@@ -2936,6 +2936,59 @@ function validateContextBenchmarkResult(record, label) {
   }
 }
 
+function validateContextSessionResult(record, label) {
+  const result = record.result;
+  assertExactKeys(
+    result,
+    ["diagnostic", "enabled", "nodes", "off", "rounds", "tools", "workingSetNodes"],
+    `${label}.result`,
+  );
+  if (typeof result.enabled !== "boolean") {
+    throw new Error(`${label}.result.enabled must be a boolean`);
+  }
+  if (typeof result.off !== "boolean") {
+    throw new Error(`${label}.result.off must be a boolean`);
+  }
+  if (typeof result.diagnostic !== "string" && result.diagnostic !== null) {
+    throw new Error(`${label}.result.diagnostic must be a string or null`);
+  }
+  if (!Number.isSafeInteger(result.nodes) || result.nodes < 0 || result.nodes > 512) {
+    throw new Error(`${label}.result.nodes must be a small non-negative integer`);
+  }
+  if (!Number.isSafeInteger(result.workingSetNodes) || result.workingSetNodes < 0) {
+    throw new Error(`${label}.result.workingSetNodes must be a non-negative integer`);
+  }
+  if (!Array.isArray(result.tools) || result.tools.length > 3) {
+    throw new Error(`${label}.result.tools must be a bounded array`);
+  }
+  const toolNames = new Set(["context.search", "context.inspect", "context.expand"]);
+  for (const [index, name] of result.tools.entries()) {
+    if (typeof name !== "string" || !toolNames.has(name)) {
+      throw new Error(`${label}.result.tools[${index}] must be a context tool name`);
+    }
+  }
+  if (!Array.isArray(result.rounds) || result.rounds.length > 32) {
+    throw new Error(`${label}.result.rounds must be a bounded array`);
+  }
+  for (const [index, round] of result.rounds.entries()) {
+    const rLabel = `${label}.result.rounds[${index}]`;
+    assertExactKeys(round, ["demoted", "promoted", "tick"], rLabel);
+    if (!Number.isSafeInteger(round.tick) || round.tick < 0) {
+      throw new Error(`${rLabel}.tick must be a non-negative integer`);
+    }
+    for (const key of ["promoted", "demoted"]) {
+      if (!Array.isArray(round[key])) {
+        throw new Error(`${rLabel}.${key} must be an array`);
+      }
+      for (const [j, id] of round[key].entries()) {
+        if (typeof id !== "string" || id.length === 0) {
+          throw new Error(`${rLabel}.${key}[${j}] must be a non-empty string`);
+        }
+      }
+    }
+  }
+}
+
 function validateSessionReplayResult(record, label) {
   assertExactKeys(
     record.result,
@@ -4852,6 +4905,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "context-benchmark") {
     validateContextBenchmarkResult(record, label);
+    return;
+  }
+  if (record.subject === "context-session") {
+    validateContextSessionResult(record, label);
     return;
   }
   if (record.subject === "tool-loop") {

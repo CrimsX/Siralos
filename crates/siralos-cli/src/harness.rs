@@ -122,6 +122,7 @@ const SUBJECT_CONTEXT_SCHEDULER: &str = "context-scheduler";
 const SUBJECT_CONTEXT_TOOL: &str = "context-tool";
 const SUBJECT_CONTEXT_SCAN: &str = "context-scan";
 const SUBJECT_CONTEXT_BENCHMARK: &str = "context-benchmark";
+const SUBJECT_CONTEXT_SESSION: &str = "context-session";
 /// Hermetic endpoint pinned by the harness for provider subjects: an
 /// unreachable loopback address, so the executed provider call never
 /// performs live network I/O and the `reqwest` refusal is deterministic
@@ -130,7 +131,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 73;
+const CORPUS_VERSION: u64 = 74;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -531,6 +532,7 @@ fn validate_scenario(
             | SUBJECT_CONTEXT_TOOL
             | SUBJECT_CONTEXT_SCAN
             | SUBJECT_CONTEXT_BENCHMARK
+            | SUBJECT_CONTEXT_SESSION
             | SUBJECT_CLI_SESSION
     ) {
         return Err(HarnessError::corpus(format!(
@@ -629,6 +631,7 @@ fn validate_scenario(
         | SUBJECT_CONTEXT_TOOL
         | SUBJECT_CONTEXT_SCAN
         | SUBJECT_CONTEXT_BENCHMARK
+        | SUBJECT_CONTEXT_SESSION
         | SUBJECT_TOOL_LOOP
         | SUBJECT_CONTEXT_PROJECTION
         | SUBJECT_USER_CONFIG
@@ -728,6 +731,11 @@ fn validate_scenario(
             if context_benchmark_subject {
                 validate_context_benchmark_input(input)?;
             }
+            let context_session_subject =
+                scenario.subject.as_str() == SUBJECT_CONTEXT_SESSION;
+            if context_session_subject {
+                validate_context_session_input(input)?;
+            }
             let tool_loop_subject =
                 scenario.subject.as_str() == SUBJECT_TOOL_LOOP;
             if tool_loop_subject {
@@ -803,6 +811,7 @@ fn validate_scenario(
                 || context_scheduler_subject
                 || context_tool_subject
                 || context_benchmark_subject
+                || context_session_subject
             {
                 MAX_PROVIDER_INPUT_BYTES
             } else if tool_loop_subject {
@@ -1571,6 +1580,18 @@ fn run_scenario(
                 "context-benchmark input was validated while loading the corpus",
             );
             let result = context_benchmark_record(input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
+        SUBJECT_CONTEXT_SESSION => {
+            let input = scenario.input.as_ref().expect(
+                "context-session input was validated while loading the corpus",
+            );
+            let result = context_session_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -10207,6 +10228,97 @@ fn context_scan_record(
     })
 }
 
+/// Activation B3b (decision 99): canonical `context-session` record.
+///
+/// Mirrors the CPU session wiring seam: load the workspace profile, read
+/// the additive `[profile.context_system]` opt-in only when the profile is
+/// actually applied (a malformed table leaves the profile unapplied and
+/// therefore OFF), build the host-side `ContextSystemSession` (build on
+/// opt-in, fail-closed diagnostic otherwise), and optionally drive the
+/// demand loop over host-observed rounds (each round's calls become
+/// `ToolObservation`s and one tick). The record is deterministic and
+/// bounded: tools are the three read-only context tools, the working set is
+/// over the classified graph, and every tick is a canonical bounded
+/// `TickInput`.
+fn context_session_record(input: &Value) -> Result<Value, HarnessError> {
+    with_fixture_workspace("context-session", input, |root| {
+        // Only an applied profile contributes the opt-in; absent key or
+        // enabled=false is byte-transparent, and a malformed context_system
+        // table leaves the whole profile unapplied (decision 48 C3).
+        let enabled = match siralos_adapters::profile_config::load_workspace_profile(
+            root,
+        ) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                record,
+            ) => record.context_system_enabled,
+            _ => false,
+        };
+        let build = siralos_adapters::context_session::build_context_system(
+            root, enabled,
+        );
+        let session = build.session.clone();
+        if session.is_none() {
+            return Ok(json!({
+                "enabled": enabled,
+                "off": true,
+                "diagnostic": build.diagnostic.unwrap_or_default(),
+                "nodes": 0,
+                "tools": [],
+                "workingSetNodes": 0,
+                "rounds": [],
+            }));
+        }
+        let mut s = session.expect("session");
+        let mut tools: Vec<String> = s
+            .register_tools()
+            .iter()
+            .map(|tool| tool.definition().name.clone())
+            .collect();
+        tools.sort();
+        let nodes = s.workspace.graph.nodes().len();
+        let working_set_nodes = s.working_set.entries().len();
+        let mut rounds: Vec<Value> = Vec::new();
+        if let Ok(round_specs) = scenario_array(input, "rounds") {
+            for spec in round_specs {
+                let mut observations: Vec<
+                    siralos_adapters::tool::context_events::ToolObservation,
+                > = Vec::new();
+                if let Ok(calls) = scenario_array(spec, "calls") {
+                    for call in calls {
+                        let tool = scenario_string(call, "tool")?;
+                        let node_id = scenario_string(call, "node_id")?;
+                        observations.push(
+                            siralos_adapters::tool::context_events::ToolObservation::new(
+                                tool.clone(),
+                                json!({ "node_id": node_id }),
+                                siralos_core::provider::ToolExecutionResult::Success {
+                                    output: json!({ "id": node_id }),
+                                    summary: format!("{tool} {node_id}"),
+                                },
+                            ),
+                        );
+                    }
+                }
+                let report = s.drive_tick(&observations);
+                rounds.push(json!({
+                    "tick": report.tick,
+                    "promoted": report.promoted,
+                    "demoted": report.demoted,
+                }));
+            }
+        }
+        Ok(json!({
+            "enabled": enabled,
+            "off": false,
+            "diagnostic": null,
+            "nodes": nodes,
+            "tools": tools,
+            "workingSetNodes": working_set_nodes,
+            "rounds": rounds,
+        }))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Stage 3R R7.1 subject: provider-turn.
 
@@ -15207,6 +15319,20 @@ fn validate_context_benchmark_input(
     Ok(())
 }
 
+/// Activation B3b (decision 99): `context-session` input shape. The input is
+/// an object (fixture `files`, optional `siralos.toml` profile, optional
+/// `rounds`); no strict key set is enforced beyond the object bound (the
+/// record is candidate-authored and digest-bound).
+fn validate_context_session_input(input: &Value) -> Result<(), HarnessError> {
+    let obj = input.as_object().ok_or_else(|| {
+        HarnessError::corpus("context-session input must be an object")
+    })?;
+    for key in obj.keys() {
+        let _ = key;
+    }
+    Ok(())
+}
+
 /// Strict provider-generic input shape validation (Stage 8, all-purpose provider).
 fn validate_provider_generic_input(input: &Value) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
@@ -18827,7 +18953,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 347);
+        assert_eq!(loaded.len(), 351);
     }
 
     #[test]

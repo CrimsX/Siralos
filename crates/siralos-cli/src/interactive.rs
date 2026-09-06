@@ -55,6 +55,7 @@ use siralos_core::projection::{
     capacity::ContextCapacity,
     segments::{SegmentInput, Stability},
 };
+use siralos_core::provider::ConversationItem;
 use siralos_core::tool::session::ApplicationProjectionConfig;
 use siralos_core::tool::{
     PermissionPolicy, PermissionRule, PolicyRule, SiralosApplication,
@@ -234,12 +235,11 @@ where
             .map_err(InteractiveError::CurrentDirectory)?,
     };
     let workspace_root = resolve_workspace_root(&workspace_root)?;
-    let tools: Vec<Box<dyn siralos_core::tool::Tool>> = vec![
+    let mut tools: Vec<Box<dyn siralos_core::tool::Tool>> = vec![
         Box::new(WorkspaceListTool::new(&workspace_root)?),
         Box::new(WorkspaceReadTool::new(&workspace_root)?),
         Box::new(WorkspaceSearchTool::new(&workspace_root)?),
     ];
-    let registry = ToolRegistry::new(tools)?;
     // R7.4 profiles select the built-in fail-closed posture; they never
     // grant a Tool. The only registered R7.2 capability is read-only
     // workspace inspection, and its decision is still checked per call.
@@ -421,6 +421,45 @@ where
         } else {
             None
         };
+    // Activation B3b (decision 99): the session wires the read-only context
+    // subsystem behind the additive `[profile.context_system]` opt-in. Only
+    // an actually-applied profile contributes the opt-in (absent key or
+    // enabled=false is byte-transparent), and a widening interpretation is
+    // impossible by construction: the key only registers read-only context
+    // tools over an immutable snapshot and updates an in-memory working set.
+    // A build failure is a host-side diagnostic and the subsystem stays off
+    // (never fatal, never partial — no tools are registered if the build
+    // failed). Nothing persists; no rendering changes (B4 owns the audit
+    // surface).
+    let context_system_enabled: bool = if effective.applied_profile.is_some() {
+        match &loaded_profile {
+            WorkspaceProfileLoad::Record(record) => {
+                record.context_system_enabled
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+    let context_build =
+        siralos_adapters::context_session::build_context_system(
+            &workspace_root,
+            context_system_enabled,
+        );
+    if let Some(diagnostic) = &context_build.diagnostic {
+        eprintln!("siralos: {diagnostic}");
+    }
+    let mut context_session_holder: Option<
+        siralos_adapters::context_session::ContextSystemSession,
+    > = context_build.session.clone();
+    // The number of conversation items already observed by the demand loop.
+    // The demand edge only derives NEW, host-observed context-tool results
+    // since the last tick, so repeated prompts never double-tick a node.
+    let mut context_history_len: usize = 0;
+    if let Some(session) = &context_session_holder {
+        tools.extend(session.register_tools());
+    }
+    let registry = ToolRegistry::new(tools)?;
     // Stage 5.9 (decision 55): verify the on-disk `siralos.lock` against
     // the recomputed current lock. The lock never gates authority: the
     // session always proceeds on live Host state and reports drift or
@@ -592,6 +631,13 @@ where
                         },
                     )?;
                     drain_events(&mut application, &mut writer)?;
+                    if let Some(session) = &mut context_session_holder {
+                        drive_context_demand(
+                            &mut application,
+                            session,
+                            &mut context_history_len,
+                        );
+                    }
                 }
             }
         }
@@ -1146,6 +1192,79 @@ where
         }
     }
     Ok(())
+}
+
+/// Activation B3b (decision 99): drive the demand loop from host-observed
+/// context-tool results after a completed prompt.
+///
+/// The only observations that reach the scheduler are paired
+/// `AssistantToolCall` -> `ToolResult` entries from the authoritative
+/// Host-owned conversation history for the three read-only context tools
+/// (`context.search` / `context.inspect` / `context.expand`). The model can
+/// never inject events or scores: the demand helpers (`compose_tick_input`
+/// and friends) accept only host-observed `ToolObservation`s, and this is
+/// the only surface feeding the session working set. New history items since
+/// the last tick are processed exactly once; a prompt with no context-tool
+/// results yields an empty observation set whose tick coalesces naturally
+/// (the decision 89 guard), so no-op rounds change nothing.
+fn drive_context_demand<P>(
+    application: &mut SiralosApplication<'_, P>,
+    session: &mut siralos_adapters::context_session::ContextSystemSession,
+    context_history_len: &mut usize,
+) where
+    P: siralos_core::provider::ModelProvider,
+{
+    let history = application.history();
+    let start = (*context_history_len).min(history.len());
+    let new_items: &[ConversationItem] = &history[start..];
+    let mut observations: Vec<
+        siralos_adapters::tool::context_events::ToolObservation,
+    > = Vec::new();
+    // Pair assistant tool calls with their results within the new window.
+    let mut pending_inputs = std::collections::BTreeMap::new();
+    for item in new_items {
+        match item {
+            ConversationItem::AssistantToolCall {
+                call_id,
+                tool_name,
+                input,
+            } => {
+                if input.value().is_some()
+                    && matches!(
+                        tool_name.as_str(),
+                        "context.search"
+                            | "context.inspect"
+                            | "context.expand"
+                    )
+                {
+                    pending_inputs.insert(
+                        call_id.clone(),
+                        input.value().expect("value present").clone(),
+                    );
+                }
+            }
+            ConversationItem::ToolResult { call_id, tool_name, result } => {
+                if !matches!(
+                    tool_name.as_str(),
+                    "context.search" | "context.inspect" | "context.expand"
+                ) {
+                    continue;
+                }
+                if let Some(input) = pending_inputs.remove(call_id) {
+                    observations.push(
+                        siralos_adapters::tool::context_events::ToolObservation::new(
+                            tool_name.clone(),
+                            input,
+                            result.clone(),
+                        ),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    *context_history_len = history.len();
+    let _ = session.drive_tick(&observations);
 }
 
 #[cfg(test)]
@@ -1727,5 +1846,60 @@ mod tests {
         assert_eq!(loaded.recordings.len(), 1);
         assert_eq!(loaded.recordings[0].body, body1);
         let _ = remove_dir_all(root4);
+    }
+
+    #[test]
+    fn context_system_off_tools_are_byte_transparent() {
+        // A workspace with no applied profile must NOT register the three
+        // context tools — the OFF path is byte-transparent (decision 99 W3).
+        let root = temporary_directory("context-system-off");
+        let output = run("/tools\n/exit\n", &root, None);
+        assert!(output.contains("workspace.list"));
+        assert!(output.contains("workspace.read"));
+        assert!(output.contains("workspace.search"));
+        assert!(!output.contains("context.search"));
+        assert!(!output.contains("context.inspect"));
+        assert!(!output.contains("context.expand"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn context_system_optin_registers_exactly_three_context_tools() {
+        // An applied profile with `[profile.context_system] enabled = true`
+        // registers exactly the three read-only context tools (W2). An
+        // absent or false key leaves the session byte-transparent (W3).
+        let root = temporary_directory("context-system-on");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = true\n",
+        )
+        .expect("profile");
+        let output = run("/tools\n/exit\n", &root, None);
+        assert!(output.contains("context.search"));
+        assert!(output.contains("context.inspect"));
+        assert!(output.contains("context.expand"));
+        // The workspace tools remain present; no mutation capability appears.
+        assert!(output.contains("workspace.read"));
+        assert!(!output.contains("workspace.write"));
+        assert!(!output.contains("context_system"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn context_system_malformed_profile_leaves_off() {
+        // A present `[profile.context_system]` without a valid boolean
+        // enabled leaves the WHOLE profile unapplied (decision 48 C3); the
+        // session stays byte-transparent (no context tools, no change).
+        let root = temporary_directory("context-system-malformed");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = \"yes\"\n",
+        )
+        .expect("profile");
+        let output = run("/tools\n/exit\n", &root, None);
+        assert!(!output.contains("context.search"));
+        assert!(!output.contains("context.inspect"));
+        assert!(!output.contains("context.expand"));
+        let _ = remove_dir_all(root);
     }
 }

@@ -1,0 +1,36 @@
+{
+  "id": "context-session.session-demand-loop",
+  "subject": "context-session",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "siralos.toml",
+        "content": "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = true\n"
+      },
+      {
+        "path": "a.txt",
+        "content": "alpha body"
+      },
+      {
+        "path": "b.txt",
+        "content": "beta body"
+      }
+    ],
+    "rounds": [
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "a.txt"
+          }
+        ]
+      },
+      {
+        "calls": []
+      }
+    ]
+  }
+}

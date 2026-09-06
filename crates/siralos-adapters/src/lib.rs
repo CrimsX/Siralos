@@ -11,6 +11,7 @@
 
 pub mod config;
 pub mod context_scan;
+pub mod context_session;
 pub mod domain;
 pub mod language;
 pub mod lockfile;

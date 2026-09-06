@@ -107,6 +107,13 @@ pub struct ProfileRecord {
     /// When true, the session composes a replay provider over the
     /// workspace store (decision 78 B2).
     pub replay: bool,
+    /// Activation B3b (decision 99): the additive `[profile.context_system]`
+    /// opt-in, default-off. Distinct from the decision 54 `[profile.context]`
+    /// CONTROLS key; both may coexist. When true on an applied profile, the
+    /// session wires the read-only context subsystem (WorkspaceContext build,
+    /// the three context tools over the derived snapshot, and the demand loop).
+    /// Absent table defaults to false (byte-transparent).
+    pub context_system_enabled: bool,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -1503,6 +1510,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1535,6 +1543,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1561,6 +1570,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1584,6 +1594,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -1603,6 +1614,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -1628,6 +1640,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -1675,6 +1688,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -1871,6 +1885,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let error = record.validate().expect_err("duplicate refused");
         assert!(error.message.contains("more than once"));
@@ -1886,6 +1901,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         let error = record.validate().expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
@@ -1901,6 +1917,7 @@ mod tests {
             endpoint: None,
             record_replay: false,
             replay: false,
+            context_system_enabled: false,
         };
         record.validate().expect("valid");
     }

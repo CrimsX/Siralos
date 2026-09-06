@@ -250,6 +250,7 @@ pub fn parse_profile_value(
             && key != "endpoint"
             && key != "record-replay"
             && key != "replay"
+            && key != "context_system"
         {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
@@ -365,6 +366,7 @@ pub fn parse_profile_value(
         };
         endpoint = Some(text.to_owned());
     }
+    let mut context_system_enabled = false;
     let mut record_replay = false;
     if let Some(value) = profile.get("record-replay") {
         let Some(flag) = value.as_bool() else {
@@ -389,6 +391,34 @@ pub fn parse_profile_value(
             "The profile cannot set both record-replay and replay; they are contradictory.".to_owned(),
         ));
     }
+    // Activation B3b (decision 99): the additive `[profile.context_system]`
+    // table with exactly one key `enabled: bool`. Absent table -> default
+    // false (byte-transparent, the session behavior matches a non-opted-in
+    // session); a present table without a valid boolean `enabled` leaves the
+    // whole profile unapplied (the established malformed-leaves-unapplied
+    // pattern, decision 48 C3). Distinct from the decision 54
+    // `[profile.context]` CONTROLS key; both may coexist.
+    if let Some(value) = profile.get("context_system") {
+        let Some(table) = value.as_table() else {
+            return Err(error(
+                "The [profile.context_system] entry must be a table.",
+            ));
+        };
+        for key in table.keys() {
+            if key != "enabled" {
+                return Err(error(format!(
+                    "Unknown profile context_system field {key:?}."
+                )));
+            }
+        }
+        let Some(flag) = table.get("enabled").and_then(toml::Value::as_bool)
+        else {
+            return Err(error(
+                "The [profile.context_system] table requires a boolean enabled.".to_owned(),
+            ));
+        };
+        context_system_enabled = flag;
+    }
     Ok(ProfileRecord {
         name: name.to_owned(),
         overlay,
@@ -401,6 +431,7 @@ pub fn parse_profile_value(
         endpoint,
         record_replay,
         replay,
+        context_system_enabled,
     })
 }
 
@@ -619,6 +650,75 @@ widgets = ["x"]
             panic!("expected invalid, got {load:?}");
         };
         assert!(diagnostic.contains("does not parse"));
+    }
+
+    #[test]
+    fn context_system_parses_and_malformed_leaves_unapplied() {
+        // Absent table -> default off (byte-transparent).
+        let absent = parse_profile_document("\n[profile]\nname = \"dev\"\n")
+            .expect("absent");
+        assert!(!absent.context_system_enabled);
+        // enabled = true -> on; enabled = false -> off.
+        let on = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = true\n",
+        )
+        .expect("on");
+        assert!(on.context_system_enabled);
+        let off = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = false\n",
+        )
+        .expect("off");
+        assert!(!off.context_system_enabled);
+        // A present table without a valid boolean enabled leaves the whole
+        // profile unapplied (parsing fails -> Invalid, decision 48 C3).
+        for document in [
+            "\n[profile]\nname = \"dev\"\n\n[profile.context_system]\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = \"yes\"\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = 1\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context_system]\nother = true\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = true\nsurprise = 1\n",
+            "\n[profile]\nname = \"dev\"\ncontext_system = true\n",
+        ] {
+            let error = parse_profile_document(document)
+                .expect_err("malformed context_system refused");
+            assert!(!error.message.is_empty());
+        }
+    }
+
+    #[test]
+    fn context_system_coexists_with_decision_54_controls() {
+        // Both the decision 54 [profile.context] CONTROLS key and the
+        // decision 99 [profile.context_system] opt-in may coexist.
+        let document = "\n[profile]\nname = \"dev\"\ncontext = \"live\"\n\n[profile.context_system]\nenabled = true\n";
+        let record = parse_profile_document(document).expect("coexist");
+        assert!(matches!(
+            record.context,
+            Some(siralos_core::context::ContextPolicy::Live)
+        ));
+        assert!(record.context_system_enabled);
+        // Also via workspace load -> profile carries the opt-in.
+        let root = workspace();
+        std::fs::write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = true\n",
+        )
+        .expect("write");
+        let load = super::load_workspace_profile(&root);
+        let super::WorkspaceProfileLoad::Record(record) = load else {
+            panic!("expected a record, got {load:?}");
+        };
+        assert!(record.context_system_enabled);
+        // And via load with a malformed context_system -> Invalid (not applied).
+        std::fs::write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = \"x\"\n",
+        )
+        .expect("write");
+        let load = super::load_workspace_profile(&root);
+        let super::WorkspaceProfileLoad::Invalid { diagnostic } = load else {
+            panic!("expected invalid, got {load:?}");
+        };
+        assert!(diagnostic.contains("boolean enabled"));
     }
 
     #[test]

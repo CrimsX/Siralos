@@ -1,0 +1,23 @@
+{
+  "id": "context-session.session-optin-builds",
+  "subject": "context-session",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "siralos.toml",
+        "content": "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = true\n"
+      },
+      {
+        "path": "a.txt",
+        "content": "alpha body"
+      },
+      {
+        "path": "b.txt",
+        "content": "beta body"
+      }
+    ]
+  }
+}

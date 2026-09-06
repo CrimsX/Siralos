@@ -1,0 +1,19 @@
+{
+  "id": "context-session.session-malformed-key-refuses",
+  "subject": "context-session",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "siralos.toml",
+        "content": "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = \"yes\"\n"
+      },
+      {
+        "path": "a.txt",
+        "content": "alpha body"
+      }
+    ]
+  }
+}

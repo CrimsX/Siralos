@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 73;
+export const CORPUS_VERSION = 74;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -93,6 +93,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "context-tool",
   "context-scan",
   "context-benchmark",
+  "context-session",
   "cli-session",
 ]);
 export const ALLOWED_PLATFORMS = new Set(["*", "windows", "posix"]);
@@ -847,6 +848,19 @@ function validateSubjectInputs(scenario, label) {
     // Minimal: any bounded plain object accepted ({}).
     return;
   }
+  if (scenario.subject === "context-session") {
+    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
+      throw new Error(`${label} context-session inputs must use platforms ["*"] and an empty env`);
+    }
+    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
+      throw new Error(`${label}.input must be a plain object`);
+    }
+    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.providerInputBytes) {
+      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.providerInputBytes} UTF-8 bytes`);
+    }
+    // Minimal: fixture files + optional profile + optional rounds.
+    return;
+  }
   if (scenario.subject === "context-projection") {
     if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
       throw new Error(
@@ -1254,6 +1268,7 @@ export function validateScenario(scenario, file) {
     "context-scheduler",
     "context-tool",
     "context-benchmark",
+    "context-session",
     "tool-loop",
     "context-projection",
     "user-config",
