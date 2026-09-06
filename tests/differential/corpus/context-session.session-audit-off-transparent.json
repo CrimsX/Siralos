@@ -1,0 +1,19 @@
+{
+  "id": "context-session.session-audit-off-transparent",
+  "subject": "context-session",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "a.txt",
+        "content": "alpha body"
+      },
+      {
+        "path": "b.txt",
+        "content": "beta body"
+      }
+    ]
+  }
+}

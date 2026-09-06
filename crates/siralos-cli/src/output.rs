@@ -107,6 +107,89 @@ fn fingerprint_prefix(fingerprint: &str) -> &str {
     &fingerprint[..fingerprint.len().min(8)]
 }
 
+/// Activation B4 (decision 100): bounded trailing audit segment for opted-in
+/// sessions — counters in pinned declaration order + the last 8 tick records
+/// oldest-first. Pure function of the in-memory ring + counters; identical
+/// state -> identical bytes. Empty ring -> counters only, no ring lines.
+/// The caller must gate on opt-in + successful build; OFF returns empty
+/// (byte-transparent). Bounded by construction (12 counters, 8 records,
+/// fixed per-record line shape).
+#[must_use]
+pub fn format_context_audit(
+    session: Option<&siralos_adapters::context_session::ContextSystemSession>,
+) -> String {
+    let Some(session) = session else {
+        return String::new();
+    };
+    let m = &session.metrics;
+    let mut out = String::new();
+    out.push_str("Context audit:\n");
+    out.push_str("  counters:\n");
+    out.push_str(&format!("    ticks_total: {}\n", m.ticks_total));
+    out.push_str(&format!(
+        "    coalesced_noop_ticks_total: {}\n",
+        m.coalesced_noop_ticks_total
+    ));
+    out.push_str(&format!("    events_total: {}\n", m.events_total));
+    out.push_str(&format!(
+        "    events_dropped_total: {}\n",
+        m.events_dropped_total
+    ));
+    out.push_str(&format!(
+        "    demand_updates_total: {}\n",
+        m.demand_updates_total
+    ));
+    out.push_str(&format!("    promotions_total: {}\n", m.promotions_total));
+    out.push_str(&format!("    demotions_total: {}\n", m.demotions_total));
+    out.push_str(&format!(
+        "    stale_demotions_total: {}\n",
+        m.stale_demotions_total
+    ));
+    out.push_str(&format!(
+        "    pin_quota_demotions_total: {}\n",
+        m.pin_quota_demotions_total
+    ));
+    out.push_str(&format!(
+        "    budget_demotions_total: {}\n",
+        m.budget_demotions_total
+    ));
+    out.push_str(&format!(
+        "    assembled_summary_tokens_total: {}\n",
+        m.assembled_summary_tokens_total
+    ));
+    out.push_str(&format!(
+        "    neighbor_stub_tokens_total: {}\n",
+        m.neighbor_stub_tokens_total
+    ));
+    let records = m.records();
+    if records.is_empty() {
+        return out;
+    }
+    out.push_str("  ring (last 8):\n");
+    let start = records.len().saturating_sub(8);
+    for rec in &records[start..] {
+        out.push_str(&format!(
+            "    tick {}: now={} canonical_event_count={} events_dropped={} tier_counts hot={} warm={} cold={} archive={} assembled_unique_total={} assembled_summary_total={} stub_total={} demotion_counts stale={} pin_quota={} budget={} promotion_count={}\n",
+            rec.now,
+            rec.now,
+            rec.canonical_event_count,
+            rec.events_dropped,
+            rec.tier_counts.hot,
+            rec.tier_counts.warm,
+            rec.tier_counts.cold,
+            rec.tier_counts.archive,
+            rec.assembled_unique_total,
+            rec.assembled_summary_total,
+            rec.stub_total,
+            rec.demotion_counts.stale,
+            rec.demotion_counts.pin_quota,
+            rec.demotion_counts.budget,
+            rec.promotion_count,
+        ));
+    }
+    out
+}
+
 /// Render the installed domains view (`/domains`): the deterministic
 /// empty state, or the recorded plugin list sorted by id.
 pub fn format_domains(records: &[PluginRecord]) -> String {
@@ -313,5 +396,264 @@ mod tests {
                 &gated_last.request.tool_projection.fingerprint[..8]
             )
         );
+    }
+
+    // B4 (decision 100) — audit surface tests (~7)
+    #[test]
+    fn audit_off_transparency_is_byte_identical() {
+        use crate::output::format_context_audit;
+        assert_eq!(format_context_audit(None), "");
+        let base =
+            "Context projection: not yet computed (send a prompt first)\n";
+        let audit = format_context_audit(None);
+        let combined = if audit.is_empty() {
+            base.to_owned()
+        } else {
+            format!("{base}{audit}")
+        };
+        assert_eq!(combined, base);
+    }
+
+    #[test]
+    fn audit_on_renders_counters_in_pinned_order() {
+        use crate::output::format_context_audit;
+        use siralos_adapters::context_session::build_context_system;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir()
+            .join(format!("siralos-audit-counters-{nonce}"));
+        std::fs::create_dir_all(&root).expect("temp dir");
+        std::fs::write(root.join("a.txt"), b"alpha").expect("write");
+        let build = build_context_system(&root, true);
+        let mut session = build.session.expect("session");
+        let obs = siralos_adapters::tool::context_events::ToolObservation::new(
+            "context.inspect",
+            serde_json::json!({ "node_id": "a.txt" }),
+            siralos_core::provider::ToolExecutionResult::Success {
+                output: serde_json::json!({ "id": "a.txt" }),
+                summary: "inspect a.txt".to_owned(),
+            },
+        );
+        let _ = session.drive_tick(std::slice::from_ref(&obs));
+        let audit = format_context_audit(Some(&session));
+        assert!(audit.contains("Context audit:\n"));
+        assert!(audit.contains("  counters:\n"));
+        let order = [
+            "    ticks_total:",
+            "    coalesced_noop_ticks_total:",
+            "    events_total:",
+            "    events_dropped_total:",
+            "    demand_updates_total:",
+            "    promotions_total:",
+            "    demotions_total:",
+            "    stale_demotions_total:",
+            "    pin_quota_demotions_total:",
+            "    budget_demotions_total:",
+            "    assembled_summary_tokens_total:",
+            "    neighbor_stub_tokens_total:",
+        ];
+        let mut last_pos = 0usize;
+        for needle in order {
+            let pos = audit[last_pos..].find(needle).expect(needle);
+            last_pos += pos + needle.len();
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn audit_on_renders_last_8_records_oldest_first_bounded() {
+        use crate::output::format_context_audit;
+        use siralos_adapters::context_session::build_context_system;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("siralos-audit-ring-{nonce}"));
+        std::fs::create_dir_all(&root).expect("temp dir");
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(root.join(name), format!("body {name}").as_bytes())
+                .expect("write");
+        }
+        let build = build_context_system(&root, true);
+        let mut session = build.session.expect("session");
+        for i in 0..10 {
+            let node = match i % 3 {
+                0 => "a.txt",
+                1 => "b.txt",
+                _ => "c.txt",
+            };
+            let obs =
+                siralos_adapters::tool::context_events::ToolObservation::new(
+                    "context.inspect",
+                    serde_json::json!({ "node_id": node }),
+                    siralos_core::provider::ToolExecutionResult::Success {
+                        output: serde_json::json!({ "id": node }),
+                        summary: format!("inspect {node}"),
+                    },
+                );
+            let _ = session.drive_tick(std::slice::from_ref(&obs));
+        }
+        let audit = format_context_audit(Some(&session));
+        let ring_lines: Vec<&str> = audit
+            .lines()
+            .filter(|l| l.trim_start().starts_with("tick "))
+            .collect();
+        assert_eq!(ring_lines.len(), 8, "expected last 8 records");
+        assert!(
+            ring_lines[0].contains("now=3"),
+            "first ring line should be oldest of last 8, got {}",
+            ring_lines[0]
+        );
+        assert!(
+            ring_lines[7].contains("now=10"),
+            "last ring line should be newest, got {}",
+            ring_lines[7]
+        );
+        for line in &ring_lines {
+            assert!(line.contains("canonical_event_count="));
+            assert!(line.contains("events_dropped="));
+            assert!(line.contains("tier_counts"));
+            assert!(line.contains("assembled_unique_total="));
+            assert!(line.contains("demotion_counts"));
+            assert!(line.contains("promotion_count="));
+            assert!(line.len() < 400, "ring line should be bounded");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn audit_determinism_is_byte_equal() {
+        use crate::output::format_context_audit;
+        use siralos_adapters::context_session::build_context_system;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir()
+            .join(format!("siralos-audit-determ-twice-{nonce}"));
+        std::fs::create_dir_all(&root).expect("temp");
+        std::fs::write(root.join("a.txt"), b"alpha").expect("write");
+        let build = build_context_system(&root, true);
+        let mut session = build.session.expect("session");
+        let obs = siralos_adapters::tool::context_events::ToolObservation::new(
+            "context.inspect",
+            serde_json::json!({ "node_id": "a.txt" }),
+            siralos_core::provider::ToolExecutionResult::Success {
+                output: serde_json::json!({ "id": "a.txt" }),
+                summary: "inspect a.txt".to_owned(),
+            },
+        );
+        let _ = session.drive_tick(std::slice::from_ref(&obs));
+        let once = format_context_audit(Some(&session));
+        let twice = format_context_audit(Some(&session));
+        assert_eq!(once, twice, "identical state -> identical bytes");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn audit_segment_flows_through_sanitizer() {
+        use crate::output::format_context_audit;
+        use crate::sanitize::sanitize_for_display;
+        use siralos_adapters::context_session::build_context_system;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir()
+            .join(format!("siralos-audit-sanitize-{nonce}"));
+        std::fs::create_dir_all(&root).expect("temp");
+        std::fs::write(root.join("a.txt"), b"alpha").expect("write");
+        let build = build_context_system(&root, true);
+        let mut session = build.session.expect("session");
+        let obs = siralos_adapters::tool::context_events::ToolObservation::new(
+            "context.inspect",
+            serde_json::json!({ "node_id": "a.txt" }),
+            siralos_core::provider::ToolExecutionResult::Success {
+                output: serde_json::json!({ "id": "a.txt" }),
+                summary: "inspect a.txt".to_owned(),
+            },
+        );
+        let _ = session.drive_tick(std::slice::from_ref(&obs));
+        let audit = format_context_audit(Some(&session));
+        assert_eq!(sanitize_for_display(&audit), audit);
+        assert_eq!(sanitize_for_display("\u{1b}[31mhello"), "hello");
+        assert_eq!(
+            sanitize_for_display("\u{1b}]8;;https://example.com\u{07}ok"),
+            "ok"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn audit_render_does_not_drain_or_clear_ring() {
+        use crate::output::format_context_audit;
+        use siralos_adapters::context_session::build_context_system;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("siralos-audit-nomut-{nonce}"));
+        std::fs::create_dir_all(&root).expect("temp");
+        std::fs::write(root.join("a.txt"), b"alpha").expect("write");
+        let build = build_context_system(&root, true);
+        let mut session = build.session.expect("session");
+        let obs = siralos_adapters::tool::context_events::ToolObservation::new(
+            "context.inspect",
+            serde_json::json!({ "node_id": "a.txt" }),
+            siralos_core::provider::ToolExecutionResult::Success {
+                output: serde_json::json!({ "id": "a.txt" }),
+                summary: "inspect a.txt".to_owned(),
+            },
+        );
+        let _ = session.drive_tick(std::slice::from_ref(&obs));
+        let len_before = session.metrics.records().len();
+        let audit_before = format_context_audit(Some(&session));
+        let len_after = session.metrics.records().len();
+        let audit_after = format_context_audit(Some(&session));
+        assert_eq!(len_before, len_after);
+        assert_eq!(audit_before, audit_after);
+        assert_eq!(session.metrics.ticks_total, 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn audit_empty_ring_renders_counters_only() {
+        use crate::output::format_context_audit;
+        use siralos_adapters::context_session::build_context_system;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("siralos-audit-empty-{nonce}"));
+        std::fs::create_dir_all(&root).expect("temp");
+        std::fs::write(root.join("a.txt"), b"alpha").expect("write");
+        let build = build_context_system(&root, true);
+        let session = build.session.expect("session");
+        assert_eq!(session.metrics.records().len(), 0);
+        let audit = format_context_audit(Some(&session));
+        assert!(audit.contains("  counters:\n"));
+        assert!(
+            !audit.contains("ring (last 8)"),
+            "empty ring should not emit ring lines, got {audit}"
+        );
+        assert!(!audit.lines().any(|l| l.trim_start().starts_with("tick ")));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

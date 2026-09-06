@@ -131,7 +131,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 74;
+const CORPUS_VERSION: u64 = 75;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -1591,7 +1591,7 @@ fn run_scenario(
             let input = scenario.input.as_ref().expect(
                 "context-session input was validated while loading the corpus",
             );
-            let result = context_session_record(input)?;
+            let result = context_session_record(&scenario.id, input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -10240,7 +10240,10 @@ fn context_scan_record(
 /// bounded: tools are the three read-only context tools, the working set is
 /// over the classified graph, and every tick is a canonical bounded
 /// `TickInput`.
-fn context_session_record(input: &Value) -> Result<Value, HarnessError> {
+fn context_session_record(
+    scenario_id: &str,
+    input: &Value,
+) -> Result<Value, HarnessError> {
     with_fixture_workspace("context-session", input, |root| {
         // Only an applied profile contributes the opt-in; absent key or
         // enabled=false is byte-transparent, and a malformed context_system
@@ -10257,7 +10260,23 @@ fn context_session_record(input: &Value) -> Result<Value, HarnessError> {
             root, enabled,
         );
         let session = build.session.clone();
+        let is_audit = scenario_id.contains("audit");
         if session.is_none() {
+            if is_audit {
+                return Ok(json!({
+                    "enabled": enabled,
+                    "off": true,
+                    "diagnostic": build.diagnostic.unwrap_or_default(),
+                    "nodes": 0,
+                    "tools": [],
+                    "workingSetNodes": 0,
+                    "rounds": [],
+                    "audit": {
+                        "counters": null,
+                        "ring": [],
+                    },
+                }));
+            }
             return Ok(json!({
                 "enabled": enabled,
                 "off": true,
@@ -10306,6 +10325,63 @@ fn context_session_record(input: &Value) -> Result<Value, HarnessError> {
                     "demoted": report.demoted,
                 }));
             }
+        }
+        if is_audit {
+            let m = &s.metrics;
+            let counters = json!({
+                "ticks_total": m.ticks_total,
+                "coalesced_noop_ticks_total": m.coalesced_noop_ticks_total,
+                "events_total": m.events_total,
+                "events_dropped_total": m.events_dropped_total,
+                "demand_updates_total": m.demand_updates_total,
+                "promotions_total": m.promotions_total,
+                "demotions_total": m.demotions_total,
+                "stale_demotions_total": m.stale_demotions_total,
+                "pin_quota_demotions_total": m.pin_quota_demotions_total,
+                "budget_demotions_total": m.budget_demotions_total,
+                "assembled_summary_tokens_total": m.assembled_summary_tokens_total,
+                "neighbor_stub_tokens_total": m.neighbor_stub_tokens_total,
+            });
+            let records = m.records();
+            let start = records.len().saturating_sub(8);
+            let ring: Vec<Value> = records[start..]
+                .iter()
+                .map(|rec| {
+                    json!({
+                        "now": rec.now,
+                        "canonical_event_count": rec.canonical_event_count,
+                        "events_dropped": rec.events_dropped,
+                        "tier_counts": {
+                            "hot": rec.tier_counts.hot,
+                            "warm": rec.tier_counts.warm,
+                            "cold": rec.tier_counts.cold,
+                            "archive": rec.tier_counts.archive,
+                        },
+                        "assembled_unique_total": rec.assembled_unique_total,
+                        "assembled_summary_total": rec.assembled_summary_total,
+                        "stub_total": rec.stub_total,
+                        "demotion_counts": {
+                            "stale": rec.demotion_counts.stale,
+                            "pin_quota": rec.demotion_counts.pin_quota,
+                            "budget": rec.demotion_counts.budget,
+                        },
+                        "promotion_count": rec.promotion_count,
+                    })
+                })
+                .collect();
+            return Ok(json!({
+                "enabled": enabled,
+                "off": false,
+                "diagnostic": null,
+                "nodes": nodes,
+                "tools": tools,
+                "workingSetNodes": working_set_nodes,
+                "rounds": rounds,
+                "audit": {
+                    "counters": counters,
+                    "ring": ring,
+                },
+            }));
         }
         Ok(json!({
             "enabled": enabled,
@@ -18953,7 +19029,7 @@ mod tests {
             platform_name(),
         )
         .expect("checked-in corpus");
-        assert_eq!(loaded.len(), 351);
+        assert_eq!(loaded.len(), 353);
     }
 
     #[test]

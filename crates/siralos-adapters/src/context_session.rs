@@ -30,6 +30,8 @@ use siralos_core::context_scheduler::{
 };
 use siralos_core::tool::Tool;
 
+use siralos_core::context_metrics::ContextMetrics;
+
 use crate::context_scan::{
     ScanError, WorkspaceContext, build_workspace_context,
 };
@@ -92,6 +94,10 @@ pub struct ContextSystemSession {
     pub graph_revision: String,
     /// The logical clock supplying tick `now` values.
     pub clock: SessionClock,
+    /// Pure in-memory metrics collector (decision 91) — saturating counters
+    /// and the capped 64-record tick ring, derived deterministically from
+    /// tick inputs/outputs.
+    pub metrics: ContextMetrics,
 }
 
 /// Build the initial scheduler working set over the classified graph.
@@ -164,6 +170,7 @@ pub fn build_context_system(root: &Path, enabled: bool) -> ContextSystemBuild {
                 config: SchedulerConfig::default(),
                 graph_revision: "context-graph-v1".to_owned(),
                 clock: SessionClock::default(),
+                metrics: ContextMetrics::new(),
             };
             ContextSystemBuild { session: Some(session), diagnostic: None }
         }
@@ -242,7 +249,22 @@ impl ContextSystemSession {
             Vec::new(),
             observations,
         );
-        self.working_set.process_tick(tick_input, &self.config)
+        let before = self.working_set.clone();
+        let report =
+            self.working_set.process_tick(tick_input.clone(), &self.config);
+        let assembled = self.working_set.assemble(
+            &self.workspace.graph,
+            &self.workspace.store,
+            &self.config,
+        );
+        self.metrics.record_tick(
+            &tick_input,
+            &before,
+            &self.working_set,
+            &report,
+            Some(&assembled),
+        );
+        report
     }
 
     /// The current scheduler working-set state for inspection and tests.

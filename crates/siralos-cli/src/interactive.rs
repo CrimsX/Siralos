@@ -67,8 +67,8 @@ use crate::configuration::{
     ConfigurationError, DEFAULT_REVIEW_PROVIDER_ID, load_user_configuration,
 };
 use crate::output::{
-    format_context_status, format_domains, format_plugin_added,
-    format_tool_projection, format_tools,
+    format_context_audit, format_context_status, format_domains,
+    format_plugin_added, format_tool_projection, format_tools,
 };
 use crate::sanitize::{TerminalSanitizer, sanitize_for_display};
 
@@ -523,16 +523,29 @@ where
         }
         match input.trim() {
             "/context" => {
+                let base = render_context_claim(
+                    &format_context_status(application.last_projection()),
+                    context_control.as_ref(),
+                );
+                let audit = if context_system_enabled
+                    && context_session_holder.is_some()
+                {
+                    format_context_audit(context_session_holder.as_ref())
+                } else {
+                    String::new()
+                };
+                let combined = if audit.is_empty() {
+                    base
+                } else {
+                    format!("{base}{audit}")
+                };
+                // R4: the audit segment flows through the existing terminal
+                // sanitizer path like every other rendered line (single output
+                // boundary — no raw bypass). Host vocab passes unchanged, so
+                // OFF remains byte-transparent.
+                let sanitized = sanitize_for_display(&combined);
                 writer
-                    .write_all(
-                        render_context_claim(
-                            &format_context_status(
-                                application.last_projection(),
-                            ),
-                            context_control.as_ref(),
-                        )
-                        .as_bytes(),
-                    )
+                    .write_all(sanitized.as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
             "/tools" => {

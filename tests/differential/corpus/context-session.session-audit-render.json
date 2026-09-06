@@ -1,0 +1,109 @@
+{
+  "id": "context-session.session-audit-render",
+  "subject": "context-session",
+  "platforms": ["*"],
+  "parity": "required",
+  "env": {},
+  "input": {
+    "files": [
+      {
+        "path": "siralos.toml",
+        "content": "[profile]\nname = \"dev\"\n\n[profile.context_system]\nenabled = true\n"
+      },
+      {
+        "path": "a.txt",
+        "content": "alpha body"
+      },
+      {
+        "path": "b.txt",
+        "content": "beta body"
+      },
+      {
+        "path": "c.txt",
+        "content": "gamma body"
+      }
+    ],
+    "rounds": [
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "a.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "b.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "c.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.search",
+            "node_id": "a.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.expand",
+            "node_id": "b.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "a.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "c.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.search",
+            "node_id": "b.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "a.txt"
+          }
+        ]
+      },
+      {
+        "calls": [
+          {
+            "tool": "context.inspect",
+            "node_id": "b.txt"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -2938,11 +2938,119 @@ function validateContextBenchmarkResult(record, label) {
 
 function validateContextSessionResult(record, label) {
   const result = record.result;
-  assertExactKeys(
-    result,
-    ["diagnostic", "enabled", "nodes", "off", "rounds", "tools", "workingSetNodes"],
-    `${label}.result`,
-  );
+  // B4 (decision 100): audit is an optional additive field for session-audit-* scenarios.
+  // Existing 4 scenarios remain byte-identical without it; new audit scenarios include it.
+  const allowed = [
+    "audit",
+    "diagnostic",
+    "enabled",
+    "nodes",
+    "off",
+    "rounds",
+    "tools",
+    "workingSetNodes",
+  ];
+  const keys = Object.keys(result).sort();
+  const required = ["diagnostic", "enabled", "nodes", "off", "rounds", "tools", "workingSetNodes"];
+  for (const key of required) {
+    if (!keys.includes(key)) {
+      throw new Error(`${label}.result has unknown or missing fields`);
+    }
+  }
+  for (const key of keys) {
+    if (!allowed.includes(key)) {
+      throw new Error(`${label}.result has unknown or missing fields`);
+    }
+  }
+  if (result.audit !== undefined) {
+    if (result.audit === null || typeof result.audit !== "object" || Array.isArray(result.audit)) {
+      throw new Error(`${label}.result.audit must be an object`);
+    }
+    assertExactKeys(result.audit, ["counters", "ring"], `${label}.result.audit`);
+    if (result.audit.counters !== null) {
+      if (typeof result.audit.counters !== "object" || Array.isArray(result.audit.counters)) {
+        throw new Error(`${label}.result.audit.counters must be an object or null`);
+      }
+      const counterKeys = [
+        "assembled_summary_tokens_total",
+        "budget_demotions_total",
+        "coalesced_noop_ticks_total",
+        "demand_updates_total",
+        "demotions_total",
+        "events_dropped_total",
+        "events_total",
+        "neighbor_stub_tokens_total",
+        "pin_quota_demotions_total",
+        "promotions_total",
+        "stale_demotions_total",
+        "ticks_total",
+      ];
+      assertExactKeys(result.audit.counters, counterKeys, `${label}.result.audit.counters`);
+      for (const k of counterKeys) {
+        if (!Number.isSafeInteger(result.audit.counters[k]) || result.audit.counters[k] < 0) {
+          throw new Error(`${label}.result.audit.counters.${k} must be a non-negative integer`);
+        }
+      }
+    }
+    if (!Array.isArray(result.audit.ring) || result.audit.ring.length > 8) {
+      throw new Error(`${label}.result.audit.ring must be a bounded array (<=8)`);
+    }
+    for (const [idx, rec] of result.audit.ring.entries()) {
+      const rLabel = `${label}.result.audit.ring[${idx}]`;
+      assertExactKeys(
+        rec,
+        [
+          "assembled_summary_total",
+          "assembled_unique_total",
+          "canonical_event_count",
+          "demotion_counts",
+          "events_dropped",
+          "now",
+          "promotion_count",
+          "stub_total",
+          "tier_counts",
+        ],
+        rLabel,
+      );
+      if (!Number.isSafeInteger(rec.now) || rec.now < 0) {
+        throw new Error(`${rLabel}.now must be a non-negative integer`);
+      }
+      if (!Number.isSafeInteger(rec.canonical_event_count) || rec.canonical_event_count < 0) {
+        throw new Error(`${rLabel}.canonical_event_count must be a non-negative integer`);
+      }
+      if (!Number.isSafeInteger(rec.events_dropped) || rec.events_dropped < 0) {
+        throw new Error(`${rLabel}.events_dropped must be a non-negative integer`);
+      }
+      assertExactKeys(rec.tier_counts, ["archive", "cold", "hot", "warm"], `${rLabel}.tier_counts`);
+      for (const tk of ["archive", "cold", "hot", "warm"]) {
+        if (!Number.isSafeInteger(rec.tier_counts[tk]) || rec.tier_counts[tk] < 0) {
+          throw new Error(`${rLabel}.tier_counts.${tk} must be a non-negative integer`);
+        }
+      }
+      if (!Number.isSafeInteger(rec.assembled_unique_total) || rec.assembled_unique_total < 0) {
+        throw new Error(`${rLabel}.assembled_unique_total must be a non-negative integer`);
+      }
+      if (!Number.isSafeInteger(rec.assembled_summary_total) || rec.assembled_summary_total < 0) {
+        throw new Error(`${rLabel}.assembled_summary_total must be a non-negative integer`);
+      }
+      if (!Number.isSafeInteger(rec.stub_total) || rec.stub_total < 0) {
+        throw new Error(`${rLabel}.stub_total must be a non-negative integer`);
+      }
+      assertExactKeys(
+        rec.demotion_counts,
+        ["budget", "pin_quota", "stale"],
+        `${rLabel}.demotion_counts`,
+      );
+      for (const dk of ["budget", "pin_quota", "stale"]) {
+        if (!Number.isSafeInteger(rec.demotion_counts[dk]) || rec.demotion_counts[dk] < 0) {
+          throw new Error(`${rLabel}.demotion_counts.${dk} must be a non-negative integer`);
+        }
+      }
+      if (!Number.isSafeInteger(rec.promotion_count) || rec.promotion_count < 0) {
+        throw new Error(`${rLabel}.promotion_count must be a non-negative integer`);
+      }
+    }
+  }
   if (typeof result.enabled !== "boolean") {
     throw new Error(`${label}.result.enabled must be a boolean`);
   }
