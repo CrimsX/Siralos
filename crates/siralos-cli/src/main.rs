@@ -20,6 +20,31 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Ok(Command::Tui) => {
+            if !siralos_cli::tui::should_use_tui(
+                true,
+                siralos_cli::tui::stdout_is_tty(),
+            ) {
+                eprintln!(
+                    "siralos: --tui requested but stdout is not a TTY; falling back to stdio"
+                );
+                match siralos_cli::interactive::run_interactive_stdio() {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => {
+                        eprintln!("siralos: {error}");
+                        ExitCode::from(1)
+                    }
+                }
+            } else {
+                match siralos_cli::interactive::run_interactive_tui_stdio() {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => {
+                        eprintln!("siralos: {error}");
+                        ExitCode::from(1)
+                    }
+                }
+            }
+        }
         Ok(Command::Version) => print_version(),
         Ok(Command::Help) => {
             print_usage();
@@ -58,11 +83,12 @@ fn print_usage() -> ExitCode {
         "siralos: a deterministic, security-first software-development and QA harness\n\
          \n\
          USAGE:\n\
-         \x20   siralos [--help | --version]\n\
+         \x20   siralos [--help | --version | --tui]\n\
          \n\
          OPTIONS:\n\
          \x20   -h, --help      Print this usage information\n\
          \x20   -V, --version   Print the version\n\
+         \x20       --tui       Start the interactive TUI shell (falls back to stdio when stdout is not a TTY; blocking provider rounds freeze the redraw — documented T1 limitation)\n\
          \n\
          With no arguments, start the interactive terminal session.\n\
          \n\

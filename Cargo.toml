@@ -29,3 +29,5 @@ todo = "deny"
 siralos-core = { path = "crates/siralos-core", version = "0.0.0" }
 siralos-adapters = { path = "crates/siralos-adapters", version = "0.0.0" }
 siralos-godot = { path = "../siralos-godot", version = "0.0.0" }
+crossterm = { version = "=0.29.0" }
+ratatui = { version = "=0.30.2" }

@@ -15,6 +15,7 @@ pub mod configuration;
 pub mod interactive;
 pub mod output;
 pub mod sanitize;
+pub mod tui;
 
 #[cfg(feature = "differential-harness")]
 pub mod harness;
@@ -28,8 +29,10 @@ use std::ffi::OsString;
 /// Outcome of parsing the command line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    /// Start the interactive terminal session.
+    /// Start the interactive terminal session (stdio).
     Interactive,
+    /// Start the interactive terminal session with the TUI shell.
+    Tui,
     /// Print the version and exit successfully.
     Version,
     /// Print usage and exit successfully.
@@ -57,6 +60,7 @@ where
     match first.to_str() {
         Some("--help") | Some("-h") => Ok(Command::Help),
         Some("--version") | Some("-V") => Ok(Command::Version),
+        Some("--tui") => Ok(Command::Tui),
         Some(other) => {
             Err(UsageError::new(format!("unknown argument `{other}`")))
         }

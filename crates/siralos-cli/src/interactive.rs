@@ -1280,6 +1280,558 @@ fn drive_context_demand<P>(
     let _ = session.drive_tick(&observations);
 }
 
+/// Run the TUI shell session (explicit opt-in via `siralos --tui`).
+///
+/// T1 composition: this function reuses the SAME seams the stdio loop calls
+/// (`ensure_host`, the command dispatch, `drain_events` with a [`crate::tui::TuiSink`],
+/// the sanitizer, the input-queue/command-catalog vocabulary). Because
+/// `run_interactive_session` blocks on `BufRead::read_line`, it would starve the
+/// `crossterm::event::poll` pump, so this loop duplicates the dispatch calling
+/// the SAME underlying functions. This duplication is honest T1 debt to be
+/// consolidated in T2-T4 when the seam is refactored for pollable input.
+///
+/// No threads: `crossterm::event::poll` with a 100ms timeout; blocking provider
+/// rounds freeze the redraw (documented T1 limitation — status showed "working"
+/// before the step). The terminal state is restored via a drop guard on every
+/// exit path (panic-safe).
+pub fn run_interactive_tui_stdio() -> Result<(), InteractiveError> {
+    run_interactive_tui_with_options(InteractiveOptions::default())
+}
+
+/// Run the TUI shell with explicit options (workspace root / config path).
+pub fn run_interactive_tui_with_options(
+    options: InteractiveOptions<'_>,
+) -> Result<(), InteractiveError> {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::time::Duration;
+
+    use crate::tui::{TerminalGuard, TuiSink, TuiState, draw};
+
+    // Guard restores raw mode + alternate screen on every exit path.
+    let _guard = TerminalGuard::enter().map_err(InteractiveError::Io)?;
+    let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+    let mut terminal = ratatui::Terminal::new(backend)
+        .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
+
+    // --- Session composition (duplicated from `run_interactive_session_with_options`) ---
+    // T1 debt: this block mirrors the stdio composition verbatim so the sanitizer,
+    // input-queue, command-catalog, approval, and context-system seams are the
+    // SAME code paths, not reimplementations. It will be consolidated in T2-T4.
+    let composed = load_user_configuration(options.config_path)?;
+    if composed.review_provider_id != DEFAULT_REVIEW_PROVIDER_ID {
+        return Err(InteractiveError::Configuration(
+            ConfigurationError::UnknownReviewProvider {
+                provider_id: composed.review_provider_id,
+            },
+        ));
+    }
+    let workspace_root = match options.workspace_root {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_dir()
+            .map_err(InteractiveError::CurrentDirectory)?,
+    };
+    let workspace_root = resolve_workspace_root(&workspace_root)?;
+    let mut tools: Vec<Box<dyn siralos_core::tool::Tool>> = vec![
+        Box::new(WorkspaceListTool::new(&workspace_root)?),
+        Box::new(WorkspaceReadTool::new(&workspace_root)?),
+        Box::new(WorkspaceSearchTool::new(&workspace_root)?),
+    ];
+    let host_rules = vec![PolicyRule {
+        capability: siralos_core::tool::CapabilityId::parse("workspace.read")
+            .expect("workspace.read is a valid capability id"),
+        rule: PermissionRule::Allow,
+    }];
+    let loaded_profile = load_workspace_profile(&workspace_root);
+    let declared = match &loaded_profile {
+        WorkspaceProfileLoad::Record(record) => declare_profile(
+            Some(record),
+            &PermissionPolicy::from_rules(host_rules.clone()),
+        ),
+        WorkspaceProfileLoad::Absent => DeclaredProfile::Absent,
+        WorkspaceProfileLoad::Invalid { diagnostic } => {
+            DeclaredProfile::Invalid { diagnostic: diagnostic.clone() }
+        }
+    };
+    let effective = compose_effective_policy(&host_rules, &declared);
+    if let Some(diagnostic) = &effective.diagnostic {
+        eprintln!("siralos: profile not applied: {diagnostic}");
+    }
+    let replay_store_path =
+        workspace_root.join(".siralos").join("replay-store.json");
+    let (want_record_replay, want_replay) = match &loaded_profile {
+        WorkspaceProfileLoad::Record(record)
+            if effective.applied_profile.is_some() =>
+        {
+            (record.record_replay, record.replay)
+        }
+        _ => (false, false),
+    };
+    let (provider_name_owned, model_opt, credential_opt, endpoint_opt) =
+        match &loaded_profile {
+            WorkspaceProfileLoad::Record(record)
+                if effective.applied_profile.is_some() =>
+            {
+                let cred = record.credential.as_deref().and_then(|c| {
+                    match HostCredential::from_env_ref(c) {
+                        Ok(cred) => Some(cred),
+                        Err(e) => {
+                            eprintln!("siralos: credential error: {e}");
+                            None
+                        }
+                    }
+                });
+                (
+                    record
+                        .provider
+                        .as_deref()
+                        .unwrap_or("deterministic-fake")
+                        .to_owned(),
+                    record.model.clone(),
+                    cred,
+                    record.endpoint.clone(),
+                )
+            }
+            _ => ("deterministic-fake".to_owned(), None, None, None),
+        };
+    let mut live_host_provider: Option<HostProvider> = None;
+    let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
+    let mut record_recorder: Option<Rc<RetainingReplayRecorder>> = None;
+    if want_replay {
+        let pid = provider_name_owned.clone();
+        let model =
+            model_opt.clone().unwrap_or_else(|| "generic-model".to_owned());
+        match load_replay_store(&replay_store_path) {
+            Ok(store) => {
+                let digest = siralos_core::determinism::replay_store::compute_replay_store_digest(&store.recordings);
+                eprintln!(
+                    "siralos: replay store loaded: digest {digest} count {}",
+                    store.recordings.len()
+                );
+                replay_provider_holder = Some(RecordedReplayProvider::new(
+                    pid,
+                    model,
+                    store.recordings,
+                ));
+            }
+            Err(ReplayStoreLoadError::NotFound) => {
+                eprintln!(
+                    "siralos: replay store absent: no recordings to replay"
+                );
+                replay_provider_holder =
+                    Some(RecordedReplayProvider::new(pid, model, Vec::new()));
+            }
+            Err(err) => {
+                let msg = match &err {
+                    ReplayStoreLoadError::UntrustedDigest => {
+                        "replay store untrusted: digest mismatch".to_owned()
+                    }
+                    ReplayStoreLoadError::Malformed(r) => {
+                        format!("replay store malformed: {r}")
+                    }
+                    ReplayStoreLoadError::Bounds(e) => {
+                        format!("replay store bounds: {e}")
+                    }
+                    ReplayStoreLoadError::Io(m) => {
+                        format!("replay store I/O: {m}")
+                    }
+                    ReplayStoreLoadError::NotFound => unreachable!(),
+                };
+                eprintln!("siralos: {msg}");
+                replay_provider_holder =
+                    Some(RecordedReplayProvider::new(pid, model, Vec::new()));
+            }
+        }
+    } else if want_record_replay {
+        let raw = match HostProvider::from_provider_str(
+            &provider_name_owned,
+            model_opt.clone(),
+            credential_opt,
+            endpoint_opt.clone(),
+        ) {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!(
+                    "siralos: provider error: {err} — falling back to deterministic-fake"
+                );
+                HostProvider::Fake(DeterministicFakeProvider::new())
+            }
+        };
+        let recorder = Rc::new(RetainingReplayRecorder::new());
+        let clock: Rc<dyn siralos_core::determinism::Clock> =
+            Rc::new(siralos_core::determinism::SystemClock);
+        let with = raw.with_replay_support(clock, recorder.clone());
+        record_recorder = Some(recorder);
+        live_host_provider = Some(with);
+    } else {
+        let raw = match HostProvider::from_provider_str(
+            &provider_name_owned,
+            model_opt,
+            credential_opt,
+            endpoint_opt,
+        ) {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!(
+                    "siralos: provider error: {err} — falling back to deterministic-fake"
+                );
+                HostProvider::Fake(DeterministicFakeProvider::new())
+            }
+        };
+        live_host_provider = Some(raw);
+    }
+    let profile_plugins: Option<Vec<String>> =
+        if effective.applied_profile.is_some() {
+            match &loaded_profile {
+                WorkspaceProfileLoad::Record(record) => record.plugins.clone(),
+                _ => None,
+            }
+        } else {
+            None
+        };
+    let context_control: Option<ContextPolicy> =
+        if effective.applied_profile.is_some() {
+            match &loaded_profile {
+                WorkspaceProfileLoad::Record(record) => record.context.clone(),
+                _ => None,
+            }
+        } else {
+            None
+        };
+    let context_system_enabled: bool = if effective.applied_profile.is_some() {
+        match &loaded_profile {
+            WorkspaceProfileLoad::Record(record) => {
+                record.context_system_enabled
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+    let context_build =
+        siralos_adapters::context_session::build_context_system(
+            &workspace_root,
+            context_system_enabled,
+        );
+    if let Some(diagnostic) = &context_build.diagnostic {
+        eprintln!("siralos: {diagnostic}");
+    }
+    let mut context_session_holder: Option<
+        siralos_adapters::context_session::ContextSystemSession,
+    > = context_build.session.clone();
+    let mut context_history_len: usize = 0;
+    if let Some(session) = &context_session_holder {
+        tools.extend(session.register_tools());
+    }
+    let registry = ToolRegistry::new(tools)?;
+    let lock_decision = verify_session_lock(&workspace_root, &effective);
+    if let Some(reason) = &lock_decision.reason {
+        eprintln!("siralos: lock not trusted: {reason}");
+    }
+    let skills_segment =
+        compose_skills_segment(&workspace_root, &loaded_profile, &effective);
+    let mut segments = vec![SegmentInput {
+        id: "siralos-core-instructions".to_owned(),
+        stability: Stability::Stable,
+        title: "Siralos instructions".to_owned(),
+        content: SIRALOS_SYSTEM_INSTRUCTIONS.to_owned(),
+    }];
+    if let Some(segment) = skills_segment {
+        segments.push(segment);
+    }
+    let policy = PermissionPolicy::from_rules(effective.rules);
+    let projection_config = ApplicationProjectionConfig {
+        capacity: Some(ContextCapacity::default()),
+        segments,
+        ..ApplicationProjectionConfig::default()
+    };
+    let session_provider = if let Some(rp) = replay_provider_holder {
+        SessionProvider::Replay(rp)
+    } else if let Some(hp) = live_host_provider {
+        SessionProvider::Host(hp)
+    } else {
+        unreachable!("session provider must be present");
+    };
+    let mut application = SiralosApplication::new(
+        &session_provider,
+        &registry,
+        policy.clone(),
+        None,
+        None,
+    )
+    .with_projection(ProjectionService::new(), projection_config);
+    let mut hosts: BTreeMap<String, DomainHost> = BTreeMap::new();
+    let mut manifests: BTreeMap<String, PluginManifest> = BTreeMap::new();
+
+    // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
+    let tui_state = Rc::new(RefCell::new(TuiState::new()));
+    tui_state.borrow_mut().status = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit".to_owned();
+    let mut sink = TuiSink::new(tui_state.clone());
+
+    // Initial draw
+    terminal
+        .draw(|frame| draw(&tui_state.borrow(), frame))
+        .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
+
+    // Event loop: poll with 100ms timeout — no threads.
+    loop {
+        // Poll for input with bounded timeout so we can redraw and check.
+        if crossterm::event::poll(Duration::from_millis(100))
+            .map_err(InteractiveError::Io)?
+        {
+            let event =
+                crossterm::event::read().map_err(InteractiveError::Io)?;
+            match event {
+                crossterm::event::Event::Key(key) => {
+                    if key.kind != crossterm::event::KeyEventKind::Press {
+                        continue;
+                    }
+                    // Ctrl+C exits cleanly (guard restores terminal)
+                    if key.code == crossterm::event::KeyCode::Char('c')
+                        && key
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                    {
+                        break;
+                    }
+                    match key.code {
+                        crossterm::event::KeyCode::Enter => {
+                            let input_line = tui_state.borrow().input.clone();
+                            // Echo the user line into the transcript as `> <input>`
+                            let echo = format!("> {}", input_line);
+                            tui_state.borrow_mut().push_line(echo);
+                            tui_state.borrow_mut().input.clear();
+                            // Empty input is a no-op (same as stdio loop)
+                            if input_line.trim().is_empty() {
+                                tui_state.borrow_mut().status =
+                                    "ready".to_owned();
+                            } else {
+                                // Dispatch the line using the SAME seam functions the stdio loop calls.
+                                tui_state.borrow_mut().status =
+                                    "working".to_owned();
+                                terminal
+                                    .draw(|frame| {
+                                        draw(&tui_state.borrow(), frame)
+                                    })
+                                    .map_err(|e| {
+                                        InteractiveError::Io(io::Error::other(
+                                            e.to_string(),
+                                        ))
+                                    })?;
+                                let should_exit = handle_tui_line(
+                                    input_line.trim(),
+                                    &workspace_root,
+                                    &registry,
+                                    &policy,
+                                    &mut application,
+                                    &mut sink,
+                                    &mut hosts,
+                                    &mut manifests,
+                                    profile_plugins.as_deref(),
+                                    context_control.as_ref(),
+                                    &mut context_session_holder,
+                                    &mut context_history_len,
+                                    &tui_state,
+                                )?;
+                                if should_exit {
+                                    break;
+                                }
+                                tui_state.borrow_mut().status =
+                                    "ready".to_owned();
+                            }
+                        }
+                        crossterm::event::KeyCode::Backspace => {
+                            tui_state.borrow_mut().input.pop();
+                        }
+                        crossterm::event::KeyCode::Char(ch) => {
+                            tui_state.borrow_mut().input.push(ch);
+                        }
+                        crossterm::event::KeyCode::PageUp => {
+                            let h = terminal
+                                .size()
+                                .map_err(|e| {
+                                    InteractiveError::Io(io::Error::other(
+                                        e.to_string(),
+                                    ))
+                                })?
+                                .height;
+                            // Transcript viewport height is total height minus 2 (input+status)
+                            let viewport = h.saturating_sub(2);
+                            let current = tui_state.borrow().scroll_offset;
+                            let max = tui_state.borrow().max_scroll(viewport);
+                            let next = (current + 10).min(max);
+                            tui_state.borrow_mut().scroll_offset = next;
+                        }
+                        crossterm::event::KeyCode::PageDown => {
+                            let current = tui_state.borrow().scroll_offset;
+                            let next = current.saturating_sub(10);
+                            tui_state.borrow_mut().scroll_offset = next;
+                        }
+                        _ => {}
+                    }
+                }
+                crossterm::event::Event::Resize(_, _) => {}
+                _ => {}
+            }
+        }
+        terminal.draw(|frame| draw(&tui_state.borrow(), frame)).map_err(
+            |e| InteractiveError::Io(io::Error::other(e.to_string())),
+        )?;
+    }
+
+    if let Some(recorder) = record_recorder {
+        let snapshot = recorder.records_snapshot();
+        match write_replay_store(&replay_store_path, &snapshot) {
+            Ok(count) => {
+                eprintln!("siralos: replay store persisted: {count}");
+            }
+            Err(err) => {
+                let msg = format!("{err}");
+                eprintln!("siralos: replay store not persisted: {msg}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_tui_line<P>(
+    input: &str,
+    workspace_root: &Path,
+    registry: &ToolRegistry,
+    policy: &PermissionPolicy,
+    application: &mut SiralosApplication<'_, P>,
+    sink: &mut crate::tui::TuiSink,
+    hosts: &mut BTreeMap<String, DomainHost>,
+    manifests: &mut BTreeMap<String, PluginManifest>,
+    profile_plugins: Option<&[String]>,
+    context_control: Option<&ContextPolicy>,
+    context_session_holder: &mut Option<
+        siralos_adapters::context_session::ContextSystemSession,
+    >,
+    context_history_len: &mut usize,
+    tui_state: &Rc<std::cell::RefCell<crate::tui::TuiState>>,
+) -> Result<bool, InteractiveError>
+where
+    P: siralos_core::provider::ModelProvider,
+{
+    match input {
+        "/context" => {
+            let base = render_context_claim(
+                &format_context_status(application.last_projection()),
+                context_control,
+            );
+            let audit = if context_session_holder.is_some() {
+                let enabled = context_session_holder.is_some();
+                // Re-check via the session holder presence; the audit helper checks the flag internally.
+                // For TUI we know the session exists only when enabled.
+                if enabled {
+                    format_context_audit(context_session_holder.as_ref())
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            let combined =
+                if audit.is_empty() { base } else { format!("{base}{audit}") };
+            let sanitized = sanitize_for_display(&combined);
+            let _ = sink.write_all(sanitized.as_bytes());
+            // Also flush any partial that drain_events left? sanitized already has newline.
+        }
+        "/tools" => {
+            let definitions = registry.definitions();
+            let _ =
+                sink.write_all(format_tools(&definitions, policy).as_bytes());
+            let _ = sink.write_all(
+                format_tool_projection(application.last_projection())
+                    .as_bytes(),
+            );
+        }
+        "/domains" => {
+            let rendered =
+                sanitize_for_display(&render_domains(workspace_root));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        "/exit" => return Ok(true),
+        rest => {
+            if rest == "/domains-add" {
+                let rendered = sanitize_for_display(&render_add_plugin(
+                    workspace_root,
+                    "",
+                    hosts,
+                    manifests,
+                ));
+                let _ = sink.write_all(rendered.as_bytes());
+            } else if let Some(folder) = rest.strip_prefix("/domains-add ") {
+                let rendered = sanitize_for_display(&render_add_plugin(
+                    workspace_root,
+                    folder,
+                    hosts,
+                    manifests,
+                ));
+                let _ = sink.write_all(rendered.as_bytes());
+            } else if rest == "/domains-enable" {
+                let rendered = sanitize_for_display(&render_enable(
+                    workspace_root,
+                    hosts,
+                    manifests,
+                    "",
+                ));
+                let _ = sink.write_all(rendered.as_bytes());
+            } else if let Some(id) = rest.strip_prefix("/domains-enable ") {
+                let rendered = sanitize_for_display(&render_enable(
+                    workspace_root,
+                    hosts,
+                    manifests,
+                    id,
+                ));
+                let _ = sink.write_all(rendered.as_bytes());
+            } else if rest == "/domains-activate" {
+                let rendered = sanitize_for_display(&render_activate(
+                    workspace_root,
+                    hosts,
+                    manifests,
+                    "",
+                    profile_plugins,
+                ));
+                let _ = sink.write_all(rendered.as_bytes());
+            } else if let Some(id) = rest.strip_prefix("/domains-activate ") {
+                let rendered = sanitize_for_display(&render_activate(
+                    workspace_root,
+                    hosts,
+                    manifests,
+                    id,
+                    profile_plugins,
+                ));
+                let _ = sink.write_all(rendered.as_bytes());
+            } else {
+                // Prompt path: same as stdio — send to application, drain with sanitizer via sink.
+                // The drain_events call pushes sanitized deltas into the sink verbatim.
+                application.send_prompt(input.to_owned()).map_err(
+                    |error| {
+                        InteractiveError::Io(io::Error::other(
+                            error.to_string(),
+                        ))
+                    },
+                )?;
+                drain_events(application, sink)?;
+                if let Some(session) = context_session_holder {
+                    drive_context_demand(
+                        application,
+                        session,
+                        context_history_len,
+                    );
+                }
+                // Drain also writes a trailing newline per response; ensure the
+                // TUI transcript shows it (sink already handled).
+                let _ = tui_state;
+            }
+        }
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{InteractiveOptions, run_interactive_session_with_options};
