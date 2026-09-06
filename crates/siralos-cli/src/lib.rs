@@ -29,10 +29,10 @@ use std::ffi::OsString;
 /// Outcome of parsing the command line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    /// Start the interactive terminal session (stdio).
+    /// Start the interactive terminal session (auto: TUI on TTY, stdio otherwise).
     Interactive,
-    /// Start the interactive terminal session with the TUI shell.
-    Tui,
+    /// Start the interactive terminal session forced to stdio (`--stdio`).
+    Stdio,
     /// Print the version and exit successfully.
     Version,
     /// Print usage and exit successfully.
@@ -60,7 +60,7 @@ where
     match first.to_str() {
         Some("--help") | Some("-h") => Ok(Command::Help),
         Some("--version") | Some("-V") => Ok(Command::Version),
-        Some("--tui") => Ok(Command::Tui),
+        Some("--stdio") => Ok(Command::Stdio),
         Some(other) => {
             Err(UsageError::new(format!("unknown argument `{other}`")))
         }
@@ -132,6 +132,22 @@ mod tests {
             parse_args(args(&["-V"])).expect("valid"),
             Command::Version
         );
+    }
+
+    #[test]
+    fn stdio_flag_forces_the_stdio_frontend() {
+        // Decision 105 A2: `--stdio` forces stdio regardless of TTY.
+        assert_eq!(
+            parse_args(args(&["--stdio"])).expect("valid"),
+            Command::Stdio
+        );
+    }
+
+    #[test]
+    fn removed_tui_flag_is_rejected() {
+        // Decision 105 A2: the one-commit `--tui` flag is removed.
+        let error = parse_args(args(&["--tui"])).expect_err("must fail");
+        assert!(error.detail().contains("--tui"));
     }
 
     #[test]

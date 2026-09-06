@@ -1207,6 +1207,36 @@ where
     Ok(())
 }
 
+/// Shared approval gate — same function both frontends call (T2 consolidation).
+///
+/// The stdio path reads a line via the input-queue (`BufRead::read_line`) and
+/// the TUI path feeds the modal's `y`/`n` through the same evaluation via a
+/// `Cursor` over the modal answer — no parallel approval logic.
+pub fn read_approval_via_input_queue<R: BufRead>(
+    reader: &mut R,
+) -> Result<crate::tui::ApprovalDecision, InteractiveError> {
+    let mut line = String::new();
+    let n = reader.read_line(&mut line).map_err(InteractiveError::Io)?;
+    if n == 0 {
+        return Ok(crate::tui::ApprovalDecision::Deny);
+    }
+    Ok(crate::tui::evaluate_approval_input(&line))
+}
+
+/// Convenience shared gate for `&str` inputs (both loops call the same
+/// `evaluate_approval_input` defined in `tui.rs` — single definition).
+pub fn shared_evaluate_approval(input: &str) -> crate::tui::ApprovalDecision {
+    crate::tui::evaluate_approval_input(input)
+}
+
+/// T2 helper: build a bounded, sanitized approval modal from the lines the
+/// session rendered through the sink (exactly as stdio would render them).
+/// The stdio render is already bounded; the modal shows at most the last
+/// 30 lines with a truncation marker (see `ApprovalModal::new`).
+pub fn build_approval_modal(lines: Vec<String>) -> crate::tui::ApprovalModal {
+    crate::tui::ApprovalModal::new(lines)
+}
+
 /// Activation B3b (decision 99): drive the demand loop from host-observed
 /// context-tool results after a completed prompt.
 ///
@@ -1280,7 +1310,8 @@ fn drive_context_demand<P>(
     let _ = session.drive_tick(&observations);
 }
 
-/// Run the TUI shell session (explicit opt-in via `siralos --tui`).
+/// Run the TUI shell session (the default frontend when stdout is a TTY;
+/// `--stdio` forces the stdio frontend, plain non-TTY uses stdio silently).
 ///
 /// T1 composition: this function reuses the SAME seams the stdio loop calls
 /// (`ensure_host`, the command dispatch, `drain_events` with a [`crate::tui::TuiSink`],
@@ -1594,80 +1625,114 @@ pub fn run_interactive_tui_with_options(
                     {
                         break;
                     }
-                    match key.code {
-                        crossterm::event::KeyCode::Enter => {
-                            let input_line = tui_state.borrow().input.clone();
-                            // Echo the user line into the transcript as `> <input>`
-                            let echo = format!("> {}", input_line);
-                            tui_state.borrow_mut().push_line(echo);
-                            tui_state.borrow_mut().input.clear();
-                            // Empty input is a no-op (same as stdio loop)
-                            if input_line.trim().is_empty() {
-                                tui_state.borrow_mut().status =
-                                    "ready".to_owned();
-                            } else {
-                                // Dispatch the line using the SAME seam functions the stdio loop calls.
-                                tui_state.borrow_mut().status =
-                                    "working".to_owned();
-                                terminal
-                                    .draw(|frame| {
-                                        draw(&tui_state.borrow(), frame)
-                                    })
+                    if tui_state.borrow().pending_approval.is_some() {
+                        // T2 (B1): while an approval modal is pending, ALL
+                        // other keys are ignored except the modal keys. The
+                        // modal's y/n/Esc feeds the SAME host-gated
+                        // evaluation the stdio path reads
+                        // (`evaluate_approval_input` via `handle_modal_key`)
+                        // — no parallel approval logic.
+                        if let Some(decision) = crate::tui::handle_modal_key(
+                            &mut tui_state.borrow_mut(),
+                            key,
+                        ) {
+                            tui_state.borrow_mut().pending_approval = None;
+                            let verdict = match decision {
+                                crate::tui::ApprovalDecision::Approve => {
+                                    "Approved."
+                                }
+                                crate::tui::ApprovalDecision::Deny => {
+                                    "Denied."
+                                }
+                            };
+                            // Static host strings — no unsanitized content;
+                            // the request lines themselves were already
+                            // sanitized upstream (same render as stdio).
+                            tui_state
+                                .borrow_mut()
+                                .push_line(verdict.to_owned());
+                            tui_state.borrow_mut().status = "ready".to_owned();
+                        }
+                    } else {
+                        match key.code {
+                            crossterm::event::KeyCode::Enter => {
+                                let input_line =
+                                    tui_state.borrow().input.clone();
+                                // Echo the user line into the transcript as `> <input>`
+                                let echo = format!("> {}", input_line);
+                                tui_state.borrow_mut().push_line(echo);
+                                tui_state.borrow_mut().input.clear();
+                                // Empty input is a no-op (same as stdio loop)
+                                if input_line.trim().is_empty() {
+                                    tui_state.borrow_mut().status =
+                                        "ready".to_owned();
+                                } else {
+                                    // Dispatch the line using the SAME seam functions the stdio loop calls.
+                                    tui_state.borrow_mut().status =
+                                        "working".to_owned();
+                                    terminal
+                                        .draw(|frame| {
+                                            draw(&tui_state.borrow(), frame)
+                                        })
+                                        .map_err(|e| {
+                                            InteractiveError::Io(
+                                                io::Error::other(
+                                                    e.to_string(),
+                                                ),
+                                            )
+                                        })?;
+                                    let should_exit = handle_tui_line(
+                                        input_line.trim(),
+                                        &workspace_root,
+                                        &registry,
+                                        &policy,
+                                        &mut application,
+                                        &mut sink,
+                                        &mut hosts,
+                                        &mut manifests,
+                                        profile_plugins.as_deref(),
+                                        context_control.as_ref(),
+                                        &mut context_session_holder,
+                                        &mut context_history_len,
+                                        &tui_state,
+                                    )?;
+                                    if should_exit {
+                                        break;
+                                    }
+                                    tui_state.borrow_mut().status =
+                                        "ready".to_owned();
+                                }
+                            }
+                            crossterm::event::KeyCode::Backspace => {
+                                tui_state.borrow_mut().input.pop();
+                            }
+                            crossterm::event::KeyCode::Char(ch) => {
+                                tui_state.borrow_mut().input.push(ch);
+                            }
+                            crossterm::event::KeyCode::PageUp => {
+                                let h = terminal
+                                    .size()
                                     .map_err(|e| {
                                         InteractiveError::Io(io::Error::other(
                                             e.to_string(),
                                         ))
-                                    })?;
-                                let should_exit = handle_tui_line(
-                                    input_line.trim(),
-                                    &workspace_root,
-                                    &registry,
-                                    &policy,
-                                    &mut application,
-                                    &mut sink,
-                                    &mut hosts,
-                                    &mut manifests,
-                                    profile_plugins.as_deref(),
-                                    context_control.as_ref(),
-                                    &mut context_session_holder,
-                                    &mut context_history_len,
-                                    &tui_state,
-                                )?;
-                                if should_exit {
-                                    break;
-                                }
-                                tui_state.borrow_mut().status =
-                                    "ready".to_owned();
+                                    })?
+                                    .height;
+                                // Transcript viewport height is total height minus 2 (input+status)
+                                let viewport = h.saturating_sub(2);
+                                let current = tui_state.borrow().scroll_offset;
+                                let max =
+                                    tui_state.borrow().max_scroll(viewport);
+                                let next = (current + 10).min(max);
+                                tui_state.borrow_mut().scroll_offset = next;
                             }
+                            crossterm::event::KeyCode::PageDown => {
+                                let current = tui_state.borrow().scroll_offset;
+                                let next = current.saturating_sub(10);
+                                tui_state.borrow_mut().scroll_offset = next;
+                            }
+                            _ => {}
                         }
-                        crossterm::event::KeyCode::Backspace => {
-                            tui_state.borrow_mut().input.pop();
-                        }
-                        crossterm::event::KeyCode::Char(ch) => {
-                            tui_state.borrow_mut().input.push(ch);
-                        }
-                        crossterm::event::KeyCode::PageUp => {
-                            let h = terminal
-                                .size()
-                                .map_err(|e| {
-                                    InteractiveError::Io(io::Error::other(
-                                        e.to_string(),
-                                    ))
-                                })?
-                                .height;
-                            // Transcript viewport height is total height minus 2 (input+status)
-                            let viewport = h.saturating_sub(2);
-                            let current = tui_state.borrow().scroll_offset;
-                            let max = tui_state.borrow().max_scroll(viewport);
-                            let next = (current + 10).min(max);
-                            tui_state.borrow_mut().scroll_offset = next;
-                        }
-                        crossterm::event::KeyCode::PageDown => {
-                            let current = tui_state.borrow().scroll_offset;
-                            let next = current.saturating_sub(10);
-                            tui_state.borrow_mut().scroll_offset = next;
-                        }
-                        _ => {}
                     }
                 }
                 crossterm::event::Event::Resize(_, _) => {}

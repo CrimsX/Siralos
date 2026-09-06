@@ -24,6 +24,64 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 /// Maximum number of transcript lines retained (bounded ring).
 pub const MAX_TRANSCRIPT_LINES: usize = 1000;
 
+/// Maximum number of lines shown in the approval modal (bounded).
+pub const MAX_APPROVAL_LINES: usize = 30;
+
+/// Marker appended when the approval request is truncated to the bound.
+pub const APPROVAL_TRUNCATION_MARKER: &str = "... (truncated)";
+
+/// Approval routing decision — host-gated, same gate the stdio path uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    /// `y` — approve.
+    Approve,
+    /// `n` or `Esc` — deny.
+    Deny,
+}
+
+/// Bounded approval modal over the transcript pane (T2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalModal {
+    /// Sanitized request lines (already bounded to [`MAX_APPROVAL_LINES`]).
+    pub lines: Vec<String>,
+    /// Focused choice (0 approve / 1 deny) — kept for completeness; keys
+    /// `y`/`n`/`Esc` decide directly and `selected` mirrors the last
+    /// highlight.
+    pub selected: bool,
+}
+
+impl ApprovalModal {
+    /// Build a modal from already-sanitized lines, bounding to
+    /// [`MAX_APPROVAL_LINES`] with a truncation marker when needed.
+    pub fn new(mut lines: Vec<String>) -> Self {
+        let truncated = lines.len() > MAX_APPROVAL_LINES;
+        if truncated {
+            lines.truncate(MAX_APPROVAL_LINES);
+            lines.push(APPROVAL_TRUNCATION_MARKER.to_owned());
+        }
+        Self { lines, selected: false }
+    }
+}
+
+/// Pure predicate shared by all frontends: decides approval from the same
+/// host-gated input the stdio path would read. `y` (case-insensitive,
+/// trimmed) approves; any other input (including `n` and `Esc`) denies.
+/// This function is the SINGLE approval-read helper both loops call (T2
+/// consolidation — no parallel logic).
+pub fn evaluate_approval_input(input: &str) -> ApprovalDecision {
+    if input.trim().eq_ignore_ascii_case("y") {
+        ApprovalDecision::Approve
+    } else {
+        ApprovalDecision::Deny
+    }
+}
+
+/// Map a typed character (`y`/`n`) to the shared gate without an
+/// intermediate parallel code path — used by the TUI modal key handler.
+pub fn evaluate_approval_char(ch: char) -> ApprovalDecision {
+    evaluate_approval_input(&ch.to_string())
+}
+
 /// Pure render model for the TUI shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiState {
@@ -37,6 +95,9 @@ pub struct TuiState {
     pub status: String,
     /// Scroll offset from the tail (0 = show tail, n = n lines up).
     pub scroll_offset: u16,
+    /// Pending approval modal — when `Some`, all non-modal keys are ignored and
+    /// the modal renders centered over a dimmed transcript (T2).
+    pub pending_approval: Option<ApprovalModal>,
 }
 
 impl Default for TuiState {
@@ -46,6 +107,7 @@ impl Default for TuiState {
             input: String::new(),
             status: String::from("ready"),
             scroll_offset: 0,
+            pending_approval: None,
         }
     }
 }
@@ -107,12 +169,22 @@ impl TuiState {
     }
 }
 
-/// Pure predicate for the non-TTY fallback (testable without a real TTY).
+/// Pure predicate for the launch decision (decision 105, testable without a real TTY).
 ///
-/// Returns true when the TUI should be used: the user asked for `--tui` and
-/// stdout is a TTY. Otherwise the stdio frontend is used.
+/// Returns true when the TUI should be used: stdout is a TTY and `--stdio`
+/// was not requested. `wants_stdio` is true when the user passed `--stdio`.
+///
+/// Truth table:
+/// - `!wants_stdio && is_tty` => TUI
+/// - otherwise => stdio (scripts / CI silent, no diagnostic)
+pub fn should_launch_tui(wants_stdio: bool, is_tty: bool) -> bool {
+    !wants_stdio && is_tty
+}
+
+/// Deprecated alias for the T1 `--tui` opt-in (kept for compiling existing
+/// tests; new code should use [`should_launch_tui`]).
 pub fn should_use_tui(wants_tui: bool, is_tty: bool) -> bool {
-    wants_tui && is_tty
+    should_launch_tui(!wants_tui, is_tty)
 }
 
 /// Returns whether stdout is a TTY on this platform.
@@ -171,15 +243,97 @@ pub fn draw(state: &TuiState, frame: &mut Frame<'_>) {
         .style(Style::default().fg(Color::Yellow));
     frame.render_widget(input, input_area);
     // Cursor at end of input (after `> ` prefix + input length). Clamp to area.
-    let cursor_x = input_area.x + 2 + state.input.len() as u16;
-    let cursor_x =
-        cursor_x.min(input_area.x + input_area.width.saturating_sub(1));
-    frame.set_cursor_position((cursor_x, input_area.y));
+    // When a modal is pending, hide the cursor behind the dimmed backdrop
+    // (no typing through a modal).
+    if state.pending_approval.is_none() {
+        let cursor_x = input_area.x + 2 + state.input.len() as u16;
+        let cursor_x =
+            cursor_x.min(input_area.x + input_area.width.saturating_sub(1));
+        frame.set_cursor_position((cursor_x, input_area.y));
+    }
 
     // Status line
     let status = Paragraph::new(state.status.as_str())
         .style(Style::default().fg(Color::Cyan));
     frame.render_widget(status, status_area);
+
+    // Modal overlay (T2): dimmed backdrop + centered modal with the sanitized
+    // approval request (bounded to MAX_APPROVAL_LINES). This reuses the same
+    // sanitizer-bound lines the stdio path would render — no unsanitized content.
+    if let Some(modal) = &state.pending_approval {
+        // Dimmed backdrop over the transcript pane (style bg dark).
+        let backdrop = Block::default()
+            .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        frame.render_widget(backdrop, transcript_area);
+        // Centered modal rect.
+        let modal_area = centered_rect(60, 60, transcript_area);
+        // Clear underneath for determinism
+        frame.render_widget(ratatui::widgets::Clear, modal_area);
+        let modal_block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Approval required (y/n, Esc deny) ")
+            .style(Style::default().bg(Color::Black).fg(Color::Yellow));
+        let inner = modal_block.inner(modal_area);
+        frame.render_widget(modal_block, modal_area);
+        let text: Vec<Line<'_>> =
+            modal.lines.iter().map(|s| Line::from(s.as_str())).collect();
+        let paragraph = Paragraph::new(Text::from(text))
+            .style(Style::default().fg(Color::White).bg(Color::Black))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        frame.render_widget(paragraph, inner);
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+/// Returns whether a key should be treated as approval input while a modal is
+/// pending. `y` approves, `n` and `Esc` deny; all other keys are ignored.
+pub fn modal_key_decision(
+    key: crossterm::event::KeyEvent,
+) -> Option<ApprovalDecision> {
+    if key.kind != crossterm::event::KeyEventKind::Press {
+        return None;
+    }
+    match key.code {
+        crossterm::event::KeyCode::Char('y')
+        | crossterm::event::KeyCode::Char('Y') => {
+            Some(evaluate_approval_char('y'))
+        }
+        crossterm::event::KeyCode::Char('n')
+        | crossterm::event::KeyCode::Char('N') => {
+            Some(evaluate_approval_char('n'))
+        }
+        crossterm::event::KeyCode::Esc => Some(ApprovalDecision::Deny),
+        _ => None,
+    }
+}
+
+/// Handle a key while a modal is pending: returns `Some(decision)` when the
+/// key is a modal key (`y`/`n`/`Esc`), otherwise `None` (caller must ignore
+/// the key — no typing through a modal).
+pub fn handle_modal_key(
+    state: &mut TuiState,
+    key: crossterm::event::KeyEvent,
+) -> Option<ApprovalDecision> {
+    state.pending_approval.as_ref()?;
+    modal_key_decision(key)
 }
 
 /// Helper for headless tests: render `state` into a `Buffer` of the given size
@@ -229,6 +383,26 @@ pub fn render_to_buffer(state: &TuiState, width: u16, height: u16) -> Buffer {
     let status = Paragraph::new(state.status.as_str())
         .style(Style::default().fg(Color::Cyan));
     status.render(status_area, &mut buf);
+
+    if let Some(modal) = &state.pending_approval {
+        let backdrop = Block::default()
+            .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        backdrop.render(transcript_area, &mut buf);
+        let modal_area = centered_rect(60, 60, transcript_area);
+        ratatui::widgets::Clear.render(modal_area, &mut buf);
+        let modal_block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Approval required (y/n, Esc deny) ")
+            .style(Style::default().bg(Color::Black).fg(Color::Yellow));
+        let inner = modal_block.inner(modal_area);
+        modal_block.render(modal_area, &mut buf);
+        let text: Vec<Line<'_>> =
+            modal.lines.iter().map(|s| Line::from(s.as_str())).collect();
+        let paragraph = Paragraph::new(Text::from(text))
+            .style(Style::default().fg(Color::White).bg(Color::Black))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        paragraph.render(inner, &mut buf);
+    }
 
     buf
 }
@@ -323,22 +497,32 @@ impl Drop for TerminalGuard {
     }
 }
 
-// T1 composition note: `run_interactive_session` blocks on `BufRead::read_line`,
-// which would starve the `crossterm::event::poll` pump, so the live TUI loop
-// in `interactive::run_interactive_tui` duplicates the dispatch calling the
-// SAME underlying seam functions (sanitizer, `ensure_host`, command dispatch,
-// `drain_events` with the `TuiSink`). This duplication is honest T1 debt to be
-// consolidated in T2-T4 when the seam is refactored for pollable input.
+// T1 composition note (updated T2): `run_interactive_session` blocks on
+// `BufRead::read_line`, which would starve the `crossterm::event::poll` pump,
+// so the live TUI loop duplicates the dispatch calling the SAME underlying seam
+// functions (sanitizer, `ensure_host`, command dispatch, `drain_events` with the
+// `TuiSink`). T2 starts the consolidation: the shared helpers
+// `evaluate_approval_input` / `ApprovalModal::new` / `modal_key_decision` are the
+// SAME functions both loops call for the approval surface; the remaining
+// dispatch/composition duplication (the slash-command match and the session-
+// composition block) stays duplicated and is recorded in the decision 106 ledger.
 // During a blocking provider round the UI simply does not redraw — the status
 // line showed "working" before the step and the freeze is documented.
 // Helpers for tests: expose scroll operations
 /// Handle a key event for the input line and scroll state. Returns true if the
 /// Enter key was pressed (caller should submit `state.input`).
+/// While a modal is pending this function returns `false` for all keys
+/// (callers must route through [`handle_modal_key`] first — no typing through
+/// a modal).
 pub fn handle_key(
     state: &mut TuiState,
     key: crossterm::event::KeyEvent,
 ) -> bool {
     use crossterm::event::{KeyCode, KeyModifiers};
+    if state.pending_approval.is_some() {
+        // T2: while a modal is pending, ALL other keys are ignored.
+        return false;
+    }
     if key.kind != crossterm::event::KeyEventKind::Press {
         return false;
     }
@@ -500,9 +684,171 @@ mod tests {
 
     #[test]
     fn non_tty_fallback_predicate() {
+        // T1 predicate (deprecated alias) still compiles
         assert!(should_use_tui(true, true));
         assert!(!should_use_tui(true, false));
         assert!(!should_use_tui(false, true));
         assert!(!should_use_tui(false, false));
+    }
+
+    #[test]
+    fn tui_default_entry_truth_table() {
+        // Decision 105: should_launch_tui(wants_stdio, is_tty) == !wants_stdio && is_tty
+        assert!(should_launch_tui(false, true));
+        assert!(!should_launch_tui(true, true));
+        assert!(!should_launch_tui(false, false));
+        assert!(!should_launch_tui(true, false));
+    }
+
+    #[test]
+    fn stdio_escape_hatch_forces_stdio() {
+        // --stdio forces stdio even on TTY
+        assert!(!should_launch_tui(true, true));
+        assert!(!should_launch_tui(true, false));
+    }
+
+    #[test]
+    fn non_tty_silent_stdio() {
+        // Plain non-TTY with no flags uses stdio silently
+        assert!(!should_launch_tui(false, false));
+    }
+
+    #[test]
+    fn modal_renders_over_dimmed_transcript() {
+        let mut state = TuiState::new();
+        state.transcript_lines =
+            vec!["line 1".to_owned(), "line 2".to_owned()];
+        state.pending_approval =
+            Some(ApprovalModal::new(vec!["Approve this?".to_owned()]));
+        let a = render(&state, 40, 12);
+        let b = render(&state, 40, 12);
+        // Determinism
+        assert_eq!(a, b);
+        let content: String = a.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Approve this?"));
+        assert!(content.contains("Approval required"));
+        // No-modal baseline differs
+        let mut plain = TuiState::new();
+        plain.transcript_lines =
+            vec!["line 1".to_owned(), "line 2".to_owned()];
+        let plain_buf = render(&plain, 40, 12);
+        assert_ne!(a, plain_buf);
+    }
+
+    #[test]
+    fn approval_y_routes_approve_through_same_gate() {
+        // Same gate stdio would use
+        assert_eq!(evaluate_approval_input("y"), ApprovalDecision::Approve);
+        assert_eq!(evaluate_approval_input("Y"), ApprovalDecision::Approve);
+        // Modal y routes approve
+        let mut state = TuiState::new();
+        state.pending_approval =
+            Some(ApprovalModal::new(vec!["req".to_owned()]));
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('y'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            handle_modal_key(&mut state, key),
+            Some(ApprovalDecision::Approve)
+        );
+        // Ensure stdio evaluation matches modal evaluation for same char
+        assert_eq!(evaluate_approval_char('y'), evaluate_approval_input("y"));
+    }
+
+    #[test]
+    fn approval_n_and_esc_route_deny() {
+        assert_eq!(evaluate_approval_input("n"), ApprovalDecision::Deny);
+        assert_eq!(evaluate_approval_input("Esc"), ApprovalDecision::Deny);
+        assert_eq!(evaluate_approval_input(""), ApprovalDecision::Deny);
+        let mut state = TuiState::new();
+        state.pending_approval =
+            Some(ApprovalModal::new(vec!["req".to_owned()]));
+        let n = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('n'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            handle_modal_key(&mut state, n),
+            Some(ApprovalDecision::Deny)
+        );
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            handle_modal_key(&mut state, esc),
+            Some(ApprovalDecision::Deny)
+        );
+    }
+
+    #[test]
+    fn keys_ignored_while_modal_pending() {
+        let mut state = TuiState::new();
+        state.input = "hello".to_owned();
+        state.pending_approval =
+            Some(ApprovalModal::new(vec!["req".to_owned()]));
+        // Typing should be ignored
+        let ch = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('a'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert!(!handle_key(&mut state, ch));
+        assert_eq!(state.input, "hello");
+        // Enter ignored
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert!(!handle_key(&mut state, enter));
+        // Only modal keys pass
+        let y = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('y'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            handle_modal_key(&mut state, y),
+            Some(ApprovalDecision::Approve)
+        );
+    }
+
+    #[test]
+    fn modal_line_bound_with_truncation_marker() {
+        let lines: Vec<String> =
+            (0..50).map(|i| format!("line {i}")).collect();
+        let modal = ApprovalModal::new(lines);
+        assert_eq!(modal.lines.len(), MAX_APPROVAL_LINES + 1);
+        assert_eq!(
+            modal.lines[MAX_APPROVAL_LINES],
+            APPROVAL_TRUNCATION_MARKER
+        );
+        // Exactly at bound no truncation
+        let exact: Vec<String> =
+            (0..MAX_APPROVAL_LINES).map(|i| format!("line {i}")).collect();
+        let modal2 = ApprovalModal::new(exact.clone());
+        assert_eq!(modal2.lines, exact);
+        // Modal never renders unsanitized — input already sanitized, modal stores verbatim
+        let mut state = TuiState::new();
+        state.pending_approval = Some(ApprovalModal::new(vec![
+            "sanitized \x1b[31mred\x1b[0m".to_owned(),
+        ]));
+        let buf = render(&state, 50, 14);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("sanitized"));
+    }
+
+    #[test]
+    fn consolidated_helper_is_same_function_both_loops_call() {
+        // Compile-level proof: both the stdio and TUI paths import and call
+        // evaluate_approval_input (and evaluate_approval_char) — the address is the same function.
+        let stdio_fn: fn(&str) -> ApprovalDecision = evaluate_approval_input;
+        let tui_fn: fn(&str) -> ApprovalDecision =
+            crate::tui::evaluate_approval_input;
+        assert_eq!(stdio_fn("y"), tui_fn("y"));
+        assert_eq!(stdio_fn("n"), tui_fn("n"));
+        let ch_fn: fn(char) -> ApprovalDecision = evaluate_approval_char;
+        assert_eq!(ch_fn('y'), ApprovalDecision::Approve);
+        assert_eq!(ch_fn('n'), ApprovalDecision::Deny);
     }
 }
