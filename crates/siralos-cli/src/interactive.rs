@@ -527,12 +527,13 @@ where
                     &format_context_status(application.last_projection()),
                     context_control.as_ref(),
                 );
-                let audit = if context_system_enabled
-                    && context_session_holder.is_some()
-                {
-                    format_context_audit(context_session_holder.as_ref())
-                } else {
-                    String::new()
+                // T3: the shared audit gate (same condition the pane uses).
+                let audit = match context_audit_session(
+                    context_system_enabled,
+                    &context_session_holder,
+                ) {
+                    Some(session) => format_context_audit(Some(session)),
+                    None => String::new(),
                 };
                 let combined = if audit.is_empty() {
                     base
@@ -1237,6 +1238,22 @@ pub fn build_approval_modal(lines: Vec<String>) -> crate::tui::ApprovalModal {
     crate::tui::ApprovalModal::new(lines)
 }
 
+/// T3 shared audit/pane gate — the SAME function both frontends call.
+///
+/// The decision 100 `/context` audit segment renders only when the applied
+/// profile has `[profile.context_system].enabled = true` AND the subsystem
+/// built successfully; the T3 context pane uses the identical condition.
+/// OFF (`!enabled` or no built session) yields `None`: byte-transparent, no
+/// placeholder. This consolidates the TUI `/context` arm's former
+/// holder-only check with the stdio arm's flag+holder check (T3
+/// consolidation where the pane work touches).
+pub fn context_audit_session(
+    enabled: bool,
+    holder: &Option<siralos_adapters::context_session::ContextSystemSession>,
+) -> Option<&siralos_adapters::context_session::ContextSystemSession> {
+    if enabled { holder.as_ref() } else { None }
+}
+
 /// Activation B3b (decision 99): drive the demand loop from host-observed
 /// context-tool results after a completed prompt.
 ///
@@ -1318,8 +1335,12 @@ fn drive_context_demand<P>(
 /// the sanitizer, the input-queue/command-catalog vocabulary). Because
 /// `run_interactive_session` blocks on `BufRead::read_line`, it would starve the
 /// `crossterm::event::poll` pump, so this loop duplicates the dispatch calling
-/// the SAME underlying functions. This duplication is honest T1 debt to be
-/// consolidated in T2-T4 when the seam is refactored for pollable input.
+/// the SAME underlying functions. T2 consolidated the approval surface; T3
+/// consolidates the audit/pane gating (`context_audit_session`, called by the
+/// stdio `/context` arm, the TUI `/context` arm, and the pane builder) and
+/// threads the `context_system_enabled` flag the TUI arm was missing. The
+/// remaining duplication (session-composition block, slash-command dispatch
+/// match, inline key-edit handling) stays duplicated for T4.
 ///
 /// No threads: `crossterm::event::poll` with a 100ms timeout; blocking provider
 /// rounds freeze the redraw (documented T1 limitation — status showed "working"
@@ -1337,7 +1358,9 @@ pub fn run_interactive_tui_with_options(
     use std::rc::Rc;
     use std::time::Duration;
 
-    use crate::tui::{TerminalGuard, TuiSink, TuiState, draw};
+    use crate::tui::{
+        TerminalGuard, TuiSink, TuiState, build_context_pane, draw_with_pane,
+    };
 
     // Guard restores raw mode + alternate screen on every exit path.
     let _guard = TerminalGuard::enter().map_err(InteractiveError::Io)?;
@@ -1348,7 +1371,8 @@ pub fn run_interactive_tui_with_options(
     // --- Session composition (duplicated from `run_interactive_session_with_options`) ---
     // T1 debt: this block mirrors the stdio composition verbatim so the sanitizer,
     // input-queue, command-catalog, approval, and context-system seams are the
-    // SAME code paths, not reimplementations. It will be consolidated in T2-T4.
+    // SAME code paths, not reimplementations. T2-T3 consolidated the approval
+    // surface and the audit/pane gating; the rest will be consolidated in T4.
     let composed = load_user_configuration(options.config_path)?;
     if composed.review_provider_id != DEFAULT_REVIEW_PROVIDER_ID {
         return Err(InteractiveError::Configuration(
@@ -1599,9 +1623,18 @@ pub fn run_interactive_tui_with_options(
     tui_state.borrow_mut().status = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit".to_owned();
     let mut sink = TuiSink::new(tui_state.clone());
 
-    // Initial draw
+    // Initial draw (T3: the context pane renders when the shared audit
+    // gate passes — opted in AND built — and is byte-identical to T2
+    // otherwise).
+    let pane = build_context_pane(
+        context_system_enabled,
+        context_session_holder.as_ref().map(|session| &session.metrics),
+        application.history(),
+    );
     terminal
-        .draw(|frame| draw(&tui_state.borrow(), frame))
+        .draw(|frame| {
+            draw_with_pane(&tui_state.borrow(), pane.as_ref(), frame)
+        })
         .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
 
     // Event loop: poll with 100ms timeout — no threads.
@@ -1670,9 +1703,20 @@ pub fn run_interactive_tui_with_options(
                                     // Dispatch the line using the SAME seam functions the stdio loop calls.
                                     tui_state.borrow_mut().status =
                                         "working".to_owned();
+                                    let pane = build_context_pane(
+                                        context_system_enabled,
+                                        context_session_holder
+                                            .as_ref()
+                                            .map(|session| &session.metrics),
+                                        application.history(),
+                                    );
                                     terminal
                                         .draw(|frame| {
-                                            draw(&tui_state.borrow(), frame)
+                                            draw_with_pane(
+                                                &tui_state.borrow(),
+                                                pane.as_ref(),
+                                                frame,
+                                            )
                                         })
                                         .map_err(|e| {
                                             InteractiveError::Io(
@@ -1692,6 +1736,7 @@ pub fn run_interactive_tui_with_options(
                                         &mut manifests,
                                         profile_plugins.as_deref(),
                                         context_control.as_ref(),
+                                        context_system_enabled,
                                         &mut context_session_holder,
                                         &mut context_history_len,
                                         &tui_state,
@@ -1739,9 +1784,21 @@ pub fn run_interactive_tui_with_options(
                 _ => {}
             }
         }
-        terminal.draw(|frame| draw(&tui_state.borrow(), frame)).map_err(
-            |e| InteractiveError::Io(io::Error::other(e.to_string())),
-        )?;
+        // T3: every redraw rebuilds the pane snapshot from the live
+        // metrics + host-observed history, so a tick is reflected in the
+        // next frame. OFF renders byte-identical to T2.
+        let pane = build_context_pane(
+            context_system_enabled,
+            context_session_holder.as_ref().map(|session| &session.metrics),
+            application.history(),
+        );
+        terminal
+            .draw(|frame| {
+                draw_with_pane(&tui_state.borrow(), pane.as_ref(), frame)
+            })
+            .map_err(|e| {
+                InteractiveError::Io(io::Error::other(e.to_string()))
+            })?;
     }
 
     if let Some(recorder) = record_recorder {
@@ -1771,6 +1828,7 @@ fn handle_tui_line<P>(
     manifests: &mut BTreeMap<String, PluginManifest>,
     profile_plugins: Option<&[String]>,
     context_control: Option<&ContextPolicy>,
+    context_system_enabled: bool,
     context_session_holder: &mut Option<
         siralos_adapters::context_session::ContextSystemSession,
     >,
@@ -1786,17 +1844,14 @@ where
                 &format_context_status(application.last_projection()),
                 context_control,
             );
-            let audit = if context_session_holder.is_some() {
-                let enabled = context_session_holder.is_some();
-                // Re-check via the session holder presence; the audit helper checks the flag internally.
-                // For TUI we know the session exists only when enabled.
-                if enabled {
-                    format_context_audit(context_session_holder.as_ref())
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
+            // T3: the shared audit gate — the TUI arm no longer carries its
+            // own holder-only check (same gating as stdio and the pane).
+            let audit = match context_audit_session(
+                context_system_enabled,
+                context_session_holder,
+            ) {
+                Some(session) => format_context_audit(Some(session)),
+                None => String::new(),
             };
             let combined =
                 if audit.is_empty() { base } else { format!("{base}{audit}") };
