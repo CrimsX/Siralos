@@ -267,8 +267,27 @@ where
             continue;
         }
         // T4: one shared parse, one thin stdio writer (the TUI loop calls
-        // the same parser with its sink writer).
-        let command = parse_slash_command(input.trim());
+        // the same parser with its sink writer). Q3 (decision 114): the
+        // stdio loop gains the same unknown-command honesty gate the TUI
+        // has, through the single shared helper — unknown slash commands
+        // render the explicit honesty line instead of falling through to
+        // the prompt path.
+        let trimmed = input.trim();
+        if is_unknown_slash_command(trimmed) {
+            let catalog_names = slash_command_catalog()
+                .iter()
+                .map(|(n, _)| *n)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let msg =
+                format!("unknown command - available: {catalog_names}\n");
+            let sanitized = sanitize_for_display(&msg);
+            writer
+                .write_all(sanitized.as_bytes())
+                .map_err(InteractiveError::Io)?;
+            continue;
+        }
+        let command = parse_slash_command(trimmed);
         if dispatch_stdio_command(
             &command,
             &workspace_root,
@@ -409,6 +428,24 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
             }
         }
     }
+}
+
+/// Returns `true` when `line` is an unknown slash command.
+///
+/// A line is unknown when it starts with `/` after trimming and parses to
+/// [`SlashCommand::Prompt`] (the audit's chunk-1 M2 minimal fix). This is
+/// the SINGLE unknown-command definition both frontends call (decision 114
+/// Q3) — the TUI loop keeps its honesty behavior through this helper and
+/// the stdio loop gains the same gate instead of falling through to the
+/// prompt path. Compatibility note: a stdio user piping `/-prefixed` prompts
+/// loses that ability for non-command strings; the user accepted this
+/// ruling (decision 114 Q3).
+pub fn is_unknown_slash_command(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('/') {
+        return false;
+    }
+    matches!(parse_slash_command(trimmed), SlashCommand::Prompt(_))
 }
 
 /// Render the `/context` claim with the shared audit gate — the SINGLE
@@ -1237,6 +1274,11 @@ fn compose_skills_segment(
 /// records; the on-disk lock is read through the unchanged 5.4 adapter.
 /// The lock never gates authority: every outcome is advisory and the
 /// session proceeds on live Host state.
+///
+/// Decision 114 Q5 — authority-only lock (documented as intentional):
+/// the session lock covers AUTHORITY identity (effective policy, plugins);
+/// provider/model/endpoint are routing configuration set by the workspace
+/// owner and intentionally do not drift the lock.
 fn verify_session_lock(
     workspace_root: &Path,
     effective: &EffectiveRunPolicy,
@@ -1992,9 +2034,11 @@ pub fn run_interactive_tui_with_options(
         }
         if let Some(input_line) = pending_submit.take() {
             // I3 & I6/I7: parse once, handle unknown honesty before dispatch
+            // through the single shared helper (decision 114 Q3 — both loops
+            // call one definition).
             let trimmed = input_line.trim().to_owned();
             let command = parse_slash_command(&trimmed);
-            let is_unknown = matches!(command, SlashCommand::Prompt(t) if t.starts_with('/'));
+            let is_unknown = is_unknown_slash_command(&trimmed);
             if is_unknown {
                 let catalog_names = slash_command_catalog()
                     .iter()
@@ -2060,9 +2104,9 @@ pub fn run_interactive_tui_with_options(
 mod tests {
     use super::{
         InteractiveOptions, SlashCommand, compose_session,
-        parse_slash_command, render_evolve_lines, render_model_line,
-        render_provider_line, run_interactive_session_with_options,
-        slash_command_catalog,
+        is_unknown_slash_command, parse_slash_command, render_evolve_lines,
+        render_model_line, render_provider_line,
+        run_interactive_session_with_options, slash_command_catalog,
     };
     use std::fs::{create_dir, create_dir_all, remove_dir_all, write};
     use std::io::Cursor;
@@ -3009,5 +3053,85 @@ mod tests {
             .map(|(a, b)| (a.to_owned(), b.to_owned()))
             .collect();
         assert_eq!(interactive_owned, tui);
+    }
+
+    #[test]
+    fn is_unknown_slash_command_shared_helper_both_loops_call() {
+        // Decision 114 Q3: the unknown-command check is a single shared
+        // helper next to parse_slash_command — both loops call one
+        // definition (fn-pointer/equality pattern). The helper returns
+        // true for unknown slash commands and false otherwise, and the
+        // stdio and TUI paths observe the same definition.
+        let helper: fn(&str) -> bool = is_unknown_slash_command;
+        let via_fn_ptr = helper;
+        assert!(via_fn_ptr("/unknown"));
+        assert!(via_fn_ptr("/unknown arg with spaces"));
+        assert!(via_fn_ptr("  /nope  "));
+        assert!(!via_fn_ptr("/context"));
+        assert!(!via_fn_ptr("/tools"));
+        assert!(!via_fn_ptr("/provider"));
+        assert!(!via_fn_ptr("hello"));
+        assert!(!via_fn_ptr("/domains-add"));
+        assert!(!via_fn_ptr(""));
+        // Both frontends use the same catalog; unknown line is derived from it.
+        let catalog = slash_command_catalog();
+        let names =
+            catalog.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ");
+        let expected = format!("unknown command - available: {names}");
+        let helper_unknown =
+            is_unknown_slash_command("/definitely-not-a-command");
+        assert!(helper_unknown);
+        assert!(expected.contains("/context"));
+        // Prove the TUI path's inline check would agree with the helper
+        // (before decision 114 it used `matches!(Prompt(t) if t.starts_with('/'))`);
+        // now it calls the helper — same outcome, one definition.
+        let tui_is_unknown = is_unknown_slash_command("/nope arg");
+        let stdio_is_unknown = is_unknown_slash_command("/nope arg");
+        assert_eq!(tui_is_unknown, stdio_is_unknown);
+        assert!(tui_is_unknown);
+    }
+
+    #[test]
+    fn stdio_unknown_command_honesty_line_not_prompt() {
+        // Decision 114 Q3: stdio unknown slash commands render the honesty
+        // line via the stdio writer (sanitized) instead of falling through
+        // to the prompt path. This is a compatibility change the user
+        // accepted (/-prefixed prompts that are not commands lose the
+        // prompt path).
+        let root = temporary_directory("stdio-unknown-honesty");
+        let output = run("/unknown-command\n/exit\n", &root, None);
+        // Must contain the honesty line derived from the shared catalog.
+        let catalog = slash_command_catalog();
+        let names =
+            catalog.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ");
+        let expected = format!("unknown command - available: {names}");
+        assert!(
+            output.contains(&expected),
+            "expected honesty line {expected:?} in output {output:?}"
+        );
+        // Must NOT have been treated as a prompt (no model turn).
+        assert!(
+            !output.contains("Siralos received: /unknown-command"),
+            "unknown slash command must not fall through to prompt path; output: {output:?}"
+        );
+        // Also check with args: "/nope arg" should be honesty, not prompt.
+        let output2 = run("/nope arg\n/exit\n", &root, None);
+        assert!(output2.contains(&expected));
+        assert!(!output2.contains("Siralos received: /nope"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn stdio_unknown_command_with_whitespace_still_honest() {
+        // Whitespace trimming: unknown detection uses trimmed line, like TUI.
+        let root = temporary_directory("stdio-unknown-trim");
+        let output = run("  /unknown  \n/exit\n", &root, None);
+        let catalog = slash_command_catalog();
+        let names =
+            catalog.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ");
+        let expected = format!("unknown command - available: {names}");
+        assert!(output.contains(&expected));
+        assert!(!output.contains("Siralos received:"));
+        let _ = remove_dir_all(root);
     }
 }

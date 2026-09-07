@@ -216,6 +216,11 @@ impl ContextSystemSession {
     /// demand tick that raises a node's priority does not mutate a
     /// registered tool; the host refreshes the snapshot (`tool_state`)
     /// whenever it (re)builds the tool set.
+    ///
+    /// Decision 114 Q2 — accepted policy (documented): snapshots are
+    /// build-time by design (immutable per decision 82/92), tiers may lag
+    /// behind ticks until session restart, ranks and content are always
+    /// fresh.
     #[must_use]
     pub fn register_tools(&self) -> Vec<Box<dyn Tool>> {
         let snapshot = self.tool_state();

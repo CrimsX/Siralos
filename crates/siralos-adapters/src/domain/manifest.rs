@@ -9,6 +9,18 @@
 //! (`[plugins.<id>] path + digest`). Every failure is typed and
 //! performs no installation. This slice is View + Add Plugin only:
 //! `Enable`/`Activate` remain Host-gated and are not implemented here.
+//!
+//! Decision 114 Q4 — approved atomic-writer surfaces (documented):
+//! the four approved temp+verify+rename writers are `siralos.lock`
+//! (`crates/siralos-adapters/src/lockfile.rs` `write_workspace_lock`),
+//! checkpoint storage (`crates/siralos-adapters/src/checkpoint.rs`),
+//! replay store (`crates/siralos-adapters/src/replay_store.rs`
+//! `write_replay_store`), and domain manifest records
+//! (`crates/siralos-adapters/src/domain/manifest.rs`
+//! `write_record_document` at ~558–596) — each with conflict/symlink
+//! refusal tests (manifest: `record_conflict_is_refused`,
+//! `crafted_record_with_absolute_path_is_refused` and symlink checks at
+//! ~640–656, 572–580).
 
 use crate::domain::host::DomainHost;
 use crate::domain::host::DomainHostBounds;

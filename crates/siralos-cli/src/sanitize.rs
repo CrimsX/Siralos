@@ -12,6 +12,11 @@
 //! provider output. Only `TextDelta`, `ResponseFailed`, and
 //! `ToolFailed` messages (untrusted provider/tool data) are sanitized in
 //! `interactive::drain_events`.
+//!
+//! Decision 114 Q6 — the sanitizer boundary guards model/tool-output
+//! sinks (the stdio writer and the TUI transcript/sink); stderr
+//! diagnostics are host-side output of host-computed strings and are
+//! outside that boundary.
 
 /// One final terminal-rendering boundary.
 ///
