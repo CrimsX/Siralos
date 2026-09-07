@@ -134,7 +134,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 76;
+const CORPUS_VERSION: u64 = 77;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -10456,11 +10456,28 @@ fn tui_render_record(
         ContextMetrics, DemotionKindCounts, TickRecord, TierCounts,
     };
 
+    // I4: transcript entries carry fixed fixture timestamps so pinned frames stay deterministic.
+    // The scenario input still carries `transcript_lines` as strings (unchanged files);
+    // the builder injects a FIXED timestamp per entry for rendering.
+    const FIXTURE_TIMESTAMP: &str = "2026-08-31 12:00:00 UTC";
     let transcript: Vec<String> = input
         .get("transcript_lines")
         .and_then(Value::as_array)
         .map(|lines| {
-            lines.iter().filter_map(Value::as_str).map(str::to_owned).collect()
+            lines
+                .iter()
+                .filter_map(|v| {
+                    if let Some(s) = v.as_str() {
+                        Some(s.to_owned())
+                    } else if let Some(obj) = v.as_object() {
+                        obj.get("text")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         })
         .ok_or_else(|| {
             HarnessError::corpus(
@@ -10605,11 +10622,22 @@ fn tui_render_record(
     };
 
     let mut state = TuiState::new();
+    // I4: fixed fixture timestamps for deterministic frames.
+    let transcript_entries: Vec<crate::tui::TranscriptEntry> = transcript
+        .iter()
+        .map(|text| crate::tui::TranscriptEntry {
+            text: text.clone(),
+            timestamp: Some(FIXTURE_TIMESTAMP.to_owned()),
+        })
+        .collect();
+    state.transcript = transcript_entries.clone();
     state.transcript_lines = transcript.clone();
+    // Also keep transcript_lines synced for legacy draw path fallback
     state.input = input_text.to_owned();
     state.status = status.to_owned();
     state.scroll_offset = scroll_offset.min(u16::MAX as u64) as u16;
     state.pending_approval = pending.clone().map(ApprovalModal::new);
+    state.palette = None;
 
     // Production draw path over the fixed viewport — no re-implementation.
     let backend = TestBackend::new(TUI_RENDER_WIDTH, TUI_RENDER_HEIGHT);

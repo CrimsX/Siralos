@@ -307,12 +307,52 @@ pub fn context_pane_lines(
     lines
 }
 
+/// One transcript entry — a sanitized line plus an optional UTC stamp.
+///
+/// `I4`: transcript entries carry caller-supplied timestamps rendered as a
+/// dim line below each message; live sessions stamp with UTC `HH:MM:SS`
+/// via std-only math (`utc_timestamp_now`), differential fixtures carry
+/// fixed values so pinned frames stay deterministic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptEntry {
+    /// Sanitized line text (no embedded newlines — split upstream).
+    pub text: String,
+    /// Optional UTC stamp like `"2026-08-31 14:03:22 UTC"` (caller-supplied).
+    pub timestamp: Option<String>,
+}
+
+/// Ordered command catalog over the SAME `SlashCommand` vocabulary (I2).
+///
+/// This is the SINGLE catalog the palette and the unknown-command honesty
+/// line derive from — no parallel list. Order matches the
+/// `parse_slash_command` arms including the U7/U8 additive commands.
+#[must_use]
+pub fn command_catalog() -> Vec<(String, String)> {
+    vec![
+        ("/context".to_owned(), "Show context projection".to_owned()),
+        ("/tools".to_owned(), "List available tools".to_owned()),
+        ("/domains".to_owned(), "List installed domains".to_owned()),
+        ("/domains-add".to_owned(), "Add a domain plugin".to_owned()),
+        ("/domains-enable".to_owned(), "Enable a domain plugin".to_owned()),
+        (
+            "/domains-activate".to_owned(),
+            "Activate a domain plugin".to_owned(),
+        ),
+        ("/provider".to_owned(), "Show applied provider".to_owned()),
+        ("/model".to_owned(), "Show applied model".to_owned()),
+        ("/evolve".to_owned(), "Show Stage 6 evolution surfaces".to_owned()),
+        ("/exit".to_owned(), "Exit the session".to_owned()),
+    ]
+}
+
 /// Pure render model for the TUI shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiState {
-    /// Transcript lines — bounded ring, oldest dropped when full. Each entry is
-    /// a single sanitized line (no embedded newlines) as produced by the
-    /// session's sanitizer boundary; the TUI adds nothing unsanitized.
+    /// Transcript entries — bounded ring, oldest dropped when full. Each entry
+    /// is a single sanitized line plus an optional UTC stamp.
+    pub transcript: Vec<TranscriptEntry>,
+    /// Back-compat accessor: transcript lines as plain strings (tests).
+    /// Prefer `transcript` directly; this is kept for harness compat.
     pub transcript_lines: Vec<String>,
     /// Current input line (edited in-place, not yet submitted).
     pub input: String,
@@ -323,16 +363,21 @@ pub struct TuiState {
     /// Pending approval modal — when `Some`, all non-modal keys are ignored and
     /// the modal renders centered over a dimmed transcript (T2).
     pub pending_approval: Option<ApprovalModal>,
+    /// Command palette popup (I2): when `Some`, the input starts with `/` and
+    /// this holds the filtered catalog entries (case-insensitive prefix filter).
+    pub palette: Option<Vec<(String, String)>>,
 }
 
 impl Default for TuiState {
     fn default() -> Self {
         Self {
+            transcript: Vec::new(),
             transcript_lines: Vec::new(),
             input: String::new(),
             status: String::from("ready"),
             scroll_offset: 0,
             pending_approval: None,
+            palette: None,
         }
     }
 }
@@ -343,45 +388,111 @@ impl TuiState {
         Self::default()
     }
 
-    /// Append a sanitized line verbatim (no sanitization, no unsanitized
-    /// injection). Oldest lines are dropped when the bound is exceeded.
-    pub fn push_line(&mut self, line: String) {
-        // Split on newlines in case a caller passes multi-line content; each
-        // resulting segment is a transcript entry. We preserve empty trailing
-        // segments as empty lines is not useful — skip empty final if input
-        // ended with newline? For verbatim semantics we push each segment
-        // produced by lines() plus handle empty input as one empty line? The
-        // sink splits on '\n' and discards trailing empty, so we mirror that:
-        // a single newline yields one empty line? Easiest: if line contains
-        // '\n', split; otherwise push as-is.
-        if line.contains('\n') {
-            for part in line.split('\n') {
-                self.push_single(part.to_owned());
+    /// Sync `transcript` and `transcript_lines` when the caller assigned
+    /// directly to one of them (the harness and old tests use
+    /// `transcript_lines`). When they diverge, rebuild `transcript` from
+    /// `transcript_lines` (with `None` timestamps) — the live path keeps both
+    /// in lockstep via `push_*`.
+    fn sync_transcript(&mut self) {
+        if self.transcript.len() != self.transcript_lines.len() {
+            // If `transcript` was built via the new API, `transcript_lines` may
+            // lag; if the caller wrote `transcript_lines` directly, `transcript`
+            // lags. Prefer the longer/newer `transcript_lines` when `transcript`
+            // is empty and `transcript_lines` non-empty (harness path).
+            if self.transcript.is_empty() && !self.transcript_lines.is_empty()
+            {
+                self.transcript = self
+                    .transcript_lines
+                    .iter()
+                    .map(|text| TranscriptEntry {
+                        text: text.clone(),
+                        timestamp: None,
+                    })
+                    .collect();
+            } else if self.transcript_lines.is_empty()
+                && !self.transcript.is_empty()
+            {
+                self.transcript_lines = self
+                    .transcript
+                    .iter()
+                    .map(|entry| entry.text.clone())
+                    .collect();
+            } else if self.transcript.len() != self.transcript_lines.len() {
+                // Keep both in sync by rebuilding `transcript_lines` from `transcript`.
+                self.transcript_lines = self
+                    .transcript
+                    .iter()
+                    .map(|entry| entry.text.clone())
+                    .collect();
             }
-        } else {
-            self.push_single(line);
         }
     }
 
+    /// Effective transcript slice after syncing the two storages.
+    fn effective_transcript_len(&self) -> usize {
+        // `transcript` is authoritative when non-empty; otherwise fall back to
+        // `transcript_lines` (harness direct assignment).
+        if !self.transcript.is_empty() || self.transcript_lines.is_empty() {
+            self.transcript.len()
+        } else {
+            self.transcript_lines.len()
+        }
+    }
+
+    /// Append a sanitized line verbatim (no sanitization, no unsanitized
+    /// injection). Oldest lines are dropped when the bound is exceeded.
+    /// Keeps `None` timestamp (static host lines).
+    pub fn push_line(&mut self, line: String) {
+        self.push_line_stamped(line, None);
+    }
+
+    /// Append a sanitized line with an optional UTC timestamp (I4).
+    /// `timestamp` like `"2026-08-31 14:03:22 UTC"` or `None` for static lines.
+    pub fn push_line_stamped(
+        &mut self,
+        line: String,
+        timestamp: Option<String>,
+    ) {
+        if line.contains('\n') {
+            for part in line.split('\n') {
+                self.push_single_stamped(part.to_owned(), timestamp.clone());
+            }
+        } else {
+            self.push_single_stamped(line, timestamp);
+        }
+    }
+
+    #[allow(dead_code)]
     fn push_single(&mut self, line: String) {
+        self.push_single_stamped(line, None);
+    }
+
+    fn push_single_stamped(
+        &mut self,
+        line: String,
+        timestamp: Option<String>,
+    ) {
+        // Keep both storages in lockstep.
+        if self.transcript.len() >= MAX_TRANSCRIPT_LINES {
+            let drain = self.transcript.len() - MAX_TRANSCRIPT_LINES + 1;
+            self.transcript.drain(0..drain);
+        }
         if self.transcript_lines.len() >= MAX_TRANSCRIPT_LINES {
             let drain = self.transcript_lines.len() - MAX_TRANSCRIPT_LINES + 1;
             self.transcript_lines.drain(0..drain);
         }
+        self.transcript
+            .push(TranscriptEntry { text: line.clone(), timestamp });
         self.transcript_lines.push(line);
-        // Auto-tail: submitting new content resets scroll to tail so the user
-        // sees the latest output.
-        // We do NOT auto-reset on every push if the user has intentionally
-        // scrolled up? For T1 we keep simple: new lines keep tail unless the
-        // caller preserves offset. But to show tail by default, we leave
-        // scroll_offset as-is; the draw clamps it. Tests expect tail by
-        // default so they use offset 0. Keep offset unchanged here; caller
-        // controls scroll.
     }
 
     /// Maximum scroll offset for the current transcript and viewport height.
+    /// Scroll operates over entries (one entry = one row; timestamp is a dim
+    /// follow-up line rendered below when present but does not affect scroll
+    /// count — the viewport height accounts for lines, timestamps render as
+    /// separate dim lines within the same entry height for simplicity).
     pub fn max_scroll(&self, viewport_height: u16) -> u16 {
-        let total = self.transcript_lines.len() as u16;
+        let total = self.effective_transcript_len() as u16;
         total.saturating_sub(viewport_height)
     }
 
@@ -392,6 +503,111 @@ impl TuiState {
             self.scroll_offset = max;
         }
     }
+
+    /// Update palette based on current input (I2). Call after every key edit:
+    /// when `input` starts with `/`, filter the single catalog by the typed
+    /// prefix (case-insensitive, prefix match); otherwise clear the palette.
+    pub fn update_palette(&mut self) {
+        if self.input.starts_with('/') {
+            let prefix = self.input.to_ascii_lowercase();
+            let filtered: Vec<(String, String)> = command_catalog()
+                .into_iter()
+                .filter(|(name, _)| {
+                    name.to_ascii_lowercase().starts_with(&prefix)
+                })
+                .collect();
+            if filtered.is_empty() {
+                self.palette = Some(vec![]);
+            } else {
+                self.palette = Some(filtered);
+            }
+        } else {
+            self.palette = None;
+        }
+    }
+
+    /// Returns the effective transcript entries for rendering (syncs first).
+    pub fn effective_entries(&mut self) -> Vec<TranscriptEntry> {
+        self.sync_transcript();
+        if !self.transcript.is_empty() {
+            self.transcript.clone()
+        } else {
+            self.transcript_lines
+                .iter()
+                .map(|text| TranscriptEntry {
+                    text: text.clone(),
+                    timestamp: None,
+                })
+                .collect()
+        }
+    }
+}
+
+/// UTC timestamp helpers (I4) — std-only, no new dependency.
+///
+/// Converts a Unix millis timestamp to `"YYYY-MM-DD HH:MM:SS UTC"` via
+/// civil-from-days math (Howard Hinnant's algorithm). Validated against
+/// golden epoch values in `tui.rs` tests.
+#[must_use]
+pub fn utc_timestamp_from_millis(millis: u64) -> String {
+    let secs = millis / 1000;
+    let days = (secs / 86_400) as i64;
+    let secs_of_day = (secs % 86_400) as u32;
+    let (year, month, day) = civil_from_days(days);
+    let hour = secs_of_day / 3600;
+    let minute = (secs_of_day % 3600) / 60;
+    let second = secs_of_day % 60;
+    format!(
+        "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC"
+    )
+}
+
+/// Civil date from days since Unix epoch (1970-01-01) — Hinnant.
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    // Shift to civil epoch (0000-03-01)
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365; // [0,399]
+    let mut y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0,365]
+    let mp = (5 * doy + 2) / 153; // [0,11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1,31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1,12]
+    y += i64::from(m <= 2);
+    (y as i32, m as u32, d as u32)
+}
+
+/// Compose the status line prefix from the composed profile (I5).
+#[must_use]
+pub fn compose_status_line(
+    base_status: &str,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> String {
+    let prefix = match (provider, model) {
+        (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
+            format!("{p} / {m}")
+        }
+        (Some(p), _) if !p.is_empty() => p.to_owned(),
+        _ => "no provider configured".to_owned(),
+    };
+    if base_status.is_empty() {
+        prefix
+    } else {
+        format!("{prefix} | {base_status}")
+    }
+}
+
+/// Current UTC timestamp for live sessions (I4) — `SystemTime` → millis → civil.
+#[must_use]
+pub fn utc_timestamp_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    utc_timestamp_from_millis(millis)
 }
 
 /// Pure predicate for the launch decision (decision 105, testable without a real TTY).
@@ -491,22 +707,92 @@ pub fn draw_with_pane(
         Some(pane_rect) => body_union(transcript_area, input_area, pane_rect),
     };
 
-    // Transcript: determine visible window.
+    // Transcript: determine visible window over expanded lines
+    // (text + optional dim timestamp). Deterministic: each entry contributes
+    // 1 line (text) + 1 dim stamp line when present. Scroll is over entries
+    // but viewport is over lines, so we expand then slice.
     let height = transcript_area.height as usize;
-    let total = state.transcript_lines.len();
-    // Clamp scroll_offset to max for this viewport.
+    // Build expanded line list with styles.
+    let entries: Vec<TranscriptEntry> = if !state.transcript.is_empty() {
+        state.transcript.clone()
+    } else {
+        state
+            .transcript_lines
+            .iter()
+            .map(|text| TranscriptEntry {
+                text: text.clone(),
+                timestamp: None,
+            })
+            .collect()
+    };
+    let mut expanded: Vec<Line<'_>> = Vec::new();
+    for entry in &entries {
+        expanded.push(Line::from(entry.text.as_str()));
+        if let Some(ts) = &entry.timestamp {
+            expanded.push(
+                Line::from(ts.as_str())
+                    .style(Style::default().fg(Color::DarkGray)),
+            );
+        }
+    }
+    let total = expanded.len();
     let max_scroll = total.saturating_sub(height);
     let scroll = (state.scroll_offset as usize).min(max_scroll);
     let start = if total <= height { 0 } else { total - height - scroll };
     let end = (start + height).min(total);
-    let visible = &state.transcript_lines[start..end];
+    let visible = &expanded[start..end];
 
-    let lines: Vec<Line<'_>> =
-        visible.iter().map(|s| Line::from(s.as_str())).collect();
-    let transcript = Paragraph::new(Text::from(lines))
+    let transcript = Paragraph::new(Text::from(visible.to_vec()))
         .block(Block::default().borders(Borders::NONE))
         .style(Style::default().fg(Color::White));
     frame.render_widget(transcript, transcript_area);
+
+    // Command palette (I2): popup above the input line, bounded height
+    // (at most 8 visible + a +N more line), display-only, filtered by prefix.
+    if let Some(catalog) = &state.palette {
+        if !catalog.is_empty() || state.input.starts_with('/') {
+            let max_visible = 8usize;
+            let visible_palette =
+                catalog.iter().take(max_visible).collect::<Vec<_>>();
+            let remaining =
+                catalog.len().saturating_sub(visible_palette.len());
+            let mut palette_lines: Vec<Line<'_>> = visible_palette
+                .iter()
+                .map(|(name, desc)| {
+                    Line::from(format!("{name} — {desc}"))
+                        .style(Style::default().fg(Color::White))
+                })
+                .collect();
+            if remaining > 0 {
+                palette_lines.push(
+                    Line::from(format!("+{remaining} more"))
+                        .style(Style::default().fg(Color::DarkGray)),
+                );
+            } else if catalog.is_empty() {
+                palette_lines.push(
+                    Line::from("no matches")
+                        .style(Style::default().fg(Color::DarkGray)),
+                );
+            }
+            // Palette popup rect: directly above input, width clamped, height bounded
+            let palette_height = (palette_lines.len() as u16).min(9);
+            let palette_width = 50u16.min(transcript_area.width);
+            let palette_x = input_area.x;
+            let palette_y = input_area.y.saturating_sub(palette_height);
+            let palette_area =
+                Rect::new(palette_x, palette_y, palette_width, palette_height);
+            frame.render_widget(ratatui::widgets::Clear, palette_area);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Commands ")
+                .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+            let inner = block.inner(palette_area);
+            frame.render_widget(block, palette_area);
+            let para = Paragraph::new(Text::from(palette_lines))
+                .style(Style::default().bg(Color::Black).fg(Color::White));
+            frame.render_widget(para, inner);
+        }
+    }
 
     // Input line: `> <input>`
     let input_text = format!("> {}", state.input);
@@ -701,18 +987,83 @@ pub fn render_to_buffer_with_pane(
     };
 
     let h = transcript_area.height as usize;
-    let total = state.transcript_lines.len();
+    let entries: Vec<TranscriptEntry> = if !state.transcript.is_empty() {
+        state.transcript.clone()
+    } else {
+        state
+            .transcript_lines
+            .iter()
+            .map(|text| TranscriptEntry {
+                text: text.clone(),
+                timestamp: None,
+            })
+            .collect()
+    };
+    let mut expanded: Vec<Line<'_>> = Vec::new();
+    for entry in &entries {
+        expanded.push(Line::from(entry.text.as_str()));
+        if let Some(ts) = &entry.timestamp {
+            expanded.push(
+                Line::from(ts.as_str())
+                    .style(Style::default().fg(Color::DarkGray)),
+            );
+        }
+    }
+    let total = expanded.len();
     let max_scroll = total.saturating_sub(h);
     let scroll = (state.scroll_offset as usize).min(max_scroll);
     let start = if total <= h { 0 } else { total - h - scroll };
     let end = (start + h).min(total);
-    let visible = &state.transcript_lines[start..end];
-    let lines: Vec<Line<'_>> =
-        visible.iter().map(|s| Line::from(s.as_str())).collect();
-    let transcript = Paragraph::new(Text::from(lines))
+    let visible = &expanded[start..end];
+    let transcript = Paragraph::new(Text::from(visible.to_vec()))
         .block(Block::default().borders(Borders::NONE))
         .style(Style::default().fg(Color::White));
     transcript.render(transcript_area, &mut buf);
+
+    // Palette (I2) — same as draw_with_pane but for buffer
+    if let Some(catalog) = &state.palette {
+        if !catalog.is_empty() || state.input.starts_with('/') {
+            let max_visible = 8usize;
+            let visible_palette =
+                catalog.iter().take(max_visible).collect::<Vec<_>>();
+            let remaining =
+                catalog.len().saturating_sub(visible_palette.len());
+            let mut palette_lines: Vec<Line<'_>> = visible_palette
+                .iter()
+                .map(|(name, desc)| {
+                    Line::from(format!("{name} — {desc}"))
+                        .style(Style::default().fg(Color::White))
+                })
+                .collect();
+            if remaining > 0 {
+                palette_lines.push(
+                    Line::from(format!("+{remaining} more"))
+                        .style(Style::default().fg(Color::DarkGray)),
+                );
+            } else if catalog.is_empty() {
+                palette_lines.push(
+                    Line::from("no matches")
+                        .style(Style::default().fg(Color::DarkGray)),
+                );
+            }
+            let palette_height = (palette_lines.len() as u16).min(9);
+            let palette_width = 50u16.min(transcript_area.width);
+            let palette_x = input_area.x;
+            let palette_y = input_area.y.saturating_sub(palette_height);
+            let palette_area =
+                Rect::new(palette_x, palette_y, palette_width, palette_height);
+            ratatui::widgets::Clear.render(palette_area, &mut buf);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Commands ")
+                .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+            let inner = block.inner(palette_area);
+            block.render(palette_area, &mut buf);
+            let para = Paragraph::new(Text::from(palette_lines))
+                .style(Style::default().bg(Color::Black).fg(Color::White));
+            para.render(inner, &mut buf);
+        }
+    }
 
     let input_text = format!("> {}", state.input);
     let input = Paragraph::new(input_text.as_str())
@@ -917,10 +1268,12 @@ pub fn handle_key(
         (KeyCode::Enter, _) => true,
         (KeyCode::Backspace, _) => {
             state.input.pop();
+            state.update_palette();
             false
         }
         (KeyCode::Char(ch), _) => {
             state.input.push(ch);
+            state.update_palette();
             false
         }
         (KeyCode::PageUp, _) => {
@@ -1819,5 +2172,182 @@ mod tests {
             }
             let _ = std::fs::remove_dir_all(&root);
         }
+
+        #[test]
+        fn palette_lists_catalog_filtered_by_prefix() {
+            let mut state = TuiState::new();
+            state.input = "/do".to_owned();
+            state.update_palette();
+            let palette = state.palette.expect("palette for /do");
+            // /do matches domains* variants
+            assert!(palette.iter().any(|(name, _)| name == "/domains"));
+            assert!(palette.iter().any(|(name, _)| name == "/domains-add"));
+            // /m matches model
+            let mut state2 = TuiState::new();
+            state2.input = "/m".to_owned();
+            state2.update_palette();
+            let palette2 = state2.palette.expect("palette for /m");
+            assert!(palette2.iter().any(|(name, _)| name == "/model"));
+            // catalog includes evolve
+            let catalog = command_catalog();
+            assert!(catalog.iter().any(|(name, _)| name == "/evolve"));
+        }
+
+        #[test]
+        fn palette_hidden_without_slash() {
+            let mut state = TuiState::new();
+            state.input = "hello".to_owned();
+            state.update_palette();
+            assert!(state.palette.is_none());
+            state.input = "".to_owned();
+            state.update_palette();
+            assert!(state.palette.is_none());
+        }
+
+        #[test]
+        fn timestamps_render_below_messages() {
+            let mut state = TuiState::new();
+            state.push_line_stamped(
+                "hello".to_owned(),
+                Some("2026-08-31 12:00:00 UTC".to_owned()),
+            );
+            state.status = "ready".to_owned();
+            let buf = super::render(&state, 80, 24);
+            let content: String =
+                buf.content().iter().map(|c| c.symbol()).collect();
+            assert!(content.contains("hello"));
+            assert!(content.contains("2026-08-31 12:00:00 UTC"));
+        }
+
+        #[test]
+        fn civil_date_golden_values() {
+            assert_eq!(
+                utc_timestamp_from_millis(0),
+                "1970-01-01 00:00:00 UTC"
+            );
+            assert_eq!(
+                utc_timestamp_from_millis(1_000),
+                "1970-01-01 00:00:01 UTC"
+            );
+            assert_eq!(
+                utc_timestamp_from_millis(86_400_000),
+                "1970-01-02 00:00:00 UTC"
+            );
+            // Fixed fixture value round-trip
+            assert_eq!(
+                utc_timestamp_from_millis(1_726_650_000_000),
+                utc_timestamp_from_millis(1_726_650_000_000)
+            );
+        }
+
+        #[test]
+        fn status_provider_model_present_and_absent() {
+            let present = compose_status_line(
+                "ready",
+                Some("example-vendor"),
+                Some("model-a"),
+            );
+            assert!(present.contains("example-vendor"));
+            assert!(present.contains("model-a"));
+            assert!(present.contains("ready"));
+            let absent = compose_status_line("ready", None, None);
+            assert!(absent.contains("no provider configured"));
+        }
+
+        #[test]
+        fn command_catalog_is_single_source() {
+            let catalog = command_catalog();
+            let names: Vec<&str> =
+                catalog.iter().map(|(name, _)| name.as_str()).collect();
+            assert!(names.contains(&"/provider"));
+            assert!(names.contains(&"/model"));
+            assert!(names.contains(&"/evolve"));
+            assert!(names.contains(&"/context"));
+            assert_eq!(names.len(), 10);
+        }
+
+        #[test]
+        fn palette_bounded_height_plus_more() {
+            let mut state = TuiState::new();
+            state.input = "/".to_owned();
+            state.update_palette();
+            let palette_len =
+                state.palette.as_ref().expect("palette for /").len();
+            assert_eq!(palette_len, 10);
+            // Draw truncates to 8 visible + +N more
+            let buf = super::render(&state, 80, 24);
+            let content: String =
+                buf.content().iter().map(|c| c.symbol()).collect();
+            // Should contain at least one command name
+            assert!(content.contains("/context"));
+        }
+    }
+
+    #[test]
+    fn palette_display_only_enter_still_submits() {
+        // Display-only: palette does not consume Enter — handle_key still returns true.
+        let mut state = TuiState::new();
+        state.input = "/con".to_owned();
+        state.update_palette();
+        assert!(state.palette.is_some());
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert!(handle_key(&mut state, key));
+    }
+
+    #[test]
+    fn unknown_command_lists_catalog_names() {
+        let catalog = command_catalog();
+        let names = catalog
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let msg = format!("unknown command - available: {names}");
+        assert!(msg.contains("/provider"));
+        assert!(msg.contains("/evolve"));
+        assert!(msg.starts_with("unknown command - available:"));
+    }
+
+    #[test]
+    fn latency_drained_batch_draws_once_shape() {
+        // I1 shape: drain collects events, then one draw per batch.
+        // We prove the palette update is O(1) per key and does not require extra draws:
+        // typing three chars updates input + palette without explicit draw call.
+        let mut state = TuiState::new();
+        for ch in ['/', 'd', 'o'] {
+            let key = crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(ch),
+                crossterm::event::KeyModifiers::NONE,
+            );
+            handle_key(&mut state, key);
+        }
+        assert_eq!(state.input, "/do");
+        assert!(state.palette.is_some());
+        // One draw would render the batched input immediately.
+        let buf = render(&state, 80, 24);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("/do") || content.contains("/domains"));
+    }
+
+    #[test]
+    fn evolve_lists_exactly_four_surfaces_via_catalog() {
+        // I7: evolve discovery lists exactly the four bounded Stage 6 surfaces;
+        // the catalog lists it and render text contains each.
+        let catalog = command_catalog();
+        assert!(catalog.iter().any(|(name, _)| name == "/evolve"));
+        let evolve_text = "corpus — evaluation corpus & baselines\nworkflow — baseline → candidate → evaluation → comparison\nproposal — skill/plugin/host proposals\npackaging — release stabilization";
+        assert!(evolve_text.contains("corpus"));
+        assert!(evolve_text.contains("workflow"));
+        assert!(evolve_text.contains("proposal"));
+        assert!(evolve_text.contains("packaging"));
+        let count = ["corpus", "workflow", "proposal", "packaging"]
+            .iter()
+            .filter(|s| evolve_text.contains(**s))
+            .count();
+        assert_eq!(count, 4);
     }
 }

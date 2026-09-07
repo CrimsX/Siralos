@@ -245,6 +245,9 @@ where
         mut context_history_len,
         record_recorder,
         replay_store_path,
+        applied_provider,
+        applied_model,
+        credential_present,
     } = session;
 
     // --- Frontend residual (stdio): prompt loop over reader/writer. ---
@@ -280,6 +283,9 @@ where
             context_system_enabled,
             &mut context_session_holder,
             &mut context_history_len,
+            applied_provider.as_deref(),
+            applied_model.as_deref(),
+            credential_present,
         )? {
             break;
         }
@@ -310,8 +316,64 @@ enum SlashCommand<'a> {
     DomainsEnable(Option<&'a str>),
     /// `/domains-activate` with optional plugin id (`None` = bare command).
     DomainsActivate(Option<&'a str>),
+    /// `/provider` — display-only (U7).
+    Provider,
+    /// `/model` — display-only (U7).
+    Model,
+    /// `/evolve` — display-only (U8).
+    Evolve,
     /// Anything else: a prompt for the application.
     Prompt(&'a str),
+}
+
+/// Ordered catalog over the SAME `SlashCommand` vocabulary (I2/I6/I7).
+///
+/// This is the SINGLE vocabulary source the palette and unknown-command
+/// honesty derive from — no parallel list. Order is pinned.
+#[must_use]
+pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("/context", "Show context projection"),
+        ("/tools", "List available tools"),
+        ("/domains", "List installed domains"),
+        ("/domains-add", "Add a domain plugin"),
+        ("/domains-enable", "Enable a domain plugin"),
+        ("/domains-activate", "Activate a domain plugin"),
+        ("/provider", "Show applied provider"),
+        ("/model", "Show applied model"),
+        ("/evolve", "Show Stage 6 evolution surfaces"),
+        ("/exit", "Exit the session"),
+    ]
+}
+
+/// Host-generated provider line from the composed profile (U7).
+fn render_provider_line(
+    provider: Option<&str>,
+    credential_present: bool,
+) -> String {
+    let name = provider.unwrap_or("no provider configured");
+    let cred = if credential_present { "present" } else { "absent" };
+    format!("provider: {name}\ncredential: {cred}\n")
+}
+
+/// Host-generated model line from the composed profile (U7).
+fn render_model_line(model: Option<&str>) -> String {
+    let name = model.unwrap_or("no model configured");
+    format!("model: {name}\n")
+}
+
+/// Host-generated evolve discovery listing (U8) — four bounded Stage 6 surfaces.
+fn render_evolve_lines() -> String {
+    let mut out = String::new();
+    out.push_str("Stage 6 evolution surfaces (bounded, host-gated):\n");
+    out.push_str("  corpus — evaluation corpus & baselines\n");
+    out.push_str(
+        "  workflow — baseline → candidate → evaluation → comparison\n",
+    );
+    out.push_str("  proposal — skill/plugin/host proposals\n");
+    out.push_str("  packaging — release stabilization\n");
+    out.push_str("Execution is host-gated (escalation Profile->Host per Stage 6 design).\n");
+    out
 }
 
 /// Parse one trimmed input line into the shared [`SlashCommand`]
@@ -325,6 +387,9 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/context" => SlashCommand::Context,
         "/tools" => SlashCommand::Tools,
         "/domains" => SlashCommand::Domains,
+        "/provider" => SlashCommand::Provider,
+        "/model" => SlashCommand::Model,
+        "/evolve" => SlashCommand::Evolve,
         "/exit" => SlashCommand::Exit,
         _ => {
             if input == "/domains-add" {
@@ -429,6 +494,9 @@ fn dispatch_stdio_command<P, W>(
         siralos_adapters::context_session::ContextSystemSession,
     >,
     context_history_len: &mut usize,
+    provider: Option<&str>,
+    model: Option<&str>,
+    credential_present: bool,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -493,6 +561,27 @@ where
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
+        SlashCommand::Provider => {
+            let rendered = sanitize_for_display(&render_provider_line(
+                provider,
+                credential_present,
+            ));
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::Model => {
+            let rendered = sanitize_for_display(&render_model_line(model));
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::Evolve => {
+            let rendered = sanitize_for_display(&render_evolve_lines());
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
         SlashCommand::Prompt(prompt) => {
             application.send_prompt((*prompt).to_owned()).map_err(
                 |error| {
@@ -532,6 +621,9 @@ fn dispatch_tui_command<P>(
         siralos_adapters::context_session::ContextSystemSession,
     >,
     context_history_len: &mut usize,
+    provider: Option<&str>,
+    model: Option<&str>,
+    credential_present: bool,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -583,6 +675,21 @@ where
                 id.unwrap_or(""),
                 profile_plugins,
             ));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Provider => {
+            let rendered = sanitize_for_display(&render_provider_line(
+                provider,
+                credential_present,
+            ));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Model => {
+            let rendered = sanitize_for_display(&render_model_line(model));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Evolve => {
+            let rendered = sanitize_for_display(&render_evolve_lines());
             let _ = sink.write_all(rendered.as_bytes());
         }
         SlashCommand::Prompt(prompt) => {
@@ -677,6 +784,12 @@ struct SessionComposition<'a> {
     record_recorder: Option<Rc<RetainingReplayRecorder>>,
     /// Replay-store path for load + flush.
     replay_store_path: std::path::PathBuf,
+    /// Applied provider name from the composed profile (U5/U7).
+    applied_provider: Option<String>,
+    /// Applied model name from the composed profile (U5/U7).
+    applied_model: Option<String>,
+    /// Whether the credential for the applied provider is present (U7).
+    credential_present: bool,
 }
 
 /// Compose one session — the SINGLE definition both loops call (T4).
@@ -778,6 +891,20 @@ fn compose_session(
                 )
             }
             _ => ("deterministic-fake".to_owned(), None, None, None),
+        };
+    // I5/U7: applied provider/model/credential for status + display commands (preserved before move).
+    let (applied_provider, applied_model, credential_present) =
+        match &loaded_profile {
+            WorkspaceProfileLoad::Record(record)
+                if effective.applied_profile.is_some() =>
+            {
+                let cred_present = record
+                    .credential
+                    .as_deref()
+                    .is_some_and(|c| HostCredential::from_env_ref(c).is_ok());
+                (record.provider.clone(), record.model.clone(), cred_present)
+            }
+            _ => (None, None, false),
         };
     let mut live_host_provider: Option<HostProvider> = None;
     let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
@@ -1000,6 +1127,9 @@ fn compose_session(
         context_history_len,
         record_recorder,
         replay_store_path,
+        applied_provider,
+        applied_model,
+        credential_present,
     })
 }
 
@@ -1719,10 +1849,21 @@ pub fn run_interactive_tui_with_options(
         mut context_history_len,
         record_recorder,
         replay_store_path,
+        applied_provider,
+        applied_model,
+        credential_present,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
     let tui_state = Rc::new(RefCell::new(TuiState::new()));
-    tui_state.borrow_mut().status = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit".to_owned();
+    {
+        let base = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit";
+        let composed = crate::tui::compose_status_line(
+            base,
+            applied_provider.as_deref(),
+            applied_model.as_deref(),
+        );
+        tui_state.borrow_mut().status = composed;
+    }
     let mut sink = TuiSink::new(tui_state.clone());
 
     // Initial draw (T3: the context pane renders when the shared audit
@@ -1739,10 +1880,13 @@ pub fn run_interactive_tui_with_options(
         })
         .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
 
-    // Event loop: poll with 100ms timeout — no threads.
+    // Event loop: drain-then-draw-once (I1) — short poll until empty, one draw per batch.
+    // Bounded idle poll remains via the 15ms timeout; submit freeze stands.
     loop {
-        // Poll for input with bounded timeout so we can redraw and check.
-        if crossterm::event::poll(Duration::from_millis(100))
+        let mut pending_submit: Option<String> = None;
+        let mut should_exit_outer = false;
+        // Inner drain: poll 15ms until empty
+        while crossterm::event::poll(Duration::from_millis(15))
             .map_err(InteractiveError::Io)?
         {
             let event =
@@ -1758,15 +1902,10 @@ pub fn run_interactive_tui_with_options(
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::CONTROL)
                     {
+                        should_exit_outer = true;
                         break;
                     }
                     if tui_state.borrow().pending_approval.is_some() {
-                        // T2 (B1): while an approval modal is pending, ALL
-                        // other keys are ignored except the modal keys. The
-                        // modal's y/n/Esc feeds the SAME host-gated
-                        // evaluation the stdio path reads
-                        // (`evaluate_approval_input` via `handle_modal_key`)
-                        // — no parallel approval logic.
                         if let Some(decision) = crate::tui::handle_modal_key(
                             &mut tui_state.borrow_mut(),
                             key,
@@ -1780,20 +1919,18 @@ pub fn run_interactive_tui_with_options(
                                     "Denied."
                                 }
                             };
-                            // Static host strings — no unsanitized content;
-                            // the request lines themselves were already
-                            // sanitized upstream (same render as stdio).
                             tui_state
                                 .borrow_mut()
                                 .push_line(verdict.to_owned());
-                            tui_state.borrow_mut().status = "ready".to_owned();
+                            let base = "ready";
+                            let composed = crate::tui::compose_status_line(
+                                base,
+                                applied_provider.as_deref(),
+                                applied_model.as_deref(),
+                            );
+                            tui_state.borrow_mut().status = composed;
                         }
                     } else {
-                        // T4: non-modal keys route through the single shared
-                        // `handle_key` (no inline duplicate). Enter submits;
-                        // everything else edits in place; the TUI loop owns
-                        // only the terminal-size lookup for PageUp and the
-                        // Ctrl+C exit above.
                         let submitted = crate::tui::handle_key(
                             &mut tui_state.borrow_mut(),
                             key,
@@ -1811,8 +1948,6 @@ pub fn run_interactive_tui_with_options(
                                             )
                                         })?
                                         .height;
-                                    // Transcript viewport height is total
-                                    // height minus 2 (input+status)
                                     let viewport = h.saturating_sub(2);
                                     let current =
                                         tui_state.borrow().scroll_offset;
@@ -1832,67 +1967,38 @@ pub fn run_interactive_tui_with_options(
                                 }
                                 _ => {}
                             }
-                            continue;
-                        }
-                        {
+                        } else {
+                            // Collect submit (freeze stands — dispatch once after drain)
                             let input_line = tui_state.borrow().input.clone();
-                            // Echo the user line into the transcript as `> <input>`
                             let echo = format!("> {}", input_line);
-                            tui_state.borrow_mut().push_line(echo);
+                            // I4: stamp user echo
+                            let ts = crate::tui::utc_timestamp_now();
+                            tui_state
+                                .borrow_mut()
+                                .push_line_stamped(echo, Some(ts));
                             tui_state.borrow_mut().input.clear();
-                            // Empty input is a no-op (same as stdio loop)
+                            tui_state.borrow_mut().palette = None;
                             if input_line.trim().is_empty() {
-                                tui_state.borrow_mut().status =
-                                    "ready".to_owned();
-                            } else {
-                                // Dispatch the line using the SAME seam functions the stdio loop calls.
-                                tui_state.borrow_mut().status =
-                                    "working".to_owned();
-                                let pane = build_context_pane(
-                                    context_system_enabled,
-                                    context_session_holder
-                                        .as_ref()
-                                        .map(|session| &session.metrics),
-                                    application.history(),
+                                let base = "ready";
+                                let composed = crate::tui::compose_status_line(
+                                    base,
+                                    applied_provider.as_deref(),
+                                    applied_model.as_deref(),
                                 );
-                                terminal
-                                    .draw(|frame| {
-                                        draw_with_pane(
-                                            &tui_state.borrow(),
-                                            pane.as_ref(),
-                                            frame,
-                                        )
-                                    })
-                                    .map_err(|e| {
-                                        InteractiveError::Io(io::Error::other(
-                                            e.to_string(),
-                                        ))
-                                    })?;
-                                // T4: one shared parse, one thin TUI writer
-                                // (the stdio loop calls the same parser with
-                                // its writer).
-                                let command =
-                                    parse_slash_command(input_line.trim());
-                                let should_exit = dispatch_tui_command(
-                                    &command,
-                                    &workspace_root,
-                                    &tool_definitions,
-                                    &policy,
-                                    &mut application,
-                                    &mut sink,
-                                    &mut hosts,
-                                    &mut manifests,
-                                    profile_plugins.as_deref(),
-                                    context_control.as_ref(),
-                                    context_system_enabled,
-                                    &mut context_session_holder,
-                                    &mut context_history_len,
-                                )?;
-                                if should_exit {
-                                    break;
-                                }
-                                tui_state.borrow_mut().status =
-                                    "ready".to_owned();
+                                tui_state.borrow_mut().status = composed;
+                            } else {
+                                // Store for dispatch after drain; show working
+                                let base = "working";
+                                let composed = crate::tui::compose_status_line(
+                                    base,
+                                    applied_provider.as_deref(),
+                                    applied_model.as_deref(),
+                                );
+                                tui_state.borrow_mut().status = composed;
+                                pending_submit = Some(input_line);
+                                // Only one submit per drain (freeze)
+                                // Continue draining remaining keys? spec says collecting submits
+                                // then dispatch ONCE. We'll keep last submit.
                             }
                         }
                     }
@@ -1901,9 +2007,56 @@ pub fn run_interactive_tui_with_options(
                 _ => {}
             }
         }
-        // T3: every redraw rebuilds the pane snapshot from the live
-        // metrics + host-observed history, so a tick is reflected in the
-        // next frame. OFF renders byte-identical to T2.
+        if should_exit_outer {
+            break;
+        }
+        if let Some(input_line) = pending_submit.take() {
+            // I3 & I6/I7: parse once, handle unknown honesty before dispatch
+            let trimmed = input_line.trim().to_owned();
+            let command = parse_slash_command(&trimmed);
+            let is_unknown = matches!(command, SlashCommand::Prompt(t) if t.starts_with('/'));
+            if is_unknown {
+                let catalog_names = slash_command_catalog()
+                    .iter()
+                    .map(|(n, _)| *n)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let msg =
+                    format!("unknown command - available: {catalog_names}\n");
+                let sanitized = sanitize_for_display(&msg);
+                let _ = sink.write_all(sanitized.as_bytes());
+            } else {
+                let should_exit = dispatch_tui_command(
+                    &command,
+                    &workspace_root,
+                    &tool_definitions,
+                    &policy,
+                    &mut application,
+                    &mut sink,
+                    &mut hosts,
+                    &mut manifests,
+                    profile_plugins.as_deref(),
+                    context_control.as_ref(),
+                    context_system_enabled,
+                    &mut context_session_holder,
+                    &mut context_history_len,
+                    applied_provider.as_deref(),
+                    applied_model.as_deref(),
+                    credential_present,
+                )?;
+                if should_exit {
+                    break;
+                }
+            }
+            let base = "ready";
+            let composed = crate::tui::compose_status_line(
+                base,
+                applied_provider.as_deref(),
+                applied_model.as_deref(),
+            );
+            tui_state.borrow_mut().status = composed;
+        }
+        // One draw at loop bottom (I1) — every drained batch or idle tick
         let pane = build_context_pane(
             context_system_enabled,
             context_session_holder.as_ref().map(|session| &session.metrics),
@@ -1927,7 +2080,9 @@ pub fn run_interactive_tui_with_options(
 mod tests {
     use super::{
         InteractiveOptions, SlashCommand, compose_session,
-        parse_slash_command, run_interactive_session_with_options,
+        parse_slash_command, render_evolve_lines, render_model_line,
+        render_provider_line, run_interactive_session_with_options,
+        slash_command_catalog,
     };
     use std::fs::{create_dir, create_dir_all, remove_dir_all, write};
     use std::io::Cursor;
@@ -2695,5 +2850,102 @@ mod tests {
         assert!(!output.contains("context.inspect"));
         assert!(!output.contains("context.expand"));
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn slash_command_catalog_lists_provider_model_evolve() {
+        let catalog = slash_command_catalog();
+        let names: Vec<&str> = catalog.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"/provider"));
+        assert!(names.contains(&"/model"));
+        assert!(names.contains(&"/evolve"));
+        assert!(names.contains(&"/context"));
+        assert_eq!(names.len(), 10);
+    }
+
+    #[test]
+    fn parse_slash_recognizes_provider_model_evolve() {
+        assert!(matches!(
+            parse_slash_command("/provider"),
+            SlashCommand::Provider
+        ));
+        assert!(matches!(parse_slash_command("/model"), SlashCommand::Model));
+        assert!(matches!(
+            parse_slash_command("/evolve"),
+            SlashCommand::Evolve
+        ));
+        // Unknown still goes to prompt
+        assert!(matches!(
+            parse_slash_command("/unknown"),
+            SlashCommand::Prompt("/unknown")
+        ));
+    }
+
+    #[test]
+    fn provider_model_evolve_dispatch_stdio_and_tui() {
+        let root = temporary_directory("provider-model-evolve");
+        let output = run("/provider\n/model\n/evolve\n/exit\n", &root, None);
+        assert!(output.contains("provider:"));
+        assert!(output.contains("credential:"));
+        assert!(output.contains("model:"));
+        assert!(output.contains("Stage 6 evolution surfaces"));
+        assert!(output.contains("corpus"));
+        assert!(output.contains("workflow"));
+        assert!(output.contains("proposal"));
+        assert!(output.contains("packaging"));
+        assert!(output.contains("host-gated"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn evolve_lists_exactly_four_surfaces() {
+        let text = render_evolve_lines();
+        assert!(text.contains("corpus"));
+        assert!(text.contains("workflow"));
+        assert!(text.contains("proposal"));
+        assert!(text.contains("packaging"));
+        let count = ["corpus", "workflow", "proposal", "packaging"]
+            .iter()
+            .filter(|s| text.contains(**s))
+            .count();
+        assert_eq!(count, 4);
+        // Must state host-gated execution note
+        assert!(text.contains("host-gated"));
+        assert!(text.contains("Profile->Host"));
+    }
+
+    #[test]
+    fn provider_line_credential_present_absent() {
+        let present = render_provider_line(Some("openai"), true);
+        assert!(present.contains("provider: openai"));
+        assert!(present.contains("credential: present"));
+        let absent = render_provider_line(Some("openai"), false);
+        assert!(absent.contains("credential: absent"));
+        let no_provider = render_provider_line(None, false);
+        assert!(no_provider.contains("no provider configured"));
+        let model = render_model_line(Some("model-a"));
+        assert!(model.contains("model-a"));
+        let no_model = render_model_line(None);
+        assert!(no_model.contains("no model configured"));
+    }
+
+    #[test]
+    fn status_provider_model_prefix_from_composed_profile() {
+        let root = temporary_directory("status-provider");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\nprovider = \"example-vendor\"\nmodel = \"model-a\"\n",
+        )
+        .expect("profile");
+        let output_provider = run("/provider\n/exit\n", &root, None);
+        assert!(output_provider.contains("provider: example-vendor"));
+        let output_model = run("/model\n/exit\n", &root, None);
+        assert!(output_model.contains("model: model-a"));
+        let _ = remove_dir_all(root);
+        // Absent provider via no profile
+        let root2 = temporary_directory("status-no-provider");
+        let output2 = run("/provider\n/exit\n", &root2, None);
+        assert!(output2.contains("no provider configured"));
+        let _ = remove_dir_all(root2);
     }
 }
