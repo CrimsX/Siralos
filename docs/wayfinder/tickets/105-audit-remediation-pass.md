@@ -1,7 +1,7 @@
 ---
 title: "The Audit Remediation Pass"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: 2026-08-31
 supersedes: []
 ---
@@ -30,3 +30,5 @@ The external-model project audit (five focused chunks, file:line evidence) found
 ## Resolution
 
 Open — entry review PASS per [decision 112](../decisions/112-audit-remediation-entry-review.md) (HITL 2026-08-31, mechanical batch R1–R9 authorized, six HITL questions OPEN and out of scope). Implementation tracked in [decision 113](../decisions/113-audit-remediation-pass.md).
+
+Closed — the mechanical batch per decisions 112-113 and the HITL rulings per decision 114 (HITL 2026-08-31).
