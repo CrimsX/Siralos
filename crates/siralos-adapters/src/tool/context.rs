@@ -580,10 +580,7 @@ fn parse_node_id_input(input: &Value) -> Result<String, String> {
             if value.len() > MAX_NODE_ID_BYTES {
                 return Err("\"node_id\" is too long.".to_owned());
             }
-            if value.contains('/')
-                || value.contains('\\')
-                || value.contains('\0')
-            {
+            if value.contains('\\') || value.contains('\0') {
                 return Err("\"node_id\" must be a bounded id.".to_owned());
             }
             Ok(value.clone())
@@ -625,6 +622,9 @@ fn parse_expand_input(input: &Value) -> Result<(String, String), String> {
         Some(Value::String(v)) if !v.is_empty() => {
             if v.len() > MAX_NODE_ID_BYTES {
                 return Err("\"node_id\" is too long.".to_owned());
+            }
+            if v.contains('\\') || v.contains('\0') {
+                return Err("\"node_id\" must be a bounded id.".to_owned());
             }
             v.clone()
         }
@@ -1570,6 +1570,212 @@ mod tests {
         let j1 = serde_json::to_string(&o1).expect("json1");
         let j2 = serde_json::to_string(&o2).expect("json2");
         assert_eq!(j1, j2);
+    }
+
+    #[test]
+    fn inspect_accepts_nested_path_slash() {
+        // R1 tripwire: inspect must accept a/b.txt (real workspace slash paths)
+        let mut snapshot = build_fixture();
+        // inject a slashed node mirroring a scanned nested file a/b.txt
+        let slashed_id = "a/b.txt";
+        let digest = siralos_core::identity::sha256_hex("slashed".as_bytes());
+        let node = ContextNode {
+            id: slashed_id.to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest.clone(),
+            summary: "nested file".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 10,
+        };
+        let mut nodes = snapshot.graph.nodes().to_vec();
+        nodes.push(node);
+        let graph =
+            ContextGraph::build(nodes, snapshot.graph.edges().to_vec())
+                .expect("graph");
+        snapshot.graph = graph;
+        // add representation for the slashed node
+        let rep = NodeRepresentation {
+            level: RepresentationLevel::Identity,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: content_digest_of("{\"id\":\"a/b.txt\"}"),
+            derived_from: vec![],
+            content: "{\"id\":\"a/b.txt\"}".to_owned(),
+        };
+        let set =
+            NodeRepresentationSet::build(slashed_id.to_owned(), vec![rep])
+                .expect("set");
+        let mut sets = snapshot.store.sets().to_vec();
+        sets.push(set);
+        snapshot.store =
+            ContextRepresentationStore::build(sets).expect("store");
+        let entry = SchedulerEntry {
+            node_id: slashed_id.to_owned(),
+            tier: WorkingSetTier::Hot,
+            pinned: false,
+            relevance: 10,
+            last_access_tick: 0,
+            token_estimate: 10,
+            content_digest: digest.clone(),
+        };
+        let mut entries = snapshot.state.entries().to_vec();
+        entries.push(entry);
+        snapshot.state = WorkingSetState::build(entries).expect("state");
+        snapshot.current_digests.push((slashed_id.to_owned(), digest));
+        let tool = ContextInspectTool::new(snapshot);
+        let token = CancellationToken::new();
+        let result =
+            tool.execute(&json!({ "node_id": slashed_id }), token.signal());
+        assert!(
+            matches!(result, ToolExecutionResult::Success { .. }),
+            "inspect with slashed id must succeed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn inspect_rejects_backslash_and_nul_but_allows_slash() {
+        let snapshot = build_fixture();
+        let tool = ContextInspectTool::new(snapshot);
+        let token = CancellationToken::new();
+        // backslash must be rejected (path-traversal hygiene)
+        let r_back =
+            tool.execute(&json!({ "node_id": "a\\b.txt" }), token.signal());
+        assert!(!matches!(r_back, ToolExecutionResult::Success { .. }));
+        assert!(
+            r_back.message().contains("bounded id"),
+            "backslash should be bounded-id, got {}",
+            r_back.message()
+        );
+        // NUL must be rejected
+        let r_nul =
+            tool.execute(&json!({ "node_id": "a\0b.txt" }), token.signal());
+        assert!(!matches!(r_nul, ToolExecutionResult::Success { .. }));
+        assert!(
+            r_nul.message().contains("bounded id"),
+            "NUL should be bounded-id, got {}",
+            r_nul.message()
+        );
+        // slash must be accepted (either success or unknown node, but not bounded-id error)
+        let r_slash =
+            tool.execute(&json!({ "node_id": "a/b.txt" }), token.signal());
+        // a/b.txt not in fixture, so it should be "unknown node", not bounded id
+        assert!(!matches!(r_slash, ToolExecutionResult::Success { .. }));
+        assert!(
+            r_slash.message().contains("unknown node"),
+            "slash should not be bounded-id, got {}",
+            r_slash.message()
+        );
+        assert!(
+            !r_slash.message().contains("bounded id"),
+            "slash must not be bounded-id"
+        );
+    }
+
+    #[test]
+    fn expand_accepts_nested_path_slash() {
+        let snapshot = build_fixture();
+        let tool = ContextExpandTool::new(snapshot);
+        let token = CancellationToken::new();
+        // expand with slashed id should not be bounded-id error (unknown node is ok)
+        let result = tool.execute(
+            &json!({ "node_id": "a/b.txt", "level": "summary" }),
+            token.signal(),
+        );
+        // expect Failed unknown node, not bounded id
+        assert!(!matches!(result, ToolExecutionResult::Success { .. }));
+        assert!(
+            !result.message().contains("bounded id"),
+            "expand should allow slash, got {}",
+            result.message()
+        );
+        assert!(
+            result.message().contains("unknown node")
+                || result.message().contains("not found"),
+            "expand slash unknown node, got {}",
+            result.message()
+        );
+        // backslash must be rejected
+        let r_back = tool.execute(
+            &json!({ "node_id": "a\\b.txt", "level": "summary" }),
+            token.signal(),
+        );
+        assert!(!matches!(r_back, ToolExecutionResult::Success { .. }));
+        assert!(
+            r_back.message().contains("bounded id"),
+            "backslash should be bounded-id, got {}",
+            r_back.message()
+        );
+    }
+
+    #[test]
+    fn search_tripwire_with_slash_query() {
+        // R1 tripwire for search: slash in query is allowed (not bounded id)
+        let snapshot = build_fixture();
+        let tool = ContextSearchTool::new(snapshot);
+        let token = CancellationToken::new();
+        let result = tool.execute(&json!({ "query": "a/b" }), token.signal());
+        // should be Success (maybe 0 hits) not Failed bounded id
+        assert!(matches!(result, ToolExecutionResult::Success { .. }));
+    }
+
+    #[test]
+    fn inspect_slashed_id_end_to_end_via_nested_fixture() {
+        // End-to-end: inject a slashed node as a scanned file would, inspect succeeds
+        let mut snapshot = build_fixture();
+        let slashed_id = "nested/a/b.txt";
+        let digest = siralos_core::identity::sha256_hex("nested".as_bytes());
+        let node = ContextNode {
+            id: slashed_id.to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest.clone(),
+            summary: "nested deep".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 10,
+        };
+        let mut nodes = snapshot.graph.nodes().to_vec();
+        nodes.push(node);
+        let graph =
+            ContextGraph::build(nodes, snapshot.graph.edges().to_vec())
+                .expect("graph");
+        snapshot.graph = graph;
+        let rep = NodeRepresentation {
+            level: RepresentationLevel::Identity,
+            origin: RepresentationOrigin::HostExtracted,
+            content_digest: content_digest_of("{\"id\":\"nested/a/b.txt\"}"),
+            derived_from: vec![],
+            content: "{\"id\":\"nested/a/b.txt\"}".to_owned(),
+        };
+        let set =
+            NodeRepresentationSet::build(slashed_id.to_owned(), vec![rep])
+                .expect("set");
+        let mut sets = snapshot.store.sets().to_vec();
+        sets.push(set);
+        snapshot.store =
+            ContextRepresentationStore::build(sets).expect("store");
+        let entry = SchedulerEntry {
+            node_id: slashed_id.to_owned(),
+            tier: WorkingSetTier::Hot,
+            pinned: false,
+            relevance: 20,
+            last_access_tick: 1,
+            token_estimate: 10,
+            content_digest: digest.clone(),
+        };
+        let mut entries = snapshot.state.entries().to_vec();
+        entries.push(entry);
+        snapshot.state = WorkingSetState::build(entries).expect("state");
+        snapshot.current_digests.push((slashed_id.to_owned(), digest));
+        let tool = ContextInspectTool::new(snapshot.clone());
+        let token = CancellationToken::new();
+        let result =
+            tool.execute(&json!({ "node_id": slashed_id }), token.signal());
+        let ToolExecutionResult::Success { output, .. } = result else {
+            panic!("slashed inspect end-to-end failed");
+        };
+        assert_eq!(output["id"], slashed_id);
+        // also verify demand tripwire: second tool sees same node via search
+        let search = ContextSearchTool::new(snapshot);
+        let r2 = search.execute(&json!({ "query": "nested" }), token.signal());
+        assert!(matches!(r2, ToolExecutionResult::Success { .. }));
     }
 
     #[test]

@@ -326,23 +326,14 @@ pub struct TranscriptEntry {
 /// This is the SINGLE catalog the palette and the unknown-command honesty
 /// line derive from — no parallel list. Order matches the
 /// `parse_slash_command` arms including the U7/U8 additive commands.
+/// Delegates to `crate::interactive::slash_command_catalog` — single source
+/// (R3); the owned `String` conversion keeps the TUI palette type stable.
 #[must_use]
 pub fn command_catalog() -> Vec<(String, String)> {
-    vec![
-        ("/context".to_owned(), "Show context projection".to_owned()),
-        ("/tools".to_owned(), "List available tools".to_owned()),
-        ("/domains".to_owned(), "List installed domains".to_owned()),
-        ("/domains-add".to_owned(), "Add a domain plugin".to_owned()),
-        ("/domains-enable".to_owned(), "Enable a domain plugin".to_owned()),
-        (
-            "/domains-activate".to_owned(),
-            "Activate a domain plugin".to_owned(),
-        ),
-        ("/provider".to_owned(), "Show applied provider".to_owned()),
-        ("/model".to_owned(), "Show applied model".to_owned()),
-        ("/evolve".to_owned(), "Show Stage 6 evolution surfaces".to_owned()),
-        ("/exit".to_owned(), "Exit the session".to_owned()),
-    ]
+    crate::interactive::slash_command_catalog()
+        .into_iter()
+        .map(|(name, desc)| (name.to_owned(), desc.to_owned()))
+        .collect()
 }
 
 /// Pure render model for the TUI shell.
@@ -587,9 +578,13 @@ pub fn compose_status_line(
 ) -> String {
     let prefix = match (provider, model) {
         (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-            format!("{p} / {m}")
+            let sp = crate::sanitize::sanitize_for_display(p);
+            let sm = crate::sanitize::sanitize_for_display(m);
+            format!("{sp} / {sm}")
         }
-        (Some(p), _) if !p.is_empty() => p.to_owned(),
+        (Some(p), _) if !p.is_empty() => {
+            crate::sanitize::sanitize_for_display(p)
+        }
         _ => "no provider configured".to_owned(),
     };
     if base_status.is_empty() {
@@ -1251,6 +1246,7 @@ impl Drop for TerminalGuard {
 pub fn handle_key(
     state: &mut TuiState,
     key: crossterm::event::KeyEvent,
+    viewport_height: u16,
 ) -> bool {
     use crossterm::event::{KeyCode, KeyModifiers};
     if state.pending_approval.is_some() {
@@ -1277,7 +1273,9 @@ pub fn handle_key(
             false
         }
         (KeyCode::PageUp, _) => {
-            state.scroll_offset = state.scroll_offset.saturating_add(10);
+            let max = state.max_scroll(viewport_height);
+            state.scroll_offset =
+                (state.scroll_offset.saturating_add(10)).min(max);
             false
         }
         (KeyCode::PageDown, _) => {
@@ -1529,14 +1527,14 @@ mod tests {
             crossterm::event::KeyCode::Char('a'),
             crossterm::event::KeyModifiers::NONE,
         );
-        assert!(!handle_key(&mut state, ch));
+        assert!(!handle_key(&mut state, ch, 10));
         assert_eq!(state.input, "hello");
         // Enter ignored
         let enter = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Enter,
             crossterm::event::KeyModifiers::NONE,
         );
-        assert!(!handle_key(&mut state, enter));
+        assert!(!handle_key(&mut state, enter, 10));
         // Only modal keys pass
         let y = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('y'),
@@ -2294,7 +2292,7 @@ mod tests {
             crossterm::event::KeyCode::Enter,
             crossterm::event::KeyModifiers::NONE,
         );
-        assert!(handle_key(&mut state, key));
+        assert!(handle_key(&mut state, key, 10));
     }
 
     #[test]
@@ -2322,7 +2320,7 @@ mod tests {
                 crossterm::event::KeyCode::Char(ch),
                 crossterm::event::KeyModifiers::NONE,
             );
-            handle_key(&mut state, key);
+            handle_key(&mut state, key, 10);
         }
         assert_eq!(state.input, "/do");
         assert!(state.palette.is_some());
@@ -2349,5 +2347,75 @@ mod tests {
             .filter(|s| evolve_text.contains(**s))
             .count();
         assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn single_scroll_clamped_and_single_step() {
+        // R2 tripwire: single +-10 per press, clamped to viewport
+        let mut state = TuiState::new();
+        for i in 0..30 {
+            state.transcript_lines.push(format!("line {i}"));
+            state.transcript.push(crate::tui::TranscriptEntry {
+                text: format!("line {i}"),
+                timestamp: None,
+            });
+        }
+        let viewport: u16 = 10;
+        let max = state.max_scroll(viewport);
+        assert!(max > 0);
+        // PageUp 10
+        let key_up = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageUp,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert!(!handle_key(&mut state, key_up, viewport));
+        assert_eq!(state.scroll_offset, 10);
+        // Second PageUp -> 20, but clamped at max
+        let key_up2 = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageUp,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        handle_key(&mut state, key_up2, viewport);
+        handle_key(&mut state, key_up2, viewport);
+        handle_key(&mut state, key_up2, viewport);
+        assert!(state.scroll_offset <= max);
+        assert_eq!(state.scroll_offset, max.min(40));
+        // PageDown 10
+        let key_down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageDown,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let before = state.scroll_offset;
+        handle_key(&mut state, key_down, viewport);
+        assert_eq!(state.scroll_offset, before.saturating_sub(10));
+        // Underflow stays 0
+        state.scroll_offset = 5;
+        handle_key(&mut state, key_down, viewport);
+        assert_eq!(state.scroll_offset, 0);
+        handle_key(&mut state, key_down, viewport);
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn catalog_cross_equality_single_source() {
+        // R3: slash_command_catalog and command_catalog must be byte-equal order
+        let tui_catalog = command_catalog();
+        let interactive_catalog = crate::interactive::slash_command_catalog()
+            .into_iter()
+            .map(|(a, b)| (a.to_owned(), b.to_owned()))
+            .collect::<Vec<_>>();
+        assert_eq!(tui_catalog, interactive_catalog);
+    }
+
+    #[test]
+    fn status_sanitizes_provider_and_model() {
+        // R5: provider/model with control chars must be sanitized in status line
+        let poison = "evil\x1b[31mred\x00";
+        let status = compose_status_line("ready", Some(poison), Some(poison));
+        assert!(!status.contains('\x1b'));
+        assert!(!status.contains('\0'));
+        // should contain sanitized visible representation (sanitize replaces with placeholder)
+        let sanitized = crate::sanitize::sanitize_for_display(poison);
+        assert!(status.contains(&sanitized));
     }
 }
