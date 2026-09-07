@@ -982,7 +982,7 @@ One Run is one selected Profile and one primary model/tool loop (ADR 0036).
 Multi-agent machinery — subagents, agent teams, Fleet, TaskGraph, worker
 hierarchies, distributed workers — is not core architecture and is not
 committed roadmap work; it may be reconsidered only from concrete demand and
-evidence. `/evolve` remains a committed future feature in Stage 6.
+evidence. `/evolve` display-only discovery exists since decision 111 (Stage 6 surfaces) while execution remains host-gated/out-of-milestone; the execution workflow remains future work.
 
 ## Deferred: process and write tools
 
