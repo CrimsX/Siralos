@@ -24,7 +24,7 @@
 //! 4. Deep-expansion priority unchanged from v1 (structured > detailed > summary > identity); a summary-level expansion of an already-inspected node naturally costs zero via rule 3.
 
 use siralos_core::context_graph::{
-    ContextGraph, ContextNode, ContextNodeKind,
+    ContextEdge, ContextEdgeKind, ContextGraph, ContextNode, ContextNodeKind,
 };
 use siralos_core::context_representation::{
     ContextRepresentationStore, NodeRepresentation, NodeRepresentationSet,
@@ -2756,8 +2756,40 @@ pub fn patch_scenarios_with_gold(
             }
             new_sets.push(new_set);
         }
-        // Rebuild state via v3_build_state helper if available, else try direct
-        let new_state = v3_build_state(new_nodes, new_sets);
+        // Rebuild state preserving the original graph edges (decision 116 planted edge).
+        let graph = ContextGraph::build(
+            new_nodes.clone(),
+            sc.state.graph.edges().to_vec(),
+        )
+        .expect("graph");
+        let store =
+            ContextRepresentationStore::build(new_sets).expect("store");
+        let entries: Vec<SchedulerEntry> = graph
+            .nodes()
+            .iter()
+            .map(|n| {
+                let summary_len = n.summary.len();
+                let digest_len = n.content_digest.len();
+                let token_est =
+                    estimate_tokens(summary_len.saturating_add(digest_len));
+                SchedulerEntry {
+                    node_id: n.id.clone(),
+                    tier: WorkingSetTier::Cold,
+                    pinned: false,
+                    relevance: 10,
+                    last_access_tick: 0,
+                    token_estimate: token_est,
+                    content_digest: n.content_digest.clone(),
+                }
+            })
+            .collect();
+        let ws = WorkingSetState::build(entries).expect("state");
+        let new_state = ContextToolState::new(
+            graph,
+            store,
+            ws,
+            sc.state.current_digests.clone(),
+        );
         let mut new_sc = sc.clone();
         new_sc.state = new_state;
         out.push(new_sc);
@@ -4571,6 +4603,10 @@ pub fn gold_set_v3() -> Result<Vec<BenchmarkScenario>, BenchmarkError> {
         scenarios.push(sc);
     }
     // paraphrase-gap: informational, query "commit gating" vs summary about "check-in approval rules"
+    // PLANTED MECHANISM-TEST FIXTURE (decision 116) — an artificial edge testing whether the neighbor
+    // mechanism traverses graph locality, not a claim that natural corpora have such edges
+    // (per decision 86 lesson: fixture design is the experiment). One genuine referrer node
+    // with a real 2-token lexical match (passes search + rerank threshold 2) linked 1-hop to the key.
     {
         let q = "commit gating";
         let key = "pg-01";
@@ -4579,6 +4615,14 @@ pub fn gold_set_v3() -> Result<Vec<BenchmarkScenario>, BenchmarkError> {
         let summary = v3_pad_to_len(summary_base, 260, key);
         let ident = v3_identity_content(key, 230, None);
         let tok = estimate_tokens(summary.len() + ident.len());
+        // Referrer: genuine 2-token match for "commit gating" (passes search AND rerank threshold 2)
+        let referrer_id = "pg-referrer";
+        let referrer_summary_base = "Commit gating for Siralos: the commit gating gate validates the phase-contract before any workspace mutation lands, enforcing host approval when the lock is stale. This deterministic check ensures only reviewed changes are applied. ";
+        let referrer_summary =
+            v3_pad_to_len(referrer_summary_base, 255, referrer_id);
+        let referrer_ident = v3_identity_content(referrer_id, 225, None);
+        let referrer_tok =
+            estimate_tokens(referrer_summary.len() + referrer_ident.len());
         let nodes = vec![
             v3_make_node(
                 key,
@@ -4586,6 +4630,13 @@ pub fn gold_set_v3() -> Result<Vec<BenchmarkScenario>, BenchmarkError> {
                 summary,
                 content_digest_of(&ident),
                 tok,
+            ),
+            v3_make_node(
+                referrer_id,
+                ContextNodeKind::Source,
+                referrer_summary,
+                content_digest_of(&referrer_ident),
+                referrer_tok,
             ),
             {
                 let s =
@@ -4624,6 +4675,14 @@ pub fn gold_set_v3() -> Result<Vec<BenchmarkScenario>, BenchmarkError> {
                 v3_identity_content(key, 230, None),
             ),
             mk_set(
+                referrer_id,
+                true,
+                false,
+                false,
+                false,
+                v3_identity_content(referrer_id, 225, None),
+            ),
+            mk_set(
                 "pg-02",
                 false,
                 true,
@@ -4640,7 +4699,35 @@ pub fn gold_set_v3() -> Result<Vec<BenchmarkScenario>, BenchmarkError> {
                 v3_identity_content("pg-03", 210, None),
             ),
         ];
-        let state = v3_build_state(nodes, sets);
+        // One planted edge: pg-referrer -> pg-01 (ContextEdgeKind consistent with sibling edges)
+        let edges = vec![ContextEdge {
+            from: referrer_id.to_owned(),
+            to: key.to_owned(),
+            kind: ContextEdgeKind::References,
+        }];
+        let graph = ContextGraph::build(nodes.clone(), edges).expect("graph");
+        let store = ContextRepresentationStore::build(sets).expect("store");
+        let entries: Vec<SchedulerEntry> = graph
+            .nodes()
+            .iter()
+            .map(|n| {
+                let summary_len = n.summary.len();
+                let digest_len = n.content_digest.len();
+                let token_est =
+                    estimate_tokens(summary_len.saturating_add(digest_len));
+                SchedulerEntry {
+                    node_id: n.id.clone(),
+                    tier: WorkingSetTier::Cold,
+                    pinned: false,
+                    relevance: 10,
+                    last_access_tick: 0,
+                    token_estimate: token_est,
+                    content_digest: n.content_digest.clone(),
+                }
+            })
+            .collect();
+        let ws = WorkingSetState::build(entries).expect("state");
+        let state = ContextToolState::new(graph, store, ws, vec![]);
         let sc = BenchmarkScenario::build(
             "paraphrase-gap".to_owned(),
             state,
@@ -6558,21 +6645,96 @@ mod tests {
     fn d115_paraphrase_reachability_honest() {
         let scenarios = gold_set_v3().expect("gold v3");
         let report = run_benchmark(&scenarios).expect("report");
-        // With empty graph edges, paraphrase key not reachable via neighbors (no hits to expand)
+        // With the planted pg-referrer -> pg-01 edge, the paraphrase key IS reachable via neighbors
         assert!(
-            !report.informational.paraphrase_gap.neighbor_reachable,
-            "honest measurement with empty graph: not reachable"
+            report.informational.paraphrase_gap.neighbor_reachable,
+            "planted referrer edge should make paraphrase key reachable"
         );
+        assert!(
+            report.informational.paraphrase_gap.neighbor_cost > 0,
+            "cost should be >0 when reachable, got {}",
+            report.informational.paraphrase_gap.neighbor_cost
+        );
+        // Informational cost must equal estimated tokens of the key summary (summary-only inspect)
+        let pg_sc = scenarios
+            .iter()
+            .find(|s| s.name == "paraphrase-gap")
+            .expect("paraphrase-gap");
+        let key_id = pg_sc.answer_key[0].clone();
+        let key_node = pg_sc.state.graph.node(&key_id).expect("key node");
+        let expected_cost = estimate_tokens(key_node.summary.len());
         assert_eq!(
-            report.informational.paraphrase_gap.neighbor_cost, 0,
-            "cost zero when not reachable"
+            report.informational.paraphrase_gap.neighbor_cost, expected_cost,
+            "neighborCost should be candidate inspect tokens"
         );
-        // Also check per-scenario neighbor candidates are all zero for gated scenarios (empty graph)
+        // Gate scenarios still have no hit->key edges, so their candidate counts remain zero
         for nc in &report.neighbor_candidates {
-            assert_eq!(nc.generated, 0, "generated 0 with empty edges");
+            assert_eq!(
+                nc.generated, 0,
+                "gate scenario {} should have 0 generated",
+                nc.name
+            );
             assert_eq!(nc.admitted, 0);
             assert_eq!(nc.tokens, 0);
         }
+        // Verify the paraphrase scenario toolCalls delta is +1 candidate inspect (via direct run_strategy)
+        let pg_report = run_strategy(
+            std::slice::from_ref(pg_sc),
+            PagingStrategy::ProgressiveV2,
+        )
+        .expect("pg run");
+        // With the planted referrer: 1 search + 1 hit inspect + 1 candidate inspect + 1 expand = 4
+        assert_eq!(
+            pg_report.scenarios[0].tool_calls, 4,
+            "paraphrase-gap toolCalls should be 4 (search + hit-inspect + candidate-inspect + expand)"
+        );
+        // Deterministically verify neighbor candidate generation for the paraphrase scenario itself
+        let search_tool = ContextSearchTool::new(pg_sc.state.clone());
+        let token = CancellationToken::new();
+        let res = search_tool
+            .execute(&json!({"query": pg_sc.query}), token.signal());
+        let hits_scored: Vec<(String, String, i32)> = match res {
+            siralos_core::provider::ToolExecutionResult::Success {
+                output,
+                ..
+            } => output
+                .get("hits")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|h| {
+                            let nid = h.get("node_id")?.as_str()?.to_owned();
+                            let matched = h
+                                .get("matched_in")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_owned();
+                            let score = h
+                                .get("score")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(0)
+                                as i32;
+                            Some((nid, matched, score))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let hits_for_expanded: Vec<(String, String)> = hits_scored
+            .iter()
+            .map(|(id, matched, _)| (id.clone(), matched.clone()))
+            .collect();
+        let expanded = expanded_ids_for_scenario(
+            pg_sc,
+            &hits_for_expanded,
+            PagingStrategy::ProgressiveV2,
+        );
+        let (admitted, generated) =
+            neighbor_candidates_for_scenario(pg_sc, &hits_scored, &expanded);
+        assert_eq!(generated, 1, "paraphrase-gap generated should be 1");
+        assert_eq!(admitted.len(), 1, "paraphrase-gap admitted should be 1");
+        assert_eq!(admitted[0].0, key_id, "candidate should be the key");
     }
 
     #[test]
@@ -6606,7 +6768,7 @@ mod tests {
         let sweep_ok = report.sensitivity.all_ok;
         let expected_go = recall_ok && margin_ok && dedup_ok && sweep_ok;
         assert_eq!(report.go, expected_go, "gate must match unchanged rule");
-        // With empty graph, V2 stays 3170 vs DeepAll 7609, 8/9 cells -> NO-GO
+        // With the planted paraphrase edge, gate (paraphrase excluded) V2 stays 3170 vs DeepAll 7609, 8/9 cells -> NO-GO
         assert_eq!(report.v2.total_paged, 3170);
         assert_eq!(report.v2.total_baseline, 7609);
         assert!(!report.go, "re-measured NO-GO under unchanged rules");
@@ -6619,6 +6781,83 @@ mod tests {
                 .count(),
             8
         );
+    }
+
+    #[test]
+    fn d116_gate_byte_identical_to_decision_115_record() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let report = run_benchmark(&scenarios).expect("report");
+        // Gate aggregate must be byte-identical to decision 115 record (decision 92 numbers)
+        assert_eq!(report.v2.total_recall_paged, 14, "recall 14/14");
+        assert_eq!(report.v2.total_recall_baseline, 14);
+        assert_eq!(report.v2.total_paged, 3170, "paged V2 3170");
+        assert_eq!(report.v2.total_baseline, 7609, "DeepAll 7609");
+        assert_eq!(
+            report
+                .sensitivity
+                .cells
+                .iter()
+                .filter(|c| c.margin_ok && c.recall_ok && c.dedup_ok)
+                .count(),
+            8,
+            "8/9 cells"
+        );
+        assert!(!report.go, "GO false");
+        // V1 and V3 invariance guards byte-identical
+        let gate: Vec<BenchmarkScenario> = scenarios
+            .iter()
+            .filter(|s| s.name != "paraphrase-gap")
+            .cloned()
+            .collect();
+        let v1 =
+            run_strategy(&gate, PagingStrategy::ExhaustiveV1).expect("v1");
+        assert_eq!(v1.total_paged, 3560, "V1 3560");
+        let mut depth_v3 = 0usize;
+        let mut depth_v2 = 0usize;
+        for sc in &gate {
+            let search_tool = ContextSearchTool::new(sc.state.clone());
+            let tok = CancellationToken::new();
+            let res =
+                search_tool.execute(&json!({"query": sc.query}), tok.signal());
+            let hits: Vec<(String, String)> = match res {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                Some((nid, matched))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let exp_v2 = expanded_ids_for_scenario(
+                sc,
+                &hits,
+                PagingStrategy::ProgressiveV2,
+            );
+            let exp_v3 = expanded_ids_for_scenario(
+                sc,
+                &hits,
+                PagingStrategy::ProgressiveV3Escalating,
+            );
+            depth_v2 += depth_aware_recall_for_scenario(sc, &hits, &exp_v2);
+            depth_v3 += depth_aware_recall_for_scenario(sc, &hits, &exp_v3);
+        }
+        assert_eq!(depth_v2, 14, "V2 depth-aware 14");
+        assert_eq!(depth_v3, 13, "V3 13/14");
     }
 }
 
