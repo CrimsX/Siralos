@@ -1,0 +1,40 @@
+---
+title: "The TUI Polish Pass Entry Review"
+label: "wayfinder:decision"
+status: accepted
+date: 2026-08-31
+ticket: "106"
+supersedes: []
+---
+
+# 117 — The TUI Polish Pass Entry Review
+
+Ticket [106](../tickets/106-tui-polish-pass.md) · entry review [103](103-siralos-tui-entry-review.md) · Map.
+
+> **User-directed 2026-08-31 (session HITL).** The user reports input latency persisting in the live TUI (root-caused: the drain's inner 15ms poll gates every redraw — a keystroke waits for the drain timeout before the screen updates) and asked for a nicer-looking TUI referencing the MiMo-Code agent's aesthetic. The pass adopts the latency fix (zero-timeout drain, immediate draw) and the visual polish adapted to Siralos's minimal aesthetic (rounded borders, role colors, header bar, styled palette, context-usage status); the render-model frames re-pin at corpus v78; the stdio frontend stays byte-unchanged.
+
+## 2. Fixes P1–P6 — as approved
+
+| ID  | Fix                                                                                                                                                                                                                                                                                                                                                                | Evidence / note                                                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| P1  | LATENCY (priority one): the inner drain uses `poll(Duration::ZERO)` (only already-queued events; NEVER waits), and after the drain the draw runs immediately; the outer loop keeps ONE bounded idle poll (raise 15ms → 50ms) so the pane/status redraw still happens when idle. A keystroke is handled and drawn with no intermediate wait; submit path unchanged. | `interactive.rs` ~1926–1932 `poll(15ms)` gates every draw; fix is zero-timeout drain + immediate draw + 50ms idle poll |
+| P2  | HEADER BAR: a top header row (1 line): `" Siralos "` left, `"provider / model"` right (the same composed profile source the status line uses; absent → `"no provider configured"`), styled reversed/accent; transcript/input/status layout shrinks by 1 row. OFF-independent.                                                                                      | `tui.rs` `draw`/`draw_with_pane` header; `compose_status_line` source reused                                           |
+| P3  | ROLE COLORS: transcript lines styled by role — user echo lines (`"> ..."`) in Cyan with dim timestamps, assistant/system lines default, host notices (`unknown command`, `Approved.`/`Denied.`) in Yellow. Styles in TestBackend frames.                                                                                                                           | `tui.rs` transcript styling by prefix                                                                                  |
+| P4  | ROUNDED BORDERS + PALETTE STYLING: the context pane and the palette popup use `BorderType::Rounded`; palette gets bordered title-styled popup (`" commands "`) with matching prefix highlighted; approval modal keeps backdrop (restyled rounded).                                                                                                                 | `tui.rs` `BorderType::Rounded` for pane/palette/modal                                                                  |
+| P5  | CONTEXT-USAGE STATUS: when the context subsystem is opted in AND built, the status line gains `"ctx <assembled>/<4096>"` (assembled unique-digest total from the same `ContextMetrics` the pane uses) appended to the composed status; absent → unchanged.                                                                                                         | `tui.rs`/`interactive.rs` status usage readout from `ContextMetrics`                                                   |
+| P6  | RENDER RE-PIN: the `tui-render` scenarios re-pin at corpus v78 (header changes layout rows; styles ride frames; record builder 80×24 with fixed fixture timestamps). Manifest `corpusVersion` 78, count 357 unchanged, digests refresh; 4 expectation records updated in place; `context-benchmark` BYTE-IDENTICAL.                                                | `harness.rs` `tui_render_record` 80×24, `contract.mjs` v78, `expectations.json` re-pinned                              |
+
+## 3. Criteria → evidence
+
+| Criterion                                              | Evidence                                                                                                                                                                                                                                                                                                              | Status |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Latency root cause diagnosed                           | `interactive.rs` ~1926–1932: the inner drain `while poll(Duration::from_millis(15))` waits up to 15ms for more keys before the drain exits and the draw runs — a keystroke's display is gated on that timeout. Fix authorized as zero-timeout drain + immediate draw + 50ms idle poll.                                | pass   |
+| MiMo-Code takeaways adopted vs skipped                 | Adopted = rounded borders / role colors / header / palette styling / context-usage readout (adapted to Siralos's minimal aesthetic); skipped = agents / modes / memory / workflows / voice per [ADR 0036](../../adr/0036-lean-product-composition-and-extension-model.md) and the lean model.                         | pass   |
+| Header / role colors / rounded borders / palette scope | P2 header is session identity (not context data) always visible; P3 styles are deterministic TestBackend buffer styles; P4 rounded borders on context pane + palette popup + approval modal; palette highlights matching prefix; P5 usage readout only when opted-in AND built, single-sourced from `ContextMetrics`. | pass   |
+| Red lines held                                         | Sanitizer is the single output boundary; the input queue the single read owner; approvals host-gated; no threads; no persistence; the stdio frontend byte-unchanged; OFF byte-transparency for the pane; decisions ≤116 untouched.                                                                                    | pass   |
+| Render re-pin shape pinned                             | `tui-render` re-pin at corpus v78 via `canonicalRecordDocument` script over 80×24 with fixed fixture timestamps; manifest `corpusVersion` 78, count 357 unchanged, digests refresh; 4 expectation records updated in place; `context-benchmark` BYTE-IDENTICAL.                                                       | pass   |
+| Out of scope recorded                                  | Agents, modes, memory, workflows, voice skipped per ADR 0036; scheduler/adapter/benchmark strategy untouched; `context-benchmark.json` byte-identical; no persistence/threads.                                                                                                                                        | pass   |
+
+## 4. Result
+
+Entry review PASS: the polish pass is authorized as P1–P6 with the latency fix as priority one and the render frames re-pinned.
