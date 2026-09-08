@@ -1861,7 +1861,6 @@ pub fn run_interactive_tui_with_options(
 ) -> Result<(), InteractiveError> {
     use std::cell::RefCell;
     use std::rc::Rc;
-    use std::time::Duration;
 
     use crate::tui::{
         TerminalGuard, TuiSink, TuiState, build_context_pane, draw_with_pane,
@@ -1900,12 +1899,17 @@ pub fn run_interactive_tui_with_options(
     let tui_state = Rc::new(RefCell::new(TuiState::new()));
     {
         let base = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit";
-        let composed = crate::tui::compose_status_line(
+        let metrics_opt = context_session_holder.as_ref().map(|s| &s.metrics);
+        let composed = crate::tui::compose_status_line_with_context(
             base,
             applied_provider.as_deref(),
             applied_model.as_deref(),
+            metrics_opt,
         );
-        tui_state.borrow_mut().status = composed;
+        let mut state = tui_state.borrow_mut();
+        state.status = composed;
+        state.provider = applied_provider.clone();
+        state.model = applied_model.clone();
     }
     let mut sink = TuiSink::new(tui_state.clone());
 
@@ -1923,110 +1927,138 @@ pub fn run_interactive_tui_with_options(
         })
         .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
 
-    // Event loop: drain-then-draw-once (I1) — short poll until empty, one draw per batch.
-    // Bounded idle poll remains via the 15ms timeout; submit freeze stands.
+    // Event loop: P1 zero-timeout drain + immediate draw, outer 50ms idle poll.
     loop {
         let mut pending_submit: Option<String> = None;
         let mut should_exit_outer = false;
-        // Inner drain: poll 15ms until empty
-        while crossterm::event::poll(Duration::from_millis(15))
-            .map_err(InteractiveError::Io)?
-        {
-            let event =
-                crossterm::event::read().map_err(InteractiveError::Io)?;
-            match event {
-                crossterm::event::Event::Key(key) => {
-                    if key.kind != crossterm::event::KeyEventKind::Press {
-                        continue;
-                    }
-                    // Ctrl+C exits cleanly (guard restores terminal)
-                    if key.code == crossterm::event::KeyCode::Char('c')
-                        && key
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL)
-                    {
-                        should_exit_outer = true;
-                        break;
-                    }
-                    if tui_state.borrow().pending_approval.is_some() {
-                        if let Some(decision) = crate::tui::handle_modal_key(
-                            &mut tui_state.borrow_mut(),
-                            key,
-                        ) {
-                            tui_state.borrow_mut().pending_approval = None;
-                            let verdict = match decision {
-                                crate::tui::ApprovalDecision::Approve => {
-                                    "Approved."
-                                }
-                                crate::tui::ApprovalDecision::Deny => {
-                                    "Denied."
-                                }
-                            };
-                            tui_state
-                                .borrow_mut()
-                                .push_line(verdict.to_owned());
-                            let base = "ready";
-                            let composed = crate::tui::compose_status_line(
-                                base,
-                                applied_provider.as_deref(),
-                                applied_model.as_deref(),
-                            );
-                            tui_state.borrow_mut().status = composed;
-                        }
-                    } else {
-                        let viewport = terminal
-                            .size()
-                            .map_err(|e| {
-                                InteractiveError::Io(io::Error::other(
-                                    e.to_string(),
-                                ))
-                            })?
-                            .height
-                            .saturating_sub(2);
-                        let submitted = crate::tui::handle_key(
-                            &mut tui_state.borrow_mut(),
-                            key,
-                            viewport,
-                        );
-                        if submitted {
-                            // Collect submit (freeze stands — dispatch once after drain)
-                            let input_line = tui_state.borrow().input.clone();
-                            tui_state.borrow_mut().input.clear();
-                            tui_state.borrow_mut().palette = None;
-                            if input_line.trim().is_empty() {
-                                let base = "ready";
-                                let composed = crate::tui::compose_status_line(
-                                    base,
-                                    applied_provider.as_deref(),
-                                    applied_model.as_deref(),
-                                );
-                                tui_state.borrow_mut().status = composed;
-                            } else {
-                                let sanitized_input =
-                                    sanitize_for_display(&input_line);
-                                let echo = format!("> {sanitized_input}");
-                                let ts = crate::tui::utc_timestamp_now();
+        // Outer bounded idle poll (50ms) — single wait for idle redraw; inner drain is ZERO.
+        let has_event = crossterm::event::poll(crate::tui::TUI_IDLE_POLL)
+            .map_err(InteractiveError::Io)?;
+        if has_event {
+            // Drain all already-queued events with ZERO timeout (never waits).
+            loop {
+                let event =
+                    crossterm::event::read().map_err(InteractiveError::Io)?;
+                match event {
+                    crossterm::event::Event::Key(key) => {
+                        if key.kind != crossterm::event::KeyEventKind::Press {
+                            // Still check for more queued events via ZERO poll below.
+                        } else if key.code
+                            == crossterm::event::KeyCode::Char('c')
+                            && key.modifiers.contains(
+                                crossterm::event::KeyModifiers::CONTROL,
+                            )
+                        {
+                            should_exit_outer = true;
+                            break;
+                        } else if tui_state.borrow().pending_approval.is_some()
+                        {
+                            if let Some(decision) =
+                                crate::tui::handle_modal_key(
+                                    &mut tui_state.borrow_mut(),
+                                    key,
+                                )
+                            {
+                                tui_state.borrow_mut().pending_approval = None;
+                                let verdict = match decision {
+                                    crate::tui::ApprovalDecision::Approve => {
+                                        "Approved."
+                                    }
+                                    crate::tui::ApprovalDecision::Deny => {
+                                        "Denied."
+                                    }
+                                };
                                 tui_state
                                     .borrow_mut()
-                                    .push_line_stamped(echo, Some(ts));
-                                // Store for dispatch after drain; show working
-                                let base = "working";
-                                let composed = crate::tui::compose_status_line(
-                                    base,
-                                    applied_provider.as_deref(),
-                                    applied_model.as_deref(),
-                                );
+                                    .push_line(verdict.to_owned());
+                                let base = "ready";
+                                let metrics_opt = context_session_holder
+                                    .as_ref()
+                                    .map(|s| &s.metrics);
+                                let composed =
+                                    crate::tui::compose_status_line_with_context(
+                                        base,
+                                        applied_provider.as_deref(),
+                                        applied_model.as_deref(),
+                                        metrics_opt,
+                                    );
                                 tui_state.borrow_mut().status = composed;
-                                pending_submit = Some(input_line);
-                                // Only one submit per drain (freeze)
-                                // Continue draining remaining keys? spec says collecting submits
-                                // then dispatch ONCE. We'll keep last submit.
+                            }
+                        } else {
+                            let viewport = terminal
+                                .size()
+                                .map_err(|e| {
+                                    InteractiveError::Io(io::Error::other(
+                                        e.to_string(),
+                                    ))
+                                })?
+                                .height
+                                .saturating_sub(3);
+                            let submitted = crate::tui::handle_key(
+                                &mut tui_state.borrow_mut(),
+                                key,
+                                viewport,
+                            );
+                            if submitted {
+                                // Collect submit (freeze stands — dispatch once after drain)
+                                let input_line =
+                                    tui_state.borrow().input.clone();
+                                tui_state.borrow_mut().input.clear();
+                                tui_state.borrow_mut().palette = None;
+                                if input_line.trim().is_empty() {
+                                    let base = "ready";
+                                    let metrics_opt = context_session_holder
+                                        .as_ref()
+                                        .map(|s| &s.metrics);
+                                    let composed =
+                                        crate::tui::compose_status_line_with_context(
+                                            base,
+                                            applied_provider.as_deref(),
+                                            applied_model.as_deref(),
+                                            metrics_opt,
+                                        );
+                                    tui_state.borrow_mut().status = composed;
+                                } else {
+                                    let sanitized_input =
+                                        sanitize_for_display(&input_line);
+                                    let echo = format!("> {sanitized_input}");
+                                    let ts = crate::tui::utc_timestamp_now();
+                                    tui_state
+                                        .borrow_mut()
+                                        .push_line_stamped(echo, Some(ts));
+                                    // Store for dispatch after drain; show working
+                                    let base = "working";
+                                    let metrics_opt = context_session_holder
+                                        .as_ref()
+                                        .map(|s| &s.metrics);
+                                    let composed =
+                                        crate::tui::compose_status_line_with_context(
+                                            base,
+                                            applied_provider.as_deref(),
+                                            applied_model.as_deref(),
+                                            metrics_opt,
+                                        );
+                                    tui_state.borrow_mut().status = composed;
+                                    pending_submit = Some(input_line);
+                                    // Only one submit per drain (freeze)
+                                    // Continue draining remaining keys? spec says collecting submits
+                                    // then dispatch ONCE. We'll keep last submit.
+                                }
                             }
                         }
                     }
+                    crossterm::event::Event::Resize(_, _) => {}
+                    _ => {}
                 }
-                crossterm::event::Event::Resize(_, _) => {}
-                _ => {}
+                if should_exit_outer {
+                    break;
+                }
+                // Only already-queued events; NEVER waits — immediate draw after drain.
+                if !crossterm::event::poll(crate::tui::TUI_DRAIN_POLL)
+                    .map_err(InteractiveError::Io)?
+                {
+                    break;
+                }
             }
         }
         if should_exit_outer {
@@ -2073,14 +2105,17 @@ pub fn run_interactive_tui_with_options(
                 }
             }
             let base = "ready";
-            let composed = crate::tui::compose_status_line(
+            let metrics_opt =
+                context_session_holder.as_ref().map(|s| &s.metrics);
+            let composed = crate::tui::compose_status_line_with_context(
                 base,
                 applied_provider.as_deref(),
                 applied_model.as_deref(),
+                metrics_opt,
             );
             tui_state.borrow_mut().status = composed;
         }
-        // One draw at loop bottom (I1) — every drained batch or idle tick
+        // One draw at loop bottom — every drained batch or idle tick (P1: immediate after drain)
         let pane = build_context_pane(
             context_system_enabled,
             context_session_holder.as_ref().map(|session| &session.metrics),

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 79,
+  "corpusVersion": 80,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -1431,5 +1431,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "3953bb0d0d12aeef24b62269d582674f27a7c60cbc8424594f766e0bc78c47c4"
+  "corpusSha256": "cf1751501ebe64ed551b6cd004b790804312e103bd15d6e0b485377cdc7016a9"
 }
