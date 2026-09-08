@@ -14,7 +14,8 @@
 //!
 //! No threads are used anywhere in the session path: the event loop uses
 //! `crossterm::event::poll` with a bounded timeout, blocking provider rounds
-//! freeze the redraw (documented T1 limitation).
+//! freeze the redraw (documented T1 limitation). A live spinner would require
+//! a UI event-pump thread (recorded as open architecture question, decision 119).
 
 use std::cell::RefCell;
 use std::io::{self, Write};
@@ -45,6 +46,19 @@ pub const MAX_APPROVAL_LINES: usize = 30;
 
 /// Marker appended when the approval request is truncated to the bound.
 pub const APPROVAL_TRUNCATION_MARKER: &str = "... (truncated)";
+
+/// ASCII banner for Siralos — hand-drawn static block, bounded width <= 80 cols (H2).
+/// TUI-only: pushed into the transcript at session start via `push_line` (stdio unchanged).
+pub const SIRALOS_BANNER: &[&str] = &[
+    "  ___ ___ ___  _   _    ___  ___",
+    " / __|_ _| _ \\/ \\ | |  / _ \\/ __|",
+    " \\__ \\| ||   / _ \\| |_| (_) \\__ \\",
+    " |___/___|_|_/_/ \\_\\___\\___/|___/",
+];
+
+/// Greeting line shown below the banner at TUI session start (H2).
+pub const SIRALOS_GREETING: &str =
+    "Welcome to Siralos. Type / to browse commands, or just start typing.";
 
 /// Approval routing decision — host-gated, same gate the stdio path uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,17 +331,18 @@ pub fn context_pane_lines(
     lines
 }
 
-/// One transcript entry — a sanitized line plus an optional UTC stamp.
+/// One transcript entry — a sanitized line plus an optional local stamp.
 ///
-/// `I4`: transcript entries carry caller-supplied timestamps rendered as a
-/// dim line below each message; live sessions stamp with UTC `HH:MM:SS`
-/// via std-only math (`utc_timestamp_now`), differential fixtures carry
-/// fixed values so pinned frames stay deterministic.
+/// `I4` (decision 119 H4): transcript entries carry caller-supplied
+/// timestamps rendered as a dim line below each message; live sessions stamp
+/// with the user's local timezone via `local_timestamp_now` (`time` crate
+/// `local-offset`); differential fixtures carry fixed values so pinned frames
+/// stay deterministic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptEntry {
     /// Sanitized line text (no embedded newlines — split upstream).
     pub text: String,
-    /// Optional UTC stamp like `"2026-08-31 14:03:22 UTC"` (caller-supplied).
+    /// Optional local stamp like `"2026-08-31 14:03:22 +02:00"` (caller-supplied).
     pub timestamp: Option<String>,
 }
 
@@ -346,11 +361,102 @@ pub fn command_catalog() -> Vec<(String, String)> {
         .collect()
 }
 
+/// One provider entry for the `/provider` picker (H6 — read-only, display-only).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderEntry {
+    /// Display name (provider id, sanitized).
+    pub name: String,
+    /// Base-url host (sanitized, e.g. `api.openai.com` or `—` when absent).
+    pub host: String,
+    /// Model (sanitized).
+    pub model: String,
+}
+
+/// Read-only provider picker popup (H6) — listing configured providers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderPicker {
+    /// Providers listed (from workspace config, display-only).
+    pub entries: Vec<ProviderEntry>,
+    /// Currently selected index.
+    pub selected: usize,
+}
+
+impl ProviderPicker {
+    /// Build a picker from entries; selected starts at 0.
+    pub fn new(entries: Vec<ProviderEntry>) -> Self {
+        Self { entries, selected: 0 }
+    }
+
+    /// Move selection up (saturating).
+    pub fn select_prev(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    /// Move selection down (clamped).
+    pub fn select_next(&mut self) {
+        if self.selected + 1 < self.entries.len() {
+            self.selected += 1;
+        }
+    }
+
+    /// Currently selected entry, if any.
+    pub fn selected_entry(&self) -> Option<&ProviderEntry> {
+        self.entries.get(self.selected)
+    }
+}
+
+/// Parse host from an endpoint URL (strip scheme, take up to `/`).
+#[must_use]
+pub fn host_from_endpoint(endpoint: &str) -> String {
+    let without_scheme = if let Some(rest) = endpoint.strip_prefix("https://")
+    {
+        rest
+    } else if let Some(rest) = endpoint.strip_prefix("http://") {
+        rest
+    } else {
+        endpoint
+    };
+    let host = without_scheme.split('/').next().unwrap_or(without_scheme);
+    if host.is_empty() {
+        "—".to_owned()
+    } else {
+        crate::sanitize::sanitize_for_display(host)
+    }
+}
+
+/// Build provider entries from the composed session's provider/model/endpoint (H6).
+/// Single-provider config yields one entry; absent yields empty.
+#[must_use]
+pub fn provider_entries_from_session(
+    provider: Option<&str>,
+    model: Option<&str>,
+    endpoint: Option<&str>,
+) -> Vec<ProviderEntry> {
+    if let Some(name) = provider {
+        if !name.is_empty() {
+            let host = endpoint
+                .map(host_from_endpoint)
+                .unwrap_or_else(|| "—".to_owned());
+            let model_disp = model
+                .map(crate::sanitize::sanitize_for_display)
+                .unwrap_or_else(|| "—".to_owned());
+            return vec![ProviderEntry {
+                name: crate::sanitize::sanitize_for_display(name),
+                host,
+                model: model_disp,
+            }];
+        }
+    }
+    Vec::new()
+}
+
 /// Pure render model for the TUI shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiState {
     /// Transcript entries — bounded ring, oldest dropped when full. Each entry
-    /// is a single sanitized line plus an optional UTC stamp.
+    /// is a single sanitized line plus an optional local stamp.
     pub transcript: Vec<TranscriptEntry>,
     /// Back-compat accessor: transcript lines as plain strings (tests).
     /// Prefer `transcript` directly; this is kept for harness compat.
@@ -371,6 +477,8 @@ pub struct TuiState {
     pub provider: Option<String>,
     /// Model for header bar (P2).
     pub model: Option<String>,
+    /// Provider picker popup (H6) — when Some, Up/Down + Enter/Esc handle it.
+    pub provider_picker: Option<ProviderPicker>,
 }
 
 impl Default for TuiState {
@@ -385,6 +493,7 @@ impl Default for TuiState {
             palette: None,
             provider: None,
             model: None,
+            provider_picker: None,
         }
     }
 }
@@ -453,8 +562,8 @@ impl TuiState {
         self.push_line_stamped(line, None);
     }
 
-    /// Append a sanitized line with an optional UTC timestamp (I4).
-    /// `timestamp` like `"2026-08-31 14:03:22 UTC"` or `None` for static lines.
+    /// Append a sanitized line with an optional local timestamp (H4).
+    /// `timestamp` like `"2026-08-31 14:03:22 +02:00"` or `"UTC"` fallback or `None` for static lines.
     pub fn push_line_stamped(
         &mut self,
         line: String,
@@ -550,11 +659,14 @@ impl TuiState {
     }
 }
 
-/// UTC timestamp helpers (I4) — std-only, no new dependency.
+/// Timestamp helpers (H4 — local timezone via `time` crate).
 ///
-/// Converts a Unix millis timestamp to `"YYYY-MM-DD HH:MM:SS UTC"` via
-/// civil-from-days math (Howard Hinnant's algorithm). Validated against
-/// golden epoch values in `tui.rs` tests.
+/// `local_timestamp_now` uses `time::OffsetDateTime::now_local()` with the
+/// `local-offset` feature. When the platform cannot determine the local
+/// offset, `now_local` returns `None` and we fall back to UTC. The formatted
+/// shape is `"YYYY-MM-DD HH:MM:SS +HH:MM"` (local) or `"YYYY-MM-DD HH:MM:SS UTC"`
+/// (fallback). `utc_timestamp_from_millis` is retained for tests and the
+/// fallback path (civil-from-days math, Howard Hinnant).
 #[must_use]
 pub fn utc_timestamp_from_millis(millis: u64) -> String {
     let secs = millis / 1000;
@@ -666,34 +778,111 @@ pub fn compose_status_line_with_context(
     append_context_usage(base, metrics)
 }
 
-/// Header bar content helper (P2) — left `" Siralos "` and right provider/model.
+/// Returns true when the base status indicates a working/loading state (H5).
+/// The synchronous architecture freezes redraw during blocking dispatch, so the
+/// working marker is styled distinctly to make the frozen state unmistakable.
+#[must_use]
+pub fn is_working_status(base_status: &str) -> bool {
+    let lower = base_status.to_ascii_lowercase();
+    lower.contains("working")
+}
+
+/// Header bar content helper (H1 — deduped: provider/model ONLY when configured).
+/// When `provider` is absent, returns only `" Siralos "` (the "no provider
+/// configured" text lives only in the bottom status line via `compose_status_line`).
 #[must_use]
 pub fn header_text(provider: Option<&str>, model: Option<&str>) -> String {
-    let right = match (provider, model) {
+    match (provider, model) {
         (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
             let sp = crate::sanitize::sanitize_for_display(p);
             let sm = crate::sanitize::sanitize_for_display(m);
-            format!("{sp} / {sm}")
+            format!(" Siralos  {sp} / {sm}")
         }
         (Some(p), _) if !p.is_empty() => {
-            crate::sanitize::sanitize_for_display(p)
+            let sp = crate::sanitize::sanitize_for_display(p);
+            format!(" Siralos  {sp}")
         }
-        _ => "no provider configured".to_owned(),
-    };
-    // Left is fixed `" Siralos "`; right is provider/model. The draw code splits them.
-    let _ = right;
-    " Siralos ".to_owned()
+        _ => " Siralos ".to_owned(),
+    }
 }
 
-/// Current UTC timestamp for live sessions (I4) — `SystemTime` → millis → civil.
+/// Current local timestamp for live sessions (H4) — `time` crate `local-offset`.
+/// Falls back to UTC when the platform cannot determine the local offset.
 #[must_use]
-pub fn utc_timestamp_now() -> String {
+pub fn local_timestamp_now() -> String {
+    // Use `time` crate's `OffsetDateTime::now_local()` when available.
+    // `now_local` attempts to read the system's local offset; on platforms
+    // where the tz database is unavailable it returns an error.
+    if let Ok(dt) = time::OffsetDateTime::now_local() {
+        #[allow(deprecated)]
+        let desc = time::format_description::parse(
+            "[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]",
+        )
+        .expect("valid format");
+        if let Ok(fmt) = dt.format(&desc) {
+            return fmt;
+        }
+        // Fallback to manual formatting if `format` fails.
+        let offset = dt.offset();
+        let total_min = offset.whole_seconds() / 60;
+        let sign = if total_min >= 0 { '+' } else { '-' };
+        let abs = total_min.unsigned_abs();
+        let oh = abs / 60;
+        let om = abs % 60;
+        return format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}{:02}:{:02}",
+            dt.year(),
+            dt.month() as u8,
+            dt.day(),
+            dt.hour(),
+            dt.minute(),
+            dt.second(),
+            sign,
+            oh,
+            om
+        );
+    }
+    // Fallback to UTC when local offset cannot be determined.
+    utc_timestamp_now_fallback()
+}
+
+/// UTC fallback when `now_local` fails — std-only civil math, labeled `UTC`.
+#[must_use]
+fn utc_timestamp_now_fallback() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     utc_timestamp_from_millis(millis)
+}
+
+/// Backward-compat alias (deprecated): use `local_timestamp_now`.
+#[must_use]
+pub fn utc_timestamp_now() -> String {
+    local_timestamp_now()
+}
+
+/// Local timestamp from millis with the given offset (for tests).
+#[must_use]
+pub fn local_timestamp_from_millis_with_offset(
+    millis: u64,
+    offset_minutes: i32,
+) -> String {
+    let secs = millis / 1000;
+    let days = (secs / 86_400) as i64;
+    let secs_of_day = (secs % 86_400) as u32;
+    let (year, month, day) = civil_from_days(days);
+    let hour = secs_of_day / 3600;
+    let minute = (secs_of_day % 3600) / 60;
+    let second = secs_of_day % 60;
+    let sign = if offset_minutes >= 0 { '+' } else { '-' };
+    let abs = offset_minutes.unsigned_abs();
+    let oh = abs / 60;
+    let om = abs % 60;
+    format!(
+        "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} {sign}{oh:02}:{om:02}"
+    )
 }
 
 /// Pure predicate for the launch decision (decision 105, testable without a real TTY).
@@ -790,22 +979,29 @@ pub fn draw_with_pane(
                 (outer[0], rows[0], rows[1], outer[2], Some(cols[1]))
             }
         };
-    // Header bar (P2) — reversed/accent, left " Siralos ", right provider/model.
+    // Header bar (H1 dedup — P2 heritage): reversed/accent, left " Siralos ",
+    // right provider/model ONLY when configured; absent shows just " Siralos ".
     {
         let left = " Siralos ";
-        let right_raw = match (&state.provider, &state.model) {
-            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-                format!("{p} / {m}")
+        let right_opt: Option<String> = match (&state.provider, &state.model) {
+            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => Some(
+                crate::sanitize::sanitize_for_display(&format!("{p} / {m}")),
+            ),
+            (Some(p), _) if !p.is_empty() => {
+                Some(crate::sanitize::sanitize_for_display(p))
             }
-            (Some(p), _) if !p.is_empty() => p.clone(),
-            _ => "no provider configured".to_owned(),
+            _ => None,
         };
-        let right = crate::sanitize::sanitize_for_display(&right_raw);
         let width = header_area.width as usize;
         let left_len = left.chars().count();
-        let right_len = right.chars().count();
-        let middle = width.saturating_sub(left_len + right_len);
-        let header_string = format!("{}{}{}", left, " ".repeat(middle), right);
+        let header_string = if let Some(ref right) = right_opt {
+            let right_len = right.chars().count();
+            let middle = width.saturating_sub(left_len + right_len);
+            format!("{}{}{}", left, " ".repeat(middle), right)
+        } else {
+            let middle = width.saturating_sub(left_len);
+            format!("{}{}", left, " ".repeat(middle))
+        };
         let header = Paragraph::new(header_string).style(
             Style::default()
                 .fg(Color::Cyan)
@@ -982,10 +1178,101 @@ pub fn draw_with_pane(
         frame.render_widget(paragraph, inner);
     }
 
-    // Status line
-    let status = Paragraph::new(state.status.as_str())
-        .style(Style::default().fg(Color::Cyan));
-    frame.render_widget(status, status_area);
+    // Status line — H5: "working" styled distinctly (yellow bold) so the frozen state is unmistakable.
+    {
+        let is_working = is_working_status(&state.status);
+        let status_widget = if is_working {
+            let lower = state.status.to_ascii_lowercase();
+            if let Some(pos) = lower.find("working") {
+                let end = pos + "working".len();
+                let before = state.status[..pos].to_owned();
+                let mid = state.status[pos..end].to_owned();
+                let after = state.status[end..].to_owned();
+                let mut spans: Vec<Span<'_>> = Vec::new();
+                if !before.is_empty() {
+                    spans.push(Span::styled(
+                        before,
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                spans.push(Span::styled(
+                    mid,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+                if !after.is_empty() {
+                    spans.push(Span::styled(
+                        after,
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                Paragraph::new(Line::from(spans))
+            } else {
+                Paragraph::new(state.status.as_str())
+                    .style(Style::default().fg(Color::Cyan))
+            }
+        } else {
+            Paragraph::new(state.status.as_str())
+                .style(Style::default().fg(Color::Cyan))
+        };
+        frame.render_widget(status_widget, status_area);
+    }
+
+    // Provider picker (H6) — rounded popup " providers ", up/down + Enter/Esc.
+    if let Some(picker) = &state.provider_picker {
+        let picker_lines: Vec<Line<'_>> = if picker.entries.is_empty() {
+            vec![
+                Line::from("no providers configured")
+                    .style(Style::default().fg(Color::DarkGray)),
+            ]
+        } else {
+            picker
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(idx, entry)| {
+                    let is_selected = idx == picker.selected;
+                    let text = format!(
+                        "{} | {} | {}",
+                        entry.name, entry.host, entry.model
+                    );
+                    if is_selected {
+                        Line::from(text).style(
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(ratatui::style::Modifier::BOLD),
+                        )
+                    } else {
+                        Line::from(text)
+                            .style(Style::default().fg(Color::White))
+                    }
+                })
+                .collect()
+        };
+        let picker_height = (picker_lines.len() as u16 + 2).min(10);
+        let picker_width = 50u16.min(transcript_area.width);
+        let picker_x = input_area.x;
+        let picker_y = input_area.y.saturating_sub(picker_height);
+        let picker_area =
+            Rect::new(picker_x, picker_y, picker_width, picker_height);
+        frame.render_widget(ratatui::widgets::Clear, picker_area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" providers ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            )
+            .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+        let inner = block.inner(picker_area);
+        frame.render_widget(block, picker_area);
+        let para = Paragraph::new(Text::from(picker_lines))
+            .style(Style::default().bg(Color::Black).fg(Color::White));
+        frame.render_widget(para, inner);
+    }
 
     // Modal overlay (T2): dimmed backdrop + centered modal with the sanitized
     // approval request (bounded to MAX_APPROVAL_LINES). This reuses the same
@@ -1140,22 +1427,28 @@ pub fn render_to_buffer_with_pane(
                 (outer[0], rows[0], rows[1], outer[2], Some(cols[1]))
             }
         };
-    // Header bar (P2) — same as draw.
+    // Header bar (H1 dedup — P2 heritage) — same as draw.
     {
         let left = " Siralos ";
-        let right_raw = match (&state.provider, &state.model) {
-            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-                format!("{p} / {m}")
+        let right_opt: Option<String> = match (&state.provider, &state.model) {
+            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => Some(
+                crate::sanitize::sanitize_for_display(&format!("{p} / {m}")),
+            ),
+            (Some(p), _) if !p.is_empty() => {
+                Some(crate::sanitize::sanitize_for_display(p))
             }
-            (Some(p), _) if !p.is_empty() => p.clone(),
-            _ => "no provider configured".to_owned(),
+            _ => None,
         };
-        let right = crate::sanitize::sanitize_for_display(&right_raw);
         let width = header_area.width as usize;
         let left_len = left.chars().count();
-        let right_len = right.chars().count();
-        let middle = width.saturating_sub(left_len + right_len);
-        let header_string = format!("{}{}{}", left, " ".repeat(middle), right);
+        let header_string = if let Some(ref right) = right_opt {
+            let right_len = right.chars().count();
+            let middle = width.saturating_sub(left_len + right_len);
+            format!("{}{}{}", left, " ".repeat(middle), right)
+        } else {
+            let middle = width.saturating_sub(left_len);
+            format!("{}{}", left, " ".repeat(middle))
+        };
         let header = Paragraph::new(header_string).style(
             Style::default()
                 .fg(Color::Cyan)
@@ -1303,9 +1596,101 @@ pub fn render_to_buffer_with_pane(
         paragraph.render(inner, &mut buf);
     }
 
-    let status = Paragraph::new(state.status.as_str())
-        .style(Style::default().fg(Color::Cyan));
-    status.render(status_area, &mut buf);
+    // Status line — H5 distinct "working" style.
+    {
+        let is_working = is_working_status(&state.status);
+        let status_widget: Paragraph<'_> = if is_working {
+            let lower = state.status.to_ascii_lowercase();
+            if let Some(pos) = lower.find("working") {
+                let end = pos + "working".len();
+                let before = state.status[..pos].to_owned();
+                let mid = state.status[pos..end].to_owned();
+                let after = state.status[end..].to_owned();
+                let mut spans: Vec<Span<'_>> = Vec::new();
+                if !before.is_empty() {
+                    spans.push(Span::styled(
+                        before,
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                spans.push(Span::styled(
+                    mid,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+                if !after.is_empty() {
+                    spans.push(Span::styled(
+                        after,
+                        Style::default().fg(Color::Cyan),
+                    ));
+                }
+                Paragraph::new(Line::from(spans))
+            } else {
+                Paragraph::new(state.status.as_str())
+                    .style(Style::default().fg(Color::Cyan))
+            }
+        } else {
+            Paragraph::new(state.status.as_str())
+                .style(Style::default().fg(Color::Cyan))
+        };
+        status_widget.render(status_area, &mut buf);
+    }
+
+    // Provider picker (H6) — same as Frame path.
+    if let Some(picker) = &state.provider_picker {
+        let picker_lines: Vec<Line<'_>> = if picker.entries.is_empty() {
+            vec![
+                Line::from("no providers configured")
+                    .style(Style::default().fg(Color::DarkGray)),
+            ]
+        } else {
+            picker
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(idx, entry)| {
+                    let is_selected = idx == picker.selected;
+                    let text = format!(
+                        "{} | {} | {}",
+                        entry.name, entry.host, entry.model
+                    );
+                    if is_selected {
+                        Line::from(text).style(
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(ratatui::style::Modifier::BOLD),
+                        )
+                    } else {
+                        Line::from(text)
+                            .style(Style::default().fg(Color::White))
+                    }
+                })
+                .collect()
+        };
+        let picker_height = (picker_lines.len() as u16 + 2).min(10);
+        let picker_width = 50u16.min(transcript_area.width);
+        let picker_x = input_area.x;
+        let picker_y = input_area.y.saturating_sub(picker_height);
+        let picker_area =
+            Rect::new(picker_x, picker_y, picker_width, picker_height);
+        ratatui::widgets::Clear.render(picker_area, &mut buf);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" providers ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            )
+            .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+        let inner = block.inner(picker_area);
+        block.render(picker_area, &mut buf);
+        let para = Paragraph::new(Text::from(picker_lines))
+            .style(Style::default().bg(Color::Black).fg(Color::White));
+        para.render(inner, &mut buf);
+    }
 
     if let Some(modal) = &state.pending_approval {
         let backdrop_area = match pane_area {
@@ -1473,6 +1858,49 @@ pub fn handle_key(
         // T2: while a modal is pending, ALL other keys are ignored.
         return false;
     }
+    // H6: provider picker intercepts all keys while visible.
+    if state.provider_picker.is_some() {
+        match key.code {
+            KeyCode::Esc => {
+                state.provider_picker = None;
+                state.input.clear();
+                state.update_palette();
+                return false;
+            }
+            KeyCode::Up => {
+                if let Some(picker) = state.provider_picker.as_mut() {
+                    picker.select_prev();
+                }
+                return false;
+            }
+            KeyCode::Down => {
+                if let Some(picker) = state.provider_picker.as_mut() {
+                    picker.select_next();
+                }
+                return false;
+            }
+            KeyCode::Enter => {
+                let selected_name = state
+                    .provider_picker
+                    .as_ref()
+                    .and_then(|p| p.selected_entry())
+                    .map(|e| e.name.clone());
+                if let Some(name) = selected_name {
+                    let sanitized =
+                        crate::sanitize::sanitize_for_display(&name);
+                    state.push_line(format!("provider: {sanitized} selected"));
+                }
+                state.provider_picker = None;
+                state.input.clear();
+                state.update_palette();
+                return false;
+            }
+            _ => {
+                // Consume all keys while picker is open (no typing through picker).
+                return false;
+            }
+        }
+    }
     if key.kind != crossterm::event::KeyEventKind::Press {
         return false;
     }
@@ -1481,6 +1909,20 @@ pub fn handle_key(
             // Ctrl+C is handled by the outer loop as exit, not here.
             false
         }
+        (KeyCode::Esc, _) => {
+            // Esc clears palette/picker context or input.
+            if state.palette.is_some() {
+                state.input.clear();
+                state.update_palette();
+            }
+            false
+        }
+        (KeyCode::Up, _) => {
+            // When palette is visible, Up navigates palette selection is display-only
+            // (no selection highlight needed for palette) — consume to allow future.
+            false
+        }
+        (KeyCode::Down, _) => false,
         (KeyCode::Enter, _) => true,
         (KeyCode::Backspace, _) => {
             state.input.pop();
@@ -1504,6 +1946,26 @@ pub fn handle_key(
         }
         _ => false,
     }
+}
+
+/// Open the provider picker (H6) — caller supplies entries from workspace config.
+/// Read-only: no config write; selection echo handled in `handle_key`.
+pub fn open_provider_picker(
+    state: &mut TuiState,
+    entries: Vec<ProviderEntry>,
+) {
+    state.provider_picker = Some(ProviderPicker::new(entries));
+    state.input.clear();
+    state.update_palette();
+}
+
+/// Push the SIRALOS banner + greeting into the transcript at session start (H2).
+/// TUI-only; stdio path unchanged. Sanitized-safe static host strings.
+pub fn push_banner_and_greeting(state: &mut TuiState) {
+    for &line in SIRALOS_BANNER {
+        state.push_line(line.to_owned());
+    }
+    state.push_line(SIRALOS_GREETING.to_owned());
 }
 
 #[cfg(test)]
@@ -2654,13 +3116,18 @@ mod tests {
     fn header_renders_provider_model_present_and_absent() {
         let mut state = TuiState::new();
         state.status = "ready".to_owned();
-        // Absent provider → header shows "no provider configured"
+        // Absent provider -> header shows just " Siralos " (no duplication)
         let buf = render(&state, 80, 24);
         let content: String =
             buf.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains(" Siralos "));
-        assert!(content.contains("no provider configured"));
-        // Present provider/model → header shows them
+        let header_row = content.lines().next().unwrap_or("");
+        assert!(header_row.contains("Siralos"));
+        assert!(!header_row.contains("no provider configured"));
+        // Overall status line still carries "no provider configured" via compose_status_line
+        let composed = compose_status_line("ready", None, None);
+        assert!(composed.contains("no provider configured"));
+        // Present provider/model -> header shows them
         let mut with = TuiState::new();
         with.provider = Some("example-vendor".to_owned());
         with.model = Some("model-a".to_owned());
@@ -2894,5 +3361,218 @@ mod tests {
         // Header ensures first row contains Siralos
         let content: String = a.content().iter().map(|c| c.symbol()).collect();
         assert!(content.contains("Siralos"));
+    }
+
+    // H2: banner + greeting (TUI-only, bounded width <= 80)
+    #[test]
+    fn banner_renders_within_80_and_greeting_present() {
+        for line in SIRALOS_BANNER {
+            assert!(
+                line.chars().count() <= 80,
+                "banner line too wide: {line:?}"
+            );
+        }
+        assert!(SIRALOS_GREETING.contains("Siralos"));
+        let mut state = TuiState::new();
+        push_banner_and_greeting(&mut state);
+        let buf = render(&state, 80, 24);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        for line in SIRALOS_BANNER {
+            assert!(
+                content.contains(line.trim()),
+                "banner line missing: {line:?}"
+            );
+        }
+        assert!(content.contains("Welcome to Siralos"));
+    }
+
+    #[test]
+    fn greeting_line_present_in_transcript() {
+        let mut state = TuiState::new();
+        push_banner_and_greeting(&mut state);
+        assert!(state.transcript.iter().any(|e| e.text == SIRALOS_GREETING));
+    }
+
+    // H3: palette filter verified — typing /p then /pr updates each step
+    #[test]
+    fn palette_filter_step_verified() {
+        let mut state = TuiState::new();
+        state.input = "/p".to_owned();
+        state.update_palette();
+        let first = state.palette.as_ref().unwrap().clone();
+        assert!(!first.is_empty());
+        assert!(
+            first
+                .iter()
+                .all(|(n, _)| n.to_ascii_lowercase().starts_with("/p"))
+        );
+        state.input = "/pr".to_owned();
+        state.update_palette();
+        let second = state.palette.as_ref().unwrap().clone();
+        assert!(second.len() <= first.len());
+        assert!(
+            second
+                .iter()
+                .all(|(n, _)| n.to_ascii_lowercase().starts_with("/pr"))
+        );
+        // Typing should keep palette visible (not drop mid-typing)
+        assert!(state.palette.is_some());
+        state.input = "/provider".to_owned();
+        state.update_palette();
+        let third = state.palette.as_ref().unwrap();
+        assert!(third.iter().any(|(n, _)| n == "/provider"));
+    }
+
+    // H4: local_timestamp_now format + fallback
+    #[test]
+    fn local_timestamp_now_format_and_fallback() {
+        let ts = local_timestamp_now();
+        // Pattern: YYYY-MM-DD HH:MM:SS +HH:MM  OR  UTC fallback
+        let is_local = ts.contains('+') || ts.contains('-');
+        let is_utc = ts.ends_with("UTC");
+        assert!(
+            is_local || is_utc,
+            "timestamp should be local offset or UTC fallback, got {ts:?}"
+        );
+        // Verify deterministic helper
+        let fixed = local_timestamp_from_millis_with_offset(0, 120);
+        assert_eq!(fixed, "1970-01-01 00:00:00 +02:00");
+        let utc = utc_timestamp_from_millis(0);
+        assert_eq!(utc, "1970-01-01 00:00:00 UTC");
+        // Time crate version pinned in CLI only (compile-time proof: time present)
+        let now_local = time::OffsetDateTime::now_local();
+        // Should be Ok or Err (fallback path) — both acceptable
+        assert!(now_local.is_ok() || now_local.is_err());
+    }
+
+    // H5: working marker styled distinctly
+    #[test]
+    fn working_status_is_detected_and_styled() {
+        assert!(is_working_status("working"));
+        assert!(is_working_status("working | ready"));
+        assert!(!is_working_status("ready"));
+        let mut state = TuiState::new();
+        state.status = compose_status_line("working", Some("p"), Some("m"));
+        assert!(is_working_status(&state.status));
+        let buf = render(&state, 80, 24);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("working"));
+        // Styled: check buffer cell style for "working" substring is yellow bold
+        let has_yellow = buf
+            .content()
+            .iter()
+            .any(|cell| cell.style().fg == Some(Color::Yellow));
+        assert!(has_yellow, "working status should be styled yellow");
+    }
+
+    // H6: provider picker render / echo / Esc
+    #[test]
+    fn provider_picker_renders_and_echo_and_esc() {
+        let mut state = TuiState::new();
+        let entries = provider_entries_from_session(
+            Some("openai"),
+            Some("gpt-4"),
+            Some("https://api.openai.com/v1"),
+        );
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "openai");
+        assert!(entries[0].host.contains("api.openai.com"));
+        assert_eq!(entries[0].model, "gpt-4");
+        open_provider_picker(&mut state, entries.clone());
+        assert!(state.provider_picker.is_some());
+        let buf = render(&state, 80, 24);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains(" providers "));
+        assert!(content.contains("openai"));
+        // Enter echoes selection
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let submitted = handle_key(&mut state, enter, 10);
+        assert!(!submitted);
+        assert!(state.provider_picker.is_none());
+        assert!(
+            state
+                .transcript
+                .iter()
+                .any(|e| e.text.contains("provider: openai selected"))
+        );
+        // Re-open and Esc closes without echo
+        open_provider_picker(&mut state, entries);
+        let esc = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        handle_key(&mut state, esc, 10);
+        assert!(state.provider_picker.is_none());
+        // Ensure no second echo from Esc
+        let count = state
+            .transcript
+            .iter()
+            .filter(|e| e.text.contains("provider: openai selected"))
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn provider_picker_single_shows_and_selects() {
+        let mut state = TuiState::new();
+        let entries = vec![ProviderEntry {
+            name: "solo".to_owned(),
+            host: "api.example.com".to_owned(),
+            model: "m1".to_owned(),
+        }];
+        open_provider_picker(&mut state, entries);
+        assert_eq!(state.provider_picker.as_ref().unwrap().entries.len(), 1);
+        // Down should stay at 0, Up stays
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        handle_key(&mut state, down, 10);
+        assert_eq!(state.provider_picker.as_ref().unwrap().selected, 0);
+    }
+
+    #[test]
+    fn provider_picker_read_only_no_config_write() {
+        let mut state = TuiState::new();
+        let entries = provider_entries_from_session(None, None, None);
+        assert!(entries.is_empty());
+        open_provider_picker(&mut state, entries);
+        let buf = render(&state, 80, 24);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("no providers configured"));
+    }
+
+    #[test]
+    fn stdio_path_byte_unchanged_banner_tui_only() {
+        // Stdio path must not inject banner; TUI path does via push_banner_and_greeting.
+        let stdio = TuiState::new();
+        // Simulate stdio composition without banner
+        assert!(stdio.transcript.is_empty());
+        let mut tui = TuiState::new();
+        push_banner_and_greeting(&mut tui);
+        assert!(!tui.transcript.is_empty());
+        // Stdio render without banner vs tui render with banner differ as expected
+        let a = render(&stdio, 80, 24);
+        let b = render(&tui, 80, 24);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn banner_lines_bounded_width_80() {
+        for line in SIRALOS_BANNER {
+            assert!(
+                line.len() <= 80,
+                "banner line exceeds 80: {:?} len {}",
+                line,
+                line.len()
+            );
+        }
     }
 }

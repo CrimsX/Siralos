@@ -248,6 +248,7 @@ where
         applied_provider,
         applied_model,
         credential_present,
+        ..
     } = session;
 
     // --- Frontend residual (stdio): prompt loop over reader/writer. ---
@@ -825,6 +826,8 @@ struct SessionComposition<'a> {
     applied_provider: Option<String>,
     /// Applied model name from the composed profile (U5/U7).
     applied_model: Option<String>,
+    /// Applied endpoint from the composed profile (H6 host for picker).
+    applied_endpoint: Option<String>,
     /// Whether the credential for the applied provider is present (U7).
     credential_present: bool,
 }
@@ -929,20 +932,29 @@ fn compose_session(
             }
             _ => ("deterministic-fake".to_owned(), None, None, None),
         };
-    // I5/U7: applied provider/model/credential for status + display commands (preserved before move).
-    let (applied_provider, applied_model, credential_present) =
-        match &loaded_profile {
-            WorkspaceProfileLoad::Record(record)
-                if effective.applied_profile.is_some() =>
-            {
-                let cred_present = record
-                    .credential
-                    .as_deref()
-                    .is_some_and(|c| HostCredential::from_env_ref(c).is_ok());
-                (record.provider.clone(), record.model.clone(), cred_present)
-            }
-            _ => (None, None, false),
-        };
+    // I5/U7 + H6: applied provider/model/credential/endpoint for status + display + picker.
+    let (
+        applied_provider,
+        applied_model,
+        applied_endpoint,
+        credential_present,
+    ) = match &loaded_profile {
+        WorkspaceProfileLoad::Record(record)
+            if effective.applied_profile.is_some() =>
+        {
+            let cred_present = record
+                .credential
+                .as_deref()
+                .is_some_and(|c| HostCredential::from_env_ref(c).is_ok());
+            (
+                record.provider.clone(),
+                record.model.clone(),
+                record.endpoint.clone(),
+                cred_present,
+            )
+        }
+        _ => (None, None, None, false),
+    };
     let mut live_host_provider: Option<HostProvider> = None;
     let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
     let mut record_recorder: Option<Rc<RetainingReplayRecorder>> = None;
@@ -1166,6 +1178,7 @@ fn compose_session(
         replay_store_path,
         applied_provider,
         applied_model,
+        applied_endpoint,
         credential_present,
     })
 }
@@ -1893,6 +1906,7 @@ pub fn run_interactive_tui_with_options(
         replay_store_path,
         applied_provider,
         applied_model,
+        applied_endpoint,
         credential_present,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
@@ -1910,6 +1924,8 @@ pub fn run_interactive_tui_with_options(
         state.status = composed;
         state.provider = applied_provider.clone();
         state.model = applied_model.clone();
+        // H2: banner + greeting at session start (TUI-only, stdio unchanged).
+        crate::tui::push_banner_and_greeting(&mut state);
     }
     let mut sink = TuiSink::new(tui_state.clone());
 
@@ -2022,7 +2038,7 @@ pub fn run_interactive_tui_with_options(
                                     let sanitized_input =
                                         sanitize_for_display(&input_line);
                                     let echo = format!("> {sanitized_input}");
-                                    let ts = crate::tui::utc_timestamp_now();
+                                    let ts = crate::tui::local_timestamp_now();
                                     tui_state
                                         .borrow_mut()
                                         .push_line_stamped(echo, Some(ts));
@@ -2081,6 +2097,17 @@ pub fn run_interactive_tui_with_options(
                     format!("unknown command - available: {catalog_names}\n");
                 let sanitized = sanitize_for_display(&msg);
                 let _ = sink.write_all(sanitized.as_bytes());
+            } else if let SlashCommand::Provider = command {
+                // H6: /provider opens a read-only picker (TUI-only). Display-only; no config write.
+                let entries = crate::tui::provider_entries_from_session(
+                    applied_provider.as_deref(),
+                    applied_model.as_deref(),
+                    applied_endpoint.as_deref(),
+                );
+                crate::tui::open_provider_picker(
+                    &mut tui_state.borrow_mut(),
+                    entries,
+                );
             } else {
                 let should_exit = dispatch_tui_command(
                     &command,

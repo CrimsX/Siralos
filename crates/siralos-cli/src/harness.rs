@@ -134,7 +134,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 80;
+const CORPUS_VERSION: u64 = 81;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -10655,7 +10655,9 @@ fn tui_render_record(
     };
 
     let mut state = TuiState::new();
-    // I4: fixed fixture timestamps for deterministic frames.
+    // H2: banner + greeting at session start (TUI-only). The pinned fixtures carry them.
+    crate::tui::push_banner_and_greeting(&mut state);
+    // I4/H4: fixed fixture timestamps for deterministic frames (banner stays unstamped).
     let transcript_entries: Vec<crate::tui::TranscriptEntry> = transcript
         .iter()
         .map(|text| crate::tui::TranscriptEntry {
@@ -10663,9 +10665,12 @@ fn tui_render_record(
             timestamp: Some(FIXTURE_TIMESTAMP.to_owned()),
         })
         .collect();
-    state.transcript = transcript_entries.clone();
-    state.transcript_lines = transcript.clone();
-    // Also keep transcript_lines synced for legacy draw path fallback
+    // Append scenario transcript after the banner.
+    for entry in transcript_entries {
+        state.transcript.push(entry.clone());
+        state.transcript_lines.push(entry.text);
+    }
+    // Ensure transcript_lines stays synced for legacy draw path fallback
     state.input = input_text.to_owned();
     state.status = status.to_owned();
     state.scroll_offset = scroll_offset.min(u16::MAX as u64) as u16;
