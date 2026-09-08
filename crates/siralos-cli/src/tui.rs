@@ -452,6 +452,89 @@ pub fn provider_entries_from_session(
     Vec::new()
 }
 
+/// Sequential field for the provider add-flow form (C1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderAddField {
+    /// Provider name (openai, anthropic, generic, or custom).
+    Provider,
+    /// Model id (free text).
+    Model,
+    /// Credential env-var name (A-Z0-9_ up to 64).
+    CredentialEnv,
+    /// Endpoint (optional, https:// or http://).
+    Endpoint,
+}
+
+impl ProviderAddField {
+    /// Title label for the current field.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Provider => "provider",
+            Self::Model => "model",
+            Self::CredentialEnv => "credential env var",
+            Self::Endpoint => "endpoint (optional)",
+        }
+    }
+}
+
+/// Completed add-flow data — the validated values to write as `[profile]` (C1/C2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderAddData {
+    /// Provider id validated `[a-z0-9_-]{1,64}`.
+    pub provider: String,
+    /// Model id validated `[a-zA-Z0-9._-]{1,128}`.
+    pub model: String,
+    /// Credential env-var NAME (without `env:` prefix) validated `A-Z0-9_` up to 64.
+    pub credential_env: String,
+    /// Optional endpoint validated `https://` or `http://`, no NUL/space, up to 512.
+    pub endpoint: Option<String>,
+}
+
+/// Sequential add-provider form (C1) — modal discipline: while Some, no other
+/// keys pass through the TUI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderAddForm {
+    /// Validated provider collected on field advance (field >= Model).
+    pub provider: Option<String>,
+    /// Validated model collected on field advance (field >= CredentialEnv).
+    pub model: Option<String>,
+    /// Validated credential env-var NAME collected on field advance (field >= Endpoint).
+    pub credential_env: Option<String>,
+    /// Validated endpoint collected on final advance (field past Endpoint).
+    pub endpoint: Option<String>,
+    /// Current field being edited.
+    pub field: ProviderAddField,
+    /// Current field edit buffer (raw typing, not yet validated).
+    pub input: String,
+    /// Validation error to display (if last Enter was invalid).
+    pub error: Option<String>,
+    /// When Some, the form has been completed and these are the validated values
+    /// to write atomically (C2) — consumed by the interactive loop.
+    pub completed: Option<ProviderAddData>,
+}
+
+impl Default for ProviderAddForm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProviderAddForm {
+    /// Create a fresh form starting at the provider field.
+    pub fn new() -> Self {
+        Self {
+            provider: None,
+            model: None,
+            credential_env: None,
+            endpoint: None,
+            field: ProviderAddField::Provider,
+            input: String::new(),
+            error: None,
+            completed: None,
+        }
+    }
+}
+
 /// Pure render model for the TUI shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TuiState {
@@ -479,6 +562,9 @@ pub struct TuiState {
     pub model: Option<String>,
     /// Provider picker popup (H6) — when Some, Up/Down + Enter/Esc handle it.
     pub provider_picker: Option<ProviderPicker>,
+    /// Provider add-flow form (C1) — sequential modal form; when Some, no other
+    /// keys pass (modal discipline).
+    pub provider_add_form: Option<ProviderAddForm>,
 }
 
 impl Default for TuiState {
@@ -494,6 +580,7 @@ impl Default for TuiState {
             provider: None,
             model: None,
             provider_picker: None,
+            provider_add_form: None,
         }
     }
 }
@@ -1143,9 +1230,9 @@ pub fn draw_with_pane(
         .style(Style::default().fg(Color::Yellow));
     frame.render_widget(input, input_area);
     // Cursor at end of input (after `> ` prefix + input length). Clamp to area.
-    // When a modal is pending, hide the cursor behind the dimmed backdrop
-    // (no typing through a modal).
-    if state.pending_approval.is_none() {
+    // When a modal is pending or the add-form is open, hide the cursor behind
+    // the dimmed backdrop (no typing through a modal).
+    if state.pending_approval.is_none() && state.provider_add_form.is_none() {
         let cursor_x = input_area.x + 2 + state.input.len() as u16;
         let cursor_x =
             cursor_x.min(input_area.x + input_area.width.saturating_sub(1));
@@ -1274,6 +1361,32 @@ pub fn draw_with_pane(
         frame.render_widget(para, inner);
     }
 
+    // Provider add-flow form (C1) — rounded modal title " add provider " with current field highlighted.
+    if let Some(form) = &state.provider_add_form {
+        let backdrop = Block::default()
+            .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        frame.render_widget(backdrop, backdrop_area);
+        let modal_area = centered_rect(65, 65, backdrop_area);
+        frame.render_widget(ratatui::widgets::Clear, modal_area);
+        let modal_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" add provider ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            )
+            .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+        let inner = modal_block.inner(modal_area);
+        frame.render_widget(modal_block, modal_area);
+        let lines = provider_add_form_lines(form);
+        let paragraph = Paragraph::new(Text::from(lines))
+            .style(Style::default().fg(Color::White).bg(Color::Black))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        frame.render_widget(paragraph, inner);
+    }
+
     // Modal overlay (T2): dimmed backdrop + centered modal with the sanitized
     // approval request (bounded to MAX_APPROVAL_LINES). This reuses the same
     // sanitizer-bound lines the stdio path would render — no unsanitized content.
@@ -1301,6 +1414,74 @@ pub fn draw_with_pane(
             .wrap(ratatui::widgets::Wrap { trim: false });
         frame.render_widget(paragraph, inner);
     }
+}
+
+fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let fields = [
+        (ProviderAddField::Provider, "provider", form.provider.as_deref()),
+        (ProviderAddField::Model, "model", form.model.as_deref()),
+        (
+            ProviderAddField::CredentialEnv,
+            "credential env var",
+            form.credential_env.as_deref(),
+        ),
+        (
+            ProviderAddField::Endpoint,
+            "endpoint (optional)",
+            form.endpoint.as_deref(),
+        ),
+    ];
+    for (field, label, stored) in fields {
+        let is_current = field == form.field && form.completed.is_none();
+        let display = if is_current {
+            format!(
+                "> {}: {}{}",
+                label,
+                form.input,
+                if form.input.is_empty() { "_" } else { "" }
+            )
+        } else if let Some(val) = stored {
+            if val.is_empty() {
+                format!("  {label}: —")
+            } else {
+                format!("  {label}: {val}")
+            }
+        } else {
+            format!("  {label}:")
+        };
+        // Highlight current field bold yellow, completed dim, pending white.
+        let style = if is_current {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(ratatui::style::Modifier::BOLD)
+        } else if stored.is_some() {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        lines.push(Line::from(display).style(style));
+    }
+    // Provider field suggestions.
+    if form.field == ProviderAddField::Provider && form.completed.is_none() {
+        lines.push(
+            Line::from(
+                "    suggestions: openai, anthropic, generic (or custom)",
+            )
+            .style(Style::default().fg(Color::DarkGray)),
+        );
+    }
+    lines.push(
+        Line::from("    Enter to continue, Esc to cancel")
+            .style(Style::default().fg(Color::DarkGray)),
+    );
+    if let Some(err) = &form.error {
+        lines.push(
+            Line::from(format!("    error: {err}"))
+                .style(Style::default().fg(Color::Red)),
+        );
+    }
+    lines
 }
 
 fn body_union(transcript: Rect, input: Rect, pane: Rect) -> Rect {
@@ -1692,6 +1873,38 @@ pub fn render_to_buffer_with_pane(
         para.render(inner, &mut buf);
     }
 
+    // Provider add-flow form (C1) — buffer path.
+    if let Some(form) = &state.provider_add_form {
+        let backdrop_area = match pane_area {
+            None => transcript_area,
+            Some(pane_rect) => {
+                body_union(transcript_area, input_area, pane_rect)
+            }
+        };
+        let backdrop = Block::default()
+            .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        backdrop.render(backdrop_area, &mut buf);
+        let modal_area = centered_rect(65, 65, backdrop_area);
+        ratatui::widgets::Clear.render(modal_area, &mut buf);
+        let modal_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" add provider ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            )
+            .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+        let inner = modal_block.inner(modal_area);
+        modal_block.render(modal_area, &mut buf);
+        let lines = provider_add_form_lines(form);
+        let paragraph = Paragraph::new(Text::from(lines))
+            .style(Style::default().fg(Color::White).bg(Color::Black))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        paragraph.render(inner, &mut buf);
+    }
+
     if let Some(modal) = &state.pending_approval {
         let backdrop_area = match pane_area {
             None => transcript_area,
@@ -1843,11 +2056,141 @@ impl Drop for TerminalGuard {
 // During a blocking provider round the UI simply does not redraw — the status
 // line showed "working" before the step and the freeze is documented.
 // Helpers for tests: expose scroll operations
+/// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
+fn validate_credential_env_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(
+            "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate provider field: [a-z0-9_-]{1,64}, non-empty, no NUL.
+fn validate_provider_name(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 64 {
+        return Err(
+            "The provider exceeds the 64-byte bound or is empty.".to_owned()
+        );
+    }
+    if value.contains('\0') {
+        return Err("A provider must not contain NUL.".to_owned());
+    }
+    if !value.chars().all(|c| {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
+    }) {
+        return Err("A provider must match [a-z0-9_-]{1,64}.".to_owned());
+    }
+    Ok(())
+}
+
+/// Validate model field: [a-zA-Z0-9._-]{1,128}, non-empty, no NUL.
+fn validate_model_name(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 128 {
+        return Err(
+            "The model exceeds the 128-byte bound or is empty.".to_owned()
+        );
+    }
+    if value.contains('\0') {
+        return Err("A model must not contain NUL.".to_owned());
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err("A model must match [a-zA-Z0-9._-]{1,128}.".to_owned());
+    }
+    Ok(())
+}
+
+/// Validate endpoint field: https:// or http://, no NUL, no space, 1..512.
+fn validate_endpoint_value(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 512 {
+        return Err(
+            "The endpoint exceeds the 512-byte bound or is empty.".to_owned()
+        );
+    }
+    if value.contains('\0') {
+        return Err("An endpoint must not contain NUL.".to_owned());
+    }
+    if !(value.starts_with("https://") || value.starts_with("http://")) {
+        return Err(
+            "An endpoint must start with \"https://\" or \"http://\"."
+                .to_owned(),
+        );
+    }
+    if value.contains(' ') {
+        return Err("An endpoint must not contain spaces.".to_owned());
+    }
+    Ok(())
+}
+
+/// Compute the longest common prefix among non-empty strings (case-sensitive,
+/// char-level). Empty input returns empty.
+fn longest_common_prefix(strs: &[String]) -> String {
+    if strs.is_empty() {
+        return String::new();
+    }
+    let mut prefix = strs[0].clone();
+    for s in &strs[1..] {
+        let mut new_len = 0;
+        for (a, b) in prefix.chars().zip(s.chars()) {
+            if a == b {
+                new_len += a.len_utf8();
+            } else {
+                break;
+            }
+        }
+        prefix.truncate(new_len);
+        if prefix.is_empty() {
+            break;
+        }
+    }
+    prefix
+}
+
+/// Handle Tab completion for the palette (C5): when input starts with `/` and
+/// there are matches, Tab (and BackTab cycles backward) completes the typed
+/// prefix to the matching command — one match -> full, multiple -> common prefix.
+fn complete_palette_prefix(state: &mut TuiState) {
+    if !state.input.starts_with('/') {
+        return;
+    }
+    let prefix_lower = state.input.to_ascii_lowercase();
+    let matches: Vec<String> = command_catalog()
+        .into_iter()
+        .filter(|(name, _)| {
+            name.to_ascii_lowercase().starts_with(&prefix_lower)
+        })
+        .map(|(name, _)| name)
+        .collect();
+    if matches.is_empty() {
+        return;
+    }
+    if matches.len() == 1 {
+        state.input = matches[0].clone();
+    } else {
+        let common = longest_common_prefix(&matches);
+        if common.len() > state.input.len() {
+            state.input = common;
+        }
+    }
+    state.update_palette();
+}
+
 /// Handle a key event for the input line and scroll state. Returns true if the
 /// Enter key was pressed (caller should submit `state.input`).
 /// While a modal is pending this function returns `false` for all keys
 /// (callers must route through [`handle_modal_key`] first — no typing through
 /// a modal).
+/// The provider add-form (C1) has modal discipline: while it is Some, NO other
+/// keys pass (modal discipline).
 pub fn handle_key(
     state: &mut TuiState,
     key: crossterm::event::KeyEvent,
@@ -1857,6 +2200,121 @@ pub fn handle_key(
     if state.pending_approval.is_some() {
         // T2: while a modal is pending, ALL other keys are ignored.
         return false;
+    }
+    // C1: provider add-form has modal discipline — consumes ALL non-Esc/Enter/Char/Backspace keys too.
+    if let Some(form) = state.provider_add_form.as_mut() {
+        // While completed, consume all until the interactive loop drains it.
+        if form.completed.is_some() {
+            return false;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                state.provider_add_form = None;
+                return false;
+            }
+            KeyCode::Enter => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                let current = form.input.clone();
+                let trimmed = current.trim().to_owned();
+                let field = form.field;
+                // Validate current field and advance or error.
+                let validation: Result<(), String> = match field {
+                    ProviderAddField::Provider => {
+                        validate_provider_name(&trimmed)
+                    }
+                    ProviderAddField::Model => validate_model_name(&trimmed),
+                    ProviderAddField::CredentialEnv => {
+                        validate_credential_env_name(&trimmed)
+                    }
+                    ProviderAddField::Endpoint => {
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_endpoint_value(&trimmed)
+                        }
+                    }
+                };
+                if let Err(msg) = validation {
+                    form.error = Some(msg);
+                    return false;
+                }
+                form.error = None;
+                match field {
+                    ProviderAddField::Provider => {
+                        form.provider = Some(trimmed);
+                        form.field = ProviderAddField::Model;
+                        form.input.clear();
+                    }
+                    ProviderAddField::Model => {
+                        form.model = Some(trimmed);
+                        form.field = ProviderAddField::CredentialEnv;
+                        form.input.clear();
+                    }
+                    ProviderAddField::CredentialEnv => {
+                        form.credential_env = Some(trimmed);
+                        form.field = ProviderAddField::Endpoint;
+                        form.input.clear();
+                    }
+                    ProviderAddField::Endpoint => {
+                        let endpoint_opt = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                        form.endpoint = endpoint_opt.clone();
+                        // Build completed data — safe to unwrap previous fields which are Some.
+                        if let (
+                            Some(provider),
+                            Some(model),
+                            Some(credential_env),
+                        ) = (
+                            form.provider.clone(),
+                            form.model.clone(),
+                            form.credential_env.clone(),
+                        ) {
+                            form.completed = Some(ProviderAddData {
+                                provider,
+                                model,
+                                credential_env,
+                                endpoint: endpoint_opt,
+                            });
+                        } else {
+                            form.error = Some(
+                                "Internal error: missing prior fields"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                }
+                return false;
+            }
+            KeyCode::Backspace => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                form.input.pop();
+                form.error = None;
+                return false;
+            }
+            KeyCode::Char(ch) => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                // Ctrl combos are handled by outer loop; here just char.
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return false;
+                }
+                form.input.push(ch);
+                form.error = None;
+                return false;
+            }
+            _ => {
+                // Modal discipline: consume all other keys while form is open.
+                return false;
+            }
+        }
     }
     // H6: provider picker intercepts all keys while visible.
     if state.provider_picker.is_some() {
@@ -1885,6 +2343,17 @@ pub fn handle_key(
                     .as_ref()
                     .and_then(|p| p.selected_entry())
                     .map(|e| e.name.clone());
+                // C1: "add" entry in the picker opens the add-flow form.
+                let selected_is_add = selected_name
+                    .as_deref()
+                    .is_some_and(|n| n == "+ Add provider");
+                if selected_is_add {
+                    state.provider_picker = None;
+                    state.input.clear();
+                    state.update_palette();
+                    state.provider_add_form = Some(ProviderAddForm::new());
+                    return false;
+                }
                 if let Some(name) = selected_name {
                     let sanitized =
                         crate::sanitize::sanitize_for_display(&name);
@@ -1915,6 +2384,11 @@ pub fn handle_key(
                 state.input.clear();
                 state.update_palette();
             }
+            false
+        }
+        (KeyCode::Tab, _) | (KeyCode::BackTab, _) => {
+            // C5 Tab completion (and Shift-Tab cycles backward — same completion).
+            complete_palette_prefix(state);
             false
         }
         (KeyCode::Up, _) => {
@@ -1950,21 +2424,48 @@ pub fn handle_key(
 
 /// Open the provider picker (H6) — caller supplies entries from workspace config.
 /// Read-only: no config write; selection echo handled in `handle_key`.
+/// When entries is non-empty an extra "Add provider" entry is appended whose
+/// selection opens the add-flow form (C1).
 pub fn open_provider_picker(
     state: &mut TuiState,
-    entries: Vec<ProviderEntry>,
+    mut entries: Vec<ProviderEntry>,
 ) {
+    // C1: add entry — present even when a provider exists so the user can
+    // re-configure; when no provider exists the picker shows only this entry.
+    if entries.is_empty() {
+        entries.push(ProviderEntry {
+            name: "+ Add provider".to_owned(),
+            host: "—".to_owned(),
+            model: "—".to_owned(),
+        });
+    } else {
+        entries.push(ProviderEntry {
+            name: "+ Add provider".to_owned(),
+            host: "add".to_owned(),
+            model: "new".to_owned(),
+        });
+    }
     state.provider_picker = Some(ProviderPicker::new(entries));
+    state.input.clear();
+    state.update_palette();
+}
+
+/// Open the provider add-flow form (C1) — sequential modal form.
+pub fn open_provider_add_form(state: &mut TuiState) {
+    state.provider_picker = None;
+    state.provider_add_form = Some(ProviderAddForm::new());
     state.input.clear();
     state.update_palette();
 }
 
 /// Push the SIRALOS banner + greeting into the transcript at session start (H2).
 /// TUI-only; stdio path unchanged. Sanitized-safe static host strings.
+/// A blank line separates the banner block from the greeting (C6).
 pub fn push_banner_and_greeting(state: &mut TuiState) {
     for &line in SIRALOS_BANNER {
         state.push_line(line.to_owned());
     }
+    state.push_line(String::new());
     state.push_line(SIRALOS_GREETING.to_owned());
 }
 
@@ -3527,14 +4028,23 @@ mod tests {
             model: "m1".to_owned(),
         }];
         open_provider_picker(&mut state, entries);
-        assert_eq!(state.provider_picker.as_ref().unwrap().entries.len(), 1);
-        // Down should stay at 0, Up stays
+        // C1: the "+ Add provider" entry is appended after the configured ones.
+        assert_eq!(state.provider_picker.as_ref().unwrap().entries.len(), 2);
+        assert_eq!(
+            state.provider_picker.as_ref().unwrap().entries[0].name,
+            "solo"
+        );
+        assert_eq!(
+            state.provider_picker.as_ref().unwrap().entries[1].name,
+            "+ Add provider"
+        );
+        // Down moves to the Add entry; Up returns to the configured provider.
         let down = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Down,
             crossterm::event::KeyModifiers::NONE,
         );
         handle_key(&mut state, down, 10);
-        assert_eq!(state.provider_picker.as_ref().unwrap().selected, 0);
+        assert_eq!(state.provider_picker.as_ref().unwrap().selected, 1);
     }
 
     #[test]
@@ -3543,10 +4053,13 @@ mod tests {
         let entries = provider_entries_from_session(None, None, None);
         assert!(entries.is_empty());
         open_provider_picker(&mut state, entries);
+        // C1: an empty configuration shows the "+ Add provider" entry.
         let buf = render(&state, 80, 24);
         let content: String =
             buf.content().iter().map(|c| c.symbol()).collect();
-        assert!(content.contains("no providers configured"));
+        assert!(content.contains("+ Add provider"));
+        // Read-only: the picker itself performs no config write — the add
+        // flow is a separate explicit form, and nothing was persisted here.
     }
 
     #[test]
@@ -3574,5 +4087,214 @@ mod tests {
                 line.len()
             );
         }
+    }
+
+    // Decision 122 (ticket 108) proofs: form flow, palette retention, Tab
+    // completion, banner newline, credential validation, determinism.
+
+    fn t108_key(
+        code: crossterm::event::KeyCode,
+    ) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(
+            code,
+            crossterm::event::KeyModifiers::NONE,
+        )
+    }
+
+    fn t108_type(state: &mut TuiState, text: &str) {
+        for ch in text.chars() {
+            handle_key(
+                state,
+                t108_key(crossterm::event::KeyCode::Char(ch)),
+                10,
+            );
+        }
+    }
+
+    fn t108_enter(state: &mut TuiState) {
+        handle_key(state, t108_key(crossterm::event::KeyCode::Enter), 10);
+    }
+
+    #[test]
+    fn provider_add_flow_sequential_form_completes() {
+        // C1: the sequential modal form advances provider -> model ->
+        // credential-env -> endpoint and yields validated completion data.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        assert!(state.provider_add_form.is_some());
+        t108_type(&mut state, "openai");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::Model);
+        assert_eq!(form.provider.as_deref(), Some("openai"));
+        t108_type(&mut state, "gpt-4o");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::CredentialEnv);
+        assert_eq!(form.model.as_deref(), Some("gpt-4o"));
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::Endpoint);
+        assert_eq!(form.credential_env.as_deref(), Some("OPENAI_API_KEY"));
+        t108_type(&mut state, "https://api.openai.com/v1");
+        t108_enter(&mut state);
+        let completed = state
+            .provider_add_form
+            .as_ref()
+            .expect("form open")
+            .completed
+            .clone()
+            .expect("completed data");
+        assert_eq!(completed.provider, "openai");
+        assert_eq!(completed.model, "gpt-4o");
+        assert_eq!(completed.credential_env, "OPENAI_API_KEY");
+        assert_eq!(
+            completed.endpoint.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+    }
+
+    #[test]
+    fn provider_add_form_esc_cancels_and_invalid_errors() {
+        // C1 modal discipline: Esc cancels the whole form; an invalid field
+        // errors without advancing.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_type(&mut state, "openai");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        assert!(state.provider_add_form.is_none());
+        // Invalid: empty provider errors and stays on the provider field.
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::Provider);
+        assert!(form.error.is_some());
+        assert!(form.completed.is_none());
+        // Invalid credential env name errors without advancing.
+        t108_type(&mut state, "openai");
+        t108_enter(&mut state);
+        t108_type(&mut state, "gpt-4o");
+        t108_enter(&mut state);
+        t108_type(&mut state, "lowercase-bad");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::CredentialEnv);
+        assert!(form.error.is_some());
+    }
+
+    #[test]
+    fn palette_retention_while_typing() {
+        // C4 root cause: update_palette recomputes on EVERY input edit while
+        // the input starts with `/` — typing `/` -> `/p` -> `/pr` -> `/pro`
+        // keeps a non-empty filtered palette with provider visible.
+        let mut state = TuiState::new();
+        for (step, ch) in ['/', 'p', 'r', 'o'].iter().enumerate() {
+            handle_key(
+                &mut state,
+                t108_key(crossterm::event::KeyCode::Char(*ch)),
+                10,
+            );
+            let palette = state.palette.as_ref().unwrap_or_else(|| {
+                panic!("palette must retain at step {step}")
+            });
+            assert!(!palette.is_empty(), "palette non-empty at step {step}");
+        }
+        assert_eq!(state.input, "/pro");
+        assert!(
+            state
+                .palette
+                .as_ref()
+                .expect("palette at /pro")
+                .iter()
+                .any(|(n, _)| n == "/provider"),
+            "provider visible at /pro"
+        );
+        // Backspace also recomputes (retention, not a stale clear).
+        handle_key(
+            &mut state,
+            t108_key(crossterm::event::KeyCode::Backspace),
+            10,
+        );
+        assert_eq!(state.input, "/pr");
+        assert!(
+            !state
+                .palette
+                .as_ref()
+                .expect("palette after backspace")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn tab_completion_single_common_prefix_noop() {
+        // C5: one match completes fully, multiple complete to the longest
+        // common prefix, no match is a no-op.
+        let mut state = TuiState::new();
+        state.input = "/pr".to_owned();
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Tab), 10);
+        assert_eq!(state.input, "/provider");
+        assert!(
+            state
+                .palette
+                .as_ref()
+                .expect("palette after tab")
+                .iter()
+                .any(|(n, _)| n == "/provider")
+        );
+        // `/d` matches /domains + /domains-* -> common prefix `/domains`.
+        let mut multi = TuiState::new();
+        multi.input = "/d".to_owned();
+        handle_key(&mut multi, t108_key(crossterm::event::KeyCode::Tab), 10);
+        assert_eq!(multi.input, "/domains");
+        // No match: input untouched.
+        let mut none = TuiState::new();
+        none.input = "/zz".to_owned();
+        none.update_palette();
+        handle_key(&mut none, t108_key(crossterm::event::KeyCode::Tab), 10);
+        assert_eq!(none.input, "/zz");
+    }
+
+    #[test]
+    fn banner_has_blank_line_between_banner_and_greeting() {
+        // C6: exactly one blank transcript line separates the ASCII banner
+        // block from the greeting line.
+        let mut state = TuiState::new();
+        push_banner_and_greeting(&mut state);
+        let texts: Vec<&str> =
+            state.transcript.iter().map(|entry| entry.text.as_str()).collect();
+        assert_eq!(texts.len(), SIRALOS_BANNER.len() + 2);
+        assert_eq!(&texts[..SIRALOS_BANNER.len()], SIRALOS_BANNER);
+        assert_eq!(texts[SIRALOS_BANNER.len()], "");
+        assert_eq!(texts[SIRALOS_BANNER.len() + 1], SIRALOS_GREETING);
+    }
+
+    #[test]
+    fn credential_env_validation() {
+        // C2 boundary: env-var NAME only, [A-Z0-9_]{1,64}.
+        assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
+        assert!(validate_credential_env_name("A").is_ok());
+        assert!(validate_credential_env_name("openai").is_err());
+        assert!(validate_credential_env_name("HAS-DASH").is_err());
+        assert!(validate_credential_env_name("HAS SPACE").is_err());
+        assert!(validate_credential_env_name("").is_err());
+        assert!(
+            validate_credential_env_name("A".repeat(65).as_str()).is_err()
+        );
+        assert!(validate_credential_env_name("A".repeat(64).as_str()).is_ok());
+    }
+
+    #[test]
+    fn add_form_modal_renders_deterministically() {
+        // Determinism holds with the new modal open (same state + size).
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_type(&mut state, "open");
+        let a = render_to_buffer(&state, 80, 24);
+        let b = render_to_buffer(&state, 80, 24);
+        assert_eq!(a, b);
+        let content: String =
+            a.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(content.contains("add provider"));
     }
 }

@@ -23,6 +23,7 @@ siralos-godot = { workspace = true }
 crossterm = { workspace = true }
 ratatui = { workspace = true }
 time = { workspace = true }
+toml_edit = { workspace = true }
 # Harness tooling (differential behavioral harness, ADR 0033): canonical
 # JSON corpus/records (serde/serde_json), scenario hashing (sha2), and
 # Cargo.toml version extraction (toml). The standard library has no

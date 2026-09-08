@@ -11,14 +11,16 @@
 //! `Enable`/`Activate` remain Host-gated and are not implemented here.
 //!
 //! Decision 114 Q4 — approved atomic-writer surfaces (documented):
-//! the four approved temp+verify+rename writers are `siralos.lock`
+//! the five approved temp+verify+rename writers are `siralos.lock`
 //! (`crates/siralos-adapters/src/lockfile.rs` `write_workspace_lock`),
 //! checkpoint storage (`crates/siralos-adapters/src/checkpoint.rs`),
 //! replay store (`crates/siralos-adapters/src/replay_store.rs`
-//! `write_replay_store`), and domain manifest records
+//! `write_replay_store`), domain manifest records
 //! (`crates/siralos-adapters/src/domain/manifest.rs`
-//! `write_record_document` at ~558–596) — each with conflict/symlink
-//! refusal tests (manifest: `record_conflict_is_refused`,
+//! `write_record_document` at ~558–596), and the profile config
+//! (`crates/siralos-cli/src/interactive.rs` `write_profile_config`
+//! per decision 122 C2) — each with conflict/symlink refusal tests
+//! (manifest: `record_conflict_is_refused`,
 //! `crafted_record_with_absolute_path_is_refused` and symlink checks at
 //! ~640–656, 572–580).
 

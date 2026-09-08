@@ -1359,6 +1359,268 @@ fn verify_session_lock(
         ),
     }
 }
+/// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
+fn validate_credential_env_name_inline(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(
+            "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// Write the `[profile]` section atomically with format-preserving merge
+/// (C2) — the fifth atomic writer (per decision 114 Q4). The credential is
+/// stored as `env:<ENV_VAR_NAME>` only — never the value. The written bytes
+/// are verified via `load_workspace_profile` (must APPLY) before the rename;
+/// symlinked/non-regular targets are refused per the manifest pattern; temp
+/// is deleted on validation failure.
+pub fn write_profile_config(
+    workspace_root: &Path,
+    provider: &str,
+    model: &str,
+    credential_env: &str,
+    endpoint: Option<&str>,
+) -> Result<(), String> {
+    // Re-validate at the write boundary (defense in depth).
+    if provider.is_empty()
+        || provider.len()
+            > siralos_core::composition::MAX_PROFILE_PROVIDER_BYTES
+        || provider.contains('\0')
+        || !provider.chars().all(|c| {
+            c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || c == '-'
+                || c == '_'
+        })
+    {
+        return Err("A provider must match [a-z0-9_-]{1,64}.".to_owned());
+    }
+    if model.is_empty()
+        || model.len() > siralos_core::composition::MAX_PROFILE_MODEL_BYTES
+        || model.contains('\0')
+        || !model.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-'
+        })
+    {
+        return Err("A model must match [a-zA-Z0-9._-]{1,128}.".to_owned());
+    }
+    validate_credential_env_name_inline(credential_env)?;
+    if let Some(ep) = endpoint {
+        if ep.is_empty()
+            || ep.len() > siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
+            || ep.contains('\0')
+            || !(ep.starts_with("https://") || ep.starts_with("http://"))
+            || ep.contains(' ')
+        {
+            if ep.is_empty() || ep.len() > 512 {
+                return Err(
+                    "The endpoint exceeds the 512-byte bound or is empty."
+                        .to_owned(),
+                );
+            }
+            if ep.contains('\0') {
+                return Err("An endpoint must not contain NUL.".to_owned());
+            }
+            if !(ep.starts_with("https://") || ep.starts_with("http://")) {
+                return Err(
+                    "An endpoint must start with \"https://\" or \"http://\"."
+                        .to_owned(),
+                );
+            }
+            return Err("An endpoint must not contain spaces.".to_owned());
+        }
+    }
+    let path = workspace_root
+        .join(siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME);
+    // Read existing bytes preserving formatting.
+    let existing: Option<String> = match std::fs::symlink_metadata(&path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                return Err("siralos.toml must be a regular file; refusing symlink or special file".to_owned());
+            }
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            if bytes.len()
+                > siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES
+            {
+                return Err("siralos.toml exceeds the byte bound".to_owned());
+            }
+            Some(
+                String::from_utf8(bytes).map_err(|_| {
+                    "siralos.toml is not valid UTF-8".to_owned()
+                })?,
+            )
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.to_string()),
+    };
+    // Format-preserving parse via toml_edit.
+    let mut doc: toml_edit::DocumentMut = if let Some(ref text) = existing {
+        if text.trim().is_empty() {
+            toml_edit::DocumentMut::new()
+        } else {
+            text.parse::<toml_edit::DocumentMut>()
+                .map_err(|e| format!("siralos.toml does not parse: {e}"))?
+        }
+    } else {
+        toml_edit::DocumentMut::new()
+    };
+    // Ensure [profile] is a table with a name when absent (name is required
+    // for the profile to parse). Fail closed on a non-table [profile]:
+    // never silently rewrite a shape-violating document.
+    match doc.get("profile") {
+        Some(item) if item.is_table() || item.is_inline_table() => {}
+        Some(_) => {
+            return Err("The [profile] entry must be a table.".to_owned());
+        }
+        None => {
+            doc["profile"] = toml_edit::table();
+        }
+    }
+    if doc["profile"]["name"].is_none() {
+        // Only set when absent — preserve an existing name byte-for-byte.
+        doc["profile"]["name"] = toml_edit::value("default");
+    }
+    // Merge profile fields.
+    doc["profile"]["provider"] = toml_edit::value(provider);
+    doc["profile"]["model"] = toml_edit::value(model);
+    doc["profile"]["credential"] =
+        toml_edit::value(format!("env:{credential_env}"));
+    if let Some(ep) = endpoint {
+        doc["profile"]["endpoint"] = toml_edit::value(ep);
+    } else {
+        // Remove endpoint key if present (optional).
+        if let Some(profile_item) = doc.get_mut("profile") {
+            if let Some(table) = profile_item.as_table_mut() {
+                table.remove("endpoint");
+            }
+        }
+    }
+    let serialized = doc.to_string();
+    if serialized.len()
+        > siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES
+    {
+        return Err("siralos.toml exceeds the byte bound".to_owned());
+    }
+    // Atomic write: temp in same dir, lstat verify target, verify parse, rename.
+    let nonce = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    };
+    let temp = workspace_root.join(format!(
+        "{}siralos-toml-{nonce:x}",
+        siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
+    ));
+    std::fs::write(&temp, serialized.as_bytes()).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        e.to_string()
+    })?;
+    // Verify temp is regular file (not symlink).
+    if let Ok(meta) = std::fs::symlink_metadata(&temp) {
+        if meta.file_type().is_symlink() || !meta.is_file() {
+            let _ = std::fs::remove_file(&temp);
+            return Err(
+                "temporary siralos.toml must be a regular file".to_owned()
+            );
+        }
+    }
+    // Verify written bytes parse and the profile APPLIES (not
+    // Invalid/Absent) — via `load_workspace_profile`, the exact loader the
+    // session uses at startup (spec C2). The temp lives in the workspace
+    // root, so copy it into a temp-dir shim as `siralos.toml` and run the
+    // loader there: the written config MUST APPLY there too.
+    let verify_bytes = std::fs::read(&temp).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        e.to_string()
+    })?;
+    let verify_text = String::from_utf8(verify_bytes).map_err(|_| {
+        let _ = std::fs::remove_file(&temp);
+        "temporary siralos.toml is not valid UTF-8".to_owned()
+    })?;
+    {
+        let shim_nonce = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        };
+        let shim_dir = std::env::temp_dir()
+            .join(format!("siralos-profile-verify-{shim_nonce:x}"));
+        let shim_result = (|| -> Result<(), String> {
+            std::fs::create_dir_all(&shim_dir)
+                .map_err(|e| format!("verify shim not writable: {e}"))?;
+            std::fs::write(
+                shim_dir.join(
+                    siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME,
+                ),
+                verify_text.as_bytes(),
+            )
+            .map_err(|e| format!("verify shim not writable: {e}"))?;
+            match siralos_adapters::profile_config::load_workspace_profile(
+                &shim_dir,
+            ) {
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                    record,
+                ) => {
+                    // Ensure the applied record carries the written values.
+                    if record.provider.as_deref() != Some(provider)
+                        || record.model.as_deref() != Some(model)
+                        || record.credential.as_deref()
+                            != Some(&format!("env:{credential_env}"))
+                        || record.endpoint.as_deref() != endpoint
+                    {
+                        return Err("written profile did not apply the requested fields"
+                            .to_owned());
+                    }
+                    Ok(())
+                }
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Invalid {
+                    diagnostic,
+                } => Err(format!(
+                    "written profile invalid: {diagnostic}"
+                )),
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Absent => {
+                    Err("written profile did not apply the requested fields"
+                        .to_owned())
+                }
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&shim_dir);
+        if let Err(err) = shim_result {
+            let _ = std::fs::remove_file(&temp);
+            return Err(err);
+        }
+    }
+    // Refuse symlinked/non-regular target before rename (manifest pattern).
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() || !meta.is_file() {
+            let _ = std::fs::remove_file(&temp);
+            return Err("siralos.toml must be a regular file; refusing symlink or special file".to_owned());
+        }
+    } else if let Err(e) = std::fs::symlink_metadata(&path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            let _ = std::fs::remove_file(&temp);
+            return Err(e.to_string());
+        }
+    }
+    if let Err(e) = std::fs::rename(&temp, &path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.to_string());
+    }
+    let _ = std::fs::remove_file(&temp);
+    Ok(())
+}
+
 /// Render the `/domains` empty-state or installed view.
 fn render_domains(workspace_root: &Path) -> String {
     match load_plugin_records(workspace_root) {
@@ -2080,6 +2342,51 @@ pub fn run_interactive_tui_with_options(
         if should_exit_outer {
             break;
         }
+        // C1/C2: handle completed add-flow form (atomically write profile).
+        let completed_opt = {
+            let mut guard = tui_state.borrow_mut();
+            if let Some(form) = guard.provider_add_form.as_mut() {
+                form.completed.take()
+            } else {
+                None
+            }
+        };
+        if let Some(data) = completed_opt {
+            let write_result = write_profile_config(
+                &workspace_root,
+                &data.provider,
+                &data.model,
+                &data.credential_env,
+                data.endpoint.as_deref(),
+            );
+            match write_result {
+                Ok(()) => {
+                    let _ = sink.write_all(
+                        sanitize_for_display(
+                            "provider saved to siralos.toml - restart the session to apply\n",
+                        )
+                        .as_bytes(),
+                    );
+                    tui_state.borrow_mut().provider_add_form = None;
+                }
+                Err(err) => {
+                    let msg = format!("provider config failed: {err}\n");
+                    let _ =
+                        sink.write_all(sanitize_for_display(&msg).as_bytes());
+                    tui_state.borrow_mut().provider_add_form = None;
+                }
+            }
+            let base = "ready";
+            let metrics_opt =
+                context_session_holder.as_ref().map(|s| &s.metrics);
+            let composed = crate::tui::compose_status_line_with_context(
+                base,
+                applied_provider.as_deref(),
+                applied_model.as_deref(),
+                metrics_opt,
+            );
+            tui_state.borrow_mut().status = composed;
+        }
         if let Some(input_line) = pending_submit.take() {
             // I3 & I6/I7: parse once, handle unknown honesty before dispatch
             // through the single shared helper (decision 114 Q3 — both loops
@@ -2098,16 +2405,22 @@ pub fn run_interactive_tui_with_options(
                 let sanitized = sanitize_for_display(&msg);
                 let _ = sink.write_all(sanitized.as_bytes());
             } else if let SlashCommand::Provider = command {
-                // H6: /provider opens a read-only picker (TUI-only). Display-only; no config write.
+                // C1: /provider with no configured provider OR the "add" entry opens the sequential add-flow form.
                 let entries = crate::tui::provider_entries_from_session(
                     applied_provider.as_deref(),
                     applied_model.as_deref(),
                     applied_endpoint.as_deref(),
                 );
-                crate::tui::open_provider_picker(
-                    &mut tui_state.borrow_mut(),
-                    entries,
-                );
+                if entries.is_empty() {
+                    crate::tui::open_provider_add_form(
+                        &mut tui_state.borrow_mut(),
+                    );
+                } else {
+                    crate::tui::open_provider_picker(
+                        &mut tui_state.borrow_mut(),
+                        entries,
+                    );
+                }
             } else {
                 let should_exit = dispatch_tui_command(
                     &command,
