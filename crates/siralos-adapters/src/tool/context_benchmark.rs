@@ -257,6 +257,19 @@ pub struct ScenarioMetrics {
     pub tool_calls: usize,
 }
 
+/// Neighbor candidate accounting per scenario (decision 115 E1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NeighborCandidateMetrics {
+    /// Scenario name, canonical.
+    pub name: String,
+    /// Distinct neighbors before cap (union of 1-hop neighbors of rerank-passing hits, excluding surfaced).
+    pub generated: usize,
+    /// Admitted after cap (<=8, ordered by decayed score desc, node_id asc).
+    pub admitted: usize,
+    /// Tokens spent on admitted candidate inspects (summary bytes estimated via ceil(bytes/4), dedup honest).
+    pub tokens: usize,
+}
+
 /// Aggregated metrics for one strategy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyAggregate {
@@ -324,6 +337,10 @@ pub struct ParaphraseGap {
     pub key_overlap: usize,
     /// Whether key is in search hits.
     pub in_hits: bool,
+    /// Decision 115: whether the paraphrase key became a neighbor candidate and was inspected.
+    pub neighbor_reachable: bool,
+    /// Decision 115: candidate inspect tokens spent on the key (summary bytes via estimate_tokens, dedup honest).
+    pub neighbor_cost: usize,
 }
 
 /// Informational (excluded from aggregate).
@@ -506,6 +523,8 @@ pub struct BenchmarkReport {
     pub policy_adopted: bool,
     /// D88: policy reason (includes numbers and branch).
     pub policy_reason: String,
+    /// Decision 115: neighbor candidates per gated scenario (generated/admitted/tokens).
+    pub neighbor_candidates: Vec<NeighborCandidateMetrics>,
 }
 
 // ---------------------------------------------------------------------------
@@ -690,7 +709,7 @@ fn compute_decomposition_for_scenario(
 ) -> (usize, usize, usize, usize) {
     // Returns (dedup_saved, rerank_saved, level_saved, total_saved) for this scenario
     let baseline = compute_baseline_with(&sc.state, bpt);
-    // Helper to compute paged tokens with variations
+    // Helper to compute paged tokens with variations (decision 115: include candidates for ProgressiveV2)
     let compute_paged = |dedup: bool, expand_all: bool| -> usize {
         let search_tool = ContextSearchTool::new(sc.state.clone());
         let token = CancellationToken::new();
@@ -725,10 +744,56 @@ fn compute_decomposition_for_scenario(
         } else {
             expanded_ids_for_scenario(sc, &hits, PagingStrategy::ProgressiveV2)
         };
+        // Candidate handling for ProgressiveV2 actual (expand_all false); exhaustive has none
+        let (candidate_ids, candidate_count) = if expand_all {
+            (Vec::new(), 0usize)
+        } else {
+            // Need scored hits for candidate generation
+            let st = ContextSearchTool::new(sc.state.clone());
+            let tok = CancellationToken::new();
+            let res = st.execute(&json!({"query": sc.query}), tok.signal());
+            let hits_scored: Vec<(String, String, i32)> = match res {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                let score = h
+                                    .get("score")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                                    as i32;
+                                Some((nid, matched, score))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let (cands, _gen) = neighbor_candidates_for_scenario(
+                sc,
+                &hits_scored,
+                &expanded_ids,
+            );
+            let cnt = cands.len();
+            (cands.into_iter().map(|(id, _)| id).collect::<Vec<String>>(), cnt)
+        };
         // Compute token sums
         let mut surfaced: std::collections::BTreeSet<String> =
             std::collections::BTreeSet::new();
         let mut sum_inspect = 0usize;
+        let mut sum_candidate = 0usize;
         let mut sum_expanded = 0usize;
         let mut expanded_count = 0usize;
         for (hid, _) in &hits {
@@ -742,6 +807,20 @@ fn compute_decomposition_for_scenario(
                 } else {
                     sum_inspect =
                         sum_inspect.saturating_add(node.summary.len());
+                }
+            }
+        }
+        for cid in &candidate_ids {
+            if let Some(node) = sc.state.graph.node(cid) {
+                if dedup {
+                    let digest = content_digest_of(&node.summary);
+                    if surfaced.insert(digest) {
+                        sum_candidate =
+                            sum_candidate.saturating_add(node.summary.len());
+                    }
+                } else {
+                    sum_candidate =
+                        sum_candidate.saturating_add(node.summary.len());
                 }
             }
         }
@@ -763,10 +842,17 @@ fn compute_decomposition_for_scenario(
                 }
             }
         }
-        let tool_calls =
-            1usize.saturating_add(hits.len()).saturating_add(expanded_count);
-        estimate_tokens_with(sum_expanded.saturating_add(sum_inspect), bpt)
-            .saturating_add(overhead * tool_calls)
+        let tool_calls = 1usize
+            .saturating_add(hits.len())
+            .saturating_add(candidate_count)
+            .saturating_add(expanded_count);
+        estimate_tokens_with(
+            sum_expanded
+                .saturating_add(sum_inspect)
+                .saturating_add(sum_candidate),
+            bpt,
+        )
+        .saturating_add(overhead * tool_calls)
     };
     let actual = compute_paged(false, false);
     // cost_no_dedup: dedup false, expand filtered
@@ -861,12 +947,61 @@ fn compute_decomposition_for_scenario(
                 std::collections::BTreeSet::new()
             }
         };
+        // Candidate handling without dedup (expand_all false includes candidates)
+        let (candidate_ids_no_dedup, candidate_cnt_no_dedup) = {
+            let st2 = ContextSearchTool::new(sc.state.clone());
+            let tok2 = CancellationToken::new();
+            let res2 = st2.execute(&json!({"query": sc.query}), tok2.signal());
+            let hits_scored2: Vec<(String, String, i32)> = match res2 {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                let score = h
+                                    .get("score")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                                    as i32;
+                                Some((nid, matched, score))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let (cands, _gen) = neighbor_candidates_for_scenario(
+                sc,
+                &hits_scored2,
+                &expanded_ids,
+            );
+            let cnt = cands.len();
+            (cands.into_iter().map(|(id, _)| id).collect::<Vec<String>>(), cnt)
+        };
         let mut sum_inspect = 0usize;
+        let mut sum_candidate = 0usize;
         let mut sum_expanded = 0usize;
         let mut expanded_count = 0usize;
         for (hid, _) in &hits {
             if let Some(node) = sc.state.graph.node(hid) {
                 sum_inspect = sum_inspect.saturating_add(node.summary.len());
+            }
+        }
+        for cid in &candidate_ids_no_dedup {
+            if let Some(node) = sc.state.graph.node(cid) {
+                sum_candidate =
+                    sum_candidate.saturating_add(node.summary.len());
             }
         }
         for hid in &expanded_ids {
@@ -880,10 +1015,17 @@ fn compute_decomposition_for_scenario(
                 }
             }
         }
-        let tool_calls =
-            1usize.saturating_add(hits.len()).saturating_add(expanded_count);
-        estimate_tokens_with(sum_expanded.saturating_add(sum_inspect), bpt)
-            .saturating_add(overhead * tool_calls)
+        let tool_calls = 1usize
+            .saturating_add(hits.len())
+            .saturating_add(candidate_cnt_no_dedup)
+            .saturating_add(expanded_count);
+        estimate_tokens_with(
+            sum_expanded
+                .saturating_add(sum_inspect)
+                .saturating_add(sum_candidate),
+            bpt,
+        )
+        .saturating_add(overhead * tool_calls)
     };
     let cost_all_hits = compute_paged(true, true);
     let total_saved = baseline.saturating_sub(actual);
@@ -949,79 +1091,163 @@ pub fn run_strategy(
 
         let expanded_ids = expanded_ids_for_scenario(sc, &hits, strategy);
 
-        // Token sums and expanded count per strategy
-        let (sum_inspect_bytes, sum_expanded_bytes, expanded_count) =
-            match strategy {
-                PagingStrategy::ExhaustiveV1 => {
-                    let mut sum_inspect = 0usize;
-                    let mut sum_expanded = 0usize;
-                    let mut exp_cnt = 0usize;
-                    for (hid, _) in &hits {
-                        if let Some(node) = sc.state.graph.node(hid) {
+        // Token sums and expanded count per strategy (decision 115: V2 candidates)
+        let (
+            sum_inspect_bytes,
+            sum_expanded_bytes,
+            expanded_count,
+            candidate_count,
+        ) = match strategy {
+            PagingStrategy::ExhaustiveV1 => {
+                let mut sum_inspect = 0usize;
+                let mut sum_expanded = 0usize;
+                let mut exp_cnt = 0usize;
+                for (hid, _) in &hits {
+                    if let Some(node) = sc.state.graph.node(hid) {
+                        sum_inspect =
+                            sum_inspect.saturating_add(node.summary.len());
+                    }
+                }
+                for (hid, _) in &hits {
+                    if !expanded_ids.contains(hid) {
+                        continue;
+                    }
+                    if let Some(set) = sc.state.store.set(hid) {
+                        if let Some(best) = best_level_for(set) {
+                            if let Some(rep) =
+                                resolve_representation(set, best)
+                            {
+                                sum_expanded = sum_expanded
+                                    .saturating_add(rep.content.len());
+                                exp_cnt += 1;
+                            }
+                        }
+                    }
+                }
+                (sum_inspect, sum_expanded, exp_cnt, 0usize)
+            }
+            PagingStrategy::ProgressiveV2 => {
+                // Need scored hits for decay
+                let search_tool_scores =
+                    ContextSearchTool::new(sc.state.clone());
+                let token_scores = CancellationToken::new();
+                let search_res_scores = search_tool_scores.execute(
+                    &json!({"query": sc.query}),
+                    token_scores.signal(),
+                );
+                let hits_with_scores: Vec<(String, String, i32)> = match search_res_scores {
+                        siralos_core::provider::ToolExecutionResult::Success { output, .. } => {
+                            output.get("hits").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter().filter_map(|h| {
+                                    let nid = h.get("node_id")?.as_str()?.to_owned();
+                                    let matched = h.get("matched_in").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+                                    let score = h.get("score").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                    Some((nid, matched, score))
+                                }).collect()
+                            }).unwrap_or_default()
+                        }
+                        _ => Vec::new(),
+                    };
+                let (candidates, _generated) =
+                    neighbor_candidates_for_scenario(
+                        sc,
+                        &hits_with_scores,
+                        &expanded_ids,
+                    );
+                let candidate_cnt = candidates.len();
+                // Digest dedup: surfaced digests across inspect(hits) + inspect(candidates) + expand
+                let mut surfaced: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
+                let mut sum_inspect = 0usize;
+                let mut sum_candidate = 0usize;
+                let mut sum_expanded = 0usize;
+                let mut exp_cnt = 0usize;
+                for (hid, _) in &hits {
+                    if let Some(node) = sc.state.graph.node(hid) {
+                        let digest = content_digest_of(&node.summary);
+                        if surfaced.insert(digest) {
                             sum_inspect =
                                 sum_inspect.saturating_add(node.summary.len());
                         }
                     }
-                    for (hid, _) in &hits {
-                        if !expanded_ids.contains(hid) {
-                            continue;
+                }
+                for (cid, _) in &candidates {
+                    if let Some(node) = sc.state.graph.node(cid) {
+                        let digest = content_digest_of(&node.summary);
+                        if surfaced.insert(digest) {
+                            sum_candidate = sum_candidate
+                                .saturating_add(node.summary.len());
                         }
-                        if let Some(set) = sc.state.store.set(hid) {
-                            if let Some(best) = best_level_for(set) {
-                                if let Some(rep) =
-                                    resolve_representation(set, best)
-                                {
+                    }
+                }
+                for (hid, _) in &hits {
+                    if !expanded_ids.contains(hid) {
+                        continue;
+                    }
+                    if let Some(set) = sc.state.store.set(hid) {
+                        if let Some(best) = best_level_for(set) {
+                            if let Some(rep) =
+                                resolve_representation(set, best)
+                            {
+                                let digest = rep.content_digest.clone();
+                                if surfaced.insert(digest) {
                                     sum_expanded = sum_expanded
                                         .saturating_add(rep.content.len());
-                                    exp_cnt += 1;
                                 }
+                                exp_cnt += 1;
                             }
                         }
                     }
-                    (sum_inspect, sum_expanded, exp_cnt)
                 }
-                PagingStrategy::ProgressiveV2
-                | PagingStrategy::ProgressiveV3Escalating => {
-                    // Digest dedup: surfaced digests across inspect + expand
-                    let mut surfaced: std::collections::BTreeSet<String> =
-                        std::collections::BTreeSet::new();
-                    let mut sum_inspect = 0usize;
-                    let mut sum_expanded = 0usize;
-                    let mut exp_cnt = 0usize;
-                    for (hid, _) in &hits {
-                        if let Some(node) = sc.state.graph.node(hid) {
-                            let digest = content_digest_of(&node.summary);
-                            if surfaced.insert(digest) {
-                                sum_inspect = sum_inspect
-                                    .saturating_add(node.summary.len());
-                            }
+                (
+                    sum_inspect.saturating_add(sum_candidate),
+                    sum_expanded,
+                    exp_cnt,
+                    candidate_cnt,
+                )
+            }
+            PagingStrategy::ProgressiveV3Escalating => {
+                // Digest dedup: surfaced digests across inspect + expand (no candidates)
+                let mut surfaced: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
+                let mut sum_inspect = 0usize;
+                let mut sum_expanded = 0usize;
+                let mut exp_cnt = 0usize;
+                for (hid, _) in &hits {
+                    if let Some(node) = sc.state.graph.node(hid) {
+                        let digest = content_digest_of(&node.summary);
+                        if surfaced.insert(digest) {
+                            sum_inspect =
+                                sum_inspect.saturating_add(node.summary.len());
                         }
                     }
-                    for (hid, _) in &hits {
-                        if !expanded_ids.contains(hid) {
-                            continue;
-                        }
-                        if let Some(set) = sc.state.store.set(hid) {
-                            if let Some(best) = best_level_for(set) {
-                                if let Some(rep) =
-                                    resolve_representation(set, best)
-                                {
-                                    let digest = rep.content_digest.clone();
-                                    if surfaced.insert(digest) {
-                                        sum_expanded = sum_expanded
-                                            .saturating_add(rep.content.len());
-                                    }
-                                    exp_cnt += 1;
+                }
+                for (hid, _) in &hits {
+                    if !expanded_ids.contains(hid) {
+                        continue;
+                    }
+                    if let Some(set) = sc.state.store.set(hid) {
+                        if let Some(best) = best_level_for(set) {
+                            if let Some(rep) =
+                                resolve_representation(set, best)
+                            {
+                                let digest = rep.content_digest.clone();
+                                if surfaced.insert(digest) {
+                                    sum_expanded = sum_expanded
+                                        .saturating_add(rep.content.len());
                                 }
+                                exp_cnt += 1;
                             }
                         }
                     }
-                    (sum_inspect, sum_expanded, exp_cnt)
                 }
-            };
+                (sum_inspect, sum_expanded, exp_cnt, 0usize)
+            }
+        };
 
         let tool_calls = 1usize
             .saturating_add(hit_ids.len())
+            .saturating_add(candidate_count)
             .saturating_add(expanded_count);
         let paged_tokens = estimate_tokens(
             sum_expanded_bytes.saturating_add(sum_inspect_bytes),
@@ -1125,76 +1351,158 @@ pub fn run_strategy_with(
         let hit_ids: Vec<String> =
             hits.iter().map(|(id, _)| id.clone()).collect();
         let expanded_ids = expanded_ids_for_scenario(sc, &hits, strategy);
-        let (sum_inspect_bytes, sum_expanded_bytes, expanded_count) =
-            match strategy {
-                PagingStrategy::ExhaustiveV1 => {
-                    let mut sum_inspect = 0usize;
-                    let mut sum_expanded = 0usize;
-                    let mut exp_cnt = 0usize;
-                    for (hid, _) in &hits {
-                        if let Some(node) = sc.state.graph.node(hid) {
+        let (
+            sum_inspect_bytes,
+            sum_expanded_bytes,
+            expanded_count,
+            candidate_count,
+        ) = match strategy {
+            PagingStrategy::ExhaustiveV1 => {
+                let mut sum_inspect = 0usize;
+                let mut sum_expanded = 0usize;
+                let mut exp_cnt = 0usize;
+                for (hid, _) in &hits {
+                    if let Some(node) = sc.state.graph.node(hid) {
+                        sum_inspect =
+                            sum_inspect.saturating_add(node.summary.len());
+                    }
+                }
+                for (hid, _) in &hits {
+                    if !expanded_ids.contains(hid) {
+                        continue;
+                    }
+                    if let Some(set) = sc.state.store.set(hid) {
+                        if let Some(best) = best_level_for(set) {
+                            if let Some(rep) =
+                                resolve_representation(set, best)
+                            {
+                                sum_expanded = sum_expanded
+                                    .saturating_add(rep.content.len());
+                                exp_cnt += 1;
+                            }
+                        }
+                    }
+                }
+                (sum_inspect, sum_expanded, exp_cnt, 0usize)
+            }
+            PagingStrategy::ProgressiveV2 => {
+                let search_tool_scores =
+                    ContextSearchTool::new(sc.state.clone());
+                let token_scores = CancellationToken::new();
+                let search_res_scores = search_tool_scores.execute(
+                    &json!({"query": sc.query}),
+                    token_scores.signal(),
+                );
+                let hits_with_scores: Vec<(String, String, i32)> = match search_res_scores {
+                        siralos_core::provider::ToolExecutionResult::Success { output, .. } => {
+                            output.get("hits").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter().filter_map(|h| {
+                                    let nid = h.get("node_id")?.as_str()?.to_owned();
+                                    let matched = h.get("matched_in").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+                                    let score = h.get("score").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                    Some((nid, matched, score))
+                                }).collect()
+                            }).unwrap_or_default()
+                        }
+                        _ => Vec::new(),
+                    };
+                let (candidates, _generated) =
+                    neighbor_candidates_for_scenario(
+                        sc,
+                        &hits_with_scores,
+                        &expanded_ids,
+                    );
+                let candidate_cnt = candidates.len();
+                let mut surfaced: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
+                let mut sum_inspect = 0usize;
+                let mut sum_candidate = 0usize;
+                let mut sum_expanded = 0usize;
+                let mut exp_cnt = 0usize;
+                for (hid, _) in &hits {
+                    if let Some(node) = sc.state.graph.node(hid) {
+                        let digest = content_digest_of(&node.summary);
+                        if surfaced.insert(digest) {
                             sum_inspect =
                                 sum_inspect.saturating_add(node.summary.len());
                         }
                     }
-                    for (hid, _) in &hits {
-                        if !expanded_ids.contains(hid) {
-                            continue;
+                }
+                for (cid, _) in &candidates {
+                    if let Some(node) = sc.state.graph.node(cid) {
+                        let digest = content_digest_of(&node.summary);
+                        if surfaced.insert(digest) {
+                            sum_candidate = sum_candidate
+                                .saturating_add(node.summary.len());
                         }
-                        if let Some(set) = sc.state.store.set(hid) {
-                            if let Some(best) = best_level_for(set) {
-                                if let Some(rep) =
-                                    resolve_representation(set, best)
-                                {
+                    }
+                }
+                for (hid, _) in &hits {
+                    if !expanded_ids.contains(hid) {
+                        continue;
+                    }
+                    if let Some(set) = sc.state.store.set(hid) {
+                        if let Some(best) = best_level_for(set) {
+                            if let Some(rep) =
+                                resolve_representation(set, best)
+                            {
+                                let digest = rep.content_digest.clone();
+                                if surfaced.insert(digest) {
                                     sum_expanded = sum_expanded
                                         .saturating_add(rep.content.len());
-                                    exp_cnt += 1;
                                 }
+                                exp_cnt += 1;
                             }
                         }
                     }
-                    (sum_inspect, sum_expanded, exp_cnt)
                 }
-                PagingStrategy::ProgressiveV2
-                | PagingStrategy::ProgressiveV3Escalating => {
-                    let mut surfaced: std::collections::BTreeSet<String> =
-                        std::collections::BTreeSet::new();
-                    let mut sum_inspect = 0usize;
-                    let mut sum_expanded = 0usize;
-                    let mut exp_cnt = 0usize;
-                    for (hid, _) in &hits {
-                        if let Some(node) = sc.state.graph.node(hid) {
-                            let digest = content_digest_of(&node.summary);
-                            if surfaced.insert(digest) {
-                                sum_inspect = sum_inspect
-                                    .saturating_add(node.summary.len());
-                            }
+                (
+                    sum_inspect.saturating_add(sum_candidate),
+                    sum_expanded,
+                    exp_cnt,
+                    candidate_cnt,
+                )
+            }
+            PagingStrategy::ProgressiveV3Escalating => {
+                let mut surfaced: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
+                let mut sum_inspect = 0usize;
+                let mut sum_expanded = 0usize;
+                let mut exp_cnt = 0usize;
+                for (hid, _) in &hits {
+                    if let Some(node) = sc.state.graph.node(hid) {
+                        let digest = content_digest_of(&node.summary);
+                        if surfaced.insert(digest) {
+                            sum_inspect =
+                                sum_inspect.saturating_add(node.summary.len());
                         }
                     }
-                    for (hid, _) in &hits {
-                        if !expanded_ids.contains(hid) {
-                            continue;
-                        }
-                        if let Some(set) = sc.state.store.set(hid) {
-                            if let Some(best) = best_level_for(set) {
-                                if let Some(rep) =
-                                    resolve_representation(set, best)
-                                {
-                                    let digest = rep.content_digest.clone();
-                                    if surfaced.insert(digest) {
-                                        sum_expanded = sum_expanded
-                                            .saturating_add(rep.content.len());
-                                    }
-                                    exp_cnt += 1;
+                }
+                for (hid, _) in &hits {
+                    if !expanded_ids.contains(hid) {
+                        continue;
+                    }
+                    if let Some(set) = sc.state.store.set(hid) {
+                        if let Some(best) = best_level_for(set) {
+                            if let Some(rep) =
+                                resolve_representation(set, best)
+                            {
+                                let digest = rep.content_digest.clone();
+                                if surfaced.insert(digest) {
+                                    sum_expanded = sum_expanded
+                                        .saturating_add(rep.content.len());
                                 }
+                                exp_cnt += 1;
                             }
                         }
                     }
-                    (sum_inspect, sum_expanded, exp_cnt)
                 }
-            };
+                (sum_inspect, sum_expanded, exp_cnt, 0usize)
+            }
+        };
         let tool_calls = 1usize
             .saturating_add(hit_ids.len())
+            .saturating_add(candidate_count)
             .saturating_add(expanded_count);
         let paged_tokens = estimate_tokens_with(
             sum_expanded_bytes.saturating_add(sum_inspect_bytes),
@@ -1348,7 +1656,109 @@ pub fn run_benchmark(
         }
     }
 
-    // Informational paraphrase-gap
+    // Decision 115: neighbor candidates per gated scenario (generated/admitted/tokens)
+    let mut neighbor_candidates: Vec<NeighborCandidateMetrics> = Vec::new();
+    for sc in &gate_scenarios {
+        let search_tool_nc = ContextSearchTool::new(sc.state.clone());
+        let token_nc = CancellationToken::new();
+        let res_nc = search_tool_nc
+            .execute(&json!({"query": sc.query}), token_nc.signal());
+        let hits_nc: Vec<(String, String)> = match res_nc {
+            siralos_core::provider::ToolExecutionResult::Success {
+                output,
+                ..
+            } => output
+                .get("hits")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|h| {
+                            let nid = h.get("node_id")?.as_str()?.to_owned();
+                            let matched = h
+                                .get("matched_in")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_owned();
+                            Some((nid, matched))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let expanded_nc = expanded_ids_for_scenario(
+            sc,
+            &hits_nc,
+            PagingStrategy::ProgressiveV2,
+        );
+        let hits_scored_nc: Vec<(String, String, i32)> = {
+            let st = ContextSearchTool::new(sc.state.clone());
+            let tok = CancellationToken::new();
+            let r = st.execute(&json!({"query": sc.query}), tok.signal());
+            match r {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                let score = h
+                                    .get("score")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                                    as i32;
+                                Some((nid, matched, score))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        };
+        let (admitted, generated) = neighbor_candidates_for_scenario(
+            sc,
+            &hits_scored_nc,
+            &expanded_nc,
+        );
+        // Compute candidate tokens with dedup honest (as in run_strategy)
+        let mut surfaced: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for (hid, _) in &hits_nc {
+            if let Some(node) = sc.state.graph.node(hid) {
+                surfaced.insert(content_digest_of(&node.summary));
+            }
+        }
+        let mut sum_candidate = 0usize;
+        for (cid, _) in &admitted {
+            if let Some(node) = sc.state.graph.node(cid) {
+                let digest = content_digest_of(&node.summary);
+                if surfaced.insert(digest) {
+                    sum_candidate =
+                        sum_candidate.saturating_add(node.summary.len());
+                }
+            }
+        }
+        let tokens = estimate_tokens(sum_candidate);
+        neighbor_candidates.push(NeighborCandidateMetrics {
+            name: sc.name.clone(),
+            generated,
+            admitted: admitted.len(),
+            tokens,
+        });
+    }
+    neighbor_candidates.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Informational paraphrase-gap (decision 115: + neighborReachable/neighborCost)
     let informational = if let Some(pg) =
         scenarios.iter().find(|s| s.name == "paraphrase-gap")
     {
@@ -1386,11 +1796,96 @@ pub fn run_benchmark(
             _ => Vec::new(),
         };
         let in_hits = hits.contains(&key_id);
+        // Decision 115 neighbor reachability for paraphrase-gap
+        let search_tool_pg = ContextSearchTool::new(pg.state.clone());
+        let token_pg = CancellationToken::new();
+        let res_pg = search_tool_pg
+            .execute(&json!({"query": pg.query}), token_pg.signal());
+        let hits_pg: Vec<(String, String)> = match res_pg {
+            siralos_core::provider::ToolExecutionResult::Success {
+                output,
+                ..
+            } => output
+                .get("hits")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|h| {
+                            let nid = h.get("node_id")?.as_str()?.to_owned();
+                            let matched = h
+                                .get("matched_in")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_owned();
+                            Some((nid, matched))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let expanded_pg = expanded_ids_for_scenario(
+            pg,
+            &hits_pg,
+            PagingStrategy::ProgressiveV2,
+        );
+        let hits_scored_pg: Vec<(String, String, i32)> = {
+            let st = ContextSearchTool::new(pg.state.clone());
+            let tok = CancellationToken::new();
+            let r = st.execute(&json!({"query": pg.query}), tok.signal());
+            match r {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                let score = h
+                                    .get("score")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                                    as i32;
+                                Some((nid, matched, score))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        };
+        let (candidates_pg, _gen_pg) = neighbor_candidates_for_scenario(
+            pg,
+            &hits_scored_pg,
+            &expanded_pg,
+        );
+        let neighbor_reachable =
+            candidates_pg.iter().any(|(id, _)| id == &key_id);
+        let neighbor_cost = if neighbor_reachable {
+            if let Some(node) = pg.state.graph.node(&key_id) {
+                estimate_tokens(node.summary.len())
+            } else {
+                0
+            }
+        } else {
+            0
+        };
         Informational {
             paraphrase_gap: ParaphraseGap {
                 query_tokens,
                 key_overlap: overlap,
                 in_hits,
+                neighbor_reachable,
+                neighbor_cost,
             },
         }
     } else {
@@ -1399,6 +1894,8 @@ pub fn run_benchmark(
                 query_tokens: Vec::new(),
                 key_overlap: 0,
                 in_hits: false,
+                neighbor_reachable: false,
+                neighbor_cost: 0,
             },
         }
     };
@@ -1909,6 +2406,7 @@ pub fn run_benchmark(
         escalation_curve,
         policy_adopted,
         policy_reason,
+        neighbor_candidates,
     })
 }
 
@@ -2483,6 +2981,73 @@ pub fn expanded_ids_for_v3_topk(
         set.insert(id);
     }
     set
+}
+
+/// Decision 115 E1: neighbor candidate generation (ProgressiveV2 only).
+///
+/// After search + rerank (threshold 2, unchanged), generate neighbor candidates:
+/// the union of the 1-hop graph neighbors of all rerank-passing hits,
+/// EXCLUDING nodes already surfaced (hits or prior candidates);
+/// each candidate inherits its referrer hit's decision 92 score HALVED (signed decay);
+/// all candidates ordered by decayed score descending, node_id ascending tiebreak;
+/// capped at 8 TOTAL candidates per scenario (first 8 in that order; overflow dropped deterministically).
+/// Pure function of graph + hits + scores; deterministic; summary-only, never expanded deeper and never escalated.
+#[must_use]
+pub fn neighbor_candidates_for_scenario(
+    sc: &BenchmarkScenario,
+    hits_with_scores: &[(String, String, i32)],
+    expanded_ids: &std::collections::BTreeSet<String>,
+) -> (Vec<(String, i32)>, usize) {
+    // hits_set for exclusion (all search hits, not just expanded)
+    let hits_set: std::collections::BTreeSet<String> =
+        hits_with_scores.iter().map(|(id, _, _)| id.clone()).collect();
+    // Map hit_id -> score
+    let mut hit_score: std::collections::BTreeMap<String, i32> =
+        std::collections::BTreeMap::new();
+    for (hid, _, score) in hits_with_scores {
+        hit_score.insert(hid.clone(), *score);
+    }
+    // Collect union of 1-hop neighbors of expanded hits, with max decayed score per neighbor
+    let mut neighbor_map: std::collections::BTreeMap<String, i32> =
+        std::collections::BTreeMap::new();
+    for expanded in expanded_ids {
+        let score = *hit_score.get(expanded).unwrap_or(&0);
+        let decayed = score / 2;
+        for edge in sc.state.graph.edges() {
+            let neighbor_opt = if edge.from == *expanded {
+                Some(edge.to.clone())
+            } else if edge.to == *expanded {
+                Some(edge.from.clone())
+            } else {
+                None
+            };
+            if let Some(nid) = neighbor_opt {
+                if nid == *expanded {
+                    continue;
+                }
+                if hits_set.contains(&nid) {
+                    continue;
+                }
+                // For this neighbor, keep max decayed score among referrers
+                neighbor_map
+                    .entry(nid)
+                    .and_modify(|e| {
+                        if decayed > *e {
+                            *e = decayed;
+                        }
+                    })
+                    .or_insert(decayed);
+            }
+        }
+    }
+    let generated = neighbor_map.len();
+    let mut candidates: Vec<(String, i32)> =
+        neighbor_map.into_iter().collect();
+    candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    if candidates.len() > 8 {
+        candidates.truncate(8);
+    }
+    (candidates, generated)
 }
 
 fn digest(ch: char) -> String {
@@ -5498,6 +6063,562 @@ mod tests {
         assert_eq!(r1.depth_aware_recall_v3, r2.depth_aware_recall_v3);
         assert_eq!(r1.policy_adopted, r2.policy_adopted);
         assert_eq!(r1.escalation_curve, r2.escalation_curve);
+    }
+
+    #[test]
+    fn d115_neighbor_candidate_decay_cap_tiebreak_and_exclusion() {
+        // Synthetic graph with hits and neighbors to validate E1 rules.
+        use crate::tool::context::ContextToolState;
+        use siralos_core::context_graph::{ContextEdge, ContextEdgeKind};
+        use siralos_core::context_representation::ContextRepresentationStore;
+        use siralos_core::context_scheduler::{
+            SchedulerEntry, WorkingSetState, WorkingSetTier,
+        };
+        let nodes = vec![
+            ContextNode {
+                id: "h-01".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('a'),
+                summary: "alpha".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            },
+            ContextNode {
+                id: "h-02".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('b'),
+                summary: "alpha".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            },
+            ContextNode {
+                id: "n-01".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('c'),
+                summary: "neighbor".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            },
+            ContextNode {
+                id: "n-02".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('d'),
+                summary: "neighbor".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            },
+            ContextNode {
+                id: "n-03".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('e'),
+                summary: "neighbor".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            },
+        ];
+        let edges = vec![
+            ContextEdge {
+                from: "h-01".to_owned(),
+                to: "n-01".to_owned(),
+                kind: ContextEdgeKind::References,
+            },
+            ContextEdge {
+                from: "h-01".to_owned(),
+                to: "n-02".to_owned(),
+                kind: ContextEdgeKind::References,
+            },
+            ContextEdge {
+                from: "h-02".to_owned(),
+                to: "n-02".to_owned(),
+                kind: ContextEdgeKind::References,
+            },
+            ContextEdge {
+                from: "h-02".to_owned(),
+                to: "n-03".to_owned(),
+                kind: ContextEdgeKind::References,
+            },
+            ContextEdge {
+                from: "h-01".to_owned(),
+                to: "h-02".to_owned(),
+                kind: ContextEdgeKind::References,
+            },
+        ];
+        let sets = vec![
+            NodeRepresentationSet::build(
+                "h-01".to_owned(),
+                vec![rep_identity("id-h01")],
+            )
+            .expect("set"),
+            NodeRepresentationSet::build(
+                "h-02".to_owned(),
+                vec![rep_identity("id-h02")],
+            )
+            .expect("set"),
+            NodeRepresentationSet::build(
+                "n-01".to_owned(),
+                vec![rep_identity("id-n01")],
+            )
+            .expect("set"),
+            NodeRepresentationSet::build(
+                "n-02".to_owned(),
+                vec![rep_identity("id-n02")],
+            )
+            .expect("set"),
+            NodeRepresentationSet::build(
+                "n-03".to_owned(),
+                vec![rep_identity("id-n03")],
+            )
+            .expect("set"),
+        ];
+        let graph = siralos_core::context_graph::ContextGraph::build(
+            nodes.clone(),
+            edges,
+        )
+        .expect("graph");
+        let store = ContextRepresentationStore::build(sets).expect("store");
+        let entries: Vec<SchedulerEntry> = nodes
+            .iter()
+            .map(|n| SchedulerEntry {
+                node_id: n.id.clone(),
+                tier: WorkingSetTier::Cold,
+                pinned: false,
+                relevance: 0,
+                last_access_tick: 0,
+                token_estimate: 0,
+                content_digest: n.content_digest.clone(),
+            })
+            .collect();
+        let ws = WorkingSetState::build(entries).expect("ws");
+        let state = ContextToolState::new(graph, store, ws, vec![]);
+        let sc = BenchmarkScenario::build(
+            "synth".to_owned(),
+            state,
+            "alpha".to_owned(),
+            vec!["h-01".to_owned()],
+        )
+        .expect("scenario");
+        // hits with scores: h-01 score 20, h-02 score 10
+        let hits_with_scores = vec![
+            ("h-01".to_owned(), "summary".to_owned(), 20),
+            ("h-02".to_owned(), "summary".to_owned(), 10),
+        ];
+        let expanded: std::collections::BTreeSet<String> =
+            ["h-01".to_owned(), "h-02".to_owned()].into_iter().collect();
+        let (admitted, generated) = neighbor_candidates_for_scenario(
+            &sc,
+            &hits_with_scores,
+            &expanded,
+        );
+        // generated distinct neighbors excluding hits: n-01,n-02,n-03 =3 (h-02 excluded as hit)
+        assert_eq!(generated, 3, "generated should be 3 distinct neighbors");
+        // admitted capped at 3 (under cap)
+        assert_eq!(admitted.len(), 3);
+        // Check decay halving: h-01 20 ->10, h-02 10->5
+        // n-01 only from h-01 =>10, n-03 only from h-02 =>5, n-02 from both => max 10
+        let map: std::collections::BTreeMap<String, i32> =
+            admitted.into_iter().collect();
+        assert_eq!(map.get("n-01"), Some(&10));
+        assert_eq!(map.get("n-03"), Some(&5));
+        assert_eq!(map.get("n-02"), Some(&10));
+        // Ordering: decayed desc then node_id asc => n-01 (10), n-02 (10), n-03 (5) -> tiebreak n-01 before n-02
+        let (admitted2, _) = neighbor_candidates_for_scenario(
+            &sc,
+            &hits_with_scores,
+            &expanded,
+        );
+        assert_eq!(admitted2[0].0, "n-01");
+        assert_eq!(admitted2[1].0, "n-02");
+        assert_eq!(admitted2[2].0, "n-03");
+        // Cap at 8: add many neighbors to h-01 and verify truncation
+        let mut many_nodes = vec![ContextNode {
+            id: "h-01".to_owned(),
+            kind: ContextNodeKind::Source,
+            content_digest: digest('a'),
+            summary: "alpha".to_owned(),
+            source_bindings: vec![],
+            token_estimate: 0,
+        }];
+        let mut many_edges = Vec::new();
+        let mut many_sets = vec![
+            NodeRepresentationSet::build(
+                "h-01".to_owned(),
+                vec![rep_identity("id")],
+            )
+            .expect("set"),
+        ];
+        for i in 0..12usize {
+            let nid = format!("c-{i:02}");
+            many_nodes.push(ContextNode {
+                id: nid.clone(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('c'),
+                summary: "neighbor".to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            });
+            many_edges.push(ContextEdge {
+                from: "h-01".to_owned(),
+                to: nid.clone(),
+                kind: ContextEdgeKind::References,
+            });
+            many_sets.push(
+                NodeRepresentationSet::build(nid, vec![rep_identity("id")])
+                    .expect("set"),
+            );
+        }
+        let graph_many = siralos_core::context_graph::ContextGraph::build(
+            many_nodes.clone(),
+            many_edges,
+        )
+        .expect("graph many");
+        let state_many = minimal_state_with_nodes(many_nodes, many_sets);
+        // need graph with edges, rebuild via ContextGraph build with edges (minimal_state_with_nodes uses vec![] edges, so we need manual)
+        let graph_many2 = graph_many;
+        let mut state_many2 = state_many;
+        state_many2.graph = graph_many2;
+        let sc_many = BenchmarkScenario::build(
+            "many".to_owned(),
+            state_many2,
+            "alpha".to_owned(),
+            vec!["h-01".to_owned()],
+        )
+        .expect("scenario many");
+        let hits_many = vec![("h-01".to_owned(), "summary".to_owned(), 100)];
+        let expanded_many: std::collections::BTreeSet<String> =
+            ["h-01".to_owned()].into_iter().collect();
+        let (admitted_many, generated_many) = neighbor_candidates_for_scenario(
+            &sc_many,
+            &hits_many,
+            &expanded_many,
+        );
+        assert_eq!(generated_many, 12);
+        assert_eq!(admitted_many.len(), 8, "capped at 8");
+        // deterministic ordering: node_id asc for same score (all decayed 50)
+        assert_eq!(admitted_many[0].0, "c-00");
+        assert_eq!(admitted_many[7].0, "c-07");
+    }
+
+    #[test]
+    fn d115_candidate_inspects_are_summary_only() {
+        // Verify candidates never cause deep expansion: candidate node's Structured content not counted.
+        use siralos_core::context_graph::{ContextEdge, ContextEdgeKind};
+        let summary_hit =
+            "alpha alpha alpha alpha alpha alpha alpha alpha alpha alpha";
+        let summary_candidate =
+            "candidate summary candidate summary candidate summary";
+        let structured_content =
+            "STRUCTURED_GOLD_XXXX".to_owned() + &"y".repeat(200);
+        let nodes = vec![
+            ContextNode {
+                id: "hit-01".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('a'),
+                summary: summary_hit.to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            },
+            ContextNode {
+                id: "cand-01".to_owned(),
+                kind: ContextNodeKind::Source,
+                content_digest: digest('b'),
+                summary: summary_candidate.to_owned(),
+                source_bindings: vec![],
+                token_estimate: 0,
+            },
+        ];
+        let edges = vec![ContextEdge {
+            from: "hit-01".to_owned(),
+            to: "cand-01".to_owned(),
+            kind: ContextEdgeKind::References,
+        }];
+        let graph = siralos_core::context_graph::ContextGraph::build(
+            nodes.clone(),
+            edges,
+        )
+        .expect("graph");
+        let set_hit = NodeRepresentationSet::build(
+            "hit-01".to_owned(),
+            vec![
+                NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("id-hit"),
+                    derived_from: vec![],
+                    content: "id-hit".to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(summary_hit),
+                    derived_from: vec![],
+                    content: summary_hit.to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Structured,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&structured_content),
+                    derived_from: vec![],
+                    content: structured_content.clone(),
+                },
+            ],
+        )
+        .expect("set hit");
+        let set_cand = NodeRepresentationSet::build(
+            "cand-01".to_owned(),
+            vec![
+                NodeRepresentation {
+                    level: RepresentationLevel::Identity,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of("id-cand"),
+                    derived_from: vec![],
+                    content: "id-cand".to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Summary,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(summary_candidate),
+                    derived_from: vec![],
+                    content: summary_candidate.to_owned(),
+                },
+                NodeRepresentation {
+                    level: RepresentationLevel::Structured,
+                    origin: RepresentationOrigin::HostExtracted,
+                    content_digest: content_digest_of(&structured_content),
+                    derived_from: vec![],
+                    content: structured_content.clone(),
+                },
+            ],
+        )
+        .expect("set cand");
+        let state = minimal_state_with_nodes(nodes, vec![set_hit, set_cand]);
+        // Override graph with edges
+        let mut state_with_edges = state;
+        state_with_edges.graph = graph;
+        let sc = BenchmarkScenario::build(
+            "cand-summary-only".to_owned(),
+            state_with_edges,
+            "alpha".to_owned(),
+            vec!["hit-01".to_owned()],
+        )
+        .expect("scenario");
+        let gate = vec![sc.clone()];
+        let v2 =
+            run_strategy(&gate, PagingStrategy::ProgressiveV2).expect("v2");
+        // Candidates should be admitted (hit-01 neighbor cand-01)
+        let search_tool = ContextSearchTool::new(sc.state.clone());
+        let tok = CancellationToken::new();
+        let res =
+            search_tool.execute(&json!({"query": sc.query}), tok.signal());
+        let hits: Vec<(String, String)> = match res {
+            siralos_core::provider::ToolExecutionResult::Success {
+                output,
+                ..
+            } => output
+                .get("hits")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|h| {
+                            let nid = h.get("node_id")?.as_str()?.to_owned();
+                            let matched = h
+                                .get("matched_in")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_owned();
+                            Some((nid, matched))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let hits_scored: Vec<(String, String, i32)> = {
+            let st = ContextSearchTool::new(sc.state.clone());
+            let tok2 = CancellationToken::new();
+            let r = st.execute(&json!({"query": sc.query}), tok2.signal());
+            match r {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                let score = h
+                                    .get("score")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                                    as i32;
+                                Some((nid, matched, score))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        };
+        let expanded = expanded_ids_for_scenario(
+            &sc,
+            &hits,
+            PagingStrategy::ProgressiveV2,
+        );
+        let (cands, _gen) =
+            neighbor_candidates_for_scenario(&sc, &hits_scored, &expanded);
+        assert!(
+            cands.iter().any(|(id, _)| id == "cand-01"),
+            "candidate should be admitted"
+        );
+        // Run_strategy's paged tokens should include candidate summary but NOT its structured content
+        // The expanded for this scenario is hit-01 only; candidate is not expanded, so its structured bytes not in paged.
+        // We can verify tool_calls includes candidate inspect: 1 search + hits inspects (1) + candidates (1) + expands (1) =4
+        assert_eq!(
+            v2.scenarios[0].tool_calls, 4,
+            "tool_calls should count candidate inspect"
+        );
+        // Ensure paged tokens does not equal DeepAll which would include structured for both nodes; it should be much smaller
+        assert!(
+            v2.total_paged < 1000,
+            "paged should be small summary-only for candidate"
+        );
+    }
+
+    #[test]
+    fn d115_v1_v3_invariance_guards() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let gate: Vec<BenchmarkScenario> = scenarios
+            .iter()
+            .filter(|s| s.name != "paraphrase-gap")
+            .cloned()
+            .collect();
+        let v1 =
+            run_strategy(&gate, PagingStrategy::ExhaustiveV1).expect("v1");
+        let v3 = run_strategy(&gate, PagingStrategy::ProgressiveV3Escalating)
+            .expect("v3");
+        assert_eq!(v1.total_paged, 3560, "V1 byte-identity must stand 3560");
+        // V3 depth-aware recall 13/14 as per decision 88 Retained
+        let mut depth_v2 = 0usize;
+        let mut depth_v3 = 0usize;
+        for sc in &gate {
+            let search_tool = ContextSearchTool::new(sc.state.clone());
+            let tok = CancellationToken::new();
+            let res =
+                search_tool.execute(&json!({"query": sc.query}), tok.signal());
+            let hits: Vec<(String, String)> = match res {
+                siralos_core::provider::ToolExecutionResult::Success {
+                    output,
+                    ..
+                } => output
+                    .get("hits")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|h| {
+                                let nid =
+                                    h.get("node_id")?.as_str()?.to_owned();
+                                let matched = h
+                                    .get("matched_in")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned();
+                                Some((nid, matched))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let exp_v2 = expanded_ids_for_scenario(
+                sc,
+                &hits,
+                PagingStrategy::ProgressiveV2,
+            );
+            let exp_v3 = expanded_ids_for_scenario(
+                sc,
+                &hits,
+                PagingStrategy::ProgressiveV3Escalating,
+            );
+            depth_v2 += depth_aware_recall_for_scenario(sc, &hits, &exp_v2);
+            depth_v3 += depth_aware_recall_for_scenario(sc, &hits, &exp_v3);
+        }
+        assert_eq!(depth_v3, 13, "V3 depth-aware recall must stand 13");
+        assert_eq!(depth_v2, 14, "V2 depth-aware recall 14");
+        assert!(v3.total_paged < v1.total_paged, "V3 cheaper than V1");
+    }
+
+    #[test]
+    fn d115_paraphrase_reachability_honest() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let report = run_benchmark(&scenarios).expect("report");
+        // With empty graph edges, paraphrase key not reachable via neighbors (no hits to expand)
+        assert!(
+            !report.informational.paraphrase_gap.neighbor_reachable,
+            "honest measurement with empty graph: not reachable"
+        );
+        assert_eq!(
+            report.informational.paraphrase_gap.neighbor_cost, 0,
+            "cost zero when not reachable"
+        );
+        // Also check per-scenario neighbor candidates are all zero for gated scenarios (empty graph)
+        for nc in &report.neighbor_candidates {
+            assert_eq!(nc.generated, 0, "generated 0 with empty edges");
+            assert_eq!(nc.admitted, 0);
+            assert_eq!(nc.tokens, 0);
+        }
+    }
+
+    #[test]
+    fn d115_determinism_with_neighbors() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let r1 = run_benchmark(&scenarios).expect("r1");
+        let r2 = run_benchmark(&scenarios).expect("r2");
+        assert_eq!(r1.neighbor_candidates, r2.neighbor_candidates);
+        assert_eq!(
+            r1.informational.paraphrase_gap.neighbor_reachable,
+            r2.informational.paraphrase_gap.neighbor_reachable
+        );
+        assert_eq!(
+            r1.informational.paraphrase_gap.neighbor_cost,
+            r2.informational.paraphrase_gap.neighbor_cost
+        );
+        assert_eq!(r1.v2, r2.v2);
+        assert_eq!(r1.sensitivity, r2.sensitivity);
+    }
+
+    #[test]
+    fn d115_gate_re_evaluation_unchanged_rule() {
+        let scenarios = gold_set_v3().expect("gold v3");
+        let report = run_benchmark(&scenarios).expect("report");
+        // Unchanged decision 87 GO rule: recall parity, paged*2 < DeepAll, dedup guard, 9-cell sweep
+        let recall_ok =
+            report.v2.total_recall_paged == report.v2.total_recall_baseline;
+        let margin_ok =
+            report.v2.total_paged.saturating_mul(2) < report.v2.total_baseline;
+        let dedup_ok = report.decomposition.dedup_guard_ok;
+        let sweep_ok = report.sensitivity.all_ok;
+        let expected_go = recall_ok && margin_ok && dedup_ok && sweep_ok;
+        assert_eq!(report.go, expected_go, "gate must match unchanged rule");
+        // With empty graph, V2 stays 3170 vs DeepAll 7609, 8/9 cells -> NO-GO
+        assert_eq!(report.v2.total_paged, 3170);
+        assert_eq!(report.v2.total_baseline, 7609);
+        assert!(!report.go, "re-measured NO-GO under unchanged rules");
+        assert_eq!(
+            report
+                .sensitivity
+                .cells
+                .iter()
+                .filter(|c| c.margin_ok && c.recall_ok && c.dedup_ok)
+                .count(),
+            8
+        );
     }
 }
 

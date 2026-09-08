@@ -134,7 +134,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 77;
+const CORPUS_VERSION: u64 = 78;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -14918,9 +14918,23 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
         "paraphraseGap": {
             "queryTokens": report.informational.paraphrase_gap.query_tokens,
             "keyOverlapCount": report.informational.paraphrase_gap.key_overlap,
-            "inHits": report.informational.paraphrase_gap.in_hits
+            "inHits": report.informational.paraphrase_gap.in_hits,
+            "neighborReachable": report.informational.paraphrase_gap.neighbor_reachable,
+            "neighborCost": report.informational.paraphrase_gap.neighbor_cost
         }
     });
+    let neighbor_candidates = report
+        .neighbor_candidates
+        .iter()
+        .map(|nc| {
+            json!({
+                "name": nc.name,
+                "generated": nc.generated,
+                "admitted": nc.admitted,
+                "tokens": nc.tokens
+            })
+        })
+        .collect::<Vec<Value>>();
     let per_scenario = report
         .per_scenario
         .iter()
@@ -15027,7 +15041,8 @@ fn context_benchmark_record(_input: &Value) -> Result<Value, HarnessError> {
             "toolCalls": p.tool_calls
         })).collect::<Vec<Value>>(),
         "policyAdopted": report.policy_adopted,
-        "policyReason": report.policy_reason
+        "policyReason": report.policy_reason,
+        "neighborCandidates": neighbor_candidates
     }))
 }
 

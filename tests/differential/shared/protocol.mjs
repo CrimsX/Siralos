@@ -2757,7 +2757,7 @@ function validateContextBenchmarkResult(record, label) {
   const pg = result.informational.paraphraseGap;
   assertExactKeys(
     pg,
-    ["queryTokens", "keyOverlapCount", "inHits"],
+    ["queryTokens", "keyOverlapCount", "inHits", "neighborReachable", "neighborCost"],
     `${label}.result.informational.paraphraseGap`,
   );
   if (!Array.isArray(pg.queryTokens) || pg.queryTokens.length === 0) {
@@ -2777,6 +2777,38 @@ function validateContextBenchmarkResult(record, label) {
   }
   if (typeof pg.inHits !== "boolean") {
     throw new Error(`${label}.result.informational.paraphraseGap.inHits must be a boolean`);
+  }
+  if (typeof pg.neighborReachable !== "boolean") {
+    throw new Error(
+      `${label}.result.informational.paraphraseGap.neighborReachable must be a boolean`,
+    );
+  }
+  if (!Number.isSafeInteger(pg.neighborCost) || pg.neighborCost < 0) {
+    throw new Error(
+      `${label}.result.informational.paraphraseGap.neighborCost must be a non-negative integer`,
+    );
+  }
+  // Decision 115: neighborCandidates per gated scenario
+  if (!Array.isArray(result.neighborCandidates) || result.neighborCandidates.length !== 6) {
+    throw new Error(`${label}.result.neighborCandidates must be a 6-element array`);
+  }
+  for (const [index, entry] of result.neighborCandidates.entries()) {
+    const eLabel = `${label}.result.neighborCandidates[${index}]`;
+    assertExactKeys(entry, ["name", "generated", "admitted", "tokens"], eLabel);
+    if (typeof entry.name !== "string" || entry.name.length === 0) {
+      throw new Error(`${eLabel}.name must be a non-empty string`);
+    }
+    for (const k of ["generated", "admitted", "tokens"]) {
+      if (!Number.isSafeInteger(entry[k]) || entry[k] < 0) {
+        throw new Error(`${eLabel}.${k} must be a non-negative integer`);
+      }
+    }
+    if (entry.admitted > 8) {
+      throw new Error(`${eLabel}.admitted must be <=8`);
+    }
+    if (entry.generated < entry.admitted) {
+      throw new Error(`${eLabel}.generated must be >= admitted`);
+    }
   }
   // v64 corrected-baseline re-gate: require DeepAll as sole gated reference plus informational SummariesAll / IdentityDiag and audit tables
   for (const key of [
