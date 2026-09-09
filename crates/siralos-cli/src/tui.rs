@@ -466,13 +466,27 @@ pub enum ProviderAddField {
 }
 
 impl ProviderAddField {
-    /// Title label for the current field.
+    /// Title label for the current field — descriptive with example (D1).
     pub fn label(self) -> &'static str {
         match self {
-            Self::Provider => "provider",
-            Self::Model => "model",
-            Self::CredentialEnv => "credential env var",
-            Self::Endpoint => "endpoint (optional)",
+            Self::Provider => "provider name (e.g. openai, example-vendor)",
+            Self::Model => "model (e.g. model-a, gpt-4o)",
+            Self::CredentialEnv => "credential env var (e.g. OPENAI_API_KEY)",
+            Self::Endpoint => {
+                "endpoint URL (optional, e.g. https://api.openai.com/v1)"
+            }
+        }
+    }
+
+    /// Dim description line below the label (D3).
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Provider => "the name you'll use to identify this provider",
+            Self::Model => "which model to use for completions",
+            Self::CredentialEnv => {
+                "the environment variable that holds your API key (set it before starting Siralos)"
+            }
+            Self::Endpoint => "the API URL (leave empty for the default)",
         }
     }
 }
@@ -520,14 +534,14 @@ impl Default for ProviderAddForm {
 }
 
 impl ProviderAddForm {
-    /// Create a fresh form starting at the provider field.
+    /// Create a fresh form starting at the endpoint field (URL-first reorder).
     pub fn new() -> Self {
         Self {
             provider: None,
             model: None,
             credential_env: None,
             endpoint: None,
-            field: ProviderAddField::Provider,
+            field: ProviderAddField::Endpoint,
             input: String::new(),
             error: None,
             completed: None,
@@ -1471,11 +1485,12 @@ pub fn draw_with_pane(
     }
 
     // Provider add-flow form (C1) — rounded modal title " add provider " with current field highlighted.
+    // I1: modal grows to accommodate the D3 description lines.
     if let Some(form) = &state.provider_add_form {
         let backdrop = Block::default()
             .style(Style::default().bg(Color::DarkGray).fg(Color::White));
         frame.render_widget(backdrop, backdrop_area);
-        let modal_area = centered_rect(65, 65, backdrop_area);
+        let modal_area = centered_rect(75, 75, backdrop_area);
         frame.render_widget(ratatui::widgets::Clear, modal_area);
         let modal_block = Block::default()
             .borders(Borders::ALL)
@@ -1528,28 +1543,17 @@ pub fn draw_with_pane(
 fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let fields = [
-        (ProviderAddField::Provider, "provider", form.provider.as_deref()),
-        (ProviderAddField::Model, "model", form.model.as_deref()),
-        (
-            ProviderAddField::CredentialEnv,
-            "credential env var",
-            form.credential_env.as_deref(),
-        ),
-        (
-            ProviderAddField::Endpoint,
-            "endpoint (optional)",
-            form.endpoint.as_deref(),
-        ),
+        (ProviderAddField::Endpoint, form.endpoint.as_deref()),
+        (ProviderAddField::Model, form.model.as_deref()),
+        (ProviderAddField::CredentialEnv, form.credential_env.as_deref()),
+        (ProviderAddField::Provider, form.provider.as_deref()),
     ];
-    for (field, label, stored) in fields {
+    for (field, stored) in fields {
+        let label = field.label();
+        let description = field.description();
         let is_current = field == form.field && form.completed.is_none();
         let display = if is_current {
-            format!(
-                "> {}: {}{}",
-                label,
-                form.input,
-                if form.input.is_empty() { "_" } else { "" }
-            )
+            format!("> {}: {}█", label, form.input)
         } else if let Some(val) = stored {
             if val.is_empty() {
                 format!("  {label}: —")
@@ -1559,7 +1563,7 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
         } else {
             format!("  {label}:")
         };
-        // Highlight current field bold yellow, completed dim, pending white.
+        // Highlight current field bold yellow, completed green, pending dark gray.
         let style = if is_current {
             Style::default()
                 .fg(Color::Yellow)
@@ -1570,6 +1574,11 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
             Style::default().fg(Color::DarkGray)
         };
         lines.push(Line::from(display).style(style));
+        // D3: dim description line below the label.
+        lines.push(
+            Line::from(format!("    {description}"))
+                .style(Style::default().fg(Color::DarkGray)),
+        );
     }
     // Provider field suggestions.
     if form.field == ProviderAddField::Provider && form.completed.is_none() {
@@ -2039,6 +2048,7 @@ pub fn render_to_buffer_with_pane(
     }
 
     // Provider add-flow form (C1) — buffer path.
+    // I1: modal grows to accommodate the D3 description lines.
     if let Some(form) = &state.provider_add_form {
         let backdrop_area = match pane_area {
             None => transcript_area,
@@ -2049,7 +2059,7 @@ pub fn render_to_buffer_with_pane(
         let backdrop = Block::default()
             .style(Style::default().bg(Color::DarkGray).fg(Color::White));
         backdrop.render(backdrop_area, &mut buf);
-        let modal_area = centered_rect(65, 65, backdrop_area);
+        let modal_area = centered_rect(75, 75, backdrop_area);
         ratatui::widgets::Clear.render(modal_area, &mut buf);
         let modal_block = Block::default()
             .borders(Borders::ALL)
@@ -2220,8 +2230,61 @@ impl Drop for TerminalGuard {
 // No forced unification beyond this — the residual is the shape, not debt.
 // During a blocking provider round the UI simply does not redraw — the status
 // line showed "working" before the step and the freeze is documented.
+/// Derive provider name from an endpoint URL per R2 rules (pure, unit-testable):
+/// take the host (strip the scheme), strip a leading "api." prefix, take the
+/// first dot-separated label, lowercase, replace every character outside
+/// [a-z0-9_-] with '-', truncate to 64. Empty URL -> empty.
+#[must_use]
+pub fn derive_provider_name(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let without_scheme = if let Some(rest) = trimmed.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        rest
+    } else {
+        trimmed
+    };
+    let host = without_scheme.split('/').next().unwrap_or(without_scheme);
+    let host = host.split(':').next().unwrap_or(host);
+    if host.is_empty() {
+        return String::new();
+    }
+    let lower = host.to_ascii_lowercase();
+    let stripped = if let Some(rest) = lower.strip_prefix("api.") {
+        rest
+    } else {
+        lower.as_str()
+    };
+    let label = stripped.split('.').next().unwrap_or(stripped);
+    if label.is_empty() {
+        return String::new();
+    }
+    let mut out: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || c == '-'
+                || c == '_'
+            {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if out.len() > 64 {
+        out.truncate(64);
+    }
+    out
+}
+
 // Helpers for tests: expose scroll operations
 /// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
+/// Human-readable error (D2) — validation rule unchanged.
 fn validate_credential_env_name(name: &str) -> Result<(), String> {
     if name.is_empty()
         || name.len() > 64
@@ -2230,7 +2293,7 @@ fn validate_credential_env_name(name: &str) -> Result<(), String> {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
     {
         return Err(
-            "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
+            "Credential env var must be uppercase letters, numbers, and underscores (e.g. OPENAI_API_KEY) - set this variable with your API key before starting Siralos"
                 .to_owned(),
         );
     }
@@ -2238,60 +2301,84 @@ fn validate_credential_env_name(name: &str) -> Result<(), String> {
 }
 
 /// Validate provider field: [a-z0-9_-]{1,64}, non-empty, no NUL.
+/// Human-readable error (D2) — validation rule unchanged.
 fn validate_provider_name(value: &str) -> Result<(), String> {
     if value.is_empty() || value.len() > 64 {
         return Err(
-            "The provider exceeds the 64-byte bound or is empty.".to_owned()
+            "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
+                .to_owned(),
         );
     }
     if value.contains('\0') {
-        return Err("A provider must not contain NUL.".to_owned());
+        return Err(
+            "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
+                .to_owned(),
+        );
     }
     if !value.chars().all(|c| {
         c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
     }) {
-        return Err("A provider must match [a-z0-9_-]{1,64}.".to_owned());
+        return Err(
+            "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
+                .to_owned(),
+        );
     }
     Ok(())
 }
 
 /// Validate model field: [a-zA-Z0-9._-]{1,128}, non-empty, no NUL.
+/// Human-readable error (D2) — validation rule unchanged (128 bound, message says 256 per spec).
 fn validate_model_name(value: &str) -> Result<(), String> {
     if value.is_empty() || value.len() > 128 {
         return Err(
-            "The model exceeds the 128-byte bound or is empty.".to_owned()
+            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+                .to_owned(),
         );
     }
     if value.contains('\0') {
-        return Err("A model must not contain NUL.".to_owned());
+        return Err(
+            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+                .to_owned(),
+        );
     }
     if !value
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
     {
-        return Err("A model must match [a-zA-Z0-9._-]{1,128}.".to_owned());
+        return Err(
+            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+                .to_owned(),
+        );
     }
     Ok(())
 }
 
 /// Validate endpoint field: https:// or http://, no NUL, no space, 1..512.
+/// Human-readable error (D2) — validation rule unchanged.
 fn validate_endpoint_value(value: &str) -> Result<(), String> {
     if value.is_empty() || value.len() > 512 {
         return Err(
-            "The endpoint exceeds the 512-byte bound or is empty.".to_owned()
+            "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
+                .to_owned(),
         );
     }
     if value.contains('\0') {
-        return Err("An endpoint must not contain NUL.".to_owned());
+        return Err(
+            "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
+                .to_owned(),
+        );
     }
     if !(value.starts_with("https://") || value.starts_with("http://")) {
         return Err(
-            "An endpoint must start with \"https://\" or \"http://\"."
+            "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
                 .to_owned(),
         );
     }
     if value.contains(' ') {
-        return Err("An endpoint must not contain spaces.".to_owned());
+        return Err(
+            "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
+                .to_owned(),
+        );
     }
     Ok(())
 }
@@ -2419,8 +2506,13 @@ pub fn handle_key(
                 }
                 form.error = None;
                 match field {
-                    ProviderAddField::Provider => {
-                        form.provider = Some(trimmed);
+                    ProviderAddField::Endpoint => {
+                        let endpoint_opt = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                        form.endpoint = endpoint_opt;
                         form.field = ProviderAddField::Model;
                         form.input.clear();
                     }
@@ -2431,31 +2523,28 @@ pub fn handle_key(
                     }
                     ProviderAddField::CredentialEnv => {
                         form.credential_env = Some(trimmed);
-                        form.field = ProviderAddField::Endpoint;
-                        form.input.clear();
-                    }
-                    ProviderAddField::Endpoint => {
-                        let endpoint_opt = if trimmed.is_empty() {
-                            None
+                        form.field = ProviderAddField::Provider;
+                        // Prefill provider name from endpoint host when non-empty.
+                        if let Some(ep) = form.endpoint.as_deref() {
+                            if !ep.is_empty() {
+                                form.input = derive_provider_name(ep);
+                            } else {
+                                form.input.clear();
+                            }
                         } else {
-                            Some(trimmed)
-                        };
-                        form.endpoint = endpoint_opt.clone();
-                        // Build completed data — safe to unwrap previous fields which are Some.
-                        if let (
-                            Some(provider),
-                            Some(model),
-                            Some(credential_env),
-                        ) = (
-                            form.provider.clone(),
-                            form.model.clone(),
-                            form.credential_env.clone(),
-                        ) {
+                            form.input.clear();
+                        }
+                    }
+                    ProviderAddField::Provider => {
+                        form.provider = Some(trimmed.clone());
+                        if let (Some(model), Some(credential_env)) =
+                            (form.model.clone(), form.credential_env.clone())
+                        {
                             form.completed = Some(ProviderAddData {
-                                provider,
+                                provider: trimmed,
                                 model,
                                 credential_env,
-                                endpoint: endpoint_opt,
+                                endpoint: form.endpoint.clone(),
                             });
                         } else {
                             form.error = Some(
@@ -2475,12 +2564,133 @@ pub fn handle_key(
                 form.error = None;
                 return false;
             }
+            KeyCode::Up => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                // Up: previous field, restoring validated value for re-editing (URL-first order).
+                let prev = match form.field {
+                    ProviderAddField::Endpoint => None,
+                    ProviderAddField::Model => {
+                        Some(ProviderAddField::Endpoint)
+                    }
+                    ProviderAddField::CredentialEnv => {
+                        Some(ProviderAddField::Model)
+                    }
+                    ProviderAddField::Provider => {
+                        Some(ProviderAddField::CredentialEnv)
+                    }
+                };
+                if let Some(prev_field) = prev {
+                    form.field = prev_field;
+                    let restored = match prev_field {
+                        ProviderAddField::Provider => {
+                            form.provider.clone().unwrap_or_default()
+                        }
+                        ProviderAddField::Model => {
+                            form.model.clone().unwrap_or_default()
+                        }
+                        ProviderAddField::CredentialEnv => {
+                            form.credential_env.clone().unwrap_or_default()
+                        }
+                        ProviderAddField::Endpoint => {
+                            form.endpoint.clone().unwrap_or_default()
+                        }
+                    };
+                    form.input = restored;
+                    form.error = None;
+                }
+                return false;
+            }
+            KeyCode::Down => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                // Down: validate current, if valid advance to next (same as Enter).
+                let current = form.input.clone();
+                let trimmed = current.trim().to_owned();
+                let field = form.field;
+                let validation: Result<(), String> = match field {
+                    ProviderAddField::Provider => {
+                        validate_provider_name(&trimmed)
+                    }
+                    ProviderAddField::Model => validate_model_name(&trimmed),
+                    ProviderAddField::CredentialEnv => {
+                        validate_credential_env_name(&trimmed)
+                    }
+                    ProviderAddField::Endpoint => {
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_endpoint_value(&trimmed)
+                        }
+                    }
+                };
+                if let Err(msg) = validation {
+                    form.error = Some(msg);
+                    return false;
+                }
+                form.error = None;
+                match field {
+                    ProviderAddField::Endpoint => {
+                        let endpoint_opt = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                        form.endpoint = endpoint_opt;
+                        form.field = ProviderAddField::Model;
+                        form.input.clear();
+                    }
+                    ProviderAddField::Model => {
+                        form.model = Some(trimmed);
+                        form.field = ProviderAddField::CredentialEnv;
+                        form.input.clear();
+                    }
+                    ProviderAddField::CredentialEnv => {
+                        form.credential_env = Some(trimmed);
+                        form.field = ProviderAddField::Provider;
+                        if let Some(ep) = form.endpoint.as_deref() {
+                            if !ep.is_empty() {
+                                form.input = derive_provider_name(ep);
+                            } else {
+                                form.input.clear();
+                            }
+                        } else {
+                            form.input.clear();
+                        }
+                    }
+                    ProviderAddField::Provider => {
+                        form.provider = Some(trimmed.clone());
+                        if let (Some(model), Some(credential_env)) =
+                            (form.model.clone(), form.credential_env.clone())
+                        {
+                            form.completed = Some(ProviderAddData {
+                                provider: trimmed,
+                                model,
+                                credential_env,
+                                endpoint: form.endpoint.clone(),
+                            });
+                        } else {
+                            form.error = Some(
+                                "Internal error: missing prior fields"
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                }
+                return false;
+            }
             KeyCode::Char(ch) => {
                 if key.kind != crossterm::event::KeyEventKind::Press {
                     return false;
                 }
                 // Ctrl combos are handled by outer loop; here just char.
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return false;
+                }
+                // F1: accept ALL printable chars including : and / (only reject control chars).
+                if ch.is_control() {
                     return false;
                 }
                 form.input.push(ch);
@@ -4402,16 +4612,22 @@ mod tests {
 
     #[test]
     fn provider_add_flow_sequential_form_completes() {
-        // C1: the sequential modal form advances provider -> model ->
-        // credential-env -> endpoint and yields validated completion data.
+        // URL-first reorder: endpoint -> model -> credential-env -> provider (auto-derived).
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
         assert!(state.provider_add_form.is_some());
-        t108_type(&mut state, "openai");
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::Endpoint
+        );
+        t108_type(&mut state, "https://api.openai.com/v1");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
         assert_eq!(form.field, ProviderAddField::Model);
-        assert_eq!(form.provider.as_deref(), Some("openai"));
+        assert_eq!(
+            form.endpoint.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
         t108_type(&mut state, "gpt-4o");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
@@ -4420,9 +4636,10 @@ mod tests {
         t108_type(&mut state, "OPENAI_API_KEY");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
-        assert_eq!(form.field, ProviderAddField::Endpoint);
+        assert_eq!(form.field, ProviderAddField::Provider);
         assert_eq!(form.credential_env.as_deref(), Some("OPENAI_API_KEY"));
-        t108_type(&mut state, "https://api.openai.com/v1");
+        // Provider prefilled from endpoint host.
+        assert_eq!(form.input, "openai");
         t108_enter(&mut state);
         let completed = state
             .provider_add_form
@@ -4446,19 +4663,22 @@ mod tests {
         // errors without advancing.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
-        t108_type(&mut state, "openai");
+        t108_type(&mut state, "https://api.openai.com/v1");
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
         assert!(state.provider_add_form.is_none());
-        // Invalid: empty provider errors and stays on the provider field.
+        // Invalid endpoint (bad URL) errors and stays on endpoint field.
         open_provider_add_form(&mut state);
+        t108_type(&mut state, "not-a-url");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
-        assert_eq!(form.field, ProviderAddField::Provider);
+        assert_eq!(form.field, ProviderAddField::Endpoint);
         assert!(form.error.is_some());
         assert!(form.completed.is_none());
-        // Invalid credential env name errors without advancing.
-        t108_type(&mut state, "openai");
-        t108_enter(&mut state);
+        // Clear and enter empty endpoint (valid, optional) -> model
+        // Reset form for next invalid checks
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty endpoint -> model
         t108_type(&mut state, "gpt-4o");
         t108_enter(&mut state);
         t108_type(&mut state, "lowercase-bad");
@@ -4698,5 +4918,407 @@ mod tests {
         let content_on: String =
             buf_on.content().iter().map(|c| c.symbol()).collect();
         assert!(content_on.contains("x"));
+    }
+
+    #[test]
+    fn provider_add_form_descriptive_labels() {
+        // D1: labels are descriptive with examples, not bare "provider:".
+        // Check via the pure line model (avoids buffer wrapping fragility) and via the rendered buffer.
+        let form = ProviderAddForm::new();
+        let lines = provider_add_form_lines(&form);
+        let joined: String = lines
+            .iter()
+            .map(|l| {
+                l.iter().map(|s| s.content.to_string()).collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("provider name (e.g. openai, example-vendor)"),
+            "provider label should be descriptive, got: {joined:?}"
+        );
+        assert!(
+            joined.contains("model (e.g. model-a, gpt-4o)"),
+            "model label should be descriptive"
+        );
+        assert!(
+            joined.contains("credential env var (e.g. OPENAI_API_KEY)"),
+            "credential label should be descriptive"
+        );
+        assert!(
+            joined.contains(
+                "endpoint URL (optional, e.g. https://api.openai.com/v1)"
+            ),
+            "endpoint label should be descriptive"
+        );
+        assert!(ProviderAddField::Provider.label().contains("provider name"));
+        // Also verify the rendered frame contains the descriptive labels (large viewport to avoid wrapping).
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        let buf = render_to_buffer(&state, 120, 30);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("provider name"));
+        assert!(content.contains("endpoint URL"));
+    }
+
+    #[test]
+    fn field_descriptions_render() {
+        // D3: each field renders a dim description line below the label.
+        let form = ProviderAddForm::new();
+        let lines = provider_add_form_lines(&form);
+        let joined: String = lines
+            .iter()
+            .map(|l| {
+                l.iter().map(|s| s.content.to_string()).collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("the name you'll use to identify this provider"),
+            "provider description missing"
+        );
+        assert!(
+            joined.contains("which model to use for completions"),
+            "model description missing"
+        );
+        assert!(
+            joined
+                .contains("the environment variable that holds your API key"),
+            "credential description missing"
+        );
+        assert!(
+            joined.contains("the API URL (leave empty for the default)"),
+            "endpoint description missing"
+        );
+        // Also check rendered buffer with large viewport.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        let buf = render_to_buffer(&state, 120, 30);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            content.contains("the name you'll use to identify this provider")
+        );
+        assert!(content.contains("which model to use for completions"));
+    }
+
+    #[test]
+    fn validation_errors_are_human_readable() {
+        // D2: error messages are plain English with examples, no cryptic regex.
+        let provider_err =
+            validate_provider_name("Bad Provider!").unwrap_err();
+        assert_eq!(
+            provider_err,
+            "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
+        );
+        assert!(!provider_err.contains("[a-z0-9_-]"));
+
+        let model_err = validate_model_name("").unwrap_err();
+        assert_eq!(
+            model_err,
+            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+        );
+
+        let cred_err =
+            validate_credential_env_name("lowercase-bad").unwrap_err();
+        assert_eq!(
+            cred_err,
+            "Credential env var must be uppercase letters, numbers, and underscores (e.g. OPENAI_API_KEY) - set this variable with your API key before starting Siralos"
+        );
+        assert!(!cred_err.contains("[A-Z0-9_]{1,64}"));
+
+        let endpoint_err = validate_endpoint_value("not-a-url").unwrap_err();
+        assert_eq!(
+            endpoint_err,
+            "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
+        );
+        assert!(!endpoint_err.contains("must start with"));
+
+        // All branches use the same human-readable strings.
+        assert_eq!(
+            validate_endpoint_value("").unwrap_err(),
+            "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
+        );
+        assert_eq!(
+            validate_provider_name("").unwrap_err(),
+            "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
+        );
+    }
+
+    #[test]
+    fn validation_still_rejects_invalid_input() {
+        // Validation rules unchanged — only error text changed.
+        assert!(validate_provider_name("openai").is_ok());
+        assert!(validate_provider_name("example-vendor").is_ok());
+        assert!(validate_provider_name("my-provider_123").is_ok());
+        assert!(validate_provider_name("OpenAI").is_err());
+        assert!(validate_provider_name("bad provider").is_err());
+        assert!(validate_provider_name("https://api.openai.com").is_err());
+        assert!(validate_provider_name("").is_err());
+        assert!(validate_provider_name("a".repeat(65).as_str()).is_err());
+
+        assert!(validate_model_name("model-a").is_ok());
+        assert!(validate_model_name("gpt-4o").is_ok());
+        assert!(validate_model_name("").is_err());
+        assert!(validate_model_name("bad model!").is_err());
+
+        assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
+        assert!(validate_credential_env_name("ANTHROPIC_KEY").is_ok());
+        assert!(validate_credential_env_name("openai").is_err());
+        assert!(validate_credential_env_name("HAS-DASH").is_err());
+
+        assert!(validate_endpoint_value("https://api.openai.com/v1").is_ok());
+        assert!(validate_endpoint_value("http://localhost:11434").is_ok());
+        assert!(validate_endpoint_value("").is_err());
+        assert!(validate_endpoint_value("not-a-url").is_err());
+        assert!(validate_endpoint_value("ftp://example.com").is_err());
+
+        // Endpoint empty is allowed via the form handler, but direct validation rejects empty.
+        // The form's Endpoint field allows empty (optional), which is handled in handle_key.
+        // URL-first order: endpoint first (empty), then model, credential, typed provider.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty endpoint -> model
+        t108_type(&mut state, "gpt-4o");
+        t108_enter(&mut state);
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        // Provider field now empty prefill (since endpoint empty), type name
+        t108_type(&mut state, "openai");
+        t108_enter(&mut state);
+        assert!(state.provider_add_form.as_ref().unwrap().completed.is_some());
+        assert!(
+            state
+                .provider_add_form
+                .as_ref()
+                .unwrap()
+                .completed
+                .as_ref()
+                .unwrap()
+                .endpoint
+                .is_none()
+        );
+        assert_eq!(
+            state
+                .provider_add_form
+                .as_ref()
+                .unwrap()
+                .completed
+                .as_ref()
+                .unwrap()
+                .provider,
+            "openai"
+        );
+    }
+
+    // URL-first reorder tests (decisions 129-130)
+
+    #[test]
+    fn field_order_endpoint_first() {
+        let form = ProviderAddForm::new();
+        assert_eq!(form.field, ProviderAddField::Endpoint);
+        let lines = provider_add_form_lines(&form);
+        let joined: String = lines
+            .iter()
+            .map(|l| {
+                l.iter().map(|s| s.content.to_string()).collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Endpoint label appears before provider label in rendered lines.
+        let endpoint_pos = joined
+            .find("endpoint URL (optional, e.g. https://api.openai.com/v1)")
+            .expect("endpoint label");
+        let provider_pos = joined
+            .find("provider name (e.g. openai, example-vendor)")
+            .expect("provider label");
+        assert!(
+            endpoint_pos < provider_pos,
+            "Endpoint should render before Provider"
+        );
+    }
+
+    #[test]
+    fn derive_provider_name_examples() {
+        assert_eq!(
+            derive_provider_name("https://api.example-vendor.com/v1"),
+            "example-vendor"
+        );
+        assert_eq!(
+            derive_provider_name("https://api.openai.com/v1"),
+            "openai"
+        );
+        assert_eq!(
+            derive_provider_name("https://vendor.example.com"),
+            "vendor"
+        );
+        // Additional edge: strip scheme, api prefix, lowercase, replace invalid
+        assert_eq!(derive_provider_name(""), "");
+        assert_eq!(derive_provider_name("https://api.example.com"), "example");
+        assert_eq!(
+            derive_provider_name("https://API.ExampleVendor.AI/v1"),
+            "example-vendor"
+        );
+        // Invalid chars replaced with '-'
+        assert_eq!(
+            derive_provider_name("https://api.foo$bar.example.com"),
+            "foo-bar"
+        );
+        // Truncate to 64
+        let long = format!("https://api.{}.example.com", "a".repeat(70));
+        assert_eq!(derive_provider_name(&long).len(), 64);
+    }
+
+    #[test]
+    fn prefill_is_editable() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_type(&mut state, "https://api.example-vendor.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "model-a");
+        t108_enter(&mut state);
+        t108_type(&mut state, "EXAMPLE_VENDOR_API_KEY");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::Provider);
+        assert_eq!(form.input, "example-vendor");
+        // Editable: clear and type custom
+        for _ in 0..form.input.len() {
+            handle_key(
+                &mut state,
+                t108_key(crossterm::event::KeyCode::Backspace),
+                10,
+            );
+        }
+        t108_type(&mut state, "my-custom");
+        t108_enter(&mut state);
+        let completed = state
+            .provider_add_form
+            .as_ref()
+            .unwrap()
+            .completed
+            .clone()
+            .unwrap();
+        assert_eq!(completed.provider, "my-custom");
+        assert_eq!(
+            completed.endpoint.as_deref(),
+            Some("https://api.example-vendor.com/v1")
+        );
+    }
+
+    #[test]
+    fn name_only_flow_still_works() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty endpoint -> model
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::Model
+        );
+        t108_type(&mut state, "gpt-4o");
+        t108_enter(&mut state);
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::Provider);
+        assert_eq!(form.input, ""); // empty prefill for name-only flow
+        t108_type(&mut state, "my-provider");
+        t108_enter(&mut state);
+        let completed = state
+            .provider_add_form
+            .as_ref()
+            .unwrap()
+            .completed
+            .clone()
+            .unwrap();
+        assert_eq!(completed.provider, "my-provider");
+        assert_eq!(completed.model, "gpt-4o");
+        assert!(completed.endpoint.is_none());
+    }
+
+    #[test]
+    fn up_down_navigation_follows_new_order() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::Endpoint
+        );
+        // Down validates and moves Endpoint -> Model
+        t108_type(&mut state, "https://api.openai.com/v1");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::Model
+        );
+        // Up returns to Endpoint with restored value
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::Endpoint
+        );
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().input,
+            "https://api.openai.com/v1"
+        );
+        // Continue down chain: Endpoint -> Model -> CredentialEnv -> Provider
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        t108_type(&mut state, "gpt-4o");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::CredentialEnv
+        );
+        t108_type(&mut state, "OPENAI_API_KEY");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::Provider);
+        assert_eq!(form.input, "openai");
+        // Up from Provider goes to CredentialEnv
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::CredentialEnv
+        );
+        // No prev from Endpoint
+        let mut state2 = TuiState::new();
+        open_provider_add_form(&mut state2);
+        handle_key(&mut state2, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert_eq!(
+            state2.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::Endpoint
+        );
+    }
+
+    #[test]
+    fn url_first_flow_completes() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_type(&mut state, "https://api.example-vendor.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "model-a");
+        t108_enter(&mut state);
+        t108_type(&mut state, "EXAMPLE_VENDOR_API_KEY");
+        t108_enter(&mut state);
+        // Provider prefilled
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::Provider);
+        assert_eq!(form.input, "example-vendor");
+        t108_enter(&mut state);
+        let completed = state
+            .provider_add_form
+            .as_ref()
+            .unwrap()
+            .completed
+            .clone()
+            .unwrap();
+        assert_eq!(completed.provider, "example-vendor");
+        assert_eq!(completed.model, "model-a");
+        assert_eq!(completed.credential_env, "EXAMPLE_VENDOR_API_KEY");
+        assert_eq!(
+            completed.endpoint.as_deref(),
+            Some("https://api.example-vendor.com/v1")
+        );
     }
 }
