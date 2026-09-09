@@ -344,6 +344,83 @@ impl GenericProvider {
     }
 }
 
+/// Fetch available models from a provider's OpenAI-compatible `/models` endpoint.
+///
+/// This is the I6 provider surface for `/models` — a blocking GET to
+/// `{endpoint}/models` with Bearer auth (when a credential is present),
+/// bounded to 1 MiB and sanitized, parsing the OpenAI shape
+/// `{data: [{id: "..."}]}`. The synchronous blocking call freezes the TUI
+/// redraw while waiting — documented architectural constraint (no threads,
+/// single read-owner, stdio frontend byte-unchanged). On error or
+/// unrecognized shape an `Err` with a sanitized `String` is returned, never
+/// echoing the credential.
+///
+/// Uses the same bounded `reqwest` pattern as `GenericProvider::call_generic`
+/// and the same credential redaction / 1 MiB cap / recording-hygiene rules
+/// (no credential values in output). Not a tool — invoked from the `/models`
+/// command dispatch.
+pub fn fetch_models(
+    endpoint: &str,
+    credential: Option<&HostCredential>,
+) -> Result<Vec<String>, String> {
+    let url = format!("{}/models", endpoint.trim_end_matches('/'));
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|err| format!("client build failed: {err}"))?;
+    let cred_str = credential.map(|c| {
+        // `HostCredential` redacted Debug; hold the bearer only for the header.
+        String::from_utf8_lossy(c.as_bytes()).to_string()
+    });
+    let mut req = client.get(&url).header("Content-Type", "application/json");
+    if let Some(cred) = cred_str {
+        // I6 specifies Bearer auth from HostCredential (OpenAI-compatible).
+        // For providers that use a different header the generic path still
+        // routes via Bearer — the error surface is honest if rejected.
+        req = req.header("Authorization", format!("Bearer {cred}"));
+    }
+    let response =
+        req.send().map_err(|err| format!("request failed: {err}"))?;
+    let status = response.status();
+    let text = crate::provider::bounded_body_text(response)
+        .map_err(|err| format!("response read failed: {err}"))?;
+    if !status.is_success() {
+        let snippet: String = text.chars().take(512).collect();
+        let safe: String = snippet
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+            .collect();
+        return Err(format!("models fetch failed: {status}: {safe}"));
+    }
+    let value: Value = serde_json::from_str(&text).map_err(|err| {
+        format!("unrecognized response shape: JSON parse failed: {err}")
+    })?;
+    parse_models_shape(&value)
+}
+
+/// Parse the OpenAI models response shape `{data: [{id: "..."}]}` into ids.
+/// Public for tests to inject fixture-shaped responses via existing infra.
+pub fn parse_models_shape(value: &Value) -> Result<Vec<String>, String> {
+    let data =
+        value.get("data").and_then(|d| d.as_array()).ok_or_else(|| {
+            "unrecognized response shape: expected {data: [{id: \"...\"}]}"
+                .to_owned()
+        })?;
+    let mut ids = Vec::new();
+    for entry in data {
+        if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
+            ids.push(id.to_owned());
+        }
+    }
+    if ids.is_empty() && !data.is_empty() {
+        return Err(
+            "unrecognized response shape: no valid model ids".to_owned()
+        );
+    }
+    Ok(ids)
+}
+
 impl std::fmt::Display for GenericProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GenericProvider({}:[REDACTED])", self.provider)
@@ -415,5 +492,43 @@ mod tests {
         let events: Vec<_> =
             provider.stream(&request, token.signal()).collect();
         assert!(!events.is_empty());
+    }
+
+    #[test]
+    fn parse_models_shape_extracts_ids() {
+        // I6: fixture-shaped OpenAI response via existing test infra
+        let value = serde_json::json!({
+            "object": "list",
+            "data": [
+                {"id": "gpt-4o", "object": "model"},
+                {"id": "gpt-4o-mini", "object": "model"}
+            ]
+        });
+        let ids = super::parse_models_shape(&value).expect("parse");
+        assert_eq!(ids, vec!["gpt-4o", "gpt-4o-mini"]);
+        // Empty data yields empty Ok
+        let empty = serde_json::json!({"data": []});
+        assert_eq!(
+            super::parse_models_shape(&empty).expect("empty"),
+            Vec::<String>::new()
+        );
+        // Missing data -> Err honest
+        let bad = serde_json::json!({"models": []});
+        assert!(super::parse_models_shape(&bad).is_err());
+    }
+
+    #[test]
+    fn fetch_models_bounded_get_redacts_credential_on_error() {
+        // I6 hygiene: credential values never appear in error output
+        let cred =
+            HostCredential::from_bytes_for_test(b"sk-secret-123".to_vec());
+        // Use an unreachable endpoint to force an error without leaking cred
+        let result = super::fetch_models("http://127.0.0.1:1", Some(&cred));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            !err.contains("sk-secret-123"),
+            "credential must not leak in error: {err:?}"
+        );
     }
 }

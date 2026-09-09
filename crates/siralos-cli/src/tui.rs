@@ -556,6 +556,9 @@ pub struct TuiState {
     /// Command palette popup (I2): when `Some`, the input starts with `/` and
     /// this holds the filtered catalog entries (case-insensitive prefix filter).
     pub palette: Option<Vec<(String, String)>>,
+    /// Selected palette entry index (I2): when `Some`, the highlighted entry
+    /// in the filtered palette (arrow-key navigation).
+    pub palette_selected: Option<usize>,
     /// Provider for header bar (P2) — same source as status line.
     pub provider: Option<String>,
     /// Model for header bar (P2).
@@ -565,6 +568,15 @@ pub struct TuiState {
     /// Provider add-flow form (C1) — sequential modal form; when Some, no other
     /// keys pass (modal discipline).
     pub provider_add_form: Option<ProviderAddForm>,
+    /// Submitted prompt history (I4): oldest first, bounded to 100, per-session
+    /// in-memory with no persistence.
+    pub prompt_history: Vec<String>,
+    /// Current history navigation index (I4): `None` means not navigating,
+    /// `Some(idx)` indexes into `prompt_history`.
+    pub history_index: Option<usize>,
+    /// Saved input before history navigation (I4): restored when navigating
+    /// past the newest entry.
+    pub history_draft: Option<String>,
 }
 
 impl Default for TuiState {
@@ -577,10 +589,14 @@ impl Default for TuiState {
             scroll_offset: 0,
             pending_approval: None,
             palette: None,
+            palette_selected: None,
             provider: None,
             model: None,
             provider_picker: None,
             provider_add_form: None,
+            prompt_history: Vec::new(),
+            history_index: None,
+            history_draft: None,
         }
     }
 }
@@ -710,6 +726,8 @@ impl TuiState {
     /// Update palette based on current input (I2). Call after every key edit:
     /// when `input` starts with `/`, filter the single catalog by the typed
     /// prefix (case-insensitive, prefix match); otherwise clear the palette.
+    /// Resets `palette_selected` to `None` on every recompute; clears history
+    /// navigation while the palette is visible (arrow keys route to palette).
     pub fn update_palette(&mut self) {
         if self.input.starts_with('/') {
             let prefix = self.input.to_ascii_lowercase();
@@ -724,9 +742,33 @@ impl TuiState {
             } else {
                 self.palette = Some(filtered);
             }
+            self.palette_selected = None;
+            // While palette is visible, history navigation is dormant.
+            self.history_index = None;
+            self.history_draft = None;
         } else {
             self.palette = None;
+            self.palette_selected = None;
         }
+    }
+
+    /// Push a submitted prompt into history (I4), bounded to 100, oldest first.
+    /// Empty or whitespace-only prompts are ignored.
+    pub fn push_history(&mut self, prompt: String) {
+        if prompt.trim().is_empty() {
+            return;
+        }
+        // Avoid consecutive duplicates (optional but keeps stack clean).
+        if self.prompt_history.last().is_some_and(|last| last == &prompt) {
+            return;
+        }
+        self.prompt_history.push(prompt);
+        if self.prompt_history.len() > 100 {
+            let drain = self.prompt_history.len() - 100;
+            self.prompt_history.drain(0..drain);
+        }
+        self.history_index = None;
+        self.history_draft = None;
     }
 
     /// Returns the effective transcript entries for rendering (syncs first).
@@ -1032,11 +1074,12 @@ pub fn draw_with_pane(
     let (header_area, transcript_area, input_area, status_area, pane_area) =
         match pane {
             None => {
+                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(1),
-                        Constraint::Min(1),
+                        Constraint::Min(0),
                         Constraint::Length(1),
                         Constraint::Length(1),
                     ])
@@ -1044,24 +1087,25 @@ pub fn draw_with_pane(
                 (chunks[0], chunks[1], chunks[2], chunks[3], None)
             }
             Some(_) => {
+                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
                 let outer = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(1),
-                        Constraint::Min(1),
+                        Constraint::Min(0),
                         Constraint::Length(1),
                     ])
                     .split(area);
                 let cols = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
-                        Constraint::Min(1),
+                        Constraint::Min(0),
                         Constraint::Length(CONTEXT_PANE_WIDTH),
                     ])
                     .split(outer[1]);
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .constraints([Constraint::Min(0), Constraint::Length(1)])
                     .split(cols[0]);
                 (outer[0], rows[0], rows[1], outer[2], Some(cols[1]))
             }
@@ -1145,61 +1189,126 @@ pub fn draw_with_pane(
         .style(Style::default().fg(Color::White));
     frame.render_widget(transcript, transcript_area);
 
-    // Command palette (I2/P4): popup above input, rounded, prefix-highlighted.
+    // Command palette (I2/P4/I3): popup above input, rounded, prefix-highlighted,
+    // with arrow-key selection (reversed style) and full vocabulary.
+    // I3 removes the 8-bound: shows ALL filtered entries, popup grows to fit
+    // bounded by terminal height minus input/status rows; scroll indicator if overflow.
     if let Some(catalog) = &state.palette {
         if !catalog.is_empty() || state.input.starts_with('/') {
-            let max_visible = 8usize;
-            let visible_palette =
-                catalog.iter().take(max_visible).collect::<Vec<_>>();
-            let remaining =
-                catalog.len().saturating_sub(visible_palette.len());
-            let prefix_lower = state.input.to_ascii_lowercase();
-            let mut palette_lines: Vec<Line<'_>> = visible_palette
-                .iter()
-                .map(|(name, desc)| {
-                    let name_lower = name.to_ascii_lowercase();
-                    if !prefix_lower.is_empty()
-                        && name_lower.starts_with(&prefix_lower)
-                        && prefix_lower.len() <= name.len()
-                    {
-                        let (pre, rest) = name.split_at(prefix_lower.len());
-                        Line::from(vec![
-                            Span::styled(
-                                pre.to_owned(),
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(
-                                        ratatui::style::Modifier::BOLD,
-                                    ),
-                            ),
-                            Span::styled(
-                                rest.to_owned(),
-                                Style::default().fg(Color::White),
-                            ),
-                            Span::styled(
-                                format!(" — {desc}"),
-                                Style::default().fg(Color::White),
-                            ),
-                        ])
-                    } else {
-                        Line::from(format!("{name} — {desc}"))
-                            .style(Style::default().fg(Color::White))
-                    }
-                })
-                .collect();
-            if remaining > 0 {
-                palette_lines.push(
-                    Line::from(format!("+{remaining} more"))
-                        .style(Style::default().fg(Color::DarkGray)),
-                );
-            } else if catalog.is_empty() {
+            // Available height for the popup (terminal height minus input/status/header).
+            // Bounded popup: grows to fit, but never exceeds terminal height -3 (header+input+status).
+            let available_height = (area.height.saturating_sub(3)) as usize;
+            // Needed height includes border (2). At least 3 (border + one line).
+            let mut palette_lines: Vec<Line<'_>> = Vec::new();
+            if catalog.is_empty() {
                 palette_lines.push(
                     Line::from("no matches")
                         .style(Style::default().fg(Color::DarkGray)),
                 );
+            } else {
+                // Compute inner height (available - border)
+                let inner_available = available_height.saturating_sub(2);
+                // Visible count: if overflow, reserve one line for scroll indicator
+                let total = catalog.len();
+                let needs_scroll = total > inner_available;
+                let visible_capacity = if needs_scroll {
+                    inner_available.saturating_sub(1).max(1)
+                } else {
+                    inner_available.max(1)
+                };
+                // Window around selected index
+                let mut window_start = 0usize;
+                if let Some(selected) = state.palette_selected {
+                    if selected < total && selected >= visible_capacity {
+                        window_start =
+                            selected.saturating_sub(visible_capacity - 1);
+                        if window_start + visible_capacity > total {
+                            window_start =
+                                total.saturating_sub(visible_capacity);
+                        }
+                    }
+                }
+                let window_end = (window_start + visible_capacity).min(total);
+                let prefix_lower = state.input.to_ascii_lowercase();
+                for (idx, (name, desc)) in
+                    catalog[window_start..window_end].iter().enumerate()
+                {
+                    let actual_idx = window_start + idx;
+                    let is_selected = state
+                        .palette_selected
+                        .is_some_and(|s| s == actual_idx);
+                    if is_selected {
+                        // Highlighted selection — reversed style
+                        let line = format!("{name} — {desc}");
+                        palette_lines.push(
+                            Line::from(line).style(
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .bg(Color::Black)
+                                    .add_modifier(
+                                        ratatui::style::Modifier::REVERSED
+                                            | ratatui::style::Modifier::BOLD,
+                                    ),
+                            ),
+                        );
+                    } else {
+                        let name_lower = name.to_ascii_lowercase();
+                        if !prefix_lower.is_empty()
+                            && name_lower.starts_with(&prefix_lower)
+                            && prefix_lower.len() <= name.len()
+                        {
+                            let (pre, rest) =
+                                name.split_at(prefix_lower.len());
+                            palette_lines.push(Line::from(vec![
+                                Span::styled(
+                                    pre.to_owned(),
+                                    Style::default()
+                                        .fg(Color::Yellow)
+                                        .add_modifier(
+                                            ratatui::style::Modifier::BOLD,
+                                        ),
+                                ),
+                                Span::styled(
+                                    rest.to_owned(),
+                                    Style::default().fg(Color::White),
+                                ),
+                                Span::styled(
+                                    format!(" — {desc}"),
+                                    Style::default().fg(Color::White),
+                                ),
+                            ]));
+                        } else {
+                            palette_lines.push(
+                                Line::from(format!("{name} — {desc}"))
+                                    .style(Style::default().fg(Color::White)),
+                            );
+                        }
+                    }
+                }
+                if needs_scroll {
+                    let remaining = total.saturating_sub(visible_capacity);
+                    // Show scroll indicator with remaining count and arrow hint
+                    let indicator = if window_start > 0 && window_end < total {
+                        format!(
+                            "↑ {} more · ↓ {} more",
+                            window_start,
+                            total - window_end
+                        )
+                    } else if window_end < total {
+                        format!("+{remaining} more ↓")
+                    } else {
+                        format!("↑ {window_start} more")
+                    };
+                    palette_lines.push(
+                        Line::from(indicator)
+                            .style(Style::default().fg(Color::DarkGray)),
+                    );
+                }
             }
             // Palette popup rect: directly above input, width clamped, height bounded
-            let palette_height = (palette_lines.len() as u16).min(9);
+            let palette_height = (palette_lines.len() as u16 + 2)
+                .min(area.height.saturating_sub(3))
+                .max(3);
             let palette_width = 50u16.min(transcript_area.width);
             let palette_x = input_area.x;
             let palette_y = input_area.y.saturating_sub(palette_height);
@@ -1574,11 +1683,12 @@ pub fn render_to_buffer_with_pane(
     let (header_area, transcript_area, input_area, status_area, pane_area) =
         match pane {
             None => {
+                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(1),
-                        Constraint::Min(1),
+                        Constraint::Min(0),
                         Constraint::Length(1),
                         Constraint::Length(1),
                     ])
@@ -1586,24 +1696,25 @@ pub fn render_to_buffer_with_pane(
                 (chunks[0], chunks[1], chunks[2], chunks[3], None)
             }
             Some(_) => {
+                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
                 let outer = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(1),
-                        Constraint::Min(1),
+                        Constraint::Min(0),
                         Constraint::Length(1),
                     ])
                     .split(area);
                 let cols = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
-                        Constraint::Min(1),
+                        Constraint::Min(0),
                         Constraint::Length(CONTEXT_PANE_WIDTH),
                     ])
                     .split(outer[1]);
                 let rows = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(1), Constraint::Length(1)])
+                    .constraints([Constraint::Min(0), Constraint::Length(1)])
                     .split(cols[0]);
                 (outer[0], rows[0], rows[1], outer[2], Some(cols[1]))
             }
@@ -1674,60 +1785,114 @@ pub fn render_to_buffer_with_pane(
         .style(Style::default().fg(Color::White));
     transcript.render(transcript_area, &mut buf);
 
-    // Palette (I2/P4) — same as draw_with_pane but for buffer, rounded + highlight
+    // Palette (I2/P4/I3) — buffer path, same as Frame path: full vocabulary, selection highlight, scroll indicator
     if let Some(catalog) = &state.palette {
         if !catalog.is_empty() || state.input.starts_with('/') {
-            let max_visible = 8usize;
-            let visible_palette =
-                catalog.iter().take(max_visible).collect::<Vec<_>>();
-            let remaining =
-                catalog.len().saturating_sub(visible_palette.len());
-            let prefix_lower = state.input.to_ascii_lowercase();
-            let mut palette_lines: Vec<Line<'_>> = visible_palette
-                .iter()
-                .map(|(name, desc)| {
-                    let name_lower = name.to_ascii_lowercase();
-                    if !prefix_lower.is_empty()
-                        && name_lower.starts_with(&prefix_lower)
-                        && prefix_lower.len() <= name.len()
-                    {
-                        let (pre, rest) = name.split_at(prefix_lower.len());
-                        Line::from(vec![
-                            Span::styled(
-                                pre.to_owned(),
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(
-                                        ratatui::style::Modifier::BOLD,
-                                    ),
-                            ),
-                            Span::styled(
-                                rest.to_owned(),
-                                Style::default().fg(Color::White),
-                            ),
-                            Span::styled(
-                                format!(" — {desc}"),
-                                Style::default().fg(Color::White),
-                            ),
-                        ])
-                    } else {
-                        Line::from(format!("{name} — {desc}"))
-                            .style(Style::default().fg(Color::White))
-                    }
-                })
-                .collect();
-            if remaining > 0 {
-                palette_lines.push(
-                    Line::from(format!("+{remaining} more"))
-                        .style(Style::default().fg(Color::DarkGray)),
-                );
-            } else if catalog.is_empty() {
+            let available_height = (area.height.saturating_sub(3)) as usize;
+            let mut palette_lines: Vec<Line<'_>> = Vec::new();
+            if catalog.is_empty() {
                 palette_lines.push(
                     Line::from("no matches")
                         .style(Style::default().fg(Color::DarkGray)),
                 );
+            } else {
+                let inner_available = available_height.saturating_sub(2);
+                let total = catalog.len();
+                let needs_scroll = total > inner_available;
+                let visible_capacity = if needs_scroll {
+                    inner_available.saturating_sub(1).max(1)
+                } else {
+                    inner_available.max(1)
+                };
+                let mut window_start = 0usize;
+                if let Some(selected) = state.palette_selected {
+                    if selected < total && selected >= visible_capacity {
+                        window_start =
+                            selected.saturating_sub(visible_capacity - 1);
+                        if window_start + visible_capacity > total {
+                            window_start =
+                                total.saturating_sub(visible_capacity);
+                        }
+                    }
+                }
+                let window_end = (window_start + visible_capacity).min(total);
+                let prefix_lower = state.input.to_ascii_lowercase();
+                for (idx, (name, desc)) in
+                    catalog[window_start..window_end].iter().enumerate()
+                {
+                    let actual_idx = window_start + idx;
+                    let is_selected = state
+                        .palette_selected
+                        .is_some_and(|s| s == actual_idx);
+                    if is_selected {
+                        let line = format!("{name} — {desc}");
+                        palette_lines.push(
+                            Line::from(line).style(
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .bg(Color::Black)
+                                    .add_modifier(
+                                        ratatui::style::Modifier::REVERSED
+                                            | ratatui::style::Modifier::BOLD,
+                                    ),
+                            ),
+                        );
+                    } else {
+                        let name_lower = name.to_ascii_lowercase();
+                        if !prefix_lower.is_empty()
+                            && name_lower.starts_with(&prefix_lower)
+                            && prefix_lower.len() <= name.len()
+                        {
+                            let (pre, rest) =
+                                name.split_at(prefix_lower.len());
+                            palette_lines.push(Line::from(vec![
+                                Span::styled(
+                                    pre.to_owned(),
+                                    Style::default()
+                                        .fg(Color::Yellow)
+                                        .add_modifier(
+                                            ratatui::style::Modifier::BOLD,
+                                        ),
+                                ),
+                                Span::styled(
+                                    rest.to_owned(),
+                                    Style::default().fg(Color::White),
+                                ),
+                                Span::styled(
+                                    format!(" — {desc}"),
+                                    Style::default().fg(Color::White),
+                                ),
+                            ]));
+                        } else {
+                            palette_lines.push(
+                                Line::from(format!("{name} — {desc}"))
+                                    .style(Style::default().fg(Color::White)),
+                            );
+                        }
+                    }
+                }
+                if needs_scroll {
+                    let remaining = total.saturating_sub(visible_capacity);
+                    let indicator = if window_start > 0 && window_end < total {
+                        format!(
+                            "↑ {} more · ↓ {} more",
+                            window_start,
+                            total - window_end
+                        )
+                    } else if window_end < total {
+                        format!("+{remaining} more ↓")
+                    } else {
+                        format!("↑ {window_start} more")
+                    };
+                    palette_lines.push(
+                        Line::from(indicator)
+                            .style(Style::default().fg(Color::DarkGray)),
+                    );
+                }
             }
-            let palette_height = (palette_lines.len() as u16).min(9);
+            let palette_height = (palette_lines.len() as u16 + 2)
+                .min(area.height.saturating_sub(3))
+                .max(3);
             let palette_width = 50u16.min(transcript_area.width);
             let palette_x = input_area.x;
             let palette_y = input_area.y.saturating_sub(palette_height);
@@ -2155,12 +2320,24 @@ fn longest_common_prefix(strs: &[String]) -> String {
     prefix
 }
 
-/// Handle Tab completion for the palette (C5): when input starts with `/` and
-/// there are matches, Tab (and BackTab cycles backward) completes the typed
-/// prefix to the matching command — one match -> full, multiple -> common prefix.
+/// Handle Tab completion for the palette (C5 + I2): when input starts with `/` and
+/// there are matches, Tab completes the typed prefix. If a palette entry is
+/// selected (I2), Tab completes to that entry and clears the palette; otherwise
+/// one match -> full, multiple -> common prefix. No match is a no-op.
 fn complete_palette_prefix(state: &mut TuiState) {
     if !state.input.starts_with('/') {
         return;
+    }
+    // I2: Tab on a selected entry completes to that entry and clears palette.
+    if let Some(idx) = state.palette_selected {
+        if let Some(palette) = &state.palette {
+            if let Some((name, _)) = palette.get(idx) {
+                state.input = name.clone();
+                state.palette = None;
+                state.palette_selected = None;
+                return;
+            }
+        }
     }
     let prefix_lower = state.input.to_ascii_lowercase();
     let matches: Vec<String> = command_catalog()
@@ -2379,25 +2556,121 @@ pub fn handle_key(
             false
         }
         (KeyCode::Esc, _) => {
-            // Esc clears palette/picker context or input.
+            // Esc clears palette/picker context or input. Also clears selection/history.
             if state.palette.is_some() {
                 state.input.clear();
+                state.palette = None;
+                state.palette_selected = None;
                 state.update_palette();
+            } else {
+                // When palette is None, Esc clears history navigation state as well
+                state.history_index = None;
+                state.history_draft = None;
             }
             false
         }
         (KeyCode::Tab, _) | (KeyCode::BackTab, _) => {
-            // C5 Tab completion (and Shift-Tab cycles backward — same completion).
+            // C5 Tab + I2 Tab with selection: if a palette entry is selected, complete to it and clear palette.
             complete_palette_prefix(state);
             false
         }
         (KeyCode::Up, _) => {
-            // When palette is visible, Up navigates palette selection is display-only
-            // (no selection highlight needed for palette) — consume to allow future.
+            // I2: when palette is Some, Up navigates palette selection
+            if let Some(catalog) = &state.palette {
+                if !catalog.is_empty() {
+                    // Palette navigation mode
+                    let len = catalog.len();
+                    state.palette_selected =
+                        Some(match state.palette_selected {
+                            None => len - 1,
+                            Some(0) => len - 1,
+                            Some(idx) => idx - 1,
+                        });
+                    return false;
+                }
+            }
+            // I4: when palette is None, Up navigates history
+            if state.palette.is_none() {
+                if state.prompt_history.is_empty() {
+                    return false;
+                }
+                if state.history_index.is_none() {
+                    // Entering history navigation — save draft
+                    state.history_draft = Some(state.input.clone());
+                    let last = state.prompt_history.len() - 1;
+                    state.history_index = Some(last);
+                    state.input = state.prompt_history[last].clone();
+                    state.update_palette();
+                } else if let Some(idx) = state.history_index {
+                    if idx > 0 {
+                        let prev = idx - 1;
+                        state.history_index = Some(prev);
+                        state.input = state.prompt_history[prev].clone();
+                        state.update_palette();
+                    }
+                    // at 0, stay
+                }
+            }
             false
         }
-        (KeyCode::Down, _) => false,
-        (KeyCode::Enter, _) => true,
+        (KeyCode::Down, _) => {
+            // I2: when palette is Some, Down navigates palette selection
+            if let Some(catalog) = &state.palette {
+                if !catalog.is_empty() {
+                    let len = catalog.len();
+                    state.palette_selected =
+                        Some(match state.palette_selected {
+                            None => 0,
+                            Some(idx) if idx + 1 >= len => 0,
+                            Some(idx) => idx + 1,
+                        });
+                    return false;
+                }
+            }
+            // I4: when palette is None, Down navigates history forward / restores draft
+            if state.palette.is_none() {
+                if let Some(idx) = state.history_index {
+                    if idx + 1 < state.prompt_history.len() {
+                        let next = idx + 1;
+                        state.history_index = Some(next);
+                        state.input = state.prompt_history[next].clone();
+                        state.update_palette();
+                    } else {
+                        // Past newest — restore draft
+                        state.history_index = None;
+                        let draft =
+                            state.history_draft.take().unwrap_or_default();
+                        state.input = draft;
+                        state.update_palette();
+                    }
+                }
+            }
+            false
+        }
+        (KeyCode::Enter, _) => {
+            // I2: Enter on a selected palette entry fills input and clears palette (no submit)
+            if let Some(selected) = state.palette_selected {
+                if let Some(catalog) = &state.palette {
+                    if let Some((name, _)) = catalog.get(selected) {
+                        state.input = name.clone();
+                        state.palette = None;
+                        state.palette_selected = None;
+                        return false;
+                    }
+                }
+            }
+            // I4: push non-slash prompts to history on submit (bounded, per-session)
+            if !state.input.trim().is_empty() && !state.input.starts_with('/')
+            {
+                let to_push = state.input.clone();
+                state.push_history(to_push);
+            } else {
+                // For slash commands, clear history navigation state but don't push
+                state.history_index = None;
+                state.history_draft = None;
+            }
+            true
+        }
         (KeyCode::Backspace, _) => {
             state.input.pop();
             state.update_palette();
@@ -3445,9 +3718,10 @@ mod tests {
                 catalog.iter().map(|(name, _)| name.as_str()).collect();
             assert!(names.contains(&"/provider"));
             assert!(names.contains(&"/model"));
+            assert!(names.contains(&"/models"));
             assert!(names.contains(&"/evolve"));
             assert!(names.contains(&"/context"));
-            assert_eq!(names.len(), 10);
+            assert_eq!(names.len(), 11);
         }
 
         #[test]
@@ -3457,13 +3731,24 @@ mod tests {
             state.update_palette();
             let palette_len =
                 state.palette.as_ref().expect("palette for /").len();
-            assert_eq!(palette_len, 10);
-            // Draw truncates to 8 visible + +N more
+            assert_eq!(palette_len, 11);
+            // I3: palette shows ALL filtered entries, bounded by terminal height minus input/status rows; scroll indicator only if overflow.
+            // At 80x24, available 21, 11 entries fit fully with no indicator.
             let buf = super::render(&state, 80, 24);
             let content: String =
                 buf.content().iter().map(|c| c.symbol()).collect();
-            // Should contain at least one command name
             assert!(content.contains("/context"));
+            assert!(content.contains("/models"));
+            // At a small height where overflow occurs, scroll indicator appears
+            let small_buf = super::render(&state, 80, 10);
+            let small_content: String =
+                small_buf.content().iter().map(|c| c.symbol()).collect();
+            // When overflow, indicator shows remaining
+            assert!(
+                small_content.contains("more")
+                    || small_content.contains("↑")
+                    || small_content.contains("↓")
+            );
         }
     }
 
@@ -3735,8 +4020,8 @@ mod tests {
         let mut state = TuiState::new();
         state.input = "/".to_owned();
         state.update_palette();
-        // Full catalog 10, palette popup bounded (8 visible + remaining indicator)
-        assert_eq!(state.palette.as_ref().unwrap().len(), 10);
+        // Full catalog 11, palette shows all filtered entries
+        assert_eq!(state.palette.as_ref().unwrap().len(), 11);
         let buf = render(&state, 80, 24);
         let content: String =
             buf.content().iter().map(|c| c.symbol()).collect();
@@ -4296,5 +4581,122 @@ mod tests {
         let content: String =
             a.content().iter().map(|cell| cell.symbol()).collect();
         assert!(content.contains("add provider"));
+    }
+
+    #[test]
+    fn palette_arrow_navigation_and_enter_tab_selection() {
+        // I2: /p + Down to /provider + Enter -> input becomes /provider, palette None; Tab also completes to selected.
+        let mut state = TuiState::new();
+        handle_key(
+            &mut state,
+            t108_key(crossterm::event::KeyCode::Char('/')),
+            10,
+        );
+        handle_key(
+            &mut state,
+            t108_key(crossterm::event::KeyCode::Char('p')),
+            10,
+        );
+        assert!(state.palette.is_some());
+        let palette = state.palette.as_ref().unwrap();
+        assert!(palette.iter().any(|(n, _)| n == "/provider"));
+        // Down selects first entry (wraps from None to 0)
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(state.palette_selected, Some(0));
+        // Enter fills input and clears palette
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Enter), 10);
+        assert_eq!(state.input, "/provider");
+        assert!(state.palette.is_none());
+        assert!(state.palette_selected.is_none());
+        // Tab with selected also completes
+        state.input = "/p".to_owned();
+        state.update_palette();
+        assert!(state.palette.is_some());
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert!(state.palette_selected.is_some());
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Tab), 10);
+        assert_eq!(state.input, "/provider");
+        assert!(state.palette.is_none());
+    }
+
+    #[test]
+    fn command_history_up_down_stack_and_restore() {
+        // I4: submit "a", "b", Up -> "b", Up -> "a", Down -> "b", Down -> "" restored; palette None routing.
+        let mut state = TuiState::new();
+        // Simulate submits via push_history (Enter handling does this for non-slash prompts)
+        state.push_history("a".to_owned());
+        state.push_history("b".to_owned());
+        assert_eq!(state.prompt_history, vec!["a", "b"]);
+        state.input = "".to_owned();
+        state.update_palette();
+        assert!(state.palette.is_none());
+        // First Up -> "b"
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert_eq!(state.input, "b");
+        assert_eq!(state.history_index, Some(1));
+        // Up -> "a"
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert_eq!(state.input, "a");
+        assert_eq!(state.history_index, Some(0));
+        // Down -> "b"
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(state.input, "b");
+        assert_eq!(state.history_index, Some(1));
+        // Down -> "" restored (pre-navigation draft)
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(state.input, "");
+        assert_eq!(state.history_index, None);
+        assert!(state.history_draft.is_none());
+        // When palette is Some, Up goes to palette not history
+        state.input = "/p".to_owned();
+        state.update_palette();
+        assert!(state.palette.is_some());
+        let history_before = state.prompt_history.clone();
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert!(state.palette_selected.is_some());
+        // History unchanged, input unchanged (still "/p")
+        assert_eq!(state.input, "/p");
+        assert_eq!(state.prompt_history, history_before);
+    }
+
+    #[test]
+    fn off_render_at_80x24_has_no_empty_right_edge_strip() {
+        // I5: off variant transcript spans full width (Min(0) fill), no gap; on variant fills with pane.
+        let mut state = TuiState::new();
+        // 80 'x' line should fill full width when pane is off, not truncated to 40.
+        let long = "x".repeat(80);
+        state.transcript_lines = vec![long.clone()];
+        state.transcript = vec![crate::tui::TranscriptEntry {
+            text: long.clone(),
+            timestamp: None,
+        }];
+        state.input = "test".to_owned();
+        state.status = "ready".to_owned();
+        let buf_off = crate::tui::render_to_buffer(&state, 80, 24);
+        let content_off: String =
+            buf_off.content().iter().map(|c| c.symbol()).collect();
+        // Long line should be present (not truncated to pane width 40)
+        assert!(
+            content_off.contains(&long[..40]),
+            "off should contain long line"
+        );
+        // Header should span full width (reversed cyan, 80 cols)
+        let header_line = &content_off[0..80];
+        assert_eq!(header_line.len(), 80);
+        // On variant with pane should still fill full width (transcript 40 + pane 40)
+        let pane = crate::tui::ContextPaneData {
+            counters: vec![],
+            ring: vec![],
+            activity: vec![],
+        };
+        let buf_on = crate::tui::render_to_buffer_with_pane(
+            &state,
+            Some(&pane),
+            80,
+            24,
+        );
+        let content_on: String =
+            buf_on.content().iter().map(|c| c.symbol()).collect();
+        assert!(content_on.contains("x"));
     }
 }

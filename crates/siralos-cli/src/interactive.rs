@@ -247,8 +247,9 @@ where
         replay_store_path,
         applied_provider,
         applied_model,
+        applied_endpoint,
         credential_present,
-        ..
+        applied_credential,
     } = session;
 
     // --- Frontend residual (stdio): prompt loop over reader/writer. ---
@@ -306,6 +307,8 @@ where
             applied_provider.as_deref(),
             applied_model.as_deref(),
             credential_present,
+            applied_endpoint.as_deref(),
+            applied_credential.as_ref(),
         )? {
             break;
         }
@@ -340,6 +343,8 @@ enum SlashCommand<'a> {
     Provider,
     /// `/model` — display-only (U7).
     Model,
+    /// `/models` — list provider models (I6, blocking GET).
+    Models,
     /// `/evolve` — display-only (U8).
     Evolve,
     /// Anything else: a prompt for the application.
@@ -361,6 +366,7 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
         ("/domains-activate", "Activate a domain plugin"),
         ("/provider", "Show applied provider"),
         ("/model", "Show applied model"),
+        ("/models", "List available models"),
         ("/evolve", "Show Stage 6 evolution surfaces"),
         ("/exit", "Exit the session"),
     ]
@@ -409,6 +415,7 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/domains" => SlashCommand::Domains,
         "/provider" => SlashCommand::Provider,
         "/model" => SlashCommand::Model,
+        "/models" => SlashCommand::Models,
         "/evolve" => SlashCommand::Evolve,
         "/exit" => SlashCommand::Exit,
         _ => {
@@ -535,6 +542,8 @@ fn dispatch_stdio_command<P, W>(
     provider: Option<&str>,
     model: Option<&str>,
     credential_present: bool,
+    endpoint: Option<&str>,
+    credential: Option<&siralos_adapters::provider::HostCredential>,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -614,6 +623,51 @@ where
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
+        SlashCommand::Models => {
+            // I6 blocking fetch — synchronous, freezes redraw (architectural constraint, no threads).
+            match (provider, endpoint, credential) {
+                (Some(_), Some(ep), Some(cred)) => {
+                    match siralos_adapters::provider::generic::fetch_models(
+                        ep,
+                        Some(cred),
+                    ) {
+                        Ok(models) => {
+                            if models.is_empty() {
+                                let line = "no models returned\n";
+                                writer
+                                    .write_all(
+                                        sanitize_for_display(line).as_bytes(),
+                                    )
+                                    .map_err(InteractiveError::Io)?;
+                            } else {
+                                for id in models {
+                                    let line = format!("{id}\n");
+                                    let sanitized =
+                                        sanitize_for_display(&line);
+                                    writer
+                                        .write_all(sanitized.as_bytes())
+                                        .map_err(InteractiveError::Io)?;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let line = format!("models fetch error: {err}\n");
+                            let sanitized = sanitize_for_display(&line);
+                            writer
+                                .write_all(sanitized.as_bytes())
+                                .map_err(InteractiveError::Io)?;
+                        }
+                    }
+                }
+                _ => {
+                    let msg = "no provider configured — set [profile] provider/endpoint and credential (env:...) in siralos.toml\n";
+                    let sanitized = sanitize_for_display(msg);
+                    writer
+                        .write_all(sanitized.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                }
+            }
+        }
         SlashCommand::Evolve => {
             let rendered = sanitize_for_display(&render_evolve_lines());
             writer
@@ -662,6 +716,8 @@ fn dispatch_tui_command<P>(
     provider: Option<&str>,
     model: Option<&str>,
     credential_present: bool,
+    endpoint: Option<&str>,
+    credential: Option<&siralos_adapters::provider::HostCredential>,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -725,6 +781,44 @@ where
         SlashCommand::Model => {
             let rendered = sanitize_for_display(&render_model_line(model));
             let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Models => {
+            // I6 blocking fetch — same as stdio, synchronous freeze documented.
+            match (provider, endpoint, credential) {
+                (Some(_), Some(ep), Some(cred)) => {
+                    match siralos_adapters::provider::generic::fetch_models(
+                        ep,
+                        Some(cred),
+                    ) {
+                        Ok(models) => {
+                            if models.is_empty() {
+                                let line = "no models returned\n";
+                                let _ = sink.write_all(
+                                    sanitize_for_display(line).as_bytes(),
+                                );
+                            } else {
+                                for id in models {
+                                    let line = format!("{id}\n");
+                                    let sanitized =
+                                        sanitize_for_display(&line);
+                                    let _ =
+                                        sink.write_all(sanitized.as_bytes());
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let line = format!("models fetch error: {err}\n");
+                            let sanitized = sanitize_for_display(&line);
+                            let _ = sink.write_all(sanitized.as_bytes());
+                        }
+                    }
+                }
+                _ => {
+                    let msg = "no provider configured — set [profile] provider/endpoint and credential (env:...) in siralos.toml\n";
+                    let sanitized = sanitize_for_display(msg);
+                    let _ = sink.write_all(sanitized.as_bytes());
+                }
+            }
         }
         SlashCommand::Evolve => {
             let rendered = sanitize_for_display(&render_evolve_lines());
@@ -830,6 +924,9 @@ struct SessionComposition<'a> {
     applied_endpoint: Option<String>,
     /// Whether the credential for the applied provider is present (U7).
     credential_present: bool,
+    /// Retained credential for /models fetch (I6) — the live HostCredential
+    /// (if any) resolved from the profile's `credential = "env:..."`.
+    applied_credential: Option<siralos_adapters::provider::HostCredential>,
 }
 
 /// Compose one session — the SINGLE definition both loops call (T4).
@@ -932,12 +1029,13 @@ fn compose_session(
             }
             _ => ("deterministic-fake".to_owned(), None, None, None),
         };
-    // I5/U7 + H6: applied provider/model/credential/endpoint for status + display + picker.
+    // I5/U7 + H6: applied provider/model/credential/endpoint for status + display + picker + /models (I6).
     let (
         applied_provider,
         applied_model,
         applied_endpoint,
         credential_present,
+        applied_credential,
     ) = match &loaded_profile {
         WorkspaceProfileLoad::Record(record)
             if effective.applied_profile.is_some() =>
@@ -946,14 +1044,19 @@ fn compose_session(
                 .credential
                 .as_deref()
                 .is_some_and(|c| HostCredential::from_env_ref(c).is_ok());
+            let cred = record
+                .credential
+                .as_deref()
+                .and_then(|c| HostCredential::from_env_ref(c).ok());
             (
                 record.provider.clone(),
                 record.model.clone(),
                 record.endpoint.clone(),
                 cred_present,
+                cred,
             )
         }
-        _ => (None, None, None, false),
+        _ => (None, None, None, false, None),
     };
     let mut live_host_provider: Option<HostProvider> = None;
     let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
@@ -1180,6 +1283,7 @@ fn compose_session(
         applied_model,
         applied_endpoint,
         credential_present,
+        applied_credential,
     })
 }
 
@@ -2170,6 +2274,7 @@ pub fn run_interactive_tui_with_options(
         applied_model,
         applied_endpoint,
         credential_present,
+        applied_credential,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
     let tui_state = Rc::new(RefCell::new(TuiState::new()));
@@ -2283,6 +2388,7 @@ pub fn run_interactive_tui_with_options(
                                     tui_state.borrow().input.clone();
                                 tui_state.borrow_mut().input.clear();
                                 tui_state.borrow_mut().palette = None;
+                                tui_state.borrow_mut().palette_selected = None;
                                 if input_line.trim().is_empty() {
                                     let base = "ready";
                                     let metrics_opt = context_session_holder
@@ -2439,6 +2545,8 @@ pub fn run_interactive_tui_with_options(
                     applied_provider.as_deref(),
                     applied_model.as_deref(),
                     credential_present,
+                    applied_endpoint.as_deref(),
+                    applied_credential.as_ref(),
                 )?;
                 if should_exit {
                     break;
@@ -3273,9 +3381,10 @@ mod tests {
         let names: Vec<&str> = catalog.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"/provider"));
         assert!(names.contains(&"/model"));
+        assert!(names.contains(&"/models"));
         assert!(names.contains(&"/evolve"));
         assert!(names.contains(&"/context"));
-        assert_eq!(names.len(), 10);
+        assert_eq!(names.len(), 11);
     }
 
     #[test]
@@ -3285,6 +3394,10 @@ mod tests {
             SlashCommand::Provider
         ));
         assert!(matches!(parse_slash_command("/model"), SlashCommand::Model));
+        assert!(matches!(
+            parse_slash_command("/models"),
+            SlashCommand::Models
+        ));
         assert!(matches!(
             parse_slash_command("/evolve"),
             SlashCommand::Evolve
@@ -3309,6 +3422,18 @@ mod tests {
         assert!(output.contains("proposal"));
         assert!(output.contains("packaging"));
         assert!(output.contains("host-gated"));
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn models_reports_honestly_when_unconfigured() {
+        // I6: when no provider/endpoint/credential, /models reports honestly (no fetch, no leak)
+        let root = temporary_directory("models-unconfigured");
+        let output = run("/models\n/exit\n", &root, None);
+        assert!(
+            output.contains("no provider configured"),
+            "expected honest unconfigured line, got: {output:?}"
+        );
         let _ = remove_dir_all(root);
     }
 
