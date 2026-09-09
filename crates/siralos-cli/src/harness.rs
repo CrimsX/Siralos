@@ -20680,6 +20680,8 @@ mod audit_remediation_harness_gate {
             skills: None,
             record_replay: false,
             replay: false,
+            protocol: siralos_core::composition::Protocol::default(),
+            model_display_name: None,
         };
         let declared_invalid =
             siralos_core::composition::DeclaredProfile::Invalid {

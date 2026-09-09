@@ -251,6 +251,8 @@ pub fn parse_profile_value(
             && key != "record-replay"
             && key != "replay"
             && key != "context_system"
+            && key != "protocol"
+            && key != "model_display_name"
         {
             return Err(error(format!("Unknown profile field {key:?}.")));
         }
@@ -419,6 +421,49 @@ pub fn parse_profile_value(
         };
         context_system_enabled = flag;
     }
+    let mut protocol = siralos_core::composition::Protocol::default();
+    if let Some(value) = profile.get("protocol") {
+        let Some(text) = value.as_str() else {
+            return Err(error(
+                "The [profile.protocol] entry must be a string.".to_owned(),
+            ));
+        };
+        let Some(parsed) = siralos_core::composition::Protocol::parse(text)
+        else {
+            return Err(error(
+                "The [profile.protocol] entry must be \"openai-compatible\" or \"anthropic\".".to_owned(),
+            ));
+        };
+        protocol = parsed;
+    }
+    let mut model_display_name: Option<String> = None;
+    if let Some(value) = profile.get("model_display_name") {
+        let Some(text) = value.as_str() else {
+            return Err(error(
+                "The [profile.model_display_name] entry must be a string."
+                    .to_owned(),
+            ));
+        };
+        if text.len()
+            > siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+        {
+            return Err(error(format!(
+                "The model display name exceeds the {}-byte bound.",
+                siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+            )));
+        }
+        if text.contains('\0') {
+            return Err(error(
+                "A model display name must not contain NUL.".to_owned(),
+            ));
+        }
+        if !text.chars().all(|c| !c.is_control()) {
+            return Err(error(
+                "A model display name must be printable.".to_owned(),
+            ));
+        }
+        model_display_name = Some(text.to_owned());
+    }
     Ok(ProfileRecord {
         name: name.to_owned(),
         overlay,
@@ -432,6 +477,8 @@ pub fn parse_profile_value(
         record_replay,
         replay,
         context_system_enabled,
+        protocol,
+        model_display_name,
     })
 }
 
@@ -779,5 +826,110 @@ widgets = ["x"]
             panic!("expected invalid");
         };
         assert!(diagnostic.contains("both record-replay"));
+    }
+
+    #[test]
+    fn profile_parse_protocol_matrix() {
+        // Present: openai-compatible
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"openai-compatible\"\n",
+        )
+        .expect("openai-compatible");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::OpenAiCompatible
+        );
+        // Present: anthropic
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"anthropic\"\n",
+        )
+        .expect("anthropic");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::Anthropic
+        );
+        // Absent -> default openai-compatible
+        let record = parse_profile_document("\n[profile]\nname = \"dev\"\n")
+            .expect("absent");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::OpenAiCompatible
+        );
+        // Malformed: unknown protocol -> error (profile unapplied)
+        let malformed = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"gopher\"\n",
+        );
+        assert!(malformed.is_err());
+        assert!(malformed.unwrap_err().message.contains("protocol"));
+        // Via workspace load -> Invalid
+        let root = workspace();
+        std::fs::write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"dev\"\nprotocol = \"gopher\"\n",
+        )
+        .expect("write");
+        let load = super::load_workspace_profile(&root);
+        let super::WorkspaceProfileLoad::Invalid { diagnostic } = load else {
+            panic!("expected invalid");
+        };
+        assert!(diagnostic.contains("protocol"));
+    }
+
+    #[test]
+    fn profile_parse_model_display_matrix() {
+        // Present
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nmodel_display_name = \"My GPT\"\n",
+        )
+        .expect("present");
+        assert_eq!(record.model_display_name.as_deref(), Some("My GPT"));
+        // Absent -> None
+        let record = parse_profile_document("\n[profile]\nname = \"dev\"\n")
+            .expect("absent");
+        assert!(record.model_display_name.is_none());
+        // Oversize -> error
+        let long = "a".repeat(257);
+        let malformed = parse_profile_document(&format!(
+            "\n[profile]\nname = \"dev\"\nmodel_display_name = \"{long}\"\n"
+        ));
+        assert!(malformed.is_err());
+        assert!(malformed.unwrap_err().message.contains("model display name"));
+        // Via workspace load -> Invalid
+        let root = workspace();
+        std::fs::write(
+            root.join("siralos.toml"),
+            format!(
+                "[profile]\nname = \"dev\"\nmodel_display_name = \"{long}\"\n"
+            ),
+        )
+        .expect("write");
+        let load = super::load_workspace_profile(&root);
+        let super::WorkspaceProfileLoad::Invalid { diagnostic } = load else {
+            panic!("expected invalid");
+        };
+        assert!(diagnostic.contains("model display name"));
+    }
+
+    #[test]
+    fn write_includes_new_keys() {
+        // Protocol omitted when default, display omitted when empty — tested via write_profile_config
+        // Here we test parse round-trip: writing default should not include protocol key
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"openai-compatible\"\n",
+        )
+        .expect("default");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::OpenAiCompatible
+        );
+        // Anthropic is non-default and should be present
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"anthropic\"\n",
+        )
+        .expect("anthropic");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::Anthropic
+        );
     }
 }

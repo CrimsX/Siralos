@@ -51,6 +51,38 @@ pub const MAX_PROFILE_MODEL_BYTES: usize = 128;
 pub const MAX_PROFILE_CREDENTIAL_BYTES: usize = 70;
 /// Maximum endpoint URL length in UTF-8 bytes.
 pub const MAX_PROFILE_ENDPOINT_BYTES: usize = 512;
+/// Maximum model display name length in UTF-8 bytes.
+pub const MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES: usize = 256;
+
+/// The provider API protocol — additive, absent-transparent (default openai-compatible).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Protocol {
+    /// OpenAI-compatible (default).
+    #[default]
+    OpenAiCompatible,
+    /// Anthropic.
+    Anthropic,
+}
+
+impl Protocol {
+    /// Parse a protocol string — closed set: openai-compatible or anthropic.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "openai-compatible" => Some(Self::OpenAiCompatible),
+            "anthropic" => Some(Self::Anthropic),
+            _ => None,
+        }
+    }
+
+    /// Stable string for the protocol.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => "openai-compatible",
+            Self::Anthropic => "anthropic",
+        }
+    }
+}
 
 /// One profile permission-overlay entry: the capability and the rule the
 /// profile requests for it. Legality is decided by
@@ -114,6 +146,12 @@ pub struct ProfileRecord {
     /// the three context tools over the derived snapshot, and the demand loop).
     /// Absent table defaults to false (byte-transparent).
     pub context_system_enabled: bool,
+    /// Protocol for the provider — additive, absent-transparent (default openai-compatible).
+    /// The protocol's request-shaping use is future work (stored and displayed now).
+    pub protocol: Protocol,
+    /// Optional model display name — shown in header/status instead of raw model id when present.
+    /// Additive, absent -> None, malformed (oversize/non-printable) -> profile UNAPPLIED.
+    pub model_display_name: Option<String>,
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -198,6 +236,8 @@ impl ProfileRecord {
         validate_model_field(&self.model)?;
         validate_credential_field(&self.credential)?;
         validate_endpoint_field(&self.endpoint)?;
+        validate_model_display_name_field(&self.model_display_name)?;
+        // protocol is an enum, always valid (closed set enforced at parse) — no validation needed.
         if self.record_replay && self.replay {
             return Err(ProfileValidationError {
                 message: "The profile cannot set both record-replay and replay; they are contradictory.".to_owned(),
@@ -329,6 +369,32 @@ fn validate_credential_field(
     {
         return Err(ProfileValidationError {
             message: "A credential env name must match [A-Z0-9_]{1,64} after \"env:\".".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_model_display_name_field(
+    model_display_name: &Option<String>,
+) -> Result<(), ProfileValidationError> {
+    let Some(value) = model_display_name else {
+        return Ok(());
+    };
+    if value.len() > MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES {
+        return Err(ProfileValidationError {
+            message: format!(
+                "The model display name exceeds the {MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES}-byte bound."
+            ),
+        });
+    }
+    if value.contains('\0') {
+        return Err(ProfileValidationError {
+            message: "A model display name must not contain NUL.".to_owned(),
+        });
+    }
+    if !value.chars().all(|c| !c.is_control()) {
+        return Err(ProfileValidationError {
+            message: "A model display name must be printable.".to_owned(),
         });
     }
     Ok(())
@@ -1511,6 +1577,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1544,6 +1612,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1571,6 +1641,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let resolution =
             resolve_profile_overlay(&record, &host_policy()).expect("valid");
@@ -1595,6 +1667,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("name refused");
@@ -1615,6 +1689,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let error = resolve_profile_overlay(&record, &host_policy())
             .expect_err("duplicate refused");
@@ -1641,6 +1717,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         if record.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
             let error = resolve_profile_overlay(&record, &host_policy())
@@ -1689,6 +1767,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let declared = declare_profile(Some(&record), &host);
         let effective =
@@ -1886,6 +1966,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let error = record.validate().expect_err("duplicate refused");
         assert!(error.message.contains("more than once"));
@@ -1902,6 +1984,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         let error = record.validate().expect_err("empty id refused");
         assert!(error.message.contains("1..=64 bytes"));
@@ -1918,6 +2002,8 @@ mod tests {
             record_replay: false,
             replay: false,
             context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
         };
         record.validate().expect("valid");
     }

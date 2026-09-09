@@ -247,6 +247,7 @@ where
         replay_store_path,
         applied_provider,
         applied_model,
+        applied_model_display_name: _,
         applied_endpoint,
         credential_present,
         applied_credential,
@@ -920,6 +921,8 @@ struct SessionComposition<'a> {
     applied_provider: Option<String>,
     /// Applied model name from the composed profile (U5/U7).
     applied_model: Option<String>,
+    /// Applied model display name — shown in header/status instead of raw model (S5).
+    applied_model_display_name: Option<String>,
     /// Applied endpoint from the composed profile (H6 host for picker).
     applied_endpoint: Option<String>,
     /// Whether the credential for the applied provider is present (U7).
@@ -1030,9 +1033,11 @@ fn compose_session(
             _ => ("deterministic-fake".to_owned(), None, None, None),
         };
     // I5/U7 + H6: applied provider/model/credential/endpoint for status + display + picker + /models (I6).
+    // S5: model display name prefers over raw model id for header/status.
     let (
         applied_provider,
         applied_model,
+        applied_model_display_name,
         applied_endpoint,
         credential_present,
         applied_credential,
@@ -1051,12 +1056,13 @@ fn compose_session(
             (
                 record.provider.clone(),
                 record.model.clone(),
+                record.model_display_name.clone(),
                 record.endpoint.clone(),
                 cred_present,
                 cred,
             )
         }
-        _ => (None, None, None, false, None),
+        _ => (None, None, None, None, false, None),
     };
     let mut live_host_provider: Option<HostProvider> = None;
     let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
@@ -1281,6 +1287,7 @@ fn compose_session(
         replay_store_path,
         applied_provider,
         applied_model,
+        applied_model_display_name,
         applied_endpoint,
         credential_present,
         applied_credential,
@@ -1491,6 +1498,8 @@ pub fn write_profile_config(
     model: &str,
     credential_env: &str,
     endpoint: Option<&str>,
+    protocol: Option<&str>,
+    model_display_name: Option<&str>,
 ) -> Result<(), String> {
     // Re-validate at the write boundary (defense in depth).
     if provider.is_empty()
@@ -1516,6 +1525,36 @@ pub fn write_profile_config(
         return Err("A model must match [a-zA-Z0-9._-]{1,128}.".to_owned());
     }
     validate_credential_env_name_inline(credential_env)?;
+    if let Some(proto) = protocol {
+        if proto != "openai-compatible" && proto != "anthropic" {
+            return Err(
+                "The protocol must be \"openai-compatible\" or \"anthropic\"."
+                    .to_owned(),
+            );
+        }
+    }
+    if let Some(display) = model_display_name {
+        if !display.is_empty() {
+            if display.len()
+                > siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+            {
+                return Err(format!(
+                    "The model display name exceeds the {}-byte bound.",
+                    siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+                ));
+            }
+            if display.contains('\0') {
+                return Err(
+                    "A model display name must not contain NUL.".to_owned()
+                );
+            }
+            if !display.chars().all(|c| !c.is_control()) {
+                return Err(
+                    "A model display name must be printable.".to_owned()
+                );
+            }
+        }
+    }
     if let Some(ep) = endpoint {
         if ep.is_empty()
             || ep.len() > siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
@@ -1604,6 +1643,34 @@ pub fn write_profile_config(
             if let Some(table) = profile_item.as_table_mut() {
                 table.remove("endpoint");
             }
+        }
+    }
+    // Protocol: written only when not default (openai-compatible omitted).
+    if let Some(proto) = protocol {
+        if proto != "openai-compatible" {
+            doc["profile"]["protocol"] = toml_edit::value(proto);
+        } else if let Some(profile_item) = doc.get_mut("profile") {
+            if let Some(table) = profile_item.as_table_mut() {
+                table.remove("protocol");
+            }
+        }
+    } else if let Some(profile_item) = doc.get_mut("profile") {
+        if let Some(table) = profile_item.as_table_mut() {
+            table.remove("protocol");
+        }
+    }
+    // Model display name: written only when non-empty.
+    if let Some(display) = model_display_name {
+        if !display.is_empty() {
+            doc["profile"]["model_display_name"] = toml_edit::value(display);
+        } else if let Some(profile_item) = doc.get_mut("profile") {
+            if let Some(table) = profile_item.as_table_mut() {
+                table.remove("model_display_name");
+            }
+        }
+    } else if let Some(profile_item) = doc.get_mut("profile") {
+        if let Some(table) = profile_item.as_table_mut() {
+            table.remove("model_display_name");
         }
     }
     let serialized = doc.to_string();
@@ -2272,11 +2339,17 @@ pub fn run_interactive_tui_with_options(
         replay_store_path,
         applied_provider,
         applied_model,
+        applied_model_display_name,
         applied_endpoint,
         credential_present,
         applied_credential,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
+    // S5: header/status prefers model display name when present.
+    let effective_model: Option<String> = applied_model_display_name
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or(applied_model.clone());
     let tui_state = Rc::new(RefCell::new(TuiState::new()));
     {
         let base = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit";
@@ -2284,13 +2357,13 @@ pub fn run_interactive_tui_with_options(
         let composed = crate::tui::compose_status_line_with_context(
             base,
             applied_provider.as_deref(),
-            applied_model.as_deref(),
+            effective_model.as_deref(),
             metrics_opt,
         );
         let mut state = tui_state.borrow_mut();
         state.status = composed;
         state.provider = applied_provider.clone();
-        state.model = applied_model.clone();
+        state.model = effective_model.clone();
         // H2: banner + greeting at session start (TUI-only, stdio unchanged).
         crate::tui::push_banner_and_greeting(&mut state);
     }
@@ -2362,7 +2435,7 @@ pub fn run_interactive_tui_with_options(
                                     crate::tui::compose_status_line_with_context(
                                         base,
                                         applied_provider.as_deref(),
-                                        applied_model.as_deref(),
+                                        effective_model.as_deref(),
                                         metrics_opt,
                                     );
                                 tui_state.borrow_mut().status = composed;
@@ -2398,7 +2471,7 @@ pub fn run_interactive_tui_with_options(
                                         crate::tui::compose_status_line_with_context(
                                             base,
                                             applied_provider.as_deref(),
-                                            applied_model.as_deref(),
+                                            effective_model.as_deref(),
                                             metrics_opt,
                                         );
                                     tui_state.borrow_mut().status = composed;
@@ -2419,7 +2492,7 @@ pub fn run_interactive_tui_with_options(
                                         crate::tui::compose_status_line_with_context(
                                             base,
                                             applied_provider.as_deref(),
-                                            applied_model.as_deref(),
+                                            effective_model.as_deref(),
                                             metrics_opt,
                                         );
                                     tui_state.borrow_mut().status = composed;
@@ -2464,6 +2537,8 @@ pub fn run_interactive_tui_with_options(
                 &data.model,
                 &data.credential_env,
                 data.endpoint.as_deref(),
+                Some(data.protocol.as_str()),
+                data.model_display_name.as_deref(),
             );
             match write_result {
                 Ok(()) => {
@@ -2488,10 +2563,69 @@ pub fn run_interactive_tui_with_options(
             let composed = crate::tui::compose_status_line_with_context(
                 base,
                 applied_provider.as_deref(),
-                applied_model.as_deref(),
+                effective_model.as_deref(),
                 metrics_opt,
             );
             tui_state.borrow_mut().status = composed;
+        }
+        // S2: model fetch integration — after ApiKey advance, fetch once (blocking, freeze documented).
+        let needs_fetch = {
+            let guard = tui_state.borrow();
+            guard.provider_add_form.as_ref().is_some_and(|f| f.fetching_models)
+        };
+        if needs_fetch {
+            // Show fetching status while blocking.
+            {
+                let metrics_opt =
+                    context_session_holder.as_ref().map(|s| &s.metrics);
+                let fetching = crate::tui::compose_status_line_with_context(
+                    "fetching models...",
+                    applied_provider.as_deref(),
+                    effective_model.as_deref(),
+                    metrics_opt,
+                );
+                tui_state.borrow_mut().status = fetching;
+            }
+            // Gather url and credential for the fetch.
+            let (url_opt, cred_opt) = {
+                let guard = tui_state.borrow();
+                if let Some(form) = guard.provider_add_form.as_ref() {
+                    (form.endpoint.clone(), form.credential_env.clone())
+                } else {
+                    (None, None)
+                }
+            };
+            let url_str = url_opt.as_deref().unwrap_or("");
+            let credential = cred_opt.as_deref().and_then(|name| {
+                let env_ref = format!("env:{name}");
+                siralos_adapters::provider::HostCredential::from_env_ref(
+                    &env_ref,
+                )
+                .ok()
+            });
+            let fetch_result =
+                siralos_adapters::provider::generic::fetch_models(
+                    url_str,
+                    credential.as_ref(),
+                );
+            {
+                let mut guard = tui_state.borrow_mut();
+                if let Some(form) = guard.provider_add_form.as_mut() {
+                    form.apply_fetch_result(fetch_result);
+                }
+            }
+            // Restore ready status after fetch (pane will re-render on next loop).
+            {
+                let metrics_opt =
+                    context_session_holder.as_ref().map(|s| &s.metrics);
+                let ready = crate::tui::compose_status_line_with_context(
+                    "ready",
+                    applied_provider.as_deref(),
+                    effective_model.as_deref(),
+                    metrics_opt,
+                );
+                tui_state.borrow_mut().status = ready;
+            }
         }
         if let Some(input_line) = pending_submit.take() {
             // I3 & I6/I7: parse once, handle unknown honesty before dispatch
@@ -2514,7 +2648,7 @@ pub fn run_interactive_tui_with_options(
                 // C1: /provider with no configured provider OR the "add" entry opens the sequential add-flow form.
                 let entries = crate::tui::provider_entries_from_session(
                     applied_provider.as_deref(),
-                    applied_model.as_deref(),
+                    effective_model.as_deref(),
                     applied_endpoint.as_deref(),
                 );
                 if entries.is_empty() {
@@ -2543,7 +2677,7 @@ pub fn run_interactive_tui_with_options(
                     &mut context_session_holder,
                     &mut context_history_len,
                     applied_provider.as_deref(),
-                    applied_model.as_deref(),
+                    effective_model.as_deref(),
                     credential_present,
                     applied_endpoint.as_deref(),
                     applied_credential.as_ref(),
@@ -2558,7 +2692,7 @@ pub fn run_interactive_tui_with_options(
             let composed = crate::tui::compose_status_line_with_context(
                 base,
                 applied_provider.as_deref(),
-                applied_model.as_deref(),
+                effective_model.as_deref(),
                 metrics_opt,
             );
             tui_state.borrow_mut().status = composed;
