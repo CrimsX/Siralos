@@ -453,14 +453,15 @@ pub fn provider_entries_from_session(
 }
 
 /// Sequential field for the provider add-flow form — six fields in user order (S1).
+/// Order per O1/I1: DisplayName -> Url -> ApiKey -> ApiProtocol -> Model -> ModelDisplayName.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderAddField {
+    /// Display name (provider name, auto-derived from URL host) — first field (O1).
+    DisplayName,
     /// URL endpoint (optional, https:// or http://).
     Url,
     /// API key env-var name (the env-var NAME, never the secret).
     ApiKey,
-    /// Display name (provider name, auto-derived from URL host).
-    DisplayName,
     /// API protocol (openai-compatible or anthropic).
     ApiProtocol,
     /// Model id (picker on fetch success, free text otherwise).
@@ -564,7 +565,7 @@ impl Default for ProviderAddForm {
 }
 
 impl ProviderAddForm {
-    /// Create a fresh form starting at the url field (six-field order).
+    /// Create a fresh form starting at the display name field (O1 order).
     pub fn new() -> Self {
         Self {
             endpoint: None,
@@ -573,7 +574,7 @@ impl ProviderAddForm {
             protocol: None,
             model: None,
             model_display_name: None,
-            field: ProviderAddField::Url,
+            field: ProviderAddField::DisplayName,
             input: String::new(),
             error: None,
             completed: None,
@@ -1604,9 +1605,9 @@ pub fn draw_with_pane(
 fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let fields = [
+        (ProviderAddField::DisplayName, form.provider.as_deref()),
         (ProviderAddField::Url, form.endpoint.as_deref()),
         (ProviderAddField::ApiKey, form.credential_env.as_deref()),
-        (ProviderAddField::DisplayName, form.provider.as_deref()),
         (ProviderAddField::ApiProtocol, form.protocol.as_deref()),
         (ProviderAddField::Model, form.model.as_deref()),
         (
@@ -2380,7 +2381,8 @@ pub fn derive_provider_name(url: &str) -> String {
 
 // Helpers for tests: expose scroll operations
 /// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
-/// Human-readable error (D2) — validation rule unchanged.
+/// Human-readable error (D2) — validation rule unchanged, but with O3/I3
+/// teaching message when the input looks like the secret itself.
 fn validate_credential_env_name(name: &str) -> Result<(), String> {
     if name.is_empty()
         || name.len() > 64
@@ -2388,6 +2390,19 @@ fn validate_credential_env_name(name: &str) -> Result<(), String> {
             .chars()
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
     {
+        // O3/I3: when validation fails and the input looks like a secret,
+        // teach the env-var-name pattern instead of the standard message.
+        let looks_like_secret = name.chars().any(|c| c.is_ascii_lowercase())
+            || name.starts_with("sk-")
+            || name.chars().any(|c| {
+                !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            });
+        if looks_like_secret {
+            return Err(
+                "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
+                    .to_owned(),
+            );
+        }
         return Err(
             "Credential env var must be uppercase letters, numbers, and underscores (e.g. OPENAI_API_KEY) - set this variable with your API key before starting Siralos"
                 .to_owned(),
@@ -2640,6 +2655,13 @@ pub fn handle_key(
                     return false;
                 }
                 let validation: Result<(), String> = match field {
+                    ProviderAddField::DisplayName => {
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_provider_name(&trimmed)
+                        }
+                    }
                     ProviderAddField::Url => {
                         if trimmed.is_empty() {
                             Ok(())
@@ -2649,9 +2671,6 @@ pub fn handle_key(
                     }
                     ProviderAddField::ApiKey => {
                         validate_credential_env_name(&trimmed)
-                    }
-                    ProviderAddField::DisplayName => {
-                        validate_provider_name(&trimmed)
                     }
                     ProviderAddField::ApiProtocol => {
                         validate_api_protocol(&trimmed)
@@ -2667,42 +2686,54 @@ pub fn handle_key(
                 }
                 form.error = None;
                 match field {
+                    ProviderAddField::DisplayName => {
+                        let provider_opt = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                        form.provider = provider_opt;
+                        form.field = ProviderAddField::Url;
+                        form.input.clear();
+                    }
                     ProviderAddField::Url => {
                         let endpoint_opt = if trimmed.is_empty() {
                             None
                         } else {
                             Some(trimmed)
                         };
-                        form.endpoint = endpoint_opt;
+                        form.endpoint = endpoint_opt.clone();
+                        // O1 derivation prefill: if display name still empty and url non-empty, prefill derived name
+                        if form.provider.is_none() {
+                            if let Some(ep) = endpoint_opt.as_deref() {
+                                if !ep.is_empty() {
+                                    let derived = derive_provider_name(ep);
+                                    if !derived.is_empty() {
+                                        form.provider = Some(derived);
+                                    }
+                                }
+                            }
+                        }
                         form.field = ProviderAddField::ApiKey;
                         form.input.clear();
                     }
                     ProviderAddField::ApiKey => {
                         form.credential_env = Some(trimmed);
-                        form.field = ProviderAddField::DisplayName;
-                        // Prefill display name from url host when non-empty (decision 130 kept).
-                        // Also trigger the model fetch if url is non-empty (S2).
+                        form.field = ProviderAddField::ApiProtocol;
+                        form.input.clear();
+                        // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
                         let url_opt = form.endpoint.clone();
                         if let Some(ep) = url_opt.as_deref() {
                             if !ep.is_empty() {
-                                form.input = derive_provider_name(ep);
-                                // Fetch only when url is present (non-empty) — blocking with freeze documented.
                                 form.fetching_models = true;
                                 form.fetch_note = None;
                                 form.model_picker = None;
                             } else {
-                                form.input.clear();
                                 form.fetching_models = false;
                             }
                         } else {
-                            form.input.clear();
                             form.fetching_models = false;
                         }
-                    }
-                    ProviderAddField::DisplayName => {
-                        form.provider = Some(trimmed);
-                        form.field = ProviderAddField::ApiProtocol;
-                        form.input.clear();
                     }
                     ProviderAddField::ApiProtocol => {
                         form.protocol = Some(trimmed);
@@ -2723,6 +2754,21 @@ pub fn handle_key(
                             Some(trimmed.clone())
                         };
                         form.model_display_name = display_opt;
+                        // O1 completion check: display name empty AND url empty -> error
+                        if form.provider.is_none() {
+                            let endpoint_empty = form
+                                .endpoint
+                                .as_deref()
+                                .map(|s| s.is_empty())
+                                .unwrap_or(true);
+                            if endpoint_empty {
+                                form.error = Some(
+                                    "a display name is required - enter one or provide a url so one can be derived"
+                                        .to_owned(),
+                                );
+                                return false;
+                            }
+                        }
                         // Validate that prior fields were collected.
                         if let (
                             Some(provider),
@@ -2799,15 +2845,15 @@ pub fn handle_key(
                 {
                     return false;
                 }
-                // Up: previous field, restoring validated value for re-editing (six-field order).
+                // Up: previous field, restoring validated value for re-editing (O1 order).
                 let prev = match form.field {
-                    ProviderAddField::Url => None,
-                    ProviderAddField::ApiKey => Some(ProviderAddField::Url),
-                    ProviderAddField::DisplayName => {
-                        Some(ProviderAddField::ApiKey)
-                    }
-                    ProviderAddField::ApiProtocol => {
+                    ProviderAddField::DisplayName => None,
+                    ProviderAddField::Url => {
                         Some(ProviderAddField::DisplayName)
+                    }
+                    ProviderAddField::ApiKey => Some(ProviderAddField::Url),
+                    ProviderAddField::ApiProtocol => {
+                        Some(ProviderAddField::ApiKey)
                     }
                     ProviderAddField::Model => {
                         Some(ProviderAddField::ApiProtocol)
@@ -2867,6 +2913,13 @@ pub fn handle_key(
                 let trimmed = current.trim().to_owned();
                 let field = form.field;
                 let validation: Result<(), String> = match field {
+                    ProviderAddField::DisplayName => {
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_provider_name(&trimmed)
+                        }
+                    }
                     ProviderAddField::Url => {
                         if trimmed.is_empty() {
                             Ok(())
@@ -2876,9 +2929,6 @@ pub fn handle_key(
                     }
                     ProviderAddField::ApiKey => {
                         validate_credential_env_name(&trimmed)
-                    }
-                    ProviderAddField::DisplayName => {
-                        validate_provider_name(&trimmed)
                     }
                     ProviderAddField::ApiProtocol => {
                         validate_api_protocol(&trimmed)
@@ -2894,39 +2944,54 @@ pub fn handle_key(
                 }
                 form.error = None;
                 match field {
+                    ProviderAddField::DisplayName => {
+                        let provider_opt = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                        form.provider = provider_opt;
+                        form.field = ProviderAddField::Url;
+                        form.input.clear();
+                    }
                     ProviderAddField::Url => {
                         let endpoint_opt = if trimmed.is_empty() {
                             None
                         } else {
                             Some(trimmed)
                         };
-                        form.endpoint = endpoint_opt;
+                        form.endpoint = endpoint_opt.clone();
+                        // O1 derivation prefill: if display name still empty and url non-empty, prefill derived name
+                        if form.provider.is_none() {
+                            if let Some(ep) = endpoint_opt.as_deref() {
+                                if !ep.is_empty() {
+                                    let derived = derive_provider_name(ep);
+                                    if !derived.is_empty() {
+                                        form.provider = Some(derived);
+                                    }
+                                }
+                            }
+                        }
                         form.field = ProviderAddField::ApiKey;
                         form.input.clear();
                     }
                     ProviderAddField::ApiKey => {
                         form.credential_env = Some(trimmed);
-                        form.field = ProviderAddField::DisplayName;
+                        form.field = ProviderAddField::ApiProtocol;
+                        form.input.clear();
+                        // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
                         let url_opt = form.endpoint.clone();
                         if let Some(ep) = url_opt.as_deref() {
                             if !ep.is_empty() {
-                                form.input = derive_provider_name(ep);
                                 form.fetching_models = true;
                                 form.fetch_note = None;
                                 form.model_picker = None;
                             } else {
-                                form.input.clear();
                                 form.fetching_models = false;
                             }
                         } else {
-                            form.input.clear();
                             form.fetching_models = false;
                         }
-                    }
-                    ProviderAddField::DisplayName => {
-                        form.provider = Some(trimmed);
-                        form.field = ProviderAddField::ApiProtocol;
-                        form.input.clear();
                     }
                     ProviderAddField::ApiProtocol => {
                         form.protocol = Some(trimmed);
@@ -2945,6 +3010,21 @@ pub fn handle_key(
                             Some(trimmed.clone())
                         };
                         form.model_display_name = display_opt;
+                        // O1 completion check: display name empty AND url empty -> error
+                        if form.provider.is_none() {
+                            let endpoint_empty = form
+                                .endpoint
+                                .as_deref()
+                                .map(|s| s.is_empty())
+                                .unwrap_or(true);
+                            if endpoint_empty {
+                                form.error = Some(
+                                    "a display name is required - enter one or provide a url so one can be derived"
+                                        .to_owned(),
+                                );
+                                return false;
+                            }
+                        }
                         if let (
                             Some(provider),
                             Some(model),
@@ -4920,14 +5000,19 @@ mod tests {
 
     #[test]
     fn provider_add_flow_sequential_form_completes() {
-        // Six-field order: url -> api key -> display name (auto-derived) -> api protocol -> model -> model display name.
+        // Six-field order: display name -> url -> api key -> api protocol -> model -> model display name (O1).
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
         assert!(state.provider_add_form.is_some());
         assert_eq!(
             state.provider_add_form.as_ref().unwrap().field,
-            ProviderAddField::Url
+            ProviderAddField::DisplayName
         );
+        // DisplayName may be left empty (advances without error, stored as None)
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::Url);
+        assert!(form.provider.is_none());
         t108_type(&mut state, "https://api.openai.com/v1");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
@@ -4936,6 +5021,8 @@ mod tests {
             form.endpoint.as_deref(),
             Some("https://api.openai.com/v1")
         );
+        // Display name prefilled from endpoint host after Url advance.
+        assert_eq!(form.provider.as_deref(), Some("openai"));
         t108_type(&mut state, "OPENAI_API_KEY");
         t108_enter(&mut state);
         // Simulate fetch completion before proceeding to Model (clears blocking flag)
@@ -4946,13 +5033,8 @@ mod tests {
             }
         }
         let form = state.provider_add_form.as_ref().expect("form open");
-        assert_eq!(form.field, ProviderAddField::DisplayName);
-        assert_eq!(form.credential_env.as_deref(), Some("OPENAI_API_KEY"));
-        // Display name prefilled from endpoint host.
-        assert_eq!(form.input, "openai");
-        t108_enter(&mut state);
-        let form = state.provider_add_form.as_ref().expect("form open");
         assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        assert_eq!(form.credential_env.as_deref(), Some("OPENAI_API_KEY"));
         t108_type(&mut state, "openai-compatible");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
@@ -4987,29 +5069,44 @@ mod tests {
         // errors without advancing.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
-        t108_type(&mut state, "https://api.openai.com/v1");
+        t108_type(&mut state, "my-provider");
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
         assert!(state.provider_add_form.is_none());
-        // Invalid endpoint (bad URL) errors and stays on endpoint field.
+        // Invalid display name (uppercase/spaces) errors and stays on the
+        // display name field.
         open_provider_add_form(&mut state);
+        t108_type(&mut state, "Bad Provider!");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::DisplayName);
+        assert!(form.error.is_some());
+        assert!(form.completed.is_none());
+        // Invalid endpoint (bad URL) errors and stays on the url field.
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty display name -> Url
         t108_type(&mut state, "not-a-url");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
         assert_eq!(form.field, ProviderAddField::Url);
         assert!(form.error.is_some());
         assert!(form.completed.is_none());
-        // Clear and enter empty endpoint (valid, optional) -> model
-        // Reset form for next invalid checks
+        // Invalid api key (lowercase looks like the secret itself) errors with
+        // the O3 teaching message and stays on the api key field.
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
         open_provider_add_form(&mut state);
-        t108_enter(&mut state); // empty endpoint -> model
-        t108_type(&mut state, "gpt-4o");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // empty display name -> Url
+        t108_enter(&mut state); // empty url -> ApiKey
         t108_type(&mut state, "lowercase-bad");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
         assert_eq!(form.field, ProviderAddField::ApiKey);
-        assert!(form.error.is_some());
+        assert_eq!(
+            form.error.as_deref(),
+            Some(
+                "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
+            )
+        );
     }
 
     #[test]
@@ -5348,13 +5445,26 @@ mod tests {
             "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
         );
 
+        // O3: the standard message applies only when the input does NOT look
+        // like a secret (e.g. too long but otherwise valid chars); anything
+        // with lowercase, an sk- prefix, or other outside chars teaches.
         let cred_err =
-            validate_credential_env_name("lowercase-bad").unwrap_err();
+            validate_credential_env_name("A".repeat(65).as_str()).unwrap_err();
         assert_eq!(
             cred_err,
             "Credential env var must be uppercase letters, numbers, and underscores (e.g. OPENAI_API_KEY) - set this variable with your API key before starting Siralos"
         );
         assert!(!cred_err.contains("[A-Z0-9_]{1,64}"));
+
+        // O3 teaching message: lowercase input looks like the secret itself.
+        let teaching_err =
+            validate_credential_env_name("lowercase-bad").unwrap_err();
+        assert_eq!(
+            teaching_err,
+            "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
+        );
+        let sk_err = validate_credential_env_name("sk-abc123").unwrap_err();
+        assert_eq!(sk_err, teaching_err);
 
         let endpoint_err = validate_endpoint_value("not-a-url").unwrap_err();
         assert_eq!(
@@ -5394,7 +5504,11 @@ mod tests {
         assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
         assert!(validate_credential_env_name("ANTHROPIC_KEY").is_ok());
         assert!(validate_credential_env_name("openai").is_err());
-        assert!(validate_credential_env_name("HAS-DASH").is_err());
+        // O3: HAS-DASH contains chars outside [A-Z0-9_], so it now teaches.
+        assert_eq!(
+            validate_credential_env_name("HAS-DASH").unwrap_err(),
+            "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
+        );
 
         assert!(validate_endpoint_value("https://api.openai.com/v1").is_ok());
         assert!(validate_endpoint_value("http://localhost:11434").is_ok());
@@ -5403,16 +5517,29 @@ mod tests {
         assert!(validate_endpoint_value("ftp://example.com").is_err());
 
         // Endpoint empty is allowed via the form handler, but direct validation rejects empty.
-        // The form's Url field allows empty (optional), which is handled in handle_key.
-        // Six-field order: url first (empty), then api key, display name, api protocol, model, model display name.
+        // The form's DisplayName field allows empty (optional), which is handled in handle_key.
+        // Six-field order O1: display name (empty), then url, api key, api protocol, model, model display name.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
-        t108_enter(&mut state); // empty url -> ApiKey
+        t108_enter(&mut state); // empty display name -> Url
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::Url
+        );
+        // Url empty is also allowed (optional) — but then completion requires
+        // a display name; give the url so derivation prefills the name.
+        t108_type(&mut state, "https://api.openai.com/v1");
+        t108_enter(&mut state); // -> ApiKey
         t108_type(&mut state, "OPENAI_API_KEY");
         t108_enter(&mut state);
-        // DisplayName field now empty prefill (since url empty), type name
-        t108_type(&mut state, "openai");
-        t108_enter(&mut state);
+        // ApiProtocol field (input cleared on ApiKey advance) — fetch fires on
+        // the ApiKey advance (url non-empty), so clear the blocking flag.
+        {
+            let form = state.provider_add_form.as_mut().unwrap();
+            if form.fetching_models {
+                form.apply_fetch_result(Err("test".to_owned()));
+            }
+        }
         t108_type(&mut state, "openai-compatible");
         t108_enter(&mut state);
         t108_type(&mut state, "gpt-4o");
@@ -5420,7 +5547,7 @@ mod tests {
         t108_type(&mut state, "");
         t108_enter(&mut state);
         assert!(state.provider_add_form.as_ref().unwrap().completed.is_some());
-        assert!(
+        assert_eq!(
             state
                 .provider_add_form
                 .as_ref()
@@ -5429,8 +5556,10 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .endpoint
-                .is_none()
+                .as_deref(),
+            Some("https://api.openai.com/v1")
         );
+        // Display name derived from the url host after the Url advance.
         assert_eq!(
             state
                 .provider_add_form
@@ -5447,10 +5576,12 @@ mod tests {
     // URL-first reorder tests (decisions 129-130)
 
     #[test]
-    fn field_order_endpoint_first() {
-        // Now six-field order (S1): url, api key, display name, api protocol, model, model display name
+    fn field_order_display_name_first() {
+        // Six-field order O1 (decisions 133-134): display name, url, api key,
+        // api protocol, model, model display name. (Replaces the old
+        // url-first order assertion.)
         let form = ProviderAddForm::new();
-        assert_eq!(form.field, ProviderAddField::Url);
+        assert_eq!(form.field, ProviderAddField::DisplayName);
         let lines = provider_add_form_lines(&form);
         let joined: String = lines
             .iter()
@@ -5459,21 +5590,21 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let url_pos = joined.find("url").expect("url label");
-        let api_key_pos = joined.find("api key").expect("api key label");
         let display_pos =
             joined.find("display name").expect("display name label");
+        let url_pos = joined.find("url").expect("url label");
+        let api_key_pos = joined.find("api key").expect("api key label");
         let protocol_pos =
             joined.find("api protocol").expect("api protocol label");
         // The second "model" occurrence is the model display name; check ordering via positions
         let model_pos =
             joined.find("\n  model:").unwrap_or(joined.find("model").unwrap());
         assert!(
-            url_pos < api_key_pos
-                && api_key_pos < display_pos
-                && display_pos < protocol_pos
+            display_pos < url_pos
+                && url_pos < api_key_pos
+                && api_key_pos < protocol_pos
                 && protocol_pos < model_pos,
-            "Six-field order must be url -> api key -> display name -> api protocol -> model -> model display name"
+            "Six-field order must be display name -> url -> api key -> api protocol -> model -> model display name"
         );
     }
 
@@ -5510,13 +5641,21 @@ mod tests {
 
     #[test]
     fn prefill_is_editable() {
+        // O1: display name first (left empty), url validates -> derivation
+        // prefills the stored provider value.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty display name -> Url
         t108_type(&mut state, "https://api.example-vendor.com/v1");
-        t108_enter(&mut state);
-        // ApiKey -> DisplayName prefill
-        t108_type(&mut state, "EXAMPLE_VENDOR_API_KEY");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // Url -> ApiKey, derivation prefills provider
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::ApiKey);
+        assert!(form.input.is_empty());
+        assert_eq!(form.provider.as_deref(), Some("example-vendor"));
+        // Editable: go back Up twice (ApiKey -> Url -> DisplayName), where the
+        // derived value is restored into the input for editing.
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
         let form = state.provider_add_form.as_ref().expect("form open");
         assert_eq!(form.field, ProviderAddField::DisplayName);
         assert_eq!(form.input, "example-vendor");
@@ -5529,6 +5668,13 @@ mod tests {
             );
         }
         t108_type(&mut state, "my-custom");
+        t108_enter(&mut state); // DisplayName -> Url (input cleared first)
+        t108_type(&mut state, "https://api.example-vendor.com/v1");
+        t108_enter(&mut state); // Url -> ApiKey (custom name kept)
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.provider.as_deref(), Some("my-custom"));
+        // Complete the remaining fields to finish the form
+        t108_type(&mut state, "EXAMPLE_VENDOR_API_KEY");
         t108_enter(&mut state);
         // Simulate fetch completion (clears blocking flag) before Model
         {
@@ -5537,7 +5683,6 @@ mod tests {
                 form.apply_fetch_result(Err("test".to_owned()));
             }
         }
-        // Complete the remaining fields to finish the form
         t108_type(&mut state, "openai-compatible");
         t108_enter(&mut state);
         t108_type(&mut state, "gpt-4o");
@@ -5560,19 +5705,20 @@ mod tests {
 
     #[test]
     fn name_only_flow_still_works() {
+        // O1: display name first — a typed name with an empty url completes.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
-        t108_enter(&mut state); // empty url -> ApiKey
+        t108_type(&mut state, "my-provider");
+        t108_enter(&mut state); // DisplayName -> Url
         assert_eq!(
             state.provider_add_form.as_ref().unwrap().field,
-            ProviderAddField::ApiKey
+            ProviderAddField::Url
         );
-        t108_type(&mut state, "OPENAI_API_KEY");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // empty url -> ApiKey (no derivation: name kept)
         let form = state.provider_add_form.as_ref().expect("form open");
-        assert_eq!(form.field, ProviderAddField::DisplayName);
-        assert_eq!(form.input, ""); // empty prefill for name-only flow
-        t108_type(&mut state, "my-provider");
+        assert_eq!(form.field, ProviderAddField::ApiKey);
+        assert_eq!(form.provider.as_deref(), Some("my-provider"));
+        t108_type(&mut state, "OPENAI_API_KEY");
         t108_enter(&mut state);
         assert_eq!(
             state.provider_add_form.as_ref().unwrap().field,
@@ -5598,13 +5744,27 @@ mod tests {
 
     #[test]
     fn up_down_navigation_follows_new_order() {
+        // O1 order: DisplayName -> Url -> ApiKey -> ApiProtocol -> Model -> ModelDisplayName.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
         assert_eq!(
             state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::DisplayName
+        );
+        // Down validates empty display name and moves DisplayName -> Url
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
             ProviderAddField::Url
         );
-        // Down validates and moves Url -> ApiKey
+        // Up returns to DisplayName
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().field,
+            ProviderAddField::DisplayName
+        );
+        // Down again to Url, type url, Down -> ApiKey
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
         t108_type(&mut state, "https://api.openai.com/v1");
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
         assert_eq!(
@@ -5621,7 +5781,7 @@ mod tests {
             state.provider_add_form.as_ref().unwrap().input,
             "https://api.openai.com/v1"
         );
-        // Continue down chain: Url -> ApiKey -> DisplayName -> ApiProtocol -> Model -> ModelDisplayName
+        // Continue down chain: Url -> ApiKey -> ApiProtocol -> Model -> ModelDisplayName
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
         t108_type(&mut state, "OPENAI_API_KEY");
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
@@ -5634,14 +5794,9 @@ mod tests {
         }
         assert_eq!(
             state.provider_add_form.as_ref().unwrap().field,
-            ProviderAddField::DisplayName
-        );
-        assert_eq!(state.provider_add_form.as_ref().unwrap().input, "openai");
-        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
-        assert_eq!(
-            state.provider_add_form.as_ref().unwrap().field,
             ProviderAddField::ApiProtocol
         );
+        assert!(state.provider_add_form.as_ref().unwrap().input.is_empty());
         t108_type(&mut state, "openai-compatible");
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
         let form = state.provider_add_form.as_ref().unwrap();
@@ -5652,22 +5807,28 @@ mod tests {
             state.provider_add_form.as_ref().unwrap().field,
             ProviderAddField::ApiProtocol
         );
-        // No prev from Endpoint
+        // No prev from DisplayName
         let mut state2 = TuiState::new();
         open_provider_add_form(&mut state2);
         handle_key(&mut state2, t108_key(crossterm::event::KeyCode::Up), 10);
         assert_eq!(
             state2.provider_add_form.as_ref().unwrap().field,
-            ProviderAddField::Url
+            ProviderAddField::DisplayName
         );
     }
 
     #[test]
-    fn url_first_flow_completes() {
+    fn display_name_first_flow_completes() {
+        // O1: display name first (empty), url -> derivation prefill, then key,
+        // protocol, model, model display name.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty display name -> Url
         t108_type(&mut state, "https://api.example-vendor.com/v1");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // Url -> ApiKey, derivation prefills provider
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::ApiKey);
+        assert_eq!(form.provider.as_deref(), Some("example-vendor"));
         t108_type(&mut state, "EXAMPLE_VENDOR_API_KEY");
         t108_enter(&mut state);
         // Simulate fetch completion before Model (clears flag)
@@ -5677,11 +5838,6 @@ mod tests {
                 form.apply_fetch_result(Err("test".to_owned()));
             }
         }
-        // DisplayName prefilled
-        let form = state.provider_add_form.as_ref().unwrap();
-        assert_eq!(form.field, ProviderAddField::DisplayName);
-        assert_eq!(form.input, "example-vendor");
-        t108_enter(&mut state);
         t108_type(&mut state, "anthropic");
         t108_enter(&mut state);
         t108_type(&mut state, "model-a");
@@ -5710,9 +5866,35 @@ mod tests {
     }
 
     #[test]
+    fn completion_requires_name_when_url_empty() {
+        // O1: empty display name AND empty url -> completion error; a typed
+        // name completes.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty display name -> Url
+        t108_enter(&mut state); // empty url -> ApiKey
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        t108_type(&mut state, "openai-compatible");
+        t108_enter(&mut state);
+        t108_type(&mut state, "gpt-4o");
+        t108_enter(&mut state);
+        t108_enter(&mut state); // empty model display name -> completion error
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert!(form.completed.is_none());
+        assert_eq!(
+            form.error.as_deref(),
+            Some(
+                "a display name is required - enter one or provide a url so one can be derived"
+            )
+        );
+    }
+
+    #[test]
     fn six_field_order_renders() {
+        // O1 render order: display name first.
         let form = ProviderAddForm::new();
-        assert_eq!(form.field, ProviderAddField::Url);
+        assert_eq!(form.field, ProviderAddField::DisplayName);
         let lines = provider_add_form_lines(&form);
         let joined = lines
             .iter()
@@ -5722,9 +5904,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let order = [
+            "display name",
             "url",
             "api key",
-            "display name",
             "api protocol",
             "model",
             "model display name",
@@ -5776,15 +5958,20 @@ mod tests {
 
     #[test]
     fn derivation_prefill_on_display_name() {
+        // O1: empty display name advances; the Url advance prefills the stored
+        // provider value via derive_provider_name.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
-        t108_type(&mut state, "https://api.openai.com/v1");
-        t108_enter(&mut state);
-        t108_type(&mut state, "OPENAI_API_KEY");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // empty display name -> Url, no error
         let form = state.provider_add_form.as_ref().unwrap();
-        assert_eq!(form.field, ProviderAddField::DisplayName);
-        assert_eq!(form.input, "openai");
+        assert_eq!(form.field, ProviderAddField::Url);
+        assert!(form.error.is_none());
+        t108_type(&mut state, "https://api.openai.com/v1");
+        t108_enter(&mut state); // Url -> ApiKey
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::ApiKey);
+        assert!(form.input.is_empty());
+        assert_eq!(form.provider.as_deref(), Some("openai"));
     }
 
     #[test]
@@ -5802,15 +5989,14 @@ mod tests {
     fn model_picker_navigation_and_selection() {
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
-        // Navigate to Model field via the six-field flow
+        // Navigate via the O1 six-field flow: DisplayName -> Url -> ApiKey -> ApiProtocol -> Model
+        t108_enter(&mut state); // empty display name -> Url
         t108_type(&mut state, "https://api.openai.com/v1");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // Url -> ApiKey (derivation prefills provider)
         t108_type(&mut state, "OPENAI_API_KEY");
-        t108_enter(&mut state);
-        // DisplayName prefilled, just advance
-        t108_enter(&mut state);
+        t108_enter(&mut state); // ApiKey -> ApiProtocol
         t108_type(&mut state, "openai-compatible");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // ApiProtocol -> Model
         // Clear fetching flag simulated (no loop in test)
         {
             let form = state.provider_add_form.as_mut().unwrap();
@@ -5826,6 +6012,8 @@ mod tests {
                 "o1".to_owned(),
             ]));
             assert!(form.model_picker.is_some());
+            // Model field with an open picker renders the picker items.
+            form.field = ProviderAddField::Model;
         }
         // Picker should render
         let lines =
@@ -5969,14 +6157,16 @@ mod tests {
         // The form stores env-var name only, never secret value; validation enforces A-Z0-9_
         assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
         assert!(validate_credential_env_name("sk-secret-123").is_err());
-        let mut form = ProviderAddForm::new();
-        form.field = ProviderAddField::ApiKey;
-        form.input = "OPENAI_API_KEY".to_owned();
-        // Simulate Enter on ApiKey field
+        // O3: a pasted secret gets the teaching message, not the standard one.
+        assert_eq!(
+            validate_credential_env_name("sk-secret-123").unwrap_err(),
+            "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
+        );
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
+        t108_enter(&mut state); // empty display name -> Url
         t108_type(&mut state, "https://api.openai.com/v1");
-        t108_enter(&mut state);
+        t108_enter(&mut state); // Url -> ApiKey
         t108_type(&mut state, "OPENAI_API_KEY");
         t108_enter(&mut state);
         let f = state.provider_add_form.as_ref().unwrap();

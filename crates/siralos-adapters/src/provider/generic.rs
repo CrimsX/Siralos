@@ -365,8 +365,8 @@ pub fn fetch_models(
 ) -> Result<Vec<String>, String> {
     let url = format!("{}/models", endpoint.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(5))
+        .connect_timeout(std::time::Duration::from_secs(3))
         .build()
         .map_err(|err| format!("client build failed: {err}"))?;
     let cred_str = credential.map(|c| {
