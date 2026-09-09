@@ -1496,7 +1496,7 @@ pub fn write_profile_config(
     workspace_root: &Path,
     provider: &str,
     model: &str,
-    credential_env: &str,
+    credential_env: Option<&str>,
     endpoint: Option<&str>,
     protocol: Option<&str>,
     model_display_name: Option<&str>,
@@ -1524,7 +1524,9 @@ pub fn write_profile_config(
     {
         return Err("A model must match [a-zA-Z0-9._-]{1,128}.".to_owned());
     }
-    validate_credential_env_name_inline(credential_env)?;
+    if let Some(cred) = credential_env {
+        validate_credential_env_name_inline(cred)?;
+    }
     if let Some(proto) = protocol {
         if proto != "openai-compatible" && proto != "anthropic" {
             return Err(
@@ -1626,15 +1628,32 @@ pub fn write_profile_config(
             doc["profile"] = toml_edit::table();
         }
     }
-    if doc["profile"]["name"].is_none() {
-        // Only set when absent — preserve an existing name byte-for-byte.
-        doc["profile"]["name"] = toml_edit::value("default");
+    // Only set when absent — preserve an existing name byte-for-byte.
+    // Navigated defensively: a fresh document has no [profile] yet, and the
+    // chained immutable index panics on missing intermediates.
+    let needs_name = doc
+        .get("profile")
+        .and_then(|item| item.as_table())
+        .map(|table| table.get("name").is_none())
+        .unwrap_or(true);
+    if needs_name {
+        if let Some(profile_item) = doc.get_mut("profile") {
+            if let Some(table) = profile_item.as_table_mut() {
+                table["name"] = toml_edit::value("default");
+            }
+        }
     }
     // Merge profile fields.
     doc["profile"]["provider"] = toml_edit::value(provider);
     doc["profile"]["model"] = toml_edit::value(model);
-    doc["profile"]["credential"] =
-        toml_edit::value(format!("env:{credential_env}"));
+    // Credential: written only when present (a public endpoint omits it).
+    if let Some(cred) = credential_env {
+        doc["profile"]["credential"] = toml_edit::value(format!("env:{cred}"));
+    } else if let Some(profile_item) = doc.get_mut("profile") {
+        if let Some(table) = profile_item.as_table_mut() {
+            table.remove("credential");
+        }
+    }
     if let Some(ep) = endpoint {
         doc["profile"]["endpoint"] = toml_edit::value(ep);
     } else {
@@ -1744,10 +1763,12 @@ pub fn write_profile_config(
                     record,
                 ) => {
                     // Ensure the applied record carries the written values.
+                    let expected_credential =
+                        credential_env.map(|c| format!("env:{c}"));
                     if record.provider.as_deref() != Some(provider)
                         || record.model.as_deref() != Some(model)
                         || record.credential.as_deref()
-                            != Some(&format!("env:{credential_env}"))
+                            != expected_credential.as_deref()
                         || record.endpoint.as_deref() != endpoint
                     {
                         return Err("written profile did not apply the requested fields"
@@ -2535,7 +2556,7 @@ pub fn run_interactive_tui_with_options(
                 &workspace_root,
                 &data.provider,
                 &data.model,
-                &data.credential_env,
+                data.credential_env.as_deref(),
                 data.endpoint.as_deref(),
                 Some(data.protocol.as_str()),
                 data.model_display_name.as_deref(),
@@ -2724,11 +2745,46 @@ mod tests {
         is_unknown_slash_command, parse_slash_command, render_evolve_lines,
         render_model_line, render_provider_line,
         run_interactive_session_with_options, slash_command_catalog,
+        write_profile_config,
     };
-    use std::fs::{create_dir, create_dir_all, remove_dir_all, write};
+    use std::fs::{create_dir, create_dir_all, read, remove_dir_all, write};
     use std::io::Cursor;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn write_profile_config_omits_credential_when_none() {
+        // K2: a public endpoint writes NO credential key, and the written
+        // config still parses and applies via load_workspace_profile.
+        let dir = temporary_directory("write_profile_omits_credential");
+        let result = write_profile_config(
+            &dir,
+            "public",
+            "public-model",
+            None,
+            Some("https://public.example.com/v1"),
+            Some("openai-compatible"),
+            None,
+        );
+        assert!(result.is_ok(), "write failed: {result:?}");
+        let toml_text = read(format!("{}/siralos.toml", dir.display()))
+            .map(|bytes| String::from_utf8(bytes).unwrap_or_default())
+            .unwrap_or_default();
+        assert!(
+            !toml_text.contains("credential"),
+            "config must not contain a credential key, got: {toml_text}"
+        );
+        match siralos_adapters::profile_config::load_workspace_profile(&dir) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                record,
+            ) => {
+                assert_eq!(record.provider.as_deref(), Some("public"));
+                assert!(record.credential.is_none());
+            }
+            other => panic!("expected applied record, got: {other:?}"),
+        }
+        let _ = remove_dir_all(&dir);
+    }
 
     fn temporary_directory(label: &str) -> PathBuf {
         let nonce = SystemTime::now()

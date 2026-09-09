@@ -516,8 +516,10 @@ pub struct ProviderAddData {
     pub provider: String,
     /// Model id validated `[a-zA-Z0-9._-]{1,128}`.
     pub model: String,
-    /// Credential env-var NAME (without `env:` prefix) validated `A-Z0-9_` up to 64.
-    pub credential_env: String,
+    /// Optional credential env-var NAME (without `env:` prefix) validated `A-Z0-9_` up to 64.
+    /// `None` means a public endpoint — no credential is written and the
+    /// model fetch sends no Authorization header.
+    pub credential_env: Option<String>,
     /// Optional endpoint validated `https://` or `http://`, no NUL/space, up to 512.
     pub endpoint: Option<String>,
     /// Protocol — closed set, default openai-compatible (S3).
@@ -2670,14 +2672,23 @@ pub fn handle_key(
                         }
                     }
                     ProviderAddField::ApiKey => {
-                        validate_credential_env_name(&trimmed)
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_credential_env_name(&trimmed)
+                        }
                     }
                     ProviderAddField::ApiProtocol => {
                         validate_api_protocol(&trimmed)
                     }
                     ProviderAddField::Model => validate_model_name(&trimmed),
                     ProviderAddField::ModelDisplayName => {
-                        validate_model_display_name(&trimmed)
+                        // Optional: empty skips the display name.
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_model_display_name(&trimmed)
+                        }
                     }
                 };
                 if let Err(msg) = validation {
@@ -2718,7 +2729,12 @@ pub fn handle_key(
                         form.input.clear();
                     }
                     ProviderAddField::ApiKey => {
-                        form.credential_env = Some(trimmed);
+                        let credential_opt = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                        form.credential_env = credential_opt;
                         form.field = ProviderAddField::ApiProtocol;
                         form.input.clear();
                         // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
@@ -2770,15 +2786,11 @@ pub fn handle_key(
                             }
                         }
                         // Validate that prior fields were collected.
-                        if let (
-                            Some(provider),
-                            Some(model),
-                            Some(credential_env),
-                        ) = (
-                            form.provider.clone(),
-                            form.model.clone(),
-                            form.credential_env.clone(),
-                        ) {
+                        // The api key is optional: an empty key completes with
+                        // `credential_env: None` (public endpoint, no credential).
+                        if let (Some(provider), Some(model)) =
+                            (form.provider.clone(), form.model.clone())
+                        {
                             let protocol =
                                 form.protocol.clone().unwrap_or_else(|| {
                                     "openai-compatible".to_owned()
@@ -2786,7 +2798,7 @@ pub fn handle_key(
                             form.completed = Some(ProviderAddData {
                                 provider,
                                 model,
-                                credential_env,
+                                credential_env: form.credential_env.clone(),
                                 endpoint: form.endpoint.clone(),
                                 protocol,
                                 model_display_name: form
@@ -2928,14 +2940,23 @@ pub fn handle_key(
                         }
                     }
                     ProviderAddField::ApiKey => {
-                        validate_credential_env_name(&trimmed)
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_credential_env_name(&trimmed)
+                        }
                     }
                     ProviderAddField::ApiProtocol => {
                         validate_api_protocol(&trimmed)
                     }
                     ProviderAddField::Model => validate_model_name(&trimmed),
                     ProviderAddField::ModelDisplayName => {
-                        validate_model_display_name(&trimmed)
+                        // Optional: empty skips the display name.
+                        if trimmed.is_empty() {
+                            Ok(())
+                        } else {
+                            validate_model_display_name(&trimmed)
+                        }
                     }
                 };
                 if let Err(msg) = validation {
@@ -2976,7 +2997,12 @@ pub fn handle_key(
                         form.input.clear();
                     }
                     ProviderAddField::ApiKey => {
-                        form.credential_env = Some(trimmed);
+                        let credential_opt = if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        };
+                        form.credential_env = credential_opt;
                         form.field = ProviderAddField::ApiProtocol;
                         form.input.clear();
                         // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
@@ -3025,15 +3051,9 @@ pub fn handle_key(
                                 return false;
                             }
                         }
-                        if let (
-                            Some(provider),
-                            Some(model),
-                            Some(credential_env),
-                        ) = (
-                            form.provider.clone(),
-                            form.model.clone(),
-                            form.credential_env.clone(),
-                        ) {
+                        if let (Some(provider), Some(model)) =
+                            (form.provider.clone(), form.model.clone())
+                        {
                             let protocol =
                                 form.protocol.clone().unwrap_or_else(|| {
                                     "openai-compatible".to_owned()
@@ -3041,7 +3061,9 @@ pub fn handle_key(
                             form.completed = Some(ProviderAddData {
                                 provider,
                                 model,
-                                credential_env,
+                                // K1: the api key is optional — None for a
+                                // public endpoint (no credential written).
+                                credential_env: form.credential_env.clone(),
                                 endpoint: form.endpoint.clone(),
                                 protocol,
                                 model_display_name: form
@@ -5054,13 +5076,86 @@ mod tests {
             .expect("completed data");
         assert_eq!(completed.provider, "openai");
         assert_eq!(completed.model, "gpt-4o");
-        assert_eq!(completed.credential_env, "OPENAI_API_KEY");
+        assert_eq!(
+            completed.credential_env.as_deref(),
+            Some("OPENAI_API_KEY")
+        );
         assert_eq!(
             completed.endpoint.as_deref(),
             Some("https://api.openai.com/v1")
         );
         assert_eq!(completed.protocol, "openai-compatible");
         assert_eq!(completed.model_display_name.as_deref(), Some("My GPT"));
+    }
+
+    #[test]
+    fn empty_api_key_advances_without_credential() {
+        // K1: the api key field is optional — empty advances with
+        // credential_env = None (a public endpoint, no credential).
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state); // DisplayName (empty) -> Url
+        t108_type(&mut state, "https://public.example.com/v1");
+        t108_enter(&mut state); // Url -> ApiKey
+        t108_enter(&mut state); // ApiKey EMPTY -> ApiProtocol
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        assert!(form.credential_env.is_none());
+    }
+
+    #[test]
+    fn public_flow_completes_with_no_credential() {
+        // K4: the public flow end-to-end — empty api key, completed data
+        // carries credential_env None.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_type(&mut state, "public");
+        t108_enter(&mut state); // DisplayName
+        t108_type(&mut state, "https://public.example.com/v1");
+        t108_enter(&mut state); // Url -> ApiKey
+        t108_enter(&mut state); // ApiKey (empty) -> ApiProtocol (fetch triggered)
+        {
+            let form = state.provider_add_form.as_mut().unwrap();
+            if form.fetching_models {
+                form.apply_fetch_result(Err("test".to_owned()));
+            }
+        }
+        t108_type(&mut state, "openai-compatible");
+        t108_enter(&mut state); // -> Model
+        t108_type(&mut state, "public-model");
+        t108_enter(&mut state); // -> ModelDisplayName
+        t108_enter(&mut state); // ModelDisplayName (empty) -> completed
+        let completed = state
+            .provider_add_form
+            .as_ref()
+            .expect("form open")
+            .completed
+            .clone()
+            .expect("completed data");
+        assert_eq!(completed.provider, "public");
+        assert_eq!(completed.model, "public-model");
+        assert!(completed.credential_env.is_none());
+    }
+
+    #[test]
+    fn nonempty_public_rejected_with_teaching_message() {
+        // K1: a non-empty lowercase value (which looks like a secret) is
+        // still rejected — with the teaching message.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state); // DisplayName (empty) -> Url
+        t108_type(&mut state, "https://public.example.com/v1");
+        t108_enter(&mut state); // Url -> ApiKey
+        t108_type(&mut state, "public");
+        t108_enter(&mut state); // ApiKey non-empty lowercase -> error
+        let form = state.provider_add_form.as_ref().expect("form open");
+        assert!(form.error.is_some());
+        let err = form.error.clone().unwrap_or_default();
+        assert!(
+            err.contains("looks like the key itself"),
+            "expected the teaching message, got: {err}"
+        );
+        assert_eq!(form.field, ProviderAddField::ApiKey);
     }
 
     #[test]
@@ -5853,7 +5948,10 @@ mod tests {
             .unwrap();
         assert_eq!(completed.provider, "example-vendor");
         assert_eq!(completed.model, "model-a");
-        assert_eq!(completed.credential_env, "EXAMPLE_VENDOR_API_KEY");
+        assert_eq!(
+            completed.credential_env.as_deref(),
+            Some("EXAMPLE_VENDOR_API_KEY")
+        );
         assert_eq!(
             completed.endpoint.as_deref(),
             Some("https://api.example-vendor.com/v1")
