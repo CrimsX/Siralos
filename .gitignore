@@ -24,3 +24,8 @@ Thumbs.db
 /fuzz/corpus/
 /experiments/**/target/
 /experiments/**/guest.component.wasm
+
+# User-local Siralos session data (provider config, recordings store, resolved lock)
+/siralos.toml
+/siralos.lock
+/.siralos/
