@@ -2131,6 +2131,53 @@ pub fn apply_provider_remove_confirmation(
     }
 }
 
+/// Resolve one keypress while a TUI approval modal is pending — the SINGLE
+/// step the live event loop calls (same `&RefCell<TuiState>` shape the loop
+/// holds). Returns `true` when the key decided the modal (modal closed and
+/// the outcome reported); `false` when the key is not a modal key (modal
+/// stays pending, nothing else touched).
+///
+/// Provider-removal confirmations (armed by `/provider remove` or the picker
+/// row) resolve through [`apply_provider_remove_confirmation`] and report
+/// through the sink; ordinary approvals keep the historical `Approved.` /
+/// `Denied.` transcript line.
+pub fn handle_pending_approval_key(
+    tui_state: &std::cell::RefCell<crate::tui::TuiState>,
+    key: crossterm::event::KeyEvent,
+    workspace_root: &Path,
+    sink: &mut crate::tui::TuiSink,
+) -> bool {
+    // Take the decision first: this block ends the mutable borrow before
+    // the body below touches `tui_state` again. (Edition 2024 extends a
+    // scrutinee `borrow_mut()` temporary over the whole `if let` body, so
+    // borrowing inside that body panics with "already mutably borrowed".)
+    let decision = {
+        let mut state = tui_state.borrow_mut();
+        crate::tui::handle_modal_key(&mut state, key)
+    };
+    let Some(decision) = decision else {
+        return false;
+    };
+    let confirming_removal = tui_state.borrow().confirming_provider_removal;
+    tui_state.borrow_mut().pending_approval = None;
+    tui_state.borrow_mut().confirming_provider_removal = false;
+    if confirming_removal {
+        // Provider-removal confirmation: resolve through the single
+        // outcome both frontends call.
+        let rendered = sanitize_for_display(
+            &apply_provider_remove_confirmation(workspace_root, decision),
+        );
+        let _ = sink.write_all(rendered.as_bytes());
+    } else {
+        let verdict = match decision {
+            crate::tui::ApprovalDecision::Approve => "Approved.",
+            crate::tui::ApprovalDecision::Deny => "Denied.",
+        };
+        tui_state.borrow_mut().push_line(verdict.to_owned());
+    }
+    true
+}
+
 /// Render the `/domains` empty-state or installed view.
 fn render_domains(workspace_root: &Path) -> String {
     match load_plugin_records(workspace_root) {
@@ -2749,44 +2796,12 @@ pub fn run_interactive_tui_with_options(
                             break;
                         } else if tui_state.borrow().pending_approval.is_some()
                         {
-                            if let Some(decision) =
-                                crate::tui::handle_modal_key(
-                                    &mut tui_state.borrow_mut(),
-                                    key,
-                                )
-                            {
-                                let confirming_removal = tui_state
-                                    .borrow()
-                                    .confirming_provider_removal;
-                                tui_state.borrow_mut().pending_approval = None;
-                                tui_state
-                                    .borrow_mut()
-                                    .confirming_provider_removal = false;
-                                if confirming_removal {
-                                    // Provider-removal confirmation: resolve
-                                    // through the single outcome both
-                                    // frontends call.
-                                    let rendered = sanitize_for_display(
-                                        &apply_provider_remove_confirmation(
-                                            &workspace_root,
-                                            decision,
-                                        ),
-                                    );
-                                    let _ =
-                                        sink.write_all(rendered.as_bytes());
-                                } else {
-                                    let verdict = match decision {
-                                        crate::tui::ApprovalDecision::Approve => {
-                                            "Approved."
-                                        }
-                                        crate::tui::ApprovalDecision::Deny => {
-                                            "Denied."
-                                        }
-                                    };
-                                    tui_state
-                                        .borrow_mut()
-                                        .push_line(verdict.to_owned());
-                                }
+                            if handle_pending_approval_key(
+                                &tui_state,
+                                key,
+                                &workspace_root,
+                                &mut sink,
+                            ) {
                                 let base = "ready";
                                 let metrics_opt = context_session_holder
                                     .as_ref()
@@ -4736,6 +4751,194 @@ mod tests {
         let after = read(root_no.join("siralos.toml")).expect("read back");
         assert_eq!(after, original.as_bytes(), "denial must not touch");
         let _ = remove_dir_all(root_no);
+    }
+
+    #[test]
+    fn tui_modal_provider_removal_yes_removes_without_panic() {
+        // Live-loop seam: a pending provider-removal confirmation plus 'y'
+        // must close the modal, remove the profile, and show the outcome in
+        // the transcript — without panicking on the RefCell borrow.
+        use super::handle_pending_approval_key;
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        };
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        fn press(code: KeyCode) -> KeyEvent {
+            KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )
+        }
+        let root = temporary_directory("tui-modal-remove-yes");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n",
+        )
+        .expect("fixture");
+        let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+        crate::tui::open_provider_remove_confirm(&mut tui_state.borrow_mut());
+        let mut sink = crate::tui::TuiSink::new(tui_state.clone());
+        assert!(
+            handle_pending_approval_key(
+                &tui_state,
+                press(KeyCode::Char('y')),
+                &root,
+                &mut sink
+            ),
+            "'y' must decide the pending removal modal"
+        );
+        assert!(
+            tui_state.borrow().pending_approval.is_none(),
+            "modal must close after the decision"
+        );
+        assert!(
+            !tui_state.borrow().confirming_provider_removal,
+            "removal flag must reset after the decision"
+        );
+        assert!(
+            tui_state.borrow().transcript_lines.iter().any(|line| line
+                .contains(
+                    "provider removed from siralos.toml - restart the session to apply"
+                )),
+            "transcript must show the removal, got: {:?}",
+            tui_state.borrow().transcript_lines
+        );
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Absent => {
+            }
+            other => panic!("profile must be gone, got: {other:?}"),
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn tui_modal_provider_removal_no_and_esc_cancel() {
+        // 'n' and Esc cancel the removal: modal closes, file untouched, and
+        // the cancellation is visible in the transcript.
+        use super::handle_pending_approval_key;
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        };
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        fn press(code: KeyCode) -> KeyEvent {
+            KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )
+        }
+        for (label, code) in [
+            ("tui-modal-remove-no", KeyCode::Char('n')),
+            ("tui-modal-remove-esc", KeyCode::Esc),
+        ] {
+            let root = temporary_directory(label);
+            let original = "[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n";
+            write(root.join("siralos.toml"), original).expect("fixture");
+            let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+            crate::tui::open_provider_remove_confirm(
+                &mut tui_state.borrow_mut(),
+            );
+            let mut sink = crate::tui::TuiSink::new(tui_state.clone());
+            assert!(
+                handle_pending_approval_key(
+                    &tui_state,
+                    press(code),
+                    &root,
+                    &mut sink
+                ),
+                "cancellation key must decide the modal"
+            );
+            assert!(
+                tui_state.borrow().pending_approval.is_none(),
+                "modal must close after cancellation"
+            );
+            assert!(
+                tui_state
+                    .borrow()
+                    .transcript_lines
+                    .iter()
+                    .any(|line| line.contains("cancelled")),
+                "transcript must show the cancellation, got: {:?}",
+                tui_state.borrow().transcript_lines
+            );
+            let after = read(root.join("siralos.toml")).expect("read back");
+            assert_eq!(after, original.as_bytes(), "cancel must not touch");
+            let _ = remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn tui_modal_dormant_approval_still_reports_verdict() {
+        // Non-removal modals keep the historical transcript verdict; keys
+        // that are not modal keys leave the modal pending.
+        use super::handle_pending_approval_key;
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        };
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        fn press(code: KeyCode) -> KeyEvent {
+            KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )
+        }
+        let root = temporary_directory("tui-modal-dormant");
+        for (label, code, verdict) in [
+            ("approve", KeyCode::Char('y'), "Approved."),
+            ("deny", KeyCode::Char('n'), "Denied."),
+        ] {
+            let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+            tui_state.borrow_mut().pending_approval = Some(
+                crate::tui::ApprovalModal::new(vec![format!("{label} req")]),
+            );
+            let mut sink = crate::tui::TuiSink::new(tui_state.clone());
+            assert!(
+                handle_pending_approval_key(
+                    &tui_state,
+                    press(code),
+                    &root,
+                    &mut sink
+                ),
+                "modal key must decide the dormant modal"
+            );
+            assert!(
+                tui_state.borrow().pending_approval.is_none(),
+                "dormant modal must close after the decision"
+            );
+            assert!(
+                tui_state
+                    .borrow()
+                    .transcript_lines
+                    .iter()
+                    .any(|line| line == verdict),
+                "transcript must hold {verdict:?}, got: {:?}",
+                tui_state.borrow().transcript_lines
+            );
+        }
+        // A non-modal key decides nothing and keeps the modal pending.
+        let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+        tui_state.borrow_mut().pending_approval =
+            Some(crate::tui::ApprovalModal::new(vec!["req".to_owned()]));
+        let mut sink = crate::tui::TuiSink::new(tui_state.clone());
+        assert!(
+            !handle_pending_approval_key(
+                &tui_state,
+                press(KeyCode::Char('a')),
+                &root,
+                &mut sink
+            ),
+            "non-modal key must not decide"
+        );
+        assert!(
+            tui_state.borrow().pending_approval.is_some(),
+            "modal must stay pending on a non-modal key"
+        );
+        let _ = remove_dir_all(root);
     }
 
     #[test]
