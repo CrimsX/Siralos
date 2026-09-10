@@ -47,8 +47,12 @@ pub const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
 pub const MAX_PROFILE_PROVIDER_BYTES: usize = 64;
 /// Maximum model id length in UTF-8 bytes.
 pub const MAX_PROFILE_MODEL_BYTES: usize = 256;
-/// Maximum credential reference length in UTF-8 bytes.
+/// Maximum credential length in UTF-8 bytes for the `env:` and bare
+/// legacy forms (the whole stored value, e.g. "env:" + a 64-char name).
 pub const MAX_PROFILE_CREDENTIAL_BYTES: usize = 70;
+/// Maximum `key:` credential value length in UTF-8 bytes (the VALUE
+/// after the "key:" prefix, which holds the literal pasted key).
+pub const MAX_PROFILE_CREDENTIAL_KEY_BYTES: usize = 4096;
 /// Maximum endpoint URL length in UTF-8 bytes.
 pub const MAX_PROFILE_ENDPOINT_BYTES: usize = 512;
 /// Maximum model display name length in UTF-8 bytes.
@@ -145,9 +149,10 @@ pub struct ProfileRecord {
     /// identifier (e.g., "gpt-4o") that feeds `EffectiveRunPolicy`.
     pub model: Option<String>,
     /// Optional credential reference: the profile may declare a bounded
-    /// `env:` reference (e.g., "env:OPENAI_API_KEY") that the Host
-    /// resolves at startup; the resolved bytes are never written to
-    /// `siralos.toml`/`siralos.lock`/`Context` (decision 67 C2, 68 §1).
+    /// `env:` reference (e.g., "env:OPENAI_API_KEY") or a bounded `key:`
+    /// literal that the Host resolves at startup; the resolved bytes are
+    /// never written to `siralos.toml`/`siralos.lock`/`Context`
+    /// (decision 67 C2, 68 §1).
     pub credential: Option<String>,
     /// Optional endpoint override: the profile may declare a bounded
     /// endpoint URL for the provider (e.g., OpenAI-compatible Copilot
@@ -363,19 +368,19 @@ fn validate_credential_field(
     let Some(value) = credential else {
         return Ok(());
     };
-    if value.len() > MAX_PROFILE_CREDENTIAL_BYTES {
-        return Err(ProfileValidationError {
-            message: format!(
-                "The credential exceeds the {MAX_PROFILE_CREDENTIAL_BYTES}-byte bound."
-            ),
-        });
-    }
     if value.contains('\0') {
         return Err(ProfileValidationError {
             message: "A credential must not contain NUL.".to_owned(),
         });
     }
     if let Some(name) = value.strip_prefix("env:") {
+        if value.len() > MAX_PROFILE_CREDENTIAL_BYTES {
+            return Err(ProfileValidationError {
+                message: format!(
+                    "The credential exceeds the {MAX_PROFILE_CREDENTIAL_BYTES}-byte bound."
+                ),
+            });
+        }
         if name.is_empty()
             || name.len() > 64
             || !name.chars().all(|c| {
@@ -394,7 +399,14 @@ fn validate_credential_field(
                 message: "A credential must be \"env:NAME\" or \"key:VALUE\" where VALUE is non-empty.".to_owned(),
             });
         }
-        // `key:` holds the literal value; no further charset restriction beyond bounds and NUL already checked.
+        if inner.len() > MAX_PROFILE_CREDENTIAL_KEY_BYTES {
+            return Err(ProfileValidationError {
+                message: format!(
+                    "The credential key value exceeds the {MAX_PROFILE_CREDENTIAL_KEY_BYTES}-byte bound."
+                ),
+            });
+        }
+        // `key:` holds the literal value; no further charset restriction beyond the value bound and NUL already checked.
         return Ok(());
     }
     // Bare legacy compat: treat bare env name as env var lookup.

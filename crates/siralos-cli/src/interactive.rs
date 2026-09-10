@@ -1510,7 +1510,8 @@ fn validate_credential_env_name_inline(name: &str) -> Result<(), String> {
 
 /// Write the `[profile]` section atomically with format-preserving merge
 /// (C2) — the fifth atomic writer (per decision 114 Q4). The credential is
-/// stored as `env:<ENV_VAR_NAME>` only — never the value. The written bytes
+/// stored verbatim as given (`env:NAME`, `key:VALUE`, or a bare legacy env
+/// name). The written bytes
 /// are verified via `load_workspace_profile` (must APPLY) before the rename;
 /// symlinked/non-regular targets are refused per the manifest pattern; temp
 /// is deleted on validation failure.
@@ -1551,6 +1552,14 @@ pub fn write_profile_config(
         // Verbatim credential: accept env:NAME, key:VALUE, or bare legacy env name. Validation mirrors ProfileRecord.
         if let Some(name) = cred.strip_prefix("env:") {
             validate_credential_env_name_inline(name)?;
+            if cred.len()
+                > siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+            {
+                return Err(format!(
+                    "The credential exceeds the {}-byte bound.",
+                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+                ));
+            }
         } else if let Some(inner) = cred.strip_prefix("key:") {
             if inner.is_empty() {
                 return Err(
@@ -1560,12 +1569,12 @@ pub fn write_profile_config(
             if inner.contains('\0') {
                 return Err("A credential must not contain NUL.".to_owned());
             }
-            if cred.len()
-                > siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+            if inner.len()
+                > siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
             {
                 return Err(format!(
-                    "The credential exceeds the {}-byte bound.",
-                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+                    "The credential key value exceeds the {}-byte bound.",
+                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
                 ));
             }
         } else {
@@ -1574,13 +1583,6 @@ pub fn write_profile_config(
         }
         if cred.contains('\0') {
             return Err("A credential must not contain NUL.".to_owned());
-        }
-        if cred.len() > siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
-        {
-            return Err(format!(
-                "The credential exceeds the {}-byte bound.",
-                siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
-            ));
         }
     }
     if let Some(proto) = protocol {
@@ -3924,6 +3926,123 @@ mod tests {
             .is_ok()
         );
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn credential_bound_splits_by_form() {
+        // The [profile] credential bound splits by form: env forms keep
+        // the 70-byte whole-value bound (name 1..=64), while key:VALUE
+        // allows VALUE 1..=4096 bytes. All keys below are synthetic.
+        let write_and_load = |label: &str, cred: Option<&str>| {
+            let root = temporary_directory(label);
+            let write_result = write_profile_config(
+                &root,
+                "openai",
+                "gpt-4o",
+                cred,
+                Some("https://api.example.com/v1"),
+                None,
+                None,
+            );
+            let loaded = write_result.is_ok().then(|| {
+                siralos_adapters::profile_config::load_workspace_profile(&root)
+            });
+            (root, write_result, loaded)
+        };
+        // Accepted: key: + 73 synthetic chars (77 bytes total) round-trips.
+        let key_73 = format!("key:{}", "a".repeat(73));
+        let (root, write_result, loaded) =
+            write_and_load("cred-key-73", Some(&key_73));
+        assert!(write_result.is_ok(), "write failed: {write_result:?}");
+        match loaded.expect("write ok implies load checked") {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                r,
+            ) => assert_eq!(r.credential.as_deref(), Some(key_73.as_str())),
+            other => panic!("expected applied record, got: {other:?}"),
+        }
+        let _ = remove_dir_all(&root);
+        // Accepted: key: + 4096 bytes.
+        let key_max = format!("key:{}", "a".repeat(4096));
+        let (root, write_result, loaded) =
+            write_and_load("cred-key-max", Some(&key_max));
+        assert!(write_result.is_ok(), "write failed: {write_result:?}");
+        match loaded.expect("write ok implies load checked") {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                r,
+            ) => assert_eq!(r.credential.as_deref(), Some(key_max.as_str())),
+            other => panic!("expected applied record, got: {other:?}"),
+        }
+        let _ = remove_dir_all(&root);
+        // Accepted: env: + 64-char name, and the bare 64-char legacy name.
+        for (label, cred) in [
+            ("cred-env-64", format!("env:{}", "A".repeat(64))),
+            ("cred-bare-64", "A".repeat(64)),
+        ] {
+            let (root, write_result, loaded) =
+                write_and_load(label, Some(&cred));
+            assert!(write_result.is_ok(), "write failed: {write_result:?}");
+            match loaded.expect("write ok implies load checked") {
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                    r,
+                ) => assert_eq!(r.credential.as_deref(), Some(cred.as_str())),
+                other => panic!("expected applied record, got: {other:?}"),
+            }
+            let _ = remove_dir_all(&root);
+        }
+        // Refused: key: + 4097 bytes, env: + 65-char name, empty key value.
+        for (label, cred) in [
+            ("cred-key-over", format!("key:{}", "a".repeat(4097))),
+            ("cred-env-over", format!("env:{}", "A".repeat(65))),
+            ("cred-key-empty", "key:".to_owned()),
+        ] {
+            let (root, write_result, _) = write_and_load(label, Some(&cred));
+            assert!(
+                write_result.is_err(),
+                "credential must be refused: {cred:?}"
+            );
+            let _ = remove_dir_all(&root);
+        }
+        // Load-side: parsing is shape-only, so a hand-written over-long
+        // credential still parses — but the core validator (the same one
+        // the session runs via resolve_profile_overlay) refuses it, so
+        // such a profile fails to apply, not just to save.
+        for (label, cred, bound) in [
+            (
+                "cred-load-key-over",
+                format!("key:{}", "a".repeat(4097)),
+                "4096-byte",
+            ),
+            ("cred-load-env-over", format!("env:{}", "A".repeat(65)), "64"),
+        ] {
+            let root = temporary_directory(label);
+            write(
+                root.join("siralos.toml"),
+                format!(
+                    "[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\ncredential = \"{cred}\"\nendpoint = \"https://api.example.com/v1\"\n"
+                ),
+            )
+            .expect("hand-written profile");
+            let record = match siralos_adapters::profile_config::load_workspace_profile(
+                &root,
+            ) {
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                    record,
+                ) => record,
+                other => {
+                    panic!("shape-only parse must load, got: {other:?}")
+                }
+            };
+            match record.validate() {
+                Err(error) => assert!(
+                    error.message.contains(bound),
+                    "diagnostic must name its bound, got: {error:?}"
+                ),
+                Ok(()) => {
+                    panic!("over-long credential must not validate: {cred:?}")
+                }
+            }
+            let _ = remove_dir_all(&root);
+        }
     }
 
     #[test]
