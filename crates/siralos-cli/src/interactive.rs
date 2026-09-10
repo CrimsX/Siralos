@@ -299,6 +299,7 @@ where
             &policy,
             &mut application,
             &mut writer,
+            &mut reader,
             &mut hosts,
             &mut manifests,
             profile_plugins.as_deref(),
@@ -343,6 +344,8 @@ enum SlashCommand<'a> {
     DomainsActivate(Option<&'a str>),
     /// `/provider` — display-only (U7).
     Provider,
+    /// `/provider remove` — remove the configured provider (confirmed).
+    ProviderRemove,
     /// `/model` — display-only (U7).
     Model,
     /// `/models` — list provider models (I6, blocking GET).
@@ -367,6 +370,7 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
         ("/domains-enable", "Enable a domain plugin"),
         ("/domains-activate", "Activate a domain plugin"),
         ("/provider", "Show applied provider"),
+        ("/provider remove", "Remove configured provider"),
         ("/model", "Show applied model"),
         ("/models", "List available models"),
         ("/evolve", "Show Stage 6 evolution surfaces"),
@@ -432,6 +436,7 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/tools" => SlashCommand::Tools,
         "/domains" => SlashCommand::Domains,
         "/provider" => SlashCommand::Provider,
+        "/provider remove" => SlashCommand::ProviderRemove,
         "/model" => SlashCommand::Model,
         "/models" => SlashCommand::Models,
         "/evolve" => SlashCommand::Evolve,
@@ -541,13 +546,14 @@ where
 /// [`dispatch_tui_command`]. Both take the same parsed command and call
 /// the same render helpers — no parallel match arms.
 #[allow(clippy::too_many_arguments)]
-fn dispatch_stdio_command<P, W>(
+fn dispatch_stdio_command<P, W, R>(
     command: &SlashCommand<'_>,
     workspace_root: &Path,
     tool_definitions: &[siralos_core::tool::registry::RegisteredToolInfo],
     policy: &PermissionPolicy,
     application: &mut SiralosApplication<'_, P>,
     writer: &mut W,
+    reader: &mut R,
     hosts: &mut BTreeMap<String, DomainHost>,
     manifests: &mut BTreeMap<String, PluginManifest>,
     profile_plugins: Option<&[String]>,
@@ -566,6 +572,7 @@ fn dispatch_stdio_command<P, W>(
 where
     P: siralos_core::provider::ModelProvider,
     W: Write,
+    R: BufRead,
 {
     match command {
         SlashCommand::Context => {
@@ -634,6 +641,40 @@ where
             writer
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::ProviderRemove => {
+            // Removal entry point (stdio): absent profile is the truthful
+            // no-op without prompting; otherwise confirm through the shared
+            // y/N input-queue gate, then resolve through the single outcome.
+            match load_workspace_profile(workspace_root) {
+                WorkspaceProfileLoad::Absent => {
+                    let rendered = sanitize_for_display(
+                        "no provider configured - nothing to remove\n",
+                    );
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                }
+                _ => {
+                    let prompt = sanitize_for_display(
+                        "remove the configured provider from siralos.toml? (y/N)\n",
+                    );
+                    writer
+                        .write_all(prompt.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                    writer.flush().map_err(InteractiveError::Io)?;
+                    let decision = read_approval_via_input_queue(reader)?;
+                    let rendered = sanitize_for_display(
+                        &apply_provider_remove_confirmation(
+                            workspace_root,
+                            decision,
+                        ),
+                    );
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                }
+            }
         }
         SlashCommand::Model => {
             let rendered = sanitize_for_display(&render_model_line(model));
@@ -795,6 +836,11 @@ where
                 credential_raw,
             ));
             let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::ProviderRemove => {
+            // Intercepted in-loop (opening the confirmation needs the
+            // `TuiState`, which this sink-only writer does not hold), so
+            // this arm is unreachable — kept only for exhaustiveness.
         }
         SlashCommand::Model => {
             let rendered = sanitize_for_display(&render_model_line(model));
@@ -1873,6 +1919,218 @@ pub fn write_profile_config(
     Ok(())
 }
 
+/// Remove the `[profile]` section atomically (provider deletion) — the
+/// sixth atomic writer, reusing the fifth's pattern beside
+/// [`write_profile_config`]: read the file preserving bytes, build the new
+/// bytes, write a temp beside the target, re-parse/verify the temp bytes,
+/// then rename atomically. A symlinked or non-regular target is refused
+/// with the write path's diagnostic; the temp is deleted on any failure.
+///
+/// Removal rule: the `[profile]` header line through the end of its
+/// section (including `profile.*` sub-tables) is deleted via
+/// `DocumentMut::remove`; every other top-level item must serialize
+/// byte-identical or the write is refused before any rename. Before the
+/// rename the temp bytes are re-parsed via `load_workspace_profile` (the
+/// exact loader the session uses) to prove they still parse AND the
+/// profile is gone.
+///
+/// A missing file, an empty file, or a file with no `[profile]` table
+/// holds no provider: succeed WITHOUT rewriting anything (truthful
+/// no-op; the bytes are not touched).
+pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
+    let path = workspace_root
+        .join(siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME);
+    // Read existing bytes preserving formatting (write-path refusals).
+    let existing: String = match std::fs::symlink_metadata(&path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                return Err("siralos.toml must be a regular file; refusing symlink or special file".to_owned());
+            }
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            if bytes.len()
+                > siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES
+            {
+                return Err("siralos.toml exceeds the byte bound".to_owned());
+            }
+            String::from_utf8(bytes)
+                .map_err(|_| "siralos.toml is not valid UTF-8".to_owned())?
+        }
+        // No file holds no profile: the truthful no-op (the write path
+        // likewise does not refuse a missing file — it proceeds; here
+        // proceeding means there is nothing to remove).
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    // Format-preserving parse via toml_edit (write-path diagnostic).
+    let mut doc: toml_edit::DocumentMut = if existing.trim().is_empty() {
+        return Ok(());
+    } else {
+        existing
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("siralos.toml does not parse: {e}"))?
+    };
+    if doc.get("profile").is_none() {
+        return Ok(());
+    }
+    // Snapshot every unrelated item; after the removal each must serialize
+    // byte-identical or the write is refused (nothing else may change).
+    let preserved: Vec<(String, String)> = doc
+        .iter()
+        .filter(|(key, _)| *key != "profile")
+        .map(|(key, item)| (key.to_owned(), item.to_string()))
+        .collect();
+    doc.remove("profile");
+    for (key, before) in &preserved {
+        match doc.get(key.as_str()) {
+            Some(after) if after.to_string() == *before => {}
+            _ => {
+                return Err(
+                    "refusing removal: unrelated configuration changed"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    if doc.len() != preserved.len() {
+        return Err(
+            "refusing removal: unrelated configuration changed".to_owned()
+        );
+    }
+    let serialized = doc.to_string();
+    if serialized.len()
+        > siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES
+    {
+        return Err("siralos.toml exceeds the byte bound".to_owned());
+    }
+    // Atomic write: temp in same dir, lstat verify target, verify parse,
+    // rename (the write path's pattern verbatim).
+    let nonce = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    };
+    let temp = workspace_root.join(format!(
+        "{}siralos-toml-{nonce:x}",
+        siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
+    ));
+    std::fs::write(&temp, serialized.as_bytes()).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        e.to_string()
+    })?;
+    // Verify temp is regular file (not symlink).
+    if let Ok(meta) = std::fs::symlink_metadata(&temp) {
+        if meta.file_type().is_symlink() || !meta.is_file() {
+            let _ = std::fs::remove_file(&temp);
+            return Err(
+                "temporary siralos.toml must be a regular file".to_owned()
+            );
+        }
+    }
+    // Verify written bytes parse and the profile is GONE — via
+    // `load_workspace_profile`, the exact loader the session uses at
+    // startup. The temp lives in the workspace root, so copy it into a
+    // temp-dir shim as `siralos.toml` and run the loader there: the
+    // remaining config MUST parse with no profile.
+    let verify_bytes = std::fs::read(&temp).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        e.to_string()
+    })?;
+    let verify_text = String::from_utf8(verify_bytes).map_err(|_| {
+        let _ = std::fs::remove_file(&temp);
+        "temporary siralos.toml is not valid UTF-8".to_owned()
+    })?;
+    {
+        let shim_nonce = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        };
+        let shim_dir = std::env::temp_dir()
+            .join(format!("siralos-profile-verify-{shim_nonce:x}"));
+        let shim_result = (|| -> Result<(), String> {
+            std::fs::create_dir_all(&shim_dir)
+                .map_err(|e| format!("verify shim not writable: {e}"))?;
+            std::fs::write(
+                shim_dir.join(
+                    siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME,
+                ),
+                verify_text.as_bytes(),
+            )
+            .map_err(|e| format!("verify shim not writable: {e}"))?;
+            match siralos_adapters::profile_config::load_workspace_profile(
+                &shim_dir,
+            ) {
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Absent => {
+                    Ok(())
+                }
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Invalid {
+                    diagnostic,
+                } => Err(format!(
+                    "removed config does not parse: {diagnostic}"
+                )),
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Record(_) => {
+                    Err("removed profile still applies; refusing to replace siralos.toml"
+                        .to_owned())
+                }
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&shim_dir);
+        if let Err(err) = shim_result {
+            let _ = std::fs::remove_file(&temp);
+            return Err(err);
+        }
+    }
+    // Refuse symlinked/non-regular target before rename (manifest pattern).
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() || !meta.is_file() {
+            let _ = std::fs::remove_file(&temp);
+            return Err("siralos.toml must be a regular file; refusing symlink or special file".to_owned());
+        }
+    } else if let Err(e) = std::fs::symlink_metadata(&path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            let _ = std::fs::remove_file(&temp);
+            return Err(e.to_string());
+        }
+    }
+    if let Err(e) = std::fs::rename(&temp, &path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.to_string());
+    }
+    let _ = std::fs::remove_file(&temp);
+    Ok(())
+}
+
+/// Resolve a `y/N` provider-removal confirmation into the transcript
+/// message — the SINGLE outcome both frontends call (one implementation).
+/// `Approve` removes via [`remove_profile_config`] and mirrors the save
+/// message; `Deny` cancels truthfully without touching the file.
+#[must_use]
+pub fn apply_provider_remove_confirmation(
+    workspace_root: &Path,
+    decision: crate::tui::ApprovalDecision,
+) -> String {
+    match decision {
+        crate::tui::ApprovalDecision::Approve => {
+            match remove_profile_config(workspace_root) {
+                Ok(()) => "provider removed from siralos.toml - restart the session to apply\n"
+                    .to_owned(),
+                Err(error) => {
+                    format!("provider removal failed: {error}\n")
+                }
+            }
+        }
+        crate::tui::ApprovalDecision::Deny => {
+            "provider removal cancelled\n".to_owned()
+        }
+    }
+}
+
 /// Render the `/domains` empty-state or installed view.
 fn render_domains(workspace_root: &Path) -> String {
     match load_plugin_records(workspace_root) {
@@ -2497,18 +2755,38 @@ pub fn run_interactive_tui_with_options(
                                     key,
                                 )
                             {
+                                let confirming_removal = tui_state
+                                    .borrow()
+                                    .confirming_provider_removal;
                                 tui_state.borrow_mut().pending_approval = None;
-                                let verdict = match decision {
-                                    crate::tui::ApprovalDecision::Approve => {
-                                        "Approved."
-                                    }
-                                    crate::tui::ApprovalDecision::Deny => {
-                                        "Denied."
-                                    }
-                                };
                                 tui_state
                                     .borrow_mut()
-                                    .push_line(verdict.to_owned());
+                                    .confirming_provider_removal = false;
+                                if confirming_removal {
+                                    // Provider-removal confirmation: resolve
+                                    // through the single outcome both
+                                    // frontends call.
+                                    let rendered = sanitize_for_display(
+                                        &apply_provider_remove_confirmation(
+                                            &workspace_root,
+                                            decision,
+                                        ),
+                                    );
+                                    let _ =
+                                        sink.write_all(rendered.as_bytes());
+                                } else {
+                                    let verdict = match decision {
+                                        crate::tui::ApprovalDecision::Approve => {
+                                            "Approved."
+                                        }
+                                        crate::tui::ApprovalDecision::Deny => {
+                                            "Denied."
+                                        }
+                                    };
+                                    tui_state
+                                        .borrow_mut()
+                                        .push_line(verdict.to_owned());
+                                }
                                 let base = "ready";
                                 let metrics_opt = context_session_holder
                                     .as_ref()
@@ -2741,6 +3019,26 @@ pub fn run_interactive_tui_with_options(
                         entries,
                     );
                 }
+            } else if let SlashCommand::ProviderRemove = command {
+                // Removal entry point (TUI): absent profile is the truthful
+                // no-op; otherwise arm the y/N confirmation modal (the
+                // decision resolves through the single outcome in the
+                // modal branch below).
+                let entries = crate::tui::provider_entries_from_session(
+                    applied_provider.as_deref(),
+                    effective_model.as_deref(),
+                    applied_endpoint.as_deref(),
+                );
+                if entries.is_empty() {
+                    let msg = sanitize_for_display(
+                        "no provider configured - nothing to remove\n",
+                    );
+                    let _ = sink.write_all(msg.as_bytes());
+                } else {
+                    crate::tui::open_provider_remove_confirm(
+                        &mut tui_state.borrow_mut(),
+                    );
+                }
             } else {
                 let should_exit = dispatch_tui_command(
                     &command,
@@ -2800,11 +3098,11 @@ pub fn run_interactive_tui_with_options(
 #[cfg(test)]
 mod tests {
     use super::{
-        InteractiveOptions, SlashCommand, compose_session,
-        is_unknown_slash_command, parse_slash_command, render_evolve_lines,
-        render_model_line, render_provider_line,
-        run_interactive_session_with_options, slash_command_catalog,
-        write_profile_config,
+        InteractiveOptions, SlashCommand, apply_provider_remove_confirmation,
+        compose_session, is_unknown_slash_command, parse_slash_command,
+        remove_profile_config, render_evolve_lines, render_model_line,
+        render_provider_line, run_interactive_session_with_options,
+        slash_command_catalog, write_profile_config,
     };
     use std::fs::{create_dir, create_dir_all, read, remove_dir_all, write};
     use std::io::Cursor;
@@ -3695,7 +3993,7 @@ mod tests {
         assert!(names.contains(&"/models"));
         assert!(names.contains(&"/evolve"));
         assert!(names.contains(&"/context"));
-        assert_eq!(names.len(), 11);
+        assert_eq!(names.len(), 12);
     }
 
     #[test]
@@ -4208,6 +4506,307 @@ mod tests {
         let expected = format!("unknown command - available: {names}");
         assert!(output.contains(&expected));
         assert!(!output.contains("Siralos received:"));
+        let _ = remove_dir_all(root);
+    }
+
+    /// List workspace-dir files left by the atomic writers (temp prefix).
+    fn mutation_temps(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let prefix = siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX;
+        std::fs::read_dir(root)
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok().map(|e| e.path()))
+                    .filter(|path| {
+                        path.file_name().is_some_and(|name| {
+                            name.to_string_lossy().starts_with(prefix)
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn remove_profile_config_strips_section_preserving_rest() {
+        // Provider deletion removes the [profile] table and nothing else:
+        // every other key, table, comment, and line survives byte-for-byte.
+        let root = temporary_directory("remove-strips");
+        let original = "# workspace config\n[workspace]\nroot = \".\"\n\n[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\ncredential = \"env:OPENAI_API_KEY\"\nendpoint = \"https://api.example.com/v1\"\n\n[other]\nkey = \"value\"\n# trailing comment\n";
+        write(root.join("siralos.toml"), original).expect("fixture");
+        remove_profile_config(&root).expect("remove");
+        let after = std::fs::read_to_string(root.join("siralos.toml"))
+            .expect("read back");
+        assert!(
+            !after.contains("[profile]"),
+            "profile section must be gone, got: {after:?}"
+        );
+        assert!(
+            !after.contains("openai"),
+            "provider value must be gone, got: {after:?}"
+        );
+        assert!(
+            after.contains("# workspace config"),
+            "leading comment must survive, got: {after:?}"
+        );
+        assert!(
+            after.contains("[workspace]\nroot = \".\""),
+            "workspace table must survive byte-for-byte, got: {after:?}"
+        );
+        assert!(
+            after.contains("[other]\nkey = \"value\"\n# trailing comment"),
+            "trailing table, key, and comment must survive, got: {after:?}"
+        );
+        // The bytes still parse AND the profile is gone (the rename gate).
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Absent => {
+            }
+            other => panic!("profile must be absent, got: {other:?}"),
+        }
+        assert!(mutation_temps(&root).is_empty(), "no temp files may remain");
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn remove_profile_config_absent_noop_leaves_bytes_untouched() {
+        // No [profile] table: succeed WITHOUT rewriting the file.
+        let root = temporary_directory("remove-noop");
+        let original = "# only comment\n[other]\nkey = \"value\"\n";
+        write(root.join("siralos.toml"), original).expect("fixture");
+        remove_profile_config(&root).expect("no-op succeeds");
+        let after = read(root.join("siralos.toml")).expect("read back");
+        assert_eq!(
+            after,
+            original.as_bytes(),
+            "no-op must not touch the bytes"
+        );
+        assert!(mutation_temps(&root).is_empty());
+        let _ = remove_dir_all(root);
+        // A missing file trivially holds no profile: same truthful no-op,
+        // and nothing is created.
+        let missing = temporary_directory("remove-noop-missing");
+        remove_profile_config(&missing).expect("missing file no-op");
+        assert!(
+            !missing.join("siralos.toml").exists(),
+            "no-op must not create a file"
+        );
+        let _ = remove_dir_all(missing);
+    }
+
+    #[test]
+    fn remove_profile_config_refuses_non_regular_target() {
+        // A directory at the target path is refused exactly like the write
+        // path refuses it, and no temp file is left behind.
+        let root = temporary_directory("remove-non-regular");
+        create_dir_all(root.join("siralos.toml")).expect("dir target");
+        let error = remove_profile_config(&root).expect_err("must refuse");
+        assert!(
+            error.contains("regular file"),
+            "refusal must name the rule, got: {error:?}"
+        );
+        assert!(mutation_temps(&root).is_empty());
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn remove_profile_config_refuses_symlink_and_leaves_no_temp() {
+        // A symlinked target is refused exactly like the write path refuses
+        // it. Symlink creation needs privileges on some platforms, so the
+        // refusal assertion only runs when the link was actually created
+        // (repo precedent: harness.rs symlink gating); temp cleanliness is
+        // asserted unconditionally.
+        let root = temporary_directory("remove-symlink");
+        write(root.join("real.toml"), "[profile]\nname = \"x\"\n")
+            .expect("target");
+        let linked = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(
+                    root.join("real.toml"),
+                    root.join("siralos.toml"),
+                )
+                .is_ok()
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_file(
+                    root.join("real.toml"),
+                    root.join("siralos.toml"),
+                )
+                .is_ok()
+            }
+        };
+        if linked {
+            let error = remove_profile_config(&root).expect_err("must refuse");
+            assert!(
+                error.contains("regular file"),
+                "refusal must name the rule, got: {error:?}"
+            );
+        }
+        assert!(mutation_temps(&root).is_empty(), "no temp files may remain");
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn remove_profile_config_unparsable_fails_and_leaves_no_temp() {
+        // An unparsable file cannot be safely excised: fail closed with the
+        // write path's parse diagnostic, bytes untouched, temp cleaned.
+        let root = temporary_directory("remove-unparsable");
+        let original = "[profile\nbroken = \n";
+        write(root.join("siralos.toml"), original).expect("fixture");
+        let error =
+            remove_profile_config(&root).expect_err("must fail closed");
+        assert!(
+            error.contains("does not parse"),
+            "failure must name the parse rule, got: {error:?}"
+        );
+        let after = read(root.join("siralos.toml")).expect("read back");
+        assert_eq!(after, original.as_bytes(), "bytes must be untouched");
+        assert!(mutation_temps(&root).is_empty());
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn slash_command_catalog_includes_provider_remove() {
+        // Both frontends derive their vocabulary from this single catalog.
+        let catalog = slash_command_catalog();
+        let names: Vec<&str> = catalog.iter().map(|(n, _)| *n).collect();
+        assert!(
+            names.contains(&"/provider remove"),
+            "catalog must list /provider remove, got: {names:?}"
+        );
+        assert!(
+            matches!(
+                parse_slash_command("/provider remove"),
+                SlashCommand::ProviderRemove
+            ),
+            "must parse to its own variant"
+        );
+        assert!(
+            matches!(parse_slash_command("/provider"), SlashCommand::Provider),
+            "bare /provider stays display-only"
+        );
+        assert!(
+            matches!(
+                parse_slash_command("/provider extra"),
+                SlashCommand::Prompt(_)
+            ),
+            "other /provider args stay unknown"
+        );
+        assert!(!is_unknown_slash_command("/provider remove"));
+    }
+
+    #[test]
+    fn provider_remove_confirm_yes_removes_no_cancels() {
+        // One implementation for the confirmation outcome: yes removes and
+        // reports the save-mirroring message, no cancels truthfully.
+        use crate::tui::ApprovalDecision;
+        let root = temporary_directory("remove-confirm-yes");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n",
+        )
+        .expect("fixture");
+        let message = apply_provider_remove_confirmation(
+            &root,
+            ApprovalDecision::Approve,
+        );
+        assert!(
+            message.contains(
+                "provider removed from siralos.toml - restart the session to apply"
+            ),
+            "success must mirror the save message, got: {message:?}"
+        );
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Absent => {
+            }
+            other => panic!("profile must be gone, got: {other:?}"),
+        }
+        let _ = remove_dir_all(root);
+        let root_no = temporary_directory("remove-confirm-no");
+        let original = "[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n";
+        write(root_no.join("siralos.toml"), original).expect("fixture");
+        let message_no = apply_provider_remove_confirmation(
+            &root_no,
+            ApprovalDecision::Deny,
+        );
+        assert!(
+            message_no.contains("cancelled"),
+            "denial must cancel truthfully, got: {message_no:?}"
+        );
+        let after = read(root_no.join("siralos.toml")).expect("read back");
+        assert_eq!(after, original.as_bytes(), "denial must not touch");
+        let _ = remove_dir_all(root_no);
+    }
+
+    #[test]
+    fn provider_remove_stdio_confirm_yes_removes() {
+        // End-to-end stdio: /provider remove prompts y/N, y removes.
+        let root = temporary_directory("remove-stdio-yes");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\nendpoint = \"https://api.example.com/v1\"\n",
+        )
+        .expect("fixture");
+        let output = run("/provider remove\ny\n/exit\n", &root, None);
+        assert!(
+            output.contains("(y/N)"),
+            "must prompt for confirmation, got: {output:?}"
+        );
+        assert!(
+            output.contains(
+                "provider removed from siralos.toml - restart the session to apply"
+            ),
+            "must report removal, got: {output:?}"
+        );
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Absent => {
+            }
+            other => panic!("profile must be gone, got: {other:?}"),
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn provider_remove_stdio_anything_else_cancels() {
+        // End-to-end stdio: anything but y (the shared y/N gate) cancels.
+        for (label, answer) in
+            [("remove-stdio-no", "n"), ("remove-stdio-empty", "")]
+        {
+            let root = temporary_directory(label);
+            let original = "[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\n";
+            write(root.join("siralos.toml"), original).expect("fixture");
+            let output = run(
+                &format!("/provider remove\n{answer}\n/exit\n"),
+                &root,
+                None,
+            );
+            assert!(
+                output.contains("cancelled"),
+                "must cancel truthfully, got: {output:?}"
+            );
+            let after = read(root.join("siralos.toml")).expect("read back");
+            assert_eq!(after, original.as_bytes(), "cancel must not touch");
+            let _ = remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn provider_remove_stdio_absent_noop() {
+        // End-to-end stdio: nothing configured says so without prompting.
+        let root = temporary_directory("remove-stdio-absent");
+        let output = run("/provider remove\n/exit\n", &root, None);
+        assert!(
+            output.contains("nothing to remove"),
+            "no-op must say there is nothing to remove, got: {output:?}"
+        );
+        assert!(
+            !output.contains("(y/N)"),
+            "no-op must not prompt, got: {output:?}"
+        );
+        assert!(
+            !root.join("siralos.toml").exists(),
+            "no-op must not create a file"
+        );
         let _ = remove_dir_all(root);
     }
 }

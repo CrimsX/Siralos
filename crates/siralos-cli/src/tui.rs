@@ -645,6 +645,11 @@ pub struct TuiState {
     /// Pending approval modal — when `Some`, all non-modal keys are ignored and
     /// the modal renders centered over a dimmed transcript (T2).
     pub pending_approval: Option<ApprovalModal>,
+    /// When `true`, the pending approval modal is a provider-removal
+    /// confirmation (armed by the "- Remove provider" picker row or
+    /// `/provider remove`): `y` removes via `remove_profile_config`,
+    /// `n`/`Esc` cancels. `false` for ordinary tool approvals.
+    pub confirming_provider_removal: bool,
     /// Command palette popup (I2): when `Some`, the input starts with `/` and
     /// this holds the filtered catalog entries (case-insensitive prefix filter).
     pub palette: Option<Vec<(String, String)>>,
@@ -680,6 +685,7 @@ impl Default for TuiState {
             status: String::from("ready"),
             scroll_offset: 0,
             pending_approval: None,
+            confirming_provider_removal: false,
             palette: None,
             palette_selected: None,
             provider: None,
@@ -3331,6 +3337,14 @@ pub fn handle_key(
                     state.provider_add_form = Some(ProviderAddForm::new());
                     return false;
                 }
+                // Removal entry: arm the y/N confirmation modal.
+                let selected_is_remove = selected_name
+                    .as_deref()
+                    .is_some_and(|n| n == "- Remove provider");
+                if selected_is_remove {
+                    open_provider_remove_confirm(state);
+                    return false;
+                }
                 if let Some(name) = selected_name {
                     let sanitized =
                         crate::sanitize::sanitize_for_display(&name);
@@ -3498,7 +3512,9 @@ pub fn handle_key(
 /// Open the provider picker (H6) — caller supplies entries from workspace config.
 /// Read-only: no config write; selection echo handled in `handle_key`.
 /// When entries is non-empty an extra "Add provider" entry is appended whose
-/// selection opens the add-flow form (C1).
+/// selection opens the add-flow form (C1), followed by a "- Remove provider"
+/// entry whose selection arms the y/N removal confirmation. An empty
+/// configuration shows only the add entry (there is nothing to remove).
 pub fn open_provider_picker(
     state: &mut TuiState,
     mut entries: Vec<ProviderEntry>,
@@ -3517,8 +3533,29 @@ pub fn open_provider_picker(
             host: "add".to_owned(),
             model: "new".to_owned(),
         });
+        entries.push(ProviderEntry {
+            name: "- Remove provider".to_owned(),
+            host: "remove".to_owned(),
+            model: "profile".to_owned(),
+        });
     }
     state.provider_picker = Some(ProviderPicker::new(entries));
+    state.input.clear();
+    state.update_palette();
+}
+
+/// Open the provider-removal confirmation (y/N modal over the shared
+/// approval gate): `y` removes the `[profile]` section, `n`/`Esc` cancels.
+/// Static host strings (sanitizer-clean); the decision resolves in the
+/// interactive loop through the single removal outcome.
+pub fn open_provider_remove_confirm(state: &mut TuiState) {
+    state.provider_picker = None;
+    state.pending_approval = Some(ApprovalModal::new(vec![
+        "Remove the configured provider from siralos.toml?".to_owned(),
+        "This deletes the [profile] section. Restart the session to apply."
+            .to_owned(),
+    ]));
+    state.confirming_provider_removal = true;
     state.input.clear();
     state.update_palette();
 }
@@ -4517,11 +4554,12 @@ mod tests {
             let names: Vec<&str> =
                 catalog.iter().map(|(name, _)| name.as_str()).collect();
             assert!(names.contains(&"/provider"));
+            assert!(names.contains(&"/provider remove"));
             assert!(names.contains(&"/model"));
             assert!(names.contains(&"/models"));
             assert!(names.contains(&"/evolve"));
             assert!(names.contains(&"/context"));
-            assert_eq!(names.len(), 11);
+            assert_eq!(names.len(), 12);
         }
 
         #[test]
@@ -4531,9 +4569,9 @@ mod tests {
             state.update_palette();
             let palette_len =
                 state.palette.as_ref().expect("palette for /").len();
-            assert_eq!(palette_len, 11);
+            assert_eq!(palette_len, 12);
             // I3: palette shows ALL filtered entries, bounded by terminal height minus input/status rows; scroll indicator only if overflow.
-            // At 80x24, available 21, 11 entries fit fully with no indicator.
+            // At 80x24, available 21, 12 entries fit fully with no indicator.
             let buf = super::render(&state, 80, 24);
             let content: String =
                 buf.content().iter().map(|c| c.symbol()).collect();
@@ -4820,8 +4858,8 @@ mod tests {
         let mut state = TuiState::new();
         state.input = "/".to_owned();
         state.update_palette();
-        // Full catalog 11, palette shows all filtered entries
-        assert_eq!(state.palette.as_ref().unwrap().len(), 11);
+        // Full catalog 12, palette shows all filtered entries
+        assert_eq!(state.palette.as_ref().unwrap().len(), 12);
         let buf = render(&state, 80, 24);
         let content: String =
             buf.content().iter().map(|c| c.symbol()).collect();
@@ -5113,8 +5151,10 @@ mod tests {
             model: "m1".to_owned(),
         }];
         open_provider_picker(&mut state, entries);
-        // C1: the "+ Add provider" entry is appended after the configured ones.
-        assert_eq!(state.provider_picker.as_ref().unwrap().entries.len(), 2);
+        // C1: the "+ Add provider" entry is appended after the configured ones,
+        // followed by the "- Remove provider" entry (present only when a
+        // provider exists).
+        assert_eq!(state.provider_picker.as_ref().unwrap().entries.len(), 3);
         assert_eq!(
             state.provider_picker.as_ref().unwrap().entries[0].name,
             "solo"
@@ -5122,6 +5162,10 @@ mod tests {
         assert_eq!(
             state.provider_picker.as_ref().unwrap().entries[1].name,
             "+ Add provider"
+        );
+        assert_eq!(
+            state.provider_picker.as_ref().unwrap().entries[2].name,
+            "- Remove provider"
         );
         // Down moves to the Add entry; Up returns to the configured provider.
         let down = crossterm::event::KeyEvent::new(
@@ -5145,6 +5189,114 @@ mod tests {
         assert!(content.contains("+ Add provider"));
         // Read-only: the picker itself performs no config write — the add
         // flow is a separate explicit form, and nothing was persisted here.
+    }
+
+    #[test]
+    fn provider_picker_remove_row_only_when_provider_exists() {
+        // The "- Remove provider" row is appended only when at least one
+        // provider entry exists; an empty configuration shows only the add
+        // row (there is nothing to remove).
+        let mut empty = TuiState::new();
+        open_provider_picker(&mut empty, Vec::new());
+        let empty_names: Vec<&str> = empty
+            .provider_picker
+            .as_ref()
+            .expect("picker")
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(empty_names, vec!["+ Add provider"]);
+        let mut configured = TuiState::new();
+        open_provider_picker(
+            &mut configured,
+            vec![ProviderEntry {
+                name: "solo".to_owned(),
+                host: "api.example.com".to_owned(),
+                model: "m1".to_owned(),
+            }],
+        );
+        let names: Vec<&str> = configured
+            .provider_picker
+            .as_ref()
+            .expect("picker")
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["solo", "+ Add provider", "- Remove provider"]);
+    }
+
+    #[test]
+    fn provider_picker_remove_row_opens_confirm_modal() {
+        // Confirm-yes path (state level): Enter on "- Remove provider"
+        // closes the picker and arms the y/N confirmation modal; the modal
+        // itself routes through the shared y/n/Esc gate.
+        let mut state = TuiState::new();
+        open_provider_picker(
+            &mut state,
+            vec![ProviderEntry {
+                name: "solo".to_owned(),
+                host: "api.example.com".to_owned(),
+                model: "m1".to_owned(),
+            }],
+        );
+        let down = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Down,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        handle_key(&mut state, down, 10);
+        handle_key(&mut state, down, 10);
+        assert_eq!(state.provider_picker.as_ref().unwrap().selected, 2);
+        assert_eq!(
+            state.provider_picker.as_ref().unwrap().entries[2].name,
+            "- Remove provider"
+        );
+        let enter = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert!(!handle_key(&mut state, enter, 10));
+        assert!(state.provider_picker.is_none());
+        assert!(state.confirming_provider_removal);
+        let modal = state.pending_approval.as_ref().expect("confirm modal");
+        assert!(
+            modal.lines.iter().any(|line| line.contains("Remove")),
+            "modal must name the removal, got: {:?}",
+            modal.lines
+        );
+        // The shared gate still decides: y approves, n/Esc deny (cancel).
+        let yes = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('y'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            handle_modal_key(&mut state, yes),
+            Some(ApprovalDecision::Approve)
+        );
+        let no = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('n'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            handle_modal_key(&mut state, no),
+            Some(ApprovalDecision::Deny)
+        );
+    }
+
+    #[test]
+    fn provider_remove_confirm_modal_renders() {
+        // The armed confirmation renders deterministically in the frame.
+        let mut state = TuiState::new();
+        open_provider_remove_confirm(&mut state);
+        assert!(state.confirming_provider_removal);
+        let first = render(&state, 80, 24);
+        let second = render(&state, 80, 24);
+        assert_eq!(first, second);
+        let content: String =
+            first.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("Remove"));
+        assert!(content.contains("y/n"));
     }
 
     #[test]
