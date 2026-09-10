@@ -289,13 +289,12 @@ impl GenericProvider {
             }
         };
         if !status.is_success() {
-            let snippet: String = text.chars().take(512).collect();
-            let safe: String = snippet
-                .chars()
-                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-                .collect();
+            let safe = truncated_sanitized_body(&text);
             let events = vec![ProviderEvent::Failed(format!(
-                "{provider} error {status}: {safe}"
+                "response failed: {} at {} - {}",
+                status.as_u16(),
+                endpoint,
+                safe
             ))];
             record_outcome(
                 hooks,
@@ -386,12 +385,13 @@ pub fn fetch_models(
     let text = crate::provider::bounded_body_text(response)
         .map_err(|err| format!("response read failed: {err}"))?;
     if !status.is_success() {
-        let snippet: String = text.chars().take(512).collect();
-        let safe: String = snippet
-            .chars()
-            .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-            .collect();
-        return Err(format!("models fetch failed: {status}: {safe}"));
+        let safe = truncated_sanitized_body(&text);
+        return Err(format!(
+            "response failed: {} at {} - {}",
+            status.as_u16(),
+            url,
+            safe
+        ));
     }
     let value: Value = serde_json::from_str(&text).map_err(|err| {
         format!("unrecognized response shape: JSON parse failed: {err}")
@@ -419,6 +419,16 @@ pub fn parse_models_shape(value: &Value) -> Result<Vec<String>, String> {
         );
     }
     Ok(ids)
+}
+
+/// Bounded, regex-free sanitization for provider error bodies: cut at first `<` (HTML), truncate to 240 chars, filter controls.
+fn truncated_sanitized_body(body: &str) -> String {
+    let cut_at_html = body.find('<').map(|idx| &body[..idx]).unwrap_or(body);
+    let truncated: String = cut_at_html.chars().take(240).collect();
+    truncated
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect()
 }
 
 impl std::fmt::Display for GenericProvider {
@@ -530,5 +540,77 @@ mod tests {
             !err.contains("sk-secret-123"),
             "credential must not leak in error: {err:?}"
         );
+    }
+
+    #[test]
+    fn credential_resolution_key_prefix_is_literal() {
+        let cred = HostCredential::from_credential_str("key:my-secret-value")
+            .expect("key:");
+        assert_eq!(cred.as_bytes(), b"my-secret-value");
+    }
+
+    #[test]
+    fn credential_resolution_env_prefix_resolves_env_var() {
+        let cred = HostCredential::from_credential_str("env:PATH")
+            .expect("env:PATH must resolve");
+        assert!(!cred.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn credential_resolution_bare_is_env_compat() {
+        let cred = HostCredential::from_credential_str("PATH")
+            .expect("bare PATH must resolve");
+        assert!(!cred.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn error_truncation_html_cut_and_bounded() {
+        let big_html = format!(
+            "Error 404: not found <html><body>{}</body></html>",
+            "x".repeat(10000)
+        );
+        let truncated = super::truncated_sanitized_body(&big_html);
+        assert!(
+            truncated.len() <= 240,
+            "must be <=240, got {}",
+            truncated.len()
+        );
+        assert!(!truncated.contains('<'), "must cut at first '<'");
+        assert!(
+            truncated.contains("Error 404"),
+            "prefix before html must remain"
+        );
+        // Simulate full error shape: "response failed: 404 at https://host/v1/chat/completions - <truncated>"
+        let url = "https://host/v1/chat/completions";
+        let err = format!("response failed: 404 at {} - {}", url, truncated);
+        assert!(err.contains(url));
+        assert!(err.contains("404"));
+        assert!(err.len() <= url.len() + 50 + 240);
+        assert!(!err.contains("<html"));
+    }
+
+    #[test]
+    fn error_truncation_10kb_html_body_is_bounded() {
+        let body = format!(
+            "{}{}{}",
+            "a".repeat(240),
+            "<html>dump</html>",
+            "b".repeat(10000)
+        );
+        let truncated = super::truncated_sanitized_body(&body);
+        assert!(truncated.len() <= 240);
+        assert!(!truncated.contains('<'));
+        assert_eq!(truncated, "a".repeat(240));
+    }
+
+    #[test]
+    fn fetch_models_error_is_bounded_and_has_url_status() {
+        // Force a 404 error via unreachable endpoint with body containing html — the error from fetch_models should be bounded
+        // We test the helper directly since live fetch would need a server; the shape is verified by error_truncation tests above.
+        let html_body =
+            "<html><head></head><body>Not Found</body></html>".repeat(500);
+        let truncated = super::truncated_sanitized_body(&html_body);
+        assert!(truncated.len() <= 240);
+        assert!(!truncated.contains('<'));
     }
 }

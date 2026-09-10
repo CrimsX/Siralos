@@ -249,8 +249,9 @@ where
         applied_model,
         applied_model_display_name: _,
         applied_endpoint,
-        credential_present,
+        credential_present: _,
         applied_credential,
+        applied_credential_raw,
     } = session;
 
     // --- Frontend residual (stdio): prompt loop over reader/writer. ---
@@ -307,7 +308,7 @@ where
             &mut context_history_len,
             applied_provider.as_deref(),
             applied_model.as_deref(),
-            credential_present,
+            applied_credential_raw.as_deref(),
             applied_endpoint.as_deref(),
             applied_credential.as_ref(),
         )? {
@@ -373,14 +374,30 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-/// Host-generated provider line from the composed profile (U7).
+/// Host-generated provider line from the composed profile (U7) — redacted (G1).
 fn render_provider_line(
     provider: Option<&str>,
-    credential_present: bool,
+    credential_raw: Option<&str>,
 ) -> String {
     let name = provider.unwrap_or("no provider configured");
-    let cred = if credential_present { "present" } else { "absent" };
+    let cred = match credential_raw {
+        None => "absent".to_owned(),
+        Some(s) if s.starts_with("key:") => "key:***".to_owned(),
+        Some(s) if s.starts_with("env:") => s.to_owned(),
+        Some(s) => format!("env:{s}"),
+    };
     format!("provider: {name}\ncredential: {cred}\n")
+}
+
+/// Redacted credential display for status surfaces (key:*** / env:NAME / absent).
+#[allow(dead_code)]
+fn redacted_credential_display(raw: Option<&str>) -> String {
+    match raw {
+        None => "absent".to_owned(),
+        Some(s) if s.starts_with("key:") => "key:***".to_owned(),
+        Some(s) if s.starts_with("env:") => s.to_owned(),
+        Some(s) => format!("env:{s}"),
+    }
 }
 
 /// Host-generated model line from the composed profile (U7).
@@ -542,7 +559,7 @@ fn dispatch_stdio_command<P, W>(
     context_history_len: &mut usize,
     provider: Option<&str>,
     model: Option<&str>,
-    credential_present: bool,
+    credential_raw: Option<&str>,
     endpoint: Option<&str>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
 ) -> Result<bool, InteractiveError>
@@ -612,7 +629,7 @@ where
         SlashCommand::Provider => {
             let rendered = sanitize_for_display(&render_provider_line(
                 provider,
-                credential_present,
+                credential_raw,
             ));
             writer
                 .write_all(rendered.as_bytes())
@@ -716,7 +733,7 @@ fn dispatch_tui_command<P>(
     context_history_len: &mut usize,
     provider: Option<&str>,
     model: Option<&str>,
-    credential_present: bool,
+    credential_raw: Option<&str>,
     endpoint: Option<&str>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
 ) -> Result<bool, InteractiveError>
@@ -775,7 +792,7 @@ where
         SlashCommand::Provider => {
             let rendered = sanitize_for_display(&render_provider_line(
                 provider,
-                credential_present,
+                credential_raw,
             ));
             let _ = sink.write_all(rendered.as_bytes());
         }
@@ -926,10 +943,13 @@ struct SessionComposition<'a> {
     /// Applied endpoint from the composed profile (H6 host for picker).
     applied_endpoint: Option<String>,
     /// Whether the credential for the applied provider is present (U7).
+    #[allow(dead_code)]
     credential_present: bool,
     /// Retained credential for /models fetch (I6) — the live HostCredential
-    /// (if any) resolved from the profile's `credential = "env:..."`.
+    /// (if any) resolved from the profile's `credential = "env:..."` or `key:...`.
     applied_credential: Option<siralos_adapters::provider::HostCredential>,
+    /// Raw credential string for redacted display (key:*** / env:NAME).
+    applied_credential_raw: Option<String>,
 }
 
 /// Compose one session — the SINGLE definition both loops call (T4).
@@ -1011,7 +1031,7 @@ fn compose_session(
                 if effective.applied_profile.is_some() =>
             {
                 let cred = record.credential.as_deref().and_then(|c| {
-                    match HostCredential::from_env_ref(c) {
+                    match HostCredential::from_credential_str(c) {
                         Ok(cred) => Some(cred),
                         Err(e) => {
                             eprintln!("siralos: credential error: {e}");
@@ -1041,18 +1061,18 @@ fn compose_session(
         applied_endpoint,
         credential_present,
         applied_credential,
+        applied_credential_raw,
     ) = match &loaded_profile {
         WorkspaceProfileLoad::Record(record)
             if effective.applied_profile.is_some() =>
         {
-            let cred_present = record
-                .credential
-                .as_deref()
-                .is_some_and(|c| HostCredential::from_env_ref(c).is_ok());
+            let cred_present = record.credential.as_deref().is_some_and(|c| {
+                HostCredential::from_credential_str(c).is_ok()
+            });
             let cred = record
                 .credential
                 .as_deref()
-                .and_then(|c| HostCredential::from_env_ref(c).ok());
+                .and_then(|c| HostCredential::from_credential_str(c).ok());
             (
                 record.provider.clone(),
                 record.model.clone(),
@@ -1060,9 +1080,10 @@ fn compose_session(
                 record.endpoint.clone(),
                 cred_present,
                 cred,
+                record.credential.clone(),
             )
         }
-        _ => (None, None, None, None, false, None),
+        _ => (None, None, None, None, false, None, None),
     };
     let mut live_host_provider: Option<HostProvider> = None;
     let mut replay_provider_holder: Option<RecordedReplayProvider> = None;
@@ -1291,6 +1312,7 @@ fn compose_session(
         applied_endpoint,
         credential_present,
         applied_credential,
+        applied_credential_raw,
     })
 }
 
@@ -1525,12 +1547,48 @@ pub fn write_profile_config(
         return Err("A model must match [a-zA-Z0-9._-]{1,128}.".to_owned());
     }
     if let Some(cred) = credential_env {
-        validate_credential_env_name_inline(cred)?;
+        // Verbatim credential: accept env:NAME, key:VALUE, or bare legacy env name. Validation mirrors ProfileRecord.
+        if let Some(name) = cred.strip_prefix("env:") {
+            validate_credential_env_name_inline(name)?;
+        } else if let Some(inner) = cred.strip_prefix("key:") {
+            if inner.is_empty() {
+                return Err(
+                    "A credential key: value must be non-empty.".to_owned()
+                );
+            }
+            if inner.contains('\0') {
+                return Err("A credential must not contain NUL.".to_owned());
+            }
+            if cred.len()
+                > siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+            {
+                return Err(format!(
+                    "The credential exceeds the {}-byte bound.",
+                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+                ));
+            }
+        } else {
+            // Bare legacy compat — treat as env name.
+            validate_credential_env_name_inline(cred)?;
+        }
+        if cred.contains('\0') {
+            return Err("A credential must not contain NUL.".to_owned());
+        }
+        if cred.len() > siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+        {
+            return Err(format!(
+                "The credential exceeds the {}-byte bound.",
+                siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+            ));
+        }
     }
     if let Some(proto) = protocol {
-        if proto != "openai-compatible" && proto != "anthropic" {
+        if proto != "openai-completions"
+            && proto != "openai-responses"
+            && proto != "anthropic-messages"
+        {
             return Err(
-                "The protocol must be \"openai-compatible\" or \"anthropic\"."
+                "The protocol must be \"openai-completions\", \"openai-responses\", or \"anthropic-messages\"."
                     .to_owned(),
             );
         }
@@ -1646,9 +1704,9 @@ pub fn write_profile_config(
     // Merge profile fields.
     doc["profile"]["provider"] = toml_edit::value(provider);
     doc["profile"]["model"] = toml_edit::value(model);
-    // Credential: written only when present (a public endpoint omits it).
+    // Credential: verbatim — written as given (env:X stays env:X; key:X written as key:X).
     if let Some(cred) = credential_env {
-        doc["profile"]["credential"] = toml_edit::value(format!("env:{cred}"));
+        doc["profile"]["credential"] = toml_edit::value(cred);
     } else if let Some(profile_item) = doc.get_mut("profile") {
         if let Some(table) = profile_item.as_table_mut() {
             table.remove("credential");
@@ -1664,9 +1722,9 @@ pub fn write_profile_config(
             }
         }
     }
-    // Protocol: written only when not default (openai-compatible omitted).
+    // Protocol: written only when not default (openai-completions omitted).
     if let Some(proto) = protocol {
-        if proto != "openai-compatible" {
+        if proto != "openai-completions" {
             doc["profile"]["protocol"] = toml_edit::value(proto);
         } else if let Some(profile_item) = doc.get_mut("profile") {
             if let Some(table) = profile_item.as_table_mut() {
@@ -1762,9 +1820,8 @@ pub fn write_profile_config(
                 siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
                     record,
                 ) => {
-                    // Ensure the applied record carries the written values.
-                    let expected_credential =
-                        credential_env.map(|c| format!("env:{c}"));
+                    // Ensure the applied record carries the written values (verbatim credential).
+                    let expected_credential = credential_env.map(|c| c.to_owned());
                     if record.provider.as_deref() != Some(provider)
                         || record.model.as_deref() != Some(model)
                         || record.credential.as_deref()
@@ -2362,8 +2419,9 @@ pub fn run_interactive_tui_with_options(
         applied_model,
         applied_model_display_name,
         applied_endpoint,
-        credential_present,
+        credential_present: _,
         applied_credential,
+        applied_credential_raw,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
     // S5: header/status prefers model display name when present.
@@ -2617,13 +2675,11 @@ pub fn run_interactive_tui_with_options(
                 }
             };
             let url_str = url_opt.as_deref().unwrap_or("");
-            let credential = cred_opt.as_deref().and_then(|name| {
-                let env_ref = format!("env:{name}");
-                siralos_adapters::provider::HostCredential::from_env_ref(
-                    &env_ref,
-                )
-                .ok()
-            });
+            let credential = cred_opt
+                .as_deref()
+                .and_then(|c| {
+                    siralos_adapters::provider::HostCredential::from_credential_str(c).ok()
+                });
             let fetch_result =
                 siralos_adapters::provider::generic::fetch_models(
                     url_str,
@@ -2699,7 +2755,7 @@ pub fn run_interactive_tui_with_options(
                     &mut context_history_len,
                     applied_provider.as_deref(),
                     effective_model.as_deref(),
-                    credential_present,
+                    applied_credential_raw.as_deref(),
                     applied_endpoint.as_deref(),
                     applied_credential.as_ref(),
                 )?;
@@ -2763,7 +2819,7 @@ mod tests {
             "public-model",
             None,
             Some("https://public.example.com/v1"),
-            Some("openai-compatible"),
+            Some("openai-completions"),
             None,
         );
         assert!(result.is_ok(), "write failed: {result:?}");
@@ -3646,17 +3702,165 @@ mod tests {
 
     #[test]
     fn provider_line_credential_present_absent() {
-        let present = render_provider_line(Some("openai"), true);
-        assert!(present.contains("provider: openai"));
-        assert!(present.contains("credential: present"));
-        let absent = render_provider_line(Some("openai"), false);
+        // Verbatim redaction: key: -> key:*** ; env: -> env:NAME ; absent -> absent
+        let key = render_provider_line(Some("openai"), Some("key:secret123"));
+        assert!(key.contains("provider: openai"));
+        assert!(key.contains("credential: key:***"));
+        assert!(!key.contains("secret123"));
+        let env =
+            render_provider_line(Some("openai"), Some("env:OPENAI_API_KEY"));
+        assert!(env.contains("credential: env:OPENAI_API_KEY"));
+        let absent = render_provider_line(Some("openai"), None);
         assert!(absent.contains("credential: absent"));
-        let no_provider = render_provider_line(None, false);
+        let no_provider = render_provider_line(None, None);
         assert!(no_provider.contains("no provider configured"));
         let model = render_model_line(Some("model-a"));
         assert!(model.contains("model-a"));
         let no_model = render_model_line(None);
         assert!(no_model.contains("no model configured"));
+    }
+
+    #[test]
+    fn verbatim_storage_public_writes_key_public() {
+        let root = temporary_directory("verbatim-public");
+        write_profile_config(
+            &root,
+            "openai",
+            "gpt-4o",
+            Some("key:public"),
+            Some("https://api.example.com/v1"),
+            None,
+            None,
+        )
+        .expect("write key:public");
+        let loaded =
+            siralos_adapters::profile_config::load_workspace_profile(&root);
+        match loaded {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                r,
+            ) => {
+                assert_eq!(r.credential.as_deref(), Some("key:public"));
+                assert!(siralos_adapters::provider::HostCredential::from_credential_str(r.credential.as_deref().unwrap()).is_ok());
+                // Redacted display must not leak value
+                let line = render_provider_line(
+                    r.provider.as_deref(),
+                    r.credential.as_deref(),
+                );
+                assert!(line.contains("key:***"));
+                assert!(!line.contains("public"));
+            }
+            _ => panic!("profile must apply"),
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn verbatim_storage_env_form_still_works() {
+        let root = temporary_directory("verbatim-env");
+        write_profile_config(
+            &root,
+            "openai",
+            "gpt-4o",
+            Some("env:PATH"),
+            Some("https://api.example.com/v1"),
+            None,
+            None,
+        )
+        .expect("write env:");
+        let loaded =
+            siralos_adapters::profile_config::load_workspace_profile(&root);
+        match loaded {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                r,
+            ) => {
+                assert_eq!(r.credential.as_deref(), Some("env:PATH"));
+                let line = render_provider_line(
+                    r.provider.as_deref(),
+                    r.credential.as_deref(),
+                );
+                assert!(line.contains("env:PATH"));
+                assert!(!line.contains("key:***"));
+            }
+            _ => panic!("profile must apply"),
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn verbatim_storage_empty_is_none() {
+        let root = temporary_directory("verbatim-empty");
+        write_profile_config(
+            &root,
+            "openai",
+            "gpt-4o",
+            None,
+            Some("https://api.example.com/v1"),
+            None,
+            None,
+        )
+        .expect("write none");
+        let loaded =
+            siralos_adapters::profile_config::load_workspace_profile(&root);
+        match loaded {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                r,
+            ) => {
+                assert!(r.credential.is_none());
+                let line = render_provider_line(
+                    r.provider.as_deref(),
+                    r.credential.as_deref(),
+                );
+                assert!(line.contains("absent"));
+            }
+            _ => panic!("profile must apply"),
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn redaction_status_line_no_leak() {
+        // Status line currently provider/model only; ensure provider line redaction covers key leak.
+        let raw_key = "key:super-secret-value-that-must-not-leak";
+        let line = render_provider_line(Some("my-provider"), Some(raw_key));
+        assert!(!line.contains("super-secret"));
+        assert!(line.contains("key:***"));
+        let line_env =
+            render_provider_line(Some("my-provider"), Some("env:MY_KEY"));
+        assert!(line_env.contains("env:MY_KEY"));
+        let line_absent = render_provider_line(Some("my-provider"), None);
+        assert!(line_absent.contains("absent"));
+    }
+
+    #[test]
+    fn write_round_trip_key_public_then_resolve() {
+        let root = temporary_directory("verbatim-roundtrip");
+        write_profile_config(
+            &root,
+            "openai",
+            "gpt-4o",
+            Some("key:public"),
+            Some("https://api.example.com/v1"),
+            Some("openai-completions"),
+            None,
+        )
+        .expect("write");
+        // Load via workspace profile applies, then GenericProvider resolution sees key:public
+        let loaded =
+            siralos_adapters::profile_config::load_workspace_profile(&root);
+        let rec = match loaded {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                r,
+            ) => r,
+            _ => panic!("should apply"),
+        };
+        assert_eq!(rec.credential.as_deref(), Some("key:public"));
+        assert!(
+            siralos_adapters::provider::HostCredential::from_credential_str(
+                rec.credential.as_deref().unwrap()
+            )
+            .is_ok()
+        );
+        let _ = remove_dir_all(root);
     }
 
     #[test]

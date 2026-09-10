@@ -431,7 +431,7 @@ pub fn parse_profile_value(
         let Some(parsed) = siralos_core::composition::Protocol::parse(text)
         else {
             return Err(error(
-                "The [profile.protocol] entry must be \"openai-compatible\" or \"anthropic\".".to_owned(),
+                "The [profile.protocol] entry must be \"openai-completions\", \"openai-responses\", or \"anthropic-messages\".".to_owned(),
             ));
         };
         protocol = parsed;
@@ -830,30 +830,57 @@ widgets = ["x"]
 
     #[test]
     fn profile_parse_protocol_matrix() {
-        // Present: openai-compatible
+        // Present: openai-completions
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"openai-completions\"\n",
+        )
+        .expect("openai-completions");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::OpenAiCompletions
+        );
+        // Present: openai-responses
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"openai-responses\"\n",
+        )
+        .expect("openai-responses");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::OpenAiResponses
+        );
+        // Present: anthropic-messages
+        let record = parse_profile_document(
+            "\n[profile]\nname = \"dev\"\nprotocol = \"anthropic-messages\"\n",
+        )
+        .expect("anthropic-messages");
+        assert_eq!(
+            record.protocol,
+            siralos_core::composition::Protocol::AnthropicMessages
+        );
+        // Legacy alias: openai-compatible -> OpenAiCompletions
         let record = parse_profile_document(
             "\n[profile]\nname = \"dev\"\nprotocol = \"openai-compatible\"\n",
         )
-        .expect("openai-compatible");
+        .expect("openai-compatible legacy");
         assert_eq!(
             record.protocol,
-            siralos_core::composition::Protocol::OpenAiCompatible
+            siralos_core::composition::Protocol::OpenAiCompletions
         );
-        // Present: anthropic
+        // Legacy alias: anthropic -> AnthropicMessages
         let record = parse_profile_document(
             "\n[profile]\nname = \"dev\"\nprotocol = \"anthropic\"\n",
         )
-        .expect("anthropic");
+        .expect("anthropic legacy");
         assert_eq!(
             record.protocol,
-            siralos_core::composition::Protocol::Anthropic
+            siralos_core::composition::Protocol::AnthropicMessages
         );
-        // Absent -> default openai-compatible
+        // Absent -> default openai-completions
         let record = parse_profile_document("\n[profile]\nname = \"dev\"\n")
             .expect("absent");
         assert_eq!(
             record.protocol,
-            siralos_core::composition::Protocol::OpenAiCompatible
+            siralos_core::composition::Protocol::OpenAiCompletions
         );
         // Malformed: unknown protocol -> error (profile unapplied)
         let malformed = parse_profile_document(
@@ -915,21 +942,21 @@ widgets = ["x"]
         // Protocol omitted when default, display omitted when empty — tested via write_profile_config
         // Here we test parse round-trip: writing default should not include protocol key
         let record = parse_profile_document(
-            "\n[profile]\nname = \"dev\"\nprotocol = \"openai-compatible\"\n",
+            "\n[profile]\nname = \"dev\"\nprotocol = \"openai-completions\"\n",
         )
         .expect("default");
         assert_eq!(
             record.protocol,
-            siralos_core::composition::Protocol::OpenAiCompatible
+            siralos_core::composition::Protocol::OpenAiCompletions
         );
-        // Anthropic is non-default and should be present
+        // Anthropic-messages is non-default and should be present
         let record = parse_profile_document(
-            "\n[profile]\nname = \"dev\"\nprotocol = \"anthropic\"\n",
+            "\n[profile]\nname = \"dev\"\nprotocol = \"anthropic-messages\"\n",
         )
-        .expect("anthropic");
+        .expect("anthropic-messages");
         assert_eq!(
             record.protocol,
-            siralos_core::composition::Protocol::Anthropic
+            siralos_core::composition::Protocol::AnthropicMessages
         );
     }
 }

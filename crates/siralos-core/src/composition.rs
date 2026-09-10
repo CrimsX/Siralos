@@ -54,22 +54,28 @@ pub const MAX_PROFILE_ENDPOINT_BYTES: usize = 512;
 /// Maximum model display name length in UTF-8 bytes.
 pub const MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES: usize = 256;
 
-/// The provider API protocol — additive, absent-transparent (default openai-compatible).
+/// The provider API protocol — additive, absent-transparent (default openai-completions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Protocol {
-    /// OpenAI-compatible (default).
+    /// OpenAI chat completions — POST {base}/chat/completions with Bearer auth (default).
     #[default]
-    OpenAiCompatible,
-    /// Anthropic.
-    Anthropic,
+    OpenAiCompletions,
+    /// OpenAI responses — POST {base}/responses with Bearer auth.
+    OpenAiResponses,
+    /// Anthropic messages — POST {base}/v1/messages with x-api-key + anthropic-version.
+    AnthropicMessages,
 }
 
 impl Protocol {
-    /// Parse a protocol string — closed set: openai-compatible or anthropic.
+    /// Parse a protocol string — closed set: openai-completions, openai-responses, anthropic-messages.
+    /// Legacy aliases accepted: "openai-compatible" -> OpenAiCompletions, "anthropic" -> AnthropicMessages.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "openai-compatible" => Some(Self::OpenAiCompatible),
-            "anthropic" => Some(Self::Anthropic),
+            "openai-completions" => Some(Self::OpenAiCompletions),
+            "openai-responses" => Some(Self::OpenAiResponses),
+            "anthropic-messages" => Some(Self::AnthropicMessages),
+            "openai-compatible" => Some(Self::OpenAiCompletions),
+            "anthropic" => Some(Self::AnthropicMessages),
             _ => None,
         }
     }
@@ -78,8 +84,9 @@ impl Protocol {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::OpenAiCompatible => "openai-compatible",
-            Self::Anthropic => "anthropic",
+            Self::OpenAiCompletions => "openai-completions",
+            Self::OpenAiResponses => "openai-responses",
+            Self::AnthropicMessages => "anthropic-messages",
         }
     }
 }
@@ -146,7 +153,7 @@ pub struct ProfileRecord {
     /// the three context tools over the derived snapshot, and the demand loop).
     /// Absent table defaults to false (byte-transparent).
     pub context_system_enabled: bool,
-    /// Protocol for the provider — additive, absent-transparent (default openai-compatible).
+    /// Protocol for the provider — additive, absent-transparent (default openai-completions).
     /// The protocol's request-shaping use is future work (stored and displayed now).
     pub protocol: Protocol,
     /// Optional model display name — shown in header/status instead of raw model id when present.
@@ -355,23 +362,40 @@ fn validate_credential_field(
             message: "A credential must not contain NUL.".to_owned(),
         });
     }
-    if !value.starts_with("env:") {
-        return Err(ProfileValidationError {
-            message: "A credential must start with \"env:\".".to_owned(),
-        });
+    if let Some(name) = value.strip_prefix("env:") {
+        if name.is_empty()
+            || name.len() > 64
+            || !name.chars().all(|c| {
+                c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
+            })
+        {
+            return Err(ProfileValidationError {
+                message: "A credential env name must match [A-Z0-9_]{1,64} after \"env:\".".to_owned(),
+            });
+        }
+        return Ok(());
     }
-    let name = &value[4..];
-    if name.is_empty()
-        || name.len() > 64
-        || !name
+    if let Some(inner) = value.strip_prefix("key:") {
+        if inner.is_empty() {
+            return Err(ProfileValidationError {
+                message: "A credential must be \"env:NAME\" or \"key:VALUE\" where VALUE is non-empty.".to_owned(),
+            });
+        }
+        // `key:` holds the literal value; no further charset restriction beyond bounds and NUL already checked.
+        return Ok(());
+    }
+    // Bare legacy compat: treat bare env name as env var lookup.
+    if !value.is_empty()
+        && value.len() <= 64
+        && value
             .chars()
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
     {
-        return Err(ProfileValidationError {
-            message: "A credential env name must match [A-Z0-9_]{1,64} after \"env:\".".to_owned(),
-        });
+        return Ok(());
     }
-    Ok(())
+    Err(ProfileValidationError {
+        message: "A credential must be \"env:NAME\" or \"key:VALUE\" where NAME matches [A-Z0-9_]{1,64}.".to_owned(),
+    })
 }
 
 fn validate_model_display_name_field(

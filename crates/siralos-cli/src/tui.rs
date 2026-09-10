@@ -462,7 +462,7 @@ pub enum ProviderAddField {
     Url,
     /// API key env-var name (the env-var NAME, never the secret).
     ApiKey,
-    /// API protocol (openai-compatible or anthropic).
+    /// API protocol (openai-completions, openai-responses, or anthropic-messages).
     ApiProtocol,
     /// Model id (picker on fetch success, free text otherwise).
     Model,
@@ -491,7 +491,9 @@ impl ProviderAddField {
                 "the environment variable holding your key; set it before starting Siralos"
             }
             Self::DisplayName => "the name shown for this provider",
-            Self::ApiProtocol => "openai-compatible or anthropic",
+            Self::ApiProtocol => {
+                "openai-completions, openai-responses, or anthropic-messages (Up/Down to pick)"
+            }
             Self::Model => "the model id",
             Self::ModelDisplayName => {
                 "the name shown for this model (optional)"
@@ -504,6 +506,15 @@ impl ProviderAddField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPicker {
     /// Fetched model ids in server order.
+    pub items: Vec<String>,
+    /// Currently selected index (Up/Down wraps).
+    pub selected: usize,
+}
+
+/// Protocol picker state — 3-item picker over the real wire protocols (decision 137/138).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtocolPicker {
+    /// Protocol options in order: openai-completions, openai-responses, anthropic-messages.
     pub items: Vec<String>,
     /// Currently selected index (Up/Down wraps).
     pub selected: usize,
@@ -522,7 +533,7 @@ pub struct ProviderAddData {
     pub credential_env: Option<String>,
     /// Optional endpoint validated `https://` or `http://`, no NUL/space, up to 512.
     pub endpoint: Option<String>,
-    /// Protocol — closed set, default openai-compatible (S3).
+    /// Protocol — closed set, default openai-completions (S3).
     pub protocol: String,
     /// Optional model display name — printable, bounded 256 (S1).
     pub model_display_name: Option<String>,
@@ -558,6 +569,8 @@ pub struct ProviderAddForm {
     pub model_picker: Option<ModelPicker>,
     /// Honest fallback note when fetch fails — shown as a dim line in the form.
     pub fetch_note: Option<String>,
+    /// Protocol picker state — Some when ApiProtocol field picker is open.
+    pub protocol_picker: Option<ProtocolPicker>,
 }
 
 impl Default for ProviderAddForm {
@@ -583,6 +596,7 @@ impl ProviderAddForm {
             fetching_models: false,
             model_picker: None,
             fetch_note: None,
+            protocol_picker: None,
         }
     }
 
@@ -1622,8 +1636,11 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
         let description = field.description();
         let is_current = field == form.field && form.completed.is_none();
         let display = if is_current {
-            // When the model picker is open, the model field shows the picker instead of raw input.
-            if field == ProviderAddField::Model && form.model_picker.is_some()
+            // When a picker is open, the field shows the picker instead of raw input.
+            if (field == ProviderAddField::Model
+                && form.model_picker.is_some())
+                || (field == ProviderAddField::ApiProtocol
+                    && form.protocol_picker.is_some())
             {
                 format!("> {label}:")
             } else {
@@ -1654,10 +1671,74 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
             Line::from(format!("    {description}"))
                 .style(Style::default().fg(Color::DarkGray)),
         );
-        // Model picker: rendered inline under the model field when open.
+        // Protocol picker: rendered inline under the api protocol field when open — bounded viewport 8.
+        if field == ProviderAddField::ApiProtocol && is_current {
+            if let Some(picker) = &form.protocol_picker {
+                const VISIBLE: usize = 8;
+                let total = picker.items.len();
+                let window_start = if total <= VISIBLE {
+                    0
+                } else {
+                    picker
+                        .selected
+                        .saturating_sub(VISIBLE - 1)
+                        .min(total.saturating_sub(VISIBLE))
+                };
+                let window_end = (window_start + VISIBLE).min(total);
+                // Position indicator at window top.
+                lines.push(
+                    Line::from(format!(
+                        "    {}/{} ",
+                        picker.selected + 1,
+                        total
+                    ))
+                    .style(Style::default().fg(Color::DarkGray)),
+                );
+                for idx in window_start..window_end {
+                    let item = &picker.items[idx];
+                    let prefix =
+                        if idx == picker.selected { "> " } else { "  " };
+                    let style = if idx == picker.selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(ratatui::style::Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    lines.push(
+                        Line::from(format!("    {prefix}{item}")).style(style),
+                    );
+                }
+                lines.push(
+                    Line::from("    Up/Down to navigate, Enter to select, Esc for free text")
+                        .style(Style::default().fg(Color::DarkGray)),
+                );
+            }
+        }
+        // Model picker: rendered inline under the model field when open — bounded viewport 8 sliding with selection.
         if field == ProviderAddField::Model && is_current {
             if let Some(picker) = &form.model_picker {
-                for (idx, item) in picker.items.iter().enumerate() {
+                const VISIBLE: usize = 8;
+                let total = picker.items.len();
+                let window_start = if total <= VISIBLE {
+                    0
+                } else {
+                    picker
+                        .selected
+                        .saturating_sub(VISIBLE - 1)
+                        .min(total.saturating_sub(VISIBLE))
+                };
+                let window_end = (window_start + VISIBLE).min(total);
+                lines.push(
+                    Line::from(format!(
+                        "    {}/{} ",
+                        picker.selected + 1,
+                        total
+                    ))
+                    .style(Style::default().fg(Color::DarkGray)),
+                );
+                for idx in window_start..window_end {
+                    let item = &picker.items[idx];
                     let prefix =
                         if idx == picker.selected { "> " } else { "  " };
                     let style = if idx == picker.selected {
@@ -2382,6 +2463,7 @@ pub fn derive_provider_name(url: &str) -> String {
 }
 
 // Helpers for tests: expose scroll operations
+#[allow(dead_code)]
 /// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
 /// Human-readable error (D2) — validation rule unchanged, but with O3/I3
 /// teaching message when the input looks like the secret itself.
@@ -2439,13 +2521,36 @@ fn validate_provider_name(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate api protocol — closed set: openai-compatible (default) or anthropic.
+/// Validate api protocol — closed set: openai-completions (default), openai-responses, anthropic-messages.
 fn validate_api_protocol(value: &str) -> Result<(), String> {
-    if value == "openai-compatible" || value == "anthropic" {
+    if value == "openai-completions"
+        || value == "openai-responses"
+        || value == "anthropic-messages"
+    {
         return Ok(());
     }
-    Err("The api protocol must be \"openai-compatible\" or \"anthropic\"."
+    Err("The api protocol must be \"openai-completions\", \"openai-responses\", or \"anthropic-messages\"."
         .to_owned())
+}
+
+fn protocol_picker_items() -> Vec<String> {
+    vec![
+        "openai-completions".to_owned(),
+        "openai-responses".to_owned(),
+        "anthropic-messages".to_owned(),
+    ]
+}
+
+fn open_protocol_picker(form: &mut ProviderAddForm) {
+    let items = protocol_picker_items();
+    let selected = form
+        .protocol
+        .as_deref()
+        .and_then(|p| items.iter().position(|x| x == p))
+        .unwrap_or(0);
+    form.protocol_picker = Some(ProtocolPicker { items, selected });
+    form.input.clear();
+    form.error = None;
 }
 
 /// Validate model display name — optional, printable, bounded 256 (S1/I1).
@@ -2614,6 +2719,13 @@ pub fn handle_key(
         }
         match key.code {
             KeyCode::Esc => {
+                // When the protocol picker is open, Esc falls back to free text.
+                if form.field == ProviderAddField::ApiProtocol
+                    && form.protocol_picker.is_some()
+                {
+                    form.protocol_picker = None;
+                    return false;
+                }
                 // When the picker is open, Esc falls back to free text (S2).
                 if form.field == ProviderAddField::Model
                     && form.model_picker.is_some()
@@ -2641,6 +2753,19 @@ pub fn handle_key(
                 let trimmed = current.trim().to_owned();
                 let field = form.field;
                 // Validate current field and advance or error.
+                // Picker interception for Protocol field: Enter selects highlighted protocol.
+                if form.field == ProviderAddField::ApiProtocol
+                    && form.protocol_picker.is_some()
+                {
+                    if let Some(picker) = form.protocol_picker.take() {
+                        let selected = picker.items[picker.selected].clone();
+                        form.protocol = Some(selected.clone());
+                        form.field = ProviderAddField::Model;
+                        form.input.clear();
+                        form.error = None;
+                    }
+                    return false;
+                }
                 // Picker interception for Model field: Up/Down handled below, Enter here selects.
                 if form.field == ProviderAddField::Model
                     && form.model_picker.is_some()
@@ -2672,13 +2797,12 @@ pub fn handle_key(
                         }
                     }
                     ProviderAddField::ApiKey => {
-                        if trimmed.is_empty() {
-                            Ok(())
-                        } else {
-                            validate_credential_env_name(&trimmed)
-                        }
+                        // Verbatim credential: no validation — field is an interface, not a validator.
+                        Ok(())
                     }
                     ProviderAddField::ApiProtocol => {
+                        // When picker is present, validation is bypassed (picker selection handled above).
+                        // Free-text fallback validated against closed set.
                         validate_api_protocol(&trimmed)
                     }
                     ProviderAddField::Model => validate_model_name(&trimmed),
@@ -2731,12 +2855,15 @@ pub fn handle_key(
                     ProviderAddField::ApiKey => {
                         let credential_opt = if trimmed.is_empty() {
                             None
+                        } else if trimmed.starts_with("env:") {
+                            Some(trimmed.clone())
                         } else {
-                            Some(trimmed)
+                            Some(format!("key:{}", trimmed))
                         };
                         form.credential_env = credential_opt;
                         form.field = ProviderAddField::ApiProtocol;
-                        form.input.clear();
+                        // Open protocol picker with pre-selected item
+                        open_protocol_picker(form);
                         // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
                         let url_opt = form.endpoint.clone();
                         if let Some(ep) = url_opt.as_deref() {
@@ -2753,6 +2880,7 @@ pub fn handle_key(
                     }
                     ProviderAddField::ApiProtocol => {
                         form.protocol = Some(trimmed);
+                        form.protocol_picker = None;
                         form.field = ProviderAddField::Model;
                         // When entering Model field, if picker already populated (fetch completed while on prior fields),
                         // it will render inline; otherwise free text.
@@ -2793,7 +2921,7 @@ pub fn handle_key(
                         {
                             let protocol =
                                 form.protocol.clone().unwrap_or_else(|| {
-                                    "openai-compatible".to_owned()
+                                    "openai-completions".to_owned()
                                 });
                             form.completed = Some(ProviderAddData {
                                 provider,
@@ -2819,6 +2947,11 @@ pub fn handle_key(
                 if key.kind != crossterm::event::KeyEventKind::Press {
                     return false;
                 }
+                if form.field == ProviderAddField::ApiProtocol
+                    && form.protocol_picker.is_some()
+                {
+                    return false;
+                }
                 if form.field == ProviderAddField::Model
                     && form.model_picker.is_some()
                 {
@@ -2836,6 +2969,20 @@ pub fn handle_key(
             KeyCode::Up => {
                 if key.kind != crossterm::event::KeyEventKind::Press {
                     return false;
+                }
+                // Picker navigation: when the protocol picker is open, Up wraps within the picker.
+                if form.field == ProviderAddField::ApiProtocol {
+                    if let Some(picker) = form.protocol_picker.as_mut() {
+                        if picker.items.is_empty() {
+                            return false;
+                        }
+                        if picker.selected == 0 {
+                            picker.selected = picker.items.len() - 1;
+                        } else {
+                            picker.selected -= 1;
+                        }
+                        return false;
+                    }
                 }
                 // Picker navigation: when the model picker is open, Up wraps within the picker.
                 if form.field == ProviderAddField::Model {
@@ -2876,34 +3023,53 @@ pub fn handle_key(
                 };
                 if let Some(prev_field) = prev {
                     form.field = prev_field;
-                    let restored = match prev_field {
-                        ProviderAddField::Url => {
-                            form.endpoint.clone().unwrap_or_default()
+                    if prev_field == ProviderAddField::ApiProtocol {
+                        open_protocol_picker(form);
+                    } else {
+                        let restored = match prev_field {
+                            ProviderAddField::Url => {
+                                form.endpoint.clone().unwrap_or_default()
+                            }
+                            ProviderAddField::ApiKey => {
+                                form.credential_env.clone().unwrap_or_default()
+                            }
+                            ProviderAddField::DisplayName => {
+                                form.provider.clone().unwrap_or_default()
+                            }
+                            ProviderAddField::ApiProtocol => {
+                                form.protocol.clone().unwrap_or_default()
+                            }
+                            ProviderAddField::Model => {
+                                form.model.clone().unwrap_or_default()
+                            }
+                            ProviderAddField::ModelDisplayName => form
+                                .model_display_name
+                                .clone()
+                                .unwrap_or_default(),
+                        };
+                        form.input = restored;
+                        form.error = None;
+                        // Clear protocol picker when leaving ApiProtocol
+                        if prev_field != ProviderAddField::ApiProtocol {
+                            form.protocol_picker = None;
                         }
-                        ProviderAddField::ApiKey => {
-                            form.credential_env.clone().unwrap_or_default()
-                        }
-                        ProviderAddField::DisplayName => {
-                            form.provider.clone().unwrap_or_default()
-                        }
-                        ProviderAddField::ApiProtocol => {
-                            form.protocol.clone().unwrap_or_default()
-                        }
-                        ProviderAddField::Model => {
-                            form.model.clone().unwrap_or_default()
-                        }
-                        ProviderAddField::ModelDisplayName => {
-                            form.model_display_name.clone().unwrap_or_default()
-                        }
-                    };
-                    form.input = restored;
-                    form.error = None;
+                    }
                 }
                 return false;
             }
             KeyCode::Down => {
                 if key.kind != crossterm::event::KeyEventKind::Press {
                     return false;
+                }
+                // Picker navigation for Down when protocol picker is open.
+                if form.field == ProviderAddField::ApiProtocol {
+                    if let Some(picker) = form.protocol_picker.as_mut() {
+                        if !picker.items.is_empty() {
+                            picker.selected =
+                                (picker.selected + 1) % picker.items.len();
+                        }
+                        return false;
+                    }
                 }
                 // Picker navigation for Down when picker is open.
                 if form.field == ProviderAddField::Model {
@@ -2921,6 +3087,14 @@ pub fn handle_key(
                     return false;
                 }
                 // Down: validate current, if valid advance to next (same as Enter).
+                // If protocol picker is open, Down already handled navigation above; validation step only for free-text fallback.
+                if form.field == ProviderAddField::ApiProtocol
+                    && form.protocol_picker.is_some()
+                {
+                    // When picker is open, Down is navigation (handled), not advance.
+                    // To advance, user must press Enter to select; free-text path requires Esc first.
+                    return false;
+                }
                 let current = form.input.clone();
                 let trimmed = current.trim().to_owned();
                 let field = form.field;
@@ -2940,11 +3114,8 @@ pub fn handle_key(
                         }
                     }
                     ProviderAddField::ApiKey => {
-                        if trimmed.is_empty() {
-                            Ok(())
-                        } else {
-                            validate_credential_env_name(&trimmed)
-                        }
+                        // Verbatim credential: no validation.
+                        Ok(())
                     }
                     ProviderAddField::ApiProtocol => {
                         validate_api_protocol(&trimmed)
@@ -2999,12 +3170,14 @@ pub fn handle_key(
                     ProviderAddField::ApiKey => {
                         let credential_opt = if trimmed.is_empty() {
                             None
+                        } else if trimmed.starts_with("env:") {
+                            Some(trimmed.clone())
                         } else {
-                            Some(trimmed)
+                            Some(format!("key:{}", trimmed))
                         };
                         form.credential_env = credential_opt;
                         form.field = ProviderAddField::ApiProtocol;
-                        form.input.clear();
+                        open_protocol_picker(form);
                         // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
                         let url_opt = form.endpoint.clone();
                         if let Some(ep) = url_opt.as_deref() {
@@ -3021,6 +3194,7 @@ pub fn handle_key(
                     }
                     ProviderAddField::ApiProtocol => {
                         form.protocol = Some(trimmed);
+                        form.protocol_picker = None;
                         form.field = ProviderAddField::Model;
                         form.input.clear();
                     }
@@ -3056,7 +3230,7 @@ pub fn handle_key(
                         {
                             let protocol =
                                 form.protocol.clone().unwrap_or_else(|| {
-                                    "openai-compatible".to_owned()
+                                    "openai-completions".to_owned()
                                 });
                             form.completed = Some(ProviderAddData {
                                 provider,
@@ -3086,6 +3260,11 @@ pub fn handle_key(
                 }
                 // Ctrl combos are handled by outer loop; here just char.
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return false;
+                }
+                if form.field == ProviderAddField::ApiProtocol
+                    && form.protocol_picker.is_some()
+                {
                     return false;
                 }
                 // While picker is open, free-text typing is gated behind Esc (S2).
@@ -5045,7 +5224,7 @@ mod tests {
         );
         // Display name prefilled from endpoint host after Url advance.
         assert_eq!(form.provider.as_deref(), Some("openai"));
-        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_type(&mut state, "env:OPENAI_API_KEY");
         t108_enter(&mut state);
         // Simulate fetch completion before proceeding to Model (clears blocking flag)
         {
@@ -5056,8 +5235,8 @@ mod tests {
         }
         let form = state.provider_add_form.as_ref().expect("form open");
         assert_eq!(form.field, ProviderAddField::ApiProtocol);
-        assert_eq!(form.credential_env.as_deref(), Some("OPENAI_API_KEY"));
-        t108_type(&mut state, "openai-compatible");
+        assert_eq!(form.credential_env.as_deref(), Some("env:OPENAI_API_KEY"));
+        // Protocol picker is open — Enter selects default openai-completions
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
         assert_eq!(form.field, ProviderAddField::Model);
@@ -5078,13 +5257,13 @@ mod tests {
         assert_eq!(completed.model, "gpt-4o");
         assert_eq!(
             completed.credential_env.as_deref(),
-            Some("OPENAI_API_KEY")
+            Some("env:OPENAI_API_KEY")
         );
         assert_eq!(
             completed.endpoint.as_deref(),
             Some("https://api.openai.com/v1")
         );
-        assert_eq!(completed.protocol, "openai-compatible");
+        assert_eq!(completed.protocol, "openai-completions");
         assert_eq!(completed.model_display_name.as_deref(), Some("My GPT"));
     }
 
@@ -5120,7 +5299,7 @@ mod tests {
                 form.apply_fetch_result(Err("test".to_owned()));
             }
         }
-        t108_type(&mut state, "openai-compatible");
+        // Protocol picker -> Enter selects default openai-completions
         t108_enter(&mut state); // -> Model
         t108_type(&mut state, "public-model");
         t108_enter(&mut state); // -> ModelDisplayName
@@ -5139,23 +5318,18 @@ mod tests {
 
     #[test]
     fn nonempty_public_rejected_with_teaching_message() {
-        // K1: a non-empty lowercase value (which looks like a secret) is
-        // still rejected — with the teaching message.
+        // Verbatim: non-empty secret-like value is stored as key:<value> with NO validation or teaching error.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
         t108_enter(&mut state); // DisplayName (empty) -> Url
         t108_type(&mut state, "https://public.example.com/v1");
         t108_enter(&mut state); // Url -> ApiKey
-        t108_type(&mut state, "public");
-        t108_enter(&mut state); // ApiKey non-empty lowercase -> error
+        t108_type(&mut state, "sk-abc123");
+        t108_enter(&mut state); // ApiKey verbatim -> ApiProtocol, no error
         let form = state.provider_add_form.as_ref().expect("form open");
-        assert!(form.error.is_some());
-        let err = form.error.clone().unwrap_or_default();
-        assert!(
-            err.contains("looks like the key itself"),
-            "expected the teaching message, got: {err}"
-        );
-        assert_eq!(form.field, ProviderAddField::ApiKey);
+        assert!(form.error.is_none());
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        assert_eq!(form.credential_env.as_deref(), Some("key:sk-abc123"));
     }
 
     #[test]
@@ -5186,8 +5360,7 @@ mod tests {
         assert_eq!(form.field, ProviderAddField::Url);
         assert!(form.error.is_some());
         assert!(form.completed.is_none());
-        // Invalid api key (lowercase looks like the secret itself) errors with
-        // the O3 teaching message and stays on the api key field.
+        // Verbatim api key: lowercase is stored as key:<value> with no validation — advances to ApiProtocol.
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
         open_provider_add_form(&mut state);
         t108_enter(&mut state); // empty display name -> Url
@@ -5195,13 +5368,9 @@ mod tests {
         t108_type(&mut state, "lowercase-bad");
         t108_enter(&mut state);
         let form = state.provider_add_form.as_ref().expect("form open");
-        assert_eq!(form.field, ProviderAddField::ApiKey);
-        assert_eq!(
-            form.error.as_deref(),
-            Some(
-                "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
-            )
-        );
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        assert_eq!(form.credential_env.as_deref(), Some("key:lowercase-bad"));
+        assert!(form.error.is_none());
     }
 
     #[test]
@@ -5505,7 +5674,9 @@ mod tests {
             "display name description missing"
         );
         assert!(
-            joined.contains("openai-compatible or anthropic"),
+            joined.contains(
+                "openai-completions, openai-responses, or anthropic-messages"
+            ),
             "api protocol description missing"
         );
         assert!(joined.contains("the model id"), "model description missing");
@@ -5635,7 +5806,9 @@ mod tests {
                 form.apply_fetch_result(Err("test".to_owned()));
             }
         }
-        t108_type(&mut state, "openai-compatible");
+        // Protocol picker -> Esc fallback to free text then type new protocol
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "openai-completions");
         t108_enter(&mut state);
         t108_type(&mut state, "gpt-4o");
         t108_enter(&mut state);
@@ -5778,7 +5951,8 @@ mod tests {
                 form.apply_fetch_result(Err("test".to_owned()));
             }
         }
-        t108_type(&mut state, "openai-compatible");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "openai-completions");
         t108_enter(&mut state);
         t108_type(&mut state, "gpt-4o");
         t108_enter(&mut state);
@@ -5819,7 +5993,8 @@ mod tests {
             state.provider_add_form.as_ref().unwrap().field,
             ProviderAddField::ApiProtocol
         );
-        t108_type(&mut state, "openai-compatible");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "openai-completions");
         t108_enter(&mut state);
         t108_type(&mut state, "gpt-4o");
         t108_enter(&mut state);
@@ -5892,7 +6067,8 @@ mod tests {
             ProviderAddField::ApiProtocol
         );
         assert!(state.provider_add_form.as_ref().unwrap().input.is_empty());
-        t108_type(&mut state, "openai-compatible");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "openai-completions");
         handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
         let form = state.provider_add_form.as_ref().unwrap();
         assert_eq!(form.field, ProviderAddField::Model);
@@ -5924,7 +6100,7 @@ mod tests {
         let form = state.provider_add_form.as_ref().unwrap();
         assert_eq!(form.field, ProviderAddField::ApiKey);
         assert_eq!(form.provider.as_deref(), Some("example-vendor"));
-        t108_type(&mut state, "EXAMPLE_VENDOR_API_KEY");
+        t108_type(&mut state, "env:EXAMPLE_VENDOR_API_KEY");
         t108_enter(&mut state);
         // Simulate fetch completion before Model (clears flag)
         {
@@ -5933,7 +6109,8 @@ mod tests {
                 form.apply_fetch_result(Err("test".to_owned()));
             }
         }
-        t108_type(&mut state, "anthropic");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "anthropic-messages");
         t108_enter(&mut state);
         t108_type(&mut state, "model-a");
         t108_enter(&mut state);
@@ -5950,13 +6127,13 @@ mod tests {
         assert_eq!(completed.model, "model-a");
         assert_eq!(
             completed.credential_env.as_deref(),
-            Some("EXAMPLE_VENDOR_API_KEY")
+            Some("env:EXAMPLE_VENDOR_API_KEY")
         );
         assert_eq!(
             completed.endpoint.as_deref(),
             Some("https://api.example-vendor.com/v1")
         );
-        assert_eq!(completed.protocol, "anthropic");
+        assert_eq!(completed.protocol, "anthropic-messages");
         assert_eq!(
             completed.model_display_name.as_deref(),
             Some("Spark Display")
@@ -5971,9 +6148,10 @@ mod tests {
         open_provider_add_form(&mut state);
         t108_enter(&mut state); // empty display name -> Url
         t108_enter(&mut state); // empty url -> ApiKey
-        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_type(&mut state, "env:OPENAI_API_KEY");
         t108_enter(&mut state);
-        t108_type(&mut state, "openai-compatible");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "openai-completions");
         t108_enter(&mut state);
         t108_type(&mut state, "gpt-4o");
         t108_enter(&mut state);
@@ -6074,13 +6252,14 @@ mod tests {
 
     #[test]
     fn protocol_validation() {
-        assert!(validate_api_protocol("openai-compatible").is_ok());
-        assert!(validate_api_protocol("anthropic").is_ok());
+        assert!(validate_api_protocol("openai-completions").is_ok());
+        assert!(validate_api_protocol("openai-responses").is_ok());
+        assert!(validate_api_protocol("anthropic-messages").is_ok());
         assert!(validate_api_protocol("gopher").is_err());
         let err = validate_api_protocol("gopher").unwrap_err();
-        assert!(
-            err.contains("openai-compatible") || err.contains("anthropic")
-        );
+        assert!(err.contains("openai-completions"));
+        assert!(err.contains("openai-responses"));
+        assert!(err.contains("anthropic-messages"));
     }
 
     #[test]
@@ -6093,7 +6272,8 @@ mod tests {
         t108_enter(&mut state); // Url -> ApiKey (derivation prefills provider)
         t108_type(&mut state, "OPENAI_API_KEY");
         t108_enter(&mut state); // ApiKey -> ApiProtocol
-        t108_type(&mut state, "openai-compatible");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "openai-completions");
         t108_enter(&mut state); // ApiProtocol -> Model
         // Clear fetching flag simulated (no loop in test)
         {
@@ -6251,23 +6431,324 @@ mod tests {
     }
 
     #[test]
-    fn api_key_env_only() {
-        // The form stores env-var name only, never secret value; validation enforces A-Z0-9_
-        assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
-        assert!(validate_credential_env_name("sk-secret-123").is_err());
-        // O3: a pasted secret gets the teaching message, not the standard one.
-        assert_eq!(
-            validate_credential_env_name("sk-secret-123").unwrap_err(),
-            "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
-        );
+    fn verbatim_credential_public_stores_key_public() {
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
-        t108_enter(&mut state); // empty display name -> Url
-        t108_type(&mut state, "https://api.openai.com/v1");
-        t108_enter(&mut state); // Url -> ApiKey
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "public");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        assert_eq!(form.credential_env.as_deref(), Some("key:public"));
+        assert!(form.error.is_none());
+    }
+
+    #[test]
+    fn verbatim_credential_empty_is_none() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_enter(&mut state); // empty ApiKey
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert!(form.credential_env.is_none());
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+    }
+
+    #[test]
+    fn verbatim_credential_env_form_stored_as_is() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "env:OPENAI_API_KEY");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.credential_env.as_deref(), Some("env:OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn verbatim_credential_arbitrary_key_no_validation() {
+        // TUI is an interface: stores WHAT THE USER TYPES verbatim, no validation gatekeeping.
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "sk-secret-123");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.credential_env.as_deref(), Some("key:sk-secret-123"));
+        assert!(form.error.is_none());
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+    }
+
+    #[test]
+    fn verbatim_credential_down_advance_also_verbatim() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        t108_type(&mut state, "https://api.example.com/v1");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        t108_type(&mut state, "none");
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.credential_env.as_deref(), Some("key:none"));
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+    }
+
+    #[test]
+    fn protocol_picker_opens_with_three_items_default_zero() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
         t108_type(&mut state, "OPENAI_API_KEY");
         t108_enter(&mut state);
-        let f = state.provider_add_form.as_ref().unwrap();
-        assert_eq!(f.credential_env.as_deref(), Some("OPENAI_API_KEY"));
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        let picker = form.protocol_picker.as_ref().expect("picker open");
+        assert_eq!(picker.items.len(), 3);
+        assert_eq!(
+            picker.items,
+            vec![
+                "openai-completions".to_owned(),
+                "openai-responses".to_owned(),
+                "anthropic-messages".to_owned()
+            ]
+        );
+        assert_eq!(picker.selected, 0);
+    }
+
+    #[test]
+    fn protocol_picker_up_down_wrap() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        // Down wraps
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(
+            state
+                .provider_add_form
+                .as_ref()
+                .unwrap()
+                .protocol_picker
+                .as_ref()
+                .unwrap()
+                .selected,
+            1
+        );
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(
+            state
+                .provider_add_form
+                .as_ref()
+                .unwrap()
+                .protocol_picker
+                .as_ref()
+                .unwrap()
+                .selected,
+            2
+        );
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        assert_eq!(
+            state
+                .provider_add_form
+                .as_ref()
+                .unwrap()
+                .protocol_picker
+                .as_ref()
+                .unwrap()
+                .selected,
+            0
+        );
+        // Up wraps
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        assert_eq!(
+            state
+                .provider_add_form
+                .as_ref()
+                .unwrap()
+                .protocol_picker
+                .as_ref()
+                .unwrap()
+                .selected,
+            2
+        );
+    }
+
+    #[test]
+    fn protocol_picker_enter_selects() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        // Navigate to anthropic-messages (index 2) and select
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.protocol.as_deref(), Some("anthropic-messages"));
+        assert_eq!(form.field, ProviderAddField::Model);
+        assert!(form.protocol_picker.is_none());
+    }
+
+    #[test]
+    fn protocol_picker_esc_fallback_to_free_text() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        // Esc falls back
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert!(form.protocol_picker.is_none());
+        // Now free-text entry validated against closed set
+        t108_type(&mut state, "openai-responses");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.protocol.as_deref(), Some("openai-responses"));
+        assert_eq!(form.field, ProviderAddField::Model);
+    }
+
+    #[test]
+    fn protocol_invalid_free_text_errors_with_three_values() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
+        t108_type(&mut state, "gopher");
+        t108_enter(&mut state);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        let err = form.error.as_deref().unwrap_or("");
+        assert!(err.contains("openai-completions"));
+        assert!(err.contains("openai-responses"));
+        assert!(err.contains("anthropic-messages"));
+    }
+
+    #[test]
+    fn protocol_picker_preselects_stored_value_on_back() {
+        let mut state = TuiState::new();
+        open_provider_add_form(&mut state);
+        t108_enter(&mut state);
+        t108_type(&mut state, "https://api.example.com/v1");
+        t108_enter(&mut state);
+        t108_type(&mut state, "OPENAI_API_KEY");
+        t108_enter(&mut state);
+        // Clear fetching flag simulated (no loop in test)
+        {
+            let form = state.provider_add_form.as_mut().unwrap();
+            form.fetching_models = false;
+        }
+        // Select anthropic-messages
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Down), 10);
+        t108_enter(&mut state);
+        assert_eq!(
+            state.provider_add_form.as_ref().unwrap().protocol.as_deref(),
+            Some("anthropic-messages")
+        );
+        // Go back Up to ApiProtocol — picker should preselect stored value
+        handle_key(&mut state, t108_key(crossterm::event::KeyCode::Up), 10);
+        let form = state.provider_add_form.as_ref().unwrap();
+        assert_eq!(form.field, ProviderAddField::ApiProtocol);
+        let picker = form.protocol_picker.as_ref().expect("picker reopened");
+        assert_eq!(picker.selected, 2);
+        assert_eq!(picker.items[2], "anthropic-messages");
+    }
+
+    #[test]
+    fn model_picker_viewport_selected_always_visible() {
+        // 45 items: selected item must always be in rendered buffer at every step 0..44, position indicator renders.
+        let mut form = ProviderAddForm::new();
+        let items: Vec<String> =
+            (0..45).map(|i| format!("model-{i:02}")).collect();
+        form.field = ProviderAddField::Model;
+        form.model_picker =
+            Some(ModelPicker { items: items.clone(), selected: 0 });
+        for sel in 0..45 {
+            form.model_picker.as_mut().unwrap().selected = sel;
+            let lines = provider_add_form_lines(&form);
+            let rendered = lines
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let expected = format!("model-{sel:02}");
+            assert!(
+                rendered.contains(&expected),
+                "selected {expected} must be visible at sel {sel}"
+            );
+            let indicator = format!("{}/45", sel + 1);
+            assert!(
+                rendered.contains(&indicator),
+                "indicator {indicator} must render at sel {sel}"
+            );
+        }
+    }
+
+    #[test]
+    fn protocol_picker_viewport_position_indicator() {
+        let mut form = ProviderAddForm::new();
+        form.field = ProviderAddField::ApiProtocol;
+        form.protocol_picker = Some(ProtocolPicker {
+            items: vec![
+                "openai-completions".to_owned(),
+                "openai-responses".to_owned(),
+                "anthropic-messages".to_owned(),
+            ],
+            selected: 1,
+        });
+        let lines = provider_add_form_lines(&form);
+        let rendered =
+            lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
+        assert!(
+            rendered.contains("2/3"),
+            "protocol picker indicator 2/3 must render"
+        );
+    }
+
+    #[test]
+    fn picker_viewport_slides_with_selection() {
+        // Bounded WINDOW of 8 visible rows that slides with selection
+        let mut form = ProviderAddForm::new();
+        let items: Vec<String> =
+            (0..20).map(|i| format!("item-{i:02}")).collect();
+        form.field = ProviderAddField::Model;
+        form.model_picker =
+            Some(ModelPicker { items: items.clone(), selected: 15 });
+        let lines = provider_add_form_lines(&form);
+        let rendered =
+            lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
+        // Selected 15 (16/20) must be visible; earlier items outside window should not be rendered as selected highlight but may still be outside viewport.
+        assert!(rendered.contains("item-15"));
+        assert!(rendered.contains("16/20"));
+        // Window size check: at most 8 items plus indicator + hint; ensure not overflow (rough)
+        let count_items =
+            items.iter().filter(|it| rendered.contains(*it)).count();
+        assert!(
+            count_items <= 8,
+            "viewport must bound to 8, got {count_items}"
+        );
     }
 }

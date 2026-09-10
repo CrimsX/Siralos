@@ -18,6 +18,36 @@ pub struct HostCredential {
 }
 
 impl HostCredential {
+    /// Resolve credential string `value` (supports `env:NAME`, `key:VALUE`, or bare legacy env name).
+    /// `env:NAME` resolves the env var at use time; `key:VALUE` is the literal Bearer token;
+    /// a bare value (legacy) is treated as an env-var name for compat.
+    /// Never logs or echoes the value; errors never include the secret bytes.
+    pub fn from_credential_str(value: &str) -> Result<Self, String> {
+        if value.starts_with("env:") {
+            return Self::from_env_ref(value);
+        }
+        if let Some(inner) = value.strip_prefix("key:") {
+            if inner.is_empty() {
+                return Err(
+                    "A credential key: value must be non-empty.".to_owned()
+                );
+            }
+            return Ok(Self { bytes: inner.as_bytes().to_vec() });
+        }
+        // Bare legacy compat: treat as env-var name.
+        if !value.is_empty()
+            && value.len() <= 64
+            && value.chars().all(|c| {
+                c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
+            })
+        {
+            let var = std::env::var(value)
+                .map_err(|_| format!("env var {value} is not set"))?;
+            return Ok(Self { bytes: var.into_bytes() });
+        }
+        Err("A credential must be \"env:NAME\" or \"key:VALUE\" where NAME matches [A-Z0-9_]{1,64}.".to_owned())
+    }
+
     /// Resolve `env:` reference `value` (e.g., `"env:OPENAI_API_KEY"`) via
     /// `std::env::var` for the name after `env:`. Returns the redacted
     /// credential on success, or a typed error that never echoes the value.
