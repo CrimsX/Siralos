@@ -6,6 +6,7 @@
  * path, line, and pattern name — never the matched text.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { basename, join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -70,11 +71,58 @@ function collectFiles(root) {
   return files;
 }
 
+/**
+ * Resolve the git-ignored subset of the given root-relative paths with one
+ * batched `git check-ignore --stdin` call, so git itself owns ignore
+ * matching. A path a normal `git add` cannot publish must not fail this
+ * publication guardrail; tracked files and untracked-but-not-ignored files
+ * are never in the returned set and stay scanned.
+ *
+ * Fail closed: when git is unavailable or the workspace is not a repository
+ * (launch failure or any exit other than 0/1), return an empty set so every
+ * file is scanned as before — never fail open.
+ */
+function collectIgnoredPaths(root, relativePaths) {
+  if (relativePaths.length === 0) {
+    return new Set();
+  }
+  let result;
+  try {
+    result = spawnSync("git", ["check-ignore", "-z", "--stdin"], {
+      cwd: root,
+      input: `${relativePaths.join("\0")}\0`,
+      encoding: null,
+      maxBuffer: 16 * 1024 * 1024,
+      shell: false,
+      windowsHide: true,
+    });
+  } catch {
+    return new Set();
+  }
+  if (result.error !== undefined || (result.status !== 0 && result.status !== 1)) {
+    return new Set();
+  }
+  const ignored = new Set();
+  for (const ignoredPath of result.stdout.toString("utf8").split("\0")) {
+    if (ignoredPath.length > 0) {
+      ignored.add(ignoredPath);
+    }
+  }
+  return ignored;
+}
+
 export function runCheck(root) {
   const violations = [];
   const files = collectFiles(root);
+  const relativeByFile = new Map(
+    files.map((fullPath) => [fullPath, relative(root, fullPath).split(sep).join("/")]),
+  );
+  const ignored = collectIgnoredPaths(root, [...relativeByFile.values()]);
 
   for (const fullPath of files) {
+    if (ignored.has(relativeByFile.get(fullPath))) {
+      continue;
+    }
     let stat;
     try {
       stat = statSync(fullPath);
