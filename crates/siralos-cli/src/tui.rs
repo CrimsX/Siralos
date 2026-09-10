@@ -525,7 +525,7 @@ pub struct ProtocolPicker {
 pub struct ProviderAddData {
     /// Provider id (display name) validated `[a-z0-9_-]{1,64}`.
     pub provider: String,
-    /// Model id validated `[a-zA-Z0-9._-]{1,128}`.
+    /// Model id: 1 to 256 bytes, no NUL, letters/numbers or . _ - / : @.
     pub model: String,
     /// Optional credential env-var NAME (without `env:` prefix) validated `A-Z0-9_` up to 64.
     /// `None` means a public endpoint — no credential is written and the
@@ -2572,27 +2572,28 @@ fn validate_model_display_name(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate model field: [a-zA-Z0-9._-]{1,128}, non-empty, no NUL.
-/// Human-readable error (D2) — validation rule unchanged (128 bound, message says 256 per spec).
+/// Validate model field: 1 to 256 bytes, no NUL, ASCII alphanumeric or
+/// `.` `_` `-` `/` `:` `@` (the core `is_model_id_char` rule).
+/// Human-readable error (D2) — the message states the enforced rule in
+/// plain words, never a regex.
 fn validate_model_name(value: &str) -> Result<(), String> {
-    if value.is_empty() || value.len() > 128 {
+    if value.is_empty()
+        || value.len() > siralos_core::composition::MAX_PROFILE_MODEL_BYTES
+    {
         return Err(
-            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+            "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
                 .to_owned(),
         );
     }
     if value.contains('\0') {
         return Err(
-            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+            "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
                 .to_owned(),
         );
     }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
-    {
+    if !value.chars().all(siralos_core::composition::is_model_id_char) {
         return Err(
-            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+            "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
                 .to_owned(),
         );
     }
@@ -5708,7 +5709,7 @@ mod tests {
         let model_err = validate_model_name("").unwrap_err();
         assert_eq!(
             model_err,
-            "Model name must be printable and between 1 and 256 characters (e.g. model-a, gpt-4o)"
+            "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
         );
 
         // O3: the standard message applies only when the input does NOT look
@@ -5764,8 +5765,21 @@ mod tests {
 
         assert!(validate_model_name("model-a").is_ok());
         assert!(validate_model_name("gpt-4o").is_ok());
+        // Provider-issued ids: vendor separator `/`, tag suffix `:`, `@` pin.
+        assert!(
+            validate_model_name("example/model-a").is_ok()
+        );
+        assert!(
+            validate_model_name("example/model-b:free")
+                .is_ok()
+        );
+        assert!(validate_model_name("openai/gpt-4o@2024-08-06").is_ok());
+        assert!(validate_model_name("a".repeat(256).as_str()).is_ok());
         assert!(validate_model_name("").is_err());
+        assert!(validate_model_name("a".repeat(257).as_str()).is_err());
         assert!(validate_model_name("bad model!").is_err());
+        assert!(validate_model_name("has space").is_err());
+        assert!(validate_model_name("ab\0cd").is_err());
 
         assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
         assert!(validate_credential_env_name("ANTHROPIC_KEY").is_ok());

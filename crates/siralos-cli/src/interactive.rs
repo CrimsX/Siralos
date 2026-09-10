@@ -1540,11 +1540,12 @@ pub fn write_profile_config(
     if model.is_empty()
         || model.len() > siralos_core::composition::MAX_PROFILE_MODEL_BYTES
         || model.contains('\0')
-        || !model.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-'
-        })
+        || !model.chars().all(siralos_core::composition::is_model_id_char)
     {
-        return Err("A model must match [a-zA-Z0-9._-]{1,128}.".to_owned());
+        return Err(
+            "A model must match [a-zA-Z0-9._/:@-]{1,256} with no NUL."
+                .to_owned(),
+        );
     }
     if let Some(cred) = credential_env {
         // Verbatim credential: accept env:NAME, key:VALUE, or bare legacy env name. Validation mirrors ProfileRecord.
@@ -2840,6 +2841,68 @@ mod tests {
             other => panic!("expected applied record, got: {other:?}"),
         }
         let _ = remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_profile_config_model_id_rule_matches_core() {
+        // The write boundary enforces the core model-id rule: 1..=256
+        // bytes, no NUL, ASCII alphanumeric or . _ - / : @.
+        let accepted: Vec<String> = vec![
+            "model-a".to_owned(),
+            "gpt-4o".to_owned(),
+            "example/model-a".to_owned(),
+            "example/model-b:free".to_owned(),
+            "openai/gpt-4o@2024-08-06".to_owned(),
+            "a".repeat(siralos_core::composition::MAX_PROFILE_MODEL_BYTES),
+        ];
+        for (index, id) in accepted.iter().enumerate() {
+            let dir = temporary_directory(&format!("model-rule-ok-{index}"));
+            write_profile_config(
+                &dir,
+                "openai",
+                id,
+                None,
+                Some("https://api.example.com/v1"),
+                Some("openai-completions"),
+                None,
+            )
+            .expect("provider-issued model id accepted");
+            match siralos_adapters::profile_config::load_workspace_profile(
+                &dir,
+            ) {
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                    record,
+                ) => {
+                    assert_eq!(record.model.as_deref(), Some(id.as_str()));
+                }
+                other => panic!("expected applied record, got: {other:?}"),
+            }
+            let _ = remove_dir_all(&dir);
+        }
+        let rejected: Vec<String> = vec![
+            String::new(),
+            "a".repeat(siralos_core::composition::MAX_PROFILE_MODEL_BYTES + 1),
+            "has space".to_owned(),
+            "ab\0cd".to_owned(),
+        ];
+        for (index, id) in rejected.iter().enumerate() {
+            let dir = temporary_directory(&format!("model-rule-err-{index}"));
+            let error = write_profile_config(
+                &dir,
+                "openai",
+                id,
+                None,
+                Some("https://api.example.com/v1"),
+                Some("openai-completions"),
+                None,
+            )
+            .expect_err("invalid model id refused");
+            assert!(
+                error.contains("256") || error.contains("NUL"),
+                "rejection must state the enforced rule, got: {error}"
+            );
+            let _ = remove_dir_all(&dir);
+        }
     }
 
     fn temporary_directory(label: &str) -> PathBuf {

@@ -46,13 +46,29 @@ pub const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
 /// Maximum provider id length in UTF-8 bytes.
 pub const MAX_PROFILE_PROVIDER_BYTES: usize = 64;
 /// Maximum model id length in UTF-8 bytes.
-pub const MAX_PROFILE_MODEL_BYTES: usize = 128;
+pub const MAX_PROFILE_MODEL_BYTES: usize = 256;
 /// Maximum credential reference length in UTF-8 bytes.
 pub const MAX_PROFILE_CREDENTIAL_BYTES: usize = 70;
 /// Maximum endpoint URL length in UTF-8 bytes.
 pub const MAX_PROFILE_ENDPOINT_BYTES: usize = 512;
 /// Maximum model display name length in UTF-8 bytes.
 pub const MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES: usize = 256;
+
+/// Returns true when `c` may appear in a `[profile]` model id: ASCII
+/// alphanumeric or one of `.` `_` `-` `/` `:` `@`. This is the single
+/// definition of the model-id charset — the write boundary
+/// (`siralos-cli::interactive::write_profile_config`) and the TUI form
+/// (`siralos-cli::tui`) enforce this predicate rather than a second copy.
+#[must_use]
+pub fn is_model_id_char(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+        || c == '.'
+        || c == '_'
+        || c == '-'
+        || c == '/'
+        || c == ':'
+        || c == '@'
+}
 
 /// The provider API protocol — additive, absent-transparent (default openai-completions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -333,12 +349,9 @@ fn validate_model_field(
             message: "A model must not contain NUL.".to_owned(),
         });
     }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
-    {
+    if !value.chars().all(is_model_id_char) {
         return Err(ProfileValidationError {
-            message: "A model must match [a-zA-Z0-9._-]{1,128}.".to_owned(),
+            message: "A model must match [a-zA-Z0-9._/:@-]{1,256}.".to_owned(),
         });
     }
     Ok(())
@@ -1749,6 +1762,64 @@ mod tests {
                 .expect_err("count refused");
             assert!(error.message.contains("entry bound"));
         }
+    }
+
+    #[test]
+    fn model_id_rule_accepts_provider_ids_and_bounds() {
+        fn record_with_model(model: Option<String>) -> ProfileRecord {
+            ProfileRecord {
+                name: "dev".to_owned(),
+                overlay: Vec::new(),
+                plugins: None,
+                context: None,
+                skills: None,
+                provider: None,
+                model,
+                credential: None,
+                endpoint: None,
+                record_replay: false,
+                replay: false,
+                context_system_enabled: false,
+                protocol: super::Protocol::default(),
+                model_display_name: None,
+            }
+        }
+        let accepted: Vec<String> = vec![
+            "model-a".to_owned(),
+            "gpt-4o".to_owned(),
+            "example/model-a".to_owned(),
+            "example/model-b:free".to_owned(),
+            "openai/gpt-4o@2024-08-06".to_owned(),
+            "a".repeat(super::MAX_PROFILE_MODEL_BYTES),
+        ];
+        for id in &accepted {
+            record_with_model(Some(id.clone()))
+                .validate()
+                .expect("provider-issued model id accepted");
+        }
+        let rejected: Vec<String> = vec![
+            String::new(),
+            "a".repeat(super::MAX_PROFILE_MODEL_BYTES + 1),
+            "has space".to_owned(),
+        ];
+        for id in &rejected {
+            let error = record_with_model(Some(id.clone()))
+                .validate()
+                .expect_err("invalid model id refused");
+            assert!(
+                error.message.contains("256"),
+                "rejection must state the enforced bound, got: {}",
+                error.message
+            );
+        }
+        let nul_error = record_with_model(Some("ab\0cd".to_owned()))
+            .validate()
+            .expect_err("NUL refused");
+        assert!(
+            nul_error.message.contains("NUL"),
+            "NUL rejection must say so, got: {}",
+            nul_error.message
+        );
     }
 
     #[test]
