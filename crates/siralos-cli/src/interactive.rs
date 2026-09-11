@@ -281,6 +281,7 @@ where
         credential_present: _,
         applied_credential,
         applied_credential_raw,
+        applied_protocol_str,
     } = session;
 
     // --- Frontend residual (stdio): prompt loop over reader/writer. ---
@@ -343,6 +344,7 @@ where
             applied_credential_raw.as_deref(),
             applied_endpoint.as_deref(),
             applied_credential.as_ref(),
+            &applied_protocol_str,
         )? {
             break;
         }
@@ -383,6 +385,9 @@ enum SlashCommand<'a> {
     Model(Option<&'a str>),
     /// `/models` — list provider models (I6, blocking GET).
     Models,
+    /// `/reload` — re-read profile and report what WOULD change (safe half:
+    /// never mutates live state; a later chunk does the swap).
+    Reload,
     /// `/mouse` — flip TUI mouse capture (TUI) / honesty line (stdio).
     Mouse,
     /// `/evolve` — display-only (U8).
@@ -409,6 +414,7 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
         ("/model", "Show applied model"),
         ("/model <id>", "Switch applied model"),
         ("/models", "List available models"),
+        ("/reload", "Re-read profile and report what would change"),
         ("/mouse", "Toggle mouse capture (wheel scroll / text select)"),
         ("/evolve", "Show Stage 6 evolution surfaces"),
         ("/exit", "Exit the session"),
@@ -447,6 +453,223 @@ fn render_model_line(model: Option<&str>) -> String {
     format!("model: {name}\n")
 }
 
+/// One recomposed provider snapshot — the routing configuration startup
+/// threads through the event loop (provider/model/credential/endpoint/
+/// protocol). Pure data: no live handles, no mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderSnapshot {
+    /// Applied provider id (`None` = session default on pure Host policy).
+    provider: Option<String>,
+    /// Applied model id.
+    model: Option<String>,
+    /// Applied credential raw string (compared redacted-ly, never resolved).
+    credential_raw: Option<String>,
+    /// Applied endpoint override.
+    endpoint: Option<String>,
+    /// Applied protocol string.
+    protocol: String,
+}
+
+/// The session's Host rules — read-only workspace inspection, Allow.
+///
+/// The ONE rule set `compose_session` composes the workspace profile
+/// against (R7.4 fail-closed posture; Stage 5.2 narrowing-only). `/reload`
+/// recomposes against these same rules through
+/// [`declare_and_compose_profile`] — the same composition path, never a
+/// second one.
+fn session_host_rules() -> Vec<PolicyRule> {
+    vec![PolicyRule {
+        capability: siralos_core::tool::CapabilityId::parse("workspace.read")
+            .expect("workspace.read is a valid capability id"),
+        rule: PermissionRule::Allow,
+    }]
+}
+
+/// Declare + compose a loaded profile — the SAME declare/compose pair
+/// `compose_session` runs at startup (`load_workspace_profile` →
+/// `declare_profile` → `compose_effective_policy`). Both the startup path
+/// and `/reload` call this one function; there is no second composition.
+fn declare_and_compose_profile(
+    loaded_profile: &WorkspaceProfileLoad,
+    host_rules: &[PolicyRule],
+) -> EffectiveRunPolicy {
+    let declared = match loaded_profile {
+        WorkspaceProfileLoad::Record(record) => declare_profile(
+            Some(record),
+            &PermissionPolicy::from_rules(host_rules.to_vec()),
+        ),
+        WorkspaceProfileLoad::Absent => DeclaredProfile::Absent,
+        WorkspaceProfileLoad::Invalid { diagnostic } => {
+            DeclaredProfile::Invalid { diagnostic: diagnostic.clone() }
+        }
+    };
+    compose_effective_policy(host_rules, &declared)
+}
+
+/// Recompose the provider snapshot through the SAME composition path
+/// startup uses: [`load_workspace_profile`] then
+/// [`declare_and_compose_profile`] over [`session_host_rules`], then the
+/// applied-record projection `compose_session` performs. Pure: reads the
+/// workspace file, holds no live handles, mutates nothing.
+fn recompose_provider_snapshot(workspace_root: &Path) -> ProviderSnapshot {
+    let host_rules = session_host_rules();
+    let loaded_profile = load_workspace_profile(workspace_root);
+    let effective = declare_and_compose_profile(&loaded_profile, &host_rules);
+    match &loaded_profile {
+        WorkspaceProfileLoad::Record(record)
+            if effective.applied_profile.is_some() =>
+        {
+            ProviderSnapshot {
+                provider: record.provider.clone(),
+                model: record.model.clone(),
+                credential_raw: record.credential.clone(),
+                endpoint: record.endpoint.clone(),
+                protocol: record.protocol.as_str().to_owned(),
+            }
+        }
+        _ => ProviderSnapshot {
+            provider: None,
+            model: None,
+            credential_raw: None,
+            endpoint: None,
+            protocol: siralos_core::composition::Protocol::default()
+                .as_str()
+                .to_owned(),
+        },
+    }
+}
+
+/// Redacted credential comparison token: `key:` literals collapse to
+/// `key:***` so secret bytes never reach the report; `env:` names and
+/// absence compare verbatim.
+fn redacted_credential_token(raw: Option<&str>) -> String {
+    match raw {
+        None => "absent".to_owned(),
+        Some(s) if s.starts_with("key:") => "key:***".to_owned(),
+        Some(s) if s.starts_with("env:") => s.to_owned(),
+        Some(s) => format!("env:{s}"),
+    }
+}
+
+/// Display one snapshot field: `None`/empty renders `absent`.
+fn display_field(value: Option<&str>) -> String {
+    match value {
+        Some(s) if !s.is_empty() => s.to_owned(),
+        _ => "absent".to_owned(),
+    }
+}
+
+/// Pure `/reload` report: recompose the session's provider configuration
+/// from the workspace `siralos.toml` WITHOUT restarting, and describe what
+/// WOULD change relative to the live session snapshot — no live-state
+/// mutation at all. Three cases:
+///
+/// - profile EDITED: one `; `-joined line naming each changed field, e.g.
+///   `provider unchanged; model example/model-a -> example/model-b;
+///   endpoint changed`.
+/// - profile INVALID: `reload not applied: <diagnostic verbatim>` — the
+///   exact `load_workspace_profile` diagnostic, nothing recomposed.
+/// - profile ABSENT: startup falls back to the deterministic fake on pure
+///   Host policy, so the report says what that fallback WOULD do.
+fn reload_report(
+    workspace_root: &Path,
+    current_provider: Option<&str>,
+    current_model: Option<&str>,
+    current_credential_raw: Option<&str>,
+    current_endpoint: Option<&str>,
+    current_protocol: &str,
+) -> String {
+    match load_workspace_profile(workspace_root) {
+        WorkspaceProfileLoad::Invalid { diagnostic } => {
+            format!("reload not applied: {diagnostic}\n")
+        }
+        WorkspaceProfileLoad::Absent => {
+            let fresh = recompose_provider_snapshot(workspace_root);
+            let want_provider = fresh.provider.as_deref();
+            let want_model = fresh.model.as_deref();
+            let want_endpoint = fresh.endpoint.as_deref();
+            let provider_unchanged =
+                want_provider == current_provider.filter(|s| !s.is_empty());
+            let model_unchanged =
+                want_model == current_model.filter(|s| !s.is_empty());
+            let endpoint_unchanged =
+                want_endpoint == current_endpoint.filter(|s| !s.is_empty());
+            if provider_unchanged && model_unchanged && endpoint_unchanged {
+                "reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session already there, nothing would change\n"
+                    .to_owned()
+            } else {
+                "reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session differs, restart to converge\n"
+                    .to_owned()
+            }
+        }
+        WorkspaceProfileLoad::Record(_) => {
+            let fresh = recompose_provider_snapshot(workspace_root);
+            let mut parts: Vec<String> = Vec::new();
+            let want_provider = fresh.provider.as_deref();
+            let current_provider = current_provider.filter(|s| !s.is_empty());
+            if want_provider == current_provider {
+                parts.push("provider unchanged".to_owned());
+            } else {
+                parts.push(format!(
+                    "provider {} -> {}",
+                    display_field(current_provider),
+                    display_field(want_provider)
+                ));
+            }
+            let want_model = fresh.model.as_deref();
+            let current_model = current_model.filter(|s| !s.is_empty());
+            if want_model == current_model {
+                parts.push("model unchanged".to_owned());
+            } else {
+                parts.push(format!(
+                    "model {} -> {}",
+                    display_field(current_model),
+                    display_field(want_model)
+                ));
+            }
+            let want_cred =
+                redacted_credential_token(fresh.credential_raw.as_deref());
+            let current_cred =
+                redacted_credential_token(current_credential_raw);
+            if want_cred == current_cred {
+                parts.push("credential unchanged".to_owned());
+            } else {
+                parts
+                    .push(format!("credential {current_cred} -> {want_cred}"));
+            }
+            let want_endpoint = fresh.endpoint.as_deref();
+            let current_endpoint = current_endpoint.filter(|s| !s.is_empty());
+            if want_endpoint == current_endpoint {
+                parts.push("endpoint unchanged".to_owned());
+            } else if want_endpoint.is_none() || current_endpoint.is_none() {
+                parts.push(format!(
+                    "endpoint {} -> {}",
+                    display_field(current_endpoint),
+                    display_field(want_endpoint)
+                ));
+            } else {
+                parts.push("endpoint changed".to_owned());
+            }
+            if fresh.protocol == current_protocol {
+                parts.push("protocol unchanged".to_owned());
+            } else {
+                parts.push(format!(
+                    "protocol {current_protocol} -> {}",
+                    fresh.protocol
+                ));
+            }
+            if parts.iter().all(|p| p.ends_with("unchanged")) {
+                format!("reload: {}\n", parts.join("; "))
+            } else {
+                format!(
+                    "reload would change: {}; live session unchanged\n",
+                    parts.join("; ")
+                )
+            }
+        }
+    }
+}
+
 /// Host-generated evolve discovery listing (U8) — four bounded Stage 6 surfaces.
 fn render_evolve_lines() -> String {
     let mut out = String::new();
@@ -477,6 +700,7 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/mouse" => SlashCommand::Mouse,
         "/model" => SlashCommand::Model(None),
         "/models" => SlashCommand::Models,
+        "/reload" => SlashCommand::Reload,
         "/evolve" => SlashCommand::Evolve,
         "/exit" => SlashCommand::Exit,
         _ => {
@@ -496,6 +720,11 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
                 // `/models` takes no arguments: anything beyond the exact
                 // form stays an unknown command (honesty gate), exactly as
                 // before the `/model <id>` form existed.
+                SlashCommand::Prompt(input)
+            } else if input.starts_with("/reload") {
+                // `/reload` takes no arguments: anything beyond the exact
+                // form stays an unknown command (honesty gate), matching
+                // `/models` above.
                 SlashCommand::Prompt(input)
             } else if let Some(id) = input.strip_prefix("/model ") {
                 SlashCommand::Model(Some(id))
@@ -615,6 +844,7 @@ fn dispatch_stdio_command<P, W, R>(
     credential_raw: Option<&str>,
     endpoint: Option<&str>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
+    applied_protocol_str: &str,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -810,6 +1040,29 @@ where
                 }
             }
         }
+        SlashCommand::Reload => {
+            // SAFE HALF: re-read + recompose + REPORT. Pure — no live
+            // mutation (neither the display holders nor the provider
+            // cell are touched; a later chunk does the swap). Stdio
+            // must work without a TTY (plain writer, no picker). The
+            // live snapshot is what startup composed: applied provider
+            // + LIVE model (honours `/model` switches) + raw
+            // credential + endpoint + the protocol the session's
+            // provider was built with.
+            let live_model = live_provider.live_model();
+            let report = reload_report(
+                workspace_root,
+                provider,
+                live_model.as_deref().or(applied_model.as_deref()),
+                credential_raw,
+                endpoint,
+                applied_protocol_str,
+            );
+            let rendered = sanitize_for_display(&report);
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
         SlashCommand::Evolve => {
             let rendered = sanitize_for_display(&render_evolve_lines());
             writer
@@ -874,6 +1127,7 @@ fn dispatch_tui_command<P>(
     credential_raw: Option<&str>,
     endpoint: Option<&str>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
+    applied_protocol_str: &str,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -1013,6 +1267,22 @@ where
             let rendered = sanitize_for_display(&render_evolve_lines());
             let _ = sink.write_all(rendered.as_bytes());
         }
+        SlashCommand::Reload => {
+            // SAFE HALF (TUI sink arm): same pure report as stdio — no
+            // live mutation. Reachable when dispatched directly (the
+            // in-loop path below prefers the same helper).
+            let live_model = live_provider.live_model();
+            let report = reload_report(
+                workspace_root,
+                provider,
+                live_model.as_deref().or(applied_model.as_deref()),
+                credential_raw,
+                endpoint,
+                applied_protocol_str,
+            );
+            let rendered = sanitize_for_display(&report);
+            let _ = sink.write_all(rendered.as_bytes());
+        }
         SlashCommand::Mouse => {
             // Intercepted in-loop (flipping needs the live `TuiState` plus
             // the `TerminalGuard` re-pair held by the loop), so this
@@ -1131,6 +1401,9 @@ struct SessionComposition<'a> {
     applied_credential: Option<siralos_adapters::provider::HostCredential>,
     /// Raw credential string for redacted display (key:*** / env:NAME).
     applied_credential_raw: Option<String>,
+    /// Protocol string the session's provider was built with (snapshot of
+    /// `applied_protocol.as_str()` at composition; `/reload` diffs this).
+    applied_protocol_str: String,
 }
 
 /// Compose one session — the SINGLE definition both loops call (T4).
@@ -1171,24 +1444,11 @@ fn compose_session(
     // Stage 5.2 (decision 48): the workspace profile narrows these Host
     // rules - composition can never produce a rule broader than the
     // Host's own, and a refused or invalid profile is simply not applied
-    // with a truthful diagnostic (C3).
-    let host_rules = vec![PolicyRule {
-        capability: siralos_core::tool::CapabilityId::parse("workspace.read")
-            .expect("workspace.read is a valid capability id"),
-        rule: PermissionRule::Allow,
-    }];
+    // with a truthful diagnostic (C3). `/reload` recomposes through the
+    // same [`declare_and_compose_profile`] below — one composition path.
+    let host_rules = session_host_rules();
     let loaded_profile = load_workspace_profile(&workspace_root);
-    let declared = match &loaded_profile {
-        WorkspaceProfileLoad::Record(record) => declare_profile(
-            Some(record),
-            &PermissionPolicy::from_rules(host_rules.clone()),
-        ),
-        WorkspaceProfileLoad::Absent => DeclaredProfile::Absent,
-        WorkspaceProfileLoad::Invalid { diagnostic } => {
-            DeclaredProfile::Invalid { diagnostic: diagnostic.clone() }
-        }
-    };
-    let effective = compose_effective_policy(&host_rules, &declared);
+    let effective = declare_and_compose_profile(&loaded_profile, &host_rules);
     if let Some(diagnostic) = &effective.diagnostic {
         // Host-side startup diagnostic (never model output): the declared
         // profile was not applied; the session proceeds on pure Host
@@ -1506,6 +1766,7 @@ fn compose_session(
         credential_present,
         applied_credential,
         applied_credential_raw,
+        applied_protocol_str: applied_protocol.as_str().to_owned(),
     })
 }
 
@@ -2997,6 +3258,7 @@ pub fn run_interactive_tui_with_options(
         credential_present: _,
         applied_credential,
         applied_credential_raw,
+        applied_protocol_str,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
     // S5: header/status prefers model display name when present.
@@ -3393,6 +3655,20 @@ pub fn run_interactive_tui_with_options(
                         let _ = sink.write_all(msg.as_bytes());
                     }
                 }
+            } else if let SlashCommand::Reload = command {
+                // `/reload` in-loop (TUI): same pure report as stdio —
+                // no live mutation, no picker, no TTY requirement.
+                let live_model = live_provider.live_model();
+                let report = reload_report(
+                    &workspace_root,
+                    applied_provider.as_deref(),
+                    live_model.as_deref().or(applied_model.as_deref()),
+                    applied_credential_raw.as_deref(),
+                    applied_endpoint.as_deref(),
+                    &applied_protocol_str,
+                );
+                let rendered = sanitize_for_display(&report);
+                let _ = sink.write_all(rendered.as_bytes());
             } else {
                 let should_exit = dispatch_tui_command(
                     &command,
@@ -3415,6 +3691,7 @@ pub fn run_interactive_tui_with_options(
                     applied_credential_raw.as_deref(),
                     applied_endpoint.as_deref(),
                     applied_credential.as_ref(),
+                    &applied_protocol_str,
                 )?;
                 if should_exit {
                     break;
@@ -4083,6 +4360,8 @@ mod tests {
             ),
             ("/models", SlashCommand::Models),
             ("/models extra", SlashCommand::Prompt("/models extra")),
+            ("/reload", SlashCommand::Reload),
+            ("/reload extra", SlashCommand::Prompt("/reload extra")),
             ("hello there", SlashCommand::Prompt("hello there")),
             (
                 "/definitely-not-a-command",
@@ -4383,10 +4662,11 @@ mod tests {
         assert!(names.contains(&"/model"));
         assert!(names.contains(&"/model <id>"));
         assert!(names.contains(&"/models"));
+        assert!(names.contains(&"/reload"));
         assert!(names.contains(&"/evolve"));
         assert!(names.contains(&"/context"));
         assert!(names.contains(&"/mouse"));
-        assert_eq!(names.len(), 14);
+        assert_eq!(names.len(), 15);
     }
 
     #[test]
@@ -4409,6 +4689,16 @@ mod tests {
             parse_slash_command("/models"),
             SlashCommand::Models
         ));
+        assert!(matches!(
+            parse_slash_command("/reload"),
+            SlashCommand::Reload
+        ));
+        assert!(!is_unknown_slash_command("/reload"));
+        assert!(matches!(
+            parse_slash_command("/reload extra"),
+            SlashCommand::Prompt("/reload extra")
+        ));
+        assert!(is_unknown_slash_command("/reload extra"));
         assert!(matches!(
             parse_slash_command("/evolve"),
             SlashCommand::Evolve
@@ -4444,6 +4734,186 @@ mod tests {
         assert!(
             output.contains("no provider configured"),
             "expected honest unconfigured line, got: {output:?}"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn reload_reports_edited_profile_changes_without_mutating() {
+        // SAFE HALF: an edited profile recomposes through the same
+        // composition path and the report names the changes — with no
+        // live-state mutation (pure `reload_report`; the session still
+        // holds the startup snapshot afterwards).
+        use super::reload_report;
+        let root = temporary_directory("reload-edited");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nendpoint = \"https://placeholder.example/v1\"\n",
+        )
+        .expect("profile");
+        // Unchanged: starting from the same file the report is all-unchanged.
+        let same = reload_report(
+            &root,
+            Some("example-vendor"),
+            Some("example/model-a"),
+            None,
+            Some("https://placeholder.example/v1"),
+            "openai-completions",
+        );
+        assert!(
+            same.contains("provider unchanged")
+                && same.contains("model unchanged")
+                && same.contains("endpoint unchanged"),
+            "unchanged report must name every field unchanged, got: {same:?}"
+        );
+        // Edited: change only the model on disk; the live snapshot still
+        // holds the old value, so the report must name the exact change.
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nendpoint = \"https://placeholder.example/v1\"\n",
+        )
+        .expect("edited profile");
+        let report = reload_report(
+            &root,
+            Some("example-vendor"),
+            Some("example/model-a"),
+            None,
+            Some("https://placeholder.example/v1"),
+            "openai-completions",
+        );
+        assert!(
+            report.contains("provider unchanged")
+                && report.contains("model example/model-a -> example/model-b")
+                && report.contains("endpoint unchanged")
+                && report.contains("live session unchanged"),
+            "edited report must name the model change truthfully, got: {report:?}"
+        );
+        // Endpoint values are never echoed: a changed endpoint reports the
+        // bare word `endpoint changed`.
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nendpoint = \"https://other-placeholder.example/v1\"\n",
+        )
+        .expect("edited endpoint");
+        let endpoint_report = reload_report(
+            &root,
+            Some("example-vendor"),
+            Some("example/model-b"),
+            None,
+            Some("https://placeholder.example/v1"),
+            "openai-completions",
+        );
+        assert!(
+            endpoint_report.contains("endpoint changed"),
+            "endpoint change must not echo URLs, got: {endpoint_report:?}"
+        );
+        assert!(
+            !endpoint_report.contains("other-placeholder"),
+            "endpoint values must never be echoed, got: {endpoint_report:?}"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn reload_reports_invalid_diagnostic_verbatim_and_changes_nothing() {
+        // Profile INVALID: the exact `load_workspace_profile` diagnostic
+        // is reported verbatim; nothing is recomposed and nothing mutates.
+        use super::reload_report;
+        let root = temporary_directory("reload-invalid");
+        let bad = "[profile]\nname = \"default\"\nprovider = 7\n";
+        write(root.join("siralos.toml"), bad).expect("bad profile");
+        let expected =
+            match siralos_adapters::profile_config::load_workspace_profile(
+                &root,
+            ) {
+                siralos_adapters::profile_config::WorkspaceProfileLoad::Invalid {
+                    diagnostic,
+                } => diagnostic,
+                other => panic!("expected invalid, got: {other:?}"),
+            };
+        let report = reload_report(
+            &root,
+            Some("example-vendor"),
+            Some("example/model-a"),
+            None,
+            Some("https://placeholder.example/v1"),
+            "openai-completions",
+        );
+        assert!(
+            report.contains(&expected),
+            "invalid report must carry the diagnostic verbatim, got: {report:?}"
+        );
+        assert!(
+            report.starts_with("reload not applied:"),
+            "invalid report must refuse application, got: {report:?}"
+        );
+        // Changes nothing: the on-disk bytes are untouched by the report.
+        let after = read(root.join("siralos.toml"))
+            .map(|bytes| String::from_utf8(bytes).unwrap_or_default())
+            .unwrap_or_default();
+        assert_eq!(after, bad);
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn reload_absent_follows_startup_semantics() {
+        // Profile ABSENT: startup semantics fall back to the
+        // deterministic fake on pure Host policy — the report says so.
+        // A session already there reports nothing-would-change; a live
+        // session holding a stale applied snapshot reports the drift.
+        use super::reload_report;
+        let root = temporary_directory("reload-absent");
+        let converged =
+            reload_report(&root, None, None, None, None, "openai-completions");
+        assert!(
+            converged.contains("no profile configured")
+                && converged.contains("deterministic fake")
+                && converged.contains("nothing would change"),
+            "absent+converged report must state startup semantics, got: {converged:?}"
+        );
+        let drifted = reload_report(
+            &root,
+            Some("example-vendor"),
+            Some("example/model-a"),
+            None,
+            Some("https://placeholder.example/v1"),
+            "openai-completions",
+        );
+        assert!(
+            drifted.contains("no profile configured")
+                && drifted.contains("deterministic fake")
+                && drifted.contains("restart to converge"),
+            "absent+drifted report must state the fallback drift, got: {drifted:?}"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn reload_end_to_end_stdio_reports_without_mutating() {
+        // Headless stdio: `/reload` reaches the shared catalog vocabulary
+        // (no TTY needed) and the report leaves disk + live state alone.
+        let root = temporary_directory("reload-stdio");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nendpoint = \"https://placeholder.example/v1\"\n",
+        )
+        .expect("profile");
+        let output = run("/reload\n/exit\n", &root, None);
+        assert!(
+            output.contains("provider unchanged")
+                && output.contains("model unchanged"),
+            "stdio /reload must print the recomposition report, got: {output:?}"
+        );
+        // The report changed nothing on disk.
+        let after = read(root.join("siralos.toml"))
+            .map(|bytes| String::from_utf8(bytes).unwrap_or_default())
+            .unwrap_or_default();
+        assert!(after.contains("example/model-a"));
+        // A following bare `/model` still shows the live (startup) value.
+        let output2 = run("/reload\n/model\n/exit\n", &root, None);
+        assert!(
+            output2.contains("model: example/model-a"),
+            "live session must be unmutated by /reload, got: {output2:?}"
         );
         let _ = remove_dir_all(root);
     }

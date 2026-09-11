@@ -5005,10 +5005,12 @@ mod tests {
             assert!(names.contains(&"/model"));
             assert!(names.contains(&"/model <id>"));
             assert!(names.contains(&"/models"));
+            assert!(names.contains(&"/reload"));
             assert!(names.contains(&"/evolve"));
             assert!(names.contains(&"/context"));
             assert!(names.contains(&"/mouse"));
-            assert_eq!(names.len(), 14);
+            assert!(names.contains(&"/exit"));
+            assert_eq!(names.len(), 15);
         }
 
         #[test]
@@ -5018,9 +5020,9 @@ mod tests {
             state.update_palette();
             let palette_len =
                 state.palette.as_ref().expect("palette for /").len();
-            assert_eq!(palette_len, 14);
+            assert_eq!(palette_len, 15);
             // I3: palette shows ALL filtered entries, bounded by terminal height minus input/status rows; scroll indicator only if overflow.
-            // At 80x24, available 21, 14 entries fit fully with no indicator.
+            // At 80x24, available 21, 15 entries fit fully with no indicator.
             let buf = super::render(&state, 80, 24);
             let content: String =
                 buf.content().iter().map(|c| c.symbol()).collect();
@@ -5423,8 +5425,8 @@ mod tests {
         let mut state = TuiState::new();
         state.input = "/".to_owned();
         state.update_palette();
-        // Full catalog 14, palette shows all filtered entries
-        assert_eq!(state.palette.as_ref().unwrap().len(), 14);
+        // Full catalog 15, palette shows all filtered entries
+        assert_eq!(state.palette.as_ref().unwrap().len(), 15);
         let buf = render(&state, 80, 24);
         let content: String =
             buf.content().iter().map(|c| c.symbol()).collect();
