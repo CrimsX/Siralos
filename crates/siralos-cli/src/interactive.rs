@@ -1098,6 +1098,15 @@ fn compose_session(
             }
             _ => ("deterministic-fake".to_owned(), None, None, None),
         };
+    let applied_protocol: siralos_core::composition::Protocol =
+        match &loaded_profile {
+            WorkspaceProfileLoad::Record(record)
+                if effective.applied_profile.is_some() =>
+            {
+                record.protocol
+            }
+            _ => siralos_core::composition::Protocol::default(),
+        };
     // I5/U7 + H6: applied provider/model/credential/endpoint for status + display + picker + /models (I6).
     // S5: model display name prefers over raw model id for header/status.
     let (
@@ -1180,11 +1189,12 @@ fn compose_session(
             }
         }
     } else if want_record_replay {
-        let raw = match HostProvider::from_provider_str(
+        let raw = match HostProvider::from_provider_str_with_protocol(
             &provider_name_owned,
             model_opt.clone(),
             credential_opt,
             endpoint_opt.clone(),
+            applied_protocol,
         ) {
             Ok(p) => p,
             Err(err) => {
@@ -1201,11 +1211,12 @@ fn compose_session(
         record_recorder = Some(recorder);
         live_host_provider = Some(with);
     } else {
-        let raw = match HostProvider::from_provider_str(
+        let raw = match HostProvider::from_provider_str_with_protocol(
             &provider_name_owned,
             model_opt,
             credential_opt,
             endpoint_opt,
+            applied_protocol,
         ) {
             Ok(p) => p,
             Err(err) => {

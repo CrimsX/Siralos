@@ -114,11 +114,33 @@ impl HostProvider {
     /// (generic, all-purpose) with an optional `model`, `credential`, and
     /// `endpoint`. Any bounded `provider` string that passed
     /// `ProfileRecord` validation is accepted — no `UnknownProvider`.
+    /// The generic path uses the default `openai-completions` protocol
+    /// (base endpoint + `/chat/completions`).
     pub fn from_provider_str(
         provider: &str,
         model: Option<String>,
         credential: Option<HostCredential>,
         endpoint: Option<String>,
+    ) -> Result<Self, String> {
+        Self::from_provider_str_with_protocol(
+            provider,
+            model,
+            credential,
+            endpoint,
+            siralos_core::composition::Protocol::default(),
+        )
+    }
+
+    /// Construct a `HostProvider` from an arbitrary `provider` string with
+    /// an explicit API `protocol` for the generic path. The endpoint stays
+    /// a base URL; the protocol selects the chat POST segment, with
+    /// full-path endpoints used verbatim (see `generic::chat_url`).
+    pub fn from_provider_str_with_protocol(
+        provider: &str,
+        model: Option<String>,
+        credential: Option<HostCredential>,
+        endpoint: Option<String>,
+        protocol: siralos_core::composition::Protocol,
     ) -> Result<Self, String> {
         if provider == "deterministic-fake" {
             return Ok(Self::Fake(
@@ -150,7 +172,8 @@ impl HostProvider {
                         model,
                         endpoint,
                         credential,
-                    ),
+                    )
+                    .with_protocol(protocol),
                 ))
             }
         }

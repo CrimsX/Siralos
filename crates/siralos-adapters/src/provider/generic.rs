@@ -5,9 +5,14 @@
 //! placeholder, never a real provider).
 //!
 //! The `ModelProvider` seam stays synchronous and Host-observed. When
-//! `endpoint` is `Some`, it is used verbatim as the POST URL (host-configured
-//! authority, `https://`/`http://` per `ProfileRecord::validate`, no
-//! `file:`/`unix:`); otherwise the provider-neutral placeholder
+//! `endpoint` is `Some`, it is treated as a BASE URL: the chat POST URL is
+//! the base plus the protocol's path segment (`/chat/completions` for
+//! `openai-completions`, `/responses` for `openai-responses`, `/messages`
+//! for `anthropic-messages`). For backward compatibility, an endpoint that
+//! already ends with that protocol segment (trailing slashes tolerated) is
+//! used verbatim. Model listing stays `endpoint + "/models"`. The endpoint
+//! authority is host-configured (`https://`/`http://` per
+//! `ProfileRecord::validate`, no `file:`/`unix:`); otherwise the provider-neutral placeholder
 //! `https://generic.invalid/endpoint` is used — the RFC 6761 reserved
 //! `.invalid` TLD is guaranteed unresolvable, so a missing configuration
 //! fails closed with a typed `ProviderEvent::Failed` and can never route a
@@ -21,6 +26,7 @@
 use crate::provider::credential::HostCredential;
 use crate::provider::{ReplayHooks, record_outcome};
 use serde_json::Value;
+use siralos_core::composition::Protocol;
 use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
 };
@@ -38,6 +44,9 @@ pub struct GenericProvider {
     model: String,
     endpoint: Option<String>,
     credential: Option<HostCredential>,
+    /// API protocol selecting the chat POST path segment appended to the
+    /// base endpoint (`openai-completions` by default).
+    protocol: Protocol,
     /// Replay hooks for determinism recording.
     hooks: ReplayHooks,
     /// Last replay availability, set on each terminal outcome.
@@ -60,6 +69,7 @@ impl GenericProvider {
             model,
             endpoint,
             credential,
+            protocol: Protocol::default(),
             hooks: ReplayHooks::default(),
             last_replay: RefCell::new(
                 ProviderReplayAvailability::Unavailable {
@@ -81,6 +91,18 @@ impl GenericProvider {
         self
     }
 
+    /// Set the API protocol selecting the chat POST path segment.
+    /// The endpoint stays a base URL; `openai-completions` (default)
+    /// appends `/chat/completions`, `openai-responses` appends
+    /// `/responses`, and `anthropic-messages` appends `/messages`, unless
+    /// the endpoint already ends with that segment (trailing slashes
+    /// tolerated), in which case it is used verbatim.
+    #[must_use]
+    pub fn with_protocol(mut self, protocol: Protocol) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
     /// Take the last replay availability, resetting it to unavailable.
     #[must_use]
     pub fn take_last_replay_availability(&self) -> ProviderReplayAvailability {
@@ -99,6 +121,39 @@ const GENERIC_PLACEHOLDER_ENDPOINT: &str = "https://generic.invalid/endpoint";
 /// Provider-neutral placeholder model applied by
 /// `registry::from_provider_str` when no `model` was declared.
 pub(crate) const GENERIC_PLACEHOLDER_MODEL: &str = "generic-model";
+
+/// Resolve the chat POST URL for a base `endpoint` and `protocol`.
+///
+/// The endpoint is consistently a BASE URL: the protocol's path segment is
+/// appended (`/chat/completions` for `openai-completions`, `/responses` for
+/// `openai-responses`, `/messages` for `anthropic-messages`). For backward
+/// compatibility, an endpoint that already ends with that segment (trailing
+/// slashes tolerated) is used verbatim (normalised without trailing
+/// slashes), so configurations that already store the full path keep
+/// working unchanged.
+#[must_use]
+pub fn chat_url(endpoint: &str, protocol: Protocol) -> String {
+    let segment = match protocol {
+        Protocol::OpenAiCompletions => "/chat/completions",
+        Protocol::OpenAiResponses => "/responses",
+        Protocol::AnthropicMessages => "/messages",
+    };
+    let trimmed = endpoint.trim_end_matches('/');
+    if trimmed.ends_with(segment) {
+        trimmed.to_owned()
+    } else {
+        format!("{trimmed}{segment}")
+    }
+}
+
+/// Resolve the model-listing URL for a base `endpoint`.
+///
+/// Unchanged in every case: `endpoint + "/models"` (trailing slashes on
+/// the endpoint tolerated).
+#[must_use]
+pub fn models_url(endpoint: &str) -> String {
+    format!("{}/models", endpoint.trim_end_matches('/'))
+}
 
 impl ModelProvider for GenericProvider {
     type Stream<'a>
@@ -134,6 +189,7 @@ impl ModelProvider for GenericProvider {
             String::from_utf8_lossy(c.as_bytes()).to_string()
         });
         let request = request.clone();
+        let protocol = self.protocol;
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget
         // is the only retry.
@@ -141,6 +197,7 @@ impl ModelProvider for GenericProvider {
             &provider,
             &model,
             &endpoint,
+            protocol,
             credential,
             &request,
             cancellation,
@@ -157,6 +214,7 @@ impl GenericProvider {
         provider: &str,
         model: &str,
         endpoint: &str,
+        protocol: Protocol,
         credential: Option<String>,
         request: &ModelRequest,
         cancellation: CancellationSignal<'_>,
@@ -247,8 +305,9 @@ impl GenericProvider {
                 message: "Host cancelled before HTTP send".to_owned(),
             }];
         }
+        let url = chat_url(endpoint, protocol);
         let mut req =
-            client.post(endpoint).header("Content-Type", "application/json");
+            client.post(&url).header("Content-Type", "application/json");
         if let Some(cred) = credential {
             if provider == "anthropic" {
                 req = req
@@ -293,7 +352,7 @@ impl GenericProvider {
             let events = vec![ProviderEvent::Failed(format!(
                 "response failed: {} at {} - {}",
                 status.as_u16(),
-                endpoint,
+                url,
                 safe
             ))];
             record_outcome(
@@ -362,7 +421,7 @@ pub fn fetch_models(
     endpoint: &str,
     credential: Option<&HostCredential>,
 ) -> Result<Vec<String>, String> {
-    let url = format!("{}/models", endpoint.trim_end_matches('/'));
+    let url = models_url(endpoint);
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .connect_timeout(std::time::Duration::from_secs(3))
@@ -612,5 +671,94 @@ mod tests {
         let truncated = super::truncated_sanitized_body(&html_body);
         assert!(truncated.len() <= 240);
         assert!(!truncated.contains('<'));
+    }
+
+    #[test]
+    fn chat_url_appends_completions_for_base_openai_completions() {
+        // Base endpoint + openai-completions -> base + /chat/completions.
+        // Placeholder host only; no network.
+        let url = super::chat_url(
+            "https://api.example.com/v1",
+            siralos_core::composition::Protocol::OpenAiCompletions,
+        );
+        assert_eq!(url, "https://api.example.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn chat_url_appends_responses_for_base_openai_responses() {
+        let url = super::chat_url(
+            "https://api.example.com/v1",
+            siralos_core::composition::Protocol::OpenAiResponses,
+        );
+        assert_eq!(url, "https://api.example.com/v1/responses");
+    }
+
+    #[test]
+    fn chat_url_appends_messages_for_base_anthropic_messages() {
+        let url = super::chat_url(
+            "https://api.example.com/v1",
+            siralos_core::composition::Protocol::AnthropicMessages,
+        );
+        assert_eq!(url, "https://api.example.com/v1/messages");
+    }
+
+    #[test]
+    fn chat_url_keeps_full_path_verbatim_with_and_without_slash() {
+        // Backward compatibility: endpoints that already store the full
+        // protocol path keep working unchanged (trailing slash tolerated).
+        let cases = [
+            (
+                "https://api.example.com/v1/chat/completions",
+                siralos_core::composition::Protocol::OpenAiCompletions,
+                "https://api.example.com/v1/chat/completions",
+            ),
+            (
+                "https://api.example.com/v1/chat/completions/",
+                siralos_core::composition::Protocol::OpenAiCompletions,
+                "https://api.example.com/v1/chat/completions",
+            ),
+            (
+                "https://api.example.com/v1/responses",
+                siralos_core::composition::Protocol::OpenAiResponses,
+                "https://api.example.com/v1/responses",
+            ),
+            (
+                "https://api.example.com/v1/responses/",
+                siralos_core::composition::Protocol::OpenAiResponses,
+                "https://api.example.com/v1/responses",
+            ),
+            (
+                "https://api.example.com/v1/messages",
+                siralos_core::composition::Protocol::AnthropicMessages,
+                "https://api.example.com/v1/messages",
+            ),
+            (
+                "https://api.example.com/v1/messages/",
+                siralos_core::composition::Protocol::AnthropicMessages,
+                "https://api.example.com/v1/messages",
+            ),
+        ];
+        for (endpoint, protocol, expected) in cases {
+            assert_eq!(super::chat_url(endpoint, protocol), expected);
+        }
+    }
+
+    #[test]
+    fn models_url_is_base_plus_models_in_every_case() {
+        // Model listing stays exactly as it is: endpoint + "/models".
+        let cases = [
+            "https://api.example.com/v1",
+            "https://api.example.com/v1/",
+            "https://api.example.com/v1/chat/completions",
+            "https://api.example.com/v1/responses",
+            "https://api.example.com/v1/messages",
+        ];
+        for endpoint in cases {
+            let trimmed = endpoint.trim_end_matches('/');
+            assert_eq!(
+                super::models_url(endpoint),
+                format!("{trimmed}/models")
+            );
+        }
     }
 }
