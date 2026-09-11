@@ -175,7 +175,7 @@ pub struct ProfileRecord {
     /// Absent table defaults to false (byte-transparent).
     pub context_system_enabled: bool,
     /// Protocol for the provider — additive, absent-transparent (default openai-completions).
-    /// The protocol's request-shaping use is future work (stored and displayed now).
+    /// The protocol selects the generic provider's chat POST path; request-body shaping is future work.
     pub protocol: Protocol,
     /// Optional model display name — shown in header/status instead of raw model id when present.
     /// Additive, absent -> None, malformed (oversize/non-printable) -> profile UNAPPLIED.
