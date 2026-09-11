@@ -4974,6 +4974,75 @@ mod tests {
     }
 
     #[test]
+    fn reload_cannot_widen_session_authority() {
+        // AUTHORITY INVARIANT -- the acceptance criterion for /reload. A
+        // reload re-reads declarative configuration and recomposes the
+        // PROVIDER snapshot only; authority is composed once at startup and
+        // is never an input or an output of the reload path. So a profile
+        // that asks for more than the Host grants cannot widen what the
+        // session may do: the composition refuses it and the effective rules
+        // stay the Host's own.
+        use super::{
+            apply_reloaded_model, declare_and_compose_profile, reload_report,
+            session_host_rules,
+        };
+        let root = temporary_directory("reload-no-widen");
+        // The Host grants `workspace.read` only; this profile asks for more.
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"greedy\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\n[profile.permissions]\nworkspace.write = \"allow\"\n",
+        )
+        .expect("widening profile");
+        let host_rules = session_host_rules();
+        let before = declare_and_compose_profile(
+            &siralos_adapters::profile_config::load_workspace_profile(&root),
+            &host_rules,
+        );
+        assert_eq!(
+            before.rules, host_rules,
+            "a widening declaration must not add or broaden a rule"
+        );
+        assert!(
+            before.applied_profile.is_none(),
+            "a widening profile must not apply, got: {before:?}"
+        );
+        assert!(
+            before.diagnostic.is_some(),
+            "the refusal must carry a diagnostic, got: {before:?}"
+        );
+        // Run the entire reload path against the same profile.
+        let (mut report, recomposed) =
+            reload_report(&root, None, None, None, None, "openai-completions");
+        assert!(
+            recomposed.is_none(),
+            "a refused profile must not reach the apply step, got: {recomposed:?}"
+        );
+        let session = switch_test_provider("example/model-a");
+        let mut model = None;
+        let mut display = None;
+        apply_reloaded_model(
+            &session,
+            None,
+            &mut model,
+            &mut display,
+            recomposed,
+            &mut report,
+        );
+        let after = declare_and_compose_profile(
+            &siralos_adapters::profile_config::load_workspace_profile(&root),
+            &host_rules,
+        );
+        assert_eq!(
+            after, before,
+            "a reload must not change composed authority"
+        );
+        assert_eq!(
+            after.rules, host_rules,
+            "authority stays the Host's own after a reload"
+        );
+    }
+
+    #[test]
     fn reload_applies_the_recomposed_model_to_the_live_session() {
         // APPLY HALF: a reload whose profile names a different model moves
         // the live cell the NEXT request reads, adopts the file's display
