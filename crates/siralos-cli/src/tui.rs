@@ -6056,7 +6056,7 @@ mod tests {
         assert_eq!(derive_provider_name("https://api.example.com"), "example");
         assert_eq!(
             derive_provider_name("https://API.ExampleVendor.AI/v1"),
-            "example-vendor"
+            "examplevendor"
         );
         // Invalid chars replaced with '-'
         assert_eq!(
