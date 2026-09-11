@@ -5918,13 +5918,8 @@ mod tests {
         assert!(validate_model_name("model-a").is_ok());
         assert!(validate_model_name("gpt-4o").is_ok());
         // Provider-issued ids: vendor separator `/`, tag suffix `:`, `@` pin.
-        assert!(
-            validate_model_name("example/model-a").is_ok()
-        );
-        assert!(
-            validate_model_name("example/model-b:free")
-                .is_ok()
-        );
+        assert!(validate_model_name("example/model-a").is_ok());
+        assert!(validate_model_name("example/model-b:free").is_ok());
         assert!(validate_model_name("openai/gpt-4o@2024-08-06").is_ok());
         assert!(validate_model_name("a".repeat(256).as_str()).is_ok());
         assert!(validate_model_name("").is_err());
