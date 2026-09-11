@@ -14,8 +14,8 @@ entry review [143](143-secret-hygiene-entry-review.md) ·
 [Map](../siralos-roadmap.md)
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `34638d3` "fix(scripts): secret hygiene skips
-> git-ignored paths", 2026-09-10, with formatting follow-up `2a23e6f`
+> committed (commit `c384764` "fix(scripts): secret hygiene skips
+> git-ignored paths", 2026-09-10, with formatting follow-up `bbee359`
 > "style(wayfinder): prettier-format the model-id charset records")
 > BEFORE this record was written. There was no prior ticket and no
 > prior entry review for this change; the approval that exists is an
@@ -31,7 +31,7 @@ entry review [143](143-secret-hygiene-entry-review.md) ·
 | M1 IGNORED SUBSET VIA GIT | `collectIgnoredPaths()` resolves the git-ignored subset with one batched `git check-ignore -z --stdin` call — git owns ignore matching (`.gitignore:29` covers the workspace `siralos.toml`, so a normal `git add` cannot publish it). | the committed script diff                    |
 | M2 COVERAGE PRESERVED     | Tracked and untracked-but-NOT-ignored files are still scanned; detection patterns, wording, and output format are unchanged.                                                                                                           | the committed diff; orchestrator probe below |
 | M3 FAIL CLOSED            | Git unlaunchable or exiting anything but 0/1 yields an empty ignored set: everything is scanned.                                                                                                                                       | the fail-closed branch in the committed diff |
-| M4 FORMAT REPAIR          | `2a23e6f` prettier-formats the 139/140 records, which had been committed before `format:check` ran over them.                                                                                                                          | the `2a23e6f` diff (wayfinder records only)  |
+| M4 FORMAT REPAIR          | `bbee359` prettier-formats the 139/140 records, which had been committed before `format:check` ran over them.                                                                                                                          | the `bbee359` diff (wayfinder records only)  |
 
 ## 3. Criteria → Evidence
 
@@ -44,8 +44,8 @@ entry review [143](143-secret-hygiene-entry-review.md) ·
 
 ## 4. Result
 
-The git-ignored skip is complete as committed in `34638d3` (plus
-`2a23e6f`): the publication guardrail no longer fails on files git
+The git-ignored skip is complete as committed in `c384764` (plus
+`bbee359`): the publication guardrail no longer fails on files git
 itself will not publish, coverage over publishable files is unchanged,
 and git's absence widens rather than narrows the scan. This closes the
 open item recorded in decisions 139/140. Retroactive record closed;

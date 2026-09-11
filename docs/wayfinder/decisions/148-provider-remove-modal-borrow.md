@@ -14,7 +14,7 @@ review [147](147-provider-remove-modal-borrow-entry-review.md) ·
 [Map](../siralos-roadmap.md)
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `0dadfca` "fix(tui): scope the modal borrow so
+> committed (commit `8306de8` "fix(tui): scope the modal borrow so
 > /provider remove does not panic", 2026-09-10) BEFORE this record was
 > written. There was no prior ticket and no prior entry review for this
 > change; the provenance is an owner bug report in-session about a
@@ -31,7 +31,7 @@ review [147](147-provider-remove-modal-borrow-entry-review.md) ·
 | M1 SCOPED DECISION BORROW | The modal branch (`crates/siralos-cli/src/interactive.rs`) takes its decision inside a block that ends the mutable borrow before the body re-borrows: the if-let scrutinee `RefMut` from `handle_modal_key(&mut tui_state.borrow_mut(), key)` no longer outlives into a `tui_state.borrow()`.         | the committed `interactive.rs` diff         |
 | M2 TESTABLE DECISION STEP | The step is extracted as `handle_pending_approval_key(&RefCell<TuiState>, ...)` so the loop's own decision path is unit-testable rather than only reachable through a real terminal.                                                                                                                  | three new `interactive::tests::tui_modal_*` |
 | M3 PATHS PRESERVED        | The dormant approval path still reports `Approved.`/`Denied.`; removal still resolves through the single outcome both frontends call.                                                                                                                                                                 | the committed diff                          |
-| M4 ATTRIBUTION, HONESTLY  | The broken shape predates the feature — the dormant `Approved.`/`Denied.` branch had the same shape — but nothing had ever set `pending_approval` (approvals dormant per decision 114), so the deletion feature shipped in `9bcc507` was the first thing to make it reachable and is what exposed it. | decisions 114 and 145/146                   |
+| M4 ATTRIBUTION, HONESTLY  | The broken shape predates the feature — the dormant `Approved.`/`Denied.` branch had the same shape — but nothing had ever set `pending_approval` (approvals dormant per decision 114), so the deletion feature shipped in `8855be8` was the first thing to make it reachable and is what exposed it. | decisions 114 and 145/146                   |
 | M5 CLASS SWEEP            | A sweep of all 55 `borrow()`/`borrow_mut()` sites found no other reachable occurrence of the class.                                                                                                                                                                                                   | the orchestrator's sweep, cited not re-run  |
 
 ## 3. Criteria → Evidence
@@ -46,7 +46,7 @@ review [147](147-provider-remove-modal-borrow-entry-review.md) ·
 
 ## 4. Result
 
-The modal-borrow panic is fixed as committed in `0dadfca`: answering
+The modal-borrow panic is fixed as committed in `8306de8`: answering
 the "- Remove provider" confirmation (y, n, or Esc) no longer kills
 the app, the provider is removed through the one outcome both
 frontends call, and the dormant approval path is untouched. The defect

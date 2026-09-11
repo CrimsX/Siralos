@@ -20,7 +20,7 @@ went 128 -> 256 to match what the add-form already told the user it
 enforced; every rejection message now states the rule it enforces.
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `5520a41`) BEFORE this ticket and its entry review
+> committed (commit `11d5eb5`) BEFORE this ticket and its entry review
 > were written, at the human owner's explicit request. There was no prior
 > ticket, no prior entry review, and no prior human approval for this
 > change; nothing here is backdated. The entry-review inversion is named

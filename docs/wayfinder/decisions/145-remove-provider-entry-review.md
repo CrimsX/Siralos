@@ -15,7 +15,7 @@ review [the Siralos TUI entry review](103-siralos-tui-entry-review.md)
 
 > **Retroactive record — the inversion, stated plainly.** This entry
 > review was written AFTER the change was implemented, verified, and
-> committed (commit `9bcc507` "feat(provider): remove the configured
+> committed (commit `8855be8` "feat(provider): remove the configured
 > provider", 2026-09-10). There was no prior ticket and no prior entry
 > review for this change; the approval that exists is an in-chat
 > design approval from the human owner on 2026-09-10 — nothing more is
@@ -62,7 +62,7 @@ review [the Siralos TUI entry review](103-siralos-tui-entry-review.md)
 ## 4. Result
 
 Entry review PASS (retroactive): provider removal as committed in
-`9bcc507` is the correct fix — an atomic writer beside the existing
+`8855be8` is the correct fix — an atomic writer beside the existing
 one, a truthful no-op when there is nothing to remove, one
 implementation behind y/N confirmation in both frontends, and the
 dormant approval path preserved. This review authorized nothing (the

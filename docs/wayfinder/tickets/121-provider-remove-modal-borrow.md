@@ -21,7 +21,7 @@ reports `Approved.`/`Denied.`, and removal still resolves through the
 single outcome both frontends call.
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `0dadfca`) BEFORE this ticket and its entry review
+> committed (commit `8306de8`) BEFORE this ticket and its entry review
 > were written. There was no prior ticket and no prior entry review
 > for this change; the provenance is an owner bug report in-session
 > about a feature that had just shipped ("unable to remove providers,

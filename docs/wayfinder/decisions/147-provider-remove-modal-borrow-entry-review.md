@@ -15,7 +15,7 @@ review [the Siralos TUI entry review](103-siralos-tui-entry-review.md)
 
 > **Retroactive record — the inversion, stated plainly.** This entry
 > review was written AFTER the change was implemented, verified, and
-> committed (commit `0dadfca` "fix(tui): scope the modal borrow so
+> committed (commit `8306de8` "fix(tui): scope the modal borrow so
 > /provider remove does not panic", 2026-09-10). There was no prior
 > ticket, no prior entry review, and no prior human approval for this
 > change, and this record does not invent or backdate any of them. The
@@ -42,7 +42,7 @@ review [the Siralos TUI entry review](103-siralos-tui-entry-review.md)
 > panics under 2024. The broken shape predates the feature — the
 > dormant `Approved.`/`Denied.` branch had the same shape — but nothing
 > had ever set `pending_approval` (approvals are dormant per decision
-> 114), so the deletion feature shipped in `9bcc507` was the first
+> 114), so the deletion feature shipped in `8855be8` was the first
 > thing to make it reachable. The feature did not introduce the defect
 > and is what exposed it. The fix: take the decision inside a block
 > that ends the mutable borrow before the body re-borrows, extracted
@@ -74,7 +74,7 @@ review [the Siralos TUI entry review](103-siralos-tui-entry-review.md)
 ## 4. Result
 
 Entry review PASS (retroactive): scoping the modal borrow as
-committed in `0dadfca` is the correct fix — the decision is taken
+committed in `8306de8` is the correct fix — the decision is taken
 inside a block that ends the mutable borrow, the step is extracted so
 the loop's decision path is unit-tested, the dormant approval path is
 preserved, and the class sweep shows no other reachable occurrence.

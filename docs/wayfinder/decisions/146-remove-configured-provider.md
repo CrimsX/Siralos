@@ -14,7 +14,7 @@ review [145](145-remove-provider-entry-review.md) ·
 [Map](../siralos-roadmap.md)
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `9bcc507` "feat(provider): remove the configured
+> committed (commit `8855be8` "feat(provider): remove the configured
 > provider", 2026-09-10) BEFORE this record was written. There was no
 > prior ticket and no prior entry review for this change; the approval
 > that exists is an in-chat design approval from the human owner on
@@ -44,7 +44,7 @@ review [145](145-remove-provider-entry-review.md) ·
 
 ## 4. Result
 
-Provider removal is complete as committed in `9bcc507`: a provider can
+Provider removal is complete as committed in `8855be8`: a provider can
 now be deleted from either frontend through one confirmed
 implementation on the established atomic-writer pattern, and deleting
 nothing is a truthful no-op. Retroactive record closed; ticket 120

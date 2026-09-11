@@ -14,7 +14,7 @@ Ticket [118](../tickets/118-credential-bound-by-form.md) · entry review
 [Map](../siralos-roadmap.md)
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `530568c` "fix(profile): split the credential bound
+> committed (commit `68f834f` "fix(profile): split the credential bound
 > by form", 2026-09-10) BEFORE this record was written. There was no
 > prior ticket, no prior entry review, and no prior human approval for
 > this change — the provenance is an owner bug report, not an
@@ -41,7 +41,7 @@ Ticket [118](../tickets/118-credential-bound-by-form.md) · entry review
 
 ## 4. Result
 
-The by-form credential bound is complete as committed in `530568c`:
+The by-form credential bound is complete as committed in `68f834f`:
 `env:` and legacy forms keep the 70-byte whole-value bound, `key:`
 values get 4096 bytes after the prefix, every rejection names its
 bound, and a stored verbatim key applies at load. Retroactive record

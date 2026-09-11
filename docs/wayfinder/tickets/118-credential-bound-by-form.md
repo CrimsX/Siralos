@@ -21,7 +21,7 @@ values get `MAX_PROFILE_CREDENTIAL_KEY_BYTES = 4096` measured after
 the prefix; every message names its bound.
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `530568c`) BEFORE this ticket and its entry review
+> committed (commit `68f834f`) BEFORE this ticket and its entry review
 > were written. There was no prior ticket, no prior entry review, and
 > no prior human approval for this change — the provenance is an owner
 > bug report, not an approval — and nothing here is backdated. The

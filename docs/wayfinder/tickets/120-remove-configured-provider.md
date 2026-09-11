@@ -22,7 +22,7 @@ arm wires the existing input-queue approval helper for this command
 only and the dormant `Approved.`/`Denied.` path is preserved unchanged.
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `9bcc507`) BEFORE this ticket and its entry review
+> committed (commit `8855be8`) BEFORE this ticket and its entry review
 > were written. There was no prior ticket and no prior entry review
 > for this change; the approval that exists is an in-chat design
 > approval from the human owner on 2026-09-10 — nothing more is claimed

@@ -14,7 +14,7 @@ Ticket [117](../tickets/117-provider-model-id-charset.md) · entry review
 [Map](../siralos-roadmap.md)
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `5520a41` "fix(profile): accept provider-issued model
+> committed (commit `11d5eb5` "fix(profile): accept provider-issued model
 > ids", 2026-09-10, 3 files:
 > `crates/siralos-core/src/composition.rs`,
 > `crates/siralos-cli/src/interactive.rs`,
@@ -45,7 +45,7 @@ Ticket [117](../tickets/117-provider-model-id-charset.md) · entry review
 
 ## 4. Result
 
-The model-id charset/bound change is complete as committed in `5520a41`:
+The model-id charset/bound change is complete as committed in `11d5eb5`:
 provider-issued ids (`/` vendor separator, `:` tag suffix, `@` pin)
 save through the add-flow and apply at load; one shared predicate owns
 the charset; the bound is 256 everywhere the form promised 256; every

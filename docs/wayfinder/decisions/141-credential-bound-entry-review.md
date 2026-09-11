@@ -15,7 +15,7 @@ Ticket [118](../tickets/118-credential-bound-by-form.md) · entry review
 
 > **Retroactive record — the inversion, stated plainly.** This entry
 > review was written AFTER the change was implemented, verified, and
-> committed (commit `530568c` "fix(profile): split the credential bound
+> committed (commit `68f834f` "fix(profile): split the credential bound
 > by form", 2026-09-10). There was no prior ticket, no prior entry
 > review, and no prior human approval for this change, and this record
 > does not invent or backdate any of them. The provenance is an owner
@@ -61,7 +61,7 @@ Ticket [118](../tickets/118-credential-bound-by-form.md) · entry review
 ## 4. Result
 
 Entry review PASS (retroactive): the by-form credential bound as
-committed in `530568c` is the correct fix — `env:`/legacy keep 70
+committed in `68f834f` is the correct fix — `env:`/legacy keep 70
 bytes, `key:` gets 4096 after the prefix, every message names its
 bound, and the load path applies what the write path saves. This
 review authorized nothing (the code had already landed); it records

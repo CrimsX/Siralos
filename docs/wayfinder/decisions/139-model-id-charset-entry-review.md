@@ -15,7 +15,7 @@ Ticket [117](../tickets/117-provider-model-id-charset.md) · entry review
 
 > **Retroactive record — the inversion, stated plainly.** This entry
 > review was written AFTER the change was implemented, verified, and
-> committed (commit `5520a41` "fix(profile): accept provider-issued model
+> committed (commit `11d5eb5` "fix(profile): accept provider-issued model
 > ids", 2026-09-10), at the human owner's explicit request. There was no
 > prior ticket, no prior entry review, and no prior human approval for
 > this change, and this record does not invent or backdate any of them.
@@ -60,7 +60,7 @@ Ticket [117](../tickets/117-provider-model-id-charset.md) · entry review
 ## 4. Result
 
 Entry review PASS (retroactive): the charset/bound change as committed
-in `5520a41` is the correct fix — one shared predicate, the 256 bound
+in `11d5eb5` is the correct fix — one shared predicate, the 256 bound
 the form already promised, honest rejections, round-trip coverage at the
 core and write layers. This review authorized nothing (the code had
 already landed); it records what authorization would have covered. The

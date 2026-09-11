@@ -21,7 +21,7 @@ check fails closed (empty ignored set = scan everything) when git
 cannot be launched or exits anything but 0/1.
 
 > **Retroactive record.** This change was implemented, verified, and
-> committed (commit `34638d3`, with formatting follow-up `2a23e6f`)
+> committed (commit `c384764`, with formatting follow-up `bbee359`)
 > BEFORE this ticket and its entry review were written. There was no
 > prior ticket and no prior entry review for this change; the approval
 > that exists is an in-chat design approval from the human owner on
@@ -37,7 +37,7 @@ Implemented and recorded in
 
 This closes the open item recorded in decisions 139/140 (the
 `check:secrets` failure on the untracked, gitignored workspace
-`siralos.toml` storing a literal key). The `2a23e6f` follow-up is the
+`siralos.toml` storing a literal key). The `bbee359` follow-up is the
 formatting repair for the 139/140 records, which had been committed
 before `format:check` ran over them.
 
