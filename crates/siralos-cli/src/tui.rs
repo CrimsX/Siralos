@@ -288,6 +288,92 @@ pub fn build_context_pane(
     })
 }
 
+/// Wrap one stored transcript line over `width` columns (render layer only).
+///
+/// Word-boundary wrap with hard-break for tokens exceeding the width (URLs,
+/// JSON bodies). The stored text is never mutated: this expands one line
+/// into one or more display rows for the transcript pane's inner width.
+/// Char-count based, consistent with the header layout and
+/// `truncate_to_width`. Deterministic: same text + same width ->
+/// byte-identical rows.
+#[must_use]
+pub fn wrap_line_to_width(text: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![text.to_owned()];
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    if len <= width {
+        return vec![text.to_owned()];
+    }
+    let mut rows = Vec::new();
+    let mut start = 0;
+    while start < len {
+        if len - start <= width {
+            rows.push(chars[start..].iter().collect());
+            break;
+        }
+        let window_end = start + width;
+        // Exact fit: the window ends at a word boundary (the next char is
+        // the break space) — take the whole window and skip that space.
+        if chars[window_end] == ' ' {
+            rows.push(chars[start..window_end].iter().collect());
+            start = window_end + 1;
+            continue;
+        }
+        // Otherwise break at the last space inside the window (word
+        // boundary) and skip that single space onto the next row. With no
+        // space in the window the token exceeds the width — hard-break at
+        // `width` (URLs, JSON bodies).
+        let mut break_at: Option<usize> = None;
+        for i in (start..window_end).rev() {
+            if chars[i] == ' ' {
+                break_at = Some(i);
+                break;
+            }
+        }
+        match break_at {
+            // Guard `i > start`: a leading space must not produce an empty
+            // row — hard-break instead.
+            Some(i) if i > start => {
+                rows.push(chars[start..i].iter().collect());
+                start = i + 1;
+            }
+            _ => {
+                rows.push(chars[start..window_end].iter().collect());
+                start = window_end;
+            }
+        }
+    }
+    rows
+}
+
+/// Expand transcript entries into wrapped display rows (render layer).
+///
+/// Returns owned `(row, style)` pairs; the caller borrows them into `Line`s
+/// that live until the frame is drawn. One stored line becomes one or more
+/// rows via [`wrap_line_to_width`]; timestamps wrap the same way (short in
+/// practice, one row) and keep the dim stamp style per row.
+fn wrapped_transcript_rows(
+    entries: &[TranscriptEntry],
+    inner_width: usize,
+) -> Vec<(String, Style)> {
+    let mut wrapped = Vec::new();
+    for entry in entries {
+        let style = style_for_transcript_line(&entry.text);
+        for row in wrap_line_to_width(&entry.text, inner_width) {
+            wrapped.push((row, style));
+        }
+        if let Some(ts) = &entry.timestamp {
+            let dim = Style::default().fg(Color::DarkGray);
+            for row in wrap_line_to_width(ts, inner_width) {
+                wrapped.push((row, dim));
+            }
+        }
+    }
+    wrapped
+}
+
 /// Truncate a line to `max_chars` characters on a char boundary (bounded
 /// pane lines never overflow the fixed 40-column pane).
 fn truncate_to_width(line: &str, max_chars: usize) -> String {
@@ -1246,10 +1332,12 @@ pub fn draw_with_pane(
         Some(pane_rect) => body_union(transcript_area, input_area, pane_rect),
     };
 
-    // Transcript: determine visible window over expanded lines
-    // (text + optional dim timestamp). Deterministic: each entry contributes
-    // 1 line (text) + 1 dim stamp line when present. Scroll is over entries
-    // but viewport is over lines, so we expand then slice.
+    // Transcript: determine visible window over wrapped display rows
+    // (text + optional dim timestamp). Deterministic: each stored line
+    // expands to one or more rows at the pane's inner width via
+    // `wrapped_transcript_rows` (word boundaries, hard-break long tokens);
+    // stored text is never mutated. Scroll windows over rows, so the tail
+    // of a long line stays readable instead of clipping off-screen.
     let height = transcript_area.height as usize;
     // Build expanded line list with styles.
     let entries: Vec<TranscriptEntry> = if !state.transcript.is_empty() {
@@ -1264,16 +1352,11 @@ pub fn draw_with_pane(
             })
             .collect()
     };
-    let mut expanded: Vec<Line<'_>> = Vec::new();
-    for entry in &entries {
-        let style = style_for_transcript_line(&entry.text);
-        expanded.push(Line::from(entry.text.as_str()).style(style));
-        if let Some(ts) = &entry.timestamp {
-            expanded.push(
-                Line::from(ts.as_str())
-                    .style(Style::default().fg(Color::DarkGray)),
-            );
-        }
+    let wrapped =
+        wrapped_transcript_rows(&entries, transcript_area.width as usize);
+    let mut expanded: Vec<Line<'_>> = Vec::with_capacity(wrapped.len());
+    for (row, style) in &wrapped {
+        expanded.push(Line::from(row.as_str()).style(*style));
     }
     let total = expanded.len();
     let max_scroll = total.saturating_sub(height);
@@ -1958,16 +2041,13 @@ pub fn render_to_buffer_with_pane(
             })
             .collect()
     };
-    let mut expanded: Vec<Line<'_>> = Vec::new();
-    for entry in &entries {
-        let style = style_for_transcript_line(&entry.text);
-        expanded.push(Line::from(entry.text.as_str()).style(style));
-        if let Some(ts) = &entry.timestamp {
-            expanded.push(
-                Line::from(ts.as_str())
-                    .style(Style::default().fg(Color::DarkGray)),
-            );
-        }
+    // Same render-layer wrap as the `Frame` path above: scroll windows over
+    // wrapped rows so long lines stay readable instead of clipping.
+    let wrapped =
+        wrapped_transcript_rows(&entries, transcript_area.width as usize);
+    let mut expanded: Vec<Line<'_>> = Vec::with_capacity(wrapped.len());
+    for (row, style) in &wrapped {
+        expanded.push(Line::from(row.as_str()).style(*style));
     }
     let total = expanded.len();
     let max_scroll = total.saturating_sub(h);
@@ -3625,6 +3705,90 @@ mod tests {
             buf2.content().iter().map(|c| c.symbol()).collect();
         assert!(content2.contains("line 9"));
         assert!(!content2.contains("line 19"));
+    }
+
+    #[test]
+    fn long_provider_error_line_wraps_with_tail_visible() {
+        // Owner report: a long provider-error line was clipped at the right
+        // edge of the pane, so the tail ran off-screen and the error could
+        // not be read. Wrapping belongs in the render layer: the stored
+        // line stays single while the frame shows head AND tail across
+        // multiple rows. Placeholder host only.
+        let mut state = TuiState::new();
+        let long = "Response failed: response failed: 429 at https://api.example.com/v1/chat/completions - {\"error\":{\"message\":\"Provider rate limit exceeded, please slow down and retry shortly\"}}".to_owned();
+        state.transcript_lines = vec![long.clone()];
+        state.status = "ready".to_owned();
+        let buf = render(&state, 40, 12);
+        let area = buf.area;
+        let mut rows = Vec::new();
+        for y in 0..area.height {
+            let mut row = String::new();
+            for x in 0..area.width {
+                if let Some(cell) = buf.cell((x, y)) {
+                    row.push_str(cell.symbol());
+                }
+            }
+            rows.push(row);
+        }
+        let joined = rows.join("\n");
+        assert!(
+            joined.contains("Response failed"),
+            "head must be visible, got: {rows:?}"
+        );
+        assert!(
+            joined.contains("retry shortly"),
+            "tail must be visible (not clipped off-screen), got: {rows:?}"
+        );
+        let matching = rows
+            .iter()
+            .filter(|row| {
+                row.contains("Response")
+                    || row.contains("429")
+                    || row.contains("retry")
+                    || row.contains("api.example")
+            })
+            .count();
+        assert!(
+            matching >= 2,
+            "long line must span multiple rows, got: {rows:?}"
+        );
+        // Render-layer wrap only: the stored transcript text is untouched.
+        assert_eq!(state.transcript_lines, vec![long]);
+    }
+
+    #[test]
+    fn wrap_line_to_width_breaks_words_and_long_tokens() {
+        // Short lines pass through untouched (pinned frames byte-identical).
+        assert_eq!(wrap_line_to_width("hello", 40), vec!["hello".to_owned()]);
+        assert_eq!(wrap_line_to_width("", 40), vec!["".to_owned()]);
+        // Word boundary with exact fit: words pack, nothing splits.
+        assert_eq!(
+            wrap_line_to_width("aa bb cc dd", 5),
+            vec!["aa bb".to_owned(), "cc dd".to_owned()]
+        );
+        // Word boundary without fit: break at spaces, never inside a word.
+        assert_eq!(
+            wrap_line_to_width("aa bb cc", 4),
+            vec!["aa".to_owned(), "bb".to_owned(), "cc".to_owned()]
+        );
+        // Long token (URL/JSON body): hard-break at the width.
+        assert_eq!(
+            wrap_line_to_width("abcdefghij", 4),
+            vec!["abcd".to_owned(), "efgh".to_owned(), "ij".to_owned()]
+        );
+        // Zero width never panics.
+        assert_eq!(wrap_line_to_width("hello", 0), vec!["hello".to_owned()]);
+        // Deterministic and bounded on a realistic error line.
+        let long = "Response failed: 429 at https://api.example.com/v1/chat/completions - {\"error\":{\"message\":\"slow down\"}}";
+        let first = wrap_line_to_width(long, 40);
+        assert_eq!(first, wrap_line_to_width(long, 40));
+        assert!(first.len() > 1);
+        for row in &first {
+            assert!(
+                row.chars().count() <= 40,
+                "row overflows the width: {row:?}"
+            );
+        }
     }
 
     #[test]

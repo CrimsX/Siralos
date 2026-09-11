@@ -348,12 +348,10 @@ impl GenericProvider {
             }
         };
         if !status.is_success() {
-            let safe = truncated_sanitized_body(&text);
-            let events = vec![ProviderEvent::Failed(format!(
-                "response failed: {} at {} - {}",
+            let events = vec![ProviderEvent::Failed(http_error_message(
                 status.as_u16(),
-                url,
-                safe
+                &url,
+                &text,
             ))];
             record_outcome(
                 hooks,
@@ -444,13 +442,7 @@ pub fn fetch_models(
     let text = crate::provider::bounded_body_text(response)
         .map_err(|err| format!("response read failed: {err}"))?;
     if !status.is_success() {
-        let safe = truncated_sanitized_body(&text);
-        return Err(format!(
-            "response failed: {} at {} - {}",
-            status.as_u16(),
-            url,
-            safe
-        ));
+        return Err(http_error_message(status.as_u16(), &url, &text));
     }
     let value: Value = serde_json::from_str(&text).map_err(|err| {
         format!("unrecognized response shape: JSON parse failed: {err}")
@@ -488,6 +480,23 @@ fn truncated_sanitized_body(body: &str) -> String {
         .chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
         .collect()
+}
+
+/// Actionable hint appended when the provider answers HTTP 429 (rate
+/// limiting, e.g. a free-tier key over quota). The bounded truthful detail
+/// (status, URL, bounded body) is always kept; this hint says what to do.
+/// No automatic retry is attempted: retrying into a rate limit makes it
+/// worse.
+pub const RATE_LIMIT_HINT: &str = "the provider is rate limiting this key (HTTP 429) -- wait a moment and retry, or switch model";
+
+/// Build the bounded provider HTTP-error message for `status` at `url`
+/// with raw `body`: the truthful `status` + URL + bounded sanitized body
+/// (decisions 137-138 behaviour, unchanged), plus [`RATE_LIMIT_HINT`]
+/// when the status is 429.
+fn http_error_message(status: u16, url: &str, body: &str) -> String {
+    let safe = truncated_sanitized_body(body);
+    let base = format!("response failed: {status} at {url} - {safe}");
+    if status == 429 { format!("{base} ({RATE_LIMIT_HINT})") } else { base }
 }
 
 impl std::fmt::Display for GenericProvider {
@@ -671,6 +680,77 @@ mod tests {
         let truncated = super::truncated_sanitized_body(&html_body);
         assert!(truncated.len() <= 240);
         assert!(!truncated.contains('<'));
+    }
+
+    #[test]
+    fn http_429_error_keeps_status_url_body_and_adds_actionable_hint() {
+        // Placeholder host only; no network.
+        let url = "https://api.example.com/v1/chat/completions";
+        let body = r#"{"error":{"message":"Provider rate limit exceeded"}}"#;
+        let msg = super::http_error_message(429, url, body);
+        assert!(msg.contains("429"), "status must stay: {msg:?}");
+        assert!(msg.contains(url), "URL must stay: {msg:?}");
+        assert!(
+            msg.contains("Provider rate limit exceeded"),
+            "bounded body must stay: {msg:?}"
+        );
+        assert!(
+            msg.contains(super::RATE_LIMIT_HINT),
+            "actionable hint must be added: {msg:?}"
+        );
+        assert!(
+            msg.contains("wait a moment and retry"),
+            "hint must say what to do: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn non_429_error_has_no_rate_limit_hint() {
+        // The hint fires only on 429; every other status keeps the
+        // truthful bounded shape unchanged.
+        let url = "https://api.example.com/v1/chat/completions";
+        for status in [400, 401, 404, 500, 503] {
+            let msg =
+                super::http_error_message(status, url, "something broke");
+            assert!(
+                msg.contains(&status.to_string()),
+                "status must stay: {msg:?}"
+            );
+            assert!(msg.contains(url), "URL must stay: {msg:?}");
+            assert!(
+                msg.contains("something broke"),
+                "body must stay: {msg:?}"
+            );
+            assert!(
+                !msg.contains("rate limiting"),
+                "hint must not fire on {status}: {msg:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn http_429_error_body_stays_bounded() {
+        // The 240-char bound (decisions 137-138) still applies to the body
+        // portion when the 429 hint is appended.
+        let body = "x".repeat(10000);
+        let msg = super::http_error_message(
+            429,
+            "https://api.example.com/v1/chat/completions",
+            &body,
+        );
+        assert!(
+            !msg.contains(&"x".repeat(241)),
+            "body portion must stay bounded: len {}",
+            msg.len()
+        );
+        assert!(
+            msg.contains(&"x".repeat(240)),
+            "bounded body prefix must be kept: {msg:?}"
+        );
+        assert!(
+            msg.contains(super::RATE_LIMIT_HINT),
+            "hint must still be added: {msg:?}"
+        );
     }
 
     #[test]
