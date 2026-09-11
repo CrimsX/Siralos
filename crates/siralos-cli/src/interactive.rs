@@ -578,10 +578,10 @@ fn reload_report(
     current_credential_raw: Option<&str>,
     current_endpoint: Option<&str>,
     current_protocol: &str,
-) -> String {
+) -> (String, Option<String>) {
     match load_workspace_profile(workspace_root) {
         WorkspaceProfileLoad::Invalid { diagnostic } => {
-            format!("reload not applied: {diagnostic}\n")
+            (format!("reload not applied: {diagnostic}\n"), None)
         }
         WorkspaceProfileLoad::Absent => {
             let fresh = recompose_provider_snapshot(workspace_root);
@@ -595,11 +595,11 @@ fn reload_report(
             let endpoint_unchanged =
                 want_endpoint == current_endpoint.filter(|s| !s.is_empty());
             if provider_unchanged && model_unchanged && endpoint_unchanged {
-                "reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session already there, nothing would change\n"
-                    .to_owned()
+                ("reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session already there, nothing would change\n"
+                    .to_owned(), fresh.model.clone())
             } else {
-                "reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session differs, restart to converge\n"
-                    .to_owned()
+                ("reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session differs, restart to converge\n"
+                    .to_owned(), fresh.model.clone())
             }
         }
         WorkspaceProfileLoad::Record(_) => {
@@ -659,11 +659,17 @@ fn reload_report(
                 ));
             }
             if parts.iter().all(|p| p.ends_with("unchanged")) {
-                format!("reload: {}\n", parts.join("; "))
+                (
+                    format!("reload: {}\n", parts.join("; ")),
+                    fresh.model.clone(),
+                )
             } else {
-                format!(
-                    "reload would change: {}; live session unchanged\n",
-                    parts.join("; ")
+                (
+                    format!(
+                        "reload would change: {}; live session unchanged\n",
+                        parts.join("; ")
+                    ),
+                    fresh.model.clone(),
                 )
             }
         }
@@ -1050,7 +1056,7 @@ where
             // credential + endpoint + the protocol the session's
             // provider was built with.
             let live_model = live_provider.live_model();
-            let report = reload_report(
+            let (report, _recomposed_model) = reload_report(
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
@@ -1272,7 +1278,7 @@ where
             // live mutation. Reachable when dispatched directly (the
             // in-loop path below prefers the same helper).
             let live_model = live_provider.live_model();
-            let report = reload_report(
+            let (report, _recomposed_model) = reload_report(
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
@@ -3659,7 +3665,7 @@ pub fn run_interactive_tui_with_options(
                 // `/reload` in-loop (TUI): same pure report as stdio —
                 // no live mutation, no picker, no TTY requirement.
                 let live_model = live_provider.live_model();
-                let report = reload_report(
+                let (report, _recomposed_model) = reload_report(
                     &workspace_root,
                     applied_provider.as_deref(),
                     live_model.as_deref().or(applied_model.as_deref()),
@@ -4752,7 +4758,7 @@ mod tests {
         )
         .expect("profile");
         // Unchanged: starting from the same file the report is all-unchanged.
-        let same = reload_report(
+        let (same, _) = reload_report(
             &root,
             Some("example-vendor"),
             Some("example/model-a"),
@@ -4773,7 +4779,7 @@ mod tests {
             "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nendpoint = \"https://placeholder.example/v1\"\n",
         )
         .expect("edited profile");
-        let report = reload_report(
+        let (report, _) = reload_report(
             &root,
             Some("example-vendor"),
             Some("example/model-a"),
@@ -4795,7 +4801,7 @@ mod tests {
             "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nendpoint = \"https://other-placeholder.example/v1\"\n",
         )
         .expect("edited endpoint");
-        let endpoint_report = reload_report(
+        let (endpoint_report, _) = reload_report(
             &root,
             Some("example-vendor"),
             Some("example/model-b"),
@@ -4831,7 +4837,7 @@ mod tests {
                 } => diagnostic,
                 other => panic!("expected invalid, got: {other:?}"),
             };
-        let report = reload_report(
+        let (report, _) = reload_report(
             &root,
             Some("example-vendor"),
             Some("example/model-a"),
@@ -4863,7 +4869,7 @@ mod tests {
         // session holding a stale applied snapshot reports the drift.
         use super::reload_report;
         let root = temporary_directory("reload-absent");
-        let converged =
+        let (converged, _) =
             reload_report(&root, None, None, None, None, "openai-completions");
         assert!(
             converged.contains("no profile configured")
@@ -4871,7 +4877,7 @@ mod tests {
                 && converged.contains("nothing would change"),
             "absent+converged report must state startup semantics, got: {converged:?}"
         );
-        let drifted = reload_report(
+        let (drifted, _) = reload_report(
             &root,
             Some("example-vendor"),
             Some("example/model-a"),
