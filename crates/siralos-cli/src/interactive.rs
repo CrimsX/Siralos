@@ -78,6 +78,34 @@ enum SessionProvider {
     Replay(RecordedReplayProvider),
 }
 
+impl SessionProvider {
+    /// Replace the live model id for the NEXT provider request (a
+    /// session-level `/model` switch). Interior mutability — `&self`
+    /// suffices while the application borrows the provider.
+    fn set_live_model(&self, model: &str) {
+        match self {
+            Self::Host(provider) => provider.set_live_model(model),
+            Self::Replay(provider) => {
+                provider.set_model(model.to_owned());
+            }
+        }
+    }
+
+    /// The model id the NEXT provider request will use (`None` for the
+    /// model-less deterministic fake). Read by the switch tests as the
+    /// observable proof that the live value changed (production display
+    /// reads the holders updated in the same breath by
+    /// `apply_model_switch`).
+    #[allow(dead_code)]
+    #[must_use]
+    fn live_model(&self) -> Option<String> {
+        match self {
+            Self::Host(provider) => provider.live_model(),
+            Self::Replay(provider) => Some(provider.live_model()),
+        }
+    }
+}
+
 impl siralos_core::provider::ModelProvider for SessionProvider {
     type Stream<'a>
         = Box<dyn Iterator<Item = siralos_core::provider::ProviderEvent> + 'a>
@@ -236,6 +264,7 @@ where
         tool_definitions,
         policy,
         mut application,
+        live_provider,
         mut hosts,
         mut manifests,
         profile_plugins,
@@ -246,8 +275,8 @@ where
         record_recorder,
         replay_store_path,
         applied_provider,
-        applied_model,
-        applied_model_display_name: _,
+        mut applied_model,
+        mut applied_model_display_name,
         applied_endpoint,
         credential_present: _,
         applied_credential,
@@ -308,7 +337,9 @@ where
             &mut context_session_holder,
             &mut context_history_len,
             applied_provider.as_deref(),
-            applied_model.as_deref(),
+            live_provider,
+            &mut applied_model,
+            &mut applied_model_display_name,
             applied_credential_raw.as_deref(),
             applied_endpoint.as_deref(),
             applied_credential.as_ref(),
@@ -346,8 +377,10 @@ enum SlashCommand<'a> {
     Provider,
     /// `/provider remove` — remove the configured provider (confirmed).
     ProviderRemove,
-    /// `/model` — display-only (U7).
-    Model,
+    /// `/model` with optional model id (`None` = bare command).
+    /// Bare `/model` shows the applied model (U7); `/model <id>` switches
+    /// the live session model and persists it to the workspace `[profile]`.
+    Model(Option<&'a str>),
     /// `/models` — list provider models (I6, blocking GET).
     Models,
     /// `/evolve` — display-only (U8).
@@ -372,6 +405,7 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
         ("/provider", "Show applied provider"),
         ("/provider remove", "Remove configured provider"),
         ("/model", "Show applied model"),
+        ("/model <id>", "Switch applied model"),
         ("/models", "List available models"),
         ("/evolve", "Show Stage 6 evolution surfaces"),
         ("/exit", "Exit the session"),
@@ -437,7 +471,7 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/domains" => SlashCommand::Domains,
         "/provider" => SlashCommand::Provider,
         "/provider remove" => SlashCommand::ProviderRemove,
-        "/model" => SlashCommand::Model,
+        "/model" => SlashCommand::Model(None),
         "/models" => SlashCommand::Models,
         "/evolve" => SlashCommand::Evolve,
         "/exit" => SlashCommand::Exit,
@@ -454,6 +488,13 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
                 SlashCommand::DomainsActivate(None)
             } else if let Some(id) = input.strip_prefix("/domains-activate ") {
                 SlashCommand::DomainsActivate(Some(id))
+            } else if input.starts_with("/models") {
+                // `/models` takes no arguments: anything beyond the exact
+                // form stays an unknown command (honesty gate), exactly as
+                // before the `/model <id>` form existed.
+                SlashCommand::Prompt(input)
+            } else if let Some(id) = input.strip_prefix("/model ") {
+                SlashCommand::Model(Some(id))
             } else {
                 SlashCommand::Prompt(input)
             }
@@ -564,7 +605,9 @@ fn dispatch_stdio_command<P, W, R>(
     >,
     context_history_len: &mut usize,
     provider: Option<&str>,
-    model: Option<&str>,
+    live_provider: &SessionProvider,
+    applied_model: &mut Option<String>,
+    applied_model_display_name: &mut Option<String>,
     credential_raw: Option<&str>,
     endpoint: Option<&str>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
@@ -676,11 +719,47 @@ where
                 }
             }
         }
-        SlashCommand::Model => {
-            let rendered = sanitize_for_display(&render_model_line(model));
-            writer
-                .write_all(rendered.as_bytes())
-                .map_err(InteractiveError::Io)?;
+        SlashCommand::Model(argument) => {
+            match argument {
+                None => {
+                    // Bare `/model` in stdio: keep the display behaviour
+                    // (U7) and say how to switch — a picker is not
+                    // possible here, so never silently do nothing.
+                    let mut out = render_model_line(applied_model.as_deref());
+                    out.push_str(
+                        "pass /model <id> to switch, or use the TUI picker\n",
+                    );
+                    let rendered = sanitize_for_display(&out);
+                    writer
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                }
+                Some(id) => {
+                    // Explicit switch: validate + persist, then update
+                    // the live provider cell and the display holders.
+                    match apply_model_switch(
+                        workspace_root,
+                        live_provider,
+                        provider,
+                        applied_model,
+                        applied_model_display_name,
+                        id,
+                    ) {
+                        Ok(message) => {
+                            let rendered = sanitize_for_display(&message);
+                            writer
+                                .write_all(rendered.as_bytes())
+                                .map_err(InteractiveError::Io)?;
+                        }
+                        Err(reason) => {
+                            let rendered = sanitize_for_display(&reason);
+                            writer
+                                .write_all(rendered.as_bytes())
+                                .map_err(InteractiveError::Io)?;
+                        }
+                    }
+                }
+            }
         }
         SlashCommand::Models => {
             // I6 blocking fetch — synchronous, freezes redraw (architectural constraint, no threads).
@@ -773,7 +852,9 @@ fn dispatch_tui_command<P>(
     >,
     context_history_len: &mut usize,
     provider: Option<&str>,
-    model: Option<&str>,
+    live_provider: &SessionProvider,
+    applied_model: &mut Option<String>,
+    applied_model_display_name: &mut Option<String>,
     credential_raw: Option<&str>,
     endpoint: Option<&str>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
@@ -842,9 +923,37 @@ where
             // `TuiState`, which this sink-only writer does not hold), so
             // this arm is unreachable — kept only for exhaustiveness.
         }
-        SlashCommand::Model => {
-            let rendered = sanitize_for_display(&render_model_line(model));
-            let _ = sink.write_all(rendered.as_bytes());
+        SlashCommand::Model(argument) => {
+            // Bare `/model` is intercepted in-loop (fetch + picker) and
+            // never reaches this writer; keep the display fallback for
+            // direct callers. `Some(id)` performs the same
+            // switch-and-persist as the stdio form.
+            match argument {
+                None => {
+                    let effective = applied_model_display_name
+                        .clone()
+                        .filter(|name| !name.is_empty())
+                        .or(applied_model.clone());
+                    let rendered = sanitize_for_display(&render_model_line(
+                        effective.as_deref(),
+                    ));
+                    let _ = sink.write_all(rendered.as_bytes());
+                }
+                Some(id) => {
+                    let outcome = apply_model_switch(
+                        workspace_root,
+                        live_provider,
+                        provider,
+                        applied_model,
+                        applied_model_display_name,
+                        id,
+                    );
+                    let rendered = sanitize_for_display(
+                        outcome.as_deref().unwrap_or_else(|reason| reason),
+                    );
+                    let _ = sink.write_all(rendered.as_bytes());
+                }
+            }
         }
         SlashCommand::Models => {
             // I6 blocking fetch — same as stdio, synchronous freeze documented.
@@ -961,6 +1070,11 @@ struct SessionComposition<'a> {
     policy: PermissionPolicy,
     /// Host application over the session provider.
     application: SiralosApplication<'a, SessionProvider>,
+    /// The live session provider behind the application borrow. A `/model`
+    /// switch updates its interior-mutable model cell in place, so the NEXT
+    /// provider request uses the new id without re-composing
+    /// provider/endpoint/credential.
+    live_provider: &'a SessionProvider,
     /// Installed domain hosts by plugin id.
     hosts: BTreeMap<String, DomainHost>,
     /// Loaded plugin manifests by plugin id.
@@ -1354,6 +1468,7 @@ fn compose_session(
         tool_definitions,
         policy,
         application,
+        live_provider: session_provider,
         hosts: BTreeMap::new(),
         manifests: BTreeMap::new(),
         profile_plugins,
@@ -1928,6 +2043,103 @@ pub fn write_profile_config(
     }
     let _ = std::fs::remove_file(&temp);
     Ok(())
+}
+
+/// Validate a candidate live model id with the existing core rule
+/// (`siralos_core::composition::is_model_id_char`, 1..=256 bytes, no NUL).
+/// Refuses with the existing honest write-boundary message.
+fn validate_live_model_id(id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || id.len() > siralos_core::composition::MAX_PROFILE_MODEL_BYTES
+        || id.contains('\0')
+        || !id.chars().all(siralos_core::composition::is_model_id_char)
+    {
+        return Err(
+            "A model must match [a-zA-Z0-9._/:@-]{1,256} with no NUL."
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// Persist a live `/model` switch: update ONLY the model in the workspace
+/// `[profile]`, clearing `model_display_name` (that display name described
+/// the previous model). Reads the applied record and rewrites it through
+/// [`write_profile_config`] — the existing atomic writer path — so neither
+/// its validation logic nor its safety pattern (preserve bytes outside
+/// `[profile]`, temp write, re-parse to prove it applies, rename; refuse
+/// symlinks/non-regular files; delete the temp on failure) is duplicated
+/// here.
+///
+/// Refuses truthfully — writing nothing — when no profile is applied (no
+/// provider configured) or the candidate id fails the core model rule.
+/// Returns the user-facing message (terminated with `\n`,
+/// sanitizer-clean: the model charset and all static text survive the
+/// terminal sanitizer unchanged).
+pub fn persist_switched_model(
+    workspace_root: &Path,
+    applied_provider: Option<&str>,
+    new_model: &str,
+) -> Result<String, String> {
+    validate_live_model_id(new_model)
+        .map_err(|reason| format!("{reason}\n"))?;
+    if applied_provider.is_none_or(|provider| provider.is_empty()) {
+        return Err(
+            "no provider configured — cannot switch model without an applied [profile]\n"
+                .to_owned(),
+        );
+    }
+    let record = match load_workspace_profile(workspace_root) {
+        WorkspaceProfileLoad::Record(record) => record,
+        _ => {
+            return Err(
+                "no provider configured — cannot switch model without an applied [profile]\n"
+                    .to_owned(),
+            );
+        }
+    };
+    let provider = match record.provider.as_deref() {
+        Some(provider) if !provider.is_empty() => provider.to_owned(),
+        _ => {
+            return Err(
+                "no provider configured — cannot switch model without an applied [profile]\n"
+                    .to_owned(),
+            );
+        }
+    };
+    write_profile_config(
+        workspace_root,
+        &provider,
+        new_model,
+        record.credential.as_deref(),
+        record.endpoint.as_deref(),
+        Some(record.protocol.as_str()),
+        None,
+    )
+    .map_err(|reason| format!("model switch failed: {reason}\n"))?;
+    Ok(format!("model switched to {new_model} — model display name cleared\n"))
+}
+
+/// Perform the full live switch: validate + persist through
+/// [`persist_switched_model`], then update the live provider cell (so the
+/// NEXT provider request uses the new id) and the session display holders
+/// in place. The provider cell is only touched after the persist succeeds,
+/// so a refused switch changes neither disk nor the live session. Returns
+/// the user-facing message from [`persist_switched_model`].
+fn apply_model_switch(
+    workspace_root: &Path,
+    live_provider: &SessionProvider,
+    applied_provider: Option<&str>,
+    applied_model: &mut Option<String>,
+    applied_model_display_name: &mut Option<String>,
+    new_model: &str,
+) -> Result<String, String> {
+    let message =
+        persist_switched_model(workspace_root, applied_provider, new_model)?;
+    live_provider.set_live_model(new_model);
+    *applied_model = Some(new_model.to_owned());
+    *applied_model_display_name = None;
+    Ok(message)
 }
 
 /// Remove the `[profile]` section atomically (provider deletion) — the
@@ -2725,6 +2937,7 @@ pub fn run_interactive_tui_with_options(
         tool_definitions,
         policy,
         mut application,
+        live_provider,
         mut hosts,
         mut manifests,
         profile_plugins,
@@ -2735,8 +2948,8 @@ pub fn run_interactive_tui_with_options(
         record_recorder,
         replay_store_path,
         applied_provider,
-        applied_model,
-        applied_model_display_name,
+        mut applied_model,
+        mut applied_model_display_name,
         applied_endpoint,
         credential_present: _,
         applied_credential,
@@ -2744,7 +2957,8 @@ pub fn run_interactive_tui_with_options(
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
     // S5: header/status prefers model display name when present.
-    let effective_model: Option<String> = applied_model_display_name
+    // Recomputed after every `/model` switch below (same preference rule).
+    let mut effective_model: Option<String> = applied_model_display_name
         .clone()
         .filter(|s| !s.is_empty())
         .or(applied_model.clone());
@@ -3065,6 +3279,42 @@ pub fn run_interactive_tui_with_options(
                         &mut tui_state.borrow_mut(),
                     );
                 }
+            } else if let SlashCommand::Model(None) = command {
+                // Bare `/model` in the TUI: fetch the provider's models
+                // and open the switch picker (the same `ModelPicker` +
+                // sliding viewport the add-flow uses). A missing
+                // provider/endpoint, or a failed/empty fetch, is reported
+                // truthfully with the explicit-id hint.
+                match (
+                    applied_provider.as_deref(),
+                    applied_endpoint.as_deref(),
+                ) {
+                    (Some(_), Some(endpoint)) => {
+                        match siralos_adapters::provider::generic::fetch_models(
+                            endpoint,
+                            applied_credential.as_ref(),
+                        ) {
+                            Ok(models) if !models.is_empty() => {
+                                crate::tui::open_model_switch_picker(
+                                    &mut tui_state.borrow_mut(),
+                                    models,
+                                );
+                            }
+                            _ => {
+                                let msg = sanitize_for_display(
+                                    "model list unavailable — pass /model <id> to switch\n",
+                                );
+                                let _ = sink.write_all(msg.as_bytes());
+                            }
+                        }
+                    }
+                    _ => {
+                        let msg = sanitize_for_display(
+                            "no provider configured — pass /model <id> to switch once a provider is set, or add one with /provider\n",
+                        );
+                        let _ = sink.write_all(msg.as_bytes());
+                    }
+                }
             } else {
                 let should_exit = dispatch_tui_command(
                     &command,
@@ -3081,7 +3331,9 @@ pub fn run_interactive_tui_with_options(
                     &mut context_session_holder,
                     &mut context_history_len,
                     applied_provider.as_deref(),
-                    effective_model.as_deref(),
+                    live_provider,
+                    &mut applied_model,
+                    &mut applied_model_display_name,
                     applied_credential_raw.as_deref(),
                     applied_endpoint.as_deref(),
                     applied_credential.as_ref(),
@@ -3090,6 +3342,33 @@ pub fn run_interactive_tui_with_options(
                     break;
                 }
             }
+            // Model-switch picker selection: the picker's Enter arms
+            // `pending_model_switch`; resolve it through the same
+            // switch-and-persist as the explicit-argument form.
+            let pending_model =
+                tui_state.borrow_mut().pending_model_switch.take();
+            if let Some(selected) = pending_model {
+                let outcome = apply_model_switch(
+                    &workspace_root,
+                    live_provider,
+                    applied_provider.as_deref(),
+                    &mut applied_model,
+                    &mut applied_model_display_name,
+                    &selected,
+                );
+                let rendered = sanitize_for_display(
+                    outcome.as_deref().unwrap_or_else(|reason| reason),
+                );
+                let _ = sink.write_all(rendered.as_bytes());
+            }
+            // Refresh the displayed model after any switch (explicit or
+            // picker): display-name preference, same rule as session start.
+            // A switch clears the display name, so the raw id shows next.
+            effective_model = applied_model_display_name
+                .clone()
+                .filter(|name| !name.is_empty())
+                .or(applied_model.clone());
+            tui_state.borrow_mut().model = effective_model.clone();
             let base = "ready";
             let metrics_opt =
                 context_session_holder.as_ref().map(|s| &s.metrics);
@@ -3124,8 +3403,9 @@ pub fn run_interactive_tui_with_options(
 #[cfg(test)]
 mod tests {
     use super::{
-        InteractiveOptions, SlashCommand, apply_provider_remove_confirmation,
-        compose_session, is_unknown_slash_command, parse_slash_command,
+        InteractiveOptions, SessionProvider, SlashCommand, apply_model_switch,
+        apply_provider_remove_confirmation, compose_session,
+        is_unknown_slash_command, parse_slash_command, persist_switched_model,
         remove_profile_config, render_evolve_lines, render_model_line,
         render_provider_line, run_interactive_session_with_options,
         slash_command_catalog, write_profile_config,
@@ -3718,6 +3998,13 @@ mod tests {
                 "/domains-activate godot",
                 SlashCommand::DomainsActivate(Some("godot")),
             ),
+            ("/model", SlashCommand::Model(None)),
+            (
+                "/model example/model-a",
+                SlashCommand::Model(Some("example/model-a")),
+            ),
+            ("/models", SlashCommand::Models),
+            ("/models extra", SlashCommand::Prompt("/models extra")),
             ("hello there", SlashCommand::Prompt("hello there")),
             (
                 "/definitely-not-a-command",
@@ -4016,10 +4303,11 @@ mod tests {
         let names: Vec<&str> = catalog.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"/provider"));
         assert!(names.contains(&"/model"));
+        assert!(names.contains(&"/model <id>"));
         assert!(names.contains(&"/models"));
         assert!(names.contains(&"/evolve"));
         assert!(names.contains(&"/context"));
-        assert_eq!(names.len(), 12);
+        assert_eq!(names.len(), 13);
     }
 
     #[test]
@@ -4028,7 +4316,16 @@ mod tests {
             parse_slash_command("/provider"),
             SlashCommand::Provider
         ));
-        assert!(matches!(parse_slash_command("/model"), SlashCommand::Model));
+        assert!(matches!(
+            parse_slash_command("/model"),
+            SlashCommand::Model(None)
+        ));
+        assert!(matches!(
+            parse_slash_command("/model example/model-a"),
+            SlashCommand::Model(Some("example/model-a"))
+        ));
+        assert!(!is_unknown_slash_command("/model example/model-a"));
+        assert!(!is_unknown_slash_command("/model"));
         assert!(matches!(
             parse_slash_command("/models"),
             SlashCommand::Models
@@ -4722,6 +5019,43 @@ mod tests {
     }
 
     #[test]
+    fn slash_command_catalog_includes_model_switch_form() {
+        // Both frontends derive their vocabulary from this single catalog:
+        // bare `/model` stays display-only, `/model <id>` switches.
+        let catalog = slash_command_catalog();
+        let names: Vec<&str> = catalog.iter().map(|(n, _)| *n).collect();
+        assert!(
+            names.contains(&"/model"),
+            "catalog must list /model, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"/model <id>"),
+            "catalog must list /model <id>, got: {names:?}"
+        );
+        assert!(
+            matches!(parse_slash_command("/model"), SlashCommand::Model(None)),
+            "bare /model stays display-only"
+        );
+        assert!(
+            matches!(
+                parse_slash_command("/model example/model-b"),
+                SlashCommand::Model(Some("example/model-b"))
+            ),
+            "must parse to the switch form"
+        );
+        assert!(
+            matches!(
+                parse_slash_command("/models extra"),
+                SlashCommand::Prompt(_)
+            ),
+            "/models takes no arguments"
+        );
+        assert!(!is_unknown_slash_command("/model"));
+        assert!(!is_unknown_slash_command("/model example/model-b"));
+        assert!(is_unknown_slash_command("/models extra"));
+    }
+
+    #[test]
     fn provider_remove_confirm_yes_removes_no_cancels() {
         // One implementation for the confirmation outcome: yes removes and
         // reports the save-mirroring message, no cancels truthfully.
@@ -5021,6 +5355,340 @@ mod tests {
             !root.join("siralos.toml").exists(),
             "no-op must not create a file"
         );
+        let _ = remove_dir_all(root);
+    }
+
+    /// Build a live [`SessionProvider`] over the generic path for switch
+    /// tests (provider/endpoint placeholders only — no network is touched:
+    /// the switch writes the file and mutates the in-memory cell).
+    fn switch_test_provider(initial_model: &str) -> SessionProvider {
+        let host =
+            siralos_adapters::provider::HostProvider::from_provider_str_with_protocol(
+                "example-vendor",
+                Some(initial_model.to_owned()),
+                None,
+                Some("https://api.example.com/v1".to_owned()),
+                siralos_core::composition::Protocol::OpenAiCompletions,
+            )
+            .expect("test provider");
+        SessionProvider::Host(host)
+    }
+
+    /// Fixture `[profile]` with a model display name (the switch must
+    /// clear it) plus surrounding content the writer must preserve.
+    fn switch_test_profile(root: &std::path::Path) {
+        write(
+            root.join("siralos.toml"),
+            "# workspace config\n[other]\nkey = \"value\"\n\n[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nmodel_display_name = \"Old Display\"\nendpoint = \"https://api.example.com/v1\"\n",
+        )
+        .expect("fixture");
+    }
+
+    #[test]
+    fn model_switch_explicit_id_updates_live_and_persisted_profile() {
+        // Explicit `/model <id>`: the live value AND the persisted
+        // `[profile]` change, round-tripped through the loader.
+        let root = temporary_directory("model-switch-live");
+        switch_test_profile(&root);
+        let session = switch_test_provider("example/model-a");
+        let mut model = Some("example/model-a".to_owned());
+        let mut display = Some("Old Display".to_owned());
+        let message = apply_model_switch(
+            &root,
+            &session,
+            Some("example-vendor"),
+            &mut model,
+            &mut display,
+            "example/model-b",
+        )
+        .expect("switch");
+        assert!(
+            message.contains("model switched to example/model-b"),
+            "must name the new model, got: {message:?}"
+        );
+        assert!(
+            message.contains("model display name cleared"),
+            "must say the display name was cleared, got: {message:?}"
+        );
+        assert_eq!(model.as_deref(), Some("example/model-b"));
+        assert_eq!(display, None);
+        // The switched id is what the NEXT provider request reads: the
+        // live cell behind `stream()` holds it.
+        assert_eq!(session.live_model().as_deref(), Some("example/model-b"));
+        // The persisted `[profile]` round-trips through the loader with
+        // provider/endpoint preserved and the display name gone.
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                record,
+            ) => {
+                assert_eq!(record.model.as_deref(), Some("example/model-b"));
+                assert_eq!(record.model_display_name, None);
+                assert_eq!(record.provider.as_deref(), Some("example-vendor"));
+                assert_eq!(
+                    record.endpoint.as_deref(),
+                    Some("https://api.example.com/v1")
+                );
+            }
+            other => panic!("expected applied record, got: {other:?}"),
+        }
+        // Bytes outside `[profile]` survive the rewrite; no temp remains.
+        let after =
+            std::fs::read_to_string(root.join("siralos.toml")).expect("read");
+        assert!(
+            after.contains("# workspace config"),
+            "surrounding bytes must survive, got: {after:?}"
+        );
+        assert!(
+            after.contains("[other]\nkey = \"value\""),
+            "other tables must survive, got: {after:?}"
+        );
+        assert!(mutation_temps(&root).is_empty());
+        // The switching message is sanitizer-clean.
+        assert_eq!(
+            crate::sanitize::sanitize_for_display(&message),
+            message,
+            "switch message must survive the sanitizer unchanged"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn model_switch_refuses_without_applied_profile() {
+        // No profile applied: refuse truthfully, writing nothing and
+        // touching neither the holders nor the live provider.
+        let root = temporary_directory("model-switch-absent");
+        let session = switch_test_provider("example/model-a");
+        let mut model: Option<String> = None;
+        let mut display: Option<String> = None;
+        let error = apply_model_switch(
+            &root,
+            &session,
+            None,
+            &mut model,
+            &mut display,
+            "example/model-b",
+        )
+        .expect_err("must refuse without a profile");
+        assert!(
+            error.contains("no provider configured"),
+            "refusal must be truthful, got: {error:?}"
+        );
+        assert_eq!(model, None);
+        assert_eq!(display, None);
+        assert_eq!(
+            session.live_model().as_deref(),
+            Some("example/model-a"),
+            "live value must be untouched by a refused switch"
+        );
+        assert!(
+            !root.join("siralos.toml").exists(),
+            "refusal must not create a file"
+        );
+        assert_eq!(
+            crate::sanitize::sanitize_for_display(&error),
+            error,
+            "refusal must be sanitizer-clean"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn model_switch_refuses_invalid_id_and_leaves_bytes_untouched() {
+        // Invalid ids are refused with the existing honest message; the
+        // file, the holders, and the live provider are untouched.
+        let root = temporary_directory("model-switch-invalid");
+        switch_test_profile(&root);
+        let session = switch_test_provider("example/model-a");
+        let bad: Vec<String> = vec![
+            String::new(),
+            "has space".to_owned(),
+            "bad!id".to_owned(),
+            "a".repeat(siralos_core::composition::MAX_PROFILE_MODEL_BYTES + 1),
+            "ab\0cd".to_owned(),
+        ];
+        for id in &bad {
+            let before =
+                std::fs::read(root.join("siralos.toml")).expect("read back");
+            let mut model = Some("example/model-a".to_owned());
+            let mut display = Some("Old Display".to_owned());
+            let error = apply_model_switch(
+                &root,
+                &session,
+                Some("example-vendor"),
+                &mut model,
+                &mut display,
+                id,
+            )
+            .expect_err("invalid id must be refused");
+            assert!(
+                error.contains("A model must match"),
+                "refusal must use the honest message, got: {error:?}"
+            );
+            assert_eq!(
+                std::fs::read(root.join("siralos.toml")).expect("read back"),
+                before,
+                "refused switch must not touch bytes"
+            );
+            assert_eq!(model.as_deref(), Some("example/model-a"));
+            assert_eq!(display.as_deref(), Some("Old Display"));
+            assert_eq!(
+                session.live_model().as_deref(),
+                Some("example/model-a")
+            );
+            assert!(mutation_temps(&root).is_empty());
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn model_picker_selection_performs_same_switch() {
+        // The picker path feeds the selected entry into the same
+        // switch-and-persist as the explicit-argument form.
+        let root = temporary_directory("model-switch-picker");
+        switch_test_profile(&root);
+        let session = switch_test_provider("example/model-a");
+        let picker = crate::tui::ModelPicker {
+            items: vec![
+                "example/model-a".to_owned(),
+                "example/model-b".to_owned(),
+            ],
+            selected: 1,
+        };
+        let selected = picker.selected_id().expect("selection").to_owned();
+        let mut model = Some("example/model-a".to_owned());
+        let mut display = Some("Old Display".to_owned());
+        let message = apply_model_switch(
+            &root,
+            &session,
+            Some("example-vendor"),
+            &mut model,
+            &mut display,
+            &selected,
+        )
+        .expect("picker selection must switch");
+        assert!(message.contains("model switched to example/model-b"));
+        assert_eq!(model.as_deref(), Some("example/model-b"));
+        assert_eq!(display, None);
+        assert_eq!(session.live_model().as_deref(), Some("example/model-b"));
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                record,
+            ) => {
+                assert_eq!(record.model.as_deref(), Some("example/model-b"));
+                assert_eq!(record.model_display_name, None);
+            }
+            other => panic!("expected applied record, got: {other:?}"),
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn model_switch_stdio_end_to_end_updates_display_and_persists() {
+        // Full stdio loop: `/model <id>` switches, and a following bare
+        // `/model` shows the live value.
+        let root = temporary_directory("model-switch-stdio");
+        switch_test_profile(&root);
+        let output =
+            run("/model example/model-b\n/model\n/exit\n", &root, None);
+        assert!(
+            output.contains("model switched to example/model-b"),
+            "must report the switch, got: {output:?}"
+        );
+        assert!(
+            output.contains("model display name cleared"),
+            "must report the cleared display name, got: {output:?}"
+        );
+        assert!(
+            output.contains("model: example/model-b"),
+            "bare /model must show the live value, got: {output:?}"
+        );
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                record,
+            ) => {
+                assert_eq!(record.model.as_deref(), Some("example/model-b"));
+                assert_eq!(record.model_display_name, None);
+            }
+            other => panic!("expected applied record, got: {other:?}"),
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn bare_model_stdio_displays_and_hints() {
+        // Bare `/model` in stdio keeps the display behaviour and tells
+        // the user how to switch — never silently nothing.
+        let root = temporary_directory("model-bare-stdio");
+        switch_test_profile(&root);
+        let output = run("/model\n/exit\n", &root, None);
+        assert!(
+            output.contains("model: example/model-a"),
+            "must still display, got: {output:?}"
+        );
+        assert!(
+            output.contains("pass /model <id>"),
+            "must hint at the switch form, got: {output:?}"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn model_switch_stdio_refuses_without_profile() {
+        // No profile: the stdio form refuses truthfully and creates nothing.
+        let root = temporary_directory("model-switch-stdio-absent");
+        let output = run("/model example/model-b\n/exit\n", &root, None);
+        assert!(
+            output.contains("no provider configured"),
+            "must refuse truthfully, got: {output:?}"
+        );
+        assert!(
+            !root.join("siralos.toml").exists(),
+            "refusal must not create a file"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn persist_switched_model_clears_display_name_only() {
+        // The persist sibling updates ONLY the model: provider, credential,
+        // endpoint, and protocol survive verbatim; the display name is
+        // removed.
+        let root = temporary_directory("model-persist-only");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nmodel_display_name = \"Example A\"\ncredential = \"env:EXAMPLE_API_KEY\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-responses\"\n",
+        )
+        .expect("fixture");
+        let message = persist_switched_model(
+            &root,
+            Some("example-vendor"),
+            "example/model-b",
+        )
+        .expect("persist");
+        assert!(message.contains("example/model-b"));
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                record,
+            ) => {
+                assert_eq!(record.model.as_deref(), Some("example/model-b"));
+                assert_eq!(record.model_display_name, None);
+                assert_eq!(record.provider.as_deref(), Some("example-vendor"));
+                assert_eq!(
+                    record.credential.as_deref(),
+                    Some("env:EXAMPLE_API_KEY")
+                );
+                assert_eq!(
+                    record.endpoint.as_deref(),
+                    Some("https://api.example.com/v1")
+                );
+                assert_eq!(
+                    record.protocol,
+                    siralos_core::composition::Protocol::OpenAiResponses
+                );
+            }
+            other => panic!("expected applied record, got: {other:?}"),
+        }
+        assert!(mutation_temps(&root).is_empty());
         let _ = remove_dir_all(root);
     }
 }

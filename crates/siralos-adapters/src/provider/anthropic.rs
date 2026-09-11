@@ -22,12 +22,17 @@ use std::rc::Rc;
 
 /// Anthropic provider — Host-constructed, credential redacted, bounded
 /// real-HTTP adapter.
+///
+/// The `model` is a shared live cell: a session-level `/model` switch
+/// replaces it in place, and the NEXT `stream()` clones the cell at call
+/// time, so the switched id flows into the request body without
+/// re-composing provider/endpoint/credential.
 #[derive(Debug)]
 pub struct AnthropicProvider {
     /// Redacted credential for anthropic.
     credential: HostCredential,
     /// Model identifier (bounded, validated at `ProfileRecord` boundary).
-    model: String,
+    model: Rc<RefCell<String>>,
     /// Replay hooks for determinism recording.
     hooks: ReplayHooks,
     /// Last replay availability, set on each terminal outcome.
@@ -40,7 +45,7 @@ impl AnthropicProvider {
     pub fn new(credential: HostCredential, model: String) -> Self {
         Self {
             credential,
-            model,
+            model: Rc::new(RefCell::new(model)),
             hooks: ReplayHooks::default(),
             last_replay: RefCell::new(
                 ProviderReplayAvailability::Unavailable {
@@ -69,6 +74,19 @@ impl AnthropicProvider {
             reason: "no provider response observed yet".to_owned(),
         })
     }
+
+    /// Replace the live model id in place. The NEXT `stream()` reads this
+    /// cell, so a session `/model` switch takes effect without
+    /// re-composing provider/endpoint/credential.
+    pub fn set_model(&self, model: String) {
+        *self.model.borrow_mut() = model;
+    }
+
+    /// The model id the NEXT `stream()` will send.
+    #[must_use]
+    pub fn live_model(&self) -> String {
+        self.model.borrow().clone()
+    }
 }
 
 impl ModelProvider for AnthropicProvider {
@@ -92,7 +110,7 @@ impl ModelProvider for AnthropicProvider {
                     .to_owned(),
             }));
         }
-        let model = self.model.clone();
+        let model = self.model.borrow().clone();
         let credential =
             String::from_utf8_lossy(self.credential.as_bytes()).to_string();
         let request = request.clone();

@@ -38,10 +38,15 @@ use std::rc::Rc;
 
 /// Generic provider — holds the bounded `provider`/`model`/`endpoint` and a
 /// redacted `HostCredential` (if any). `Debug`/`Display` redacted.
+///
+/// The `model` is a shared live cell: a session-level `/model` switch
+/// replaces it in place, and the NEXT `stream()` clones the cell at call
+/// time, so the switched id flows into the request body without
+/// re-composing provider/endpoint/credential.
 #[derive(Debug)]
 pub struct GenericProvider {
     provider: String,
-    model: String,
+    model: Rc<RefCell<String>>,
     endpoint: Option<String>,
     credential: Option<HostCredential>,
     /// API protocol selecting the chat POST path segment appended to the
@@ -66,7 +71,7 @@ impl GenericProvider {
     ) -> Self {
         Self {
             provider,
-            model,
+            model: Rc::new(RefCell::new(model)),
             endpoint,
             credential,
             protocol: Protocol::default(),
@@ -109,6 +114,19 @@ impl GenericProvider {
         self.last_replay.replace(ProviderReplayAvailability::Unavailable {
             reason: "no provider response observed yet".to_owned(),
         })
+    }
+
+    /// Replace the live model id in place. The NEXT `stream()` reads this
+    /// cell, so a session `/model` switch takes effect without
+    /// re-composing provider/endpoint/credential.
+    pub fn set_model(&self, model: String) {
+        *self.model.borrow_mut() = model;
+    }
+
+    /// The model id the NEXT `stream()` will send.
+    #[must_use]
+    pub fn live_model(&self) -> String {
+        self.model.borrow().clone()
     }
 }
 
@@ -177,7 +195,7 @@ impl ModelProvider for GenericProvider {
             }));
         }
         let provider = self.provider.clone();
-        let model = self.model.clone();
+        let model = self.model.borrow().clone();
         let endpoint = self
             .endpoint
             .clone()
@@ -629,6 +647,21 @@ mod tests {
         let cred = HostCredential::from_credential_str("PATH")
             .expect("bare PATH must resolve");
         assert!(!cred.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn switched_model_is_what_the_next_request_reads() {
+        // The live cell `stream()` clones at call time holds the switched
+        // id after `set_model`: the NEXT request body uses it.
+        let provider = super::GenericProvider::new(
+            "example-vendor".to_owned(),
+            "example/model-a".to_owned(),
+            None,
+            None,
+        );
+        assert_eq!(provider.live_model(), "example/model-a");
+        provider.set_model("example/model-b".to_owned());
+        assert_eq!(provider.live_model(), "example/model-b");
     }
 
     #[test]

@@ -235,6 +235,37 @@ impl HostProvider {
         }
     }
 
+    /// Replace the live model id for the NEXT provider request.
+    ///
+    /// Interior mutability (`&self` suffices — the session holds the
+    /// provider behind a shared reference borrowed by the application).
+    /// `Fake` is a model-less echo and ignores the switch; the HTTP
+    /// adapters read the same cell at `stream()` time, so the switched id
+    /// flows into the request body. Provider/endpoint/credential are
+    /// never re-composed here (separate approved slice).
+    pub fn set_live_model(&self, model: &str) {
+        match self {
+            Self::Fake(_) => {}
+            Self::OpenAi(provider) => provider.set_model(model.to_owned()),
+            Self::Anthropic(provider) => {
+                provider.set_model(model.to_owned());
+            }
+            Self::Generic(provider) => provider.set_model(model.to_owned()),
+        }
+    }
+
+    /// The model id the NEXT provider request will use, or `None` for
+    /// `Fake` (model-less echo).
+    #[must_use]
+    pub fn live_model(&self) -> Option<String> {
+        match self {
+            Self::Fake(_) => None,
+            Self::OpenAi(provider) => Some(provider.live_model()),
+            Self::Anthropic(provider) => Some(provider.live_model()),
+            Self::Generic(provider) => Some(provider.live_model()),
+        }
+    }
+
     /// Take the last replay availability from the inner provider.
     ///
     /// `Fake` returns `Unavailable` with reason
@@ -293,6 +324,35 @@ impl ModelProvider for HostProvider {
 #[cfg(test)]
 mod tests {
     use super::{ProviderKind, provider_kind_from_str};
+
+    #[test]
+    fn live_model_switch_reaches_the_next_request() {
+        // `set_live_model` replaces the id the NEXT `stream()` reads
+        // (the HTTP adapters clone the same cell at call time); the
+        // model-less fake reports `None` and ignores the switch.
+        let provider = super::HostProvider::from_provider_str_with_protocol(
+            "example-vendor",
+            Some("example/model-a".to_owned()),
+            None,
+            Some("https://api.example.com/v1".to_owned()),
+            siralos_core::composition::Protocol::OpenAiCompletions,
+        )
+        .expect("provider");
+        assert_eq!(provider.live_model().as_deref(), Some("example/model-a"));
+        provider.set_live_model("example/model-b");
+        assert_eq!(provider.live_model().as_deref(), Some("example/model-b"));
+        let fake = super::HostProvider::from_provider_str_with_protocol(
+            "deterministic-fake",
+            None,
+            None,
+            None,
+            siralos_core::composition::Protocol::OpenAiCompletions,
+        )
+        .expect("fake");
+        assert_eq!(fake.live_model(), None);
+        fake.set_live_model("example/model-b");
+        assert_eq!(fake.live_model(), None);
+    }
 
     #[test]
     fn known_providers_map() {

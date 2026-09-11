@@ -10,6 +10,8 @@ use siralos_core::determinism::ReplayRecording;
 use siralos_core::provider::{
     CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Convert a sanitized bounded body text into `ProviderEvent`s.
 ///
@@ -168,13 +170,16 @@ pub(crate) fn completion_events_from_body(text: &str) -> Vec<ProviderEvent> {
 ///
 /// Serves in-memory [`ReplayRecording`]s as `ProviderEvent`s. Recording data
 /// lives in memory only and is consumed sequentially.
+///
+/// The `model` is a live cell like the HTTP adapters (a `/model` switch
+/// updates the label it reports; playback itself serves the fixed
+/// recordings and never re-matches on the model).
 #[derive(Debug)]
 pub struct RecordedReplayProvider {
     /// Provider identifier.
     provider_id: String,
     /// Model identifier.
-    #[allow(dead_code)]
-    model: String,
+    model: Rc<RefCell<String>>,
     /// Recordings to serve in order.
     recordings: Vec<ReplayRecording>,
     /// Cursor into `recordings`.
@@ -191,7 +196,7 @@ impl RecordedReplayProvider {
     ) -> Self {
         Self {
             provider_id,
-            model,
+            model: Rc::new(RefCell::new(model)),
             recordings,
             cursor: core::cell::Cell::new(0),
         }
@@ -201,6 +206,18 @@ impl RecordedReplayProvider {
     #[must_use]
     pub fn recordings_remaining(&self) -> usize {
         self.recordings.len().saturating_sub(self.cursor.get())
+    }
+
+    /// Replace the live model label in place (playback still serves the
+    /// fixed recordings; the label is what the session reports).
+    pub fn set_model(&self, model: String) {
+        *self.model.borrow_mut() = model;
+    }
+
+    /// The current live model label.
+    #[must_use]
+    pub fn live_model(&self) -> String {
+        self.model.borrow().clone()
     }
 }
 

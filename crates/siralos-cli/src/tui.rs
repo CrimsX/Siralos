@@ -589,12 +589,94 @@ impl ProviderAddField {
 }
 
 /// Model picker state — opened after successful fetch, part of the form modal (S2).
+/// Also opened by bare `/model` as the live switch picker: the same struct
+/// (decision 138), never a second picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPicker {
     /// Fetched model ids in server order.
     pub items: Vec<String>,
     /// Currently selected index (Up/Down wraps).
     pub selected: usize,
+}
+
+impl ModelPicker {
+    /// Move selection up with wrap (shared by the add-flow form keys and
+    /// the `/model` switch picker — one definition).
+    pub fn select_prev_wrapping(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = self.items.len() - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    /// Move selection down with wrap (shared by the add-flow form keys and
+    /// the `/model` switch picker — one definition).
+    pub fn select_next_wrapping(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.items.len();
+    }
+
+    /// Currently selected model id, if any.
+    pub fn selected_id(&self) -> Option<&str> {
+        self.items.get(self.selected).map(String::as_str)
+    }
+}
+
+/// Sliding viewport window over model-picker items (decision 138): at most
+/// 8 rows, end-anchored so the selection is always visible. Shared by the
+/// add-flow form render and the `/model` switch picker render — one
+/// definition, identical windows.
+#[must_use]
+pub fn model_picker_window(total: usize, selected: usize) -> (usize, usize) {
+    const VISIBLE: usize = 8;
+    let window_start = if total <= VISIBLE {
+        0
+    } else {
+        selected.saturating_sub(VISIBLE - 1).min(total.saturating_sub(VISIBLE))
+    };
+    let window_end = (window_start + VISIBLE).min(total);
+    (window_start, window_end)
+}
+
+/// Item lines for a model picker: position header, the windowed items with
+/// the selection highlight, and the navigation hint. Shared by the
+/// add-flow form render and the `/model` switch picker render — one
+/// definition, byte-identical lines.
+#[must_use]
+pub fn model_picker_lines(picker: &ModelPicker) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let total = picker.items.len();
+    let (window_start, window_end) =
+        model_picker_window(total, picker.selected);
+    lines.push(
+        Line::from(format!("    {}/{} ", picker.selected + 1, total))
+            .style(Style::default().fg(Color::DarkGray)),
+    );
+    for idx in window_start..window_end {
+        let item = &picker.items[idx];
+        let prefix = if idx == picker.selected { "> " } else { "  " };
+        let style = if idx == picker.selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(ratatui::style::Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        lines.push(Line::from(format!("    {prefix}{item}")).style(style));
+    }
+    lines.push(
+        Line::from(
+            "    Up/Down to navigate, Enter to select, Esc for free text",
+        )
+        .style(Style::default().fg(Color::DarkGray)),
+    );
+    lines
 }
 
 /// Protocol picker state — 3-item picker over the real wire protocols (decision 137/138).
@@ -751,6 +833,16 @@ pub struct TuiState {
     /// Provider add-flow form (C1) — sequential modal form; when Some, no other
     /// keys pass (modal discipline).
     pub provider_add_form: Option<ProviderAddForm>,
+    /// `/model` switch picker — when Some, Up/Down + Enter/Esc handle it.
+    /// Opened by bare `/model` over the provider's fetched models; this is
+    /// the same [`ModelPicker`] (+ sliding viewport, decision 138) the
+    /// add-flow uses, not a second picker. Enter arms
+    /// `pending_model_switch` for the loop to resolve through the same
+    /// switch-and-persist as the explicit-argument form.
+    pub model_switch_picker: Option<ModelPicker>,
+    /// Armed model id from the switch picker — consumed once by the
+    /// interactive loop (same switch-and-persist as `/model <id>`).
+    pub pending_model_switch: Option<String>,
     /// Submitted prompt history (I4): oldest first, bounded to 100, per-session
     /// in-memory with no persistence.
     pub prompt_history: Vec<String>,
@@ -778,6 +870,8 @@ impl Default for TuiState {
             model: None,
             provider_picker: None,
             provider_add_form: None,
+            model_switch_picker: None,
+            pending_model_switch: None,
             prompt_history: Vec::new(),
             history_index: None,
             history_draft: None,
@@ -1651,6 +1745,35 @@ pub fn draw_with_pane(
         frame.render_widget(para, inner);
     }
 
+    // `/model` switch picker — rounded popup " switch model ", same
+    // `ModelPicker` lines (decision 138 viewport) as the add-flow form.
+    // `None` renders nothing (existing frames byte-identical).
+    if let Some(picker) = &state.model_switch_picker {
+        let picker_lines = model_picker_lines(picker);
+        let picker_height = (picker_lines.len() as u16 + 2).min(12);
+        let picker_width = 50u16.min(transcript_area.width);
+        let picker_x = input_area.x;
+        let picker_y = input_area.y.saturating_sub(picker_height);
+        let picker_area =
+            Rect::new(picker_x, picker_y, picker_width, picker_height);
+        frame.render_widget(ratatui::widgets::Clear, picker_area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" switch model ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            )
+            .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+        let inner = block.inner(picker_area);
+        frame.render_widget(block, picker_area);
+        let para = Paragraph::new(Text::from(picker_lines))
+            .style(Style::default().bg(Color::Black).fg(Color::White));
+        frame.render_widget(para, inner);
+    }
+
     // Provider add-flow form (C1) — rounded modal title " add provider " with current field highlighted.
     // I1: modal grows to accommodate the D3 description lines.
     if let Some(form) = &state.provider_add_form {
@@ -1804,47 +1927,12 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
                 );
             }
         }
-        // Model picker: rendered inline under the model field when open — bounded viewport 8 sliding with selection.
+        // Model picker: rendered inline under the model field when open —
+        // the shared `model_picker_lines` (decision 138 viewport), also
+        // used by the `/model` switch picker popup.
         if field == ProviderAddField::Model && is_current {
             if let Some(picker) = &form.model_picker {
-                const VISIBLE: usize = 8;
-                let total = picker.items.len();
-                let window_start = if total <= VISIBLE {
-                    0
-                } else {
-                    picker
-                        .selected
-                        .saturating_sub(VISIBLE - 1)
-                        .min(total.saturating_sub(VISIBLE))
-                };
-                let window_end = (window_start + VISIBLE).min(total);
-                lines.push(
-                    Line::from(format!(
-                        "    {}/{} ",
-                        picker.selected + 1,
-                        total
-                    ))
-                    .style(Style::default().fg(Color::DarkGray)),
-                );
-                for idx in window_start..window_end {
-                    let item = &picker.items[idx];
-                    let prefix =
-                        if idx == picker.selected { "> " } else { "  " };
-                    let style = if idx == picker.selected {
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(ratatui::style::Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::White)
-                    };
-                    lines.push(
-                        Line::from(format!("    {prefix}{item}")).style(style),
-                    );
-                }
-                lines.push(
-                    Line::from("    Up/Down to navigate, Enter to select, Esc for free text")
-                        .style(Style::default().fg(Color::DarkGray)),
-                );
+                lines.extend(model_picker_lines(picker));
             } else if form.fetching_models {
                 lines.push(
                     Line::from("    fetching models...")
@@ -3441,6 +3529,50 @@ pub fn handle_key(
             }
         }
     }
+    // `/model` switch picker intercepts all keys while visible (same modal
+    // discipline as the provider picker; navigation wraps through the
+    // shared `ModelPicker` methods, decision 138).
+    if state.model_switch_picker.is_some() {
+        match key.code {
+            KeyCode::Esc => {
+                state.model_switch_picker = None;
+                state.pending_model_switch = None;
+                state.input.clear();
+                state.update_palette();
+                return false;
+            }
+            KeyCode::Up => {
+                if let Some(picker) = state.model_switch_picker.as_mut() {
+                    picker.select_prev_wrapping();
+                }
+                return false;
+            }
+            KeyCode::Down => {
+                if let Some(picker) = state.model_switch_picker.as_mut() {
+                    picker.select_next_wrapping();
+                }
+                return false;
+            }
+            KeyCode::Enter => {
+                let selected = state
+                    .model_switch_picker
+                    .as_ref()
+                    .and_then(|picker| picker.selected_id())
+                    .map(str::to_owned);
+                state.model_switch_picker = None;
+                state.input.clear();
+                state.update_palette();
+                // Arm the resolved switch; the loop persists it through
+                // the same path as `/model <id>`.
+                state.pending_model_switch = selected;
+                return false;
+            }
+            _ => {
+                // Consume all keys while picker is open (no typing through picker).
+                return false;
+            }
+        }
+    }
     if key.kind != crossterm::event::KeyEventKind::Press {
         return false;
     }
@@ -3644,6 +3776,25 @@ pub fn open_provider_remove_confirm(state: &mut TuiState) {
 pub fn open_provider_add_form(state: &mut TuiState) {
     state.provider_picker = None;
     state.provider_add_form = Some(ProviderAddForm::new());
+    state.input.clear();
+    state.update_palette();
+}
+
+/// Open the `/model` switch picker over the provider's fetched models.
+///
+/// Reuses the add-flow [`ModelPicker`] (decision 138 sliding viewport),
+/// not a second picker. Selecting an entry arms `pending_model_switch`,
+/// which the interactive loop resolves through the same switch-and-persist
+/// as `/model <id>`. An empty fetch never opens (the caller reports it
+/// truthfully instead). Sanitizer note: fetched ids render verbatim like
+/// the add-flow picker; the switch itself validates the id against the
+/// core model rule before anything is written or messaged.
+pub fn open_model_switch_picker(state: &mut TuiState, items: Vec<String>) {
+    if items.is_empty() {
+        return;
+    }
+    state.model_switch_picker = Some(ModelPicker { items, selected: 0 });
+    state.pending_model_switch = None;
     state.input.clear();
     state.update_palette();
 }
@@ -4720,10 +4871,11 @@ mod tests {
             assert!(names.contains(&"/provider"));
             assert!(names.contains(&"/provider remove"));
             assert!(names.contains(&"/model"));
+            assert!(names.contains(&"/model <id>"));
             assert!(names.contains(&"/models"));
             assert!(names.contains(&"/evolve"));
             assert!(names.contains(&"/context"));
-            assert_eq!(names.len(), 12);
+            assert_eq!(names.len(), 13);
         }
 
         #[test]
@@ -4733,9 +4885,9 @@ mod tests {
             state.update_palette();
             let palette_len =
                 state.palette.as_ref().expect("palette for /").len();
-            assert_eq!(palette_len, 12);
+            assert_eq!(palette_len, 13);
             // I3: palette shows ALL filtered entries, bounded by terminal height minus input/status rows; scroll indicator only if overflow.
-            // At 80x24, available 21, 12 entries fit fully with no indicator.
+            // At 80x24, available 21, 13 entries fit fully with no indicator.
             let buf = super::render(&state, 80, 24);
             let content: String =
                 buf.content().iter().map(|c| c.symbol()).collect();
@@ -5022,8 +5174,8 @@ mod tests {
         let mut state = TuiState::new();
         state.input = "/".to_owned();
         state.update_palette();
-        // Full catalog 12, palette shows all filtered entries
-        assert_eq!(state.palette.as_ref().unwrap().len(), 12);
+        // Full catalog 13, palette shows all filtered entries
+        assert_eq!(state.palette.as_ref().unwrap().len(), 13);
         let buf = render(&state, 80, 24);
         let content: String =
             buf.content().iter().map(|c| c.symbol()).collect();
@@ -5253,6 +5405,89 @@ mod tests {
             .iter()
             .any(|cell| cell.style().fg == Some(Color::Yellow));
         assert!(has_yellow, "working status should be styled yellow");
+    }
+
+    // `/model` switch picker: same ModelPicker, wrap navigation, Enter
+    // arms the pending switch, Esc closes, render shows the window.
+    #[test]
+    fn model_switch_picker_navigates_arms_and_renders() {
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        };
+        fn press(code: KeyCode) -> KeyEvent {
+            KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )
+        }
+        let mut state = TuiState::new();
+        // Empty fetch never opens.
+        open_model_switch_picker(&mut state, Vec::new());
+        assert!(state.model_switch_picker.is_none());
+        open_model_switch_picker(
+            &mut state,
+            vec!["example/model-a".to_owned(), "example/model-b".to_owned()],
+        );
+        let picker = state.model_switch_picker.as_ref().expect("open");
+        assert_eq!(picker.selected, 0);
+        assert_eq!(picker.selected_id(), Some("example/model-a"));
+        // Down wraps; Up wraps back.
+        assert!(!handle_key(&mut state, press(KeyCode::Down), 10));
+        assert!(!handle_key(&mut state, press(KeyCode::Down), 10));
+        assert_eq!(
+            state.model_switch_picker.as_ref().unwrap().selected,
+            0,
+            "two Downs over two items must wrap to 0"
+        );
+        assert!(!handle_key(&mut state, press(KeyCode::Up), 10));
+        assert_eq!(
+            state.model_switch_picker.as_ref().unwrap().selected,
+            1,
+            "Up from 0 must wrap to the last item"
+        );
+        // Render shows the fetched ids while open.
+        let buf = render(&state, 80, 24);
+        let content: String =
+            buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("example/model-a"));
+        assert!(content.contains("example/model-b"));
+        assert!(content.contains("switch model"));
+        // Enter arms the pending switch and closes the picker.
+        assert!(!handle_key(&mut state, press(KeyCode::Enter), 10));
+        assert!(state.model_switch_picker.is_none());
+        assert_eq!(
+            state.pending_model_switch.as_deref(),
+            Some("example/model-b")
+        );
+        // Esc clears a pending arm and an open picker.
+        open_model_switch_picker(
+            &mut state,
+            vec!["example/model-a".to_owned()],
+        );
+        assert!(!handle_key(&mut state, press(KeyCode::Esc), 10));
+        assert!(state.model_switch_picker.is_none());
+        assert!(state.pending_model_switch.is_none());
+    }
+
+    #[test]
+    fn model_picker_window_always_shows_selection() {
+        // The shared decision 138 window both pickers use: the selection
+        // is always inside the rendered window, bounded to 8 rows.
+        for total in [1usize, 7, 8, 9, 20] {
+            for selected in 0..total {
+                let (start, end) = model_picker_window(total, selected);
+                assert!(
+                    start <= selected && selected < end,
+                    "selection {selected} must be visible in {start}..{end} (total {total})"
+                );
+                assert!(
+                    end - start <= 8,
+                    "window must bound to 8, got {}..{end}",
+                    start
+                );
+            }
+        }
     }
 
     // H6: provider picker render / echo / Esc
