@@ -42,5 +42,12 @@ name = "siralos-harness"
 path = "src/bin/siralos-harness.rs"
 required-features = ["differential-harness"]
 
+[dev-dependencies]
+# Test-only JSON fixtures (`serde_json::json!` in `output.rs`/`tui.rs`
+# tests): the optional runtime dependency above is absent with default
+# features, so test builds need their own edge. Dev-dependencies do not
+# ship in the runtime graph.
+serde_json = "1"
+
 [lints]
 workspace = true
