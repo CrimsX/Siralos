@@ -383,6 +383,8 @@ enum SlashCommand<'a> {
     Model(Option<&'a str>),
     /// `/models` — list provider models (I6, blocking GET).
     Models,
+    /// `/mouse` — flip TUI mouse capture (TUI) / honesty line (stdio).
+    Mouse,
     /// `/evolve` — display-only (U8).
     Evolve,
     /// Anything else: a prompt for the application.
@@ -407,6 +409,7 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
         ("/model", "Show applied model"),
         ("/model <id>", "Switch applied model"),
         ("/models", "List available models"),
+        ("/mouse", "Toggle mouse capture (wheel scroll / text select)"),
         ("/evolve", "Show Stage 6 evolution surfaces"),
         ("/exit", "Exit the session"),
     ]
@@ -471,6 +474,7 @@ fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/domains" => SlashCommand::Domains,
         "/provider" => SlashCommand::Provider,
         "/provider remove" => SlashCommand::ProviderRemove,
+        "/mouse" => SlashCommand::Mouse,
         "/model" => SlashCommand::Model(None),
         "/models" => SlashCommand::Models,
         "/evolve" => SlashCommand::Evolve,
@@ -812,6 +816,18 @@ where
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
+        SlashCommand::Mouse => {
+            // Stdio has no TTY mouse: report truthfully instead of
+            // pretending to toggle. The TUI arm (in-loop, needs the
+            // `TuiState` + `TerminalGuard`) is unreachable here.
+            let rendered = sanitize_for_display(&format!(
+                "{}\n",
+                crate::tui::MOUSE_STDIO_MESSAGE
+            ));
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
         SlashCommand::Prompt(prompt) => {
             application.send_prompt((*prompt).to_owned()).map_err(
                 |error| {
@@ -996,6 +1012,11 @@ where
         SlashCommand::Evolve => {
             let rendered = sanitize_for_display(&render_evolve_lines());
             let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Mouse => {
+            // Intercepted in-loop (flipping needs the live `TuiState` plus
+            // the `TerminalGuard` re-pair held by the loop), so this
+            // sink-only arm is unreachable — kept for exhaustiveness.
         }
         SlashCommand::Prompt(prompt) => {
             // Prompt path: same as stdio — send to application, drain with
@@ -2401,6 +2422,27 @@ pub fn handle_pending_approval_key(
     true
 }
 
+/// Live-loop seam for mouse-wheel transcript scrolling (the modal-fix
+/// pattern): the event loop calls this one function, which routes the
+/// [`crossterm::event::MouseEvent`] into [`crate::tui::handle_mouse`].
+/// Returns `true` when the event moved `scroll_offset` (the loop redraws
+/// every drained batch at the loop bottom, so a move is visible on the
+/// next draw); `false` for ignored events (non-wheel kinds, modal open,
+/// already at the clamp edge).
+pub fn handle_tui_mouse(
+    tui_state: &std::cell::RefCell<crate::tui::TuiState>,
+    event: crossterm::event::MouseEvent,
+    viewport_height: u16,
+) -> bool {
+    let before = tui_state.borrow().scroll_offset;
+    crate::tui::handle_mouse(
+        &mut tui_state.borrow_mut(),
+        event,
+        viewport_height,
+    );
+    tui_state.borrow().scroll_offset != before
+}
+
 /// Render the `/domains` empty-state or installed view.
 fn render_domains(workspace_root: &Path) -> String {
     match load_plugin_records(workspace_root) {
@@ -2928,7 +2970,8 @@ pub fn run_interactive_tui_with_options(
     let session = compose_session(options)?;
 
     // Guard restores raw mode + alternate screen on every exit path.
-    let _guard = TerminalGuard::enter().map_err(InteractiveError::Io)?;
+    // `mut`: `/mouse` re-pairs the terminal escape through it in-loop.
+    let mut _guard = TerminalGuard::enter().map_err(InteractiveError::Io)?;
     let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
     let mut terminal = ratatui::Terminal::new(backend)
         .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
@@ -3102,6 +3145,20 @@ pub fn run_interactive_tui_with_options(
                                     // then dispatch ONCE. We'll keep last submit.
                                 }
                             }
+                        }
+                    }
+                    crossterm::event::Event::Mouse(mouse) => {
+                        let viewport = terminal
+                            .size()
+                            .map_err(|e| {
+                                InteractiveError::Io(io::Error::other(
+                                    e.to_string(),
+                                ))
+                            })?
+                            .height
+                            .saturating_sub(3);
+                        if handle_tui_mouse(&tui_state, mouse, viewport) {
+                            // Changed: the loop-bottom draw is the redraw.
                         }
                     }
                     crossterm::event::Event::Resize(_, _) => {}
@@ -3278,6 +3335,27 @@ pub fn run_interactive_tui_with_options(
                     crate::tui::open_provider_remove_confirm(
                         &mut tui_state.borrow_mut(),
                     );
+                }
+            } else if let SlashCommand::Mouse = command {
+                // `/mouse` in-loop interception (beside `ProviderRemove`
+                // above): flip the live `TuiState` and re-pair the terminal
+                // escape in the same arm so state and terminal stay in
+                // lockstep; the sink-only `dispatch_tui_command` arm below
+                // stays unreachable. A failed escape rolls the flip back.
+                let before = tui_state.borrow().mouse_capture;
+                let message = crate::tui::toggle_mouse_capture(
+                    &mut tui_state.borrow_mut(),
+                );
+                let enabled = tui_state.borrow().mouse_capture;
+                if let Err(err) = _guard.set_mouse_capture(enabled) {
+                    tui_state.borrow_mut().mouse_capture = before;
+                    let msg = sanitize_for_display(&format!(
+                        "mouse capture unchanged - terminal escape failed: {err}\n"
+                    ));
+                    let _ = sink.write_all(msg.as_bytes());
+                } else {
+                    let msg = sanitize_for_display(&format!("{message}\n"));
+                    let _ = sink.write_all(msg.as_bytes());
                 }
             } else if let SlashCommand::Model(None) = command {
                 // Bare `/model` in the TUI: fetch the provider's models
@@ -4307,7 +4385,8 @@ mod tests {
         assert!(names.contains(&"/models"));
         assert!(names.contains(&"/evolve"));
         assert!(names.contains(&"/context"));
-        assert_eq!(names.len(), 13);
+        assert!(names.contains(&"/mouse"));
+        assert_eq!(names.len(), 14);
     }
 
     #[test]
@@ -5284,6 +5363,53 @@ mod tests {
             "modal must stay pending on a non-modal key"
         );
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn tui_mouse_wheel_seam_scrolls_transcript() {
+        // Wiring: a ScrollUp mouse event dispatched through the
+        // live-loop seam increases `scroll_offset`, and a ScrollDown
+        // decreases it again.
+        use super::handle_tui_mouse;
+        use crossterm::event::{
+            KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        fn wheel(kind: MouseEventKind) -> MouseEvent {
+            MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            }
+        }
+        let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+        for i in 0..30 {
+            tui_state.borrow_mut().push_line(format!("line {i}"));
+        }
+        let viewport: u16 = 10;
+        assert_eq!(tui_state.borrow().scroll_offset, 0);
+        assert!(handle_tui_mouse(
+            &tui_state,
+            wheel(MouseEventKind::ScrollUp),
+            viewport
+        ));
+        let up = tui_state.borrow().scroll_offset;
+        assert_eq!(up, crate::tui::MOUSE_WHEEL_STEP);
+        assert!(handle_tui_mouse(
+            &tui_state,
+            wheel(MouseEventKind::ScrollDown),
+            viewport
+        ));
+        assert_eq!(tui_state.borrow().scroll_offset, 0);
+        // Non-wheel clicks move nothing and report no change.
+        assert!(!handle_tui_mouse(
+            &tui_state,
+            wheel(MouseEventKind::Down(MouseButton::Left)),
+            viewport
+        ));
+        assert_eq!(tui_state.borrow().scroll_offset, 0);
     }
 
     #[test]

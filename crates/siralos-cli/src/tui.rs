@@ -47,6 +47,29 @@ pub const MAX_APPROVAL_LINES: usize = 30;
 /// Marker appended when the approval request is truncated to the bound.
 pub const APPROVAL_TRUNCATION_MARKER: &str = "... (truncated)";
 
+/// Transcript rows per mouse-wheel notch (option b): a small step reusing
+/// the existing `scroll_offset` clamp/max logic — not a second mechanism.
+/// PageUp/PageDown keep their 10-row step; the wheel is the fine control.
+pub const MOUSE_WHEEL_STEP: u16 = 3;
+
+/// Toggle result line when mouse capture turns on: states the result and
+/// the copy trade (capture steals click-drag selection) with the way back.
+pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript; /mouse again to select text";
+
+/// Toggle result line when mouse capture turns off: states the result and
+/// the way back to wheel scrolling.
+pub const MOUSE_CAPTURE_OFF_MESSAGE: &str = "mouse capture off - the terminal selects text; /mouse again to scroll with the wheel";
+
+/// Honest stdio answer for `/mouse`: the stdio frontend has no TTY mouse,
+/// so it reports that instead of pretending to toggle anything.
+pub const MOUSE_STDIO_MESSAGE: &str = "mouse capture unavailable - the stdio frontend has no TTY mouse; use the TUI for wheel scrolling";
+
+/// Map a capture state to its toggle result line (pure, headlessly tested).
+#[must_use]
+pub fn mouse_capture_message(enabled: bool) -> &'static str {
+    if enabled { MOUSE_CAPTURE_ON_MESSAGE } else { MOUSE_CAPTURE_OFF_MESSAGE }
+}
+
 /// ASCII banner for Siralos — hand-drawn static block, bounded width <= 80 cols (H2).
 /// TUI-only: pushed into the transcript at session start via `push_line` (stdio unchanged).
 pub const SIRALOS_BANNER: &[&str] = &[
@@ -852,6 +875,11 @@ pub struct TuiState {
     /// Saved input before history navigation (I4): restored when navigating
     /// past the newest entry.
     pub history_draft: Option<String>,
+    /// Mouse capture state (option b): `true` (default) means the TUI owns
+    /// the mouse — wheel events scroll the transcript. `false` hands the
+    /// mouse back to the terminal so click-drag selects text. Render-neutral:
+    /// no pane, status, or frame change — the differential frames pin this.
+    pub mouse_capture: bool,
 }
 
 impl Default for TuiState {
@@ -875,6 +903,9 @@ impl Default for TuiState {
             prompt_history: Vec::new(),
             history_index: None,
             history_draft: None,
+            // ON by default: the wheel works out of the box; `/mouse`
+            // hands the mouse back to the terminal for text selection.
+            mouse_capture: true,
         }
     }
 }
@@ -2519,15 +2550,33 @@ impl Write for TuiSink {
 }
 
 /// RAII guard that restores terminal state (raw mode off, alternate screen
-/// exit) on drop — panic-safe.
+/// exit, MOUSE CAPTURE OFF) on drop — panic-safe.
+///
+/// PAIRING GUARANTEE (required behaviour 1): `enter` enables
+/// `EnableMouseCapture` AFTER raw mode + alternate screen, and `drop`
+/// disables it (`DisableMouseCapture`) BEFORE leaving the alternate screen
+/// and raw mode — the exact reverse order. The guard is held as `_guard`
+/// for the whole TUI session in
+/// `interactive::run_interactive_tui_with_options`, so EVERY exit path —
+/// normal `/exit`, Ctrl+C break, `?` early return, and panics — runs
+/// `drop`. The only gap is a hard abort (`process::abort`, `SIGKILL`):
+/// no userspace guard can run there, same as raw mode itself.
+///
+/// The guard additionally exposes `set_mouse_capture` so the live loop can
+/// re-pair the terminal escape immediately on every `/mouse` toggle: the
+/// state flip (`toggle_mouse_capture`) and the escape stay in lockstep in
+/// the same match arm — never one without the other.
 pub struct TerminalGuard {
     restored: bool,
+    mouse_captured: bool,
 }
 
 impl TerminalGuard {
-    /// Enter alternate screen and raw mode. Returns the guard; dropping it
-    /// restores state. Errors are returned without having entered raw mode.
+    /// Enter alternate screen, raw mode, and mouse capture (in that order).
+    /// Returns the guard; dropping it restores state. Errors unwind in
+    /// reverse: a failed alternate-screen entry disables raw mode first.
     pub fn enter() -> io::Result<Self> {
+        use crossterm::event::EnableMouseCapture;
         use crossterm::execute;
         use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
         enable_raw_mode()?;
@@ -2536,14 +2585,48 @@ impl TerminalGuard {
             let _ = crossterm::terminal::disable_raw_mode();
             return Err(e);
         }
-        Ok(Self { restored: false })
+        if let Err(e) = execute!(stdout, EnableMouseCapture) {
+            let _ = crossterm::execute!(
+                io::stdout(),
+                crossterm::terminal::LeaveAlternateScreen
+            );
+            let _ = crossterm::terminal::disable_raw_mode();
+            return Err(e);
+        }
+        Ok(Self { restored: false, mouse_captured: true })
+    }
+
+    /// Re-pair the terminal escape with the toggled state: enabling sends
+    /// `EnableMouseCapture`, disabling sends `DisableMouseCapture`. Called
+    /// in the same `/mouse` arm as the `TuiState` flip — the two never
+    /// diverge. A failed escape is reported to the loop as `Err` (the state
+    /// flip is rolled back by the caller so state and terminal stay paired).
+    pub fn set_mouse_capture(&mut self, enabled: bool) -> io::Result<()> {
+        use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+        if enabled == self.mouse_captured {
+            return Ok(());
+        }
+        if enabled {
+            crossterm::execute!(io::stdout(), EnableMouseCapture)?;
+        } else {
+            crossterm::execute!(io::stdout(), DisableMouseCapture)?;
+        }
+        self.mouse_captured = enabled;
+        Ok(())
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        use crossterm::event::DisableMouseCapture;
         if self.restored {
             return;
+        }
+        // Reverse of `enter`: mouse capture off FIRST, so no exit path —
+        // not even a panic unwind — leaves the terminal captured.
+        if self.mouse_captured {
+            let _ = crossterm::execute!(io::stdout(), DisableMouseCapture);
+            self.mouse_captured = false;
         }
         let _ = crossterm::terminal::disable_raw_mode();
         let _ = crossterm::execute!(
@@ -2867,6 +2950,55 @@ fn complete_palette_prefix(state: &mut TuiState) {
         }
     }
     state.update_palette();
+}
+
+/// Flip mouse capture and return the resulting state line (pure state
+/// flip; the live loop pairs it with the terminal escape immediately).
+/// ON hands the wheel to the transcript; OFF hands the mouse back to the
+/// terminal for click-drag text selection.
+pub fn toggle_mouse_capture(state: &mut TuiState) -> &'static str {
+    state.mouse_capture = !state.mouse_capture;
+    mouse_capture_message(state.mouse_capture)
+}
+
+/// Handle a mouse event for transcript scrolling (option b).
+///
+/// Only wheel notches move anything, by [`MOUSE_WHEEL_STEP`] rows through
+/// the SAME `scroll_offset` clamp/max logic `PageUp`/`PageDown` use — no
+/// second scroll mechanism, no other state touched. All other mouse kinds
+/// (press/release/drag/move) are ignored: the TUI takes no click action.
+///
+/// MODAL DECISION (reported): while any modal, picker, or the add-form is
+/// open, wheel events are IGNORED — the same modal discipline that ignores
+/// non-modal keys. The transcript behind a confirmation must not move
+/// under the question being asked; key handling is untouched (this
+/// function never reads or writes keys, input, palette, or history).
+pub fn handle_mouse(
+    state: &mut TuiState,
+    event: crossterm::event::MouseEvent,
+    viewport_height: u16,
+) {
+    use crossterm::event::MouseEventKind;
+    if state.pending_approval.is_some()
+        || state.provider_add_form.is_some()
+        || state.provider_picker.is_some()
+        || state.model_switch_picker.is_some()
+    {
+        return;
+    }
+    match event.kind {
+        MouseEventKind::ScrollUp => {
+            let max = state.max_scroll(viewport_height);
+            state.scroll_offset =
+                (state.scroll_offset.saturating_add(MOUSE_WHEEL_STEP))
+                    .min(max);
+        }
+        MouseEventKind::ScrollDown => {
+            state.scroll_offset =
+                state.scroll_offset.saturating_sub(MOUSE_WHEEL_STEP);
+        }
+        _ => {}
+    }
 }
 
 /// Handle a key event for the input line and scroll state. Returns true if the
@@ -4875,7 +5007,8 @@ mod tests {
             assert!(names.contains(&"/models"));
             assert!(names.contains(&"/evolve"));
             assert!(names.contains(&"/context"));
-            assert_eq!(names.len(), 13);
+            assert!(names.contains(&"/mouse"));
+            assert_eq!(names.len(), 14);
         }
 
         #[test]
@@ -4885,9 +5018,9 @@ mod tests {
             state.update_palette();
             let palette_len =
                 state.palette.as_ref().expect("palette for /").len();
-            assert_eq!(palette_len, 13);
+            assert_eq!(palette_len, 14);
             // I3: palette shows ALL filtered entries, bounded by terminal height minus input/status rows; scroll indicator only if overflow.
-            // At 80x24, available 21, 13 entries fit fully with no indicator.
+            // At 80x24, available 21, 14 entries fit fully with no indicator.
             let buf = super::render(&state, 80, 24);
             let content: String =
                 buf.content().iter().map(|c| c.symbol()).collect();
@@ -5019,6 +5152,122 @@ mod tests {
         assert_eq!(state.scroll_offset, 0);
         handle_key(&mut state, key_down, viewport);
         assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn mouse_toggle_flips_capture_state_with_expected_message() {
+        // `/mouse`: toggling flips the capture flag and yields the
+        // matching message line each way (plus the stdio honesty line).
+        let mut state = TuiState::new();
+        assert!(state.mouse_capture);
+        assert_eq!(
+            toggle_mouse_capture(&mut state),
+            MOUSE_CAPTURE_OFF_MESSAGE
+        );
+        assert!(!state.mouse_capture);
+        assert_eq!(toggle_mouse_capture(&mut state), MOUSE_CAPTURE_ON_MESSAGE);
+        assert!(state.mouse_capture);
+        assert_eq!(mouse_capture_message(true), MOUSE_CAPTURE_ON_MESSAGE);
+        assert_eq!(mouse_capture_message(false), MOUSE_CAPTURE_OFF_MESSAGE);
+        assert!(!MOUSE_STDIO_MESSAGE.is_empty());
+    }
+
+    #[test]
+    fn mouse_wheel_scroll_clamps_at_both_bounds() {
+        // Wheel reuses the SAME max_scroll clamp PageUp/PageDown
+        // use: ScrollUp never exceeds max_scroll, ScrollDown
+        // never drops below zero.
+        use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+        fn wheel(kind: MouseEventKind) -> MouseEvent {
+            MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            }
+        }
+        let mut state = TuiState::new();
+        for i in 0..30 {
+            state.push_line(format!("line {i}"));
+        }
+        let viewport: u16 = 10;
+        let max = state.max_scroll(viewport);
+        assert!(max > 0);
+        // Scroll up past the top: every notch respects the clamp.
+        for _ in 0..(max / MOUSE_WHEEL_STEP + 3) {
+            handle_mouse(
+                &mut state,
+                wheel(MouseEventKind::ScrollUp),
+                viewport,
+            );
+            assert!(state.scroll_offset <= max);
+        }
+        assert_eq!(state.scroll_offset, max);
+        // Already at the top: further ScrollUp stays at max.
+        handle_mouse(&mut state, wheel(MouseEventKind::ScrollUp), viewport);
+        assert_eq!(state.scroll_offset, max);
+        // At the tail: ScrollDown never goes below zero.
+        state.scroll_offset = 0;
+        for _ in 0..3 {
+            handle_mouse(
+                &mut state,
+                wheel(MouseEventKind::ScrollDown),
+                viewport,
+            );
+            assert_eq!(state.scroll_offset, 0);
+        }
+        // Sub-step offset saturates to zero rather than wrapping.
+        state.scroll_offset = 1;
+        handle_mouse(&mut state, wheel(MouseEventKind::ScrollDown), viewport);
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn mouse_wheel_ignored_while_modal_or_form_open() {
+        // Pinned modal discipline (see `handle_mouse`): wheel
+        // events are IGNORED while a modal or the add-form is
+        // open — no scroll, no modal/form state corruption.
+        use crossterm::event::{
+            KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        fn wheel(kind: MouseEventKind) -> MouseEvent {
+            MouseEvent {
+                kind,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            }
+        }
+        fn wheels() -> Vec<MouseEventKind> {
+            vec![
+                MouseEventKind::ScrollUp,
+                MouseEventKind::ScrollDown,
+                MouseEventKind::Down(MouseButton::Left),
+            ]
+        }
+        let viewport: u16 = 10;
+        // Provider-removal confirm modal (shares the approval gate).
+        let mut state = TuiState::new();
+        for i in 0..30 {
+            state.push_line(format!("line {i}"));
+        }
+        open_provider_remove_confirm(&mut state);
+        state.scroll_offset = 5;
+        let before = state.clone();
+        for kind in wheels() {
+            handle_mouse(&mut state, wheel(kind), viewport);
+        }
+        assert_eq!(state, before);
+        // Provider add-form.
+        state.pending_approval = None;
+        state.confirming_provider_removal = false;
+        open_provider_add_form(&mut state);
+        state.scroll_offset = 5;
+        let before = state.clone();
+        for kind in wheels() {
+            handle_mouse(&mut state, wheel(kind), viewport);
+        }
+        assert_eq!(state, before);
     }
 
     #[test]
@@ -5174,8 +5423,8 @@ mod tests {
         let mut state = TuiState::new();
         state.input = "/".to_owned();
         state.update_palette();
-        // Full catalog 13, palette shows all filtered entries
-        assert_eq!(state.palette.as_ref().unwrap().len(), 13);
+        // Full catalog 14, palette shows all filtered entries
+        assert_eq!(state.palette.as_ref().unwrap().len(), 14);
         let buf = render(&state, 80, 24);
         let content: String =
             buf.content().iter().map(|c| c.symbol()).collect();
