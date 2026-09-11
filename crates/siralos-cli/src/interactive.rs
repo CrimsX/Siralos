@@ -462,12 +462,65 @@ struct ProviderSnapshot {
     provider: Option<String>,
     /// Applied model id.
     model: Option<String>,
+    /// Applied model display name (`None` = prefer the raw id).
+    model_display_name: Option<String>,
     /// Applied credential raw string (compared redacted-ly, never resolved).
     credential_raw: Option<String>,
     /// Applied endpoint override.
     endpoint: Option<String>,
     /// Applied protocol string.
     protocol: String,
+}
+
+/// The part of a recomposed snapshot `/reload` can apply to a live session:
+/// the model id, plus the display name that describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReloadedModel {
+    /// Recomposed model id.
+    id: String,
+    /// Recomposed display name (`None` = prefer the raw id).
+    display_name: Option<String>,
+}
+
+/// Project a recomposed snapshot onto the part `/reload` applies.
+fn reloaded_model(fresh: &ProviderSnapshot) -> Option<ReloadedModel> {
+    fresh.model.clone().map(|id| ReloadedModel {
+        id,
+        display_name: fresh.model_display_name.clone(),
+    })
+}
+
+/// Apply a recomposed model to the live session: the provider cell the NEXT
+/// request reads, plus the display holders the status line shows. The profile
+/// file is the truth here, so this never writes it and always adopts the
+/// file's display name (clearing it when the file has none). The transition
+/// is reported on the reload report; an unchanged model is a no-op, which is
+/// what keeps the pure report path byte-identical.
+#[allow(clippy::too_many_arguments)]
+fn apply_reloaded_model(
+    live_provider: &SessionProvider,
+    current_live_model: Option<&str>,
+    applied_model: &mut Option<String>,
+    applied_model_display_name: &mut Option<String>,
+    recomposed: Option<ReloadedModel>,
+    report: &mut String,
+) {
+    let Some(recomposed) = recomposed else {
+        return;
+    };
+    let current =
+        current_live_model.or(applied_model.as_deref()).map(str::to_owned);
+    if current.as_deref() == Some(recomposed.id.as_str()) {
+        return;
+    }
+    live_provider.set_live_model(&recomposed.id);
+    *applied_model = Some(recomposed.id.clone());
+    *applied_model_display_name = recomposed.display_name.clone();
+    report.push_str(&format!(
+        "applied: model {} -> {} (live, no restart)\n",
+        current.as_deref().unwrap_or("(none)"),
+        recomposed.id
+    ));
 }
 
 /// The session's Host rules — read-only workspace inspection, Allow.
@@ -522,6 +575,7 @@ fn recompose_provider_snapshot(workspace_root: &Path) -> ProviderSnapshot {
             ProviderSnapshot {
                 provider: record.provider.clone(),
                 model: record.model.clone(),
+                model_display_name: record.model_display_name.clone(),
                 credential_raw: record.credential.clone(),
                 endpoint: record.endpoint.clone(),
                 protocol: record.protocol.as_str().to_owned(),
@@ -530,6 +584,7 @@ fn recompose_provider_snapshot(workspace_root: &Path) -> ProviderSnapshot {
         _ => ProviderSnapshot {
             provider: None,
             model: None,
+            model_display_name: None,
             credential_raw: None,
             endpoint: None,
             protocol: siralos_core::composition::Protocol::default()
@@ -578,7 +633,7 @@ fn reload_report(
     current_credential_raw: Option<&str>,
     current_endpoint: Option<&str>,
     current_protocol: &str,
-) -> (String, Option<String>) {
+) -> (String, Option<ReloadedModel>) {
     match load_workspace_profile(workspace_root) {
         WorkspaceProfileLoad::Invalid { diagnostic } => {
             (format!("reload not applied: {diagnostic}\n"), None)
@@ -596,10 +651,10 @@ fn reload_report(
                 want_endpoint == current_endpoint.filter(|s| !s.is_empty());
             if provider_unchanged && model_unchanged && endpoint_unchanged {
                 ("reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session already there, nothing would change\n"
-                    .to_owned(), fresh.model.clone())
+                    .to_owned(), reloaded_model(&fresh))
             } else {
                 ("reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session differs, restart to converge\n"
-                    .to_owned(), fresh.model.clone())
+                    .to_owned(), reloaded_model(&fresh))
             }
         }
         WorkspaceProfileLoad::Record(_) => {
@@ -661,7 +716,7 @@ fn reload_report(
             if parts.iter().all(|p| p.ends_with("unchanged")) {
                 (
                     format!("reload: {}\n", parts.join("; ")),
-                    fresh.model.clone(),
+                    reloaded_model(&fresh),
                 )
             } else {
                 (
@@ -669,7 +724,7 @@ fn reload_report(
                         "reload would change: {}; live session unchanged\n",
                         parts.join("; ")
                     ),
-                    fresh.model.clone(),
+                    reloaded_model(&fresh),
                 )
             }
         }
@@ -1056,13 +1111,21 @@ where
             // credential + endpoint + the protocol the session's
             // provider was built with.
             let live_model = live_provider.live_model();
-            let (report, _recomposed_model) = reload_report(
+            let (mut report, recomposed_model) = reload_report(
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
                 credential_raw,
                 endpoint,
                 applied_protocol_str,
+            );
+            apply_reloaded_model(
+                live_provider,
+                live_model.as_deref(),
+                applied_model,
+                applied_model_display_name,
+                recomposed_model,
+                &mut report,
             );
             let rendered = sanitize_for_display(&report);
             writer
@@ -1278,13 +1341,21 @@ where
             // live mutation. Reachable when dispatched directly (the
             // in-loop path below prefers the same helper).
             let live_model = live_provider.live_model();
-            let (report, _recomposed_model) = reload_report(
+            let (mut report, recomposed_model) = reload_report(
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
                 credential_raw,
                 endpoint,
                 applied_protocol_str,
+            );
+            apply_reloaded_model(
+                live_provider,
+                live_model.as_deref(),
+                applied_model,
+                applied_model_display_name,
+                recomposed_model,
+                &mut report,
             );
             let rendered = sanitize_for_display(&report);
             let _ = sink.write_all(rendered.as_bytes());
@@ -3665,13 +3736,21 @@ pub fn run_interactive_tui_with_options(
                 // `/reload` in-loop (TUI): same pure report as stdio —
                 // no live mutation, no picker, no TTY requirement.
                 let live_model = live_provider.live_model();
-                let (report, _recomposed_model) = reload_report(
+                let (mut report, recomposed_model) = reload_report(
                     &workspace_root,
                     applied_provider.as_deref(),
                     live_model.as_deref().or(applied_model.as_deref()),
                     applied_credential_raw.as_deref(),
                     applied_endpoint.as_deref(),
                     &applied_protocol_str,
+                );
+                apply_reloaded_model(
+                    live_provider,
+                    live_model.as_deref(),
+                    &mut applied_model,
+                    &mut applied_model_display_name,
+                    recomposed_model,
+                    &mut report,
                 );
                 let rendered = sanitize_for_display(&report);
                 let _ = sink.write_all(rendered.as_bytes());
@@ -4892,6 +4971,61 @@ mod tests {
             "absent+drifted report must state the fallback drift, got: {drifted:?}"
         );
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn reload_applies_the_recomposed_model_to_the_live_session() {
+        // APPLY HALF: a reload whose profile names a different model moves
+        // the live cell the NEXT request reads, adopts the file's display
+        // name, and says so on the report -- and never rewrites the file
+        // (the file is where the value came from).
+        use super::{apply_reloaded_model, reload_report};
+        let root = temporary_directory("reload-apply-model");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nmodel_display_name = \"New Display\"\nendpoint = \"https://api.example.com/v1\"\n",
+        )
+        .expect("edited profile");
+        let session = switch_test_provider("example/model-a");
+        let mut model = Some("example/model-a".to_owned());
+        let mut display = Some("Old Display".to_owned());
+        let live_model = session.live_model();
+        let (mut report, recomposed) = reload_report(
+            &root,
+            Some("example-vendor"),
+            live_model.as_deref().or(model.as_deref()),
+            None,
+            Some("https://api.example.com/v1"),
+            "openai-completions",
+        );
+        apply_reloaded_model(
+            &session,
+            live_model.as_deref(),
+            &mut model,
+            &mut display,
+            recomposed,
+            &mut report,
+        );
+        assert_eq!(session.live_model().as_deref(), Some("example/model-b"));
+        assert_eq!(model.as_deref(), Some("example/model-b"));
+        assert_eq!(display.as_deref(), Some("New Display"));
+        assert!(
+            report
+                .contains("applied: model example/model-a -> example/model-b"),
+            "the report must name the live apply, got: {report:?}"
+        );
+        match siralos_adapters::profile_config::load_workspace_profile(&root) {
+            siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
+                record,
+            ) => {
+                assert_eq!(record.model.as_deref(), Some("example/model-b"));
+                assert_eq!(
+                    record.model_display_name.as_deref(),
+                    Some("New Display")
+                );
+            }
+            other => panic!("expected an applied record, got: {other:?}"),
+        }
     }
 
     #[test]
