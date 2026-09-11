@@ -1,7 +1,7 @@
 ---
 title: "Scope the Modal Borrow So Provider Removal Does Not Panic"
 label: "wayfinder:ticket"
-status: "open"
+status: closed
 date: "2026-09-10"
 supersedes: []
 ---
@@ -39,5 +39,3 @@ Implemented and recorded in
 Note that this record's own feature (ticket 120, decisions 145/146)
 shipped with this defect reachable: the deletion feature exposed the
 panic without introducing it.
-
-(End of file - total 41 lines)

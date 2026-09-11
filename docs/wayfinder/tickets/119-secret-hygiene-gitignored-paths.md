@@ -1,7 +1,7 @@
 ---
 title: "Secret Hygiene Skips Git-Ignored Paths"
 label: "wayfinder:ticket"
-status: "open"
+status: closed
 date: "2026-09-10"
 supersedes: []
 ---
@@ -40,5 +40,3 @@ This closes the open item recorded in decisions 139/140 (the
 `siralos.toml` storing a literal key). The `bbee359` follow-up is the
 formatting repair for the 139/140 records, which had been committed
 before `format:check` ran over them.
-
-(End of file - total 41 lines)

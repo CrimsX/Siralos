@@ -68,5 +68,3 @@ review authorized nothing (the code had already landed); it records
 what authorization would have covered. The decision 68 record's
 70-byte documentation is immutable and untouched; the supersession is
 noted in [decision 142](142-credential-bound-by-form.md) only.
-
-(End of file - total 48 lines)

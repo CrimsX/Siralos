@@ -53,5 +53,3 @@ frontends call, and the dormant approval path is untouched. The defect
 predates the deletion feature that exposed it; this record's own
 feature (ticket 120, decisions 145/146) shipped with the defect
 reachable. Retroactive record closed; ticket 121 done.
-
-(End of file - total 48 lines)

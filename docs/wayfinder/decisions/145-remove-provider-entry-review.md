@@ -68,5 +68,3 @@ implementation behind y/N confirmation in both frontends, and the
 dormant approval path preserved. This review authorized nothing (the
 code had already landed); it records what authorization would have
 covered.
-
-(End of file - total 48 lines)

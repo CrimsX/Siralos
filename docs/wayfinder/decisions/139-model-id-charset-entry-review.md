@@ -66,5 +66,3 @@ core and write layers. This review authorized nothing (the code had
 already landed); it records what authorization would have covered. The
 unrelated `check:secrets` failure (untracked gitignored `siralos.toml`
 stores a literal key) is an open item outside this change.
-
-(End of file - total 48 lines)

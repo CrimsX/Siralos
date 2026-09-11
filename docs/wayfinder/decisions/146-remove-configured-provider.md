@@ -49,5 +49,3 @@ now be deleted from either frontend through one confirmed
 implementation on the established atomic-writer pattern, and deleting
 nothing is a truthful no-op. Retroactive record closed; ticket 120
 done.
-
-(End of file - total 48 lines)

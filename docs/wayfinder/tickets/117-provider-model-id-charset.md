@@ -1,7 +1,7 @@
 ---
 title: "The Provider Model-Id Charset and Bound"
 label: "wayfinder:ticket"
-status: "open"
+status: closed
 date: "2026-09-10"
 supersedes: []
 ---
@@ -36,5 +36,3 @@ Open item: `npm run check` currently fails at `check:secrets` for an
 unrelated, pre-existing reason — the untracked, gitignored workspace file
 `siralos.toml` stores a literal key. That file and that script were not
 touched by this change.
-
-(End of file - total 41 lines)

@@ -1,7 +1,7 @@
 ---
 title: "The Optional API Key"
 label: "wayfinder:ticket"
-status: "open"
+status: closed
 date: "2026-08-31"
 supersedes: []
 ---

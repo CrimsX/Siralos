@@ -51,5 +51,3 @@ Supersession note (this record only): the 70-byte env-only bound
 documented in the decision 68 record is superseded for `key:`-form
 credentials by the 4096-byte post-prefix bound. The decision 68 record
 itself is immutable and stays as it is.
-
-(End of file - total 48 lines)

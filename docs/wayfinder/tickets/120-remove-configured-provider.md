@@ -1,7 +1,7 @@
 ---
 title: "Remove the Configured Provider"
 label: "wayfinder:ticket"
-status: "open"
+status: closed
 date: "2026-09-10"
 supersedes: []
 ---
@@ -35,5 +35,3 @@ Authorized by
 [the Remove the Configured Provider Entry Review (retroactive)](../decisions/145-remove-provider-entry-review.md).
 Implemented and recorded in
 [decision 146](../decisions/146-remove-configured-provider.md).
-
-(End of file - total 41 lines)

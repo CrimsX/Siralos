@@ -55,5 +55,3 @@ Open item (not this change): `npm run check` fails at `check:secrets`
 because the untracked, gitignored workspace file `siralos.toml` stores a
 literal key — pre-existing and unrelated. That file and that script were
 not touched.
-
-(End of file - total 48 lines)

@@ -1,7 +1,7 @@
 ---
 title: "The Credential Bound Split by Form"
 label: "wayfinder:ticket"
-status: "open"
+status: closed
 date: "2026-09-10"
 supersedes: []
 ---
@@ -37,5 +37,3 @@ Implemented and recorded in
 Note: the 70-byte bound was documented in the decision 68 record.
 That record is immutable and stays as it is; the supersession is noted
 in the new decision record only.
-
-(End of file - total 41 lines)

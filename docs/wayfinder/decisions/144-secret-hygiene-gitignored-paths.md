@@ -51,5 +51,3 @@ and git's absence widens rather than narrows the scan. This closes the
 open item recorded in decisions 139/140. Retroactive record closed;
 ticket 119 done. All evidence above was gathered by the orchestrator
 and is cited here, not re-run.
-
-(End of file - total 48 lines)

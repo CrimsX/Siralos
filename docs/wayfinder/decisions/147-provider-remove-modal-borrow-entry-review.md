@@ -80,5 +80,3 @@ the loop's decision path is unit-tested, the dormant approval path is
 preserved, and the class sweep shows no other reachable occurrence.
 This review authorized nothing (the code had already landed); it
 records what authorization would have covered.
-
-(End of file - total 48 lines)

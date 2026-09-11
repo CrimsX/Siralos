@@ -68,5 +68,3 @@ check fails closed without git, and the open item from decisions
 landed); it records what authorization would have covered. All
 evidence above was gathered by the orchestrator and is cited here,
 not re-run.
-
-(End of file - total 48 lines)
