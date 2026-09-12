@@ -104,6 +104,51 @@ impl SessionProvider {
             Self::Replay(provider) => Some(provider.live_model()),
         }
     }
+
+    /// Replace the live endpoint base for the NEXT provider request (a
+    /// session-level `/reload`). Only the Host provider is endpoint-
+    /// configurable; the replay provider serves a fixed recording and
+    /// ignores the switch.
+    fn set_live_endpoint(&self, endpoint: Option<String>) {
+        match self {
+            Self::Host(provider) => provider.set_live_endpoint(endpoint),
+            Self::Replay(_) => {}
+        }
+    }
+
+    /// The endpoint base the NEXT provider request will use (`None` when the
+    /// provider is not endpoint-configurable or has none set). Read by the
+    /// reload tests as the observable proof that the live value changed.
+    #[allow(dead_code)]
+    #[must_use]
+    fn live_endpoint(&self) -> Option<String> {
+        match self {
+            Self::Host(provider) => provider.live_endpoint(),
+            Self::Replay(_) => None,
+        }
+    }
+
+    /// Replace the live protocol for the NEXT provider request.
+    fn set_live_protocol(
+        &self,
+        protocol: siralos_core::composition::Protocol,
+    ) {
+        match self {
+            Self::Host(provider) => provider.set_live_protocol(protocol),
+            Self::Replay(_) => {}
+        }
+    }
+
+    /// The protocol the NEXT provider request will use (`None` when the
+    /// provider does not resolve its path from a protocol).
+    #[allow(dead_code)]
+    #[must_use]
+    fn live_protocol(&self) -> Option<siralos_core::composition::Protocol> {
+        match self {
+            Self::Host(provider) => provider.live_protocol(),
+            Self::Replay(_) => None,
+        }
+    }
 }
 
 impl siralos_core::provider::ModelProvider for SessionProvider {
@@ -277,11 +322,11 @@ where
         applied_provider,
         mut applied_model,
         mut applied_model_display_name,
-        applied_endpoint,
+        mut applied_endpoint,
         credential_present: _,
         applied_credential,
         applied_credential_raw,
-        applied_protocol_str,
+        mut applied_protocol_str,
     } = session;
 
     // --- Frontend residual (stdio): prompt loop over reader/writer. ---
@@ -342,9 +387,9 @@ where
             &mut applied_model,
             &mut applied_model_display_name,
             applied_credential_raw.as_deref(),
-            applied_endpoint.as_deref(),
+            &mut applied_endpoint,
             applied_credential.as_ref(),
-            &applied_protocol_str,
+            &mut applied_protocol_str,
         )? {
             break;
         }
@@ -472,55 +517,99 @@ struct ProviderSnapshot {
     protocol: String,
 }
 
-/// The part of a recomposed snapshot `/reload` can apply to a live session:
-/// the model id, plus the display name that describes it.
+/// The parts of a recomposed snapshot `/reload` can apply to a live session:
+/// the model plus the display name that describes it, the endpoint base, and
+/// the protocol that selects the POST path segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ReloadedModel {
-    /// Recomposed model id.
-    id: String,
+struct ReloadedConfig {
+    /// Recomposed model id, when the profile names one.
+    model: Option<String>,
     /// Recomposed display name (`None` = prefer the raw id).
     display_name: Option<String>,
+    /// Recomposed endpoint base (`None` = the provider-neutral placeholder).
+    endpoint: Option<String>,
+    /// Recomposed protocol.
+    protocol: siralos_core::composition::Protocol,
 }
 
-/// Project a recomposed snapshot onto the part `/reload` applies.
-fn reloaded_model(fresh: &ProviderSnapshot) -> Option<ReloadedModel> {
-    fresh.model.clone().map(|id| ReloadedModel {
-        id,
+/// Project a recomposed snapshot onto the parts `/reload` applies.
+///
+/// The EMPTY snapshot is what `recompose_provider_snapshot` returns when no
+/// profile applied (absent, invalid or refused), so an empty projection means
+/// "nothing to apply" -- never "clear every field".
+fn reloaded_config(fresh: &ProviderSnapshot) -> Option<ReloadedConfig> {
+    let empty = fresh.provider.is_none()
+        && fresh.model.is_none()
+        && fresh.model_display_name.is_none()
+        && fresh.credential_raw.is_none()
+        && fresh.endpoint.is_none()
+        && fresh.protocol
+            == siralos_core::composition::Protocol::default().as_str();
+    if empty {
+        return None;
+    }
+    Some(ReloadedConfig {
+        model: fresh.model.clone(),
         display_name: fresh.model_display_name.clone(),
+        endpoint: fresh.endpoint.clone(),
+        protocol: siralos_core::composition::Protocol::parse(&fresh.protocol)
+            .unwrap_or_default(),
     })
 }
 
-/// Apply a recomposed model to the live session: the provider cell the NEXT
-/// request reads, plus the display holders the status line shows. The profile
-/// file is the truth here, so this never writes it and always adopts the
-/// file's display name (clearing it when the file has none). The transition
-/// is reported on the reload report; an unchanged model is a no-op, which is
-/// what keeps the pure report path byte-identical.
+/// Apply a recomposed configuration to the live session: the provider cells the
+/// NEXT request reads (model, endpoint base, protocol) plus the display holders
+/// the status line shows. The profile file is the truth here, so this never
+/// writes it and always adopts the file's display name (clearing it when the
+/// file has none). Each transition is reported; an unchanged value is a no-op,
+/// which is what keeps the pure report path byte-identical.
 #[allow(clippy::too_many_arguments)]
-fn apply_reloaded_model(
+fn apply_reloaded_config(
     live_provider: &SessionProvider,
     current_live_model: Option<&str>,
     applied_model: &mut Option<String>,
     applied_model_display_name: &mut Option<String>,
-    recomposed: Option<ReloadedModel>,
+    applied_endpoint: &mut Option<String>,
+    applied_protocol_str: &mut String,
+    recomposed: Option<ReloadedConfig>,
     report: &mut String,
 ) {
     let Some(recomposed) = recomposed else {
         return;
     };
-    let current =
-        current_live_model.or(applied_model.as_deref()).map(str::to_owned);
-    if current.as_deref() == Some(recomposed.id.as_str()) {
-        return;
+    // Model: the provider cell behind `stream()`, plus the display name the
+    // profile file declares for it.
+    if let Some(model) = recomposed.model {
+        let current =
+            current_live_model.or(applied_model.as_deref()).map(str::to_owned);
+        if current.as_deref() != Some(model.as_str()) {
+            live_provider.set_live_model(&model);
+            *applied_model = Some(model.clone());
+            *applied_model_display_name = recomposed.display_name.clone();
+            report.push_str(&format!(
+                "applied: model {} -> {} (live, no restart)\n",
+                current.as_deref().unwrap_or("(none)"),
+                model
+            ));
+        }
     }
-    live_provider.set_live_model(&recomposed.id);
-    *applied_model = Some(recomposed.id.clone());
-    *applied_model_display_name = recomposed.display_name.clone();
-    report.push_str(&format!(
-        "applied: model {} -> {} (live, no restart)\n",
-        current.as_deref().unwrap_or("(none)"),
-        recomposed.id
-    ));
+    // Endpoint base: the value the NEXT request resolves its URL from. The
+    // endpoint VALUE is never echoed -- the same rule the report follows.
+    if applied_endpoint.as_deref() != recomposed.endpoint.as_deref() {
+        live_provider.set_live_endpoint(recomposed.endpoint.clone());
+        *applied_endpoint = recomposed.endpoint.clone();
+        report.push_str("applied: endpoint changed (live, no restart)\n");
+    }
+    // Protocol: selects the POST path segment appended to that base.
+    if applied_protocol_str.as_str() != recomposed.protocol.as_str() {
+        let before = applied_protocol_str.clone();
+        live_provider.set_live_protocol(recomposed.protocol);
+        *applied_protocol_str = recomposed.protocol.as_str().to_owned();
+        report.push_str(&format!(
+            "applied: protocol {before} -> {} (live, no restart)\n",
+            applied_protocol_str
+        ));
+    }
 }
 
 /// The session's Host rules — read-only workspace inspection, Allow.
@@ -633,7 +722,7 @@ fn reload_report(
     current_credential_raw: Option<&str>,
     current_endpoint: Option<&str>,
     current_protocol: &str,
-) -> (String, Option<ReloadedModel>) {
+) -> (String, Option<ReloadedConfig>) {
     match load_workspace_profile(workspace_root) {
         WorkspaceProfileLoad::Invalid { diagnostic } => {
             (format!("reload not applied: {diagnostic}\n"), None)
@@ -651,10 +740,10 @@ fn reload_report(
                 want_endpoint == current_endpoint.filter(|s| !s.is_empty());
             if provider_unchanged && model_unchanged && endpoint_unchanged {
                 ("reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session already there, nothing would change\n"
-                    .to_owned(), reloaded_model(&fresh))
+                    .to_owned(), reloaded_config(&fresh))
             } else {
                 ("reload: no profile configured — startup would use the deterministic fake on pure Host policy; live session differs, restart to converge\n"
-                    .to_owned(), reloaded_model(&fresh))
+                    .to_owned(), reloaded_config(&fresh))
             }
         }
         WorkspaceProfileLoad::Record(_) => {
@@ -716,7 +805,7 @@ fn reload_report(
             if parts.iter().all(|p| p.ends_with("unchanged")) {
                 (
                     format!("reload: {}\n", parts.join("; ")),
-                    reloaded_model(&fresh),
+                    reloaded_config(&fresh),
                 )
             } else {
                 (
@@ -724,7 +813,7 @@ fn reload_report(
                         "reload would change: {}; live session unchanged\n",
                         parts.join("; ")
                     ),
-                    reloaded_model(&fresh),
+                    reloaded_config(&fresh),
                 )
             }
         }
@@ -903,9 +992,9 @@ fn dispatch_stdio_command<P, W, R>(
     applied_model: &mut Option<String>,
     applied_model_display_name: &mut Option<String>,
     credential_raw: Option<&str>,
-    endpoint: Option<&str>,
+    applied_endpoint: &mut Option<String>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
-    applied_protocol_str: &str,
+    applied_protocol_str: &mut String,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -1058,7 +1147,7 @@ where
         }
         SlashCommand::Models => {
             // I6 blocking fetch — synchronous, freezes redraw (architectural constraint, no threads).
-            match (provider, endpoint, credential) {
+            match (provider, applied_endpoint.as_deref(), credential) {
                 (Some(_), Some(ep), Some(cred)) => {
                     match siralos_adapters::provider::generic::fetch_models(
                         ep,
@@ -1111,20 +1200,22 @@ where
             // credential + endpoint + the protocol the session's
             // provider was built with.
             let live_model = live_provider.live_model();
-            let (mut report, recomposed_model) = reload_report(
+            let (mut report, recomposed_config) = reload_report(
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
                 credential_raw,
-                endpoint,
-                applied_protocol_str,
+                applied_endpoint.as_deref(),
+                applied_protocol_str.as_str(),
             );
-            apply_reloaded_model(
+            apply_reloaded_config(
                 live_provider,
                 live_model.as_deref(),
                 applied_model,
                 applied_model_display_name,
-                recomposed_model,
+                applied_endpoint,
+                applied_protocol_str,
+                recomposed_config,
                 &mut report,
             );
             let rendered = sanitize_for_display(&report);
@@ -1194,9 +1285,9 @@ fn dispatch_tui_command<P>(
     applied_model: &mut Option<String>,
     applied_model_display_name: &mut Option<String>,
     credential_raw: Option<&str>,
-    endpoint: Option<&str>,
+    applied_endpoint: &mut Option<String>,
     credential: Option<&siralos_adapters::provider::HostCredential>,
-    applied_protocol_str: &str,
+    applied_protocol_str: &mut String,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -1296,7 +1387,7 @@ where
         }
         SlashCommand::Models => {
             // I6 blocking fetch — same as stdio, synchronous freeze documented.
-            match (provider, endpoint, credential) {
+            match (provider, applied_endpoint.as_deref(), credential) {
                 (Some(_), Some(ep), Some(cred)) => {
                     match siralos_adapters::provider::generic::fetch_models(
                         ep,
@@ -1341,20 +1432,22 @@ where
             // live mutation. Reachable when dispatched directly (the
             // in-loop path below prefers the same helper).
             let live_model = live_provider.live_model();
-            let (mut report, recomposed_model) = reload_report(
+            let (mut report, recomposed_config) = reload_report(
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
                 credential_raw,
-                endpoint,
-                applied_protocol_str,
+                applied_endpoint.as_deref(),
+                applied_protocol_str.as_str(),
             );
-            apply_reloaded_model(
+            apply_reloaded_config(
                 live_provider,
                 live_model.as_deref(),
                 applied_model,
                 applied_model_display_name,
-                recomposed_model,
+                applied_endpoint,
+                applied_protocol_str,
+                recomposed_config,
                 &mut report,
             );
             let rendered = sanitize_for_display(&report);
@@ -3331,11 +3424,11 @@ pub fn run_interactive_tui_with_options(
         applied_provider,
         mut applied_model,
         mut applied_model_display_name,
-        applied_endpoint,
+        mut applied_endpoint,
         credential_present: _,
         applied_credential,
         applied_credential_raw,
-        applied_protocol_str,
+        mut applied_protocol_str,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
     // S5: header/status prefers model display name when present.
@@ -3736,20 +3829,22 @@ pub fn run_interactive_tui_with_options(
                 // `/reload` in-loop (TUI): same pure report as stdio —
                 // no live mutation, no picker, no TTY requirement.
                 let live_model = live_provider.live_model();
-                let (mut report, recomposed_model) = reload_report(
+                let (mut report, recomposed_config) = reload_report(
                     &workspace_root,
                     applied_provider.as_deref(),
                     live_model.as_deref().or(applied_model.as_deref()),
                     applied_credential_raw.as_deref(),
                     applied_endpoint.as_deref(),
-                    &applied_protocol_str,
+                    applied_protocol_str.as_str(),
                 );
-                apply_reloaded_model(
+                apply_reloaded_config(
                     live_provider,
                     live_model.as_deref(),
                     &mut applied_model,
                     &mut applied_model_display_name,
-                    recomposed_model,
+                    &mut applied_endpoint,
+                    &mut applied_protocol_str,
+                    recomposed_config,
                     &mut report,
                 );
                 let rendered = sanitize_for_display(&report);
@@ -3774,9 +3869,9 @@ pub fn run_interactive_tui_with_options(
                     &mut applied_model,
                     &mut applied_model_display_name,
                     applied_credential_raw.as_deref(),
-                    applied_endpoint.as_deref(),
+                    &mut applied_endpoint,
                     applied_credential.as_ref(),
-                    &applied_protocol_str,
+                    &mut applied_protocol_str,
                 )?;
                 if should_exit {
                     break;
@@ -4983,7 +5078,7 @@ mod tests {
         // session may do: the composition refuses it and the effective rules
         // stay the Host's own.
         use super::{
-            apply_reloaded_model, declare_and_compose_profile, reload_report,
+            apply_reloaded_config, declare_and_compose_profile, reload_report,
             session_host_rules,
         };
         let root = temporary_directory("reload-no-widen");
@@ -5020,11 +5115,15 @@ mod tests {
         let session = switch_test_provider("example/model-a");
         let mut model = None;
         let mut display = None;
-        apply_reloaded_model(
+        let mut endpoint = None;
+        let mut protocol_str = "openai-completions".to_owned();
+        apply_reloaded_config(
             &session,
             None,
             &mut model,
             &mut display,
+            &mut endpoint,
+            &mut protocol_str,
             recomposed,
             &mut report,
         );
@@ -5046,42 +5145,69 @@ mod tests {
     fn reload_applies_the_recomposed_model_to_the_live_session() {
         // APPLY HALF: a reload whose profile names a different model moves
         // the live cell the NEXT request reads, adopts the file's display
-        // name, and says so on the report -- and never rewrites the file
-        // (the file is where the value came from).
-        use super::{apply_reloaded_model, reload_report};
+        // name, moves the live endpoint base the next request resolves
+        // its URL from, and says so on the report -- and never rewrites
+        // the file (the file is where the value came from).
+        use super::{apply_reloaded_config, reload_report};
         let root = temporary_directory("reload-apply-model");
         write(
             root.join("siralos.toml"),
-            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nmodel_display_name = \"New Display\"\nendpoint = \"https://api.example.com/v1\"\n",
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nmodel_display_name = \"New Display\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-responses\"\n",
         )
         .expect("edited profile");
         let session = switch_test_provider("example/model-a");
         let mut model = Some("example/model-a".to_owned());
         let mut display = Some("Old Display".to_owned());
+        let mut endpoint = Some("https://old.example.com/v1".to_owned());
+        let mut protocol_str = "openai-completions".to_owned();
         let live_model = session.live_model();
         let (mut report, recomposed) = reload_report(
             &root,
             Some("example-vendor"),
             live_model.as_deref().or(model.as_deref()),
             None,
-            Some("https://api.example.com/v1"),
+            Some("https://old.example.com/v1"),
             "openai-completions",
         );
-        apply_reloaded_model(
+        apply_reloaded_config(
             &session,
             live_model.as_deref(),
             &mut model,
             &mut display,
+            &mut endpoint,
+            &mut protocol_str,
             recomposed,
             &mut report,
         );
         assert_eq!(session.live_model().as_deref(), Some("example/model-b"));
         assert_eq!(model.as_deref(), Some("example/model-b"));
         assert_eq!(display.as_deref(), Some("New Display"));
+        // The endpoint base behind the next request also moved, and so did
+        // the protocol that selects the POST path appended to that base.
+        assert_eq!(endpoint.as_deref(), Some("https://api.example.com/v1"));
+        assert_eq!(
+            session.live_endpoint().as_deref(),
+            Some("https://api.example.com/v1")
+        );
+        assert_eq!(protocol_str, "openai-responses");
+        assert_eq!(
+            session.live_protocol(),
+            Some(siralos_core::composition::Protocol::OpenAiResponses)
+        );
+        assert!(
+            report.contains(
+                "applied: protocol openai-completions -> openai-responses (live, no restart)"
+            ),
+            "the report must name the live protocol apply, got: {report:?}"
+        );
         assert!(
             report
                 .contains("applied: model example/model-a -> example/model-b"),
             "the report must name the live apply, got: {report:?}"
+        );
+        assert!(
+            report.contains("applied: endpoint changed (live, no restart)"),
+            "the report must name the live endpoint apply, got: {report:?}"
         );
         match siralos_adapters::profile_config::load_workspace_profile(&root) {
             siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
