@@ -47,11 +47,12 @@ use std::rc::Rc;
 pub struct GenericProvider {
     provider: String,
     model: Rc<RefCell<String>>,
-    endpoint: Option<String>,
+    endpoint: Rc<RefCell<Option<String>>>,
     credential: Option<HostCredential>,
     /// API protocol selecting the chat POST path segment appended to the
-    /// base endpoint (`openai-completions` by default).
-    protocol: Protocol,
+    /// base endpoint (`openai-completions` by default). A shared live cell:
+    /// `/reload` replaces it in place and the NEXT `stream()` reads it.
+    protocol: Rc<RefCell<Protocol>>,
     /// Replay hooks for determinism recording.
     hooks: ReplayHooks,
     /// Last replay availability, set on each terminal outcome.
@@ -72,9 +73,9 @@ impl GenericProvider {
         Self {
             provider,
             model: Rc::new(RefCell::new(model)),
-            endpoint,
+            endpoint: Rc::new(RefCell::new(endpoint)),
             credential,
-            protocol: Protocol::default(),
+            protocol: Rc::new(RefCell::new(Protocol::default())),
             hooks: ReplayHooks::default(),
             last_replay: RefCell::new(
                 ProviderReplayAvailability::Unavailable {
@@ -103,8 +104,8 @@ impl GenericProvider {
     /// the endpoint already ends with that segment (trailing slashes
     /// tolerated), in which case it is used verbatim.
     #[must_use]
-    pub fn with_protocol(mut self, protocol: Protocol) -> Self {
-        self.protocol = protocol;
+    pub fn with_protocol(self, protocol: Protocol) -> Self {
+        *self.protocol.borrow_mut() = protocol;
         self
     }
 
@@ -127,6 +128,32 @@ impl GenericProvider {
     #[must_use]
     pub fn live_model(&self) -> String {
         self.model.borrow().clone()
+    }
+
+    /// Replace the live endpoint base in place. The NEXT `stream()` reads
+    /// this cell, so a session `/reload` takes effect without rebuilding
+    /// the provider; `None` restores the provider-neutral placeholder.
+    pub fn set_endpoint(&self, endpoint: Option<String>) {
+        *self.endpoint.borrow_mut() = endpoint;
+    }
+
+    /// The endpoint base the NEXT `stream()` will use (`None` = the
+    /// provider-neutral placeholder).
+    #[must_use]
+    pub fn live_endpoint(&self) -> Option<String> {
+        self.endpoint.borrow().clone()
+    }
+
+    /// Replace the live protocol in place. The NEXT `stream()` reads this
+    /// cell, so the resolved POST path segment follows a `/reload`.
+    pub fn set_protocol(&self, protocol: Protocol) {
+        *self.protocol.borrow_mut() = protocol;
+    }
+
+    /// The protocol the NEXT `stream()` will use.
+    #[must_use]
+    pub fn live_protocol(&self) -> Protocol {
+        *self.protocol.borrow()
     }
 }
 
@@ -198,6 +225,7 @@ impl ModelProvider for GenericProvider {
         let model = self.model.borrow().clone();
         let endpoint = self
             .endpoint
+            .borrow()
             .clone()
             .unwrap_or_else(|| GENERIC_PLACEHOLDER_ENDPOINT.to_owned());
         let credential = self.credential.as_ref().map(|c| {
@@ -207,7 +235,7 @@ impl ModelProvider for GenericProvider {
             String::from_utf8_lossy(c.as_bytes()).to_string()
         });
         let request = request.clone();
-        let protocol = self.protocol;
+        let protocol = *self.protocol.borrow();
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget
         // is the only retry.

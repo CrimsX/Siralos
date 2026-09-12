@@ -266,6 +266,51 @@ impl HostProvider {
         }
     }
 
+    /// Replace the live endpoint base for the NEXT provider request.
+    ///
+    /// Only `Generic` carries a configurable endpoint: the named adapters
+    /// post to fixed URLs and ignore this. `None` restores the
+    /// provider-neutral placeholder. `/reload` uses this to apply a changed
+    /// `endpoint` without rebuilding the provider.
+    pub fn set_live_endpoint(&self, endpoint: Option<String>) {
+        if let Self::Generic(provider) = self {
+            provider.set_endpoint(endpoint);
+        }
+    }
+
+    /// The endpoint base the NEXT provider request will use, or `None` when
+    /// the provider is not endpoint-configurable or has no endpoint set.
+    #[must_use]
+    pub fn live_endpoint(&self) -> Option<String> {
+        match self {
+            Self::Generic(provider) => provider.live_endpoint(),
+            _ => None,
+        }
+    }
+
+    /// Replace the live protocol for the NEXT provider request. Only
+    /// `Generic` resolves its POST path segment from the protocol.
+    pub fn set_live_protocol(
+        &self,
+        protocol: siralos_core::composition::Protocol,
+    ) {
+        if let Self::Generic(provider) = self {
+            provider.set_protocol(protocol);
+        }
+    }
+
+    /// The protocol the NEXT provider request will use, or `None` when the
+    /// provider does not resolve its path from a protocol.
+    #[must_use]
+    pub fn live_protocol(
+        &self,
+    ) -> Option<siralos_core::composition::Protocol> {
+        match self {
+            Self::Generic(provider) => Some(provider.live_protocol()),
+            _ => None,
+        }
+    }
+
     /// Take the last replay availability from the inner provider.
     ///
     /// `Fake` returns `Unavailable` with reason
@@ -352,6 +397,71 @@ mod tests {
         assert_eq!(fake.live_model(), None);
         fake.set_live_model("example/model-b");
         assert_eq!(fake.live_model(), None);
+    }
+
+    #[test]
+    fn live_endpoint_and_protocol_switches_reach_the_next_request() {
+        // `/reload` applies a changed endpoint/protocol the same way `/model`
+        // applies a model: by moving the cells the NEXT `stream()` reads. The
+        // resolved POST URL follows both, so a changed endpoint reroutes the
+        // very next request instead of requiring a restart. The named
+        // adapters post to fixed URLs and report `None`.
+        let provider = super::HostProvider::from_provider_str_with_protocol(
+            "example-vendor",
+            Some("example/model-a".to_owned()),
+            None,
+            Some("https://api.example.com/v1".to_owned()),
+            siralos_core::composition::Protocol::OpenAiCompletions,
+        )
+        .expect("provider");
+        assert_eq!(
+            provider.live_endpoint().as_deref(),
+            Some("https://api.example.com/v1")
+        );
+        assert_eq!(
+            provider.live_protocol(),
+            Some(siralos_core::composition::Protocol::OpenAiCompletions)
+        );
+        provider.set_live_endpoint(Some(
+            "https://other.example.com/v2".to_owned(),
+        ));
+        provider.set_live_protocol(
+            siralos_core::composition::Protocol::OpenAiResponses,
+        );
+        assert_eq!(
+            provider.live_endpoint().as_deref(),
+            Some("https://other.example.com/v2")
+        );
+        assert_eq!(
+            provider.live_protocol(),
+            Some(siralos_core::composition::Protocol::OpenAiResponses)
+        );
+        // The URL the next request posts to follows both cells.
+        let url = crate::provider::generic::chat_url(
+            &provider.live_endpoint().expect("endpoint is configured"),
+            provider.live_protocol().expect("generic resolves a protocol"),
+        );
+        assert_eq!(url, "https://other.example.com/v2/responses");
+        // A provider without a configurable endpoint reports none, and a
+        // switch against it is a no-op rather than an error.
+        let fake = super::HostProvider::from_provider_str_with_protocol(
+            "deterministic-fake",
+            None,
+            None,
+            None,
+            siralos_core::composition::Protocol::OpenAiCompletions,
+        )
+        .expect("fake");
+        assert_eq!(fake.live_endpoint(), None);
+        assert_eq!(fake.live_protocol(), None);
+        fake.set_live_endpoint(Some(
+            "https://other.example.com/v2".to_owned(),
+        ));
+        fake.set_live_protocol(
+            siralos_core::composition::Protocol::OpenAiResponses,
+        );
+        assert_eq!(fake.live_endpoint(), None);
+        assert_eq!(fake.live_protocol(), None);
     }
 
     #[test]
