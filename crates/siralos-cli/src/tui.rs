@@ -64,6 +64,9 @@ pub const REASONING_BYTES: usize = 8192;
 /// How many thinking rows the expanded block shows (the tail).
 pub const REASONING_ROWS: usize = 8;
 
+/// How much of the newest thinking line the COLLAPSED row previews.
+pub const THINKING_TAIL_CHARS: usize = 60;
+
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
 pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript directly; /mouse again hands the mouse back to the terminal";
@@ -1005,8 +1008,20 @@ impl TuiState {
         }
         let lines: Vec<&str> = self.reasoning.lines().collect();
         if !self.reasoning_expanded {
+            // Show a LIVE tail, not only a line count: a count changes when
+            // a line COMPLETES, which made the block look like it arrived
+            // line by line instead of streaming left to right.
+            let newest = lines.last().copied().unwrap_or_default().trim_end();
+            let total = newest.chars().count();
+            let mut tail: String = newest
+                .chars()
+                .skip(total.saturating_sub(THINKING_TAIL_CHARS))
+                .collect();
+            if total > THINKING_TAIL_CHARS {
+                tail.insert_str(0, "...");
+            }
             return vec![format!(
-                "\u{25b8} thinking ({} lines) - press Right to expand",
+                "\u{25b8} thinking ({} lines) {tail} - press Right to expand",
                 lines.len()
             )];
         }
@@ -5380,6 +5395,14 @@ mod tests {
         assert_eq!(collapsed.len(), 1, "collapsed thinking is ONE row");
         assert!(collapsed[0].contains("3 lines"));
         assert!(collapsed[0].contains("Right"));
+        // The collapsed row previews the NEWEST text, so thinking streams
+        // visibly instead of updating once per completed line.
+        state.reasoning = "one\ntwo\nstreaming now".to_owned();
+        assert!(
+            state.reasoning_block_lines()[0].contains("streaming now"),
+            "the collapsed row shows the newest thinking text"
+        );
+        state.reasoning = "one\ntwo\nthree".to_owned();
         let right = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Right,
             crossterm::event::KeyModifiers::NONE,
