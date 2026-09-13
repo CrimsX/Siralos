@@ -2959,6 +2959,27 @@ pub fn toggle_mouse_capture(state: &mut TuiState) -> &'static str {
     mouse_capture_message(state.mouse_capture)
 }
 
+/// Take the submitted input: clear the box and the palette, echo the line
+/// into the transcript, and report the line to run (`None` for an empty
+/// submit).
+///
+/// Owner QoL 2026-09-12 (S1): this was inline in the TUI loop, which is why
+/// "pressing Enter should clear the message" had no test behind it. The
+/// state change is pure and tested here; the loop only composes the status
+/// line and dispatches.
+#[must_use]
+pub fn accept_submitted_input(state: &mut TuiState) -> Option<String> {
+    let line = std::mem::take(&mut state.input);
+    state.palette = None;
+    state.palette_selected = None;
+    if line.trim().is_empty() {
+        return None;
+    }
+    let echo = format!("> {}", crate::sanitize::sanitize_for_display(&line));
+    state.push_line_stamped(echo, Some(local_timestamp_now()));
+    Some(line)
+}
+
 /// Handle a mouse event for transcript scrolling (option b).
 ///
 /// Only wheel notches move anything, by [`MOUSE_WHEEL_STEP`] rows through
@@ -5175,6 +5196,33 @@ mod tests {
         assert_eq!(state.scroll_offset, 0);
         handle_key(&mut state, key_down, viewport);
         assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn submitted_input_clears_echoes_and_reports_the_line() {
+        // S1: the owner reported that pressing Enter left the message in
+        // the box. This state change is what has to be right; the loop then
+        // paints it BEFORE the synchronous turn runs.
+        let mut state = TuiState::new();
+        state.input = "hello world".to_owned();
+        state.palette = Some(Vec::new());
+        state.palette_selected = Some(0);
+        let submitted = accept_submitted_input(&mut state);
+        assert_eq!(submitted.as_deref(), Some("hello world"));
+        assert!(state.input.is_empty(), "the box must clear on submit");
+        assert!(state.palette.is_none());
+        assert!(state.palette_selected.is_none());
+        assert_eq!(state.transcript.len(), 1);
+        assert_eq!(state.transcript[0].text, "> hello world");
+    }
+
+    #[test]
+    fn empty_submit_clears_without_echoing() {
+        let mut state = TuiState::new();
+        state.input = "   ".to_owned();
+        assert!(accept_submitted_input(&mut state).is_none());
+        assert!(state.input.is_empty());
+        assert!(state.transcript.is_empty(), "an empty submit echoes nothing");
     }
 
     #[test]

@@ -3621,50 +3621,33 @@ pub fn run_interactive_tui_with_options(
                                 viewport,
                             );
                             if submitted {
-                                // Collect submit (freeze stands — dispatch once after drain)
-                                let input_line =
-                                    tui_state.borrow().input.clone();
-                                tui_state.borrow_mut().input.clear();
-                                tui_state.borrow_mut().palette = None;
-                                tui_state.borrow_mut().palette_selected = None;
-                                if input_line.trim().is_empty() {
-                                    let base = "ready";
-                                    let metrics_opt = context_session_holder
-                                        .as_ref()
-                                        .map(|s| &s.metrics);
-                                    let composed =
-                                        crate::tui::compose_status_line_with_context(
-                                            base,
-                                            applied_provider.as_deref(),
-                                            effective_model.as_deref(),
-                                            metrics_opt,
-                                        );
-                                    tui_state.borrow_mut().status = composed;
+                                // S1: the state change is the tested helper;
+                                // the pre-dispatch frame below is what makes
+                                // it visible before the turn runs.
+                                let pending =
+                                    crate::tui::accept_submitted_input(
+                                        &mut tui_state.borrow_mut(),
+                                    );
+                                let base = if pending.is_some() {
+                                    "working"
                                 } else {
-                                    let sanitized_input =
-                                        sanitize_for_display(&input_line);
-                                    let echo = format!("> {sanitized_input}");
-                                    let ts = crate::tui::local_timestamp_now();
-                                    tui_state
-                                        .borrow_mut()
-                                        .push_line_stamped(echo, Some(ts));
-                                    // Store for dispatch after drain; show working
-                                    let base = "working";
-                                    let metrics_opt = context_session_holder
-                                        .as_ref()
-                                        .map(|s| &s.metrics);
-                                    let composed =
-                                        crate::tui::compose_status_line_with_context(
-                                            base,
-                                            applied_provider.as_deref(),
-                                            effective_model.as_deref(),
-                                            metrics_opt,
-                                        );
-                                    tui_state.borrow_mut().status = composed;
-                                    pending_submit = Some(input_line);
-                                    // Only one submit per drain (freeze)
-                                    // Continue draining remaining keys? spec says collecting submits
-                                    // then dispatch ONCE. We'll keep last submit.
+                                    "ready"
+                                };
+                                let metrics_opt = context_session_holder
+                                    .as_ref()
+                                    .map(|s| &s.metrics);
+                                let composed =
+                                    crate::tui::compose_status_line_with_context(
+                                        base,
+                                        applied_provider.as_deref(),
+                                        effective_model.as_deref(),
+                                        metrics_opt,
+                                    );
+                                tui_state.borrow_mut().status = composed;
+                                // One submit per drain: dispatch once, keep
+                                // the last line when several arrive together.
+                                if pending.is_some() {
+                                    pending_submit = pending;
                                 }
                             }
                         }
@@ -3803,6 +3786,26 @@ pub fn run_interactive_tui_with_options(
                 );
                 tui_state.borrow_mut().status = ready;
             }
+        }
+        // S1 (owner QoL 2026-09-12): paint BEFORE the turn runs. The turn is
+        // synchronous, so without this frame the input box still shows the
+        // submitted text and `working` is never seen until the response
+        // arrives -- the "press Enter" and "looks frozen" reports.
+        if pending_submit.is_some() {
+            let pane = build_context_pane(
+                context_system_enabled,
+                context_session_holder
+                    .as_ref()
+                    .map(|session| &session.metrics),
+                application.history(),
+            );
+            terminal
+                .draw(|frame| {
+                    draw_with_pane(&tui_state.borrow(), pane.as_ref(), frame)
+                })
+                .map_err(|e| {
+                    InteractiveError::Io(io::Error::other(e.to_string()))
+                })?;
         }
         if let Some(input_line) = pending_submit.take() {
             // I3 & I6/I7: parse once, handle unknown honesty before dispatch
