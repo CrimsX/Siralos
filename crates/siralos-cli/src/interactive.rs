@@ -202,8 +202,14 @@ impl siralos_core::provider::ModelProvider for SessionProvider {
 /// The stable product-neutral segment supplied by the CLI composition root.
 ///
 /// Core owns the segment model and projection mechanics; this product text
-/// remains at the composition boundary, matching the TypeScript oracle.
-const SIRALOS_SYSTEM_INSTRUCTIONS: &str = r#"You are Siralos, a host-owned AI agent harness for Godot Engine development.
+/// lives at the composition boundary.
+///
+/// It was re-framed when the Godot domain was externalized (decisions
+/// 60-65): the harness is no longer "for Godot Engine development", and a
+/// session without the plugin installed must not be told that it is. Domain
+/// guidance arrives with the domain (its own prompt segment), so this text
+/// stays product-neutral.
+const SIRALOS_SYSTEM_INSTRUCTIONS: &str = r#"You are Siralos, a host-owned AI agent harness with an inspectable execution environment.
 
 Architecture
 - The host runtime owns all authoritative state: tasks, approvals, sandboxing, checkpoints, and validation gates.
@@ -215,11 +221,11 @@ Task discipline
 - If you believe the task is complete, finish your work and let the host evaluate completion. Never fabricate evidence, results, or file contents.
 - If a step is blocked, report the blocker precisely instead of repeating the same failed action.
 
-GDScript development
-- Inspect the project before proposing changes. Propose exact change sets through the provided mutation tool; every change set requires its own host approval and checkpoint.
-- After a change is applied, validation (parse and fresh language-session diagnostics) and an independent review run host-side; incorporate their findings into focused repairs.
-- Stay within the workspace; never attempt network access, game execution, or unrestricted commands.
-"#;
+Workspace work
+- Inspect the workspace before proposing changes. Propose exact change sets through the provided mutation tool; every change set requires its own host approval and checkpoint.
+- After a change is applied, validation and an independent review run host-side; incorporate their findings into focused repairs.
+- Stay within the workspace; never attempt network access, application execution, or unrestricted commands.
+- Optional domain intelligence is installed explicitly and never assumed. When a domain is active, its own guidance appears in this prompt; without one, work generically."#;
 
 /// Options used by the testable and stdio session entry points.
 #[derive(Debug, Clone, Copy, Default)]
@@ -3596,8 +3602,30 @@ pub fn run_interactive_tui_with_options(
             }
         }
     };
+    // A streamed turn can emit hundreds of deltas a second. The loop's own
+    // draws stay unconditional (they mark turn boundaries), but the
+    // PER-EVENT repaints are throttled: unthrottled, the process spends its
+    // time painting frames and the text arrives in lumps -- the "laggy, not
+    // smooth" report. A key press forces a frame so expanding is instant.
+    let draw_throttled = {
+        let draw_now = draw_now.clone();
+        let last = Rc::new(std::cell::Cell::new(None::<std::time::Instant>));
+        move || {
+            let now = std::time::Instant::now();
+            let due = match last.get() {
+                None => true,
+                Some(previous) => {
+                    now.duration_since(previous) >= crate::tui::REDRAW_INTERVAL
+                }
+            };
+            if due {
+                last.set(Some(now));
+                draw_now();
+            }
+        }
+    };
     {
-        let hook: Rc<dyn Fn()> = Rc::new(draw_now.clone());
+        let hook: Rc<dyn Fn()> = Rc::new(draw_throttled.clone());
         sink.set_redraw(hook);
     }
 
@@ -3605,7 +3633,7 @@ pub fn run_interactive_tui_with_options(
     // the tail) and repaints; the collapsed/expanded choice is rendering.
     let mut reasoning_sink = {
         let tui_state = Rc::clone(&tui_state);
-        let draw_now = draw_now.clone();
+        let draw_now = draw_throttled.clone();
         move |text: &str| {
             {
                 let mut state = tui_state.borrow_mut();
@@ -3634,13 +3662,16 @@ pub fn run_interactive_tui_with_options(
         let tui_state = Rc::clone(&tui_state);
         let interrupt = Rc::clone(&interrupt);
         let draw_now = draw_now.clone();
+        let draw_throttled = draw_throttled.clone();
         move || -> bool {
             use crossterm::event::Event;
+            let mut handled_key = false;
             while crossterm::event::poll(std::time::Duration::ZERO)
                 .unwrap_or(false)
             {
                 match crossterm::event::read() {
                     Ok(Event::Key(key)) => {
+                        handled_key = true;
                         if crate::tui::apply_turn_key(
                             &mut tui_state.borrow_mut(),
                             key.code,
@@ -3652,7 +3683,11 @@ pub fn run_interactive_tui_with_options(
                     Err(_) => break,
                 }
             }
-            draw_now();
+            if handled_key {
+                draw_now();
+            } else {
+                draw_throttled();
+            }
             interrupt.get()
         }
     };
