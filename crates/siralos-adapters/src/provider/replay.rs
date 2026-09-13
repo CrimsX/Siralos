@@ -29,6 +29,17 @@ pub(crate) fn completion_events_from_body(text: &str) -> Vec<ProviderEvent> {
         .unwrap_or_default();
     for choice in choices {
         let message = choice.get("message").cloned().unwrap_or(Value::Null);
+        // S3: a recorded body carries the thinking it streamed, so a replay
+        // reproduces the reasoning channel too.
+        if let Some(reasoning) =
+            message.get("reasoning").and_then(|v| v.as_str())
+        {
+            if !reasoning.is_empty() {
+                events.push(ProviderEvent::Event(
+                    ModelEvent::ReasoningDelta { text: reasoning.to_owned() },
+                ));
+            }
+        }
         if let Some(content) = message.get("content").and_then(|v| v.as_str())
         {
             if !content.is_empty() {

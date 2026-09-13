@@ -196,7 +196,15 @@ impl CompletionStream {
             }
             for field in ["reasoning", "reasoning_content"] {
                 if let Some(text) = delta.get(field).and_then(Value::as_str) {
-                    self.reasoning.push_str(text);
+                    if !text.is_empty() {
+                        self.reasoning.push_str(text);
+                        // S3: thinking is streamed on its own channel.
+                        events.push(ProviderEvent::Event(
+                            ModelEvent::ReasoningDelta {
+                                text: text.to_owned(),
+                            },
+                        ));
+                    }
                 }
             }
             if let Some(calls) =
@@ -290,6 +298,11 @@ impl CompletionStream {
             .collect();
         let mut message = json!({
             "role": "assistant",
+            "reasoning": if self.reasoning.is_empty() {
+                Value::Null
+            } else {
+                Value::String(self.reasoning.clone())
+            },
             "content": if self.content.is_empty() {
                 Value::Null
             } else {
@@ -421,11 +434,37 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_is_captured_without_being_emitted_yet() {
+    fn reasoning_streams_on_its_own_channel_and_replays_from_the_body() {
+        // S3: the thinking is emitted as ReasoningDelta (never as answer
+        // text) and the recorded body carries it, so a replay reproduces
+        // the same channel.
         let mut stream = CompletionStream::new(4096);
-        let events = stream.push_chunk("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"weighing options\"}}]}\n");
-        assert!(events.is_empty(), "reasoning is not a turn event yet");
-        assert_eq!(stream.reasoning(), "weighing options");
+        let events = stream.push_chunk(
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"weighing\"}}]}\n",
+        );
+        assert!(
+            matches!(
+                events.first(),
+                Some(ProviderEvent::Event(ModelEvent::ReasoningDelta { text })) if text == "weighing"
+            ),
+            "reasoning streams as its own event, got: {events:?}"
+        );
+        assert!(texts(&events).is_empty(), "reasoning is not answer text");
+        stream.push_chunk(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"the answer\"}}]}\n",
+        );
+        stream.push_chunk("data: [DONE]\n");
+        let body = stream.assembled_body().to_string();
+        let replayed =
+            crate::provider::replay::completion_events_from_body(&body);
+        assert!(
+            replayed.iter().any(|event| matches!(
+                event,
+                ProviderEvent::Event(ModelEvent::ReasoningDelta { text }) if text == "weighing"
+            )),
+            "the recorded body must replay the reasoning, got: {replayed:?}"
+        );
+        assert_eq!(texts(&replayed).join(""), "the answer");
     }
 
     #[test]

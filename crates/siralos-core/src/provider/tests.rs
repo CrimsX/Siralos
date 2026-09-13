@@ -22,6 +22,30 @@ use super::turn::{
 };
 
 #[test]
+fn reasoning_never_becomes_the_assistant_text() {
+    // S3: thinking is model output the Host accounts for, but it is not the
+    // answer -- it must not reach the assistant text or the deltas the
+    // transcript replays.
+    let events = vec![
+        ProviderEvent::Event(ModelEvent::ReasoningDelta {
+            text: "weighing options".to_owned(),
+        }),
+        ProviderEvent::Event(ModelEvent::Completed),
+    ];
+    let provider = ScriptedProvider { events };
+    let token = CancellationToken::new();
+    let outcome =
+        collect_provider_turn(&provider, &[user("hello")], &[], None, &token);
+    match outcome {
+        TurnOutcome::Turn { assistant_text, text_deltas, .. } => {
+            assert!(assistant_text.is_empty(), "thinking is not the answer");
+            assert!(text_deltas.is_empty(), "thinking is not answer text");
+        }
+        other => panic!("expected a completed turn, got {other:?}"),
+    }
+}
+
+#[test]
 fn incremental_collector_matches_the_whole_turn_wrapper() {
     // S2 (owner QoL 2026-09-12): the session will pull ONE provider event
     // at a time so a frontend can repaint (and check for an interrupt)

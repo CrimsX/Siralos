@@ -94,6 +94,8 @@ pub struct BoundedTurnState {
     limits: ProviderTurnLimits,
     assistant_text: String,
     assistant_text_bytes: usize,
+    /// Bytes accepted on the reasoning channel (S3).
+    reasoning_bytes: usize,
     text_events: usize,
     turn_bytes: usize,
     completion_seen: bool,
@@ -106,6 +108,7 @@ impl BoundedTurnState {
             limits,
             assistant_text: String::new(),
             assistant_text_bytes: 0,
+            reasoning_bytes: 0,
             text_events: 0,
             turn_bytes: 0,
             completion_seen: false,
@@ -163,6 +166,36 @@ impl BoundedTurnState {
         Ok(())
     }
 
+    /// Account one REASONING delta (S3) under the same budgets as text, but
+    /// keep it OUT of `assistant_text`: thinking is model output, never the
+    /// answer, and it must not reach the transcript history or a tool call.
+    ///
+    /// The bytes are accounted twice on purpose -- once against the reasoning
+    /// allowance and once against the aggregate turn budget -- so a route
+    /// cannot smuggle unbounded output through the thinking channel.
+    pub fn push_reasoning(&mut self, text: &str) -> Result<(), TurnFailure> {
+        self.text_events += 1;
+        if self.text_events > self.limits.max_text_events {
+            return Err(TurnFailure::LimitExceeded(
+                LimitClass::TextEventCount,
+            ));
+        }
+        let bytes = text.len();
+        self.reasoning_bytes += bytes;
+        if self.reasoning_bytes > self.limits.max_assistant_text_bytes {
+            return Err(TurnFailure::LimitExceeded(
+                LimitClass::AssistantTextBytes,
+            ));
+        }
+        self.turn_bytes += bytes;
+        if self.turn_bytes > self.limits.max_turn_bytes {
+            return Err(TurnFailure::LimitExceeded(
+                LimitClass::AggregateTurnBytes,
+            ));
+        }
+        Ok(())
+    }
+
     /// Account one tool call (call-id bytes, then tool-name bytes, then
     /// serialized-argument bytes, then aggregate turn bytes — the
     /// reference's order).
@@ -200,6 +233,7 @@ fn apply_event(
     seen_call_ids: &mut BTreeSet<String>,
     invalid_call_index: &mut usize,
     text_deltas: &mut Vec<String>,
+    reasoning_deltas: &mut Vec<String>,
 ) -> Result<(), TurnFailure> {
     match event {
         ModelEvent::Completed => {
@@ -209,6 +243,14 @@ fn apply_event(
         ModelEvent::TextDelta { text } => {
             state.push_text(&text)?;
             text_deltas.push(text);
+            Ok(())
+        }
+        ModelEvent::ReasoningDelta { text } => {
+            // Bounded by the SAME budgets -- reasoning is model output and
+            // must not balloon -- but kept in its own channel so it can never
+            // become the answer.
+            state.push_reasoning(&text)?;
+            reasoning_deltas.push(text);
             Ok(())
         }
         ModelEvent::ToolCall { call_id, tool_name, input } => {
@@ -282,6 +324,9 @@ pub struct ProviderTurnCollector {
     seen_call_ids: BTreeSet<String>,
     invalid_call_index: usize,
     text_deltas: Vec<String>,
+    /// The reasoning channel (S3): bounded with the text budget, never part
+    /// of the answer, and exposed so a frontend can show it as it arrives.
+    reasoning_deltas: Vec<String>,
     failure: Option<TurnFailure>,
     terminal: Option<TurnOutcome>,
 }
@@ -302,6 +347,7 @@ impl ProviderTurnCollector {
             seen_call_ids: BTreeSet::new(),
             invalid_call_index: 0,
             text_deltas: Vec::new(),
+            reasoning_deltas: Vec::new(),
             failure: None,
             terminal: None,
         }
@@ -352,6 +398,7 @@ impl ProviderTurnCollector {
             &mut self.seen_call_ids,
             &mut self.invalid_call_index,
             &mut self.text_deltas,
+            &mut self.reasoning_deltas,
         ) {
             self.failure = Some(limit);
             return TurnStep::Stop;
@@ -374,6 +421,18 @@ impl ProviderTurnCollector {
     #[must_use]
     pub fn text_delta_at(&self, index: usize) -> Option<&str> {
         self.text_deltas.get(index).map(String::as_str)
+    }
+
+    /// How many REASONING deltas have been accepted so far (S3).
+    #[must_use]
+    pub fn reasoning_count(&self) -> usize {
+        self.reasoning_deltas.len()
+    }
+
+    /// The reasoning text at `index`, when it exists.
+    #[must_use]
+    pub fn reasoning_at(&self, index: usize) -> Option<&str> {
+        self.reasoning_deltas.get(index).map(String::as_str)
     }
 
     /// The outcome once the provider stream has ended, with the same

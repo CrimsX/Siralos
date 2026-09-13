@@ -57,6 +57,10 @@ pub const MOUSE_WHEEL_STEP: u16 = 3;
 /// always painted because the loop's own draw runs after the drain.
 pub const REDRAW_INTERVAL: Duration = Duration::from_millis(33);
 
+/// How much streamed thinking the TUI keeps (the tail), so a long reasoning
+/// trace cannot grow the state without bound.
+pub const REASONING_BYTES: usize = 8192;
+
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
 pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript directly; /mouse again hands the mouse back to the terminal";
@@ -886,6 +890,12 @@ pub struct TuiState {
     /// directly. Render-neutral: no pane, status, or frame change — the
     /// differential frames pin this.
     pub mouse_capture: bool,
+    /// Thinking streamed so far (S3): host-accounted model output that is
+    /// NOT the answer. Bounded to the last [`REASONING_BYTES`]; rendered as
+    /// one collapsed row that Right expands and Left collapses.
+    pub reasoning: String,
+    /// Whether the thinking block is expanded.
+    pub reasoning_expanded: bool,
 }
 
 impl Default for TuiState {
@@ -916,6 +926,8 @@ impl Default for TuiState {
             // them; `/mouse` captures the mouse when raw wheel events are
             // wanted.
             mouse_capture: false,
+            reasoning: String::new(),
+            reasoning_expanded: false,
         }
     }
 }

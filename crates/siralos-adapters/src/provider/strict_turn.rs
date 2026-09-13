@@ -218,6 +218,16 @@ fn apply_strict_event(
                 message: failure.strict_message(actor),
             }),
         },
+        // S3: reasoning is accounted against the same budgets (it is model
+        // output) but contributes nothing to the turn's text.
+        ModelEvent::ReasoningDelta { text } => {
+            match state.push_reasoning(&text) {
+                Ok(()) => Ok(()),
+                Err(failure) => Err(BoundedModelTurnOutcome::Failed {
+                    message: failure.strict_message(actor),
+                }),
+            }
+        }
         ModelEvent::ToolCall { call_id, tool_name, input } => {
             if call_id.is_empty() || tool_name.is_empty() {
                 return Err(BoundedModelTurnOutcome::Failed {

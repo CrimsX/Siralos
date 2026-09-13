@@ -22,6 +22,15 @@ pub enum ToolLoopEvent {
     /// interrupt, and the response continues afterwards. Scripted and
     /// recorded providers never emit it.
     ProviderPending,
+    /// One reasoning (thinking) delta (S3).
+    ///
+    /// Model output the Host accounts for, but never the answer: a frontend
+    /// may render it as a collapsed, expandable block. A route that does not
+    /// volunteer reasoning never emits one.
+    ReasoningDelta {
+        /// The reasoning text.
+        text: String,
+    },
     /// The prompt completed successfully.
     ResponseCompleted,
     /// The prompt was cancelled by the Host.

@@ -1318,7 +1318,7 @@ where
                     InteractiveError::Io(io::Error::other(error.to_string()))
                 },
             )?;
-            drain_events(application, writer, &mut || false)?;
+            drain_events(application, writer, &mut || false, &mut |_| {})?;
             if let Some(session) = context_session_holder {
                 drive_context_demand(
                     application,
@@ -1360,6 +1360,7 @@ fn dispatch_tui_command<P>(
     applied_credential: &mut Option<HostCredential>,
     applied_protocol_str: &mut String,
     progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -1544,7 +1545,7 @@ where
                     InteractiveError::Io(io::Error::other(error.to_string()))
                 },
             )?;
-            drain_events(application, sink, progress)?;
+            drain_events(application, sink, progress, reasoning)?;
             if let Some(session) = context_session_holder {
                 drive_context_demand(
                     application,
@@ -3279,6 +3280,9 @@ fn drain_events<P, W>(
     // typed while the model works, and to report an interrupt request;
     // returning `true` cancels the response.
     progress: &mut dyn FnMut() -> bool,
+    // S3: thinking goes to its own sink. Stdio ignores it (byte-identical),
+    // the TUI buffers it for the collapsed row.
+    reasoning: &mut dyn FnMut(&str),
 ) -> Result<(), InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -3328,6 +3332,7 @@ where
                     .write_all(format!("Tool failed: {safe}\n").as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
+            ToolLoopEvent::ReasoningDelta { text } => reasoning(&text),
             // The keep-alive tick carries no output: the `progress`
             // callback above already gave the frontend its chance.
             ToolLoopEvent::ProviderPending
@@ -3591,6 +3596,31 @@ pub fn run_interactive_tui_with_options(
         let hook: Rc<dyn Fn()> = Rc::new(draw_now.clone());
         sink.set_redraw(hook);
     }
+
+    // S3: the thinking sink. It buffers the streamed reasoning (bounded to
+    // the tail) and repaints; the collapsed/expanded choice is rendering.
+    let mut reasoning_sink = {
+        let tui_state = Rc::clone(&tui_state);
+        let draw_now = draw_now.clone();
+        move |text: &str| {
+            {
+                let mut state = tui_state.borrow_mut();
+                state.reasoning.push_str(text);
+                if state.reasoning.len() > crate::tui::REASONING_BYTES {
+                    let cut =
+                        state.reasoning.len() - crate::tui::REASONING_BYTES;
+                    let boundary = state
+                        .reasoning
+                        .char_indices()
+                        .map(|(index, _)| index)
+                        .find(|index| *index >= cut)
+                        .unwrap_or(cut);
+                    state.reasoning.drain(..boundary);
+                }
+            }
+            draw_now();
+        }
+    };
 
     // S2 chunk 4b: what the TUI does with a keep-alive tick -- repaint,
     // keep what the user typed while the model works, and read the
@@ -4039,6 +4069,7 @@ pub fn run_interactive_tui_with_options(
                     &mut applied_credential,
                     &mut applied_protocol_str,
                     &mut progress,
+                    &mut reasoning_sink,
                 )?;
                 if should_exit {
                     break;

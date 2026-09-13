@@ -383,6 +383,11 @@ fn canonical_event(event: &ToolLoopEvent) -> Value {
         // not response content: the corpus never sees one (the harness
         // leaves the opt-in off) and it maps to nothing here.
         ToolLoopEvent::ProviderPending => Value::Null,
+        // S3: thinking is observable, but it is not the answer -- the
+        // canonical record names it as its own kind.
+        ToolLoopEvent::ReasoningDelta { text } => {
+            json!({ "type": "reasoning_delta", "text": text })
+        }
         ToolLoopEvent::ResponseCompleted => {
             json!({ "type": "response_completed" })
         }

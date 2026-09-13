@@ -82,6 +82,16 @@ pub enum ModelEvent {
         /// The delta text (UTF-8 byte-accounted by the collectors).
         text: String,
     },
+    /// A reasoning (thinking) delta for the current turn (S3).
+    ///
+    /// Reasoning is model output the Host accounts for, but it is NOT the
+    /// answer: it never reaches the assistant text, the transcript history,
+    /// or a tool argument. A route that does not volunteer reasoning simply
+    /// never emits one.
+    ReasoningDelta {
+        /// The reasoning text.
+        text: String,
+    },
     /// A tool-call proposal for the current turn.
     ToolCall {
         /// Correlation id of the proposed call.
@@ -501,6 +511,12 @@ pub fn validate_external_event(
             "text_delta" => match object.get("text") {
                 Some(Value::String(text)) => {
                     Ok(ModelEvent::TextDelta { text: text.clone() })
+                }
+                _ => Err(ProtocolFailure::MalformedTextEvent),
+            },
+            "reasoning_delta" => match object.get("text") {
+                Some(Value::String(text)) => {
+                    Ok(ModelEvent::ReasoningDelta { text: text.clone() })
                 }
                 _ => Err(ProtocolFailure::MalformedTextEvent),
             },

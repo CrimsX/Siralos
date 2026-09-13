@@ -13282,6 +13282,7 @@ fn provider_generic_record(input: &Value) -> Result<Value, HarnessError> {
         "providerId": generic.id(),
         "events": events.iter().map(|e| match e {
             siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                siralos_core::provider::ModelEvent::ReasoningDelta { text } => serde_json::json!({"type": "reasoning_delta", "text": text}),
                 siralos_core::provider::ModelEvent::TextDelta { text } => serde_json::json!({"type": "text_delta", "text": text}),
                 siralos_core::provider::ModelEvent::ToolCall { call_id, tool_name, input } => serde_json::json!({"type": "tool_call", "callId": call_id, "toolName": tool_name, "input": input.value()}),
                 siralos_core::provider::ModelEvent::Completed => serde_json::json!({"type": "completed"}),
@@ -13351,6 +13352,7 @@ fn provider_replay_record(_input: &Value) -> Result<Value, HarnessError> {
             .iter()
             .map(|e| match e {
                 siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                    siralos_core::provider::ModelEvent::ReasoningDelta { text } => serde_json::json!({"type": "reasoning_delta", "text": text}),
                     siralos_core::provider::ModelEvent::TextDelta { text } => {
                         serde_json::json!({"type": "text_delta", "text": text})
                     }
@@ -13463,6 +13465,7 @@ fn session_replay_record(_input: &Value) -> Result<Value, HarnessError> {
             .iter()
             .map(|e| match e {
                 siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                    siralos_core::provider::ModelEvent::ReasoningDelta { text } => serde_json::json!({"type": "reasoning_delta", "text": text}),
                     siralos_core::provider::ModelEvent::TextDelta { text } => {
                         serde_json::json!({"type": "text_delta", "text": text})
                     }
@@ -13612,6 +13615,7 @@ fn replay_store_record(_input: &Value) -> Result<Value, HarnessError> {
     ) -> Vec<Value> {
         events.iter().map(|e| match e {
             siralos_core::provider::ProviderEvent::Event(ev) => match ev {
+                siralos_core::provider::ModelEvent::ReasoningDelta { text } => serde_json::json!({"type": "reasoning_delta", "text": text}),
                 siralos_core::provider::ModelEvent::TextDelta { text } => {
                     serde_json::json!({"type": "text_delta", "text": text})
                 }

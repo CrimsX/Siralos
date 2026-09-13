@@ -448,9 +448,13 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                             // event is validated (and becomes a delta)
                             // inside the collector.
                             let before = collector.text_delta_count();
+                            let before_reasoning = collector.reasoning_count();
                             let step = collector.push(event);
                             let live_text = collector
                                 .text_delta_at(before)
+                                .map(str::to_owned);
+                            let live_reasoning = collector
+                                .reasoning_at(before_reasoning)
                                 .map(str::to_owned);
                             match step {
                                 TurnStep::Terminal(outcome) => {
@@ -474,6 +478,16 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                                         // answer as it arrives.
                                         return Some(
                                             ToolLoopEvent::TextDelta { text },
+                                        );
+                                    }
+                                    if let Some(text) = live_reasoning {
+                                        // Thinking streams too, on its own
+                                        // channel: it never becomes the
+                                        // answer or the history.
+                                        return Some(
+                                            ToolLoopEvent::ReasoningDelta {
+                                                text,
+                                            },
                                         );
                                     }
                                 }
