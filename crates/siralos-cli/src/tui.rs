@@ -1479,7 +1479,9 @@ pub fn draw_with_pane(
     // P2 header bar + transcript/input/status layout (header 1 line, OFF-independent)
     // Owner QoL: the `working` indicator owns a row ONLY while the model
     // works, so idle frames stay byte-identical to the pinned ones.
-    let busy_rows = u16::from(is_working_status(&state.status));
+    // The turn timer IS the busy signal now that the bottom bar no longer
+    // carries a `working` word.
+    let busy_rows = u16::from(state.busy_since.is_some());
     let (
         header_area,
         transcript_area,
@@ -1591,8 +1593,14 @@ pub fn draw_with_pane(
     // S3b: the thinking block renders as the last transcript rows, so it
     // scrolls with the conversation and needs no layout surgery.
     let mut entries = entries;
-    for line in state.reasoning_block_lines() {
+    let reasoning_rows = state.reasoning_block_lines();
+    let has_reasoning = !reasoning_rows.is_empty();
+    for line in reasoning_rows {
         entries.push(TranscriptEntry { text: line, timestamp: None });
+    }
+    if has_reasoning && state.busy_since.is_some() {
+        // Keep the indicator visually SEPARATE from the thinking block.
+        entries.push(TranscriptEntry { text: String::new(), timestamp: None });
     }
 
     let wrapped =
@@ -1764,10 +1772,8 @@ pub fn draw_with_pane(
     frame.render_widget(input, input_area);
     // The `working` state is a STATIC row above the input, in the banner
     // colour, pulsing once a second -- never text in the conversation.
-    if is_working_status(&state.status) {
-        let elapsed =
-            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
-        let indicator = Paragraph::new(working_line(elapsed))
+    if let Some(start) = state.busy_since {
+        let indicator = Paragraph::new(working_line(start.elapsed()))
             .style(Style::default().fg(Color::Cyan));
         frame.render_widget(indicator, busy_area);
     }
@@ -2206,7 +2212,9 @@ pub fn render_to_buffer_with_pane(
     // the widget rendering via `Widget::render`.
     // Owner QoL: the `working` indicator owns a row ONLY while the model
     // works, so idle frames stay byte-identical to the pinned ones.
-    let busy_rows = u16::from(is_working_status(&state.status));
+    // The turn timer IS the busy signal now that the bottom bar no longer
+    // carries a `working` word.
+    let busy_rows = u16::from(state.busy_since.is_some());
     let (
         header_area,
         transcript_area,
@@ -2304,8 +2312,14 @@ pub fn render_to_buffer_with_pane(
     // S3b: the thinking block renders as the last transcript rows, so it
     // scrolls with the conversation and needs no layout surgery.
     let mut entries = entries;
-    for line in state.reasoning_block_lines() {
+    let reasoning_rows = state.reasoning_block_lines();
+    let has_reasoning = !reasoning_rows.is_empty();
+    for line in reasoning_rows {
         entries.push(TranscriptEntry { text: line, timestamp: None });
+    }
+    if has_reasoning && state.busy_since.is_some() {
+        // Keep the indicator visually SEPARATE from the thinking block.
+        entries.push(TranscriptEntry { text: String::new(), timestamp: None });
     }
 
     // Same render-layer wrap as the `Frame` path above: scroll windows over
@@ -2463,10 +2477,8 @@ pub fn render_to_buffer_with_pane(
     let input = Paragraph::new(input_text.as_str())
         .style(Style::default().fg(Color::Yellow));
     input.render(input_area, &mut buf);
-    if is_working_status(&state.status) {
-        let elapsed =
-            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
-        Paragraph::new(working_line(elapsed))
+    if let Some(start) = state.busy_since {
+        Paragraph::new(working_line(start.elapsed()))
             .style(Style::default().fg(Color::Cyan))
             .render(busy_area, &mut buf);
     }

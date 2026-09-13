@@ -3564,7 +3564,7 @@ pub fn run_interactive_tui_with_options(
         .or(applied_model.clone());
     let tui_state = Rc::new(RefCell::new(TuiState::new()));
     {
-        let base = "ready — type and press Enter, PageUp/PageDown to scroll, Ctrl+C to exit";
+        let base = "";
         let metrics_opt = context_session_holder.as_ref().map(|s| &s.metrics);
         let composed = crate::tui::compose_status_line_with_context(
             base,
@@ -3734,7 +3734,7 @@ pub fn run_interactive_tui_with_options(
                                 &workspace_root,
                                 &mut sink,
                             ) {
-                                let base = "ready";
+                                let base = "";
                                 let metrics_opt = context_session_holder
                                     .as_ref()
                                     .map(|s| &s.metrics);
@@ -3771,11 +3771,10 @@ pub fn run_interactive_tui_with_options(
                                     crate::tui::accept_submitted_input(
                                         &mut tui_state.borrow_mut(),
                                     );
-                                let base = if pending.is_some() {
-                                    "working"
-                                } else {
-                                    "ready"
-                                };
+                                // The bottom bar no longer says ready or
+                                // working: the indicator above the input owns
+                                // that state.
+                                let base = "";
                                 // The pulsing `working` line renders above
                                 // the input, timed from the turn start.
                                 tui_state.borrow_mut().busy_since = pending
@@ -3868,7 +3867,7 @@ pub fn run_interactive_tui_with_options(
                     tui_state.borrow_mut().provider_add_form = None;
                 }
             }
-            let base = "ready";
+            let base = "";
             let metrics_opt =
                 context_session_holder.as_ref().map(|s| &s.metrics);
             let composed = crate::tui::compose_status_line_with_context(
@@ -4113,6 +4112,8 @@ pub fn run_interactive_tui_with_options(
                     &mut progress,
                     &mut reasoning_sink,
                 )?;
+                // The turn is over: the indicator above the input stops.
+                tui_state.borrow_mut().busy_since = None;
                 if should_exit {
                     break;
                 }
@@ -4144,7 +4145,7 @@ pub fn run_interactive_tui_with_options(
                 .filter(|name| !name.is_empty())
                 .or(applied_model.clone());
             tui_state.borrow_mut().model = effective_model.clone();
-            let base = "ready";
+            let base = "";
             let metrics_opt =
                 context_session_holder.as_ref().map(|s| &s.metrics);
             let composed = crate::tui::compose_status_line_with_context(
