@@ -359,6 +359,23 @@ impl ProviderTurnCollector {
         TurnStep::Continue
     }
 
+    /// How many text deltas have been ACCEPTED so far.
+    ///
+    /// A caller that streams to a frontend records this before a
+    /// [`Self::push`] and reads [`Self::text_delta_at`] afterwards, so it
+    /// emits exactly the text that push accepted -- without having to guess
+    /// the event shape (`Raw` events are validated inside the collector).
+    #[must_use]
+    pub fn text_delta_count(&self) -> usize {
+        self.text_deltas.len()
+    }
+
+    /// The text of the delta at `index`, when it exists.
+    #[must_use]
+    pub fn text_delta_at(&self, index: usize) -> Option<&str> {
+        self.text_deltas.get(index).map(String::as_str)
+    }
+
     /// The outcome once the provider stream has ended, with the same
     /// precedence the whole-turn wrapper always had: a provider-declared
     /// terminal outcome first, then a recorded limit/protocol failure, then

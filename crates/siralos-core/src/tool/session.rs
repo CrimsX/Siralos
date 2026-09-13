@@ -20,8 +20,8 @@ use crate::projection::{
     visibility::ProjectionMode,
 };
 use crate::provider::{
-    CancellationToken, ConversationItem, ModelEvent, ModelProvider,
-    ProviderEvent, ToolDefinition, ToolExecutionResult, TurnOutcome, TurnStep,
+    CancellationToken, ConversationItem, ModelProvider, ProviderEvent,
+    ToolDefinition, ToolExecutionResult, TurnOutcome, TurnStep,
     open_provider_turn,
 };
 use crate::tool::budget::RoundBudget;
@@ -428,13 +428,16 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                             self.phase = self.handle_provider_outcome(outcome);
                         }
                         Some(event) => {
-                            let live_text = match &event {
-                                ProviderEvent::Event(
-                                    ModelEvent::TextDelta { text },
-                                ) => Some(text.clone()),
-                                _ => None,
-                            };
-                            match collector.push(event) {
+                            // Ask the collector what this event ADDED
+                            // instead of matching the event shape: a RAW
+                            // event is validated (and becomes a delta)
+                            // inside the collector.
+                            let before = collector.text_delta_count();
+                            let step = collector.push(event);
+                            let live_text = collector
+                                .text_delta_at(before)
+                                .map(str::to_owned);
+                            match step {
                                 TurnStep::Terminal(outcome) => {
                                     self.phase =
                                         self.handle_provider_outcome(outcome);
