@@ -67,6 +67,14 @@ pub const REASONING_ROWS: usize = 8;
 /// How much of the newest thinking line the COLLAPSED row previews.
 pub const THINKING_TAIL_CHARS: usize = 60;
 
+/// How fast revealed text is released to the reader (S3c), so the answer
+/// reads left to right whatever chunk size the provider sends.
+pub const REVEAL_CHARS_PER_SEC: f64 = 240.0;
+
+/// The most one tick may release, so a long stall cannot dump a wall of
+/// text the instant a frame is painted.
+pub const REVEAL_TICK_CHARS: usize = 480;
+
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
 pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript directly; /mouse again hands the mouse back to the terminal";
@@ -834,7 +842,10 @@ impl ProviderAddForm {
 }
 
 /// Pure render model for the TUI shell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Eq` is deliberately absent: the reveal debt (S3c) is a float, and `f64`
+/// has no total equality. `PartialEq` is what the tests compare with.
+#[derive(Debug, Clone, PartialEq)]
 pub struct TuiState {
     /// Transcript entries — bounded ring, oldest dropped when full. Each entry
     /// is a single sanitized line plus an optional local stamp.
@@ -904,6 +915,17 @@ pub struct TuiState {
     pub reasoning_expanded: bool,
     /// When the current turn started, for the pulsing `working` line.
     pub busy_since: Option<std::time::Instant>,
+    /// Answer text received but not yet revealed (S3c).
+    pub stream_buffer: String,
+    /// The revealed text of the INCOMPLETE line, rendered as a growing row
+    /// so a long answer appears left to right instead of popping in whole.
+    pub stream_tail: String,
+    /// How much of `reasoning` has been revealed.
+    pub reasoning_shown: usize,
+    /// Last reveal tick, and the character debt carried between ticks.
+    pub reveal_last: Option<std::time::Instant>,
+    /// Characters still owed to the reader.
+    pub reveal_debt: f64,
 }
 
 impl Default for TuiState {
@@ -937,6 +959,11 @@ impl Default for TuiState {
             reasoning: String::new(),
             reasoning_expanded: false,
             busy_since: None,
+            stream_buffer: String::new(),
+            stream_tail: String::new(),
+            reasoning_shown: 0,
+            reveal_last: None,
+            reveal_debt: 0.0,
         }
     }
 }
@@ -998,6 +1025,60 @@ impl TuiState {
         }
     }
 
+    /// Release the text owed to the reader (S3c).
+    ///
+    /// Called before every paint: the answer and the thinking are revealed at
+    /// `REVEAL_CHARS_PER_SEC` from the same budget, and the INCOMPLETE line is
+    /// kept in `stream_tail` so a long line grows left to right instead of
+    /// appearing whole. Pure in `now`, so the pacing is testable.
+    pub fn reveal_now(&mut self, now: std::time::Instant) {
+        let budget = match self.reveal_last {
+            None => REVEAL_TICK_CHARS as f64,
+            Some(previous) => {
+                let elapsed =
+                    now.duration_since(previous).as_secs_f64().min(1.0);
+                self.reveal_debt + elapsed * REVEAL_CHARS_PER_SEC
+            }
+        };
+        self.reveal_last = Some(now);
+        let allowance = budget.min(REVEAL_TICK_CHARS as f64).floor() as usize;
+        let mut take = allowance;
+        if take == 0 {
+            self.reveal_debt = budget;
+            return;
+        }
+        // Answer channel: complete lines become transcript rows, the rest
+        // stays visible as the growing tail.
+        while take > 0 {
+            let Some(ch) = self.stream_buffer.chars().next() else {
+                break;
+            };
+            self.stream_buffer.remove(0);
+            take -= 1;
+            if ch == '\n' {
+                let line = std::mem::take(&mut self.stream_tail);
+                self.push_line(line);
+            } else {
+                self.stream_tail.push(ch);
+            }
+        }
+        let released = allowance - take;
+        // Thinking channel: what the answer did not spend reveals the
+        // reasoning, so both channels share one pacing budget.
+        if take > 0 && self.reasoning_shown < self.reasoning.len() {
+            let mut shown = self.reasoning_shown;
+            for ch in self.reasoning[shown..].chars() {
+                if take == 0 {
+                    break;
+                }
+                shown += ch.len_utf8();
+                take -= 1;
+            }
+            self.reasoning_shown = shown;
+        }
+        // Only the budget actually LEFT OVER carries: what was spent is gone.
+        self.reveal_debt = (budget - released as f64).max(0.0);
+    }
     /// The thinking block as transcript rows (S3b).
     ///
     /// Empty when nothing was streamed, so a route that never reasons is
@@ -1006,10 +1087,15 @@ impl TuiState {
     /// conversation off screen.
     #[must_use]
     pub fn reasoning_block_lines(&self) -> Vec<String> {
-        if self.reasoning.trim().is_empty() {
+        // Only what has been REVEALED renders (S3c): thinking grows left to
+        // right like the answer, whatever chunk the provider sent -- so the
+        // emptiness test is on the revealed slice, not the raw buffer.
+        let shown = self.reasoning_shown.min(self.reasoning.len());
+        let visible = &self.reasoning[..shown];
+        if visible.trim().is_empty() {
             return Vec::new();
         }
-        let lines: Vec<&str> = self.reasoning.lines().collect();
+        let lines: Vec<&str> = visible.lines().collect();
         if !self.reasoning_expanded {
             // Show a LIVE tail, not only a line count: a count changes when
             // a line COMPLETES, which made the block look like it arrived
@@ -1597,6 +1683,14 @@ pub fn draw_with_pane(
     let has_reasoning = !reasoning_rows.is_empty();
     for line in reasoning_rows {
         entries.push(TranscriptEntry { text: line, timestamp: None });
+    }
+    if !state.stream_tail.is_empty() {
+        // The answer's current line, revealed so far: this is what makes it
+        // read left to right instead of appearing whole.
+        entries.push(TranscriptEntry {
+            text: state.stream_tail.clone(),
+            timestamp: None,
+        });
     }
     if has_reasoning && state.busy_since.is_some() {
         // Keep the indicator visually SEPARATE from the thinking block.
@@ -2317,6 +2411,14 @@ pub fn render_to_buffer_with_pane(
     for line in reasoning_rows {
         entries.push(TranscriptEntry { text: line, timestamp: None });
     }
+    if !state.stream_tail.is_empty() {
+        // The answer's current line, revealed so far: this is what makes it
+        // read left to right instead of appearing whole.
+        entries.push(TranscriptEntry {
+            text: state.stream_tail.clone(),
+            timestamp: None,
+        });
+    }
     if has_reasoning && state.busy_since.is_some() {
         // Keep the indicator visually SEPARATE from the thinking block.
         entries.push(TranscriptEntry { text: String::new(), timestamp: None });
@@ -2724,21 +2826,15 @@ impl TuiSink {
 impl Write for TuiSink {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let text = String::from_utf8_lossy(bytes);
-        self.buf.push_str(&text);
-        // Split completed lines on '\n'
-        while let Some(pos) = self.buf.find('\n') {
-            let line = self.buf[..pos].to_owned();
-            // Remove up to and including '\n'
-            self.buf.drain(..=pos);
-            // Strip trailing '\r' for CRLF
-            let line = if line.ends_with('\r') {
-                line[..line.len() - 1].to_owned()
-            } else {
-                line
-            };
-            self.state.borrow_mut().push_line(line);
-            self.redraw_due();
+        {
+            let mut state = self.state.borrow_mut();
+            // S3c: hand the text to the REVEAL rather than the transcript,
+            // so a line the provider sends whole still appears left to
+            // right, and an unfinished line is visible as it grows.
+            state.stream_buffer.push_str(&text);
+            state.reveal_now(std::time::Instant::now());
         }
+        self.redraw_due();
         Ok(bytes.len())
     }
 
@@ -4415,9 +4511,15 @@ mod tests {
     fn tui_sink_respects_transcript_bound() {
         let state = Rc::new(RefCell::new(TuiState::new()));
         let mut sink = TuiSink::new(state.clone());
+        let start = std::time::Instant::now();
         for i in 0..(MAX_TRANSCRIPT_LINES + 50) {
             let line = format!("line {i}\n");
             sink.write_all(line.as_bytes()).expect("write");
+            // S3c: the reveal is paced, so advance the clock (a second per
+            // line is far more than the budget needs).
+            state.borrow_mut().reveal_now(
+                start + std::time::Duration::from_secs(i as u64 + 1),
+            );
         }
         let transcript = state.borrow().transcript_lines.clone();
         assert_eq!(transcript.len(), MAX_TRANSCRIPT_LINES);
@@ -5444,6 +5546,48 @@ mod tests {
     }
 
     #[test]
+    fn reveal_releases_text_at_the_configured_rate() {
+        // S3c: the answer and the thinking are revealed at a steady rate, so
+        // text reads left to right instead of appearing in provider chunks.
+        use std::time::{Duration, Instant};
+        let mut state = TuiState::new();
+        let start = Instant::now();
+        // A long line is released a tick at a time: the reader sees it grow
+        // instead of the whole line appearing at once.
+        state.stream_buffer = "a".repeat(REVEAL_TICK_CHARS * 2) + "\n";
+        state.reasoning = "thinking hard".to_owned();
+        state.reveal_now(start);
+        assert_eq!(
+            state.stream_tail.chars().count(),
+            REVEAL_TICK_CHARS,
+            "the first tick releases one tick's budget"
+        );
+        assert!(
+            !state.stream_buffer.is_empty(),
+            "the rest stays buffered for later frames"
+        );
+        // One second later the remaining budget is owed, and it is less than
+        // the whole remainder: the reveal is PACED, not instant.
+        state.reveal_now(start + Duration::from_secs(1));
+        assert!(
+            !state.stream_buffer.is_empty(),
+            "a second releases the per-second rate, not the whole buffer"
+        );
+        // A short buffer is released completely, and the reasoning with it.
+        state.stream_buffer = "short line\n".to_owned();
+        state.reveal_now(start + Duration::from_secs(3));
+        assert!(state.stream_buffer.is_empty());
+        assert_eq!(state.reasoning_shown, state.reasoning.len());
+        assert!(
+            state
+                .transcript_lines
+                .iter()
+                .any(|line| line.ends_with("short line")),
+            "a revealed complete line lands in the transcript"
+        );
+    }
+
+    #[test]
     fn working_line_pulses_once_a_second_and_errors_render_red() {
         // Owner QoL: the liveness line sits above the input with dots that
         // pulse every second, and failures are red rather than plain text.
@@ -5499,6 +5643,12 @@ mod tests {
             "a route that never reasons renders nothing"
         );
         state.reasoning = "one\ntwo\nthree".to_owned();
+        // S3c: nothing renders until it is revealed, then it grows.
+        assert!(
+            state.reasoning_block_lines().is_empty(),
+            "unrevealed thinking is not shown yet"
+        );
+        state.reasoning_shown = state.reasoning.len();
         let collapsed = state.reasoning_block_lines();
         assert_eq!(collapsed.len(), 1, "collapsed thinking is ONE row");
         assert!(collapsed[0].contains("3 lines"));
@@ -5506,11 +5656,13 @@ mod tests {
         // The collapsed row previews the NEWEST text, so thinking streams
         // visibly instead of updating once per completed line.
         state.reasoning = "one\ntwo\nstreaming now".to_owned();
+        state.reasoning_shown = state.reasoning.len();
         assert!(
             state.reasoning_block_lines()[0].contains("streaming now"),
             "the collapsed row shows the newest thinking text"
         );
         state.reasoning = "one\ntwo\nthree".to_owned();
+        state.reasoning_shown = state.reasoning.len();
         let right = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Right,
             crossterm::event::KeyModifiers::NONE,

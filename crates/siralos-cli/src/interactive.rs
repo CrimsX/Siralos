@@ -3591,6 +3591,11 @@ pub fn run_interactive_tui_with_options(
         let tui_state = Rc::clone(&tui_state);
         let pane_cache = Rc::clone(&pane_cache);
         move || {
+            // S3c: every paint releases the text the reader is owed, so the
+            // answer and the thinking grow left to right at a steady rate
+            // whatever chunk size the provider sent -- and the backlog keeps
+            // draining on the idle ticks after a turn ends.
+            tui_state.borrow_mut().reveal_now(std::time::Instant::now());
             if let Ok(mut terminal) = terminal.try_borrow_mut() {
                 let _ = terminal.draw(|frame| {
                     draw_with_pane(
