@@ -255,6 +255,135 @@ fn apply_event(
     }
 }
 
+/// One step of an incremental turn collection (S2, owner QoL 2026-09-12).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TurnStep {
+    /// Keep pulling provider events.
+    Continue,
+    /// Stop pulling: the turn is over, ask
+    /// [`ProviderTurnCollector::finish`] for the outcome.
+    Stop,
+    /// The provider itself declared the terminal outcome (cancellation or
+    /// failure); do not pull further and do not re-derive it.
+    Terminal(TurnOutcome),
+}
+
+/// Incremental collector for exactly one application provider turn.
+///
+/// The whole-turn [`collect_provider_turn`] is a thin loop over this type:
+/// one implementation, two granularities. A frontend that owns the stream
+/// can pull ONE event at a time, repaint, and check for an interrupt
+/// between events instead of only after the turn has arrived -- which is
+/// what "the UI looks frozen" needs.
+#[derive(Debug)]
+pub struct ProviderTurnCollector {
+    state: BoundedTurnState,
+    tool_calls: Vec<TurnToolCall>,
+    seen_call_ids: BTreeSet<String>,
+    invalid_call_index: usize,
+    text_deltas: Vec<String>,
+    failure: Option<TurnFailure>,
+    terminal: Option<TurnOutcome>,
+}
+
+impl Default for ProviderTurnCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProviderTurnCollector {
+    /// A collector with the default turn limits.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            state: BoundedTurnState::new(ProviderTurnLimits::default()),
+            tool_calls: Vec::new(),
+            seen_call_ids: BTreeSet::new(),
+            invalid_call_index: 0,
+            text_deltas: Vec::new(),
+            failure: None,
+            terminal: None,
+        }
+    }
+
+    /// Feed exactly one provider event.
+    pub fn push(&mut self, event: ProviderEvent) -> TurnStep {
+        match event {
+            ProviderEvent::Cancelled { .. } => {
+                self.terminal = Some(TurnOutcome::Cancelled);
+                TurnStep::Terminal(TurnOutcome::Cancelled)
+            }
+            ProviderEvent::Failed(message) => {
+                let outcome = TurnOutcome::Failed {
+                    failure: TurnFailure::ProviderFailed(message),
+                };
+                self.terminal = Some(outcome.clone());
+                TurnStep::Terminal(outcome)
+            }
+            ProviderEvent::Event(event) => {
+                if self.state.completion_seen() {
+                    self.failure = Some(TurnFailure::EventAfterCompletion);
+                    return TurnStep::Stop;
+                }
+                self.apply(event)
+            }
+            ProviderEvent::Raw(raw) => {
+                if self.state.completion_seen() {
+                    self.failure = Some(TurnFailure::EventAfterCompletion);
+                    return TurnStep::Stop;
+                }
+                match validate_external_event(&raw) {
+                    Ok(event) => self.apply(event),
+                    Err(protocol) => {
+                        self.failure = Some(TurnFailure::Protocol(protocol));
+                        TurnStep::Stop
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply(&mut self, event: ModelEvent) -> TurnStep {
+        if let Err(limit) = apply_event(
+            event,
+            &mut self.state,
+            &mut self.tool_calls,
+            &mut self.seen_call_ids,
+            &mut self.invalid_call_index,
+            &mut self.text_deltas,
+        ) {
+            self.failure = Some(limit);
+            return TurnStep::Stop;
+        }
+        TurnStep::Continue
+    }
+
+    /// The outcome once the provider stream has ended, with the same
+    /// precedence the whole-turn wrapper always had: a provider-declared
+    /// terminal outcome first, then a recorded limit/protocol failure, then
+    /// a stream that ended without a completion event.
+    #[must_use]
+    pub fn finish(self) -> TurnOutcome {
+        if let Some(terminal) = self.terminal {
+            return terminal;
+        }
+        if let Some(failure) = self.failure {
+            return TurnOutcome::Failed { failure };
+        }
+        if !self.state.completion_seen() {
+            return TurnOutcome::Failed {
+                failure: TurnFailure::EofWithoutCompletion,
+            };
+        }
+        TurnOutcome::Turn {
+            assistant_text: self.state.assistant_text().to_owned(),
+            text_deltas: self.text_deltas,
+            tool_calls: self.tool_calls,
+        }
+    }
+}
+
 /// Collect and validate exactly one application provider turn.
 ///
 /// The transcript is validated before any provider use. Events are then
@@ -263,6 +392,10 @@ fn apply_event(
 /// and the outcome is committed only when the stream ends after a
 /// 'Completed' event without cancellation. Cancellation outranks
 /// completion and terminal failures.
+///
+/// This is the whole-turn convenience wrapper over
+/// [`ProviderTurnCollector`]; a frontend that owns the stream can pull one
+/// event at a time instead.
 pub fn collect_provider_turn<P: ModelProvider>(
     provider: &P,
     history: &[ConversationItem],
@@ -286,84 +419,22 @@ pub fn collect_provider_turn<P: ModelProvider>(
     // The provider receives only the read-only observation view; the
     // Host keeps the controller and all cancellation authority.
     let mut stream = provider.stream(&request, cancellation.signal());
-    let mut state = BoundedTurnState::new(ProviderTurnLimits::default());
-    let mut tool_calls: Vec<TurnToolCall> = Vec::new();
-    let mut seen_call_ids: BTreeSet<String> = BTreeSet::new();
-    let mut invalid_call_index: usize = 0;
-    let mut text_deltas: Vec<String> = Vec::new();
-    let mut failure: Option<TurnFailure> = None;
+    let mut collector = ProviderTurnCollector::new();
     loop {
         if cancellation.is_cancelled() {
             return TurnOutcome::Cancelled;
         }
-        match stream.next() {
-            None => break,
-            Some(ProviderEvent::Cancelled { .. }) => {
-                return TurnOutcome::Cancelled;
-            }
-            Some(ProviderEvent::Failed(message)) => {
-                return TurnOutcome::Failed {
-                    failure: TurnFailure::ProviderFailed(message),
-                };
-            }
-            Some(ProviderEvent::Event(event)) => {
-                if state.completion_seen() {
-                    failure = Some(TurnFailure::EventAfterCompletion);
-                    break;
-                }
-                if let Err(limit) = apply_event(
-                    event,
-                    &mut state,
-                    &mut tool_calls,
-                    &mut seen_call_ids,
-                    &mut invalid_call_index,
-                    &mut text_deltas,
-                ) {
-                    failure = Some(limit);
-                    break;
-                }
-            }
-            Some(ProviderEvent::Raw(raw)) => {
-                if state.completion_seen() {
-                    failure = Some(TurnFailure::EventAfterCompletion);
-                    break;
-                }
-                match validate_external_event(&raw) {
-                    Ok(event) => {
-                        if let Err(limit) = apply_event(
-                            event,
-                            &mut state,
-                            &mut tool_calls,
-                            &mut seen_call_ids,
-                            &mut invalid_call_index,
-                            &mut text_deltas,
-                        ) {
-                            failure = Some(limit);
-                            break;
-                        }
-                    }
-                    Err(protocol) => {
-                        failure = Some(TurnFailure::Protocol(protocol));
-                        break;
-                    }
-                }
-            }
+        let Some(event) = stream.next() else {
+            break;
+        };
+        match collector.push(event) {
+            TurnStep::Continue => {}
+            TurnStep::Stop => break,
+            TurnStep::Terminal(outcome) => return outcome,
         }
     }
     if cancellation.is_cancelled() {
         return TurnOutcome::Cancelled;
     }
-    if let Some(failure) = failure {
-        return TurnOutcome::Failed { failure };
-    }
-    if !state.completion_seen() {
-        return TurnOutcome::Failed {
-            failure: TurnFailure::EofWithoutCompletion,
-        };
-    }
-    TurnOutcome::Turn {
-        assistant_text: state.assistant_text().to_owned(),
-        text_deltas,
-        tool_calls,
-    }
+    collector.finish()
 }

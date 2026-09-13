@@ -16,7 +16,41 @@ use super::event::{
 use super::result::{
     DetachFailure, ToolExecutionResult, detach_bounded_tool_result,
 };
-use super::turn::{TurnOutcome, TurnToolCall, collect_provider_turn};
+use super::turn::{
+    ProviderTurnCollector, TurnOutcome, TurnStep, TurnToolCall,
+    collect_provider_turn,
+};
+
+#[test]
+fn incremental_collector_matches_the_whole_turn_wrapper() {
+    // S2 (owner QoL 2026-09-12): the session will pull ONE provider event
+    // at a time so a frontend can repaint (and check for an interrupt)
+    // between events. Driving the collector by hand must yield exactly
+    // what the whole-turn wrapper yields.
+    let events = vec![
+        text_event("Hel"),
+        text_event("lo"),
+        call_event("call-1", "workspace.read", json!({"path": "a"})),
+        ProviderEvent::Event(ModelEvent::Completed),
+    ];
+    let provider = ScriptedProvider { events: events.clone() };
+    let token = CancellationToken::new();
+    let wrapped =
+        collect_provider_turn(&provider, &[user("hello")], &[], None, &token);
+
+    let mut collector = ProviderTurnCollector::new();
+    let mut steps = 0usize;
+    for event in events {
+        steps += 1;
+        assert_eq!(
+            collector.push(event),
+            TurnStep::Continue,
+            "the collector must not end the turn before the stream does"
+        );
+    }
+    assert_eq!(collector.finish(), wrapped);
+    assert_eq!(steps, 4, "every event is pulled exactly once");
+}
 
 /// A deterministic scripted provider for the tests.
 struct ScriptedProvider {
