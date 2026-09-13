@@ -16,6 +16,7 @@ pub mod openai;
 pub mod registry;
 pub mod replay;
 pub mod strict_turn;
+pub mod tool_names;
 
 #[cfg(test)]
 mod tests;

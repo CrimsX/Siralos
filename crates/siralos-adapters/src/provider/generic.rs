@@ -310,6 +310,12 @@ impl GenericProvider {
                 return events;
             }
         };
+        // Owner bug 2026-09-12: the provider validator rejects the dot in
+        // `workspace.read`, so the boundary translates every name -- the
+        // definitions below, the replayed calls, and the inbound calls.
+        let tool_names = crate::provider::tool_names::ToolNames::new(
+            request.tools.iter().map(|tool| tool.name.as_str()),
+        );
         let mut messages = Vec::new();
         if let Some(system) = &request.system {
             messages.push(
@@ -336,7 +342,7 @@ impl GenericProvider {
                     };
                     messages.push(serde_json::json!({
                         "role": "assistant",
-                        "tool_calls": [{"id": call_id, "type": "function", "function": {"name": tool_name, "arguments": args_str}}]
+                        "tool_calls": [{"id": call_id, "type": "function", "function": {"name": tool_names.alias(tool_name), "arguments": args_str}}]
                     }));
                 }
                 siralos_core::provider::ConversationItem::ToolResult {
@@ -359,7 +365,7 @@ impl GenericProvider {
         for tool in &request.tools {
             tools_json.push(serde_json::json!({
                 "type": "function",
-                "function": {"name": tool.name, "description": tool.description, "parameters": tool.input_schema}
+                "function": {"name": tool_names.alias(&tool.name), "description": tool.description, "parameters": tool.input_schema}
             }));
         }
         let mut body =
@@ -456,8 +462,9 @@ impl GenericProvider {
         // `RecordedReplayProvider`; validate the value is usable before
         // delegating to avoid double-parse divergence on malformed JSON.
         let _ = &value;
-        let events =
-            crate::provider::replay::completion_events_from_body(&text);
+        let events = tool_names.restore_events(
+            crate::provider::replay::completion_events_from_body(&text),
+        );
         record_outcome(
             hooks,
             last_replay,
