@@ -755,7 +755,7 @@ fn reload_report(
                 parts.push("provider unchanged".to_owned());
             } else {
                 parts.push(format!(
-                    "provider {} -> {}",
+                    "provider {} -> {} (restart to converge)",
                     display_field(current_provider),
                     display_field(want_provider)
                 ));
@@ -778,8 +778,9 @@ fn reload_report(
             if want_cred == current_cred {
                 parts.push("credential unchanged".to_owned());
             } else {
-                parts
-                    .push(format!("credential {current_cred} -> {want_cred}"));
+                parts.push(format!(
+                    "credential {current_cred} -> {want_cred} (restart to converge)"
+                ));
             }
             let want_endpoint = fresh.endpoint.as_deref();
             let current_endpoint = current_endpoint.filter(|s| !s.is_empty());
@@ -809,10 +810,7 @@ fn reload_report(
                 )
             } else {
                 (
-                    format!(
-                        "reload would change: {}; live session unchanged\n",
-                        parts.join("; ")
-                    ),
+                    format!("reload would change: {}\n", parts.join("; ")),
                     reloaded_config(&fresh),
                 )
             }
@@ -4965,8 +4963,12 @@ mod tests {
             report.contains("provider unchanged")
                 && report.contains("model example/model-a -> example/model-b")
                 && report.contains("endpoint unchanged")
-                && report.contains("live session unchanged"),
+                && report.contains("would change"),
             "edited report must name the model change truthfully, got: {report:?}"
+        );
+        assert!(
+            !report.contains("live session unchanged"),
+            "the report must not claim the session is unchanged while the apply step runs, got: {report:?}"
         );
         // Endpoint values are never echoed: a changed endpoint reports the
         // bare word `endpoint changed`.
