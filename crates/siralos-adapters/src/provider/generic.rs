@@ -237,6 +237,28 @@ impl ModelProvider for GenericProvider {
         request: &'a ModelRequest,
         cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
+        // The borrowing entry point keeps its meaning; the streaming work
+        // lives in `open`, which owns the request.
+        self.open(request.clone(), cancellation)
+    }
+
+    fn open_stream<'a>(
+        &'a self,
+        request: ModelRequest,
+        cancellation: CancellationSignal<'a>,
+    ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
+        self.open(request, cancellation)
+    }
+}
+
+impl GenericProvider {
+    /// Send one request and return the turn, streamed when the protocol
+    /// allows it (S2 chunk 3/2).
+    fn open<'a>(
+        &'a self,
+        request: ModelRequest,
+        cancellation: CancellationSignal<'a>,
+    ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
                 message: "Host cancelled the turn before provider start"
@@ -259,7 +281,6 @@ impl ModelProvider for GenericProvider {
                 String::from_utf8_lossy(c.as_bytes()).to_string()
             })
         };
-        let request = request.clone();
         let protocol = *self.protocol.borrow();
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget

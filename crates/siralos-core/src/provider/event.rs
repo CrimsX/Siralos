@@ -454,6 +454,28 @@ pub trait ModelProvider {
         request: &'a ModelRequest,
         cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a>;
+
+    /// Begin one turn stream that OWNS its request (S2 chunk 2).
+    ///
+    /// `stream` borrows the request, so the returned iterator cannot
+    /// outlive the call that built the request -- which is exactly what a
+    /// session needs when it pulls one event per step and lets a frontend
+    /// repaint in between.
+    ///
+    /// The default implementation is EAGER: it drives `stream` to
+    /// completion and hands back the collected events, so every existing
+    /// implementor keeps its exact behaviour and no caller sees a change.
+    /// A provider that can deliver events incrementally overrides this and
+    /// returns a lazy iterator.
+    fn open_stream<'a>(
+        &'a self,
+        request: ModelRequest,
+        cancellation: CancellationSignal<'a>,
+    ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
+        let events: Vec<ProviderEvent> =
+            self.stream(&request, cancellation).collect();
+        Box::new(events.into_iter())
+    }
 }
 
 /// Validate untrusted external provider event data before it becomes a

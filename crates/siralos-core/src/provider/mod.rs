@@ -49,5 +49,6 @@ pub use result::{
     DetachFailure, ToolExecutionResult, detach_bounded_tool_result,
 };
 pub use turn::{
-    BoundedTurnState, TurnOutcome, TurnToolCall, collect_provider_turn,
+    BoundedTurnState, ProviderTurnCollector, TurnOutcome, TurnStep,
+    TurnToolCall, collect_provider_turn, open_provider_turn,
 };

@@ -384,6 +384,45 @@ impl ProviderTurnCollector {
     }
 }
 
+/// Validate the transcript, build the request, and OPEN one provider turn.
+///
+/// The returned iterator OWNS its request, which is why it can outlive this
+/// call: a session pulls one event per step and keeps the collector, so a
+/// frontend gets control (and can repaint) between events. The whole-turn
+/// [`collect_provider_turn`] is the same two pieces in a loop.
+///
+/// # Errors
+///
+/// Returns the terminal outcome when the turn cannot be opened at all: an
+/// invalid transcript, or a cancellation that already landed.
+pub fn open_provider_turn<'a, P: ModelProvider>(
+    provider: &'a P,
+    history: &[ConversationItem],
+    tools: &[ToolDefinition],
+    system: Option<String>,
+    cancellation: &'a CancellationToken,
+) -> Result<
+    (Box<dyn Iterator<Item = ProviderEvent> + 'a>, ProviderTurnCollector),
+    TurnOutcome,
+> {
+    if let Err(failure) = validate_conversation_items(history) {
+        return Err(TurnOutcome::Failed {
+            failure: TurnFailure::InvalidTranscript(failure.message()),
+        });
+    }
+    let request = ModelRequest {
+        messages: history.to_vec(),
+        tools: tools.to_vec(),
+        system,
+    };
+    if cancellation.is_cancelled() {
+        return Err(TurnOutcome::Cancelled);
+    }
+    // The provider receives only the read-only observation view; the Host
+    // keeps the controller and all cancellation authority.
+    let stream = provider.open_stream(request, cancellation.signal());
+    Ok((stream, ProviderTurnCollector::new()))
+}
 /// Collect and validate exactly one application provider turn.
 ///
 /// The transcript is validated before any provider use. Events are then
@@ -403,23 +442,16 @@ pub fn collect_provider_turn<P: ModelProvider>(
     system: Option<String>,
     cancellation: &CancellationToken,
 ) -> TurnOutcome {
-    if let Err(failure) = validate_conversation_items(history) {
-        return TurnOutcome::Failed {
-            failure: TurnFailure::InvalidTranscript(failure.message()),
-        };
-    }
-    let request = ModelRequest {
-        messages: history.to_vec(),
-        tools: tools.to_vec(),
+    let (mut stream, mut collector) = match open_provider_turn(
+        provider,
+        history,
+        tools,
         system,
+        cancellation,
+    ) {
+        Ok(opened) => opened,
+        Err(outcome) => return outcome,
     };
-    if cancellation.is_cancelled() {
-        return TurnOutcome::Cancelled;
-    }
-    // The provider receives only the read-only observation view; the
-    // Host keeps the controller and all cancellation authority.
-    let mut stream = provider.stream(&request, cancellation.signal());
-    let mut collector = ProviderTurnCollector::new();
     loop {
         if cancellation.is_cancelled() {
             return TurnOutcome::Cancelled;
