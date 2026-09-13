@@ -902,6 +902,8 @@ pub struct TuiState {
     pub reasoning: String,
     /// Whether the thinking block is expanded.
     pub reasoning_expanded: bool,
+    /// When the current turn started, for the pulsing `working` line.
+    pub busy_since: Option<std::time::Instant>,
 }
 
 impl Default for TuiState {
@@ -934,6 +936,7 @@ impl Default for TuiState {
             mouse_capture: false,
             reasoning: String::new(),
             reasoning_expanded: false,
+            busy_since: None,
         }
     }
 }
@@ -1235,6 +1238,18 @@ pub fn compose_status_line(
 pub fn style_for_transcript_line(text: &str) -> Style {
     if text.starts_with("> ") {
         Style::default().fg(Color::Cyan)
+    } else if text.starts_with("Response failed")
+        || text.starts_with("Tool failed")
+        || text.starts_with("provider config failed")
+        || text.starts_with("reload not applied")
+    {
+        Style::default().fg(Color::Red)
+    } else if text.starts_with("-> ")
+        || text.starts_with("tool ")
+        || text.starts_with("Tool ")
+    {
+        // Tool activity is secondary: grey keeps it readable but quiet.
+        Style::default().fg(Color::DarkGray)
     } else if text.starts_with("unknown command")
         || text == "Approved."
         || text == "Denied."
@@ -1245,6 +1260,22 @@ pub fn style_for_transcript_line(text: &str) -> Style {
     } else {
         Style::default().fg(Color::White)
     }
+}
+
+/// How long each `working` dot phase lasts.
+pub const WORKING_PULSE: Duration = Duration::from_secs(1);
+
+/// The liveness line rendered directly ABOVE the input (owner QoL
+/// 2026-09-12): the working state moved out of the status row and into the
+/// conversation flow, with dots that pulse once a second.
+///
+/// Pure in `elapsed`, so the animation is testable without a clock: the
+/// render path passes how long the current turn has been running.
+#[must_use]
+pub fn working_line(elapsed: Duration) -> String {
+    let phase = (elapsed.as_millis() / WORKING_PULSE.as_millis().max(1)) % 3;
+    let dots = ".".repeat(1 + phase as usize);
+    format!("working{dots}")
 }
 
 /// Assembled unique-digest total from the same `ContextMetrics` the pane uses (P5 — single source).
@@ -1548,6 +1579,14 @@ pub fn draw_with_pane(
     let mut entries = entries;
     for line in state.reasoning_block_lines() {
         entries.push(TranscriptEntry { text: line, timestamp: None });
+    }
+    if is_working_status(&state.status) {
+        let elapsed =
+            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
+        entries.push(TranscriptEntry {
+            text: working_line(elapsed),
+            timestamp: None,
+        });
     }
     let wrapped =
         wrapped_transcript_rows(&entries, transcript_area.width as usize);
@@ -2237,6 +2276,14 @@ pub fn render_to_buffer_with_pane(
     let mut entries = entries;
     for line in state.reasoning_block_lines() {
         entries.push(TranscriptEntry { text: line, timestamp: None });
+    }
+    if is_working_status(&state.status) {
+        let elapsed =
+            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
+        entries.push(TranscriptEntry {
+            text: working_line(elapsed),
+            timestamp: None,
+        });
     }
     // Same render-layer wrap as the `Frame` path above: scroll windows over
     // wrapped rows so long lines stay readable instead of clipping.
@@ -5352,6 +5399,25 @@ mod tests {
         assert_eq!(state.scroll_offset, 0);
         handle_key(&mut state, key_down, viewport);
         assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn working_line_pulses_once_a_second_and_errors_render_red() {
+        // Owner QoL: the liveness line sits above the input with dots that
+        // pulse every second, and failures are red rather than plain text.
+        use std::time::Duration;
+        assert_eq!(working_line(Duration::ZERO), "working.");
+        assert_eq!(working_line(Duration::from_millis(1200)), "working..");
+        assert_eq!(working_line(Duration::from_millis(2300)), "working...");
+        assert_eq!(working_line(Duration::from_millis(3400)), "working.");
+        assert_eq!(
+            style_for_transcript_line("Response failed: nope").fg,
+            Some(ratatui::style::Color::Red)
+        );
+        assert_eq!(
+            style_for_transcript_line("-> workspace.read").fg,
+            Some(ratatui::style::Color::DarkGray)
+        );
     }
 
     #[test]

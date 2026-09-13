@@ -3776,6 +3776,11 @@ pub fn run_interactive_tui_with_options(
                                 } else {
                                     "ready"
                                 };
+                                // The pulsing `working` line renders above
+                                // the input, timed from the turn start.
+                                tui_state.borrow_mut().busy_since = pending
+                                    .as_ref()
+                                    .map(|_| std::time::Instant::now());
                                 let metrics_opt = context_session_holder
                                     .as_ref()
                                     .map(|s| &s.metrics);
