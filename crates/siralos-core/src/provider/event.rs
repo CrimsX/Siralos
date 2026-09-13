@@ -467,13 +467,17 @@ pub trait ModelProvider {
     /// implementor keeps its exact behaviour and no caller sees a change.
     /// A provider that can deliver events incrementally overrides this and
     /// returns a lazy iterator.
+    /// It deliberately takes NO cancellation signal: cancellation is owned
+    /// by the Host, which checks its token between pulls. Borrowing the
+    /// token here would tie the returned stream to the caller's `self` and
+    /// stop a session from holding it across steps.
     fn open_stream<'a>(
         &'a self,
         request: ModelRequest,
-        cancellation: CancellationSignal<'a>,
     ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
+        let token = CancellationToken::new();
         let events: Vec<ProviderEvent> =
-            self.stream(&request, cancellation).collect();
+            self.stream(&request, token.signal()).collect();
         Box::new(events.into_iter())
     }
 }

@@ -239,15 +239,16 @@ impl ModelProvider for GenericProvider {
     ) -> Self::Stream<'a> {
         // The borrowing entry point keeps its meaning; the streaming work
         // lives in `open`, which owns the request.
-        self.open(request.clone(), cancellation)
+        self.open(request.clone(), Some(cancellation))
     }
 
     fn open_stream<'a>(
         &'a self,
         request: ModelRequest,
-        cancellation: CancellationSignal<'a>,
     ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
-        self.open(request, cancellation)
+        // No signal: the session that owns this stream checks its own
+        // cancellation token between pulls (the read loop stays bounded).
+        self.open(request, None)
     }
 }
 
@@ -257,9 +258,9 @@ impl GenericProvider {
     fn open<'a>(
         &'a self,
         request: ModelRequest,
-        cancellation: CancellationSignal<'a>,
+        cancellation: Option<CancellationSignal<'a>>,
     ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
-        if cancellation.is_cancelled() {
+        if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
                 message: "Host cancelled the turn before provider start"
                     .to_owned(),
@@ -322,11 +323,11 @@ impl GenericProvider {
         protocol: Protocol,
         credential: Option<String>,
         request: &ModelRequest,
-        cancellation: CancellationSignal<'_>,
+        cancellation: Option<CancellationSignal<'_>>,
         hooks: &ReplayHooks,
         last_replay: &RefCell<ProviderReplayAvailability>,
     ) -> CallOutcome {
-        if cancellation.is_cancelled() {
+        if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: "Host cancelled before HTTP call".to_owned(),
             }]);
@@ -416,7 +417,7 @@ impl GenericProvider {
         if let Some(system) = &request.system {
             body["system"] = Value::String(system.clone());
         }
-        if cancellation.is_cancelled() {
+        if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: "Host cancelled before HTTP send".to_owned(),
             }]);
@@ -444,7 +445,7 @@ impl GenericProvider {
                 return CallOutcome::Events(events);
             }
         };
-        if cancellation.is_cancelled() {
+        if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: "Host cancelled after HTTP response".to_owned(),
             }]);
@@ -570,7 +571,7 @@ struct StreamingTurn<'a> {
     model: String,
     hooks: &'a ReplayHooks,
     last_replay: &'a RefCell<ProviderReplayAvailability>,
-    cancellation: CancellationSignal<'a>,
+    cancellation: Option<CancellationSignal<'a>>,
     tool_names: ToolNames,
     assembler: crate::provider::sse::CompletionStream,
     pending_bytes: Vec<u8>,
@@ -596,7 +597,7 @@ impl<'a> StreamingTurn<'a> {
         model: String,
         hooks: &'a ReplayHooks,
         last_replay: &'a RefCell<ProviderReplayAvailability>,
-        cancellation: CancellationSignal<'a>,
+        cancellation: Option<CancellationSignal<'a>>,
         tool_names: ToolNames,
     ) -> Self {
         Self {
@@ -682,7 +683,7 @@ impl Iterator for StreamingTurn<'_> {
                 }
                 StreamState::Reading => {}
             }
-            if self.cancellation.is_cancelled() {
+            if self.cancellation.is_some_and(|signal| signal.is_cancelled()) {
                 self.record_once();
                 self.state = StreamState::Done;
                 return Some(ProviderEvent::Cancelled {

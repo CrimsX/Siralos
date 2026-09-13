@@ -20,8 +20,9 @@ use crate::projection::{
     visibility::ProjectionMode,
 };
 use crate::provider::{
-    CancellationToken, ConversationItem, ModelProvider, ToolDefinition,
-    ToolExecutionResult, TurnOutcome, collect_provider_turn,
+    CancellationToken, ConversationItem, ModelEvent, ModelProvider,
+    ProviderEvent, ToolDefinition, ToolExecutionResult, TurnOutcome, TurnStep,
+    open_provider_turn,
 };
 use crate::tool::budget::RoundBudget;
 use crate::tool::events::ToolLoopEvent;
@@ -238,6 +239,14 @@ enum Phase<'a> {
     EmitText {
         turn: CollectedTurn,
     },
+    /// Streaming collection (S2 chunk 2): the machine pulls ONE provider
+    /// event per step, so a frontend gets control (and can repaint)
+    /// between events. Text deltas leave as they arrive; the collector
+    /// keeps validating to the same outcome as the whole-turn path.
+    StreamTurn {
+        stream: Box<dyn Iterator<Item = ProviderEvent> + 'a>,
+        collector: crate::provider::ProviderTurnCollector,
+    },
     RunningRound {
         runner: ToolRoundRunner<HostToolExecutor<'a>>,
         assistant_text: String,
@@ -371,11 +380,13 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                         }
                     }
                     self.provider_turns += 1;
-                    let outcome = match request {
+                    // S2 chunk 2: OPEN the turn, then stream it one event
+                    // per step instead of collecting it in one call.
+                    let opened = match request {
                         ProviderRequest::Raw => {
                             let definitions =
                                 self.host.provider_tool_definitions();
-                            collect_provider_turn(
+                            open_provider_turn(
                                 self.provider,
                                 self.history.as_slice(),
                                 &definitions,
@@ -385,17 +396,72 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                         }
                         ProviderRequest::Projected(projected) => {
                             let projected = *projected;
-                            let definitions = projected.tools;
-                            collect_provider_turn(
+                            open_provider_turn(
                                 self.provider,
                                 projected.messages.as_slice(),
-                                &definitions,
+                                &projected.tools,
                                 projected.system,
                                 &self.token,
                             )
                         }
                     };
-                    self.phase = self.handle_provider_outcome(outcome);
+                    self.phase = match opened {
+                        Ok((stream, collector)) => {
+                            Phase::StreamTurn { stream, collector }
+                        }
+                        Err(outcome) => self.handle_provider_outcome(outcome),
+                    };
+                }
+                Phase::StreamTurn { mut stream, mut collector } => {
+                    // The stream holds no cancellation signal; the Host is
+                    // the authority and checks its own token between pulls.
+                    if self.token.is_cancelled() {
+                        self.phase = Phase::Terminal {
+                            event: ToolLoopEvent::ResponseCancelled,
+                        };
+                        continue;
+                    }
+                    match stream.next() {
+                        None => {
+                            let outcome =
+                                Self::without_text_deltas(collector.finish());
+                            self.phase = self.handle_provider_outcome(outcome);
+                        }
+                        Some(event) => {
+                            let live_text = match &event {
+                                ProviderEvent::Event(
+                                    ModelEvent::TextDelta { text },
+                                ) => Some(text.clone()),
+                                _ => None,
+                            };
+                            match collector.push(event) {
+                                TurnStep::Terminal(outcome) => {
+                                    self.phase =
+                                        self.handle_provider_outcome(outcome);
+                                }
+                                TurnStep::Stop => {
+                                    let outcome = Self::without_text_deltas(
+                                        collector.finish(),
+                                    );
+                                    self.phase =
+                                        self.handle_provider_outcome(outcome);
+                                }
+                                TurnStep::Continue => {
+                                    self.phase = Phase::StreamTurn {
+                                        stream,
+                                        collector,
+                                    };
+                                    if let Some(text) = live_text {
+                                        // Live: the frontend sees the
+                                        // answer as it arrives.
+                                        return Some(
+                                            ToolLoopEvent::TextDelta { text },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Phase::EmitText { mut turn } => {
                     match turn.text_deltas.pop_front() {
@@ -465,6 +531,23 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
             projected.tool_projection.approved_names.clone(),
         ));
         projected
+    }
+
+    /// The turn outcome with its text deltas REMOVED: the streaming phase
+    /// already emitted them as they arrived (S2 chunk 2), so replaying them
+    /// through `EmitText` would double the answer. The assistant text and the
+    /// tool calls -- everything the later phases act on -- are kept.
+    fn without_text_deltas(outcome: TurnOutcome) -> TurnOutcome {
+        match outcome {
+            TurnOutcome::Turn { assistant_text, tool_calls, .. } => {
+                TurnOutcome::Turn {
+                    assistant_text,
+                    text_deltas: Vec::new(),
+                    tool_calls,
+                }
+            }
+            other => other,
+        }
     }
 
     fn handle_provider_outcome(&mut self, outcome: TurnOutcome) -> Phase<'a> {

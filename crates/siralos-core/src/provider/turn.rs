@@ -400,7 +400,9 @@ pub fn open_provider_turn<'a, P: ModelProvider>(
     history: &[ConversationItem],
     tools: &[ToolDefinition],
     system: Option<String>,
-    cancellation: &'a CancellationToken,
+    // Deliberately NOT tied to `'a`: the token is only read here, and the
+    // stream must stay storable by a caller that keeps mutating itself.
+    cancellation: &CancellationToken,
 ) -> Result<
     (Box<dyn Iterator<Item = ProviderEvent> + 'a>, ProviderTurnCollector),
     TurnOutcome,
@@ -419,10 +421,13 @@ pub fn open_provider_turn<'a, P: ModelProvider>(
         return Err(TurnOutcome::Cancelled);
     }
     // The provider receives only the read-only observation view; the Host
-    // keeps the controller and all cancellation authority.
-    let stream = provider.open_stream(request, cancellation.signal());
+    // keeps the controller and all cancellation authority. The stream
+    // deliberately holds no signal: the caller checks the token between
+    // pulls, which is also what keeps the stream storable across steps.
+    let stream = provider.open_stream(request);
     Ok((stream, ProviderTurnCollector::new()))
 }
+
 /// Collect and validate exactly one application provider turn.
 ///
 /// The transcript is validated before any provider use. Events are then
