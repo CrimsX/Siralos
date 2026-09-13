@@ -15,6 +15,7 @@ pub mod generic;
 pub mod openai;
 pub mod registry;
 pub mod replay;
+pub mod sse;
 pub mod strict_turn;
 pub mod tool_names;
 

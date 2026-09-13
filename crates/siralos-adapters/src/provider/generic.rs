@@ -24,6 +24,7 @@
 //! `ProfileRecord` validation is accepted.
 
 use crate::provider::credential::HostCredential;
+use crate::provider::tool_names::ToolNames;
 use crate::provider::{ReplayHooks, record_outcome};
 use serde_json::Value;
 use siralos_core::composition::Protocol;
@@ -263,7 +264,7 @@ impl ModelProvider for GenericProvider {
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget
         // is the only retry.
-        let events = Self::call_generic(
+        match Self::call_generic(
             &provider,
             &model,
             &endpoint,
@@ -273,8 +274,21 @@ impl ModelProvider for GenericProvider {
             cancellation,
             &self.hooks,
             &self.last_replay,
-        );
-        Box::new(events.into_iter())
+        ) {
+            CallOutcome::Events(events) => Box::new(events.into_iter()),
+            CallOutcome::Streaming { response, status, tool_names } => {
+                Box::new(StreamingTurn::new(
+                    response,
+                    status,
+                    provider,
+                    model,
+                    &self.hooks,
+                    &self.last_replay,
+                    cancellation,
+                    tool_names,
+                ))
+            }
+        }
     }
 }
 
@@ -290,11 +304,11 @@ impl GenericProvider {
         cancellation: CancellationSignal<'_>,
         hooks: &ReplayHooks,
         last_replay: &RefCell<ProviderReplayAvailability>,
-    ) -> Vec<ProviderEvent> {
+    ) -> CallOutcome {
         if cancellation.is_cancelled() {
-            return vec![ProviderEvent::Cancelled {
+            return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: "Host cancelled before HTTP call".to_owned(),
-            }];
+            }]);
         }
         let client = match reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -307,7 +321,7 @@ impl GenericProvider {
                     "{provider} client build failed: {err}"
                 ))];
                 record_outcome(hooks, last_replay, provider, model, None, "");
-                return events;
+                return CallOutcome::Events(events);
             }
         };
         // Owner bug 2026-09-12: the provider validator rejects the dot in
@@ -370,6 +384,11 @@ impl GenericProvider {
         }
         let mut body =
             serde_json::json!({"model": model, "messages": messages});
+        if protocol == Protocol::OpenAiCompletions {
+            // Server-sent events: the streamed deltas are assembled back
+            // into the same events (and the same recording) as before.
+            body["stream"] = Value::Bool(true);
+        }
         if !tools_json.is_empty() {
             body["tools"] = Value::Array(tools_json);
         }
@@ -377,9 +396,9 @@ impl GenericProvider {
             body["system"] = Value::String(system.clone());
         }
         if cancellation.is_cancelled() {
-            return vec![ProviderEvent::Cancelled {
+            return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: "Host cancelled before HTTP send".to_owned(),
-            }];
+            }]);
         }
         let url = chat_url(endpoint, protocol);
         let mut req =
@@ -401,29 +420,35 @@ impl GenericProvider {
                     "{provider} request failed: {err}"
                 ))];
                 record_outcome(hooks, last_replay, provider, model, None, "");
-                return events;
+                return CallOutcome::Events(events);
             }
         };
         if cancellation.is_cancelled() {
-            return vec![ProviderEvent::Cancelled {
+            return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: "Host cancelled after HTTP response".to_owned(),
-            }];
+            }]);
         }
         let status = response.status();
-        // Bound the response body at READ time (at most 1 MiB is buffered)
-        // and sanitize untrusted data before embedding it in the
-        // Host-visible diagnostic.
-        let text = match crate::provider::bounded_body_text(response) {
-            Ok(text) => text,
-            Err(err) => {
-                let events = vec![ProviderEvent::Failed(format!(
-                    "{provider} response read failed: {err}"
-                ))];
-                record_outcome(hooks, last_replay, provider, model, None, "");
-                return events;
-            }
-        };
         if !status.is_success() {
+            // A refused request still has a bounded, sanitized body worth
+            // reporting; read it once and stop (no stream to iterate).
+            let text = match crate::provider::bounded_body_text(response) {
+                Ok(text) => text,
+                Err(err) => {
+                    let events = vec![ProviderEvent::Failed(format!(
+                        "{provider} response read failed: {err}"
+                    ))];
+                    record_outcome(
+                        hooks,
+                        last_replay,
+                        provider,
+                        model,
+                        None,
+                        "",
+                    );
+                    return CallOutcome::Events(events);
+                }
+            };
             let events = vec![ProviderEvent::Failed(http_error_message(
                 status.as_u16(),
                 &url,
@@ -437,43 +462,251 @@ impl GenericProvider {
                 Some(status.as_u16()),
                 &text,
             );
-            return events;
+            return CallOutcome::Events(events);
         }
-        let value: Value = match serde_json::from_str(&text) {
-            Ok(v) => v,
-            Err(err) => {
-                let snippet: String = text.chars().take(512).collect();
-                let events = vec![ProviderEvent::Failed(format!(
-                    "{provider} response JSON parse failed: {err}: {snippet}"
-                ))];
-                record_outcome(
-                    hooks,
-                    last_replay,
-                    provider,
-                    model,
-                    Some(status.as_u16()),
-                    &text,
-                );
-                return events;
-            }
-        };
-        // Body-to-events conversion is centralized in
-        // `crate::provider::replay::completion_events_from_body` for reuse by
-        // `RecordedReplayProvider`; validate the value is usable before
-        // delegating to avoid double-parse divergence on malformed JSON.
-        let _ = &value;
-        let events = tool_names.restore_events(
-            crate::provider::replay::completion_events_from_body(&text),
-        );
-        record_outcome(
-            hooks,
-            last_replay,
+        if protocol != Protocol::OpenAiCompletions {
+            // The responses and messages protocols stream DIFFERENT event
+            // shapes, so they keep the whole-body path byte-unchanged
+            // (no `stream: true` was sent for them).
+            let text = match crate::provider::bounded_body_text(response) {
+                Ok(text) => text,
+                Err(err) => {
+                    let events = vec![ProviderEvent::Failed(format!(
+                        "{provider} response read failed: {err}"
+                    ))];
+                    record_outcome(
+                        hooks,
+                        last_replay,
+                        provider,
+                        model,
+                        None,
+                        "",
+                    );
+                    return CallOutcome::Events(events);
+                }
+            };
+            let value: Value = match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(err) => {
+                    let snippet: String = text.chars().take(512).collect();
+                    let events = vec![ProviderEvent::Failed(format!(
+                        "{provider} response JSON parse failed: {err}: {snippet}"
+                    ))];
+                    record_outcome(
+                        hooks,
+                        last_replay,
+                        provider,
+                        model,
+                        Some(status.as_u16()),
+                        &text,
+                    );
+                    return CallOutcome::Events(events);
+                }
+            };
+            let _ = &value;
+            let events = tool_names.restore_events(
+                crate::provider::replay::completion_events_from_body(&text),
+            );
+            record_outcome(
+                hooks,
+                last_replay,
+                provider,
+                model,
+                Some(status.as_u16()),
+                &text,
+            );
+            return CallOutcome::Events(events);
+        }
+        // 2xx on the OpenAI-compatible chat path: hand the OPEN response
+        // back so the caller iterates events as they arrive.
+        CallOutcome::Streaming {
+            response,
+            status: status.as_u16(),
+            tool_names,
+        }
+    }
+}
+
+/// What one generic call produced (S2 chunk 3).
+enum CallOutcome {
+    /// Terminal events: the call failed before a usable stream existed.
+    Events(Vec<ProviderEvent>),
+    /// A 2xx response the caller iterates incrementally.
+    Streaming {
+        response: reqwest::blocking::Response,
+        status: u16,
+        tool_names: ToolNames,
+    },
+}
+
+/// One streamed provider turn: reads the response in bounded chunks, parses
+/// SSE frames as they complete, and records the assembled body once at the
+/// end so a recording still replays through the shared body converter.
+struct StreamingTurn<'a> {
+    response: reqwest::blocking::Response,
+    status: u16,
+    provider: String,
+    model: String,
+    hooks: &'a ReplayHooks,
+    last_replay: &'a RefCell<ProviderReplayAvailability>,
+    cancellation: CancellationSignal<'a>,
+    tool_names: ToolNames,
+    assembler: crate::provider::sse::CompletionStream,
+    pending_bytes: Vec<u8>,
+    queued: std::collections::VecDeque<ProviderEvent>,
+    state: StreamState,
+    recorded: bool,
+}
+
+#[derive(PartialEq, Eq)]
+enum StreamState {
+    Reading,
+    /// The response is finished; drain what is queued, then stop.
+    Draining,
+    Done,
+}
+
+impl<'a> StreamingTurn<'a> {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        response: reqwest::blocking::Response,
+        status: u16,
+        provider: String,
+        model: String,
+        hooks: &'a ReplayHooks,
+        last_replay: &'a RefCell<ProviderReplayAvailability>,
+        cancellation: CancellationSignal<'a>,
+        tool_names: ToolNames,
+    ) -> Self {
+        Self {
+            response,
+            status,
             provider,
             model,
-            Some(status.as_u16()),
-            &text,
+            hooks,
+            last_replay,
+            cancellation,
+            tool_names,
+            assembler: crate::provider::sse::CompletionStream::new(
+                crate::provider::MAX_RESPONSE_BYTES,
+            ),
+            pending_bytes: Vec::new(),
+            queued: std::collections::VecDeque::new(),
+            state: StreamState::Reading,
+            recorded: false,
+        }
+    }
+
+    /// Record once: the assembled (or plain) body, never raw chunks, so the
+    /// replay store keeps its body-shaped contract.
+    fn record_once(&mut self) {
+        if self.recorded {
+            return;
+        }
+        self.recorded = true;
+        let body = match self.assembler.plain_body() {
+            Some(body) => body.to_owned(),
+            None => self.assembler.assembled_body().to_string(),
+        };
+        record_outcome(
+            self.hooks,
+            self.last_replay,
+            &self.provider,
+            &self.model,
+            Some(self.status),
+            &body,
         );
-        events
+    }
+
+    /// Decode the bytes read so far, keeping an incomplete trailing UTF-8
+    /// sequence for the next read instead of corrupting it.
+    fn take_text(&mut self) -> String {
+        match std::str::from_utf8(&self.pending_bytes) {
+            Ok(text) => {
+                let text = text.to_owned();
+                self.pending_bytes.clear();
+                text
+            }
+            Err(err) if err.error_len().is_none() => {
+                let valid = err.valid_up_to();
+                let text =
+                    String::from_utf8_lossy(&self.pending_bytes[..valid])
+                        .to_string();
+                self.pending_bytes.drain(..valid);
+                text
+            }
+            Err(_) => {
+                let text =
+                    String::from_utf8_lossy(&self.pending_bytes).to_string();
+                self.pending_bytes.clear();
+                text
+            }
+        }
+    }
+}
+
+impl Iterator for StreamingTurn<'_> {
+    type Item = ProviderEvent;
+
+    fn next(&mut self) -> Option<ProviderEvent> {
+        loop {
+            if let Some(event) = self.queued.pop_front() {
+                return Some(event);
+            }
+            match self.state {
+                StreamState::Done => return None,
+                StreamState::Draining => {
+                    self.state = StreamState::Done;
+                    return None;
+                }
+                StreamState::Reading => {}
+            }
+            if self.cancellation.is_cancelled() {
+                self.record_once();
+                self.state = StreamState::Done;
+                return Some(ProviderEvent::Cancelled {
+                    message: "Host cancelled during the streamed response"
+                        .to_owned(),
+                });
+            }
+            let mut buf = [0u8; 8192];
+            match std::io::Read::read(&mut self.response, &mut buf) {
+                Ok(0) => {
+                    let events = match self.assembler.plain_body() {
+                        Some(body) => crate::provider::replay::completion_events_from_body(body),
+                        None => self.assembler.finish(),
+                    };
+                    let restored = self.tool_names.restore_events(events);
+                    self.queued.extend(restored);
+                    self.record_once();
+                    self.state = StreamState::Draining;
+                }
+                Ok(n) => {
+                    self.pending_bytes.extend_from_slice(&buf[..n]);
+                    let text = self.take_text();
+                    let events = self.assembler.push_chunk(&text);
+                    let failed = matches!(
+                        events.first(),
+                        Some(ProviderEvent::Failed(_))
+                    );
+                    let restored = self.tool_names.restore_events(events);
+                    self.queued.extend(restored);
+                    if failed {
+                        self.record_once();
+                        self.state = StreamState::Draining;
+                    }
+                }
+                Err(err) => {
+                    let message = format!(
+                        "{} response read failed: {err}",
+                        self.provider
+                    );
+                    self.record_once();
+                    self.state = StreamState::Done;
+                    return Some(ProviderEvent::Failed(message));
+                }
+            }
+        }
     }
 }
 
