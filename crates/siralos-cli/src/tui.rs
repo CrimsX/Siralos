@@ -61,6 +61,9 @@ pub const REDRAW_INTERVAL: Duration = Duration::from_millis(33);
 /// trace cannot grow the state without bound.
 pub const REASONING_BYTES: usize = 8192;
 
+/// How many thinking rows the expanded block shows (the tail).
+pub const REASONING_ROWS: usize = 8;
+
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
 pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript directly; /mouse again hands the mouse back to the terminal";
@@ -989,6 +992,32 @@ impl TuiState {
         }
     }
 
+    /// The thinking block as transcript rows (S3b).
+    ///
+    /// Empty when nothing was streamed, so a route that never reasons is
+    /// byte-identical to before. Collapsed it is ONE row; expanded it is a
+    /// bounded tail of the thinking, so a long trace cannot push the
+    /// conversation off screen.
+    #[must_use]
+    pub fn reasoning_block_lines(&self) -> Vec<String> {
+        if self.reasoning.trim().is_empty() {
+            return Vec::new();
+        }
+        let lines: Vec<&str> = self.reasoning.lines().collect();
+        if !self.reasoning_expanded {
+            return vec![format!(
+                "\u{25b8} thinking ({} lines) - press Right to expand",
+                lines.len()
+            )];
+        }
+        let mut out =
+            vec![format!("\u{25be} thinking - press Left to collapse")];
+        for line in lines.iter().rev().take(REASONING_ROWS).rev() {
+            out.push(format!("  {line}"));
+        }
+        out
+    }
+
     /// Append a sanitized line verbatim (no sanitization, no unsanitized
     /// injection). Oldest lines are dropped when the bound is exceeded.
     /// Keeps `None` timestamp (static host lines).
@@ -1499,6 +1528,12 @@ pub fn draw_with_pane(
             })
             .collect()
     };
+    // S3b: the thinking block renders as the last transcript rows, so it
+    // scrolls with the conversation and needs no layout surgery.
+    let mut entries = entries;
+    for line in state.reasoning_block_lines() {
+        entries.push(TranscriptEntry { text: line, timestamp: None });
+    }
     let wrapped =
         wrapped_transcript_rows(&entries, transcript_area.width as usize);
     let mut expanded: Vec<Line<'_>> = Vec::with_capacity(wrapped.len());
@@ -2182,6 +2217,12 @@ pub fn render_to_buffer_with_pane(
             })
             .collect()
     };
+    // S3b: the thinking block renders as the last transcript rows, so it
+    // scrolls with the conversation and needs no layout surgery.
+    let mut entries = entries;
+    for line in state.reasoning_block_lines() {
+        entries.push(TranscriptEntry { text: line, timestamp: None });
+    }
     // Same render-layer wrap as the `Frame` path above: scroll windows over
     // wrapped rows so long lines stay readable instead of clipping.
     let wrapped =
@@ -3784,6 +3825,17 @@ pub fn handle_key(
             // Ctrl+C is handled by the outer loop as exit, not here.
             false
         }
+        (KeyCode::Right, _) => {
+            // S3b: expand the thinking block (no-op when nothing streamed).
+            if !state.reasoning.trim().is_empty() {
+                state.reasoning_expanded = true;
+            }
+            false
+        }
+        (KeyCode::Left, _) => {
+            state.reasoning_expanded = false;
+            false
+        }
         (KeyCode::Esc, _) => {
             // Esc clears palette/picker context or input. Also clears selection/history.
             if state.palette.is_some() {
@@ -5248,6 +5300,38 @@ mod tests {
         assert_eq!(state.scroll_offset, 0);
         handle_key(&mut state, key_down, viewport);
         assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn thinking_block_is_absent_collapsed_and_expands_in_place() {
+        // S3b: one collapsed row, expanded by Right, collapsed by Left, and
+        // ABSENT when the route streamed no thinking at all.
+        let mut state = TuiState::new();
+        assert!(
+            state.reasoning_block_lines().is_empty(),
+            "a route that never reasons renders nothing"
+        );
+        state.reasoning = "one\ntwo\nthree".to_owned();
+        let collapsed = state.reasoning_block_lines();
+        assert_eq!(collapsed.len(), 1, "collapsed thinking is ONE row");
+        assert!(collapsed[0].contains("3 lines"));
+        assert!(collapsed[0].contains("Right"));
+        let right = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert!(!handle_key(&mut state, right, 10));
+        assert!(state.reasoning_expanded);
+        let expanded = state.reasoning_block_lines();
+        assert_eq!(expanded.len(), 4, "a header plus the three lines");
+        assert!(expanded[1].contains("one"));
+        let left = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Left,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        handle_key(&mut state, left, 10);
+        assert!(!state.reasoning_expanded);
+        assert_eq!(state.reasoning_block_lines().len(), 1);
     }
 
     #[test]
