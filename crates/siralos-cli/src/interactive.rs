@@ -3494,8 +3494,16 @@ pub fn run_interactive_tui_with_options(
     // `mut`: `/mouse` re-pairs the terminal escape through it in-loop.
     let mut _guard = TerminalGuard::enter().map_err(InteractiveError::Io)?;
     let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-    let mut terminal = ratatui::Terminal::new(backend)
-        .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
+    // S2 chunk 4: the terminal is SHARED, because the sink must be able to
+    // ask for a frame while a streamed turn is arriving -- the loop itself
+    // is blocked inside the drain at that moment.
+    let terminal =
+        Rc::new(RefCell::new(ratatui::Terminal::new(backend).map_err(
+            |e| InteractiveError::Io(io::Error::other(e.to_string())),
+        )?));
+    // The last pane the loop built, so a sink-driven frame never blanks it.
+    let pane_cache: Rc<RefCell<Option<crate::tui::ContextPaneData>>> =
+        Rc::new(RefCell::new(None));
     let SessionComposition {
         workspace_root,
         tool_definitions,
@@ -3546,19 +3554,38 @@ pub fn run_interactive_tui_with_options(
     }
     let mut sink = TuiSink::new(tui_state.clone());
 
+    // One place that paints a frame, callable from the loop and from the
+    // sink. It never blocks: a frame already in progress is skipped.
+    let draw_now = {
+        let terminal = Rc::clone(&terminal);
+        let tui_state = Rc::clone(&tui_state);
+        let pane_cache = Rc::clone(&pane_cache);
+        move || {
+            if let Ok(mut terminal) = terminal.try_borrow_mut() {
+                let _ = terminal.draw(|frame| {
+                    draw_with_pane(
+                        &tui_state.borrow(),
+                        pane_cache.borrow().as_ref(),
+                        frame,
+                    )
+                });
+            }
+        }
+    };
+    {
+        let hook: Rc<dyn Fn()> = Rc::new(draw_now.clone());
+        sink.set_redraw(hook);
+    }
+
     // Initial draw (T3: the context pane renders when the shared audit
     // gate passes — opted in AND built — and is byte-identical to T2
     // otherwise).
-    let pane = build_context_pane(
+    *pane_cache.borrow_mut() = build_context_pane(
         context_system_enabled,
         context_session_holder.as_ref().map(|session| &session.metrics),
         application.history(),
     );
-    terminal
-        .draw(|frame| {
-            draw_with_pane(&tui_state.borrow(), pane.as_ref(), frame)
-        })
-        .map_err(|e| InteractiveError::Io(io::Error::other(e.to_string())))?;
+    draw_now();
 
     // Event loop: P1 zero-timeout drain + immediate draw, outer 50ms idle poll.
     loop {
@@ -3607,6 +3634,7 @@ pub fn run_interactive_tui_with_options(
                             }
                         } else {
                             let viewport = terminal
+                                .borrow()
                                 .size()
                                 .map_err(|e| {
                                     InteractiveError::Io(io::Error::other(
@@ -3654,6 +3682,7 @@ pub fn run_interactive_tui_with_options(
                     }
                     crossterm::event::Event::Mouse(mouse) => {
                         let viewport = terminal
+                            .borrow()
                             .size()
                             .map_err(|e| {
                                 InteractiveError::Io(io::Error::other(
@@ -3792,20 +3821,14 @@ pub fn run_interactive_tui_with_options(
         // submitted text and `working` is never seen until the response
         // arrives -- the "press Enter" and "looks frozen" reports.
         if pending_submit.is_some() {
-            let pane = build_context_pane(
+            *pane_cache.borrow_mut() = build_context_pane(
                 context_system_enabled,
                 context_session_holder
                     .as_ref()
                     .map(|session| &session.metrics),
                 application.history(),
             );
-            terminal
-                .draw(|frame| {
-                    draw_with_pane(&tui_state.borrow(), pane.as_ref(), frame)
-                })
-                .map_err(|e| {
-                    InteractiveError::Io(io::Error::other(e.to_string()))
-                })?;
+            draw_now();
         }
         if let Some(input_line) = pending_submit.take() {
             // I3 & I6/I7: parse once, handle unknown honesty before dispatch
@@ -4011,18 +4034,12 @@ pub fn run_interactive_tui_with_options(
             tui_state.borrow_mut().status = composed;
         }
         // One draw at loop bottom — every drained batch or idle tick (P1: immediate after drain)
-        let pane = build_context_pane(
+        *pane_cache.borrow_mut() = build_context_pane(
             context_system_enabled,
             context_session_holder.as_ref().map(|session| &session.metrics),
             application.history(),
         );
-        terminal
-            .draw(|frame| {
-                draw_with_pane(&tui_state.borrow(), pane.as_ref(), frame)
-            })
-            .map_err(|e| {
-                InteractiveError::Io(io::Error::other(e.to_string()))
-            })?;
+        draw_now();
     }
 
     // Decision 78 B2: the shared record-replay flush both loops call.

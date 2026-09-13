@@ -52,6 +52,11 @@ pub const APPROVAL_TRUNCATION_MARKER: &str = "... (truncated)";
 /// PageUp/PageDown keep their 10-row step; the wheel is the fine control.
 pub const MOUSE_WHEEL_STEP: u16 = 3;
 
+/// Minimum gap between sink-requested redraws while a stream is arriving.
+/// Above ~30 fps a terminal gains nothing, and the last delta of a turn is
+/// always painted because the loop's own draw runs after the drain.
+pub const REDRAW_INTERVAL: Duration = Duration::from_millis(33);
+
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
 pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript directly; /mouse again hands the mouse back to the terminal";
@@ -2508,12 +2513,45 @@ pub fn render_to_buffer_with_pane(
 pub struct TuiSink {
     state: Rc<RefCell<TuiState>>,
     buf: String,
+    /// The live loop's redraw hook (S2 chunk 4): a streamed delta lands in
+    /// the transcript and the sink asks for a frame, which is what makes
+    /// streaming VISIBLE instead of arriving in one frame at the end.
+    /// `None` in headless tests.
+    redraw: Option<Rc<dyn Fn()>>,
+    /// Last time the hook ran, for throttling a fast stream.
+    last_redraw: std::cell::Cell<Option<std::time::Instant>>,
 }
 
 impl TuiSink {
     /// Create a sink sharing `state`.
     pub fn new(state: Rc<RefCell<TuiState>>) -> Self {
-        Self { state, buf: String::new() }
+        Self {
+            state,
+            buf: String::new(),
+            redraw: None,
+            last_redraw: std::cell::Cell::new(None),
+        }
+    }
+
+    /// Install the live loop's redraw hook.
+    pub fn set_redraw(&mut self, redraw: Rc<dyn Fn()>) {
+        self.redraw = Some(redraw);
+    }
+
+    /// Ask for a frame, at most once per [`REDRAW_INTERVAL`].
+    fn redraw_due(&self) {
+        let Some(hook) = self.redraw.as_ref() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        let due = match self.last_redraw.get() {
+            None => true,
+            Some(last) => now.duration_since(last) >= REDRAW_INTERVAL,
+        };
+        if due {
+            self.last_redraw.set(Some(now));
+            hook();
+        }
     }
 
     /// Flush any partial line (without trailing newline) as a transcript entry.
@@ -2521,6 +2559,7 @@ impl TuiSink {
         if !self.buf.is_empty() {
             let line = std::mem::take(&mut self.buf);
             self.state.borrow_mut().push_line(line);
+            self.redraw_due();
         }
     }
 }
@@ -2541,6 +2580,7 @@ impl Write for TuiSink {
                 line
             };
             self.state.borrow_mut().push_line(line);
+            self.redraw_due();
         }
         Ok(bytes.len())
     }
@@ -5196,6 +5236,35 @@ mod tests {
         assert_eq!(state.scroll_offset, 0);
         handle_key(&mut state, key_down, viewport);
         assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn sink_requests_a_coalesced_redraw_after_it_changes_the_transcript() {
+        // S2 chunk 4: without this hook a streamed answer arrives in one
+        // frame at the end of the turn -- the deltas landed in the
+        // transcript, but nothing painted them.
+        use std::cell::Cell;
+        use std::io::Write as _;
+        let state = Rc::new(RefCell::new(TuiState::new()));
+        let mut sink = TuiSink::new(Rc::clone(&state));
+        let frames = Rc::new(Cell::new(0usize));
+        {
+            let frames = Rc::clone(&frames);
+            sink.set_redraw(Rc::new(move || frames.set(frames.get() + 1)));
+        }
+        sink.write_all(b"streamed line\n").expect("write");
+        assert_eq!(frames.get(), 1, "a new line asks for a frame");
+        assert!(
+            state
+                .borrow()
+                .transcript
+                .iter()
+                .any(|entry| entry.text == "streamed line"),
+            "the line still lands in the transcript"
+        );
+        // Coalesced: a fast stream must not repaint per delta.
+        sink.write_all(b"second line\n").expect("write");
+        assert_eq!(frames.get(), 1, "a frame already asked for is enough");
     }
 
     #[test]
