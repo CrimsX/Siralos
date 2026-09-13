@@ -1318,7 +1318,7 @@ where
                     InteractiveError::Io(io::Error::other(error.to_string()))
                 },
             )?;
-            drain_events(application, writer)?;
+            drain_events(application, writer, &mut || false)?;
             if let Some(session) = context_session_holder {
                 drive_context_demand(
                     application,
@@ -1359,6 +1359,7 @@ fn dispatch_tui_command<P>(
     applied_endpoint: &mut Option<String>,
     applied_credential: &mut Option<HostCredential>,
     applied_protocol_str: &mut String,
+    progress: &mut dyn FnMut() -> bool,
 ) -> Result<bool, InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -1543,7 +1544,7 @@ where
                     InteractiveError::Io(io::Error::other(error.to_string()))
                 },
             )?;
-            drain_events(application, sink)?;
+            drain_events(application, sink, progress)?;
             if let Some(session) = context_session_holder {
                 drive_context_demand(
                     application,
@@ -3273,6 +3274,11 @@ fn rejection_code(
 fn drain_events<P, W>(
     application: &mut SiralosApplication<'_, P>,
     writer: &mut W,
+    // S2 chunk 4b: called for EVERY drained event. A frontend that can
+    // repaint uses the keep-alive ticks to draw, to collect what the user
+    // typed while the model works, and to report an interrupt request;
+    // returning `true` cancels the response.
+    progress: &mut dyn FnMut() -> bool,
 ) -> Result<(), InteractiveError>
 where
     P: siralos_core::provider::ModelProvider,
@@ -3280,6 +3286,9 @@ where
 {
     let mut sanitizer = TerminalSanitizer::new();
     while let Some(event) = application.poll_event() {
+        if progress() {
+            application.cancel();
+        }
         match event {
             ToolLoopEvent::TextDelta { text } => {
                 writer
@@ -3319,7 +3328,10 @@ where
                     .write_all(format!("Tool failed: {safe}\n").as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
-            ToolLoopEvent::ToolCancelled { .. }
+            // The keep-alive tick carries no output: the `progress`
+            // callback above already gave the frontend its chance.
+            ToolLoopEvent::ProviderPending
+            | ToolLoopEvent::ToolCancelled { .. }
             | ToolLoopEvent::ResponseStarted
             | ToolLoopEvent::ToolStarted { .. }
             | ToolLoopEvent::ToolCompleted { .. }
@@ -3552,6 +3564,9 @@ pub fn run_interactive_tui_with_options(
         // H2: banner + greeting at session start (TUI-only, stdio unchanged).
         crate::tui::push_banner_and_greeting(&mut state);
     }
+    // The TUI can repaint and read keys while a turn runs, so it wants the
+    // keep-alive ticks; the harness and stdio paths leave them off.
+    application.enable_provider_progress_ticks();
     let mut sink = TuiSink::new(tui_state.clone());
 
     // One place that paints a frame, callable from the loop and from the
@@ -3576,6 +3591,39 @@ pub fn run_interactive_tui_with_options(
         let hook: Rc<dyn Fn()> = Rc::new(draw_now.clone());
         sink.set_redraw(hook);
     }
+
+    // S2 chunk 4b: what the TUI does with a keep-alive tick -- repaint,
+    // keep what the user typed while the model works, and read the
+    // interrupt key. Returns true when the user asked to cancel.
+    let interrupt = Rc::new(std::cell::Cell::new(false));
+    let mut progress = {
+        let tui_state = Rc::clone(&tui_state);
+        let interrupt = Rc::clone(&interrupt);
+        let draw_now = draw_now.clone();
+        move || -> bool {
+            use crossterm::event::{Event, KeyCode};
+            while crossterm::event::poll(std::time::Duration::ZERO)
+                .unwrap_or(false)
+            {
+                match crossterm::event::read() {
+                    Ok(Event::Key(key)) => match key.code {
+                        KeyCode::Esc => interrupt.set(true),
+                        KeyCode::Char(ch) => {
+                            tui_state.borrow_mut().input.push(ch);
+                        }
+                        KeyCode::Backspace => {
+                            tui_state.borrow_mut().input.pop();
+                        }
+                        _ => {}
+                    },
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+            draw_now();
+            interrupt.get()
+        }
+    };
 
     // Initial draw (T3: the context pane renders when the shared audit
     // gate passes — opted in AND built — and is byte-identical to T2
@@ -3990,6 +4038,7 @@ pub fn run_interactive_tui_with_options(
                     &mut applied_endpoint,
                     &mut applied_credential,
                     &mut applied_protocol_str,
+                    &mut progress,
                 )?;
                 if should_exit {
                     break;

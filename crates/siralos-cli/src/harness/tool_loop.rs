@@ -379,6 +379,10 @@ fn canonical_event(event: &ToolLoopEvent) -> Value {
         ToolLoopEvent::TextDelta { text } => {
             json!({ "type": "text_delta", "text": text })
         }
+        // The keep-alive tick (S2 chunk 4b) is a frontend liveness signal,
+        // not response content: the corpus never sees one (the harness
+        // leaves the opt-in off) and it maps to nothing here.
+        ToolLoopEvent::ProviderPending => Value::Null,
         ToolLoopEvent::ResponseCompleted => {
             json!({ "type": "response_completed" })
         }

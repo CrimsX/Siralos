@@ -16,6 +16,12 @@ pub enum ToolLoopEvent {
         /// The delta text.
         text: String,
     },
+    /// The provider has produced nothing yet (S2 chunk 4b).
+    ///
+    /// A keep-alive, not content: a frontend repaints and may offer an
+    /// interrupt, and the response continues afterwards. Scripted and
+    /// recorded providers never emit it.
+    ProviderPending,
     /// The prompt completed successfully.
     ResponseCompleted,
     /// The prompt was cancelled by the Host.

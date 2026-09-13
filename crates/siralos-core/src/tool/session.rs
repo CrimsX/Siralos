@@ -272,6 +272,11 @@ struct ResponseMachine<'a, P: ModelProvider> {
     attempted_tool_rounds: u32,
     completed_tool_rounds: u32,
     provider_turns: u32,
+    /// Whether to emit the `ProviderPending` keep-alive tick (S2 chunk
+    /// 4b). OFF by default so the pinned event sequences -- the corpus and
+    /// every unit test -- stay byte-identical; a frontend that can repaint
+    /// turns it on.
+    progress_ticks: bool,
     phase: Phase<'a>,
 }
 
@@ -290,6 +295,7 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
             attempted_tool_rounds: 0,
             completed_tool_rounds: 0,
             provider_turns: 0,
+            progress_ticks: false,
             phase: Phase::Start,
         }
     }
@@ -411,6 +417,15 @@ impl<'a, P: ModelProvider> ResponseMachine<'a, P> {
                         }
                         Err(outcome) => self.handle_provider_outcome(outcome),
                     };
+                    // S2 chunk 4b: one keep-alive tick BEFORE the first
+                    // pull. Waiting for the first byte can take seconds, and
+                    // this is the last moment a frontend can paint
+                    // "working" and read an interrupt key.
+                    if self.progress_ticks
+                        && matches!(self.phase, Phase::StreamTurn { .. })
+                    {
+                        return Some(ToolLoopEvent::ProviderPending);
+                    }
                 }
                 Phase::StreamTurn { mut stream, mut collector } => {
                     // The stream holds no cancellation signal; the Host is
@@ -811,6 +826,18 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
     pub fn cancel(&mut self) {
         if let AppState::Responding(machine) = &self.state {
             machine.cancel();
+        }
+    }
+
+    /// Ask for the `ProviderPending` keep-alive tick while a response is
+    /// being collected (S2 chunk 4b).
+    ///
+    /// A frontend that can repaint (and read an interrupt key) turns this
+    /// on; it is OFF by default so the pinned event sequences stay
+    /// byte-identical. Call it before `send_prompt`.
+    pub fn enable_provider_progress_ticks(&mut self) {
+        if let AppState::Responding(machine) = &mut self.state {
+            machine.progress_ticks = true;
         }
     }
 
