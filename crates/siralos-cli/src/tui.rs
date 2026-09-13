@@ -3052,6 +3052,43 @@ pub fn toggle_mouse_capture(state: &mut TuiState) -> &'static str {
     mouse_capture_message(state.mouse_capture)
 }
 
+/// Handle one key pressed WHILE a turn is running (S2 chunk 4b + S3b).
+///
+/// The input line is busy with the model, so the keys mean: typed characters
+/// and backspace are kept as type-ahead for the next prompt, the arrows
+/// expand and collapse the thinking block (so thinking is readable MID
+/// FLIGHT, not only after the turn), and Esc asks for an interrupt.
+///
+/// Returns true only for Esc -- the caller owns cancellation.
+#[must_use]
+pub fn apply_turn_key(
+    state: &mut TuiState,
+    code: crossterm::event::KeyCode,
+) -> bool {
+    use crossterm::event::KeyCode;
+    match code {
+        KeyCode::Esc => true,
+        KeyCode::Char(ch) => {
+            state.input.push(ch);
+            false
+        }
+        KeyCode::Backspace => {
+            state.input.pop();
+            false
+        }
+        KeyCode::Right => {
+            if !state.reasoning.trim().is_empty() {
+                state.reasoning_expanded = true;
+            }
+            false
+        }
+        KeyCode::Left => {
+            state.reasoning_expanded = false;
+            false
+        }
+        _ => false,
+    }
+}
 /// Take the submitted input: clear the box and the palette, echo the line
 /// into the transcript, and report the line to run (`None` for an empty
 /// submit).
@@ -5300,6 +5337,33 @@ mod tests {
         assert_eq!(state.scroll_offset, 0);
         handle_key(&mut state, key_down, viewport);
         assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn turn_keys_keep_type_ahead_expand_thinking_and_ask_to_interrupt() {
+        // S3b/4b: the keys that work WHILE the model is running. The arrows
+        // must expand the thinking mid-flight -- the whole point is watching
+        // it arrive -- and Esc must be the only interrupt.
+        use crossterm::event::KeyCode;
+        let mut state = TuiState::new();
+        assert!(!apply_turn_key(&mut state, KeyCode::Char('h')));
+        assert!(!apply_turn_key(&mut state, KeyCode::Char('i')));
+        assert_eq!(state.input, "hi", "typing mid-turn is kept");
+        assert!(!apply_turn_key(&mut state, KeyCode::Backspace));
+        assert_eq!(state.input, "h");
+        // The arrows do nothing when the route streamed no thinking...
+        assert!(!apply_turn_key(&mut state, KeyCode::Right));
+        assert!(!state.reasoning_expanded);
+        // ...and expand/collapse it when there is thinking.
+        state.reasoning = "weighing options".to_owned();
+        assert!(!apply_turn_key(&mut state, KeyCode::Right));
+        assert!(state.reasoning_expanded, "Right expands mid-flight");
+        assert!(!apply_turn_key(&mut state, KeyCode::Left));
+        assert!(!state.reasoning_expanded, "Left collapses");
+        // Esc is the interrupt, and it changes nothing else.
+        let before = state.input.clone();
+        assert!(apply_turn_key(&mut state, KeyCode::Esc));
+        assert_eq!(state.input, before);
     }
 
     #[test]

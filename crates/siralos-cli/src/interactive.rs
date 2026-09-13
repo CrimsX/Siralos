@@ -2003,7 +2003,11 @@ fn compose_session(
         registry_static,
         policy.clone(),
         None,
-        None,
+        // Owner bug 2026-09-12: the frozen reference default is 8 rounds,
+        // which a real multi-step task exhausts (read, search, read again).
+        // The Session Budget takes the hard cap the same frozen rules
+        // allow; the reference default stays untouched for parity.
+        Some(f64::from(siralos_core::tool::budget::MAX_TOOL_ROUNDS)),
     )
     .with_projection(ProjectionService::new(), projection_config);
     Ok(SessionComposition {
@@ -3631,21 +3635,19 @@ pub fn run_interactive_tui_with_options(
         let interrupt = Rc::clone(&interrupt);
         let draw_now = draw_now.clone();
         move || -> bool {
-            use crossterm::event::{Event, KeyCode};
+            use crossterm::event::Event;
             while crossterm::event::poll(std::time::Duration::ZERO)
                 .unwrap_or(false)
             {
                 match crossterm::event::read() {
-                    Ok(Event::Key(key)) => match key.code {
-                        KeyCode::Esc => interrupt.set(true),
-                        KeyCode::Char(ch) => {
-                            tui_state.borrow_mut().input.push(ch);
+                    Ok(Event::Key(key)) => {
+                        if crate::tui::apply_turn_key(
+                            &mut tui_state.borrow_mut(),
+                            key.code,
+                        ) {
+                            interrupt.set(true);
                         }
-                        KeyCode::Backspace => {
-                            tui_state.borrow_mut().input.pop();
-                        }
-                        _ => {}
-                    },
+                    }
                     Ok(_) => {}
                     Err(_) => break,
                 }
