@@ -54,11 +54,11 @@ pub const MOUSE_WHEEL_STEP: u16 = 3;
 
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
-pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript; /mouse again to select text";
+pub const MOUSE_CAPTURE_ON_MESSAGE: &str = "mouse capture on - the wheel scrolls the transcript directly; /mouse again hands the mouse back to the terminal";
 
 /// Toggle result line when mouse capture turns off: states the result and
 /// the way back to wheel scrolling.
-pub const MOUSE_CAPTURE_OFF_MESSAGE: &str = "mouse capture off - the terminal selects text; /mouse again to scroll with the wheel";
+pub const MOUSE_CAPTURE_OFF_MESSAGE: &str = "mouse capture off - the terminal selects text and pastes; the wheel scrolls via arrow keys; /mouse captures the mouse";
 
 /// Honest stdio answer for `/mouse`: the stdio frontend has no TTY mouse,
 /// so it reports that instead of pretending to toggle anything.
@@ -875,10 +875,11 @@ pub struct TuiState {
     /// Saved input before history navigation (I4): restored when navigating
     /// past the newest entry.
     pub history_draft: Option<String>,
-    /// Mouse capture state (option b): `true` (default) means the TUI owns
-    /// the mouse — wheel events scroll the transcript. `false` hands the
-    /// mouse back to the terminal so click-drag selects text. Render-neutral:
-    /// no pane, status, or frame change — the differential frames pin this.
+    /// Mouse capture state: `false` (default) hands the mouse to the
+    /// terminal, so click-drag selects text and the terminal's own paste
+    /// works. `true` captures it so wheel events scroll the transcript
+    /// directly. Render-neutral: no pane, status, or frame change — the
+    /// differential frames pin this.
     pub mouse_capture: bool,
 }
 
@@ -903,9 +904,13 @@ impl Default for TuiState {
             prompt_history: Vec::new(),
             history_index: None,
             history_draft: None,
-            // ON by default: the wheel works out of the box; `/mouse`
-            // hands the mouse back to the terminal for text selection.
-            mouse_capture: true,
+            // OFF by default (owner ruling 2026-09-12): native select/copy
+            // and paste must work out of the box. With capture off the
+            // terminal turns the wheel into arrow keys in the alternate
+            // screen, and an empty prompt scrolls the transcript with
+            // them; `/mouse` captures the mouse when raw wheel events are
+            // wanted.
+            mouse_capture: false,
         }
     }
 }
@@ -2572,11 +2577,12 @@ pub struct TerminalGuard {
 }
 
 impl TerminalGuard {
-    /// Enter alternate screen, raw mode, and mouse capture (in that order).
-    /// Returns the guard; dropping it restores state. Errors unwind in
-    /// reverse: a failed alternate-screen entry disables raw mode first.
+    /// Enter alternate screen and raw mode (in that order). The mouse is NOT
+    /// captured here: the terminal keeps it, so click-drag selects text and
+    /// its own paste works (owner ruling 2026-09-12). `/mouse` captures it
+    /// live through [`Self::set_mouse_capture`]. Returns the guard; dropping
+    /// it restores state.
     pub fn enter() -> io::Result<Self> {
-        use crossterm::event::EnableMouseCapture;
         use crossterm::execute;
         use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
         enable_raw_mode()?;
@@ -2585,15 +2591,7 @@ impl TerminalGuard {
             let _ = crossterm::terminal::disable_raw_mode();
             return Err(e);
         }
-        if let Err(e) = execute!(stdout, EnableMouseCapture) {
-            let _ = crossterm::execute!(
-                io::stdout(),
-                crossterm::terminal::LeaveAlternateScreen
-            );
-            let _ = crossterm::terminal::disable_raw_mode();
-            return Err(e);
-        }
-        Ok(Self { restored: false, mouse_captured: true })
+        Ok(Self { restored: false, mouse_captured: false })
     }
 
     /// Re-pair the terminal escape with the toggled state: enabling sends
@@ -3747,6 +3745,21 @@ pub fn handle_key(
                     return false;
                 }
             }
+            // Owner ruling 2026-09-12: mouse capture is OFF by default, so
+            // the terminal turns the wheel into arrow keys in the alternate
+            // screen. An EMPTY prompt with a scrollable transcript treats
+            // plain Up/Down as wheel steps; history stays on Ctrl+Up/Down
+            // and on any non-empty input.
+            if state.palette.is_none()
+                && state.input.is_empty()
+                && !key.modifiers.contains(KeyModifiers::CONTROL)
+            {
+                let max = state.max_scroll(viewport_height);
+                if state.scroll_offset < max {
+                    state.scroll_offset += 1;
+                    return false;
+                }
+            }
             // I4: when palette is None, Up navigates history
             if state.palette.is_none() {
                 if state.prompt_history.is_empty() {
@@ -3784,6 +3797,14 @@ pub fn handle_key(
                         });
                     return false;
                 }
+            }
+            if state.palette.is_none()
+                && state.input.is_empty()
+                && !key.modifiers.contains(KeyModifiers::CONTROL)
+                && state.scroll_offset > 0
+            {
+                state.scroll_offset -= 1;
+                return false;
             }
             // I4: when palette is None, Down navigates history forward / restores draft
             if state.palette.is_none() {
@@ -5157,18 +5178,89 @@ mod tests {
     }
 
     #[test]
+    fn empty_prompt_arrows_scroll_instead_of_history() {
+        // Owner ruling 2026-09-12: mouse capture is OFF by default, so the
+        // terminal turns the wheel into arrow keys in the alternate screen.
+        // An EMPTY prompt with a scrollable transcript scrolls; history
+        // stays reachable on Ctrl+Up/Down and on any non-empty input.
+        let mut state = TuiState::new();
+        for i in 0..30 {
+            state.transcript_lines.push(format!("line {i}"));
+            state.transcript.push(crate::tui::TranscriptEntry {
+                text: format!("line {i}"),
+                timestamp: None,
+            });
+        }
+        state.push_history("older prompt".to_owned());
+        let viewport: u16 = 10;
+        assert!(
+            state.max_scroll(viewport) > 0,
+            "the transcript must overflow"
+        );
+        let key =
+            |code, modifiers| crossterm::event::KeyEvent::new(code, modifiers);
+        // Empty prompt: the arrow scrolls the transcript, not history.
+        assert!(!handle_key(
+            &mut state,
+            key(
+                crossterm::event::KeyCode::Up,
+                crossterm::event::KeyModifiers::NONE
+            ),
+            viewport
+        ));
+        assert_eq!(state.scroll_offset, 1);
+        assert_eq!(state.input, "", "an empty prompt must not recall history");
+        assert!(state.history_index.is_none());
+        handle_key(
+            &mut state,
+            key(
+                crossterm::event::KeyCode::Down,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            viewport,
+        );
+        assert_eq!(state.scroll_offset, 0);
+        // Non-empty input: Up is history again (I4 unchanged).
+        state.input = "draft".to_owned();
+        handle_key(
+            &mut state,
+            key(
+                crossterm::event::KeyCode::Up,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            viewport,
+        );
+        assert_eq!(state.input, "older prompt");
+        // Ctrl+Up is always history, even from an empty prompt.
+        state.input.clear();
+        state.history_index = None;
+        state.history_draft = None;
+        handle_key(
+            &mut state,
+            key(
+                crossterm::event::KeyCode::Up,
+                crossterm::event::KeyModifiers::CONTROL,
+            ),
+            viewport,
+        );
+        assert_eq!(state.input, "older prompt");
+    }
+
+    #[test]
     fn mouse_toggle_flips_capture_state_with_expected_message() {
         // `/mouse`: toggling flips the capture flag and yields the
         // matching message line each way (plus the stdio honesty line).
+        // Capture starts OFF (owner ruling 2026-09-12), so the first
+        // toggle CAPTURES the mouse and the second hands it back.
         let mut state = TuiState::new();
+        assert!(!state.mouse_capture);
+        assert_eq!(toggle_mouse_capture(&mut state), MOUSE_CAPTURE_ON_MESSAGE);
         assert!(state.mouse_capture);
         assert_eq!(
             toggle_mouse_capture(&mut state),
             MOUSE_CAPTURE_OFF_MESSAGE
         );
         assert!(!state.mouse_capture);
-        assert_eq!(toggle_mouse_capture(&mut state), MOUSE_CAPTURE_ON_MESSAGE);
-        assert!(state.mouse_capture);
         assert_eq!(mouse_capture_message(true), MOUSE_CAPTURE_ON_MESSAGE);
         assert_eq!(mouse_capture_message(false), MOUSE_CAPTURE_OFF_MESSAGE);
         assert!(!MOUSE_STDIO_MESSAGE.is_empty());

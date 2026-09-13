@@ -149,6 +149,29 @@ impl SessionProvider {
             Self::Replay(_) => None,
         }
     }
+
+    /// Replace the live credential the NEXT provider request
+    /// authenticates with (the `/reload` credential apply). Returns
+    /// `true` when the provider carries a live credential cell.
+    fn set_live_credential(&self, credential: Option<HostCredential>) -> bool {
+        match self {
+            Self::Host(provider) => provider.set_live_credential(credential),
+            // A replay stream authenticates nothing: it replays recorded
+            // outcomes, so there is no cell to move.
+            Self::Replay(_) => false,
+        }
+    }
+
+    /// The credential the NEXT provider request will use, when the
+    /// provider exposes it. Redacted by construction.
+    #[allow(dead_code)]
+    #[must_use]
+    fn live_credential(&self) -> Option<HostCredential> {
+        match self {
+            Self::Host(provider) => provider.live_credential(),
+            Self::Replay(_) => None,
+        }
+    }
 }
 
 impl siralos_core::provider::ModelProvider for SessionProvider {
@@ -324,8 +347,8 @@ where
         mut applied_model_display_name,
         mut applied_endpoint,
         credential_present: _,
-        applied_credential,
-        applied_credential_raw,
+        mut applied_credential,
+        mut applied_credential_raw,
         mut applied_protocol_str,
     } = session;
 
@@ -386,9 +409,9 @@ where
             live_provider,
             &mut applied_model,
             &mut applied_model_display_name,
-            applied_credential_raw.as_deref(),
+            &mut applied_credential_raw,
             &mut applied_endpoint,
-            applied_credential.as_ref(),
+            &mut applied_credential,
             &mut applied_protocol_str,
         )? {
             break;
@@ -530,6 +553,10 @@ struct ReloadedConfig {
     endpoint: Option<String>,
     /// Recomposed protocol.
     protocol: siralos_core::composition::Protocol,
+    /// The credential form the profile declares (`env:NAME`, `key:VALUE`,
+    /// a bare legacy env name, or `None` when none is declared). Resolved
+    /// at apply time so a credential added mid-session converges.
+    credential_raw: Option<String>,
 }
 
 /// Project a recomposed snapshot onto the parts `/reload` applies.
@@ -554,6 +581,7 @@ fn reloaded_config(fresh: &ProviderSnapshot) -> Option<ReloadedConfig> {
         endpoint: fresh.endpoint.clone(),
         protocol: siralos_core::composition::Protocol::parse(&fresh.protocol)
             .unwrap_or_default(),
+        credential_raw: fresh.credential_raw.clone(),
     })
 }
 
@@ -571,6 +599,8 @@ fn apply_reloaded_config(
     applied_model_display_name: &mut Option<String>,
     applied_endpoint: &mut Option<String>,
     applied_protocol_str: &mut String,
+    applied_credential: &mut Option<HostCredential>,
+    applied_credential_raw: &mut Option<String>,
     recomposed: Option<ReloadedConfig>,
     report: &mut String,
 ) {
@@ -609,6 +639,44 @@ fn apply_reloaded_config(
             "applied: protocol {before} -> {} (live, no restart)\n",
             applied_protocol_str
         ));
+    }
+    // Credential: resolved fresh from the declared form, because a
+    // credential that appears AFTER composition is exactly what a
+    // mid-session `/provider` add produces -- and silently sending the
+    // request without it is what made that add look like a 401 from the
+    // provider. The value is never echoed; a resolution failure is
+    // reported instead of swallowed.
+    let declared = recomposed.credential_raw.clone();
+    if applied_credential_raw.as_deref() != declared.as_deref() {
+        match declared.as_deref().map(HostCredential::from_credential_str) {
+            None => {
+                // A profile that declares none clears the live one: a stale
+                // secret must never keep flowing to a provider that stopped
+                // declaring it.
+                if live_provider.set_live_credential(None) {
+                    *applied_credential = None;
+                    *applied_credential_raw = None;
+                    report.push_str(
+                        "applied: credential cleared (live, no restart)\n",
+                    );
+                }
+            }
+            Some(Ok(resolved)) => {
+                if live_provider.set_live_credential(Some(resolved.clone())) {
+                    *applied_credential = Some(resolved);
+                    *applied_credential_raw = declared;
+                    report.push_str(
+                        "applied: credential changed (live, no restart)\n",
+                    );
+                } else {
+                    report.push_str(
+                        "not applied: credential (this provider keeps the credential it was composed with; restart to converge)\n",
+                    );
+                }
+            }
+            Some(Err(reason)) => report
+                .push_str(&format!("not applied: credential ({reason})\n")),
+        }
     }
 }
 
@@ -778,9 +846,8 @@ fn reload_report(
             if want_cred == current_cred {
                 parts.push("credential unchanged".to_owned());
             } else {
-                parts.push(format!(
-                    "credential {current_cred} -> {want_cred} (restart to converge)"
-                ));
+                parts
+                    .push(format!("credential {current_cred} -> {want_cred}"));
             }
             let want_endpoint = fresh.endpoint.as_deref();
             let current_endpoint = current_endpoint.filter(|s| !s.is_empty());
@@ -989,9 +1056,9 @@ fn dispatch_stdio_command<P, W, R>(
     live_provider: &SessionProvider,
     applied_model: &mut Option<String>,
     applied_model_display_name: &mut Option<String>,
-    credential_raw: Option<&str>,
+    applied_credential_raw: &mut Option<String>,
     applied_endpoint: &mut Option<String>,
-    credential: Option<&siralos_adapters::provider::HostCredential>,
+    applied_credential: &mut Option<HostCredential>,
     applied_protocol_str: &mut String,
 ) -> Result<bool, InteractiveError>
 where
@@ -1061,7 +1128,7 @@ where
         SlashCommand::Provider => {
             let rendered = sanitize_for_display(&render_provider_line(
                 provider,
-                credential_raw,
+                applied_credential_raw.as_deref(),
             ));
             writer
                 .write_all(rendered.as_bytes())
@@ -1145,7 +1212,11 @@ where
         }
         SlashCommand::Models => {
             // I6 blocking fetch — synchronous, freezes redraw (architectural constraint, no threads).
-            match (provider, applied_endpoint.as_deref(), credential) {
+            match (
+                provider,
+                applied_endpoint.as_deref(),
+                applied_credential.as_ref(),
+            ) {
                 (Some(_), Some(ep), Some(cred)) => {
                     match siralos_adapters::provider::generic::fetch_models(
                         ep,
@@ -1202,7 +1273,7 @@ where
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
-                credential_raw,
+                applied_credential_raw.as_deref(),
                 applied_endpoint.as_deref(),
                 applied_protocol_str.as_str(),
             );
@@ -1213,6 +1284,8 @@ where
                 applied_model_display_name,
                 applied_endpoint,
                 applied_protocol_str,
+                applied_credential,
+                applied_credential_raw,
                 recomposed_config,
                 &mut report,
             );
@@ -1282,9 +1355,9 @@ fn dispatch_tui_command<P>(
     live_provider: &SessionProvider,
     applied_model: &mut Option<String>,
     applied_model_display_name: &mut Option<String>,
-    credential_raw: Option<&str>,
+    applied_credential_raw: &mut Option<String>,
     applied_endpoint: &mut Option<String>,
-    credential: Option<&siralos_adapters::provider::HostCredential>,
+    applied_credential: &mut Option<HostCredential>,
     applied_protocol_str: &mut String,
 ) -> Result<bool, InteractiveError>
 where
@@ -1342,7 +1415,7 @@ where
         SlashCommand::Provider => {
             let rendered = sanitize_for_display(&render_provider_line(
                 provider,
-                credential_raw,
+                applied_credential_raw.as_deref(),
             ));
             let _ = sink.write_all(rendered.as_bytes());
         }
@@ -1385,7 +1458,11 @@ where
         }
         SlashCommand::Models => {
             // I6 blocking fetch — same as stdio, synchronous freeze documented.
-            match (provider, applied_endpoint.as_deref(), credential) {
+            match (
+                provider,
+                applied_endpoint.as_deref(),
+                applied_credential.as_ref(),
+            ) {
                 (Some(_), Some(ep), Some(cred)) => {
                     match siralos_adapters::provider::generic::fetch_models(
                         ep,
@@ -1434,7 +1511,7 @@ where
                 workspace_root,
                 provider,
                 live_model.as_deref().or(applied_model.as_deref()),
-                credential_raw,
+                applied_credential_raw.as_deref(),
                 applied_endpoint.as_deref(),
                 applied_protocol_str.as_str(),
             );
@@ -1445,6 +1522,8 @@ where
                 applied_model_display_name,
                 applied_endpoint,
                 applied_protocol_str,
+                applied_credential,
+                applied_credential_raw,
                 recomposed_config,
                 &mut report,
             );
@@ -1684,13 +1763,26 @@ fn compose_session(
         WorkspaceProfileLoad::Record(record)
             if effective.applied_profile.is_some() =>
         {
-            let cred_present = record.credential.as_deref().is_some_and(|c| {
-                HostCredential::from_credential_str(c).is_ok()
-            });
-            let cred = record
+            let resolved_credential = match record
                 .credential
                 .as_deref()
-                .and_then(|c| HostCredential::from_credential_str(c).ok());
+                .map(HostCredential::from_credential_str)
+            {
+                None => None,
+                Some(Ok(resolved)) => Some(resolved),
+                Some(Err(reason)) => {
+                    // Host-side startup diagnostic (never model output):
+                    // the declared credential could not be resolved, so
+                    // every request would go out unauthenticated and the
+                    // provider would answer with a bare 401. Say so.
+                    eprintln!(
+                        "siralos: credential not resolved: {reason} (requests will carry no auth header)"
+                    );
+                    None
+                }
+            };
+            let cred_present = resolved_credential.is_some();
+            let cred = resolved_credential;
             (
                 record.provider.clone(),
                 record.model.clone(),
@@ -3424,8 +3516,8 @@ pub fn run_interactive_tui_with_options(
         mut applied_model_display_name,
         mut applied_endpoint,
         credential_present: _,
-        applied_credential,
-        applied_credential_raw,
+        mut applied_credential,
+        mut applied_credential_raw,
         mut applied_protocol_str,
     } = session;
     // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
@@ -3842,6 +3934,8 @@ pub fn run_interactive_tui_with_options(
                     &mut applied_model_display_name,
                     &mut applied_endpoint,
                     &mut applied_protocol_str,
+                    &mut applied_credential,
+                    &mut applied_credential_raw,
                     recomposed_config,
                     &mut report,
                 );
@@ -3866,9 +3960,9 @@ pub fn run_interactive_tui_with_options(
                     live_provider,
                     &mut applied_model,
                     &mut applied_model_display_name,
-                    applied_credential_raw.as_deref(),
+                    &mut applied_credential_raw,
                     &mut applied_endpoint,
-                    applied_credential.as_ref(),
+                    &mut applied_credential,
                     &mut applied_protocol_str,
                 )?;
                 if should_exit {
@@ -5119,6 +5213,10 @@ mod tests {
         let mut display = None;
         let mut endpoint = None;
         let mut protocol_str = "openai-completions".to_owned();
+        let mut credential: Option<
+            siralos_adapters::provider::HostCredential,
+        > = None;
+        let mut credential_raw: Option<String> = None;
         apply_reloaded_config(
             &session,
             None,
@@ -5126,6 +5224,8 @@ mod tests {
             &mut display,
             &mut endpoint,
             &mut protocol_str,
+            &mut credential,
+            &mut credential_raw,
             recomposed,
             &mut report,
         );
@@ -5154,7 +5254,7 @@ mod tests {
         let root = temporary_directory("reload-apply-model");
         write(
             root.join("siralos.toml"),
-            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nmodel_display_name = \"New Display\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-responses\"\n",
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-b\"\nmodel_display_name = \"New Display\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-responses\"\ncredential = \"key:example-test-value\"\n",
         )
         .expect("edited profile");
         let session = switch_test_provider("example/model-a");
@@ -5162,6 +5262,10 @@ mod tests {
         let mut display = Some("Old Display".to_owned());
         let mut endpoint = Some("https://old.example.com/v1".to_owned());
         let mut protocol_str = "openai-completions".to_owned();
+        let mut credential: Option<
+            siralos_adapters::provider::HostCredential,
+        > = None;
+        let mut credential_raw: Option<String> = None;
         let live_model = session.live_model();
         let (mut report, recomposed) = reload_report(
             &root,
@@ -5178,6 +5282,8 @@ mod tests {
             &mut display,
             &mut endpoint,
             &mut protocol_str,
+            &mut credential,
+            &mut credential_raw,
             recomposed,
             &mut report,
         );
@@ -5211,6 +5317,16 @@ mod tests {
             report.contains("applied: endpoint changed (live, no restart)"),
             "the report must name the live endpoint apply, got: {report:?}"
         );
+        // The credential the form writes verbatim resolves and applies on
+        // the same reload -- the 401 fix pinned: a declared credential is
+        // never silently dropped from the request.
+        assert!(credential.is_some(), "the declared credential must resolve");
+        assert_eq!(credential_raw.as_deref(), Some("key:example-test-value"));
+        assert!(session.live_credential().is_some());
+        assert!(
+            report.contains("applied: credential changed (live, no restart)"),
+            "the report must name the live credential apply, got: {report:?}"
+        );
         match siralos_adapters::profile_config::load_workspace_profile(&root) {
             siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
                 record,
@@ -5223,6 +5339,59 @@ mod tests {
             }
             other => panic!("expected an applied record, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn reload_reports_an_unresolvable_credential_instead_of_dropping_it() {
+        // The 401 mystery: a DECLARED credential that cannot be resolved
+        // must be reported, never silently dropped from the request.
+        use super::{apply_reloaded_config, reload_report};
+        let root = temporary_directory("reload-credential-unresolved");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nendpoint = \"https://api.example.com/v1\"\ncredential = \"env:SIRALOS_TEST_UNSET_VARIABLE\"\n",
+        )
+        .expect("profile");
+        let session = switch_test_provider("example/model-a");
+        let mut model = Some("example/model-a".to_owned());
+        let mut display = None;
+        let mut endpoint = Some("https://api.example.com/v1".to_owned());
+        let mut protocol_str = "openai-completions".to_owned();
+        let mut credential: Option<
+            siralos_adapters::provider::HostCredential,
+        > = None;
+        let mut credential_raw: Option<String> = None;
+        let live_model = session.live_model();
+        let (mut report, recomposed) = reload_report(
+            &root,
+            Some("example-vendor"),
+            live_model.as_deref().or(model.as_deref()),
+            None,
+            Some("https://api.example.com/v1"),
+            "openai-completions",
+        );
+        apply_reloaded_config(
+            &session,
+            live_model.as_deref(),
+            &mut model,
+            &mut display,
+            &mut endpoint,
+            &mut protocol_str,
+            &mut credential,
+            &mut credential_raw,
+            recomposed,
+            &mut report,
+        );
+        assert!(
+            credential.is_none(),
+            "an unresolved credential is never applied"
+        );
+        assert!(
+            report.contains(
+                "not applied: credential (env var SIRALOS_TEST_UNSET_VARIABLE is not set)"
+            ),
+            "an unresolvable credential must be reported, got: {report:?}"
+        );
     }
 
     #[test]

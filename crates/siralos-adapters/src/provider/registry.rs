@@ -311,6 +311,35 @@ impl HostProvider {
         }
     }
 
+    /// Replace the live credential for the NEXT provider request.
+    ///
+    /// Only `Generic` carries a live credential cell: the named adapters
+    /// (`OpenAi`/`Anthropic`) post to fixed endpoints and keep the
+    /// credential they were composed with, and `Fake` needs none. Returns
+    /// `true` when the live cell was written, so a caller can report what
+    /// actually happened instead of what it hoped for.
+    pub fn set_live_credential(
+        &self,
+        credential: Option<HostCredential>,
+    ) -> bool {
+        if let Self::Generic(provider) = self {
+            provider.set_credential(credential);
+            return true;
+        }
+        false
+    }
+
+    /// The credential the NEXT provider request will authenticate with.
+    /// `None` for `Fake`, for the named adapters (which do not expose it),
+    /// and when no credential is set. Redacted by construction.
+    #[must_use]
+    pub fn live_credential(&self) -> Option<HostCredential> {
+        match self {
+            Self::Generic(provider) => provider.live_credential(),
+            _ => None,
+        }
+    }
+
     /// Take the last replay availability from the inner provider.
     ///
     /// `Fake` returns `Unavailable` with reason

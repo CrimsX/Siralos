@@ -48,7 +48,12 @@ pub struct GenericProvider {
     provider: String,
     model: Rc<RefCell<String>>,
     endpoint: Rc<RefCell<Option<String>>>,
-    credential: Option<HostCredential>,
+    /// The resolved credential the NEXT request authenticates with. A
+    /// shared live cell: `/reload` replaces it in place and the NEXT
+    /// `stream()` reads it, so a credential that appears after the session
+    /// was composed converges without a restart. `None` means the profile
+    /// declared none.
+    credential: Rc<RefCell<Option<HostCredential>>>,
     /// API protocol selecting the chat POST path segment appended to the
     /// base endpoint (`openai-completions` by default). A shared live cell:
     /// `/reload` replaces it in place and the NEXT `stream()` reads it.
@@ -74,7 +79,7 @@ impl GenericProvider {
             provider,
             model: Rc::new(RefCell::new(model)),
             endpoint: Rc::new(RefCell::new(endpoint)),
-            credential,
+            credential: Rc::new(RefCell::new(credential)),
             protocol: Rc::new(RefCell::new(Protocol::default())),
             hooks: ReplayHooks::default(),
             last_replay: RefCell::new(
@@ -155,6 +160,22 @@ impl GenericProvider {
     pub fn live_protocol(&self) -> Protocol {
         *self.protocol.borrow()
     }
+
+    /// Replace the live credential in place. The NEXT `stream()` reads
+    /// this cell, so a credential that appears in `siralos.toml` after the
+    /// session was composed converges on `/reload` without a restart.
+    /// `None` clears it (the request then carries no auth header, which is
+    /// what a public endpoint wants).
+    pub fn set_credential(&self, credential: Option<HostCredential>) {
+        *self.credential.borrow_mut() = credential;
+    }
+
+    /// The credential the NEXT `stream()` will authenticate with.
+    /// Redacted: `HostCredential` never prints its bytes.
+    #[must_use]
+    pub fn live_credential(&self) -> Option<HostCredential> {
+        self.credential.borrow().clone()
+    }
 }
 
 /// Provider-neutral placeholder endpoint used when the generic provider is
@@ -228,12 +249,15 @@ impl ModelProvider for GenericProvider {
             .borrow()
             .clone()
             .unwrap_or_else(|| GENERIC_PLACEHOLDER_ENDPOINT.to_owned());
-        let credential = self.credential.as_ref().map(|c| {
-            // Clone the bytes as a String for the header; the `HostCredential`
-            // itself stays redacted, and the `String` is held only for the
-            // `reqwest` call and never logged.
-            String::from_utf8_lossy(c.as_bytes()).to_string()
-        });
+        let credential = {
+            let held = self.credential.borrow();
+            held.as_ref().map(|c| {
+                // Clone the bytes as a String for the header; the
+                // `HostCredential` itself stays redacted, and the `String`
+                // is held only for the `reqwest` call and never logged.
+                String::from_utf8_lossy(c.as_bytes()).to_string()
+            })
+        };
         let request = request.clone();
         let protocol = *self.protocol.borrow();
         // Host-observed, bounded HTTP call via `reqwest::blocking` with

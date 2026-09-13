@@ -37,15 +37,15 @@ half-consumed, and this record claims only the half it consumed.
 
 ## 4. Criteria -> Evidence
 
-| Criterion                                         | Evidence                                                                                                                                   |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| A reload's endpoint change reaches the wire       | M1 (URL built from the cell) + M2                                                                                                          |
-| A reload's protocol change reaches the wire       | M1 + M2 (`live_protocol` asserted, not a label)                                                                                            |
-| Only changed fields write; unchanged fields no-op | M2 -- the pure report path stays byte-identical                                                                                            |
-| Endpoint values are never echoed                  | M2 (the report says `endpoint changed`) and the pre-existing no-echo assertion in `reload_reports_edited_profile_changes_without_mutating` |
-| Nothing that needs a restart pretends otherwise   | M3 + §3                                                                                                                                    |
-| A reload cannot widen authority                   | decision 158 M5 untouched (`reload_cannot_widen_session_authority` still green)                                                            |
-| The repository gate holds                         | `npm run check` exit 0 at `f00e4ec` -- 317 adapters / 25 conformance / 253 cli (1 ignored) / 614 core, 0 failed; differential parity 352/352           |
+| Criterion                                         | Evidence                                                                                                                                     |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| A reload's endpoint change reaches the wire       | M1 (URL built from the cell) + M2                                                                                                            |
+| A reload's protocol change reaches the wire       | M1 + M2 (`live_protocol` asserted, not a label)                                                                                              |
+| Only changed fields write; unchanged fields no-op | M2 -- the pure report path stays byte-identical                                                                                              |
+| Endpoint values are never echoed                  | M2 (the report says `endpoint changed`) and the pre-existing no-echo assertion in `reload_reports_edited_profile_changes_without_mutating`   |
+| Nothing that needs a restart pretends otherwise   | M3 + §3                                                                                                                                      |
+| A reload cannot widen authority                   | decision 158 M5 untouched (`reload_cannot_widen_session_authority` still green)                                                              |
+| The repository gate holds                         | `npm run check` exit 0 at `f00e4ec` -- 317 adapters / 25 conformance / 253 cli (1 ignored) / 614 core, 0 failed; differential parity 352/352 |
 
 ## 5. Result
 

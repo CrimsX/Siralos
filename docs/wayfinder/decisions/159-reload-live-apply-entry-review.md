@@ -38,13 +38,13 @@ Ticket [127](../tickets/127-reload-live-endpoint-protocol.md) · entry review
 
 ## 3. Criteria -> Evidence
 
-| Criterion                                        | Evidence                                                                                                                         |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| An endpoint change reaches the next request      | F1 (the request URL, not a label) + F3                                                                                           |
-| A protocol change reaches the next request       | F1 + F3 (asserted on `live_protocol`)                                                                                            |
-| Reporting cannot mutate live state               | decision 158 F2 -- the report is still one pure function; only the apply step writes                                             |
-| What cannot be applied live is said, not implied | F4 -- provider name and credential carry `(restart to converge)`                                                                 |
-| A reload cannot widen authority                  | decision 158 F5 untouched; the reload applies the same file a restart would read                                                 |
+| Criterion                                        | Evidence                                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| An endpoint change reaches the next request      | F1 (the request URL, not a label) + F3                                                                                                       |
+| A protocol change reaches the next request       | F1 + F3 (asserted on `live_protocol`)                                                                                                        |
+| Reporting cannot mutate live state               | decision 158 F2 -- the report is still one pure function; only the apply step writes                                                         |
+| What cannot be applied live is said, not implied | F4 -- provider name and credential carry `(restart to converge)`                                                                             |
+| A reload cannot widen authority                  | decision 158 F5 untouched; the reload applies the same file a restart would read                                                             |
 | The repository gate holds                        | `npm run check` exit 0 at `f00e4ec` -- 317 adapters / 25 conformance / 253 cli (1 ignored) / 614 core, 0 failed; differential parity 352/352 |
 
 ## 4. Result
