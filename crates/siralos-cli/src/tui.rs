@@ -1477,45 +1477,59 @@ pub fn draw_with_pane(
         return;
     }
     // P2 header bar + transcript/input/status layout (header 1 line, OFF-independent)
-    let (header_area, transcript_area, input_area, status_area, pane_area) =
-        match pane {
-            None => {
-                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Min(0),
-                        Constraint::Length(1),
-                        Constraint::Length(1),
-                    ])
-                    .split(area);
-                (chunks[0], chunks[1], chunks[2], chunks[3], None)
-            }
-            Some(_) => {
-                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
-                let outer = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Min(0),
-                        Constraint::Length(1),
-                    ])
-                    .split(area);
-                let cols = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(CONTEXT_PANE_WIDTH),
-                    ])
-                    .split(outer[1]);
-                let rows = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(0), Constraint::Length(1)])
-                    .split(cols[0]);
-                (outer[0], rows[0], rows[1], outer[2], Some(cols[1]))
-            }
-        };
+    // Owner QoL: the `working` indicator owns a row ONLY while the model
+    // works, so idle frames stay byte-identical to the pinned ones.
+    let busy_rows = u16::from(is_working_status(&state.status));
+    let (
+        header_area,
+        transcript_area,
+        busy_area,
+        input_area,
+        status_area,
+        pane_area,
+    ) = match pane {
+        None => {
+            // I5 OFF: transcript spans full width, no gap (Min(0) fill)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            (chunks[0], chunks[1], chunks[2], chunks[3], chunks[4], None)
+        }
+        Some(_) => {
+            // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(CONTEXT_PANE_WIDTH),
+                ])
+                .split(outer[1]);
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                ])
+                .split(cols[0]);
+            (outer[0], rows[0], rows[1], rows[2], outer[2], Some(cols[1]))
+        }
+    };
     // Header bar (H1 dedup — P2 heritage): reversed/accent, left " Siralos ",
     // right provider/model ONLY when configured; absent shows just " Siralos ".
     {
@@ -1580,14 +1594,7 @@ pub fn draw_with_pane(
     for line in state.reasoning_block_lines() {
         entries.push(TranscriptEntry { text: line, timestamp: None });
     }
-    if is_working_status(&state.status) {
-        let elapsed =
-            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
-        entries.push(TranscriptEntry {
-            text: working_line(elapsed),
-            timestamp: None,
-        });
-    }
+
     let wrapped =
         wrapped_transcript_rows(&entries, transcript_area.width as usize);
     let mut expanded: Vec<Line<'_>> = Vec::with_capacity(wrapped.len());
@@ -1755,6 +1762,15 @@ pub fn draw_with_pane(
     let input = Paragraph::new(input_text.as_str())
         .style(Style::default().fg(Color::Yellow));
     frame.render_widget(input, input_area);
+    // The `working` state is a STATIC row above the input, in the banner
+    // colour, pulsing once a second -- never text in the conversation.
+    if is_working_status(&state.status) {
+        let elapsed =
+            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
+        let indicator = Paragraph::new(working_line(elapsed))
+            .style(Style::default().fg(Color::Cyan));
+        frame.render_widget(indicator, busy_area);
+    }
     // Cursor at end of input (after `> ` prefix + input length). Clamp to area.
     // When a modal is pending or the add-form is open, hide the cursor behind
     // the dimmed backdrop (no typing through a modal).
@@ -2188,45 +2204,59 @@ pub fn render_to_buffer_with_pane(
     // layout using the same logic as `draw_with_pane` but writing into `buf`
     // directly. To keep determinism identical to `draw_with_pane`, we reuse
     // the widget rendering via `Widget::render`.
-    let (header_area, transcript_area, input_area, status_area, pane_area) =
-        match pane {
-            None => {
-                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Min(0),
-                        Constraint::Length(1),
-                        Constraint::Length(1),
-                    ])
-                    .split(area);
-                (chunks[0], chunks[1], chunks[2], chunks[3], None)
-            }
-            Some(_) => {
-                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
-                let outer = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Min(0),
-                        Constraint::Length(1),
-                    ])
-                    .split(area);
-                let cols = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(CONTEXT_PANE_WIDTH),
-                    ])
-                    .split(outer[1]);
-                let rows = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(0), Constraint::Length(1)])
-                    .split(cols[0]);
-                (outer[0], rows[0], rows[1], outer[2], Some(cols[1]))
-            }
-        };
+    // Owner QoL: the `working` indicator owns a row ONLY while the model
+    // works, so idle frames stay byte-identical to the pinned ones.
+    let busy_rows = u16::from(is_working_status(&state.status));
+    let (
+        header_area,
+        transcript_area,
+        busy_area,
+        input_area,
+        status_area,
+        pane_area,
+    ) = match pane {
+        None => {
+            // I5 OFF: transcript spans full width, no gap (Min(0) fill)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            (chunks[0], chunks[1], chunks[2], chunks[3], chunks[4], None)
+        }
+        Some(_) => {
+            // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(0),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(CONTEXT_PANE_WIDTH),
+                ])
+                .split(outer[1]);
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                ])
+                .split(cols[0]);
+            (outer[0], rows[0], rows[1], rows[2], outer[2], Some(cols[1]))
+        }
+    };
     // Header bar (H1 dedup — P2 heritage) — same as draw.
     {
         let left = " Siralos ";
@@ -2277,14 +2307,7 @@ pub fn render_to_buffer_with_pane(
     for line in state.reasoning_block_lines() {
         entries.push(TranscriptEntry { text: line, timestamp: None });
     }
-    if is_working_status(&state.status) {
-        let elapsed =
-            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
-        entries.push(TranscriptEntry {
-            text: working_line(elapsed),
-            timestamp: None,
-        });
-    }
+
     // Same render-layer wrap as the `Frame` path above: scroll windows over
     // wrapped rows so long lines stay readable instead of clipping.
     let wrapped =
@@ -2440,6 +2463,13 @@ pub fn render_to_buffer_with_pane(
     let input = Paragraph::new(input_text.as_str())
         .style(Style::default().fg(Color::Yellow));
     input.render(input_area, &mut buf);
+    if is_working_status(&state.status) {
+        let elapsed =
+            state.busy_since.map(|start| start.elapsed()).unwrap_or_default();
+        Paragraph::new(working_line(elapsed))
+            .style(Style::default().fg(Color::Cyan))
+            .render(busy_area, &mut buf);
+    }
 
     if let (Some(pane_data), Some(pane_rect)) = (pane, pane_area) {
         let pane_block = Block::default()
