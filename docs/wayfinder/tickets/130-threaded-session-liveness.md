@@ -49,6 +49,16 @@ switch is atomic: either `dispatch_tui_command` no longer takes an
 `application`, or nothing changes. The completion check is exactly that
 parameter disappearing.
 
+One piece of step 3 is already in place, as a behaviour-preserving refactor
+(`24f9dd7`): `drain_events` reads a narrow `EventSource` seam -- `poll_event`
+
+- `cancel` -- that the real session satisfies by pure delegation, proven with
+  a fake source in `drain_events_reads_the_source_seam_and_cancels_on_request`.
+  That takes the drain body out of the atomic switch: when the source becomes
+  worker-backed, the drain does not change. It creates NO second session --
+  `compose_session` still runs exactly once, in the frontend -- so what remains
+  is what the paragraph above describes.
+
 Order and hazards for whoever takes it: `%TEMP%\siralos-c2-wiring.md`.
 
 ## Slices
