@@ -50,14 +50,23 @@ switch is atomic: either `dispatch_tui_command` no longer takes an
 parameter disappearing.
 
 One piece of step 3 is already in place, as a behaviour-preserving refactor
-(`24f9dd7`): `drain_events` reads a narrow `EventSource` seam -- `poll_event`
+(`24f9dd7`): `drain_events` reads a narrow `EventSource` seam (the two calls it
+always made, `poll_event` and `cancel`) that the real session satisfies by pure
+delegation, proven with a fake source in
+`drain_events_reads_the_source_seam_and_cancels_on_request`. That takes the
+drain body out of the atomic switch: when the source becomes worker-backed, the
+drain does not change. It creates NO second session -- `compose_session` still
+runs exactly once, in the frontend -- so what remains is what the paragraph
+above describes.
 
-- `cancel` -- that the real session satisfies by pure delegation, proven with
-  a fake source in `drain_events_reads_the_source_seam_and_cancels_on_request`.
-  That takes the drain body out of the atomic switch: when the source becomes
-  worker-backed, the drain does not change. It creates NO second session --
-  `compose_session` still runs exactly once, in the frontend -- so what remains
-  is what the paragraph above describes.
+The frontend half of that switch is in place too (`2457feb`): `WorkerSource`
+wraps a `WorkerHandle` as the drain's source. Session events feed the shared
+drain; everything else comes back from `take_pending` for `apply_worker_event`,
+and `cancel` sets the flag AND sends the command. Four tests cover it, one of
+which drives the real `drain_events` from a scripted worker channel, so "the
+drain can read a worker" is measured rather than asserted. Still no second
+session: nothing calls `spawn_worker` from the loop, so `compose_session` keeps
+running exactly once, in the frontend.
 
 Order and hazards for whoever takes it: `%TEMP%\siralos-c2-wiring.md`.
 
