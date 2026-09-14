@@ -269,6 +269,77 @@ impl WorkerHandle {
     }
 }
 
+/// The frontend half of the bridge: the worker seen as the drain's source.
+///
+/// \`drain_events\` reads session events through \`EventSource\`; everything the
+/// worker sends that is NOT a session event -- a pane snapshot, a display
+/// report, a failure, the end of a turn, the final stop -- is handed back by
+/// \`take_pending\` for \`apply_worker_event\`. The split is deliberate: the drain
+/// owns the sanitizer boundary, the frontend owns what it does with the rest.
+///
+/// Ordering: session events keep their order among themselves and pending
+/// events keep theirs. A pane snapshot arriving between two deltas is applied
+/// after both, which decision 167 D1 already allows (advisory, may lag a frame).
+pub struct WorkerSource {
+    handle: WorkerHandle,
+    ready: std::collections::VecDeque<ToolLoopEvent>,
+    pending: Vec<WorkerEvent>,
+}
+
+impl WorkerSource {
+    /// Wrap a handle (from \`spawn_worker\`) as a drainable source.
+    #[must_use]
+    pub fn new(handle: WorkerHandle) -> Self {
+        Self {
+            handle,
+            ready: std::collections::VecDeque::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    /// The non-session events seen since the last call, in order.
+    pub fn take_pending(&mut self) -> Vec<WorkerEvent> {
+        std::mem::take(&mut self.pending)
+    }
+
+    /// Send one command (\`false\` when the worker is already gone).
+    pub fn send(&self, command: WorkerCommand) -> bool {
+        self.handle.send(command)
+    }
+
+    /// The shared cancel flag, for a loop that also polls it directly.
+    #[must_use]
+    pub fn cancel_flag(&self) -> &CancelFlag {
+        self.handle.cancel_flag()
+    }
+
+    /// Stop the worker and WAIT for it: the recordings are flushed before this
+    /// returns (decision 78's single-owner rule, decision 167 step 4).
+    pub fn shutdown(self) {
+        self.handle.shutdown();
+    }
+}
+
+impl EventSource for WorkerSource {
+    fn poll_event(&mut self) -> Option<ToolLoopEvent> {
+        for event in self.handle.try_recv_all() {
+            match event {
+                WorkerEvent::Session(inner) => self.ready.push_back(inner),
+                other => self.pending.push(other),
+            }
+        }
+        self.ready.pop_front()
+    }
+
+    fn cancel(&mut self) {
+        // Both halves: the flag reaches the worker BETWEEN events (it does not
+        // wait for a blocked read to return), the command reaches it when it is
+        // not in a turn.
+        self.handle.cancel_flag().request();
+        self.handle.send(WorkerCommand::Cancel);
+    }
+}
+
 /// Spawn the worker that OWNS the session (C2 step 2).
 ///
 /// The session cannot cross threads (decision 167), so composition happens
@@ -376,6 +447,116 @@ pub fn apply_worker_event<W: std::io::Write>(
         WorkerEvent::TurnFinished | WorkerEvent::Stopped => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod worker_source_tests {
+    use super::{
+        CancelFlag, EventSource, WorkerCommand, WorkerEvent, WorkerHandle,
+        WorkerSource,
+    };
+    use siralos_core::tool::ToolLoopEvent;
+
+    /// A handle whose far end the test still owns, so the worker side is
+    /// scripted without a thread and without a session: a thread is not a
+    /// capability (decision 167), and this test needs neither.
+    pub(crate) struct Scripted {
+        pub(crate) source: WorkerSource,
+        pub(crate) events: std::sync::mpsc::Sender<WorkerEvent>,
+        pub(crate) commands: std::sync::mpsc::Receiver<WorkerCommand>,
+        pub(crate) cancel: CancelFlag,
+    }
+
+    /// Shared with the drain test in `interactive`, which drives the real
+    /// drain from this scripted worker.
+    pub(crate) fn scripted() -> Scripted {
+        let (command_tx, commands) = std::sync::mpsc::channel();
+        let (events, event_rx) = std::sync::mpsc::channel();
+        let cancel = CancelFlag::new();
+        let handle = WorkerHandle {
+            commands: command_tx,
+            events: event_rx,
+            cancel: cancel.clone(),
+            join: None,
+        };
+        Scripted {
+            source: WorkerSource::new(handle),
+            events,
+            commands,
+            cancel,
+        }
+    }
+
+    fn text(value: &str) -> WorkerEvent {
+        WorkerEvent::Session(ToolLoopEvent::TextDelta {
+            text: value.to_owned(),
+        })
+    }
+
+    #[test]
+    fn worker_source_feeds_the_drain_session_events_in_order() {
+        let mut s = scripted();
+        assert_eq!(
+            s.source.poll_event(),
+            None,
+            "an empty channel yields nothing"
+        );
+
+        s.events.send(text("a")).expect("send");
+        s.events.send(WorkerEvent::Report("ctx".to_owned())).expect("send");
+        s.events.send(text("b")).expect("send");
+
+        assert_eq!(
+            s.source.poll_event(),
+            Some(ToolLoopEvent::TextDelta { text: "a".to_owned() })
+        );
+        assert_eq!(
+            s.source.poll_event(),
+            Some(ToolLoopEvent::TextDelta { text: "b".to_owned() }),
+            "a display event must not be mistaken for a session event"
+        );
+        assert_eq!(s.source.poll_event(), None);
+    }
+
+    #[test]
+    fn worker_source_hands_back_everything_that_is_not_a_session_event() {
+        let mut s = scripted();
+        s.events.send(WorkerEvent::Report("tools".to_owned())).expect("send");
+        s.events.send(WorkerEvent::TurnFinished).expect("send");
+        s.events.send(WorkerEvent::Stopped).expect("send");
+
+        // Draining the session side must not swallow the rest.
+        assert_eq!(s.source.poll_event(), None);
+        assert_eq!(
+            s.source.take_pending(),
+            vec![
+                WorkerEvent::Report("tools".to_owned()),
+                WorkerEvent::TurnFinished,
+                WorkerEvent::Stopped,
+            ],
+            "pending events keep their order for apply_worker_event"
+        );
+        assert!(s.source.take_pending().is_empty(), "taking drains them");
+    }
+
+    #[test]
+    fn worker_source_cancels_on_both_channels_and_stops_the_worker() {
+        let mut s = scripted();
+        assert!(!s.cancel.is_requested());
+        s.source.cancel();
+        assert!(s.cancel.is_requested(), "the flag reaches a blocked read");
+        assert_eq!(s.commands.try_recv(), Ok(WorkerCommand::Cancel));
+
+        assert!(s.source.send(WorkerCommand::ContextReport));
+        assert_eq!(s.commands.try_recv(), Ok(WorkerCommand::ContextReport));
+
+        s.source.shutdown();
+        assert_eq!(
+            s.commands.try_recv(),
+            Ok(WorkerCommand::Shutdown),
+            "shutdown is the command that flushes the recordings"
+        );
+    }
 }
 
 #[cfg(test)]

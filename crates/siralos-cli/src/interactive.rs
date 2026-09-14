@@ -4363,6 +4363,51 @@ mod tests {
     }
 
     #[test]
+    fn drain_events_reads_a_worker_backed_source() {
+        // C2 step 3: the two halves compose. A worker channel is drained by the
+        // SAME drain stdio and the TUI use, and the events that are not part of
+        // the stream survive it for the loop to act on.
+        let mut worker =
+            crate::session_worker::worker_source_tests::scripted();
+        for event in [
+            crate::session_worker::WorkerEvent::Session(
+                ToolLoopEvent::TextDelta { text: "hi".to_owned() },
+            ),
+            crate::session_worker::WorkerEvent::Session(
+                ToolLoopEvent::ReasoningDelta { text: "why".to_owned() },
+            ),
+            crate::session_worker::WorkerEvent::TurnFinished,
+        ] {
+            worker.events.send(event).expect("send");
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        let mut thinking = String::new();
+        super::drain_events(
+            &mut worker.source,
+            &mut out,
+            &mut || false,
+            &mut |text| thinking.push_str(text),
+        )
+        .expect("drain");
+
+        assert_eq!(
+            String::from_utf8(out).expect("utf8"),
+            "hi",
+            "answer text streams through the terminal sanitizer"
+        );
+        assert_eq!(
+            thinking, "why",
+            "thinking goes to its own sink and never into the answer"
+        );
+        assert_eq!(
+            worker.source.take_pending(),
+            vec![crate::session_worker::WorkerEvent::TurnFinished],
+            "the turn-end signal survives the drain so the loop can go idle"
+        );
+    }
+
+    #[test]
     fn write_profile_config_omits_credential_when_none() {
         // K2: a public endpoint writes NO credential key, and the written
         // config still parses and applies via load_workspace_profile.
