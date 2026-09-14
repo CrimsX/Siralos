@@ -1606,7 +1606,7 @@ fn flush_record_replay(
 /// `harness_cli_session::create_application`); the definitions snapshot is
 /// byte-equal to what `registry.definitions()` would return because the
 /// registry is immutable after construction.
-struct SessionComposition<'a> {
+pub(crate) struct SessionComposition<'a> {
     /// Canonical workspace root.
     workspace_root: std::path::PathBuf,
     /// Registration-ordered tool definitions snapshot (same content as
@@ -1735,7 +1735,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
 /// segment, projection config, application, hosts/manifests. The ONLY
 /// per-frontend residual is the terminal I/O each loop owns after this
 /// returns (stdio: `reader`/`writer`; TUI: guard/terminal/state/sink).
-fn compose_session(
+pub(crate) fn compose_session(
     options: InteractiveOptions<'_>,
 ) -> Result<SessionComposition<'static>, InteractiveError> {
     // --- The verbatim T1 composition both loops duplicated (one copy now).

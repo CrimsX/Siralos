@@ -206,6 +206,96 @@ pub fn run_worker_loop<S: WorkerSession>(
     let _ = events.send(WorkerEvent::Stopped);
 }
 
+/// The UI's handle on a running worker (C2 step 2).
+///
+/// Dropping it does NOT stop the worker: `shutdown` sends the command and joins,
+/// which is the only path that guarantees the recordings flushed before the
+/// process restores the terminal.
+pub struct WorkerHandle {
+    commands: std::sync::mpsc::Sender<WorkerCommand>,
+    events: std::sync::mpsc::Receiver<WorkerEvent>,
+    cancel: CancelFlag,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl WorkerHandle {
+    /// Send one command (`false` when the worker is already gone).
+    pub fn send(&self, command: WorkerCommand) -> bool {
+        self.commands.send(command).is_ok()
+    }
+
+    /// The next worker event, or `None` when the worker has stopped.
+    pub fn recv(&self) -> Option<WorkerEvent> {
+        self.events.recv().ok()
+    }
+
+    /// Everything the worker has already produced, without blocking.
+    pub fn try_recv_all(&self) -> Vec<WorkerEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = self.events.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    /// The shared cancel flag the worker polls between events.
+    #[must_use]
+    pub fn cancel_flag(&self) -> &CancelFlag {
+        &self.cancel
+    }
+
+    /// Stop the worker and WAIT for it: the recordings are flushed before this
+    /// returns (decision 78's single-owner rule, decision 167 step 4).
+    pub fn shutdown(mut self) {
+        let _ = self.commands.send(WorkerCommand::Shutdown);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+/// Spawn the worker that OWNS the session (C2 step 2).
+///
+/// The session cannot cross threads (decision 167), so composition happens
+/// inside the thread: this takes owned paths and builds `InteractiveOptions`
+/// from them there. A composition failure is reported as a `Failed` event
+/// rather than a panic, so a frontend can render it truthfully.
+pub fn spawn_worker(
+    workspace_root: Option<std::path::PathBuf>,
+    config_path: Option<std::path::PathBuf>,
+) -> WorkerHandle {
+    let (command_tx, command_rx) = std::sync::mpsc::channel::<WorkerCommand>();
+    let (event_tx, event_rx) = std::sync::mpsc::channel::<WorkerEvent>();
+    let cancel = CancelFlag::new();
+    let thread_cancel = cancel.clone();
+    let join = std::thread::spawn(move || {
+        let options = crate::interactive::InteractiveOptions {
+            config_path: config_path.as_deref(),
+            workspace_root: workspace_root.as_deref(),
+        };
+        match crate::interactive::compose_session(options) {
+            Ok(mut session) => {
+                run_worker_loop(
+                    &command_rx,
+                    &event_tx,
+                    &thread_cancel,
+                    &mut session,
+                );
+            }
+            Err(error) => {
+                let _ = event_tx.send(WorkerEvent::Failed(error.to_string()));
+                let _ = event_tx.send(WorkerEvent::Stopped);
+            }
+        }
+    });
+    WorkerHandle {
+        commands: command_tx,
+        events: event_rx,
+        cancel,
+        join: Some(join),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CancelFlag, WorkerCommand, WorkerEvent};
@@ -279,6 +369,46 @@ mod tests {
 
 #[cfg(test)]
 mod loop_tests {
+    #[test]
+    fn a_spawned_worker_composes_its_own_session_and_stops_cleanly() {
+        // C2 step 2 end to end: the session CANNOT cross threads (decision
+        // 167), so it is constructed inside the worker. This drives a real
+        // worker against a real (empty) workspace: no profile means the
+        // deterministic fake provider, and shutdown must still stop cleanly.
+        let dir = std::env::temp_dir().join(format!(
+            "siralos-worker-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp workspace");
+        let worker = super::spawn_worker(Some(dir.clone()), None);
+        assert!(
+            worker.send(WorkerCommand::Shutdown),
+            "the worker accepts a command"
+        );
+        let mut stopped = false;
+        let mut failed: Option<String> = None;
+        while let Some(event) = worker.recv() {
+            match event {
+                WorkerEvent::Stopped => {
+                    stopped = true;
+                    break;
+                }
+                // A composition failure ALSO ends in Stopped, so the test
+                // would pass on a broken worker: record it and fail below.
+                WorkerEvent::Failed(message) => failed = Some(message),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            failed, None,
+            "the worker composed a real session, not a failure"
+        );
+        assert!(stopped, "the worker flushed and reported Stopped");
+        worker.shutdown();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     use super::{
         CancelFlag, WorkerCommand, WorkerEvent, WorkerSession, run_worker_loop,
     };
