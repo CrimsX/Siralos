@@ -1668,6 +1668,32 @@ pub(crate) struct SessionComposition<'a> {
 /// recorder, which are exactly the things the worker loop needs. Implementing
 /// the trait here (rather than on `SiralosApplication`) is what lets `pane()`
 /// read the context metrics and `flush()` reach the recordings.
+// C2 step 3b: the drain's source seam, implemented by pure delegation. The
+// stdio and TUI loops keep calling \`drain_events\` with the composed session,
+// so this changes no behaviour -- it is what makes the source swappable.
+impl<'a, P> crate::session_worker::EventSource for SiralosApplication<'a, P>
+where
+    P: siralos_core::provider::ModelProvider,
+{
+    fn poll_event(&mut self) -> Option<ToolLoopEvent> {
+        SiralosApplication::poll_event(self)
+    }
+
+    fn cancel(&mut self) {
+        SiralosApplication::cancel(self);
+    }
+}
+
+impl crate::session_worker::EventSource for SessionComposition<'_> {
+    fn poll_event(&mut self) -> Option<ToolLoopEvent> {
+        self.application.poll_event()
+    }
+
+    fn cancel(&mut self) {
+        self.application.cancel();
+    }
+}
+
 impl crate::session_worker::WorkerSession for SessionComposition<'_> {
     fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
         self.application
@@ -3347,8 +3373,8 @@ fn rejection_code(
     }
 }
 
-fn drain_events<P, W>(
-    application: &mut SiralosApplication<'_, P>,
+fn drain_events<S, W>(
+    application: &mut S,
     writer: &mut W,
     // S2 chunk 4b: called for EVERY drained event. A frontend that can
     // repaint uses the keep-alive ticks to draw, to collect what the user
@@ -3360,7 +3386,7 @@ fn drain_events<P, W>(
     reasoning: &mut dyn FnMut(&str),
 ) -> Result<(), InteractiveError>
 where
-    P: siralos_core::provider::ModelProvider,
+    S: crate::session_worker::EventSource,
     W: Write,
 {
     let mut sanitizer = TerminalSanitizer::new();
@@ -4270,17 +4296,71 @@ pub fn run_interactive_tui_with_options(
 #[cfg(test)]
 mod tests {
     use super::{
-        InteractiveOptions, SessionProvider, SlashCommand, apply_model_switch,
-        apply_provider_remove_confirmation, compose_session,
-        is_unknown_slash_command, parse_slash_command, persist_switched_model,
-        remove_profile_config, render_evolve_lines, render_model_line,
-        render_provider_line, run_interactive_session_with_options,
-        slash_command_catalog, write_profile_config,
+        InteractiveOptions, SessionProvider, SlashCommand, ToolLoopEvent,
+        apply_model_switch, apply_provider_remove_confirmation,
+        compose_session, is_unknown_slash_command, parse_slash_command,
+        persist_switched_model, remove_profile_config, render_evolve_lines,
+        render_model_line, render_provider_line,
+        run_interactive_session_with_options, slash_command_catalog,
+        write_profile_config,
     };
     use std::fs::{create_dir, create_dir_all, read, remove_dir_all, write};
     use std::io::Cursor;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// C2 step 3b: the drain is source-agnostic. A fake source stands in for
+    /// the session, which is the property the worker switch depends on.
+    struct FakeSource {
+        events: Vec<ToolLoopEvent>,
+        cancels: usize,
+    }
+
+    impl crate::session_worker::EventSource for FakeSource {
+        fn poll_event(&mut self) -> Option<ToolLoopEvent> {
+            if self.events.is_empty() {
+                None
+            } else {
+                Some(self.events.remove(0))
+            }
+        }
+
+        fn cancel(&mut self) {
+            self.cancels += 1;
+        }
+    }
+
+    #[test]
+    fn drain_events_reads_the_source_seam_and_cancels_on_request() {
+        let mut source = FakeSource {
+            events: vec![
+                ToolLoopEvent::TextDelta { text: "hi".to_owned() },
+                ToolLoopEvent::ProviderPending,
+                ToolLoopEvent::ResponseCompleted,
+            ],
+            cancels: 0,
+        };
+        let mut out: Vec<u8> = Vec::new();
+        let mut ticks = 0usize;
+        super::drain_events(
+            &mut source,
+            &mut out,
+            &mut || {
+                ticks += 1;
+                ticks == 2
+            },
+            &mut |_| {},
+        )
+        .expect("drain");
+
+        assert_eq!(
+            String::from_utf8(out).expect("utf8"),
+            "hi\n",
+            "the drain still forwards text through the terminal sanitizer"
+        );
+        assert_eq!(source.cancels, 1, "a frontend request cancels the source");
+        assert_eq!(ticks, 3, "progress sees every drained event");
+    }
 
     #[test]
     fn write_profile_config_omits_credential_when_none() {

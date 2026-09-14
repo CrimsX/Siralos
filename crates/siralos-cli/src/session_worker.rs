@@ -123,6 +123,21 @@ pub trait WorkerSession {
     fn flush(&mut self);
 }
 
+/// The narrow source the shared drain reads (C2 step 3b).
+///
+/// \`drain_events\` needs exactly these two calls, so the frontend can point it
+/// at a worker-owned session instead of a locally composed one. The seam is
+/// what lets the switch stay atomic (decision 167): the real application
+/// implements it by pure delegation today, so stdio and TUI drain byte-for-byte
+/// what they drained before, and the wiring step adds the worker-backed
+/// implementation without touching the drain.
+pub trait EventSource {
+    /// The next session event, or \`None\` when nothing is pending.
+    fn poll_event(&mut self) -> Option<ToolLoopEvent>;
+    /// Ask the session to stop the current turn.
+    fn cancel(&mut self);
+}
+
 /// Run the worker loop until `Shutdown` (C2).
 ///
 /// Synchronous and single-threaded on its own thread: receive a command, act,
