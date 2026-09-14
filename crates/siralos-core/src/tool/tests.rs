@@ -274,6 +274,52 @@ fn provider_failure_is_terminal_and_commits_nothing() {
 }
 
 #[test]
+fn the_keep_alive_tick_is_session_configuration_not_per_machine() {
+    // The review found the tick UNREACHABLE: enabling it while idle wrote to
+    // a machine that did not exist yet, and `send_prompt` built a fresh one
+    // with ticks off. This drives the real sequence and pins BOTH sides: the
+    // tick appears when the session asked for it, and never when it did not
+    // (which is what keeps the pinned event sequences byte-identical).
+    let script =
+        || TurnScriptProvider::new(vec![vec![text("hi"), completed()]]);
+
+    let provider = script();
+    let tool_registry = registry(vec![]);
+    let mut app = SiralosApplication::new(
+        &provider,
+        &tool_registry,
+        default_policy(),
+        None,
+        None,
+    );
+    app.enable_provider_progress_ticks();
+    app.send_prompt("hello".to_owned()).unwrap();
+    assert_eq!(app.poll_event(), Some(ToolLoopEvent::ResponseStarted));
+    assert_eq!(
+        app.poll_event(),
+        Some(ToolLoopEvent::ProviderPending),
+        "the keep-alive arrives BEFORE the first provider event"
+    );
+
+    // Without the opt-in the same turn carries no tick at all.
+    let provider = script();
+    let tool_registry = registry(vec![]);
+    let mut plain = SiralosApplication::new(
+        &provider,
+        &tool_registry,
+        default_policy(),
+        None,
+        None,
+    );
+    plain.send_prompt("hello".to_owned()).unwrap();
+    assert_eq!(plain.poll_event(), Some(ToolLoopEvent::ResponseStarted));
+    assert_eq!(
+        plain.poll_event(),
+        Some(ToolLoopEvent::TextDelta { text: "hi".to_owned() }),
+        "the default path is unchanged: no tick, straight to the answer"
+    );
+}
+#[test]
 fn single_flight_rejects_while_responding_and_recovers_after_drop() {
     let provider = TurnScriptProvider::new(vec![vec![completed()]]);
     let registry = registry(vec![]);
