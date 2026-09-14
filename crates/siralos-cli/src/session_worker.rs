@@ -567,6 +567,7 @@ mod loop_tests {
         flushes: usize,
         refuse: Option<String>,
         responding: bool,
+        models: Vec<String>,
     }
 
     impl WorkerSession for FakeSession {
@@ -598,12 +599,14 @@ mod loop_tests {
             "tools".to_owned()
         }
         fn set_model(&mut self, model: &str) -> Result<(), String> {
-            Ok(()).map(|()| {
-                let _ = model;
-            })
+            // Record it: a double that discards its argument cannot fail a test.
+            self.models.push(model.to_owned());
+            Ok(())
         }
         fn reload(&mut self) -> Result<(), String> {
-            Ok(())
+            // Faithful to the REAL adapter, which refuses until the reload path
+            // moves behind this boundary: a permissive double would hide it.
+            Err("reload is not available through the worker yet".to_owned())
         }
         fn cancel(&mut self) {
             self.cancels += 1;
@@ -631,6 +634,32 @@ mod loop_tests {
             events.push(event);
         }
         events
+    }
+
+    #[test]
+    fn a_model_switch_reaches_the_session_and_a_reload_refusal_is_reported() {
+        // The bridge commands are driven through the loop: a double that
+        // discards its argument, or a refusal that returned Ok, would let a
+        // broken wiring pass this.
+        let mut session = FakeSession::default();
+        let events = run(
+            vec![
+                WorkerCommand::SetModel("example/model-b".to_owned()),
+                WorkerCommand::Reload,
+                WorkerCommand::Shutdown,
+            ],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert_eq!(session.models, vec!["example/model-b".to_owned()]);
+        assert!(events.contains(&WorkerEvent::Report(
+            "model switched to example/model-b".to_owned()
+        )));
+        // Reload is not wired to the worker yet: it must SAY so, not pretend.
+        assert!(events.iter().any(|event| matches!(
+            event,
+            WorkerEvent::Failed(message) if message.contains("not available")
+        )));
     }
 
     #[test]

@@ -1343,12 +1343,6 @@ pub fn style_for_transcript_line(text: &str) -> Style {
         || text.starts_with("Install failed")
     {
         Style::default().fg(Color::Red)
-    } else if text.starts_with("-> ")
-        || text.starts_with("tool ")
-        || text.starts_with("Tool ")
-    {
-        // Tool activity is secondary: grey keeps it readable but quiet.
-        Style::default().fg(Color::DarkGray)
     } else if text.starts_with("unknown command")
         || text == "Approved."
         || text == "Denied."
@@ -2849,7 +2843,8 @@ impl Write for TuiSink {
 /// exit, MOUSE CAPTURE OFF) on drop — panic-safe.
 ///
 /// PAIRING GUARANTEE (required behaviour 1): `enter` enables
-/// `EnableMouseCapture` AFTER raw mode + alternate screen, and `drop`
+/// `EnableMouseCapture` is deliberately NOT sent at entry -- capture is OFF
+/// by default so native select, copy and paste work (owner ruling) -- and `drop`
 /// disables it (`DisableMouseCapture`) BEFORE leaving the alternate screen
 /// and raw mode — the exact reverse order. The guard is held as `_guard`
 /// for the whole TUI session in
@@ -5606,9 +5601,13 @@ mod tests {
             style_for_transcript_line("Response failed: nope").fg,
             Some(ratatui::style::Color::Red)
         );
+        // The grey tool-activity rule was WITHDRAWN on review: no producer
+        // emits those transcript lines (tool activity renders in the context
+        // pane), so it is the default style -- asserted so a re-introduction
+        // has to come with a producer.
         assert_eq!(
             style_for_transcript_line("-> workspace.read").fg,
-            Some(ratatui::style::Color::DarkGray)
+            Some(ratatui::style::Color::White)
         );
     }
 
