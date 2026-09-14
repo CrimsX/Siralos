@@ -70,6 +70,32 @@ running exactly once, in the frontend.
 
 Order and hazards for whoever takes it: `%TEMP%\siralos-c2-wiring.md`.
 
+## C2 touch-point inventory (measured)
+
+Every place the TUI loop still reaches the session, and the transport that
+replaces it (`crates/siralos-cli/src/interactive.rs`, line numbers as of
+`2457feb`):
+
+| Site                   | Reach                                                            | Transport                                                                                                                                                                                                                                                   |
+| ---------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 994, 1031              | `last_projection()` behind the `/context` and `/tools` renderers | `WorkerCommand::{ContextReport,ToolsReport}` -> `WorkerEvent::Report`                                                                                                                                                                                       |
+| 1549                   | `send_prompt`                                                    | `WorkerCommand::Prompt`                                                                                                                                                                                                                                     |
+| 3516, 3819, 4066, 4286 | `history()` (context demand and the pane)                        | `WorkerEvent::Pane` (decision 167 D1); the demand loop moves to whoever owns the history                                                                                                                                                                    |
+| 3675                   | `enable_provider_progress_ticks()`                               | moves into the worker: after the switch IT composes the session the TUI drives                                                                                                                                                                              |
+| 3847-3849              | the approval modal                                               | not a cross-thread concern: provider-removal confirmation resolves entirely frontend-side (`handle_pending_approval_key` + `apply_provider_remove_confirmation`), and the tool loop's approval reader (`read_approval_via_input_queue`, 1164) is stdio-only |
+
+`/models` needs no transport either: the fetch never touches the session.
+
+The inventory exposed one lie-in-waiting, fixed in `4dc2d67`: the loop
+answered `Reload` with a hardcoded `"reloaded"` while the session's `reload`
+refuses, so a switched `/reload` would have claimed success for work that
+never happened. `WorkerSession::reload` now returns the report and the loop
+relays exactly it.
+
+The one real gap left before the switch is the reload path itself (re-read,
+recompose, apply), which still lives in the frontend and must move behind the
+boundary, or `/reload` regresses.
+
 ## Slices
 
 | Slice | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
