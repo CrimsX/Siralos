@@ -111,6 +111,18 @@ implements it as the demand tick the frontends call today. Two tests pin it --
 the once-per-turn call, and that the adapter's hook is a real call site (a
 source check, the idiom `compose_session_before_guard_no_terminal_needed` uses).
 
+The header transport is in as well (`13267b9`): `WorkerEvent::Ready(SessionStatus)`
+arrives before any command and again after `SetModel`/`Reload`, because the
+status segment, the provider and the model are all derived from the composition
+(including its context metrics) and the frontend cannot build them once the
+session lives in the worker. `set_model` drops a display name that belonged to
+the previous model so the header cannot lie, and `apply_worker_event` ignores
+the header because it is frontend state, not transcript.
+
+That closes every transport the switch needs. What remains is the rewiring
+itself and step 4 -- `Shutdown` on every exit path, join before the terminal is
+restored.
+
 ## Slices
 
 | Slice | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
