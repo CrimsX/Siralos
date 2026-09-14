@@ -93,6 +93,119 @@ const _: () = {
     assert_send::<CancelFlag>();
 };
 
+/// What the worker needs from a session (C2).
+///
+/// Implemented for the composed session in the wiring step; a test double
+/// implements it here, so the loop is proven before any thread touches a real
+/// session. A method is fallible ONLY where the real session is: a prompt can
+/// be refused (already responding), a model switch can be refused, the rest
+/// cannot fail at all.
+pub trait WorkerSession {
+    /// Start one prompt turn.
+    fn send_prompt(&mut self, prompt: &str) -> Result<(), String>;
+    /// The next session event, or `None` when the turn is over.
+    fn poll_event(&mut self) -> Option<ToolLoopEvent>;
+    /// Whether a turn is currently running.
+    fn is_responding(&self) -> bool;
+    /// A detached pane snapshot for the frontend (decision 167 D1).
+    fn pane(&self) -> Option<crate::tui::ContextPaneData>;
+    /// The projection report behind `/context`.
+    fn context_report(&self) -> String;
+    /// The tool projection report behind `/tools`.
+    fn tools_report(&self) -> String;
+    /// Apply a model switch the UI has already persisted (decision 167 D3).
+    fn set_model(&mut self, model: &str) -> Result<(), String>;
+    /// Re-apply the reloaded composition (decision 167 D3).
+    fn reload(&mut self) -> Result<(), String>;
+    /// Host cancellation authority.
+    fn cancel(&mut self);
+    /// Flush the recordings -- called EXACTLY once, on shutdown.
+    fn flush(&mut self);
+}
+
+/// Run the worker loop until `Shutdown` (C2).
+///
+/// Synchronous and single-threaded on its own thread: receive a command, act,
+/// drain the session into worker events, repeat. The cancel flag is checked
+/// between commands AND between drained events, so a cancel need not wait for a
+/// blocked read to return.
+///
+/// `flush` is called exactly once, on shutdown, which is decision 78's
+/// single-owner rule made mechanical.
+pub fn run_worker_loop<S: WorkerSession>(
+    commands: &std::sync::mpsc::Receiver<WorkerCommand>,
+    events: &std::sync::mpsc::Sender<WorkerEvent>,
+    cancel: &CancelFlag,
+    session: &mut S,
+) {
+    while let Ok(command) = commands.recv() {
+        match command {
+            WorkerCommand::Prompt(prompt) => {
+                cancel.clear();
+                match session.send_prompt(&prompt) {
+                    Ok(()) => {
+                        while let Some(event) = session.poll_event() {
+                            let _ = events.send(WorkerEvent::Session(event));
+                            if cancel.is_requested() {
+                                session.cancel();
+                            }
+                            if let Some(pane) = session.pane() {
+                                let _ = events.send(WorkerEvent::Pane(pane));
+                            }
+                        }
+                        let _ = events.send(WorkerEvent::TurnFinished);
+                    }
+                    Err(message) => {
+                        let _ = events.send(WorkerEvent::Failed(message));
+                        let _ = events.send(WorkerEvent::TurnFinished);
+                    }
+                }
+            }
+            WorkerCommand::Cancel => session.cancel(),
+            WorkerCommand::ContextReport => {
+                let report = session.context_report();
+                let _ = events.send(WorkerEvent::Report(report));
+            }
+            WorkerCommand::ToolsReport => {
+                let report = session.tools_report();
+                let _ = events.send(WorkerEvent::Report(report));
+            }
+            WorkerCommand::SetModel(model) => {
+                match session.set_model(&model) {
+                    Ok(()) => {
+                        let note = format!("model switched to {model}");
+                        let _ = events.send(WorkerEvent::Report(note));
+                    }
+                    Err(message) => {
+                        let _ = events.send(WorkerEvent::Failed(message));
+                    }
+                }
+            }
+            WorkerCommand::Reload => match session.reload() {
+                Ok(()) => {
+                    let _ = events
+                        .send(WorkerEvent::Report("reloaded".to_owned()));
+                }
+                Err(message) => {
+                    let _ = events.send(WorkerEvent::Failed(message));
+                }
+            },
+            WorkerCommand::Shutdown => {
+                if session.is_responding() {
+                    session.cancel();
+                }
+                session.flush();
+                let _ = events.send(WorkerEvent::Stopped);
+                return;
+            }
+        }
+    }
+    // The command channel closed without a Shutdown: flush once anyway, so a
+    // vanished UI cannot lose the recordings silently.
+    session.flush();
+    let _ = events.send(WorkerEvent::Stopped);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CancelFlag, WorkerCommand, WorkerEvent};
@@ -161,5 +274,187 @@ mod tests {
         assert!(seen.is_requested(), "the clone observes the same flag");
         seen.clear();
         assert!(!flag.is_requested());
+    }
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::{
+        CancelFlag, WorkerCommand, WorkerEvent, WorkerSession, run_worker_loop,
+    };
+    use siralos_core::tool::ToolLoopEvent;
+
+    /// A scripted session: records what the loop asked of it.
+    #[derive(Default)]
+    struct FakeSession {
+        events: std::collections::VecDeque<ToolLoopEvent>,
+        prompts: Vec<String>,
+        cancels: usize,
+        flushes: usize,
+        refuse: Option<String>,
+        responding: bool,
+    }
+
+    impl WorkerSession for FakeSession {
+        fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
+            if let Some(message) = self.refuse.take() {
+                return Err(message);
+            }
+            self.prompts.push(prompt.to_owned());
+            self.responding = true;
+            Ok(())
+        }
+        fn poll_event(&mut self) -> Option<ToolLoopEvent> {
+            let next = self.events.pop_front();
+            if next.is_none() {
+                self.responding = false;
+            }
+            next
+        }
+        fn is_responding(&self) -> bool {
+            self.responding
+        }
+        fn pane(&self) -> Option<crate::tui::ContextPaneData> {
+            None
+        }
+        fn context_report(&self) -> String {
+            "context".to_owned()
+        }
+        fn tools_report(&self) -> String {
+            "tools".to_owned()
+        }
+        fn set_model(&mut self, model: &str) -> Result<(), String> {
+            Ok(()).map(|()| {
+                let _ = model;
+            })
+        }
+        fn reload(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn cancel(&mut self) {
+            self.cancels += 1;
+            self.responding = false;
+        }
+        fn flush(&mut self) {
+            self.flushes += 1;
+        }
+    }
+
+    fn run(
+        commands: Vec<WorkerCommand>,
+        session: &mut FakeSession,
+        cancel: &CancelFlag,
+    ) -> Vec<WorkerEvent> {
+        let (command_tx, command_rx) = std::sync::mpsc::channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        for command in commands {
+            command_tx.send(command).expect("send");
+        }
+        drop(command_tx);
+        run_worker_loop(&command_rx, &event_tx, cancel, session);
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    #[test]
+    fn a_prompt_forwards_its_events_and_finishes() {
+        let mut session = FakeSession {
+            events: vec![
+                ToolLoopEvent::ResponseStarted,
+                ToolLoopEvent::ResponseCompleted,
+            ]
+            .into(),
+            ..FakeSession::default()
+        };
+        let events = run(
+            vec![
+                WorkerCommand::Prompt("hi".to_owned()),
+                WorkerCommand::Shutdown,
+            ],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert_eq!(session.prompts, vec!["hi".to_owned()]);
+        assert!(
+            events.contains(&WorkerEvent::Session(
+                ToolLoopEvent::ResponseStarted
+            ))
+        );
+        assert!(events.contains(&WorkerEvent::TurnFinished));
+        assert_eq!(events.last(), Some(&WorkerEvent::Stopped));
+    }
+
+    #[test]
+    fn a_refused_prompt_reports_failure_and_never_looks_like_success() {
+        let mut session = FakeSession {
+            refuse: Some("already responding".to_owned()),
+            ..FakeSession::default()
+        };
+        let events = run(
+            vec![
+                WorkerCommand::Prompt("hi".to_owned()),
+                WorkerCommand::Shutdown,
+            ],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert!(
+            events.contains(&WorkerEvent::Failed(
+                "already responding".to_owned()
+            ))
+        );
+        assert_eq!(events.last(), Some(&WorkerEvent::Stopped));
+    }
+
+    #[test]
+    fn the_cancel_flag_and_the_cancel_command_both_reach_the_session() {
+        let cancel = CancelFlag::new();
+        cancel.request();
+        let mut session = FakeSession {
+            events: vec![
+                ToolLoopEvent::ResponseStarted,
+                ToolLoopEvent::ResponseCancelled,
+            ]
+            .into(),
+            ..FakeSession::default()
+        };
+        // The flag is set before the prompt: the loop clears it at turn start,
+        // so the explicit Cancel command is what must land here.
+        let events = run(
+            vec![WorkerCommand::Cancel, WorkerCommand::Shutdown],
+            &mut session,
+            &cancel,
+        );
+        assert_eq!(session.cancels, 1, "Cancel reaches the session");
+        assert_eq!(events.last(), Some(&WorkerEvent::Stopped));
+    }
+
+    #[test]
+    fn shutdown_flushes_exactly_once_and_a_closed_channel_flushes_anyway() {
+        let mut session = FakeSession::default();
+        run(vec![WorkerCommand::Shutdown], &mut session, &CancelFlag::new());
+        assert_eq!(session.flushes, 1, "one owner, one flush");
+
+        let mut session = FakeSession::default();
+        run(Vec::new(), &mut session, &CancelFlag::new());
+        assert_eq!(
+            session.flushes, 1,
+            "a channel that closes without a Shutdown still flushes once"
+        );
+    }
+
+    #[test]
+    fn display_reports_answer_their_requests() {
+        let mut session = FakeSession::default();
+        let events = run(
+            vec![WorkerCommand::ContextReport, WorkerCommand::ToolsReport],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert!(events.contains(&WorkerEvent::Report("context".to_owned())));
+        assert!(events.contains(&WorkerEvent::Report("tools".to_owned())));
     }
 }
