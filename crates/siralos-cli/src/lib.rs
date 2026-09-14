@@ -15,6 +15,7 @@ pub mod configuration;
 pub mod interactive;
 pub mod output;
 pub mod sanitize;
+pub mod session_worker;
 pub mod tui;
 
 #[cfg(feature = "differential-harness")]
