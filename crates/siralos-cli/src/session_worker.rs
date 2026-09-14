@@ -99,7 +99,7 @@ const _: () = {
 /// implements it here, so the loop is proven before any thread touches a real
 /// session. A method is fallible ONLY where the real session is: a prompt can
 /// be refused (already responding), a model switch can be refused, the rest
-/// cannot fail at all.
+/// cannot fail at all -- with ONE deliberate exception: `reload` refuses until the reload path moves behind this boundary, and the command stays in the trait so the wiring has the shape it needs.
 pub trait WorkerSession {
     /// Start one prompt turn.
     fn send_prompt(&mut self, prompt: &str) -> Result<(), String>;

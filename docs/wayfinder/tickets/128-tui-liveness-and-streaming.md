@@ -37,7 +37,7 @@ arrived. Fixing the freeze fixes both reports.
   provider parses OpenAI-compatible SSE incrementally and still records a
   BODY, so recordings replay through the same converter; \`Phase::StreamTurn\`
   pulls one provider event per step and emits text deltas as they arrive; the
-  TUI shares its terminal so the sink can ask for a coalesced frame (33 ms)
+  TUI shares its terminal so the sink can ask for a coalesced frame (16 ms)
   while the loop is blocked in the drain; and an opt-in \`ProviderPending\`
   keep-alive tick gives the frontend a chance to repaint, keep type-ahead, and
   read Esc as an interrupt.

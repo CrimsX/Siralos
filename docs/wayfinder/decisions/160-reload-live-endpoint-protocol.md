@@ -35,6 +35,8 @@ live session's display identity, and there is no live credential cell (the
 credential is resolved once at composition). Decision 158's limit is therefore
 half-consumed, and this record claims only the half it consumed.
 
+> **Correction (2026-09-12, decision 162 M9).** The paragraph above is superseded for the CREDENTIAL: the credential became a live cell, so `/reload` resolves and applies a changed credential for the generic provider (and CLEARS it when a profile stops declaring one), reporting what it could not apply instead of staying silent. A changed provider NAME still needs a restart -- it is the live session's display identity. The limit left standing is narrower than this record states.
+
 ## 4. Criteria -> Evidence
 
 | Criterion                                         | Evidence                                                                                                                                     |
