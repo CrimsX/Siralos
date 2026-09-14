@@ -51,8 +51,24 @@ pub enum WorkerEvent {
     Failed(String),
     /// The turn is over: nothing more arrives until the next command.
     TurnFinished,
+    /// What the frontend header shows (C2 step 3). Sent once when the loop
+    /// starts and again whenever the composition moves under it (`SetModel`,
+    /// `Reload`), because only the session can derive it.
+    Ready(SessionStatus),
     /// The recordings were flushed and the worker is exiting.
     Stopped,
+}
+
+/// The header the frontend shows: the composed status segment plus the two
+/// names it is built from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionStatus {
+    /// The composed status segment (provider, model, context usage).
+    pub status: String,
+    /// Applied provider name, if any.
+    pub provider: Option<String>,
+    /// Model to display -- the display name when the profile declares one.
+    pub model: Option<String>,
 }
 
 /// The external cancel flag (decision 167): the UI sets it, the worker polls it
@@ -123,6 +139,10 @@ pub trait WorkerSession {
     /// runs HERE, with the session, because it reads state only the owner can
     /// see -- the context demand loop reads the session's own history.
     fn turn_settled(&mut self);
+    /// The header the frontend shows (C2 step 3). The status segment is derived
+    /// from the composition and its context metrics, so the frontend cannot
+    /// build it once the session lives here.
+    fn status(&self) -> SessionStatus;
     /// Host cancellation authority.
     fn cancel(&mut self);
     /// Flush the recordings -- called EXACTLY once, on shutdown.
@@ -159,6 +179,9 @@ pub fn run_worker_loop<S: WorkerSession>(
     cancel: &CancelFlag,
     session: &mut S,
 ) {
+    // The frontend cannot derive its header any more: it arrives first, and
+    // again whenever a command moves the composition under it.
+    let _ = events.send(WorkerEvent::Ready(session.status()));
     while let Ok(command) = commands.recv() {
         match command {
             WorkerCommand::Prompt(prompt) => {
@@ -197,6 +220,8 @@ pub fn run_worker_loop<S: WorkerSession>(
                     Ok(()) => {
                         let note = format!("model switched to {model}");
                         let _ = events.send(WorkerEvent::Report(note));
+                        let _ =
+                            events.send(WorkerEvent::Ready(session.status()));
                     }
                     Err(message) => {
                         let _ = events.send(WorkerEvent::Failed(message));
@@ -206,6 +231,7 @@ pub fn run_worker_loop<S: WorkerSession>(
             WorkerCommand::Reload => match session.reload() {
                 Ok(report) => {
                     let _ = events.send(WorkerEvent::Report(report));
+                    let _ = events.send(WorkerEvent::Ready(session.status()));
                 }
                 Err(message) => {
                     let _ = events.send(WorkerEvent::Failed(message));
@@ -405,6 +431,9 @@ pub fn apply_worker_event<W: std::io::Write>(
     pane: &mut Option<crate::tui::ContextPaneData>,
 ) -> std::io::Result<()> {
     match event {
+        // The header is frontend STATE, not transcript: the loop that
+        // owns the header applies it, so nothing is written here.
+        WorkerEvent::Ready(_) => {}
         WorkerEvent::Session(event) => match event {
             ToolLoopEvent::TextDelta { text } => {
                 writer.write_all(sanitizer.push(&text).as_bytes())?;
@@ -756,7 +785,8 @@ mod loop_tests {
     }
 
     use super::{
-        CancelFlag, WorkerCommand, WorkerEvent, WorkerSession, run_worker_loop,
+        CancelFlag, SessionStatus, WorkerCommand, WorkerEvent, WorkerSession,
+        run_worker_loop,
     };
     use siralos_core::tool::ToolLoopEvent;
 
@@ -824,6 +854,13 @@ mod loop_tests {
         fn turn_settled(&mut self) {
             self.settled += 1;
         }
+        fn status(&self) -> SessionStatus {
+            SessionStatus {
+                status: "fake status".to_owned(),
+                provider: Some("fake".to_owned()),
+                model: Some("fake-model".to_owned()),
+            }
+        }
         fn flush(&mut self) {
             self.flushes += 1;
         }
@@ -846,6 +883,17 @@ mod loop_tests {
             events.push(event);
         }
         events
+    }
+
+    #[test]
+    fn the_worker_announces_the_header_before_any_command() {
+        let mut session = FakeSession::default();
+        let cancel = CancelFlag::new();
+        let events = run(vec![], &mut session, &cancel);
+        assert!(
+            matches!(events.first(), Some(WorkerEvent::Ready(_))),
+            "the frontend cannot derive its header any more, so it arrives first: {events:?}"
+        );
     }
 
     #[test]
@@ -881,10 +929,20 @@ mod loop_tests {
         assert_eq!(
             events,
             vec![
+                WorkerEvent::Ready(SessionStatus {
+                    status: "fake status".to_owned(),
+                    provider: Some("fake".to_owned()),
+                    model: Some("fake-model".to_owned()),
+                }),
                 WorkerEvent::Report(
                     "reload applied: model=beta (restart to converge)\n"
                         .to_owned()
                 ),
+                WorkerEvent::Ready(SessionStatus {
+                    status: "fake status".to_owned(),
+                    provider: Some("fake".to_owned()),
+                    model: Some("fake-model".to_owned()),
+                }),
                 // The command channel closed without a Shutdown: the loop
                 // still flushes once, and says so.
                 WorkerEvent::Stopped,

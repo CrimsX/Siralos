@@ -1741,8 +1741,34 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         // D3: the FRONTEND persists the profile first; the worker only applies
         // it live, so persist-before-live stays true without shared state.
         self.live_provider.set_live_model(model);
+        // A display name belongs to the model it was declared for: keeping the
+        // old one would label the new model with the old model's name.
+        if self.applied_model.as_deref() != Some(model) {
+            self.applied_model_display_name = None;
+        }
         self.applied_model = Some(model.to_owned());
         Ok(())
+    }
+
+    fn status(&self) -> crate::session_worker::SessionStatus {
+        // The same recipe the TUI entry used before the session moved here: the
+        // display name wins when the profile declares one, and the context
+        // metrics feed the usage segment.
+        let model = self
+            .applied_model_display_name
+            .clone()
+            .filter(|name| !name.is_empty())
+            .or_else(|| self.applied_model.clone());
+        crate::session_worker::SessionStatus {
+            status: crate::tui::compose_status_line_with_context(
+                "",
+                self.applied_provider.as_deref(),
+                model.as_deref(),
+                self.context_session_holder.as_ref().map(|s| &s.metrics),
+            ),
+            provider: self.applied_provider.clone(),
+            model,
+        }
     }
 
     fn reload(&mut self) -> Result<String, String> {
@@ -4515,6 +4541,48 @@ mod tests {
             body.contains("drive_context_demand("),
             "the settled-turn hook is where the demand loop moved to"
         );
+    }
+
+    #[test]
+    fn the_worker_adapter_reports_the_header_the_frontend_showed() {
+        use crate::session_worker::WorkerSession;
+        let root = temporary_directory("worker-status");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nmodel_display_name = \"Example A\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-completions\"\n",
+        )
+        .expect("profile");
+        let mut session = compose_session(InteractiveOptions {
+            workspace_root: Some(&root),
+            config_path: None,
+        })
+        .expect("compose");
+        let status = session.status();
+        assert_eq!(status.provider.as_deref(), Some("example-vendor"));
+        assert_eq!(
+            status.model.as_deref(),
+            Some("Example A"),
+            "the display name wins"
+        );
+        assert_eq!(
+            status.status,
+            crate::tui::compose_status_line_with_context(
+                "",
+                status.provider.as_deref(),
+                status.model.as_deref(),
+                None,
+            ),
+            "the worker builds the same header the TUI entry built"
+        );
+
+        // A live switch must not keep the OLD model's display name.
+        session.set_model("example/model-b").expect("switch");
+        assert_eq!(
+            session.status().model.as_deref(),
+            Some("example/model-b"),
+            "the stale display name is dropped, so the header cannot lie"
+        );
+        let _ = remove_dir_all(root);
     }
 
     #[test]
