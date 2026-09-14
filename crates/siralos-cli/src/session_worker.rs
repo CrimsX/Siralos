@@ -115,8 +115,10 @@ pub trait WorkerSession {
     fn tools_report(&self) -> String;
     /// Apply a model switch the UI has already persisted (decision 167 D3).
     fn set_model(&mut self, model: &str) -> Result<(), String>;
-    /// Re-apply the reloaded composition (decision 167 D3).
-    fn reload(&mut self) -> Result<(), String>;
+    /// Re-apply the reloaded composition (decision 167 D3) and return the
+    /// report the frontend shows. The report belongs to the SESSION: a loop
+    /// that invented its own could announce a reload that never happened.
+    fn reload(&mut self) -> Result<String, String>;
     /// Host cancellation authority.
     fn cancel(&mut self);
     /// Flush the recordings -- called EXACTLY once, on shutdown.
@@ -197,9 +199,8 @@ pub fn run_worker_loop<S: WorkerSession>(
                 }
             }
             WorkerCommand::Reload => match session.reload() {
-                Ok(()) => {
-                    let _ = events
-                        .send(WorkerEvent::Report("reloaded".to_owned()));
+                Ok(report) => {
+                    let _ = events.send(WorkerEvent::Report(report));
                 }
                 Err(message) => {
                     let _ = events.send(WorkerEvent::Failed(message));
@@ -764,6 +765,7 @@ mod loop_tests {
         refuse: Option<String>,
         responding: bool,
         models: Vec<String>,
+        reload_report: Option<String>,
     }
 
     impl WorkerSession for FakeSession {
@@ -799,10 +801,15 @@ mod loop_tests {
             self.models.push(model.to_owned());
             Ok(())
         }
-        fn reload(&mut self) -> Result<(), String> {
+        fn reload(&mut self) -> Result<String, String> {
             // Faithful to the REAL adapter, which refuses until the reload path
             // moves behind this boundary: a permissive double would hide it.
-            Err("reload is not available through the worker yet".to_owned())
+            // A test that needs the success path sets `reload_report`.
+            match self.reload_report.take() {
+                Some(report) => Ok(report),
+                None => Err("reload is not available through the worker yet"
+                    .to_owned()),
+            }
         }
         fn cancel(&mut self) {
             self.cancels += 1;
@@ -830,6 +837,32 @@ mod loop_tests {
             events.push(event);
         }
         events
+    }
+
+    #[test]
+    fn a_reload_report_comes_from_the_session_not_the_loop() {
+        let mut session = FakeSession {
+            reload_report: Some(
+                "reload applied: model=beta (restart to converge)\n"
+                    .to_owned(),
+            ),
+            ..FakeSession::default()
+        };
+        let cancel = CancelFlag::new();
+        let events = run(vec![WorkerCommand::Reload], &mut session, &cancel);
+        assert_eq!(
+            events,
+            vec![
+                WorkerEvent::Report(
+                    "reload applied: model=beta (restart to converge)\n"
+                        .to_owned()
+                ),
+                // The command channel closed without a Shutdown: the loop
+                // still flushes once, and says so.
+                WorkerEvent::Stopped,
+            ],
+            "the loop announces exactly what the session did, nothing of its own"
+        );
     }
 
     #[test]

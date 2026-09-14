@@ -1733,7 +1733,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         Ok(())
     }
 
-    fn reload(&mut self) -> Result<(), String> {
+    fn reload(&mut self) -> Result<String, String> {
         // The reload path (re-read, recompose, apply) still lives in the
         // frontend; claiming otherwise here would be a lie, so it refuses
         // until C2's wiring moves it behind this boundary.
