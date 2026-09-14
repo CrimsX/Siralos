@@ -33,6 +33,24 @@ The UI's loop then becomes: poll crossterm with a short timeout, run the 16 ms
 tick (reveal, pulse, draw), drain the event channel. Liveness stops depending on
 the provider's cadence.
 
+## C2 Status (2026-09-12)
+
+Delivered and green: the message contract with its compile-time `Send` proof
+(`85b932c`), the worker loop proven against a scripted session (`6702dbc`), the
+adapter for the composed session (`d1267dd`), the spawn path with its owned
+paths and its single flush (`8c6fb79`), and the event bridge with the
+sanitizer boundary intact (`f10b65a`).
+
+**What remains is ONE step, and it cannot be sliced.** Step 3 rewires the TUI
+loop to commands and events; step 4 sends `Shutdown` on every exit path and
+joins. A partially switched loop would leave the UI holding a session AND the
+worker holding one -- the divergence decision 167 exists to forbid -- so the
+switch is atomic: either `dispatch_tui_command` no longer takes an
+`application`, or nothing changes. The completion check is exactly that
+parameter disappearing.
+
+Order and hazards for whoever takes it: `%TEMP%\siralos-c2-wiring.md`.
+
 ## Slices
 
 | Slice | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
