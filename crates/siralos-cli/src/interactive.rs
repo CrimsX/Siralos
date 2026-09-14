@@ -1701,6 +1701,18 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             .map_err(|error| error.to_string())
     }
 
+    fn turn_settled(&mut self) {
+        // C2: the demand loop reads the session's OWN history, so it runs with
+        // the session -- after the turn's events, exactly where the frontends
+        // call it today (`send_prompt` -> drain -> demand).
+        if let Some(session) = self.context_session_holder.as_mut() {
+            drive_context_demand(
+                &mut self.application,
+                session,
+                &mut self.context_history_len,
+            );
+        }
+    }
     fn poll_event(&mut self) -> Option<siralos_core::tool::ToolLoopEvent> {
         self.application.poll_event()
     }
@@ -4473,6 +4485,36 @@ mod tests {
             "the NEXT provider request reads the reloaded model"
         );
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_demand_loop_runs_where_the_history_lives() {
+        // Decision 167 and the C2 inventory: the demand loop reads the
+        // session's OWN history, so every owner calls it -- both frontends AND
+        // the worker adapter's settled-turn hook. The property is "this call is
+        // still here", which is what a source check can settle (the same idiom
+        // `compose_session_before_guard_no_terminal_needed` uses).
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/interactive.rs"),
+        )
+        .expect("read interactive.rs");
+        let calls = src.matches("drive_context_demand(").count();
+        assert!(
+            calls >= 3,
+            "the stdio arm, the TUI arm and the worker hook all drive the demand loop, found {calls}"
+        );
+        let hook =
+            src.find("fn turn_settled").expect("the adapter settles turns");
+        let after = &src[hook..];
+        let body = match after.find("\n    }\n") {
+            Some(end) => &after[..end],
+            None => after,
+        };
+        assert!(
+            body.contains("drive_context_demand("),
+            "the settled-turn hook is where the demand loop moved to"
+        );
     }
 
     #[test]

@@ -119,6 +119,10 @@ pub trait WorkerSession {
     /// report the frontend shows. The report belongs to the SESSION: a loop
     /// that invented its own could announce a reload that never happened.
     fn reload(&mut self) -> Result<String, String>;
+    /// The turn's events are done (C2 step 3). What follows a finished turn
+    /// runs HERE, with the session, because it reads state only the owner can
+    /// see -- the context demand loop reads the session's own history.
+    fn turn_settled(&mut self);
     /// Host cancellation authority.
     fn cancel(&mut self);
     /// Flush the recordings -- called EXACTLY once, on shutdown.
@@ -170,6 +174,7 @@ pub fn run_worker_loop<S: WorkerSession>(
                                 let _ = events.send(WorkerEvent::Pane(pane));
                             }
                         }
+                        session.turn_settled();
                         let _ = events.send(WorkerEvent::TurnFinished);
                     }
                     Err(message) => {
@@ -766,6 +771,7 @@ mod loop_tests {
         responding: bool,
         models: Vec<String>,
         reload_report: Option<String>,
+        settled: usize,
     }
 
     impl WorkerSession for FakeSession {
@@ -815,6 +821,9 @@ mod loop_tests {
             self.cancels += 1;
             self.responding = false;
         }
+        fn turn_settled(&mut self) {
+            self.settled += 1;
+        }
         fn flush(&mut self) {
             self.flushes += 1;
         }
@@ -837,6 +846,25 @@ mod loop_tests {
             events.push(event);
         }
         events
+    }
+
+    #[test]
+    fn a_finished_turn_is_settled_once_by_the_loop() {
+        let mut session = FakeSession::default();
+        let cancel = CancelFlag::new();
+        let events = run(
+            vec![WorkerCommand::Prompt("hi".to_owned())],
+            &mut session,
+            &cancel,
+        );
+        assert_eq!(
+            session.settled, 1,
+            "the session settles its turn once, after the events"
+        );
+        assert!(
+            events.contains(&WorkerEvent::TurnFinished),
+            "and the frontend still hears the turn is over"
+        );
     }
 
     #[test]
