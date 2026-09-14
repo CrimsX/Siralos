@@ -53,9 +53,13 @@ pub const APPROVAL_TRUNCATION_MARKER: &str = "... (truncated)";
 pub const MOUSE_WHEEL_STEP: u16 = 3;
 
 /// Minimum gap between sink-requested redraws while a stream is arriving.
-/// Above ~30 fps a terminal gains nothing, and the last delta of a turn is
-/// always painted because the loop's own draw runs after the drain.
-pub const REDRAW_INTERVAL: Duration = Duration::from_millis(33);
+///
+/// The reveal releases `rate * interval` characters per frame, so this IS
+/// the text's step size: at 33 ms a 240 char/s reveal moved ~8 characters a
+/// frame and read as "display, stop, display" on a slow provider. 16 ms
+/// (60 fps) halves the step, and the last delta of a turn is always painted
+/// because the loop's own draw runs after the drain.
+pub const REDRAW_INTERVAL: Duration = Duration::from_millis(16);
 
 /// How much streamed thinking the TUI keeps (the tail), so a long reasoning
 /// trace cannot grow the state without bound.
