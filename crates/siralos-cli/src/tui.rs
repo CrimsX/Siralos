@@ -1337,6 +1337,10 @@ pub fn style_for_transcript_line(text: &str) -> Style {
         || text.starts_with("Tool failed")
         || text.starts_with("provider config failed")
         || text.starts_with("reload not applied")
+        || text.starts_with("models fetch error")
+        || text.starts_with("provider removal failed")
+        || text.starts_with("Activate failed")
+        || text.starts_with("Install failed")
     {
         Style::default().fg(Color::Red)
     } else if text.starts_with("-> ")
@@ -2780,7 +2784,6 @@ pub fn render_to_buffer_with_pane(
 /// segment verbatim via [`TuiState::push_line`].
 pub struct TuiSink {
     state: Rc<RefCell<TuiState>>,
-    buf: String,
     /// The live loop's redraw hook (S2 chunk 4): a streamed delta lands in
     /// the transcript and the sink asks for a frame, which is what makes
     /// streaming VISIBLE instead of arriving in one frame at the end.
@@ -2793,12 +2796,7 @@ pub struct TuiSink {
 impl TuiSink {
     /// Create a sink sharing `state`.
     pub fn new(state: Rc<RefCell<TuiState>>) -> Self {
-        Self {
-            state,
-            buf: String::new(),
-            redraw: None,
-            last_redraw: std::cell::Cell::new(None),
-        }
+        Self { state, redraw: None, last_redraw: std::cell::Cell::new(None) }
     }
 
     /// Install the live loop's redraw hook.
@@ -2819,15 +2817,6 @@ impl TuiSink {
         if due {
             self.last_redraw.set(Some(now));
             hook();
-        }
-    }
-
-    /// Flush any partial line (without trailing newline) as a transcript entry.
-    pub fn flush_partial(&mut self) {
-        if !self.buf.is_empty() {
-            let line = std::mem::take(&mut self.buf);
-            self.state.borrow_mut().push_line(line);
-            self.redraw_due();
         }
     }
 }

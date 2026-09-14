@@ -709,6 +709,10 @@ pub struct SiralosApplication<'a, P: ModelProvider> {
     projection_service: Option<ProjectionService>,
     /// R7.3 projection configuration (only when service is Some).
     projection_config: ApplicationProjectionConfig,
+    /// Whether a started turn carries the `ProviderPending` keep-alive tick.
+    /// Session configuration (set by the CLI for a frontend that can
+    /// repaint), so `send_prompt` can hand it to every machine it builds.
+    progress_ticks: bool,
 }
 
 impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
@@ -735,6 +739,7 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
             state: AppState::Idle,
             projection_service: None,
             projection_config: ApplicationProjectionConfig::default(),
+            progress_ticks: false,
         }
     }
 
@@ -810,6 +815,9 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
         let mut machine =
             ResponseMachine::new(self.provider, host, self.max_tool_rounds);
         machine.history = history;
+        // Session configuration, not per-machine: a frontend that asked for
+        // the keep-alive tick gets it on EVERY turn it starts.
+        machine.progress_ticks = self.progress_ticks;
         self.state = AppState::Responding(Box::new(machine));
         Ok(())
     }
@@ -848,8 +856,12 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
     ///
     /// A frontend that can repaint (and read an interrupt key) turns this
     /// on; it is OFF by default so the pinned event sequences stay
-    /// byte-identical. Call it before `send_prompt`.
+    /// byte-identical. It is SESSION configuration: the frontend calls it
+    /// once, and every turn it starts afterwards carries the tick. (Setting
+    /// it only on an already-running machine made the tick unreachable, since
+    /// `send_prompt` builds a fresh machine.)
     pub fn enable_provider_progress_ticks(&mut self) {
+        self.progress_ticks = true;
         if let AppState::Responding(machine) = &mut self.state {
             machine.progress_ticks = true;
         }

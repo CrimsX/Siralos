@@ -3650,11 +3650,15 @@ pub fn run_interactive_tui_with_options(
     let mut sink = TuiSink::new(tui_state.clone());
 
     // One place that paints a frame, callable from the loop and from the
-    // sink. It never blocks: a frame already in progress is skipped.
+    // sink. It never blocks: a frame already in progress is skipped. The
+    // FIRST failure is kept here and reported, so a dead terminal is a
+    // diagnostic rather than a frozen UI.
+    let draw_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let draw_now = {
         let terminal = Rc::clone(&terminal);
         let tui_state = Rc::clone(&tui_state);
         let pane_cache = Rc::clone(&pane_cache);
+        let draw_error = Rc::clone(&draw_error);
         move || {
             // S3c: every paint releases the text the reader is owed, so the
             // answer and the thinking grow left to right at a steady rate
@@ -3662,13 +3666,21 @@ pub fn run_interactive_tui_with_options(
             // draining on the idle ticks after a turn ends.
             tui_state.borrow_mut().reveal_now(std::time::Instant::now());
             if let Ok(mut terminal) = terminal.try_borrow_mut() {
-                let _ = terminal.draw(|frame| {
+                // A frame already in progress is skipped, but a REAL failure
+                // (a dead terminal) is kept and reported once, instead of
+                // leaving a frozen UI with no diagnostic.
+                if let Err(error) = terminal.draw(|frame| {
                     draw_with_pane(
                         &tui_state.borrow(),
                         pane_cache.borrow().as_ref(),
                         frame,
                     )
-                });
+                }) {
+                    let mut slot = draw_error.borrow_mut();
+                    if slot.is_none() {
+                        *slot = Some(error.to_string());
+                    }
+                }
             }
         }
     };
@@ -4235,6 +4247,11 @@ pub fn run_interactive_tui_with_options(
                 metrics_opt,
             );
             tui_state.borrow_mut().status = composed;
+        }
+        // A draw failure is reported ONCE (a dead terminal must not spin in
+        // silence) and then cleared.
+        if let Some(message) = draw_error.borrow_mut().take() {
+            eprintln!("siralos: terminal draw failed: {message}");
         }
         // One draw at loop bottom — every drained batch or idle tick (P1: immediate after drain)
         *pane_cache.borrow_mut() = build_context_pane(

@@ -338,9 +338,14 @@ pub fn apply_worker_event<W: std::io::Write>(
                 writer.write_all(line.as_bytes())?;
             }
             ToolLoopEvent::ReasoningDelta { text } => reasoning(&text),
-            // The keep-alive tick, round markers and context pressure carry
-            // no output of their own.
-            _ => {}
+            // Enumerated, not a catch-all: a new variant must be classified
+            // deliberately rather than silently ignored.
+            ToolLoopEvent::ResponseStarted
+            | ToolLoopEvent::ToolStarted { .. }
+            | ToolLoopEvent::ToolCompleted { .. }
+            | ToolLoopEvent::ToolCancelled { .. }
+            | ToolLoopEvent::ProviderPending
+            | ToolLoopEvent::ContextPressure { .. } => {}
         },
         WorkerEvent::Pane(data) => *pane = Some(data),
         WorkerEvent::Report(text) => {
