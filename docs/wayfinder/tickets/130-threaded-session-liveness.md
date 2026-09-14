@@ -104,6 +104,13 @@ One more thing the inventory settled: the TUI's in-loop `/reload` (4181) never
 refreshed the header, it only printed the report, so the switch needs no
 applied-config event for it.
 
+The other worker-side item is in as well (`6a29ffd`): the demand loop reads the
+session's own history, so `WorkerSession` gained `turn_settled`, the loop calls
+it once after the turn's events and before `TurnFinished`, and the adapter
+implements it as the demand tick the frontends call today. Two tests pin it --
+the once-per-turn call, and that the adapter's hook is a real call site (a
+source check, the idiom `compose_session_before_guard_no_terminal_needed` uses).
+
 ## Slices
 
 | Slice | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
