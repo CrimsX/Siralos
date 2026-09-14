@@ -296,6 +296,68 @@ pub fn spawn_worker(
     }
 }
 
+/// What a frontend does with one worker event (C2 step 3).
+///
+/// The semantics that matter -- the sanitizer boundary, the exact failure
+/// wording, and where the thinking goes -- live HERE rather than inside the
+/// loop, so they are tested before the loop is rewired to the worker.
+///
+/// # Errors
+///
+/// Propagates the writer's IO error; nothing else here can fail.
+pub fn apply_worker_event<W: std::io::Write>(
+    event: WorkerEvent,
+    sanitizer: &mut crate::sanitize::TerminalSanitizer,
+    writer: &mut W,
+    reasoning: &mut dyn FnMut(&str),
+    pane: &mut Option<crate::tui::ContextPaneData>,
+) -> std::io::Result<()> {
+    match event {
+        WorkerEvent::Session(event) => match event {
+            ToolLoopEvent::TextDelta { text } => {
+                writer.write_all(sanitizer.push(&text).as_bytes())?;
+            }
+            ToolLoopEvent::ResponseCompleted => {
+                writer.write_all(sanitizer.flush().as_bytes())?;
+                writer.write_all(b"\n")?;
+            }
+            ToolLoopEvent::ResponseCancelled => {
+                writer.write_all(sanitizer.flush().as_bytes())?;
+                writer.write_all(b"Response cancelled.\n")?;
+            }
+            ToolLoopEvent::ResponseFailed { message } => {
+                writer.write_all(sanitizer.flush().as_bytes())?;
+                let safe = crate::sanitize::sanitize_for_display(&message);
+                let line = format!("Response failed: {safe}\n");
+                writer.write_all(line.as_bytes())?;
+            }
+            ToolLoopEvent::ToolFailed { message, .. } => {
+                writer.write_all(sanitizer.flush().as_bytes())?;
+                let safe = crate::sanitize::sanitize_for_display(&message);
+                let line = format!("Tool failed: {safe}\n");
+                writer.write_all(line.as_bytes())?;
+            }
+            ToolLoopEvent::ReasoningDelta { text } => reasoning(&text),
+            // The keep-alive tick, round markers and context pressure carry
+            // no output of their own.
+            _ => {}
+        },
+        WorkerEvent::Pane(data) => *pane = Some(data),
+        WorkerEvent::Report(text) => {
+            let safe = crate::sanitize::sanitize_for_display(&text);
+            writer.write_all(safe.as_bytes())?;
+        }
+        WorkerEvent::Failed(message) => {
+            writer.write_all(sanitizer.flush().as_bytes())?;
+            let safe = crate::sanitize::sanitize_for_display(&message);
+            let line = format!("Worker failed: {safe}\n");
+            writer.write_all(line.as_bytes())?;
+        }
+        WorkerEvent::TurnFinished | WorkerEvent::Stopped => {}
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CancelFlag, WorkerCommand, WorkerEvent};
@@ -369,6 +431,83 @@ mod tests {
 
 #[cfg(test)]
 mod loop_tests {
+    #[test]
+    fn the_bridge_keeps_the_sanitizer_as_the_output_boundary() {
+        use super::{WorkerEvent, apply_worker_event};
+        use crate::sanitize::TerminalSanitizer;
+        use siralos_core::tool::ToolLoopEvent;
+        let mut sanitizer = TerminalSanitizer::new();
+        let mut out: Vec<u8> = Vec::new();
+        let mut reasoning = |_text: &str| {};
+        let mut pane = None;
+        apply_worker_event(
+            WorkerEvent::Session(ToolLoopEvent::TextDelta {
+                text: "\u{1b}[31mred".to_owned(),
+            }),
+            &mut sanitizer,
+            &mut out,
+            &mut reasoning,
+            &mut pane,
+        )
+        .expect("write");
+        let text = String::from_utf8_lossy(&out);
+        assert!(!text.contains('\u{1b}'), "escapes are stripped");
+    }
+
+    #[test]
+    fn the_bridge_routes_thinking_to_its_own_sink_and_reports_failures() {
+        use super::{WorkerEvent, apply_worker_event};
+        use crate::sanitize::TerminalSanitizer;
+        use siralos_core::tool::ToolLoopEvent;
+        let mut sanitizer = TerminalSanitizer::new();
+        let mut out: Vec<u8> = Vec::new();
+        let mut thinking = String::new();
+        let mut pane = None;
+        {
+            let mut reasoning = |text: &str| thinking.push_str(text);
+            apply_worker_event(
+                WorkerEvent::Session(ToolLoopEvent::ReasoningDelta {
+                    text: "weighing".to_owned(),
+                }),
+                &mut sanitizer,
+                &mut out,
+                &mut reasoning,
+                &mut pane,
+            )
+            .expect("write");
+            apply_worker_event(
+                WorkerEvent::Session(ToolLoopEvent::ResponseFailed {
+                    message: "provider exploded".to_owned(),
+                }),
+                &mut sanitizer,
+                &mut out,
+                &mut reasoning,
+                &mut pane,
+            )
+            .expect("write");
+            apply_worker_event(
+                WorkerEvent::Pane(crate::tui::ContextPaneData {
+                    counters: vec![("assembled".to_owned(), 7)],
+                    ring: Vec::new(),
+                    activity: Vec::new(),
+                }),
+                &mut sanitizer,
+                &mut out,
+                &mut reasoning,
+                &mut pane,
+            )
+            .expect("write");
+        }
+        assert_eq!(thinking, "weighing");
+        let text = String::from_utf8_lossy(&out);
+        assert!(!text.contains("weighing"), "thinking is not transcript text");
+        assert!(
+            text.contains("Response failed: provider exploded"),
+            "the failure wording is preserved"
+        );
+        assert_eq!(pane.expect("pane").counters.len(), 1);
+    }
+
     #[test]
     fn a_spawned_worker_composes_its_own_session_and_stops_cleanly() {
         // C2 step 2 end to end: the session CANNOT cross threads (decision
