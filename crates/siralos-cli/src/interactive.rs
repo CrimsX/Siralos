@@ -1734,10 +1734,35 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
     }
 
     fn reload(&mut self) -> Result<String, String> {
-        // The reload path (re-read, recompose, apply) still lives in the
-        // frontend; claiming otherwise here would be a lie, so it refuses
-        // until C2's wiring moves it behind this boundary.
-        Err("reload is not available through the worker yet".to_owned())
+        // C2: the reload path (re-read, recompose, apply) now runs HERE, with
+        // the session it mutates -- the same `reload_report` +
+        // `apply_reloaded_config` pair both frontends call, so there is still
+        // exactly one definition of what a reload does. The report is RETURNED
+        // rather than printed: the frontend shows what happened, and the loop
+        // cannot announce a reload that did not.
+        let live_provider = self.live_provider;
+        let live_model = live_provider.live_model();
+        let (mut report, recomposed) = reload_report(
+            &self.workspace_root,
+            self.applied_provider.as_deref(),
+            live_model.as_deref().or(self.applied_model.as_deref()),
+            self.applied_credential_raw.as_deref(),
+            self.applied_endpoint.as_deref(),
+            self.applied_protocol_str.as_str(),
+        );
+        apply_reloaded_config(
+            live_provider,
+            live_model.as_deref(),
+            &mut self.applied_model,
+            &mut self.applied_model_display_name,
+            &mut self.applied_endpoint,
+            &mut self.applied_protocol_str,
+            &mut self.applied_credential,
+            &mut self.applied_credential_raw,
+            recomposed,
+            &mut report,
+        );
+        Ok(report)
     }
 
     fn cancel(&mut self) {
@@ -4405,6 +4430,49 @@ mod tests {
             vec![crate::session_worker::WorkerEvent::TurnFinished],
             "the turn-end signal survives the drain so the loop can go idle"
         );
+    }
+
+    #[test]
+    fn the_worker_adapter_applies_a_reload_and_returns_the_report() {
+        // C2: `/reload` behind the worker boundary. The adapter re-reads the
+        // profile, moves the live cells the NEXT request reads, and returns the
+        // report the frontend shows -- nothing about it is frontend-only.
+        use crate::session_worker::WorkerSession;
+        let root = temporary_directory("worker-reload-apply");
+        let profile = |model: &str| {
+            format!(
+                "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"{model}\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-completions\"\n"
+            )
+        };
+        write(root.join("siralos.toml"), profile("example/model-a"))
+            .expect("profile");
+        let options = InteractiveOptions {
+            workspace_root: Some(&root),
+            config_path: None,
+        };
+        let mut session = compose_session(options).expect("compose");
+        assert_eq!(
+            session.live_provider.live_model().as_deref(),
+            Some("example/model-a"),
+            "the session starts on the profile's model"
+        );
+
+        write(root.join("siralos.toml"), profile("example/model-b"))
+            .expect("edited");
+        let report =
+            session.reload().expect("reload is behind the boundary now");
+        assert!(
+            report.contains(
+                "applied: model example/model-a -> example/model-b (live, no restart)"
+            ),
+            "the report says what moved, got: {report:?}"
+        );
+        assert_eq!(
+            session.live_provider.live_model().as_deref(),
+            Some("example/model-b"),
+            "the NEXT provider request reads the reloaded model"
+        );
+        let _ = remove_dir_all(root);
     }
 
     #[test]
