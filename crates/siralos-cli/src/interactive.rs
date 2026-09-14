@@ -1661,6 +1661,71 @@ struct SessionComposition<'a> {
     applied_protocol_str: String,
 }
 
+/// C2 (ticket 130): the composition IS the worker's session.
+///
+/// The adapter is thin on purpose -- `SessionComposition` already owns the
+/// application, the live provider behind it, the context session and the
+/// recorder, which are exactly the things the worker loop needs. Implementing
+/// the trait here (rather than on `SiralosApplication`) is what lets `pane()`
+/// read the context metrics and `flush()` reach the recordings.
+impl crate::session_worker::WorkerSession for SessionComposition<'_> {
+    fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
+        self.application
+            .send_prompt(prompt.to_owned())
+            .map_err(|error| error.to_string())
+    }
+
+    fn poll_event(&mut self) -> Option<siralos_core::tool::ToolLoopEvent> {
+        self.application.poll_event()
+    }
+
+    fn is_responding(&self) -> bool {
+        self.application.is_responding()
+    }
+
+    fn pane(&self) -> Option<crate::tui::ContextPaneData> {
+        crate::tui::build_context_pane(
+            self.context_system_enabled,
+            self.context_session_holder.as_ref().map(|s| &s.metrics),
+            self.application.history(),
+        )
+    }
+
+    fn context_report(&self) -> String {
+        format_context_status(self.application.last_projection())
+    }
+
+    fn tools_report(&self) -> String {
+        format_tool_projection(self.application.last_projection())
+    }
+
+    fn set_model(&mut self, model: &str) -> Result<(), String> {
+        // D3: the FRONTEND persists the profile first; the worker only applies
+        // it live, so persist-before-live stays true without shared state.
+        self.live_provider.set_live_model(model);
+        self.applied_model = Some(model.to_owned());
+        Ok(())
+    }
+
+    fn reload(&mut self) -> Result<(), String> {
+        // The reload path (re-read, recompose, apply) still lives in the
+        // frontend; claiming otherwise here would be a lie, so it refuses
+        // until C2's wiring moves it behind this boundary.
+        Err("reload is not available through the worker yet".to_owned())
+    }
+
+    fn cancel(&mut self) {
+        self.application.cancel();
+    }
+
+    fn flush(&mut self) {
+        // Exactly once, by the single owner (decision 78). `take` is what
+        // makes that mechanical: a second flush finds nothing to flush.
+        let recorder = self.record_recorder.take();
+        flush_record_replay(recorder, &self.replay_store_path);
+    }
+}
+
 /// Compose one session — the SINGLE definition both loops call (T4).
 ///
 /// This is the verbatim T1 composition block both loops duplicated:
