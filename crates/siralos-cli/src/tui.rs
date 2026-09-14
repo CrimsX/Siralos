@@ -1066,9 +1066,10 @@ impl TuiState {
                 self.stream_tail.push(ch);
             }
         }
-        let released = allowance - take;
+        let answer_spent = allowance - take;
         // Thinking channel: what the answer did not spend reveals the
         // reasoning, so both channels share one pacing budget.
+        let mut thinking_spent = 0usize;
         if take > 0 && self.reasoning_shown < self.reasoning.len() {
             let mut shown = self.reasoning_shown;
             for ch in self.reasoning[shown..].chars() {
@@ -1077,11 +1078,15 @@ impl TuiState {
                 }
                 shown += ch.len_utf8();
                 take -= 1;
+                thinking_spent += 1;
             }
             self.reasoning_shown = shown;
         }
         // Only the budget actually LEFT OVER carries: what was spent is gone.
-        self.reveal_debt = (budget - released as f64).max(0.0);
+        // BOTH channels spend from it -- charging only the answer let the
+        // thinking stream at the tick cap instead of the configured rate.
+        let spent = (answer_spent + thinking_spent) as f64;
+        self.reveal_debt = (budget - spent).max(0.0);
     }
     /// The thinking block as transcript rows (S3b).
     ///
@@ -3267,10 +3272,18 @@ pub fn toggle_mouse_capture(state: &mut TuiState) -> &'static str {
 #[must_use]
 pub fn apply_turn_key(
     state: &mut TuiState,
-    code: crossterm::event::KeyCode,
+    key: crossterm::event::KeyEvent,
 ) -> bool {
-    use crossterm::event::KeyCode;
-    match code {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    // A chorded key belongs to the loop, not to the type-ahead: Ctrl+C is
+    // the exit key, and folding it into the prompt would kill it for the
+    // whole turn.
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::ALT)
+    {
+        return false;
+    }
+    match key.code {
         KeyCode::Esc => true,
         KeyCode::Char(ch) => {
             state.input.push(ch);
@@ -5613,27 +5626,36 @@ mod tests {
     #[test]
     fn turn_keys_keep_type_ahead_expand_thinking_and_ask_to_interrupt() {
         // S3b/4b: the keys that work WHILE the model is running. The arrows
-        // must expand the thinking mid-flight -- the whole point is watching
-        // it arrive -- and Esc must be the only interrupt.
-        use crossterm::event::KeyCode;
+        // expand the thinking mid-flight, Esc is the interrupt, and a CHORDED
+        // key stays the loop's (Ctrl+C is the exit key -- folding it into the
+        // prompt would kill it for the whole turn).
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = |code, modifiers| KeyEvent::new(code, modifiers);
+        let plain = |code| KeyEvent::new(code, KeyModifiers::NONE);
         let mut state = TuiState::new();
-        assert!(!apply_turn_key(&mut state, KeyCode::Char('h')));
-        assert!(!apply_turn_key(&mut state, KeyCode::Char('i')));
+        assert!(!apply_turn_key(&mut state, plain(KeyCode::Char('h'))));
+        assert!(!apply_turn_key(&mut state, plain(KeyCode::Char('i'))));
         assert_eq!(state.input, "hi", "typing mid-turn is kept");
-        assert!(!apply_turn_key(&mut state, KeyCode::Backspace));
+        assert!(!apply_turn_key(&mut state, plain(KeyCode::Backspace)));
         assert_eq!(state.input, "h");
+        // A chorded character is NOT type-ahead.
+        assert!(!apply_turn_key(
+            &mut state,
+            key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(state.input, "h", "Ctrl+C must not become a literal c");
         // The arrows do nothing when the route streamed no thinking...
-        assert!(!apply_turn_key(&mut state, KeyCode::Right));
+        assert!(!apply_turn_key(&mut state, plain(KeyCode::Right)));
         assert!(!state.reasoning_expanded);
         // ...and expand/collapse it when there is thinking.
         state.reasoning = "weighing options".to_owned();
-        assert!(!apply_turn_key(&mut state, KeyCode::Right));
+        assert!(!apply_turn_key(&mut state, plain(KeyCode::Right)));
         assert!(state.reasoning_expanded, "Right expands mid-flight");
-        assert!(!apply_turn_key(&mut state, KeyCode::Left));
+        assert!(!apply_turn_key(&mut state, plain(KeyCode::Left)));
         assert!(!state.reasoning_expanded, "Left collapses");
         // Esc is the interrupt, and it changes nothing else.
         let before = state.input.clone();
-        assert!(apply_turn_key(&mut state, KeyCode::Esc));
+        assert!(apply_turn_key(&mut state, plain(KeyCode::Esc)));
         assert_eq!(state.input, before);
     }
 

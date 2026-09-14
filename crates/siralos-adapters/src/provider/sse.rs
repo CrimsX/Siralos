@@ -14,6 +14,11 @@
 use serde_json::{Value, json};
 use siralos_core::provider::{ModelEvent, ProviderEvent, ToolCallInput};
 
+/// The most tool calls one streamed turn may accumulate. Above this the
+/// frame's call is ignored: the index comes from the provider, so it cannot
+/// be allowed to size an allocation.
+const MAX_STREAMED_TOOL_CALLS: usize = 64;
+
 /// One accumulated tool call (OpenAI streams them by index, in pieces).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct PartialCall {
@@ -214,6 +219,12 @@ impl CompletionStream {
                     let index =
                         call.get("index").and_then(Value::as_u64).unwrap_or(0)
                             as usize;
+                    // The index is UNTRUSTED. Growing to it would let a
+                    // ~70-byte frame asking for index 2^32 allocate gigabytes
+                    // -- the 1 MiB body bound does not bound memory.
+                    if index >= MAX_STREAMED_TOOL_CALLS {
+                        continue;
+                    }
                     while self.calls.len() <= index {
                         self.calls.push(PartialCall::default());
                     }

@@ -3700,14 +3700,20 @@ pub fn run_interactive_tui_with_options(
     }
 
     // S3: the thinking sink. It buffers the streamed reasoning (bounded to
-    // the tail) and repaints; the collapsed/expanded choice is rendering.
+    // the tail), crosses the terminal sanitizer, and repaints.
     let mut reasoning_sink = {
         let tui_state = Rc::clone(&tui_state);
         let draw_now = draw_throttled.clone();
+        // The reasoning channel is model output too, so it crosses the SAME
+        // terminal sanitizer: a stateful one, because an escape can be split
+        // across deltas. Without this, raw provider bytes would reach the
+        // frame (AGENTS.md: the sanitizer is the single output boundary).
+        let mut sanitizer = crate::sanitize::TerminalSanitizer::new();
         move |text: &str| {
+            let safe = sanitizer.push(text);
             {
                 let mut state = tui_state.borrow_mut();
-                state.reasoning.push_str(text);
+                state.reasoning.push_str(&safe);
                 if state.reasoning.len() > crate::tui::REASONING_BYTES {
                     let cut =
                         state.reasoning.len() - crate::tui::REASONING_BYTES;
@@ -3718,12 +3724,16 @@ pub fn run_interactive_tui_with_options(
                         .find(|index| *index >= cut)
                         .unwrap_or(cut);
                     state.reasoning.drain(..boundary);
+                    // The reveal offset is a byte index into THIS buffer: after
+                    // trimming the front it must be rebased, or the next slice
+                    // lands on a non-character boundary and panics.
+                    state.reasoning_shown =
+                        state.reasoning_shown.saturating_sub(boundary);
                 }
             }
             draw_now();
         }
     };
-
     // S2 chunk 4b: what the TUI does with a keep-alive tick -- repaint,
     // keep what the user typed while the model works, and read the
     // interrupt key. Returns true when the user asked to cancel.
@@ -3744,7 +3754,7 @@ pub fn run_interactive_tui_with_options(
                         handled_key = true;
                         if crate::tui::apply_turn_key(
                             &mut tui_state.borrow_mut(),
-                            key.code,
+                            key,
                         ) {
                             interrupt.set(true);
                         }
