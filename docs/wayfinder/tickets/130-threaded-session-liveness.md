@@ -92,9 +92,17 @@ refuses, so a switched `/reload` would have claimed success for work that
 never happened. `WorkerSession::reload` now returns the report and the loop
 relays exactly it.
 
-The one real gap left before the switch is the reload path itself (re-read,
-recompose, apply), which still lives in the frontend and must move behind the
-boundary, or `/reload` regresses.
+That gap is closed as of `e84c4fc`: `SessionComposition::reload` re-reads the
+profile, recomposes, applies the same live cells the frontends apply, and
+returns the report.
+`the_worker_adapter_applies_a_reload_and_returns_the_report` composes a real
+session, edits the model on disk, reloads through the boundary, and asserts the
+report AND that the NEXT request reads the new model -- so `/reload` does not
+regress when the loop switches.
+
+One more thing the inventory settled: the TUI's in-loop `/reload` (4181) never
+refreshed the header, it only printed the report, so the switch needs no
+applied-config event for it.
 
 ## Slices
 
