@@ -123,6 +123,11 @@ That closes every transport the switch needs. What remains is the rewiring
 itself and step 4 -- `Shutdown` on every exit path, join before the terminal is
 restored.
 
+R2's piece is in (`856c6cf`): `WorkerCommand::ModelsFetch` ->
+`WorkerEvent::Models(Vec<String>)`, with the adapter calling the same
+`generic::fetch_models` the frontends call using its OWN endpoint and
+credential, so no secret has to cross for the picker to keep working.
+
 The rewiring itself now has a placement decision written BEFORE the edit
 ([168](../decisions/168-c2-step3-wiring-placement.md)): measuring it first showed
 the job is not the short call-site list above but roughly ninety
