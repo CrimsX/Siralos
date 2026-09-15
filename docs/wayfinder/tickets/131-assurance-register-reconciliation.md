@@ -1,7 +1,7 @@
 ---
 title: "Assurance registers vs the Verified record, and the untracked items beside them"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: "2026-09-12"
 supersedes: []
 ---
@@ -73,3 +73,28 @@ this ticket does not reopen them.
 - Any capability change, any code change, any corpus or differential change.
 - Re-opening a boundary that a decision closed on purpose (this ticket
   reconciles text about them, it does not relitigate them).
+
+## Resolution (2026-09-12)
+
+Both halves are done, and [decision 174](../decisions/174-assurance-registers-reconciled.md)
+records it.
+
+**Registers.** `REQUIREMENTS.md` 34 rows rewritten (17 promoted to `VERIFIED` with
+the closing milestone or decision in the evidence cell; 17 kept `PARTIAL`/`NOT DUE`
+with a current reason and an owner); `GOLDEN_TRACES.md` 13 rows rewritten (3
+promoted, the rest re-reasoned); `RFC_INDEX.md` 6 rows re-owned;
+`PLATFORM_CONFORMANCE.md` and `STRUCTURED_INPUT_INVENTORY.md` corrected in prose.
+Each of the four registers opens with a short `Reconciliation (2026-09-12)` note
+stating what changed -- status and evidence only, never the normative text.
+
+**Follow-ups.** The licensing decision and the cargo-vet re-evaluation are ticket
+[132](132-supply-chain-decisions.md); the provider work deferred in decision 102 and
+the protocol shaping from decision 132 are ticket
+[133](133-provider-interface-deferred-work.md); RFC-0011's consolidation (now
+unblocked) is ticket [134](134-error-diagnostic-consolidation.md); the durable
+journal, persistence, the marketplace and the durable trace protocol are recorded as
+boundaries rather than pending work.
+
+Four single sentences that contradicted the record outright were fixed with the
+ticket: the map's own Notes line, `PROJECT_CONTEXT.md`, and the two "R7 remains
+Active" tails. No capability claim was weakened.

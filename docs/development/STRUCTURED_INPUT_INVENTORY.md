@@ -2,10 +2,16 @@
 
 Status: authoritative (pre-Stage-4 assurance, contract Part 3).
 
-Every meaningful structured-input boundary in current Stage 1–3 Siralos,
-its trust classification, and its fuzz/security priority. The TypeScript
-reference remains the product's actual boundary surface; the Rust
-candidate's boundaries are listed where they exist today. Classifications:
+Every meaningful structured-input boundary in Siralos, its trust
+classification, and its fuzz/security priority.
+
+The Rust implementation is the product's boundary surface: the TypeScript
+tree was removed by decision 40, and the paths in the tables below are
+being reconciled against the Rust workspace (ticket 131). Until that pass
+completes, treat a row whose path starts with `packages/` or `apps/` as a
+HISTORICAL reference — the boundary it describes still exists, but it now
+lives in `crates/siralos-core`, `crates/siralos-adapters` or
+`crates/siralos-cli`. Classifications:
 
 - `trusted internal` — produced and consumed by host-owned code; no
   hostile input expected, still validated at parse boundaries.

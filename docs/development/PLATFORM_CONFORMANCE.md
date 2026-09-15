@@ -31,13 +31,23 @@ resolution (USERPROFILE/HOME semantics per platform), CLI exit codes,
 stdout/stderr separation, and probe subprocesses with scrubbed
 environments.
 
-Not yet testable on the current surface (no workspace mutation,
-checkpoint, or process-execution capability exists in Rust): atomic
-writes, permission failures, read-only files, symlink traversal,
-deletion/rename semantics, cancellation, and child-process cleanup.
-These receive platform conformance tests when the corresponding
-subsystems are ported (R4+) — policy will represent semantic platform
-differences explicitly rather than normalizing them away.
+Not yet testable on the current surface, and the reason is a boundary
+rather than a missing milestone (2026-09-12, ticket 131): Rust has no
+workspace mutation, no checkpoint creation and no process execution
+because those effects are deliberately `unavailable` until their
+security property is mechanically enforceable (SECURITY.md, fail-closed
+posture). The untested list is therefore atomic writes, permission
+failures, read-only files, symlink traversal, deletion/rename semantics,
+cancellation, and child-process cleanup — all of them reachable only
+through an effect the Host refuses to perform.
+
+What DOES carry platform conformance today: the read surfaces
+(canonical root, containment-safe resolution, bounded exact reads,
+deterministic list/search), the differential harness, and the atomic
+writers that do exist (profile config, lock, replay store). Policy will
+represent semantic platform differences explicitly rather than
+normalizing them away; the coverage list above stays open until an effect
+boundary makes it measurable.
 
 ## Path correctness (contract Part 10)
 
