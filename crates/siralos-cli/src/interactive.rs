@@ -1460,13 +1460,18 @@ fn pump_worker(
             }
             WorkerWait::Gone => {
                 effects.stopped = true;
-                // Truthful, not silent: the frontend would otherwise wait for
-                // output that can never arrive.
-                let message = sanitize_for_display(
-                    "worker stopped before it finished\n",
-                );
-                sink.write_all(message.as_bytes())
-                    .map_err(InteractiveError::Io)?;
+                // Truthful, not silent: a relay that was WAITING would
+                // otherwise wait for output that can never arrive. A DRAIN was
+                // waiting for nothing, and it runs on every frame -- announcing
+                // a vanished worker there would print one line twenty times a
+                // second.
+                if until != Until::Drain {
+                    let message = sanitize_for_display(
+                        "worker stopped before it finished\n",
+                    );
+                    sink.write_all(message.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                }
                 break;
             }
         };
@@ -1489,15 +1494,24 @@ fn pump_worker(
                 stop = true;
             }
             // One answer, handed back UNRENDERED: the caller owns the wording.
-            WorkerEvent::Report(text) if until != Until::TurnFinished => {
+            // A TURN and a DRAIN have no caller to hand one to, so their
+            // answers fall through to the shared bridge below and are rendered:
+            // an answer is never swallowed, whichever relay saw it.
+            WorkerEvent::Report(text)
+                if matches!(until, Until::Answer | Until::Applied) =>
+            {
                 effects.answer = Some(WorkerEvent::Report(text));
                 stop = true;
             }
-            WorkerEvent::Failed(message) if until != Until::TurnFinished => {
+            WorkerEvent::Failed(message)
+                if matches!(until, Until::Answer | Until::Applied) =>
+            {
                 effects.answer = Some(WorkerEvent::Failed(message));
                 stop = true;
             }
-            WorkerEvent::Models(models) if until != Until::TurnFinished => {
+            WorkerEvent::Models(models)
+                if matches!(until, Until::Answer | Until::Applied) =>
+            {
                 effects.answer = Some(WorkerEvent::Models(models));
                 stop = true;
             }
@@ -4936,6 +4950,16 @@ mod tests {
             exit
         }
 
+        /// Simulate a worker that VANISHED: the far end of the channel closes,
+        /// so the source reports `Gone`. The original sender is dropped (the
+        /// decoy writes to a channel nobody listens to, which is what makes the
+        /// field assignable).
+        fn close_worker(&mut self) {
+            let (decoy, receiver) = std::sync::mpsc::channel();
+            drop(receiver);
+            self.worker.events = decoy;
+        }
+
         /// The transcript as one string, after the reveal has been released.
         fn transcript(&self) -> String {
             settle_reveal(&self.state);
@@ -5473,6 +5497,48 @@ mod tests {
         assert!(
             painted.contains("aaaa"),
             "the painted frame shows the released answer, got:\n{painted}"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_drain_says_nothing_about_a_worker_it_was_not_waiting_for() {
+        // C3: the frame-level sweep runs on EVERY iteration, so a worker that
+        // vanished must not be announced twenty times a second. A relay that was
+        // waiting reports it -- exactly once.
+        let root = temporary_directory("drain-gone-worker");
+        let mut tui = ScriptedTui::new();
+        tui.close_worker();
+        let before = tui.transcript();
+        super::drain_pending_worker(
+            &mut tui.worker.source,
+            &mut tui.sink,
+            &tui.state,
+            &tui.pane,
+        )
+        .expect("drain");
+        super::drain_pending_worker(
+            &mut tui.worker.source,
+            &mut tui.sink,
+            &tui.state,
+            &tui.pane,
+        )
+        .expect("drain again");
+        assert_eq!(
+            tui.transcript(),
+            before,
+            "a per-frame drain must stay silent about a worker it was not waiting for"
+        );
+
+        let mut waiting = ScriptedTui::new();
+        waiting.close_worker();
+        let mut ticks = 0usize;
+        waiting.dispatch(&SlashCommand::Context, &root, &mut ticks);
+        let text = waiting.transcript();
+        assert_eq!(
+            text.matches("worker stopped").count(),
+            1,
+            "the relay that WAS waiting says so once, got {text:?}"
         );
         let _ = remove_dir_all(root);
     }
