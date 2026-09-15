@@ -75,6 +75,14 @@ pub struct SessionStatus {
     pub provider: Option<String>,
     /// Model to display -- the display name when the profile declares one.
     pub model: Option<String>,
+    /// Endpoint the session was composed with (decision 168 R3: display only).
+    pub endpoint: Option<String>,
+    /// Protocol string the provider was built with.
+    pub protocol: String,
+    /// The credential in its display form, ALREADY REDACTED. The raw value
+    /// never leaves the worker (decision 168 R2): a frontend that received it
+    /// could put a secret in `TuiState`, the render path and any log.
+    pub credential_display: Option<String>,
 }
 
 /// The external cancel flag (decision 167): the UI sets it, the worker polls it
@@ -882,6 +890,9 @@ mod loop_tests {
                 status: "fake status".to_owned(),
                 provider: Some("fake".to_owned()),
                 model: Some("fake-model".to_owned()),
+                endpoint: None,
+                protocol: "openai-completions".to_owned(),
+                credential_display: None,
             }
         }
         fn flush(&mut self) {
@@ -968,6 +979,9 @@ mod loop_tests {
                     status: "fake status".to_owned(),
                     provider: Some("fake".to_owned()),
                     model: Some("fake-model".to_owned()),
+                    endpoint: None,
+                    protocol: "openai-completions".to_owned(),
+                    credential_display: None,
                 }),
                 WorkerEvent::Report(
                     "reload applied: model=beta (restart to converge)\n"
@@ -977,6 +991,9 @@ mod loop_tests {
                     status: "fake status".to_owned(),
                     provider: Some("fake".to_owned()),
                     model: Some("fake-model".to_owned()),
+                    endpoint: None,
+                    protocol: "openai-completions".to_owned(),
+                    credential_display: None,
                 }),
                 // The command channel closed without a Shutdown: the loop
                 // still flushes once, and says so.

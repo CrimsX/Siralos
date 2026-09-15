@@ -1779,6 +1779,12 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             ),
             provider: self.applied_provider.clone(),
             model,
+            endpoint: self.applied_endpoint.clone(),
+            protocol: self.applied_protocol_str.clone(),
+            credential_display: self
+                .applied_credential_raw
+                .as_deref()
+                .map(|raw| redacted_credential_display(Some(raw))),
         }
     }
 
@@ -4552,6 +4558,40 @@ mod tests {
             body.contains("drive_context_demand("),
             "the settled-turn hook is where the demand loop moved to"
         );
+    }
+
+    #[test]
+    fn the_status_snapshot_never_carries_the_credential() {
+        // Decision 168 R2: the snapshot crosses to the frontend, so the raw
+        // credential must not -- it is redacted where it lives. The endpoint and
+        // the protocol DO cross, because the picker shows them (R3).
+        use crate::session_worker::WorkerSession;
+        let root = temporary_directory("worker-status-redaction");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-completions\"\ncredential = \"key:super-secret-value\"\n",
+        )
+        .expect("profile");
+        let session = compose_session(InteractiveOptions {
+            workspace_root: Some(&root),
+            config_path: None,
+        })
+        .expect("compose");
+        let snapshot = format!("{:?}", session.status());
+        assert!(
+            !snapshot.contains("super-secret-value"),
+            "the secret must not cross the boundary: {snapshot}"
+        );
+        assert!(
+            snapshot.contains("key:***"),
+            "the display form crosses instead: {snapshot}"
+        );
+        assert_eq!(
+            session.status().endpoint.as_deref(),
+            Some("https://api.example.com/v1")
+        );
+        assert_eq!(session.status().protocol, "openai-completions");
+        let _ = remove_dir_all(root);
     }
 
     #[test]
