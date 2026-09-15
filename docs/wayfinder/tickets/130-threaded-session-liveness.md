@@ -128,6 +128,16 @@ R2's piece is in (`856c6cf`): `WorkerCommand::ModelsFetch` ->
 `generic::fetch_models` the frontends call using its OWN endpoint and
 credential, so no secret has to cross for the picker to keep working.
 
+R3's piece is in (`47cab9b`): the status snapshot also carries the endpoint, the
+protocol and the credential's ALREADY-REDACTED display form, so the picker can
+show what it shows today without the raw value crossing --
+`the_status_snapshot_never_carries_the_credential` composes a session with
+`key:super-secret-value` and asserts the snapshot holds `key:***` and not the
+secret.
+
+That is every additive piece decision 168 named. What is left is the atomic
+switch in one commit and step 4.
+
 The rewiring itself now has a placement decision written BEFORE the edit
 ([168](../decisions/168-c2-step3-wiring-placement.md)): measuring it first showed
 the job is not the short call-site list above but roughly ninety
