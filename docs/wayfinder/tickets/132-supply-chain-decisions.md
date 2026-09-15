@@ -1,7 +1,7 @@
 ---
 title: "Supply chain: the licensing decision and the cargo-vet re-evaluation"
 label: "wayfinder:ticket"
-status: "open"
+status: open
 date: "2026-09-12"
 supersedes: []
 ---

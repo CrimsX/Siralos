@@ -1,7 +1,7 @@
 ---
 title: "Provider interface: the work deferred beside the implementation"
 label: "wayfinder:ticket"
-status: "open"
+status: open
 date: "2026-09-12"
 supersedes: []
 ---

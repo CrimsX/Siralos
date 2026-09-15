@@ -1,7 +1,7 @@
 ---
 title: "Error and diagnostic consolidation, unblocked by the completed migration"
 label: "wayfinder:ticket"
-status: "open"
+status: open
 date: "2026-09-12"
 supersedes: []
 ---
