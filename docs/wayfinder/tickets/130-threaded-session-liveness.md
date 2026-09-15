@@ -155,6 +155,24 @@ a report while an arm that reads capability state to DECIDE moves to the worker,
 and the switch stays one commit because a staged one would leave two
 compositions alive (the divergence 167 forbids).
 
+## Switch readiness (as of `18bce0c`)
+
+Every prerequisite decision 168 lists is implemented and tested. The
+transports: the drain's `EventSource` seam, `WorkerSource` over the channel,
+`reload`, `turn_settled`, `Ready(SessionStatus)` (the header plus the picker's
+display values, with the credential redacted where it lives),
+`ModelsFetch`/`Models`, the three domain commands (`DomainsAdd`,
+`DomainsEnable`, `DomainsActivate` -- they mutate the registry, so they cannot
+stay in the frontend), and `enable_progress_ticks`, which `spawn_worker` turns
+on for the session it composes.
+
+What is left is ONE edit and its follow-up: spawn the worker in the TUI entry,
+cache `Ready`/`Pane`, replace the command arms, drop
+`dispatch_tui_command`'s six capability parameters (the completion check), then
+send `Shutdown` and join on every exit path before the terminal guard restores.
+Decision 168 section 3a records the arm classification that edit needs, and
+section 2 the measured inventory behind it.
+
 ## Slices
 
 | Slice | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
