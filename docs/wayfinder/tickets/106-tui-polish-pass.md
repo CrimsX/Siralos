@@ -1,7 +1,7 @@
 ---
 title: "The TUI Polish Pass"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: 2026-08-31
 supersedes: []
 ---
@@ -31,3 +31,8 @@ The sanitizer is the single output boundary; the input queue the single read own
 ## Resolution
 
 Open — entry review PASS per [decision 117](../decisions/117-tui-polish-entry-review.md) (HITL 2026-08-31, P1–P6 approved with the latency fix as priority one). Implementation tracked in [decision 118](../decisions/118-tui-polish-pass.md).
+
+Closed 2026-09-12: the Resolution line above was written at the ENTRY REVIEW, so the
+frontmatter said open while the work was still ahead. The implementation landed and is
+recorded in [decision 118](../decisions/118-tui-polish-pass.md); nothing on this ticket is
+left open.

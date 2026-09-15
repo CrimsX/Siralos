@@ -1,7 +1,7 @@
 ---
 title: "The TUI UX Pass 2"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: 2026-08-31
 supersedes: []
 ---
@@ -31,3 +31,8 @@ The sanitizer is the single output boundary; the input queue the single read own
 ## Resolution
 
 Open — entry review PASS per [decision 119](../decisions/119-tui-ux2-entry-review.md) (HITL 2026-08-31). Implementation tracked in [decision 120](../decisions/120-tui-ux-pass-2.md). The `/provider` add-flow is ticket 108 pending a config-write authority decision.
+
+Closed 2026-09-12: the Resolution line above was written at the ENTRY REVIEW, so the
+frontmatter said open while the work was still ahead. The implementation landed and is
+recorded in [decision 120](../decisions/120-tui-ux-pass-2.md); nothing on this ticket is
+left open.

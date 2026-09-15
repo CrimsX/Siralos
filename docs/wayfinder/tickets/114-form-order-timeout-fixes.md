@@ -1,7 +1,7 @@
 ---
 title: "The Form Order and Fetch-Timeout Fixes"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: "2026-08-31"
 supersedes: []
 ---
@@ -29,3 +29,8 @@ The sanitizer is the single output boundary; no threads; the env-only credential
 ## Resolution
 
 Open — entry review PASS per [decision 133](../decisions/133-order-timeout-entry-review.md) (HITL 2026-08-31). Implementation tracked in [decision 134](../decisions/134-order-timeout-fixes.md).
+
+Closed 2026-09-12: the Resolution line above was written at the ENTRY REVIEW, so the
+frontmatter said open while the work was still ahead. The implementation landed and is
+recorded in [decision 134](../decisions/134-order-timeout-fixes.md); nothing on this ticket is
+left open.

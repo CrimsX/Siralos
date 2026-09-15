@@ -1,7 +1,7 @@
 ---
 title: "The TUI Usability Pass"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: 2026-08-31
 supersedes: []
 ---
@@ -29,3 +29,8 @@ The user-reported usability pass over the decision 103-109 TUI — the shell, ap
 ## Resolution
 
 Open — entry review PASS per [decision 110](../decisions/110-tui-usability-entry-review.md) (HITL 2026-08-31, U1–U8 approved, two defects root-caused). Implementation tracked in [decision 111](../decisions/111-tui-usability-pass.md).
+
+Closed 2026-09-12: the Resolution line above was written at the ENTRY REVIEW, so the
+frontmatter said open while the work was still ahead. The implementation landed and is
+recorded in [decision 111](../decisions/111-tui-usability-pass.md); nothing on this ticket is
+left open.

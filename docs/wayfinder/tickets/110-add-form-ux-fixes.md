@@ -1,7 +1,7 @@
 ---
 title: "The Provider Add-Form UX Fixes"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: 2026-08-31
 supersedes: []
 ---
@@ -28,3 +28,8 @@ The sanitizer is the single output boundary; approvals host-gated; no threads; n
 ## Resolution
 
 Open — entry review PASS per [decision 125](../decisions/125-add-form-ux-fixes-entry-review.md) (HITL 2026-08-31). Implementation tracked in [decision 126](../decisions/126-add-form-ux-fixes.md).
+
+Closed 2026-09-12: the Resolution line above was written at the ENTRY REVIEW, so the
+frontmatter said open while the work was still ahead. The implementation landed and is
+recorded in [decision 126](../decisions/126-add-form-ux-fixes.md); nothing on this ticket is
+left open.

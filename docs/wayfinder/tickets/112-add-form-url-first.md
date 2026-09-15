@@ -1,7 +1,7 @@
 ---
 title: "The Add-Form URL-First Reorder"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: "2026-08-31"
 supersedes: []
 ---
@@ -28,3 +28,8 @@ The sanitizer is the single output boundary; no threads; no persistence; the std
 ## Resolution
 
 Open — entry review PASS per [decision 129](../decisions/129-url-first-entry-review.md) (HITL 2026-08-31). Implementation tracked in [decision 130](../decisions/130-url-first-reorder.md).
+
+Closed 2026-09-12: the Resolution line above was written at the ENTRY REVIEW, so the
+frontmatter said open while the work was still ahead. The implementation landed and is
+recorded in [decision 130](../decisions/130-url-first-reorder.md); nothing on this ticket is
+left open.

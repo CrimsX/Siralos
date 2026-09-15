@@ -1,7 +1,7 @@
 ---
 title: "The Six-Field Provider Form"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: "2026-08-31"
 supersedes: []
 ---
@@ -31,3 +31,8 @@ The sanitizer is the single output boundary; no threads; no persistence beyond t
 ## Resolution
 
 Open — entry review PASS per [decision 131](../decisions/131-six-field-entry-review.md) (HITL 2026-08-31). Implementation tracked in [decision 132](../decisions/132-six-field-provider-form.md).
+
+Closed 2026-09-12: the Resolution line above was written at the ENTRY REVIEW, so the
+frontmatter said open while the work was still ahead. The implementation landed and is
+recorded in [decision 132](../decisions/132-six-field-provider-form.md); nothing on this ticket is
+left open.
