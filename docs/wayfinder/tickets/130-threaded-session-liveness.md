@@ -1,7 +1,7 @@
 ---
 title: "Threaded session for UI-owned liveness"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: "2026-09-12"
 supersedes: []
 ---
@@ -350,3 +350,41 @@ remembered.
 The TUI's slash commands, the context pane, approvals and the replay flush all
 touch the session today. Moving the session off-thread moves every one of them
 behind a channel, which is the real size of this arc -- not the thread itself.
+
+## Closed (2026-09-12)
+
+The recorded risk was the real size and it was paid: every one of those touch
+points is behind the channel now, and the session handle is gone from the
+frontend.
+
+Delivered, in order: the boundary inventory and the C2 design finding
+(decisions [166](../decisions/166-c1-boundary-inventory.md),
+[167](../decisions/167-c2-session-cannot-cross-threads.md)), the placement rules
+([168](../decisions/168-c2-step3-wiring-placement.md)), then C1, C2 step 3
+(`cb66824`), C2 step 4 (`dfa450f`) and C3 (`1d0df16`, `00d93eb`) -- and four
+owner follow-ups on the reveal, each its own decision:
+
+- "the thinking still seems delayed and not smooth" →
+  [169](../decisions/169-reveal-tracks-a-fast-stream.md) (measured: the display
+  was 2904 characters behind after two seconds of a 1920 chars/s stream);
+- "i would like it to display/render one character at a time" →
+  [170](../decisions/170-one-character-at-a-time.md) (one character per painted
+  frame, and the frame cost had to stop growing with the session first: 5.3 ms at
+  24 lines and 20.6 ms at 1200 became 2.2 ms at both);
+- "keep the character cadence on the idle path" (`cd78afa`);
+- "are you able to match the speed the model produces it?" /
+  "model agnostic right?" → [171](../decisions/171-reveal-tracks-the-model.md)
+  (no cadence at all: the display rate is the arrival rate, measured at 498
+  characters a second in the dev build).
+
+The owner's last live report was "nice thats better", then agreement that the
+result is good; the four checks in this ticket's acceptance (differential
+352/352, a stalled provider still yields events, stdio unchanged and byte-equal,
+`npm run check` exit 0) all hold on `c1ae919`.
+
+**C4 (the evidence pack) is deliberately NOT done** and is not needed for this
+ticket's acceptance: it would record frame counts under a scripted stall and
+cancel latency. The idle-frame half is already covered by the pinned
+`tui-render` differential subject, and the liveness half by
+`the_ui_paints_on_its_own_tick_with_no_provider_events`. If those numbers are
+wanted, C4 is a fresh slice with its own entry review, not a loose end here.
