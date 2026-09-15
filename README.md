@@ -243,6 +243,15 @@ cargo run --locked --bin siralos -- --version
 cargo run --locked --bin siralos -- --help
 ```
 
+The interactive TUI reveals text one character per painted frame, so the build
+sets its ceiling: an unoptimized `cargo run` sustains ~650 characters a second
+and a release build ~2800 (measured; decision 173). Use the release path when a
+fast model should be tracked exactly:
+
+```bash
+npm run siralos:release
+```
+
 ### Verify
 
 Run the standard local repository quality gate:
