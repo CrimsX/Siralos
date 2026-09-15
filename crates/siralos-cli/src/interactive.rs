@@ -1380,6 +1380,10 @@ enum Until {
     Answer,
     /// An applied composition change: the `Ready` that follows, or a `Failed`.
     Applied,
+    /// Nothing is expected (C3): apply whatever the worker has ALREADY
+    /// produced and return. This is the frame-level sweep, so an event that
+    /// arrives between commands cannot sit in the channel unread.
+    Drain,
 }
 
 /// What one relay run collected, beyond what it applied itself.
@@ -1436,9 +1440,18 @@ fn pump_worker(
     let mut effects = ReplyEffects::default();
     let mut stop;
     loop {
-        let event = match worker.wait(WORKER_WAIT) {
+        // A drain never waits: an empty channel is the END of its work, not a
+        // tick to sit through.
+        let timeout = match until {
+            Until::Drain => std::time::Duration::ZERO,
+            _ => WORKER_WAIT,
+        };
+        let event = match worker.wait(timeout) {
             WorkerWait::Event(event) => event,
             WorkerWait::Idle => {
+                if until == Until::Drain {
+                    break;
+                }
                 // Nothing arrived: this is the tick, not a stall.
                 if progress() {
                     worker.cancel();
@@ -1536,6 +1549,31 @@ fn render_answer(
         &mut scratch_pane,
     )
     .map_err(InteractiveError::Io)
+}
+
+/// Apply whatever the worker has ALREADY produced, without waiting (C3).
+///
+/// The relay waits for an answer; this is the loop's per-frame sweep, so the
+/// loop is a genuine channel drain at every iteration rather than only while a
+/// command is outstanding.
+fn drain_pending_worker(
+    worker: &mut WorkerSource,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+) -> Result<(), InteractiveError> {
+    let mut progress = || false;
+    let mut reasoning = |_text: &str| {};
+    pump_worker(
+        worker,
+        sink,
+        state,
+        pane,
+        &mut progress,
+        &mut reasoning,
+        Until::Drain,
+    )?;
+    Ok(())
 }
 
 /// Ask the worker one request command and return its answer (C2 step 3).
@@ -4643,6 +4681,16 @@ pub fn run_interactive_tui_with_options(
                 )?;
             }
         }
+        // C3: every frame drains the channel first. Anything the worker has
+        // already produced -- a pane snapshot, a header the composition moved
+        // under, an event nobody is waiting for -- is applied on THIS frame,
+        // without waiting for it.
+        drain_pending_worker(
+            worker.source(),
+            &mut sink,
+            &tui_state,
+            &pane_cache,
+        )?;
         // A draw failure is reported ONCE (a dead terminal must not spin in
         // silence) and then cleared.
         if let Some(message) = draw_error.borrow_mut().take() {
@@ -4761,7 +4809,7 @@ mod tests {
     };
     use std::cell::RefCell;
     use std::fs::{create_dir, create_dir_all, read, remove_dir_all, write};
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -5315,6 +5363,116 @@ mod tests {
         assert!(
             !written.contains("example/model-c"),
             "a refused switch must not touch the disk"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    /// Turn a TestBackend frame into text rows (the harness renders frames the
+    /// same way: cell symbols, row by row, trailing blanks trimmed).
+    fn frame_rows(
+        terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+    ) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        let area = buffer.area;
+        (0..area.height)
+            .map(|row| {
+                let mut line = String::new();
+                for col in 0..area.width {
+                    if let Some(cell) = buffer.cell((col, row)) {
+                        line.push_str(cell.symbol());
+                    }
+                }
+                line.trim_end().to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_ui_paints_on_its_own_tick_with_no_provider_events() {
+        // C3's acceptance: the frame must advance while the worker is SILENT.
+        // Nothing but the frontend's own clock drives it any more, and the
+        // paint below is the PRODUCTION draw path over a TestBackend -- what
+        // the loop does on a tick, with no event to react to.
+        let root = temporary_directory("ui-own-tick");
+        let mut tui = ScriptedTui::new();
+        // A whole answer arrives at once and lands in the reveal buffer: the
+        // sink hands text to the reveal, not to the transcript, so an
+        // unfinished answer is on screen only because a frame released it.
+        tui.sink
+            .write_all(format!("{}\n", "a".repeat(600)).as_bytes())
+            .expect("sink");
+
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let events = tui.worker.events.clone();
+        let ticker = std::thread::spawn(move || {
+            // Long enough for several 16 ms ticks, still fast.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let _ =
+                events.send(crate::session_worker::WorkerEvent::TurnFinished);
+        });
+
+        let mut released: Vec<usize> = Vec::new();
+        {
+            // The closures borrow the terminal and the sample log, so they live
+            // in their own scope: the frame is read back once the relay is done
+            // and nothing borrows it any more.
+            let state = Rc::clone(&tui.state);
+            let mut progress = || {
+                {
+                    let mut guard = state.borrow_mut();
+                    guard.reveal_now(std::time::Instant::now());
+                    released.push(
+                        guard.stream_tail.len()
+                            + guard
+                                .transcript_lines
+                                .iter()
+                                .map(String::len)
+                                .sum::<usize>(),
+                    );
+                }
+                terminal
+                    .draw(|frame| {
+                        crate::tui::draw_with_pane(
+                            &state.borrow(),
+                            None,
+                            frame,
+                        );
+                    })
+                    .expect("frame");
+                false
+            };
+            let mut reasoning = |_text: &str| {};
+            super::pump_worker(
+                &mut tui.worker.source,
+                &mut tui.sink,
+                &tui.state,
+                &tui.pane,
+                &mut progress,
+                &mut reasoning,
+                super::Until::TurnFinished,
+            )
+            .expect("relay");
+            ticker.join().expect("ticker thread");
+        }
+
+        assert!(
+            released.len() >= 2,
+            "the frontend ticked on its own clock while the worker was silent, frames={released:?}"
+        );
+        assert!(
+            released[0] > 0,
+            "the first frame already released answer text, frames={released:?}"
+        );
+        assert!(
+            *released.last().expect("a frame") > released[0],
+            "the answer ADVANCED on the clock alone, frames={released:?}"
+        );
+        // And the frame itself carries it: the paint, not just the buffer.
+        let painted = frame_rows(&terminal).join("\n");
+        assert!(
+            painted.contains("aaaa"),
+            "the painted frame shows the released answer, got:\n{painted}"
         );
         let _ = remove_dir_all(root);
     }
