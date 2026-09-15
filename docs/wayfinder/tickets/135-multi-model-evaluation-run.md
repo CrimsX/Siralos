@@ -61,6 +61,33 @@ path is owner-run and never in the gate, because it spends real budget.
 4. Nothing in the feature gates, scores or blocks a session; the label stays
    INFORMATIONAL.
 
+## Progress (2026-09-12) — the offline half is delivered
+
+[Decision 179](../decisions/179-multi-model-evaluation-offline-half.md) records the delivery:
+`siralos-core::evaluation` (the pure records, the comparison and the task-set digest),
+`siralos-cli::evaluation` (the three-case corpus and the runner that composes a real session
+per target), and the owner-run live entry `siralos-harness evaluate` / `npm run evaluate`.
+The offline proof is a gate test and composes three targets over one task set:
+`deterministic-fake / echo` at 0/3, `deterministic-fake / recorded-good` at 3/3 and
+`deterministic-fake / recorded-weak` at 2/3, with one shared task-set digest and one
+INFORMATIONAL table.
+
+Acceptance status: **1 met** (offline path, in `npm run check`), **2 not met** — the live
+owner-run demonstration below is still pending, and it is the owner's budget to spend;
+**3 met** (no workspace path, credential or endpoint in any record, asserted on the emitted
+JSON); **4 met** (`informational: true`, pinned in core and asserted). The ticket stays open
+for acceptance 2 alone.
+
+To run the live half (once, with real profiles):
+
+```bash
+npm run evaluate -- --run first=<workspace-a> --run second=<workspace-b> --out eval.json
+```
+
+Each `--run <label>=<dir>` composes a session for that workspace's own `siralos.toml`, so
+the provider, model and credential are the profile's. Nothing runs at startup, the turn
+budget is `--turn-timeout-ms` (default 120000), and the record is the file the owner names.
+
 ## Out of scope
 
 - Longitudinal storage or trend dashboards (that is HAR-046 and the uncommitted
